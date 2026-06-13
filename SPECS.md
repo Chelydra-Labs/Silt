@@ -1,4 +1,4 @@
-Technical Specification: notes# (notes sharp)
+Technical Specification: Silt
 
 A Local-First, High-Performance Hybrid Note & Task Management Lifecycle Architecture
 
@@ -8,9 +8,9 @@ A Local-First, High-Performance Hybrid Note & Task Management Lifecycle Architec
 
 Modern personal knowledge management (PKM) and task-management tools are fundamentally split. Hierarchical tools (such as Microsoft OneNote) excel at spatial partitioning and structured organization but fail at temporal journaling, lightweight processing, and open formats. On the other hand, outline graph-based systems (such as Logseq or Obsidian) offer friction-free, daily logging but struggle to natively integrate rich task metadata directly into the block-stream. Relying on complex, third-party plugin ecosystems to connect notes and tasks introduces structural instability, speed degradation, and unpredictable data-serialization standards.
 
-1.2 The System Vision: notes#
+1.2 The System Vision: Silt
 
-notes# is an uncompromised, local-first desktop application designed to bridge structured notebooks with daily chronological capture streams. It treats simple, human-readable Markdown text files on your local drive as the immutable database of record. Simultaneously, it uses a lightweight, compiled Go-based backend and an in-memory SQLite indexing cache to serve real-time multi-dimensional productivity views:
+Silt is an uncompromised, local-first desktop application designed to bridge structured notebooks with daily chronological capture streams. It treats simple, human-readable Markdown text files on your local drive as the immutable database of record. Simultaneously, it uses a lightweight, compiled Go-based backend and an in-memory SQLite indexing cache to serve real-time multi-dimensional productivity views:
 
 The Document View: A seamless, virtualized infinite scrolling page of notes organized by days.
 
@@ -24,7 +24,7 @@ The Sovereign Principle: The local directory structure is the single source of t
 
 2. Technical Stack & Decoupled Architecture
 
-To hit our strict resource limits and keep the UI completely lag-free, notes# avoids bloated Electron wrappers in favor of a compile-time optimized, system-native desktop wrapper.
+To hit our strict resource limits and keep the UI completely lag-free, Silt avoids bloated Electron wrappers in favor of a compile-time optimized, system-native desktop wrapper.
 
 +-----------------------------------------------------------------------+
 |                             SVELTE FRONTEND                           |
@@ -103,7 +103,7 @@ Notebooks/
 │   └── Travel_Planning/
 │       └── 2026-05-10.md
 └── Work/
-    └── notes_sharp_project/
+    └── silt_project/
         ├── 2026-06-11.md
         ├── 2026-06-12.md
         └── 2026-06-13.md
@@ -115,7 +115,7 @@ Every daily file contains a strict YAML metadata block bounded by triple dashes 
 
 ---
 notebook: Work
-section: notes_sharp_project
+section: silt_project
 date: 2026-06-13
 tags: [systems/specs, wails/go]
 ---
@@ -208,7 +208,7 @@ INSERT INTO tasks (id, parent_id, owner, start_date, due_date, priority, body) V
 
 5.1 Hierarchical Smart Tag Namespaces
 
-Tags in notes# leverage a slash-delimited taxonomy (#work/sogav/milestone-one) to allow for structured, recursive querying without rigid metadata forms.
+Tags in Silt leverage a slash-delimited taxonomy (#work/sogav/milestone-one) to allow for structured, recursive querying without rigid metadata forms.
 
 When a tag is processed, the parser splits it by depth levels and indexes it into a hierarchical table:
 
@@ -235,7 +235,7 @@ Block Embed {{embed:uuid}}: Renders a live, interactive portal displaying the so
 
 6.1 Color Palette & Dark-Mode Aesthetics
 
-To minimize eye strain and maintain professional focus, notes# utilizes a high-contrast dark aesthetic with deep visual depth:
+To minimize eye strain and maintain professional focus, Silt utilizes a high-contrast dark aesthetic with deep visual depth:
 
 Base Canvas: #121214 (Deep slate black)
 
@@ -247,15 +247,15 @@ Primary Text: #e4e4e7 (Light warm gray)
 
 Muted Text & Metadata: #71717a (Medium cool gray)
 
-Active Highlights & Guideline Markers: #38bdf8 (Vivid sky blue)
+Active Highlights & Guideline Markers: #2dd4bf (Refined teal, 400-shade)
 
 6.2 Visual Guideline Path Highlights
 
-For nested lists, Svelte tracks the active cursor focus and dynamically highlights the current hierarchy path. Vertical guide rules align to the indentation columns. Selecting a nested bullet changes the color of its ancestral parent guidelines from #27272a to #38bdf8, providing instant visual context within deeply nested structures.
+For nested lists, Svelte tracks the active cursor focus and dynamically highlights the current hierarchy path. Vertical guide rules align to the indentation columns. Selecting a nested bullet changes the color of its ancestral parent guidelines from #27272a to #2dd4bf, providing instant visual context within deeply nested structures.
 
   - Root Node Focus
   |   - Sub-Level Node
-  |   |   - Active Cursor Selection Bullet Point  <-- Guideline columns are colored sky blue
+  |   |   - Active Cursor Selection Bullet Point  <-- Guideline columns are colored teal
   |   - Unfocused Parallel Bullet Point           <-- Guideline column is colored dark gray
 
 
@@ -289,7 +289,7 @@ Transforms the active block into a first-level markdown header (# ).
 
 6.4 Theme Customization Engine
 
-To prevent styling stagnation, notes# provides a built-in user theme engine mapping to CSS Custom Properties.
+To prevent styling stagnation, Silt provides a built-in user theme engine mapping to CSS Custom Properties.
 
 Theme Files: Parsed dynamically from JSON files inside Notebooks/.system/themes/.
 
@@ -309,8 +309,8 @@ Schema Example (cyber_forest.json):
     "border-active": "#3d5c4b",
     "text-primary": "#e2ebd5",
     "text-muted": "#6a8274",
-    "color-teal-start": "#10b981",
-    "color-teal-end": "#059669",
+    "color-teal-start": "#2dd4bf",
+    "color-teal-end": "#0d9488",
     "color-indigo-start": "#4ade80",
     "color-indigo-end": "#22c55e"
   }
@@ -321,7 +321,7 @@ Schema Example (cyber_forest.json):
 
 7.1 Atomic Staging & Overwrite Protocol
 
-Because your notes are stored directly on disk, notes# must guarantee data safety during unexpected app exits, power failures, or system crashes. The Go file-writing engine never directly modifies an active file. Instead, it follows a strict atomic update sequence:
+Because your notes are stored directly on disk, Silt must guarantee data safety during unexpected app exits, power failures, or system crashes. The Go file-writing engine never directly modifies an active file. Instead, it follows a strict atomic update sequence:
 
 [InMemory Modified Block Buffer]
               │
@@ -343,14 +343,14 @@ Startup Ingestion: The parser must boot, scan, token-analyze, and index a direct
 
 UI Frame Budget: To keep typing smooth, Svelte must complete inline shorthand processing and DOM updates within a 16ms render window (maintaining a locked 60 FPS).
 
-Memory Footprint: The application must maintain an idle memory footprint of less than 65MB RAM, ensuring notes# remains a lightweight utility running in your system tray.
+Memory Footprint: The application must maintain an idle memory footprint of less than 65MB RAM, ensuring Silt remains a lightweight utility running in your system tray.
 
 8. Local-First Plugin Architecture
 
-To support core system extension while retaining a lightweight base engine, notes# abstracts all dynamic dashboards—including the Agenda, Calendar, and Kanban viewports—into explicit plugins. The host application acts strictly as a raw block editor, tree compiler, and IPC router.
+To support core system extension while retaining a lightweight base engine, Silt abstracts all dynamic dashboards—including the Agenda, Calendar, and Kanban viewports—into explicit plugins. The host application acts strictly as a raw block editor, tree compiler, and IPC router.
 
                   +--------------------------------+
-                  |      notes# Core Editor       |
+                  |      Silt Core Editor       |
                   +--------------------------------+
                                   │
           ┌───────────────────────┼───────────────────────┐
@@ -379,8 +379,8 @@ export interface PluginContext {
   updateBlockState: (id: string, status: 'TODO' | 'DOING' | 'DONE') => Promise<boolean>;
 }
 
-export interface NotesSharpPlugin {
-  id: string;          // e.g. "notes-sharp-kanban"
+export interface SiltPlugin {
+  id: string;          // e.g. "silt-kanban"
   name: string;        // e.g. "Kanban Board"
   version: string;
   icon: string;        // Inline SVG path
@@ -404,7 +404,7 @@ Global settings are managed locally in a human-readable file located at Notebook
 
 9.1 Configuration Schema (config.yaml)
 
-# notes# Global System Settings Configuration
+# Silt Global System Settings Configuration
 
 # Spatial Mapping
 notebooks:
@@ -438,12 +438,12 @@ hotkeys:
 # Plugin Registry
 plugins:
   active:
-    - "notes-sharp-agenda"
-    - "notes-sharp-calendar"
-    - "notes-sharp-kanban"
+    - "silt-agenda"
+    - "silt-calendar"
+    - "silt-kanban"
   disabled: []
   plugin_settings:
-    notes-sharp-kanban:
+    silt-kanban:
       default_col: "TODO"
       columns: ["TODO", "DOING", "DONE"]
 

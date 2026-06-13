@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"notes-sharp/backend/core"
-	"notes-sharp/backend/db"
+	"silt/backend/core"
+	"silt/backend/db"
 )
 
 func TestDirectoryWatcher_ReindexFileHoldsFileLock(t *testing.T) {
@@ -136,4 +136,76 @@ func TestDirectoryWatcher_ReindexFileIndexesFile(t *testing.T) {
 			t.Errorf("expected block %s to be indexed, got count %d", id, n)
 		}
 	}
+}
+
+func TestDirectoryWatcher_FocusLockSuppressesReindex(t *testing.T) {
+	vaultPath := t.TempDir()
+
+	dm, err := db.NewDatabaseManager()
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	filePath := filepath.Join(vaultPath, "test.md")
+
+	// Step 1: write a file and wait for the watcher to index it.
+	writeContent := func(text string) {
+		if err := os.WriteFile(filePath, []byte(text), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+	}
+	writeContent("# Initial <!-- id: aaaa0000-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n")
+
+	waitForBlock := func(id string, wantCount int, timeout time.Duration) {
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			var n int
+			if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE id = ?", id).Scan(&n); err == nil && n == wantCount {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		var n int
+		_ = dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE id = ?", id).Scan(&n)
+		t.Fatalf("timed out waiting for block %s count=%d (want %d)", id, n, wantCount)
+	}
+
+	waitForBlock("aaaa0000-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1, 3*time.Second)
+
+	// Step 2: lock the file.
+	dw.LockFocus(filePath)
+
+	// Step 3: write new content while locked. The watcher must NOT reindex.
+	writeContent("# Updated <!-- id: aaaa0000-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n" +
+		"- [ ] TODO TASK locked content <!-- id: bbbb1111-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->\n")
+
+	// Give the watcher time to (incorrectly) process it.
+	time.Sleep(1 * time.Second)
+
+	var lockedCount int
+	_ = dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE id = ?", "bbbb1111-bbbb-bbbb-bbbb-bbbbbbbbbbbb").Scan(&lockedCount)
+	if lockedCount != 0 {
+		t.Fatalf("expected locked content to NOT be indexed, but found %d rows for bbbb1111", lockedCount)
+	}
+
+	// Step 4: unlock and write again. The watcher must now reindex.
+	dw.UnlockFocus(filePath)
+	writeContent("# Re-indexed <!-- id: aaaa0000-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n" +
+		"- [ ] TODO TASK unlocked content <!-- id: cccc2222-cccc-cccc-cccc-cccccccccccc -->\n")
+
+	waitForBlock("cccc2222-cccc-cccc-cccc-cccccccccccc", 1, 3*time.Second)
 }

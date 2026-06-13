@@ -331,3 +331,74 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDa
 	newContent := strings.Join(outputLines, "\n")
 	return blocks, meta, newContent, modifiedAny, nil
 }
+
+// FormatBlockToLine converts a ParsedBlock back into a markdown line.
+func FormatBlockToLine(block ParsedBlock, spacesPerTab int) string {
+	if spacesPerTab <= 0 {
+		spacesPerTab = 4
+	}
+	indent := strings.Repeat(" ", block.Depth*spacesPerTab)
+
+	// Build ID suffix
+	idSuffix := ""
+	if block.ID != "" {
+		idSuffix = fmt.Sprintf(" <!-- id: %s -->", block.ID)
+	}
+
+	if block.Type == BlockTask {
+		checkbox := " "
+		if block.Status == "DOING" {
+			checkbox = "/"
+		} else if block.Status == "DONE" {
+			checkbox = "x"
+		}
+
+		ownerStr := ""
+		if block.Owner != "" {
+			ownerStr = fmt.Sprintf(" [%s]", block.Owner)
+		}
+
+		dateStr := ""
+		if block.StartDate != "" && block.DueDate != "" {
+			dateStr = fmt.Sprintf("(%s, %s)", block.StartDate, block.DueDate)
+		} else if block.DueDate != "" {
+			dateStr = fmt.Sprintf("(%s)", block.DueDate)
+		}
+
+		priorityStr := ""
+		if block.Priority > 0 && block.Priority != 3 {
+			priorityStr = fmt.Sprintf("#%d", block.Priority)
+		}
+
+		// - [checkbox] STATUS TASK [owner](dates)#priority description <!-- id: id -->
+		return fmt.Sprintf("%s- [%s] %s TASK%s%s%s %s%s",
+			indent, checkbox, block.Status, ownerStr, dateStr, priorityStr,
+			strings.ReplaceAll(block.CleanText, "\n", " "), idSuffix)
+	} else if block.Type == BlockHeader {
+		hashes := strings.Repeat("#", block.Depth)
+		if hashes == "" {
+			hashes = "#"
+		}
+		return fmt.Sprintf("%s %s%s", hashes, block.CleanText, idSuffix)
+	} else {
+		// BlockNote. Newly created blocks arrive with an empty RawText, so
+		// default to the "- " bullet used by the outliner instead of
+		// dropping the marker on every editor-created line.
+		prefix := "- "
+		trimmedRaw := strings.TrimSpace(block.RawText)
+		if trimmedRaw != "" {
+			if strings.HasPrefix(trimmedRaw, "- ") {
+				prefix = "- "
+			} else if strings.HasPrefix(trimmedRaw, "* ") {
+				prefix = "* "
+			} else if strings.HasPrefix(trimmedRaw, "+ ") {
+				prefix = "+ "
+			} else {
+				prefix = ""
+			}
+		}
+		return fmt.Sprintf("%s%s%s%s", indent, prefix,
+			strings.ReplaceAll(block.CleanText, "\n", " "), idSuffix)
+	}
+}
+

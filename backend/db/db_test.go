@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"notes-sharp/backend/parser"
+	"silt/backend/parser"
 )
 
 func newTestDB(t *testing.T) *DatabaseManager {

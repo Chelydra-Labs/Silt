@@ -3,23 +3,27 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
-	"notes-sharp/backend/core"
-	"notes-sharp/backend/db"
-	"notes-sharp/backend/monitor"
-	"notes-sharp/backend/parser"
-	"notes-sharp/backend/vault"
+	"silt/backend/core"
+	"silt/backend/db"
+	"silt/backend/monitor"
+	"silt/backend/parser"
+	"silt/backend/vault"
 
+	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
-	maxTimelineLimit    = 200
+	maxTimelineLimit     = 200
 	defaultTimelineLimit = 30
 )
 
@@ -155,7 +159,7 @@ func (a *App) IsVaultInitialized() bool {
 // InitializeVault prompts the user for a folder, sets it up, and loads the services.
 func (a *App) InitializeVault() (bool, error) {
 	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select notes# Vault Directory",
+		Title: "Select Silt Vault Directory",
 	})
 	if err != nil {
 		return false, fmt.Errorf("failed to select vault folder: %w", err)
@@ -309,7 +313,13 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		// uses the same cleaned values that went into the file path.
 		blocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
 		if err == nil {
-			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+			var idxErr error
+			a.coordinator.WithDBWrite(func() {
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+			})
+			if idxErr != nil {
+				log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Date, idxErr)
+			}
 		}
 	})
 
@@ -352,13 +362,16 @@ func findLineByBlockID(lines []string, blockID string) int {
 // safely fold untrusted frontmatter strings into file paths.
 func sanitizePathSegment(s string) string {
 	cleaned := strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r == 0 {
+		if r == '/' || r == '\\' || r < 32 {
 			return -1
 		}
 		return r
 	}, s)
 	for strings.Contains(cleaned, "..") {
 		cleaned = strings.ReplaceAll(cleaned, "..", "")
+	}
+	if cleaned == "." {
+		cleaned = ""
 	}
 	return strings.TrimSpace(cleaned)
 }
@@ -382,4 +395,303 @@ func isPathWithinVault(target, vaultRoot string) bool {
 	}
 	prefix := absRoot + string(os.PathSeparator)
 	return strings.HasPrefix(absTarget, prefix)
+}
+
+// ListNotebooksAndSections returns all unique notebooks and their sub-sections.
+func (a *App) ListNotebooksAndSections() (map[string][]string, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("vault database not loaded")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var res map[string][]string
+	var err error
+	a.coordinator.WithDBRead(func() {
+		res, err = a.db.ListNotebooksAndSections()
+	})
+
+	return res, err
+}
+
+// SearchBlocks fuzzy searches blocks and headings matching the query.
+func (a *App) SearchBlocks(query string) ([]parser.TaskResult, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("vault database not loaded")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var res []parser.TaskResult
+	var err error
+	a.coordinator.WithDBRead(func() {
+		res, err = a.db.SearchBlocks(query)
+	})
+
+	return res, err
+}
+
+// AcquireFocusLock registers a focus lock on a file to ignore fsnotify updates.
+func (a *App) AcquireFocusLock(notebook, section, fileDate string) error {
+	if a.watcher == nil {
+		return fmt.Errorf("watcher not running")
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safeFileDate := sanitizePathSegment(fileDate)
+	if safeNotebook == "" || safeSection == "" || safeFileDate == "" {
+		return fmt.Errorf("invalid path metadata")
+	}
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeFileDate+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return fmt.Errorf("path escapes vault")
+	}
+	a.watcher.LockFocus(filePath)
+	return nil
+}
+
+// ReleaseFocusLock removes a focus lock from a file.
+func (a *App) ReleaseFocusLock(notebook, section, fileDate string) error {
+	if a.watcher == nil {
+		return fmt.Errorf("watcher not running")
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safeFileDate := sanitizePathSegment(fileDate)
+	if safeNotebook == "" || safeSection == "" || safeFileDate == "" {
+		return fmt.Errorf("invalid path metadata")
+	}
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeFileDate+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return fmt.Errorf("path escapes vault")
+	}
+	a.watcher.UnlockFocus(filePath)
+	return nil
+}
+
+// CreateNewSection creates and scaffolds a daily note in a section.
+func (a *App) CreateNewSection(notebook, section, dateStr string) (string, error) {
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safeDate := sanitizePathSegment(dateStr)
+	if safeNotebook == "" || safeSection == "" {
+		return "", fmt.Errorf("notebook and section names are required")
+	}
+	if safeDate == "" {
+		safeDate = time.Now().Format("2006-01-02")
+	}
+
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeDate+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return "", fmt.Errorf("path escapes vault")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return "", fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	if _, err := os.Stat(filePath); err == nil {
+		return safeDate, nil // already exists
+	}
+
+	formattedDate := safeDate
+	if t, err := time.Parse("2006-01-02", safeDate); err == nil {
+		formattedDate = t.Format("Monday, January 2, 2006")
+	}
+
+	headerID := uuid.New().String()
+	taskID := uuid.New().String()
+
+scaffoldContent := fmt.Sprintf(`---
+notebook: %s
+section: %s
+date: %s
+tags: []
+---
+# %s <!-- id: %s -->
+
+- [ ] TODO TASK [Chris] Start writing in %s <!-- id: %s -->
+`, strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safeDate), formattedDate, headerID, safeSection, taskID)
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var writeErr error
+	a.coordinator.LockFileWrite(filePath, func() {
+		a.tracker.RegisterWrite(filePath)
+		if err := parser.WriteFileAtomic(filePath, []byte(scaffoldContent)); err != nil {
+			writeErr = err
+			return
+		}
+
+		blocks, meta, _, _, err := parser.ParseFileContent(scaffoldContent, safeNotebook, safeSection, safeDate, a.spacesPerTab)
+		if err == nil {
+			var idxErr error
+			a.coordinator.WithDBWrite(func() {
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+			})
+			if idxErr != nil {
+				log.Printf("CreateNewSection: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Date, idxErr)
+			}
+		}
+	})
+
+	if writeErr != nil {
+		return "", fmt.Errorf("failed to write scaffolded section note: %w", writeErr)
+	}
+
+	return safeDate, nil
+}
+
+// SaveFileBlocks writes the updated list of blocks back to the note file.
+func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser.ParsedBlock) error {
+	if a.db == nil {
+		return fmt.Errorf("vault database not loaded")
+	}
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safeFileDate := sanitizePathSegment(fileDate)
+	if safeNotebook == "" || safeSection == "" || safeFileDate == "" {
+		return fmt.Errorf("invalid path metadata")
+	}
+
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeFileDate+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return fmt.Errorf("path escapes vault")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var writeErr error
+	a.coordinator.LockFileWrite(filePath, func() {
+		contentBytes, err := os.ReadFile(filePath)
+		if err != nil && !os.IsNotExist(err) {
+			writeErr = fmt.Errorf("failed to read existing file: %w", err)
+			return
+		}
+
+		frontmatter := ""
+		bodyStart := 0
+		var lines []string
+		if err == nil {
+			lines = strings.Split(string(contentBytes), "\n")
+			if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
+				var fmParts []string
+				fmParts = append(fmParts, lines[0])
+				for i := 1; i < len(lines); i++ {
+					fmParts = append(fmParts, lines[i])
+					if strings.TrimSpace(lines[i]) == "---" {
+						bodyStart = i + 1
+						break
+					}
+				}
+				if len(fmParts) > 1 && strings.TrimSpace(fmParts[len(fmParts)-1]) == "---" {
+					frontmatter = strings.Join(fmParts, "\n") + "\n"
+				}
+			}
+		}
+
+		if frontmatter == "" {
+			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safeFileDate))
+		}
+
+		updatedByID := make(map[string]parser.ParsedBlock, len(blocks))
+		orderedBlocks := make([]parser.ParsedBlock, 0, len(blocks))
+		for _, block := range blocks {
+			if block.ID == "" {
+				block.ID = uuid.New().String()
+			}
+			updatedByID[block.ID] = block
+			orderedBlocks = append(orderedBlocks, block)
+		}
+
+		// Distinguish deleted managed blocks from unmanaged lines that
+		// happen to contain a UUID-shaped comment. Without this, a user-
+		// typed note quoting a commit hash would be silently dropped.
+		oldBlockIDs := make(map[string]bool)
+		if len(lines) > 0 {
+			oldBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
+			if parseErr == nil {
+				for _, b := range oldBlocks {
+					oldBlockIDs[b.ID] = true
+				}
+			}
+		}
+
+		preservedBefore := make(map[string][]string)
+		var pendingPreserved []string
+		inCodeBlock := false
+		for i := bodyStart; i < len(lines); i++ {
+			line := lines[i]
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "```") {
+				inCodeBlock = !inCodeBlock
+				pendingPreserved = append(pendingPreserved, line)
+				continue
+			}
+			if inCodeBlock || trimmed == "" {
+				pendingPreserved = append(pendingPreserved, line)
+				continue
+			}
+
+			matches := updateLineIDRegex.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				blockID := matches[1]
+				if _, ok := updatedByID[blockID]; ok {
+					if _, assigned := preservedBefore[blockID]; assigned {
+						continue
+					}
+					preservedBefore[blockID] = append(preservedBefore[blockID], pendingPreserved...)
+					pendingPreserved = nil
+					continue
+				}
+				if oldBlockIDs[blockID] {
+					continue
+				}
+			}
+
+			pendingPreserved = append(pendingPreserved, line)
+		}
+
+		var markdownLines []string
+		for _, block := range orderedBlocks {
+			if preserved, ok := preservedBefore[block.ID]; ok {
+				markdownLines = append(markdownLines, preserved...)
+			}
+			markdownLines = append(markdownLines, parser.FormatBlockToLine(block, a.spacesPerTab))
+		}
+		markdownLines = append(markdownLines, pendingPreserved...)
+
+		newContent := frontmatter + strings.Join(markdownLines, "\n")
+
+		a.tracker.RegisterWrite(filePath)
+
+		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+			writeErr = err
+			return
+		}
+
+		parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
+		if err == nil {
+			var idxErr error
+			a.coordinator.WithDBWrite(func() {
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, parsedBlocks, meta.Tags, meta.Warnings...)
+			})
+			if idxErr != nil {
+				log.Printf("SaveFileBlocks: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Date, idxErr)
+			}
+		}
+	})
+
+	return writeErr
 }

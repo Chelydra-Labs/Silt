@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"notes-sharp/backend/core"
-	"notes-sharp/backend/db"
-	"notes-sharp/backend/monitor"
-	"notes-sharp/backend/parser"
-	"notes-sharp/backend/vault"
+	"silt/backend/core"
+	"silt/backend/db"
+	"silt/backend/monitor"
+	"silt/backend/parser"
+	"silt/backend/vault"
 )
 
 func newTestApp(t *testing.T) *App {
@@ -156,6 +156,18 @@ func TestUpdateBlockState_RejectsNonTaskBlock(t *testing.T) {
 	}
 }
 
+func TestUpdateBlockState_RejectsInvalidStatus(t *testing.T) {
+	app := newTestApp(t)
+
+	err := app.UpdateBlockState("any-block-id", "INVALID")
+	if err == nil {
+		t.Fatalf("expected error for invalid status")
+	}
+	if !strings.Contains(err.Error(), "invalid target status") {
+		t.Errorf("expected error to mention 'invalid target status', got: %v", err)
+	}
+}
+
 func TestFetchSectionTimeline_GroupsAndPaginates(t *testing.T) {
 	app := newTestApp(t)
 
@@ -210,33 +222,33 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 
 	blocks := []parser.ParsedBlock{
 		{
-			ID:        "t1",
-			Type:      parser.BlockTask,
-			RawText:   "- [x] DONE TASK [Alice] ship #work/sogav <!-- id: t1 -->",
-			CleanText: "ship",
-			Status:    "DONE",
-			Owner:     "Alice",
-			Priority:  1,
+			ID:         "t1",
+			Type:       parser.BlockTask,
+			RawText:    "- [x] DONE TASK [Alice] ship #work/sogav <!-- id: t1 -->",
+			CleanText:  "ship",
+			Status:     "DONE",
+			Owner:      "Alice",
+			Priority:   1,
 			LineNumber: 1,
 		},
 		{
-			ID:        "t2",
-			Type:      parser.BlockTask,
-			RawText:   "- [/] DOING TASK [Bob] fix <!-- id: t2 -->",
-			CleanText: "fix",
-			Status:    "DOING",
-			Owner:     "Bob",
-			Priority:  2,
+			ID:         "t2",
+			Type:       parser.BlockTask,
+			RawText:    "- [/] DOING TASK [Bob] fix <!-- id: t2 -->",
+			CleanText:  "fix",
+			Status:     "DOING",
+			Owner:      "Bob",
+			Priority:   2,
 			LineNumber: 2,
 		},
 		{
-			ID:        "t3",
-			Type:      parser.BlockTask,
-			RawText:   "- [ ] TODO TASK [Alice] research <!-- id: t3 -->",
-			CleanText: "research",
-			Status:    "TODO",
-			Owner:     "Alice",
-			Priority:  3,
+			ID:         "t3",
+			Type:       parser.BlockTask,
+			RawText:    "- [ ] TODO TASK [Alice] research <!-- id: t3 -->",
+			CleanText:  "research",
+			Status:     "TODO",
+			Owner:      "Alice",
+			Priority:   3,
 			LineNumber: 3,
 		},
 	}
@@ -274,5 +286,293 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 	}
 	if len(tagged) > 0 && len(tagged[0].Tags) == 0 {
 		t.Errorf("expected tag hydration on result, got empty Tags")
+	}
+}
+
+func TestCreateNewSection_Scaffolding(t *testing.T) {
+	app := newTestApp(t)
+
+	dateStr, err := app.CreateNewSection("Work", "Meeting Notes", "2026-06-13")
+	if err != nil {
+		t.Fatalf("CreateNewSection failed: %v", err)
+	}
+	if dateStr != "2026-06-13" {
+		t.Errorf("expected date 2026-06-13, got %q", dateStr)
+	}
+
+	filePath := filepath.Join(app.vaultPath, "Work", "Meeting Notes", "2026-06-13.md")
+	contentBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("failed to read scaffolded file: %v", err)
+	}
+	content := string(contentBytes)
+	if !strings.Contains(content, `notebook: "Work"`) || !strings.Contains(content, `section: "Meeting Notes"`) {
+		t.Errorf("scaffolded file is missing frontmatter metadata, got:\n%s", content)
+	}
+}
+
+func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
+	app := newTestApp(t)
+
+	notebook := "Work"
+	section := "Journal"
+	fileDate := "2026-06-13"
+	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	content := "---\n" +
+		"notebook: Work\n" +
+		"section: Journal\n" +
+		"date: 2026-06-13\n" +
+		"tags: []\n" +
+		"---\n" +
+		"# Today <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"\n" +
+		"```go\n" +
+		"fmt.Println(\"keep me\") <!-- id: 99999999-9999-9999-9999-999999999999 -->\n" +
+		"```\n" +
+		"\n" +
+		"- [ ] TODO TASK [Alice] ship <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [ ] TODO TASK [Bob] remove <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
+	writeFile(t, filePath, content)
+
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	var updated []parser.ParsedBlock
+	for _, block := range blocks {
+		if block.ID == "33333333-3333-3333-3333-333333333333" {
+			continue
+		}
+		if block.ID == "22222222-2222-2222-2222-222222222222" {
+			block.CleanText = "ship the fix"
+		}
+		updated = append(updated, block)
+	}
+
+	if err := app.SaveFileBlocks(notebook, section, fileDate, updated); err != nil {
+		t.Fatalf("SaveFileBlocks: %v", err)
+	}
+	writtenBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	written := string(writtenBytes)
+	if !strings.Contains(written, "fmt.Println(\"keep me\") <!-- id: 99999999-9999-9999-9999-999999999999 -->") {
+		t.Errorf("expected fenced code content to be preserved, got:\n%s", written)
+	}
+	if !strings.Contains(written, "- [ ] TODO TASK [Alice] ship the fix <!-- id: 22222222-2222-2222-2222-222222222222 -->") {
+		t.Errorf("expected updated task text, got:\n%s", written)
+	}
+	if strings.Contains(written, "remove <!-- id: 33333333-3333-3333-3333-333333333333 -->") {
+		t.Errorf("expected removed block to stay deleted, got:\n%s", written)
+	}
+}
+
+func TestSearchBlocks_FuzzySearch(t *testing.T) {
+	app := newTestApp(t)
+
+	blocks := []parser.ParsedBlock{
+		{
+			ID:         "b1",
+			Type:       parser.BlockNote,
+			RawText:    "Establish base node connection parameters <!-- id: b1 -->",
+			CleanText:  "Establish base node connection parameters",
+			LineNumber: 1,
+		},
+		{
+			ID:         "b2",
+			Type:       parser.BlockHeader,
+			RawText:    "# Cyber-Forest objectives <!-- id: b2 -->",
+			CleanText:  "Cyber-Forest objectives",
+			LineNumber: 2,
+		},
+	}
+	if err := app.db.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	res, err := app.SearchBlocks("base connection")
+	if err != nil {
+		t.Fatalf("SearchBlocks failed: %v", err)
+	}
+	if len(res) != 1 || res[0].ID != "b1" {
+		t.Errorf("expected exactly 1 match (b1) for query, got %d results", len(res))
+	}
+
+	res, err = app.SearchBlocks("Cyber objectives")
+	if err != nil {
+		t.Fatalf("SearchBlocks failed: %v", err)
+	}
+	if len(res) != 1 || res[0].ID != "b2" {
+		t.Errorf("expected exactly 1 match (b2) for query, got %d results", len(res))
+	}
+
+	// Case-insensitive: lowercase query must match mixed-case content.
+	res, err = app.SearchBlocks("base CONNECTION")
+	if err != nil {
+		t.Fatalf("SearchBlocks failed: %v", err)
+	}
+	if len(res) != 1 || res[0].ID != "b1" {
+		t.Errorf("expected 1 case-insensitive match (b1), got %d results", len(res))
+	}
+
+	// Case-insensitive: uppercase query must match lowercase notebook.
+	res, err = app.SearchBlocks("WORK")
+	if err != nil {
+		t.Fatalf("SearchBlocks failed: %v", err)
+	}
+	if len(res) != 2 {
+		t.Errorf("expected 2 matches for WORK notebook, got %d", len(res))
+	}
+}
+
+func TestFocusLocking_AcquireAndRelease(t *testing.T) {
+	app := newTestApp(t)
+
+	watcher, err := monitor.NewDirectoryWatcher(app.vaultPath, app.db, app.tracker, app.coordinator, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher failed: %v", err)
+	}
+	app.watcher = watcher
+
+	notebook := "Work"
+	section := "Journal"
+	fileDate := "2026-06-13"
+	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+
+	if err := app.AcquireFocusLock(notebook, section, fileDate); err != nil {
+		t.Fatalf("AcquireFocusLock failed: %v", err)
+	}
+	if !app.watcher.IsFocusLocked(filePath) {
+		t.Errorf("expected file to be focus locked")
+	}
+
+	if err := app.ReleaseFocusLock(notebook, section, fileDate); err != nil {
+		t.Fatalf("ReleaseFocusLock failed: %v", err)
+	}
+	if app.watcher.IsFocusLocked(filePath) {
+		t.Errorf("expected file to be unlocked")
+	}
+}
+
+func TestSaveFileBlocks_DeletesMiddleBlockPreservesNonBlockLines(t *testing.T) {
+	app := newTestApp(t)
+
+	notebook := "Work"
+	section := "Journal"
+	fileDate := "2026-06-13"
+	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	content := "---\n" +
+		"notebook: Work\n" +
+		"section: Journal\n" +
+		"date: 2026-06-13\n" +
+		"tags: []\n" +
+		"---\n" +
+		"- [ ] TODO TASK [Alice] first <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"\n" +
+		"```go\n" +
+		"// preserved code block\n" +
+		"```\n" +
+		"\n" +
+		"- [ ] TODO TASK [Bob] middle <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [ ] TODO TASK [Carol] last <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
+	writeFile(t, filePath, content)
+
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	var updated []parser.ParsedBlock
+	for _, block := range blocks {
+		if block.ID == "22222222-2222-2222-2222-222222222222" {
+			continue
+		}
+		updated = append(updated, block)
+	}
+
+	if err := app.SaveFileBlocks(notebook, section, fileDate, updated); err != nil {
+		t.Fatalf("SaveFileBlocks: %v", err)
+	}
+	writtenBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	written := string(writtenBytes)
+	if !strings.Contains(written, "// preserved code block") {
+		t.Errorf("expected fenced code content to survive middle-block deletion, got:\n%s", written)
+	}
+	if strings.Contains(written, "middle <!-- id: 22222222-2222-2222-2222-222222222222 -->") {
+		t.Errorf("expected deleted middle block to be gone, got:\n%s", written)
+	}
+	if !strings.Contains(written, "- [ ] TODO TASK [Carol] last <!-- id: 33333333-3333-3333-3333-333333333333 -->") {
+		t.Errorf("expected last block to survive, got:\n%s", written)
+	}
+}
+
+func TestSaveFileBlocks_PreservesUnknownUUIDLine(t *testing.T) {
+	app := newTestApp(t)
+
+	notebook := "Work"
+	section := "Journal"
+	fileDate := "2026-06-13"
+	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	content := "---\n" +
+		"notebook: Work\n" +
+		"section: Journal\n" +
+		"date: 2026-06-13\n" +
+		"tags: []\n" +
+		"---\n" +
+		"- [ ] TODO TASK [Alice] keep <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"ref to commit <!-- id: deadbeef-dead-beef-dead-beefdeadbeef -->\n" +
+		"- [ ] TODO TASK [Bob] also keep <!-- id: 22222222-2222-2222-2222-222222222222 -->\n"
+	writeFile(t, filePath, content)
+
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+
+	if err := app.SaveFileBlocks(notebook, section, fileDate, blocks); err != nil {
+		t.Fatalf("SaveFileBlocks: %v", err)
+	}
+	writtenBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	written := string(writtenBytes)
+	if !strings.Contains(written, "deadbeef-dead-beef-dead-beefdeadbeef") {
+		t.Errorf("expected unknown-UUID line to survive, got:\n%s", written)
+	}
+}
+
+func TestSanitizePathSegment_StripsControlChars(t *testing.T) {
+	// Control characters (including newlines and NUL) must be stripped so
+	// they cannot corrupt YAML frontmatter or inject into file paths.
+	result := sanitizePathSegment("evil\nsection")
+	if strings.ContainsAny(result, "\n\r\x00") {
+		t.Errorf("expected control characters stripped, got %q", result)
+	}
+
+	result = sanitizePathSegment("clean")
+	if result != "clean" {
+		t.Errorf("expected 'clean' unchanged, got %q", result)
+	}
+}
+
+func TestAcquireFocusLock_RejectsTraversalMetadata(t *testing.T) {
+	app := newTestApp(t)
+
+	watcher, err := monitor.NewDirectoryWatcher(app.vaultPath, app.db, app.tracker, app.coordinator, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher failed: %v", err)
+	}
+	app.watcher = watcher
+
+	err = app.AcquireFocusLock("../../..", "etc", "passwd")
+	if err == nil {
+		t.Fatalf("expected AcquireFocusLock to reject traversal metadata")
+	}
+	if !strings.Contains(err.Error(), "invalid path metadata") {
+		t.Errorf("expected 'invalid path metadata' from sanitization, got: %v", err)
 	}
 }

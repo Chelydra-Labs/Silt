@@ -1,10 +1,10 @@
-Engineering Architecture: notes# (notes sharp)
+Engineering Architecture: Silt
 
-This document details the low-level system design, state machines, data pipelines, and performance constraints of notes#. It acts as the direct engineering blueprint for developers implementing the Go core and Svelte interface layers.
+This document details the low-level system design, state machines, data pipelines, and performance constraints of Silt. It acts as the direct engineering blueprint for developers implementing the Go core and Svelte interface layers.
 
 1. System Topology & Process Boundaries
 
-The notes# system runs as a single local process. The operating system boundary separates the low-level compiled disk-access layer from the lightweight front-end view frame using native platform Webview IPC handles:
+The Silt system runs as a single local process. The operating system boundary separates the low-level compiled disk-access layer from the lightweight front-end view frame using native platform Webview IPC handles:
 
 +-----------------------------------------------------------------------------------+
 |                           FRONTEND PROCESS BOUNDARY (Webkit)                      |
@@ -50,7 +50,7 @@ To allow interoperability with external plain-text editors (e.g., VS Code, Obsid
 
 The Feedback Loop Prevention Strategy
 
-When notes# writes to disk, the fsnotify engine intercepts the write event, which could trigger an accidental infinite parsing loop. To prevent this, the file writer implements an execution flag cache:
+When Silt writes to disk, the fsnotify engine intercepts the write event, which could trigger an accidental infinite parsing loop. To prevent this, the file writer implements an execution flag cache:
 
 package monitor
 
@@ -380,7 +380,7 @@ func (ec *ExecutionCoordinator) LockFileWrite(filepath string, task func()) {
 
 6.2 Viewport Sync Conflict Mitigation
 
-If you edit a markdown file in VS Code while the notes# dashboard is open, the file-watcher triggers a rebuild of the SQLite cache. If Svelte is actively editing the same line, the changes could conflict.
+If you edit a markdown file in VS Code while the Silt dashboard is open, the file-watcher triggers a rebuild of the SQLite cache. If Svelte is actively editing the same line, the changes could conflict.
 
 Mitigation Plan:
 

@@ -35,5 +35,17 @@ Thumbs.db
 # Temporary planning files
 PLAN.md
 
+# Build distributions
+distributions/
+
 # Local PR context / ad-hoc diffs
 *.diff
+
+# Local vaults
+vault/
+
+# Vite build cache timestamps
+frontend/vite.config.ts.timestamp-*.mjs
+
+# NSIS installer generated files
+build/installer/

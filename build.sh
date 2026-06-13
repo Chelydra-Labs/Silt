@@ -1,0 +1,125 @@
+#!/bin/bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+
+VERSION_FILE="$ROOT/VERSION"
+DIST_DIR="$ROOT/distributions"
+APP_NAME="silt"
+PRODUCT_NAME="Silt"
+
+# --- helpers ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log_info()  { printf "${GREEN}[INFO]${NC}  %s\n" "$*"; }
+log_warn()  { printf "${YELLOW}[WARN]${NC}  %s\n" "$*"; }
+log_error() { printf "${RED}[ERROR]${NC} %s\n" "$*"; }
+
+check_tool() {
+    if ! command -v "$1" &> /dev/null; then
+        log_error "$1 is required but not found. Install it and re-run."
+        exit 1
+    fi
+}
+
+# --- prereq checks ---
+check_tool go
+check_tool node
+check_tool npm
+check_tool wails
+check_tool makensis
+
+# --- read & bump version ---
+if [ ! -f "$VERSION_FILE" ]; then
+    echo "0.1.0" > "$VERSION_FILE"
+    log_info "Created VERSION file with 0.1.0"
+fi
+
+OLD_VERSION=$(tr -d '[:space:]' < "$VERSION_FILE")
+IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD_VERSION"
+PATCH=$((PATCH + 1))
+VERSION="${MAJOR}.${MINOR}.${PATCH}"
+
+log_info "Building version: $OLD_VERSION -> $VERSION"
+
+# --- build frontend + backend + NSIS scaffolding ---
+# Build frontend before wails because wails runs Go bindings generation
+# first (which requires frontend/dist to exist for the embed directive).
+log_info "Installing frontend dependencies..."
+(cd "$ROOT/frontend" && npm install)
+
+# --- generate app icon from logo.svg ---
+log_info "Generating app icon from logo.svg..."
+NODE_PATH="$ROOT/frontend/node_modules" node "$ROOT/scripts/generate-icon.mjs" \
+    "$ROOT/frontend/src/assets/logo.svg" \
+    "$ROOT/build/appicon.png"
+
+log_info "Building frontend..."
+(cd "$ROOT/frontend" && npm run build)
+
+# Clean previous build artifacts (do this after frontend build so dist/ survives).
+rm -rf "$ROOT/build/bin"
+
+# Running --nsis populates build/windows/ (icon.ico) and builds the binary.
+# We skip --clean to avoid wiping frontend/dist.
+log_info "Building with Wails..."
+wails build --platform windows/amd64 --nsis
+
+BINARY="$ROOT/build/bin/${APP_NAME}.exe"
+if [ ! -f "$BINARY" ]; then
+    log_error "Binary not found at $BINARY. Build may have failed."
+    exit 1
+fi
+
+log_info "Binary built: $BINARY"
+
+# --- create distribution directory ---
+BUILD_DIR="$DIST_DIR/v${VERSION}"
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+
+# --- 1) portable .zip ---
+log_info "Creating portable zip..."
+ZIP_NAME="${APP_NAME}-v${VERSION}-portable.zip"
+cp "$BINARY" "$BUILD_DIR/${APP_NAME}.exe"
+(cd "$BUILD_DIR" && zip -9q "$ZIP_NAME" "${APP_NAME}.exe")
+rm "$BUILD_DIR/${APP_NAME}.exe"
+log_info "  -> $BUILD_DIR/$ZIP_NAME"
+
+# --- 2) per-user NSIS installer (no admin required) ---
+log_info "Building per-user installer..."
+
+INSTALLER_NAME="${APP_NAME}-v${VERSION}-installer-peruser.exe"
+NSI_FILE="$ROOT/build/windows/installer/project.nsi"
+NSIS_OUTPUT="$ROOT/build/bin/${APP_NAME}-amd64-installer.exe"
+
+# makensis resolves relative paths (icon, webview2 bootstrapper) from the
+# directory containing the .nsi file, so we cd there.
+(cd "$(dirname "$NSI_FILE")" && makensis \
+    -DINFO_PROJECTNAME="$APP_NAME" \
+    -DINFO_PRODUCTNAME="$PRODUCT_NAME" \
+    -DINFO_PRODUCTVERSION="$VERSION" \
+    -DARG_WAILS_AMD64_BINARY="$BINARY" \
+    "$(basename "$NSI_FILE")")
+
+cp "$NSIS_OUTPUT" "$BUILD_DIR/$INSTALLER_NAME"
+
+log_info "  -> $BUILD_DIR/$INSTALLER_NAME"
+
+# --- persist new version (only on success) ---
+echo "$VERSION" > "$VERSION_FILE"
+log_info "Version bumped to $VERSION"
+
+# --- summary ---
+echo ""
+echo "  ┌─────────────────────────────────────────────┐"
+echo "  │  Build complete — version $VERSION"
+echo "  ├─────────────────────────────────────────────┤"
+echo "  │  Portable  : $ZIP_NAME"
+echo "  │  Installer : $INSTALLER_NAME"
+echo "  │  Location  : $BUILD_DIR"
+echo "  └─────────────────────────────────────────────┘"

@@ -1,4 +1,4 @@
-Design Specification: notes# (notes sharp)
+Design Specification: Silt
 
 Core Design System, Component Tokens, & Interaction Specification
 
@@ -6,11 +6,11 @@ Core Design System, Component Tokens, & Interaction Specification
 
 Most digital workspace applications fall into one of two visual extremes: flat, sterile minimalism that feels clinical (e.g., default Logseq or Obsidian) or over-saturated, high-contrast neon layouts that induce cognitive fatigue during multi-hour reading/writing sessions.
 
-notes# implements "Refined Cyber-Ink"—a design framework engineered for deep, distraction-free focus:
+Silt implements "Refined Cyber-Ink"—a design framework engineered for deep, distraction-free focus:
 
 Ink-Rich Canvas: The interface relies on an ultra-dark slate base (#0c0c0e) and dark charcoal panels (#121215). This mimics high-grade dark paper, absorbing light emission to protect eyes on OLED, mini-LED, and high-brightness displays.
 
-Surgical Accents: Highly saturated color gradients are constrained to less than 3% of the active viewport area. They act as glowing signposts (for checkboxes, keyboard navigation path markers, and active selection guides).
+Surgical Accents: Highly saturated color gradients are constrained to less than 3% of the active viewport area. They act as glowing signposts (for checkboxes, keyboard navigation path markers, and active selection guides). The teal accent sits in the teal-400 → teal-600 range (rather than a fully-saturated sky/cyan) so it stays readable across long sessions without inducing visual fatigue; the indigo "in-progress" gradient remains one notch more vivid so the active state still draws the eye.
 
 Hairline Isolation: Visual boundaries use absolute $1\text{px}$ lines with dark metallic borders instead of heavy box-shadow offsets, maintaining a clean, structured appearance.
 
@@ -21,7 +21,7 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
 2.1 Color Tokens Schema
 
 {
-  "system": "notes-sharp-core",
+  "system": "silt-core",
   "version": "1.0.0",
   "modes": {
     "dark": {
@@ -44,9 +44,9 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
         "disabled": "#4b5563"
       },
       "accent": {
-        "teal-start": "#38bdf8",
-        "teal-end": "#06b6d4",
-        "teal-glow": "rgba(6, 182, 212, 0.15)",
+        "teal-start": "#2dd4bf",
+        "teal-end": "#0d9488",
+        "teal-glow": "rgba(20, 184, 166, 0.15)",
         "indigo-start": "#6366f1",
         "indigo-end": "#a855f7",
         "indigo-glow": "rgba(168, 85, 247, 0.12)"
@@ -76,9 +76,9 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
         "disabled": "#94a3b8"
       },
       "accent": {
-        "teal-start": "#0284c7",
-        "teal-end": "#0891b2",
-        "teal-glow": "rgba(2, 132, 199, 0.10)",
+        "teal-start": "#0d9488",
+        "teal-end": "#115e59",
+        "teal-glow": "rgba(13, 148, 136, 0.10)",
         "indigo-start": "#4f46e5",
         "indigo-end": "#7c3aed",
         "indigo-glow": "rgba(79, 70, 229, 0.08)"
@@ -122,7 +122,7 @@ Line Height Constraint: Every block features a native py-1 ($4\text{px}$ top/bot
 
 4.1 The Task Checkpoint Component
 
-Custom checkbox rendering mimics the structural rounded-corner boundaries (rx="16") of the notes# logo.
+Custom checkbox rendering mimics the structural rounded-corner boundaries (rx="16") of the Silt logo.
 
        [ ] TODO                    [/] DOING                   [x] DONE
    ┌───────────────┐           ┌───────────────┐           ┌───────────────┐
@@ -213,7 +213,7 @@ The slash command menu uses clear, frosted glass visual styling, maintaining bac
 
 5. Interaction States & Dynamic Feedback
 
-Every component in notes# implements distinct states to provide clear feedback during mouse, keyboard, or touch-screen interaction:
+Every component in Silt implements distinct states to provide clear feedback during mouse, keyboard, or touch-screen interaction:
 
 Component
 
@@ -269,7 +269,7 @@ Kanban Card Drag-Reorder: Uses compile-time svelte/animate (using Svelte's nativ
 
 7. Dynamic Theme Injection Runtime
 
-To support user-defined styling, notes# implements a runtime CSS Custom Property injector:
+To support user-defined styling, Silt implements a runtime CSS Custom Property injector:
 
                   +--------------------------------+
                   |  Go Backend: cyber_forest.json  |
@@ -293,7 +293,7 @@ To support user-defined styling, notes# implements a runtime CSS Custom Property
 
 8. Accessibility (A11Y) & Keyboard Navigation Compliance
 
-notes# is built for complete hands-on-keyboard efficiency, complying directly with WCAG 2.2 AAA guidelines:
+Silt is built for complete hands-on-keyboard efficiency, complying directly with WCAG 2.2 AAA guidelines:
 
 Contrast Ratios: Text-to-background contrast ratios are strictly maintained above 7:1 for primary elements, and above 4.5:1 for secondary tags.
 

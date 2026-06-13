@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"notes-sharp/backend/core"
-	"notes-sharp/backend/db"
-	"notes-sharp/backend/parser"
+	"silt/backend/core"
+	"silt/backend/db"
+	"silt/backend/parser"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -28,6 +28,9 @@ type DirectoryWatcher struct {
 
 	failedMu   sync.Mutex
 	failedPaths []string
+
+	focusMu    sync.RWMutex
+	focusLocks map[string]bool
 }
 
 func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *WriteTracker, coordinator *core.ExecutionCoordinator, spacesPerTab int) (*DirectoryWatcher, error) {
@@ -44,7 +47,34 @@ func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *Writ
 		coordinator:  coordinator,
 		spacesPerTab: spacesPerTab,
 		closeChan:    make(chan struct{}),
+		focusLocks:   make(map[string]bool),
 	}, nil
+}
+
+func (dw *DirectoryWatcher) LockFocus(path string) {
+	dw.focusMu.Lock()
+	defer dw.focusMu.Unlock()
+	if dw.focusLocks == nil {
+		dw.focusLocks = make(map[string]bool)
+	}
+	dw.focusLocks[filepath.Clean(path)] = true
+}
+
+func (dw *DirectoryWatcher) UnlockFocus(path string) {
+	dw.focusMu.Lock()
+	defer dw.focusMu.Unlock()
+	if dw.focusLocks != nil {
+		delete(dw.focusLocks, filepath.Clean(path))
+	}
+}
+
+func (dw *DirectoryWatcher) IsFocusLocked(path string) bool {
+	dw.focusMu.RLock()
+	defer dw.focusMu.RUnlock()
+	if dw.focusLocks == nil {
+		return false
+	}
+	return dw.focusLocks[filepath.Clean(path)]
 }
 
 func (dw *DirectoryWatcher) Close() error {
@@ -158,6 +188,11 @@ func (dw *DirectoryWatcher) listenLoop() {
 				continue
 			}
 
+			// Ignore events if the file is focus-locked by Svelte editor
+			if dw.IsFocusLocked(path) {
+				continue
+			}
+
 			// Ignore self-generated writes
 			if dw.tracker.IsSelfGenerated(path) {
 				continue
@@ -190,6 +225,10 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 	// self-generated writes — it does not protect against genuine
 	// external mutations racing the watcher.
 	dw.coordinator.LockFileWrite(path, func() {
+		if dw.IsFocusLocked(path) {
+			return
+		}
+
 		notebook, section, dateStr := dw.resolveFileMetadata(path)
 		contentBytes, err := os.ReadFile(path)
 		if err != nil {
@@ -202,12 +241,15 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		}
 
 		if modified {
-			// Register write before modifying the file to prevent loop triggers
 			dw.tracker.RegisterWrite(path)
 			_ = parser.WriteFileAtomic(path, []byte(newContent))
 		}
 
-		_ = dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+		dw.coordinator.WithDBWrite(func() {
+			if err := dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...); err != nil {
+				log.Printf("reindexFile: IndexFileBlocks failed for %s: %v", path, err)
+			}
+		})
 	})
 }
 

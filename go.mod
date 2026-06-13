@@ -1,4 +1,4 @@
-module notes-sharp
+module silt
 
 go 1.25.0
 
