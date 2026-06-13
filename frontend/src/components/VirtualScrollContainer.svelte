@@ -1,11 +1,12 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
-  import { FetchSectionTimeline } from '../../wailsjs/go/main/App.js'
+  import { FetchPageTimeline } from '../../wailsjs/go/main/App.js'
   import BlockRenderer from './BlockRenderer.svelte'
 
   interface Props {
     notebook: string
     section: string
+    page: string
     targetDate?: string
     targetBlockId?: string
     targetKey?: string
@@ -17,6 +18,7 @@
   let {
     notebook,
     section,
+    page,
     targetDate = '',
     targetBlockId = '',
     targetKey = '',
@@ -34,16 +36,16 @@
   let containerEl = $state<HTMLDivElement | null>(null)
   let handledTargetKey = $state('')
 
-  // Reload timeline when notebook or section changes.
+  // Reload timeline when notebook, section, or page changes.
   //
   // resetTimeline() is async and, through loadMoreDays(), reads reactive state
   // (loading/hasMore) synchronously. Running it inside the effect's tracking
   // scope would make those reads effect dependencies, re-triggering the effect
   // on every loading/hasMore flip and producing an infinite reset/refetch loop
   // (the "Loading logs..." hang). untrack() limits the effect to only
-  // notebook/section.
+  // notebook/section/page.
   $effect(() => {
-    if (notebook && section) {
+    if (notebook && section && page) {
       untrack(() => resetTimeline())
     }
   })
@@ -70,9 +72,10 @@
     let succeeded = false
 
     try {
-      const newDays = await FetchSectionTimeline(
+      const newDays = await FetchPageTimeline(
         notebook,
         section,
+        page,
         offset,
         limit
       )
@@ -167,18 +170,18 @@
   <nav
     class="mb-6 flex items-center gap-2 text-text-muted font-label-sm text-label-sm"
   >
-    <span>Notes</span>
-    <span class="material-symbols-outlined text-[14px]">chevron_right</span>
     <span>{notebook}</span>
     <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-    <span class="text-accent-teal-start">{section}</span>
+    <span>{section}</span>
+    <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+    <span class="text-accent-teal-start">{page}</span>
   </nav>
 
   <header class="mb-8">
     <h1
       class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-2"
     >
-      {section} Timeline
+      {page}
     </h1>
     <div class="flex items-center gap-3">
       <span
@@ -189,7 +192,7 @@
       <span
         class="bg-[#1e1e23]/50 border border-accent-teal-start/20 text-accent-teal-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
       >
-        Active Stream
+        {section}
       </span>
     </div>
   </header>
@@ -232,6 +235,7 @@
                 {block}
                 {notebook}
                 {section}
+                {page}
                 fileDate={group.date}
                 siblings={group.blocks}
                 blockIndex={idx}

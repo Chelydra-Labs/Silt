@@ -26,6 +26,7 @@
     block: Block
     notebook: string
     section: string
+    page: string
     fileDate: string
     siblings: Block[]
     blockIndex: number
@@ -39,6 +40,7 @@
     block = $bindable(),
     notebook,
     section,
+    page,
     fileDate,
     siblings,
     blockIndex,
@@ -122,7 +124,7 @@
   async function handleFocus() {
     isFocused = true
     try {
-      await AcquireFocusLock(notebook, section, fileDate)
+      await AcquireFocusLock(notebook, section, page, fileDate)
       hasFocusLock = true
     } catch (e) {
       console.error('Focus lock failed:', e)
@@ -166,7 +168,7 @@
 
   async function saveBlocksDirectly(blocksToSave = siblings) {
     try {
-      await SaveFileBlocks(notebook, section, fileDate, blocksToSave)
+      await SaveFileBlocks(notebook, section, page, fileDate, blocksToSave)
     } catch (e) {
       console.error('Failed to save blocks:', e)
     }
@@ -176,7 +178,7 @@
     if (!hasFocusLock) return
     hasFocusLock = false
     try {
-      await ReleaseFocusLock(notebook, section, fileDate)
+      await ReleaseFocusLock(notebook, section, page, fileDate)
     } catch (e) {
       console.error('Focus unlock failed:', e)
     }

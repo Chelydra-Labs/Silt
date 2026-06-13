@@ -152,7 +152,8 @@ CREATE TABLE blocks (
     parent_id TEXT,
     notebook TEXT NOT NULL,
     section TEXT NOT NULL,
-    file_date TEXT NOT NULL, -- YYYY-MM-DD
+    page TEXT NOT NULL,       -- Page (streaming unit) inside the Section
+    file_date TEXT NOT NULL,  -- YYYY-MM-DD
     depth INTEGER DEFAULT 0,
     type TEXT NOT NULL,      -- 'TASK', 'NOTE', 'HEADER'
     raw_content TEXT NOT NULL,
@@ -184,7 +185,7 @@ CREATE TABLE tags (
 );
 
 -- Create covered indexes for dynamic query performance
-CREATE INDEX idx_blocks_file ON blocks(notebook, section, file_date);
+CREATE INDEX idx_blocks_file ON blocks(notebook, section, page, file_date);
 CREATE INDEX idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;
 CREATE INDEX idx_tags_lookup ON tags(level_0, level_1, level_2);
 
@@ -220,14 +221,25 @@ type App struct {
 	db  *sql.DB
 }
 
-// FetchSectionTimeline returns day-grouped blocks for infinite virtualization scroll
-func (a *App) FetchSectionTimeline(notebook, section string, offset int, limit int) ([]DayGroup, error)
+// FetchPageTimeline returns day-grouped blocks for the streaming Page
+// (notebook/section/page), paged for infinite virtualization scroll.
+func (a *App) FetchPageTimeline(notebook, section, page string, offset int, limit int) ([]DayGroup, error)
 
 // UpdateBlockState transitions task checkbox and updates raw plaintext files atomically
 func (a *App) UpdateBlockState(blockID string, newState string) error
 
 // QueryTasks retrieves indexed items matching the active dashboard layout filters
 func (a *App) QueryTasks(filter TaskQueryFilter) ([]TaskResult, error)
+
+// Notebook/Section/Page lifecycle. Silt starts blank; the user opens an
+// existing notebook folder or creates one from the sidebar selector.
+func (a *App) CreateNotebook(name string) error
+func (a *App) OpenNotebook(folderPath string) (string, error)
+func (a *App) CreateSection(notebook, section string) error
+func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error)
+
+// ListNavigation returns the Notebook > Section > Page tree for the sidebar.
+func (a *App) ListNavigation() (NavigationTree, error)
 
 
 5. Svelte 5 Frontend Architecture
@@ -242,7 +254,7 @@ To render sections containing years of logs without degrading memory, the Svelte
 <script lang="ts">
   import { onMount } from 'svelte';
   
-  let { notebook, section } = $props();
+  let { notebook, section, page } = $props();
   
   let visibleGroups = $state<DayGroup[]>([]);
   let listContainer: HTMLDivElement;
@@ -253,9 +265,10 @@ To render sections containing years of logs without degrading memory, the Svelte
     if (loading) return;
     loading = true;
     
-    const newDays = await window.go.parser.App.FetchSectionTimeline(
+    const newDays = await window.go.main.App.FetchPageTimeline(
       notebook, 
-      section, 
+      section,
+      page,
       offset, 
       15
     );

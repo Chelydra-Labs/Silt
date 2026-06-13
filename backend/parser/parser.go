@@ -204,7 +204,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 	}, newLine, modified
 }
 
-func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDate string, spacesPerTab int) ([]ParsedBlock, FileMetadata, string, bool, error) {
+func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPage, defaultDate string, spacesPerTab int) ([]ParsedBlock, FileMetadata, string, bool, error) {
 	if spacesPerTab <= 0 {
 		spacesPerTab = 4
 	}
@@ -213,6 +213,7 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDa
 	var meta FileMetadata
 	meta.Notebook = defaultNotebook
 	meta.Section = defaultSection
+	meta.Page = defaultPage
 	meta.Date = defaultDate
 
 	hasFrontmatter := false
@@ -240,6 +241,9 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDa
 				}
 				if parsedMeta.Section != "" {
 					meta.Section = parsedMeta.Section
+				}
+				if parsedMeta.Page != "" {
+					meta.Page = parsedMeta.Page
 				}
 				if parsedMeta.Date != "" {
 					meta.Date = normalizeDate(parsedMeta.Date)

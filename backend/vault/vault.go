@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"silt/backend/parser"
 )
@@ -65,13 +64,14 @@ func ScaffoldVault(vaultPath string) error {
 	// is guarded by an os.Stat existence check. Re-running it on the
 	// same vault path is safe and will leave custom user content
 	// (e.g. their own themes, plugins, or notes) untouched.
+	//
+	// Silt starts blank: no default notebook or page is created. The user
+	// opens or creates their first notebook from the sidebar selector.
 	// 1. Create folders
 	folders := []string{
 		filepath.Join(vaultPath, ".system"),
 		filepath.Join(vaultPath, ".system", "themes"),
 		filepath.Join(vaultPath, ".system", "plugins"),
-		filepath.Join(vaultPath, "Work"),
-		filepath.Join(vaultPath, "Work", "Journal"),
 	}
 
 	for _, folder := range folders {
@@ -159,31 +159,6 @@ plugins:
 		err = os.WriteFile(themePath, []byte(cyberForestJSON), 0644)
 		if err != nil {
 			return fmt.Errorf("failed to write cyber_forest.json theme: %w", err)
-		}
-	}
-
-	// 4. Scaffold welcome daily note
-	todayStr := time.Now().Format("2006-01-02")
-	welcomeNote := `---
-notebook: Work
-section: Journal
-date: %s
-tags: [welcome, tutorial]
----
-# Welcome to Silt <!-- id: 5ec16086-7cb4-49c8-bf50-c831b79f82de -->
-
-Silt is an uncompromised, local-first note-taking and task-lifecycle platform. <!-- id: a78d8a0c-51de-46fa-9fe3-c64efb4d1c16 -->
-
-## Quick Start <!-- id: d5b4c102-482f-410a-b108-a578ee1a221f -->
-- [x] DONE TASK [Chris]#3 Successfully initialize Silt vault <!-- id: b64987dc-e33a-4467-9252-78d12a9e328e -->
-- [ ] TODO TASK [Chris]#1 Explore the Silt interface <!-- id: f437b7dc-d33a-4f67-8252-78d12a9e3290 -->
-- [ ] TODO TASK [Chris]#2 Try typing a new task using the /todo slash menu <!-- id: c537b7dc-c33a-4f67-7252-78d12a9e329f -->
-`
-	dailyFilePath := filepath.Join(vaultPath, "Work", "Journal", todayStr+".md")
-	if _, err := os.Stat(dailyFilePath); os.IsNotExist(err) {
-		err = os.WriteFile(dailyFilePath, []byte(fmt.Sprintf(welcomeNote, todayStr)), 0644)
-		if err != nil {
-			return fmt.Errorf("failed to create welcome note file: %w", err)
 		}
 	}
 

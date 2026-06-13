@@ -78,6 +78,7 @@ func (dm *DatabaseManager) initSchema() error {
 		parent_id TEXT,
 		notebook TEXT NOT NULL,
 		section TEXT NOT NULL,
+		page TEXT NOT NULL,
 		file_date TEXT NOT NULL, -- YYYY-MM-DD
 		depth INTEGER DEFAULT 0,
 		type TEXT NOT NULL,      -- 'TASK', 'NOTE', 'HEADER'
@@ -122,7 +123,7 @@ func (dm *DatabaseManager) initSchema() error {
 
 	// Create covered indexes
 	indexes := []string{
-		"CREATE INDEX IF NOT EXISTS idx_blocks_file ON blocks(notebook, section, file_date);",
+		"CREATE INDEX IF NOT EXISTS idx_blocks_file ON blocks(notebook, section, page, file_date);",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_tags_lookup ON tags(level_0, level_1, level_2);",
 		// Functional indexes for case-insensitive search (SearchBlocks).
@@ -158,14 +159,14 @@ func ExtractTags(text string) []string {
 	return tags
 }
 
-// ClearFileBlocks deletes all blocks, tasks, and tags associated with a specific notebook section day.
-func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, fileDate string) error {
-	query := "DELETE FROM blocks WHERE notebook = ? AND section = ? AND file_date = ?"
+// ClearFileBlocks deletes all blocks, tasks, and tags associated with a specific page on a given day.
+func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, page, fileDate string) error {
+	query := "DELETE FROM blocks WHERE notebook = ? AND section = ? AND page = ? AND file_date = ?"
 	var err error
 	if tx != nil {
-		_, err = tx.Exec(query, notebook, section, fileDate)
+		_, err = tx.Exec(query, notebook, section, page, fileDate)
 	} else {
-		_, err = dm.db.Exec(query, notebook, section, fileDate)
+		_, err = dm.db.Exec(query, notebook, section, page, fileDate)
 	}
 	return err
 }
@@ -176,7 +177,7 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, fileDa
 // (e.g. malformed YAML frontmatter). They are logged at warn level so a
 // maintainer can grep the output without changing the call signature or
 // the public API.
-func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, blocks []parser.ParsedBlock, fileTags []string, fileWarnings ...string) error {
+func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page, fileDate string, blocks []parser.ParsedBlock, fileTags []string, fileWarnings ...string) error {
 	for _, w := range fileWarnings {
 		log.Printf("db.IndexFileBlocks(%s/%s/%s): %s", notebook, section, fileDate, w)
 	}
@@ -208,7 +209,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 
 	// Also clear by metadata to catch blocks that the user removed from the
 	// file (their IDs are no longer in the new parse output).
-	if err := dm.ClearFileBlocks(tx, notebook, section, fileDate); err != nil {
+	if err := dm.ClearFileBlocks(tx, notebook, section, page, fileDate); err != nil {
 		return fmt.Errorf("failed to clear old blocks: %w", err)
 	}
 
@@ -216,7 +217,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 		return tx.Commit()
 	}
 
-	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, notebook, section, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -240,7 +241,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 		if block.ParentID != "" {
 			parentID = block.ParentID
 		}
-		_, err = stmtBlock.Exec(block.ID, parentID, notebook, section, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
+		_, err = stmtBlock.Exec(block.ID, parentID, notebook, section, page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
 		if err != nil {
 			return fmt.Errorf("failed to insert block %s: %w", block.ID, err)
 		}
@@ -324,7 +325,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	}
 	defer tx.Rollback()
 
-	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, notebook, section, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -351,6 +352,19 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 			continue
 		}
 
+		// Files that did not resolve to a notebook/section/page (e.g. live
+		// too shallow in the vault) arrive with a warning and no notebook.
+		// Surface them as skipped rather than indexing under empty strings.
+		if res.Notebook == "" {
+			for _, w := range res.Warnings {
+				skipped = append(skipped, fmt.Sprintf("%s: %s", res.Path, w))
+			}
+			if len(res.Warnings) == 0 {
+				skipped = append(skipped, fmt.Sprintf("%s: missing notebook/section/page", res.Path))
+			}
+			continue
+		}
+
 		// Clear any pre-existing rows for these block IDs (handles the case
 		// where frontmatter metadata changed since the previous index, since
 		// block IDs are stable but (notebook, section, date) is denormalized).
@@ -368,7 +382,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		}
 
 		// Also clear by metadata to catch blocks the user removed from the file.
-		if err := dm.ClearFileBlocks(tx, res.Notebook, res.Section, res.Date); err != nil {
+		if err := dm.ClearFileBlocks(tx, res.Notebook, res.Section, res.Page, res.Date); err != nil {
 			return 0, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
@@ -377,7 +391,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 			if block.ParentID != "" {
 				parentID = block.ParentID
 			}
-			_, err = stmtBlock.Exec(block.ID, parentID, res.Notebook, res.Section, res.Date, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
+			_, err = stmtBlock.Exec(block.ID, parentID, res.Notebook, res.Section, res.Page, res.Date, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
 			if err != nil {
 				return 0, skipped, fmt.Errorf("failed to insert block %s: %w", block.ID, err)
 			}
@@ -455,11 +469,11 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 // days requested: one to resolve the paginated date set, and one to load all
 // blocks for those dates in a single round-trip. The results are grouped by
 // file_date in Go and formatted for the timeline view.
-func (dm *DatabaseManager) FetchTimelineDays(notebook, section string, limit, offset int) ([]parser.DayGroup, error) {
+func (dm *DatabaseManager) FetchTimelineDays(notebook, section, page string, limit, offset int) ([]parser.DayGroup, error) {
 	// Query 1: resolve paginated distinct dates.
 	dateRows, err := dm.db.Query(
-		"SELECT DISTINCT file_date FROM blocks WHERE notebook = ? AND section = ? ORDER BY file_date DESC LIMIT ? OFFSET ?",
-		notebook, section, limit, offset,
+		"SELECT DISTINCT file_date FROM blocks WHERE notebook = ? AND section = ? AND page = ? ORDER BY file_date DESC LIMIT ? OFFSET ?",
+		notebook, section, page, limit, offset,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query timeline dates: %w", err)
@@ -484,8 +498,8 @@ func (dm *DatabaseManager) FetchTimelineDays(notebook, section string, limit, of
 
 	// Query 2: load all blocks for the resolved dates in a single round-trip.
 	placeholders := make([]string, len(dates))
-	args := make([]interface{}, 0, len(dates)+2)
-	args = append(args, notebook, section)
+	args := make([]interface{}, 0, len(dates)+3)
+	args = append(args, notebook, section, page)
 	for i, d := range dates {
 		placeholders[i] = "?"
 		args = append(args, d)
@@ -496,7 +510,7 @@ func (dm *DatabaseManager) FetchTimelineDays(notebook, section string, limit, of
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
-		WHERE b.notebook = ? AND b.section = ? AND b.file_date IN (%s)
+		WHERE b.notebook = ? AND b.section = ? AND b.page = ? AND b.file_date IN (%s)
 		ORDER BY b.file_date DESC, b.line_number ASC
 	`, strings.Join(placeholders, ","))
 
@@ -562,7 +576,7 @@ func (dm *DatabaseManager) FetchTimelineDays(notebook, section string, limit, of
 // QueryTasksWithFilters fetches task results matching the provided query filters.
 func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) ([]parser.TaskResult, error) {
 	baseQuery := `
-		SELECT b.id, b.parent_id, b.notebook, b.section, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
+		SELECT b.id, b.parent_id, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
 		       t.status, t.owner, t.start_date, t.due_date, t.priority
 		FROM blocks b
 		INNER JOIN tasks t ON b.id = t.block_id
@@ -622,7 +636,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		var priority int
 
 		err := rows.Scan(
-			&r.ID, &parentID, &r.Notebook, &r.Section, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
+			&r.ID, &parentID, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
 			&status, &owner, &start, &due, &priority,
 		)
 		if err != nil {
@@ -691,32 +705,75 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	return results, nil
 }
 
-// ListNotebooksAndSections returns a map of all unique notebooks to their sections.
-func (dm *DatabaseManager) ListNotebooksAndSections() (map[string][]string, error) {
-	rows, err := dm.db.Query("SELECT DISTINCT notebook, section FROM blocks ORDER BY notebook, section")
+// ListNavigation returns the Notebook > Section > Page tree with block counts
+// per page, for the sidebar navigator. Ordering is by name at each level.
+func (dm *DatabaseManager) ListNavigation() (parser.NavigationTree, error) {
+	// A single grouped query is enough: the cardinality (notebooks × sections
+	// × pages) is small even for large vaults, and we assemble the tree in Go
+	// to preserve insertion order per level.
+	rows, err := dm.db.Query(`
+		SELECT notebook, section, page, COUNT(*) AS cnt
+		FROM blocks
+		GROUP BY notebook, section, page
+		ORDER BY notebook, section, page
+	`)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query notebooks and sections: %w", err)
+		return parser.NavigationTree{}, fmt.Errorf("failed to query navigation tree: %w", err)
 	}
 	defer rows.Close()
 
-	res := make(map[string][]string)
-	seen := make(map[string]map[string]bool)
+	type pageKey struct {
+		name  string
+		count int
+	}
+	type sectionKey struct {
+		pages []pageKey
+	}
+	nbOrder := []string{}
+	nbMap := map[string]*[]string{}      // notebook -> ordered sections
+	secMap := map[string]map[string]*sectionKey{}
+	pageMap := map[string]map[string]map[string]*pageKey{}
 
 	for rows.Next() {
-		var nb, sec string
-		if err := rows.Scan(&nb, &sec); err != nil {
-			return nil, err
+		var nb, sec, pg string
+		var cnt int
+		if err := rows.Scan(&nb, &sec, &pg, &cnt); err != nil {
+			return parser.NavigationTree{}, err
 		}
-		if seen[nb] == nil {
-			seen[nb] = make(map[string]bool)
+		if _, ok := nbMap[nb]; !ok {
+			nbOrder = append(nbOrder, nb)
+			nbMap[nb] = &[]string{}
+			secMap[nb] = map[string]*sectionKey{}
+			pageMap[nb] = map[string]map[string]*pageKey{}
 		}
-		if !seen[nb][sec] {
-			seen[nb][sec] = true
-			res[nb] = append(res[nb], sec)
+		if _, ok := secMap[nb][sec]; !ok {
+			*nbMap[nb] = append(*nbMap[nb], sec)
+			secMap[nb][sec] = &sectionKey{}
+			pageMap[nb][sec] = map[string]*pageKey{}
 		}
+		if _, ok := pageMap[nb][sec][pg]; !ok {
+			pageMap[nb][sec][pg] = &pageKey{name: pg}
+			secMap[nb][sec].pages = append(secMap[nb][sec].pages, pageKey{name: pg})
+		}
+		pageMap[nb][sec][pg].count += cnt
+	}
+	if err := rows.Close(); err != nil {
+		return parser.NavigationTree{}, err
 	}
 
-	return res, nil
+	tree := parser.NavigationTree{Notebooks: []parser.NavigationNotebook{}}
+	for _, nb := range nbOrder {
+		nn := parser.NavigationNotebook{Name: nb, Sections: []parser.NavigationSection{}}
+		for _, sec := range *nbMap[nb] {
+			ns := parser.NavigationSection{Name: sec, Pages: []parser.NavigationPage{}}
+			for _, pg := range secMap[nb][sec].pages {
+				ns.Pages = append(ns.Pages, parser.NavigationPage{Name: pg.name, Count: pg.count})
+			}
+			nn.Sections = append(nn.Sections, ns)
+		}
+		tree.Notebooks = append(tree.Notebooks, nn)
+	}
+	return tree, nil
 }
 
 // SearchBlocks searches for blocks matching the query. It splits the query into
@@ -740,7 +797,7 @@ func (dm *DatabaseManager) SearchBlocks(query string) ([]parser.TaskResult, erro
 	whereClause := strings.Join(sqlParts, " AND ")
 
 	baseQuery := `
-		SELECT b.id, b.parent_id, b.notebook, b.section, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
+		SELECT b.id, b.parent_id, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
@@ -765,7 +822,7 @@ func (dm *DatabaseManager) SearchBlocks(query string) ([]parser.TaskResult, erro
 		var priority int
 
 		err := rows.Scan(
-			&r.ID, &parentID, &r.Notebook, &r.Section, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
+			&r.ID, &parentID, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
 			&status, &owner, &start, &due, &priority,
 		)
 		if err != nil {

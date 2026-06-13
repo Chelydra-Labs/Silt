@@ -56,8 +56,9 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 
 	notebook := "Work"
 	section := "Journal"
+	page := "Daily"
 	fileDate := "2026-06-13"
-	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	filePath := filepath.Join(app.vaultPath, notebook, section, page, fileDate+".md")
 	content := "# Today <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
 		"\n" +
 		"- [ ] TODO TASK [Alice] ship <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
@@ -66,11 +67,11 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 	writeFile(t, filePath, content)
 
 	// Index the file so the DB has block metadata.
-	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, page, fileDate, app.spacesPerTab)
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -121,7 +122,7 @@ func TestUpdateBlockState_RejectsTraversalMetadata(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := app.db.IndexFileBlocks("../../..", "etc", "passwd", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("../../..", "etc", "passwd", "2026-01-01", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -138,16 +139,17 @@ func TestUpdateBlockState_RejectsNonTaskBlock(t *testing.T) {
 	app := newTestApp(t)
 	notebook := "Work"
 	section := "Journal"
+	page := "Daily"
 	fileDate := "2026-06-13"
-	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	filePath := filepath.Join(app.vaultPath, notebook, section, page, fileDate+".md")
 	content := "# Header <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
 	writeFile(t, filePath, content)
 
-	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, page, fileDate, app.spacesPerTab)
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
-	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags); err != nil {
+	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -168,7 +170,7 @@ func TestUpdateBlockState_RejectsInvalidStatus(t *testing.T) {
 	}
 }
 
-func TestFetchSectionTimeline_GroupsAndPaginates(t *testing.T) {
+func TestFetchPageTimeline_GroupsAndPaginates(t *testing.T) {
 	app := newTestApp(t)
 
 	for _, d := range []string{"2026-06-13", "2026-06-12", "2026-06-11"} {
@@ -181,13 +183,13 @@ func TestFetchSectionTimeline_GroupsAndPaginates(t *testing.T) {
 				LineNumber: 1,
 			},
 		}
-		if err := app.db.IndexFileBlocks("Work", "Journal", d, blocks, nil); err != nil {
+		if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", d, blocks, nil); err != nil {
 			t.Fatalf("IndexFileBlocks %s: %v", d, err)
 		}
 	}
 
 	// First page.
-	page1, err := app.FetchSectionTimeline("Work", "Journal", 0, 2)
+	page1, err := app.FetchPageTimeline("Work", "Journal", "Daily", 0, 2)
 	if err != nil {
 		t.Fatalf("page1: %v", err)
 	}
@@ -199,7 +201,7 @@ func TestFetchSectionTimeline_GroupsAndPaginates(t *testing.T) {
 	}
 
 	// Second page.
-	page2, err := app.FetchSectionTimeline("Work", "Journal", 2, 2)
+	page2, err := app.FetchPageTimeline("Work", "Journal", "Daily", 2, 2)
 	if err != nil {
 		t.Fatalf("page2: %v", err)
 	}
@@ -208,7 +210,7 @@ func TestFetchSectionTimeline_GroupsAndPaginates(t *testing.T) {
 	}
 
 	// Empty section.
-	empty, err := app.FetchSectionTimeline("Work", "Missing", 0, 5)
+	empty, err := app.FetchPageTimeline("Work", "Missing", "Daily", 0, 5)
 	if err != nil {
 		t.Fatalf("empty: %v", err)
 	}
@@ -252,7 +254,7 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 			LineNumber: 3,
 		},
 	}
-	if err := app.db.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -289,24 +291,24 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 	}
 }
 
-func TestCreateNewSection_Scaffolding(t *testing.T) {
+func TestCreatePage_Scaffolding(t *testing.T) {
 	app := newTestApp(t)
 
-	dateStr, err := app.CreateNewSection("Work", "Meeting Notes", "2026-06-13")
+	dateStr, err := app.CreatePage("Work", "Meeting Notes", "Daily", "2026-06-13")
 	if err != nil {
-		t.Fatalf("CreateNewSection failed: %v", err)
+		t.Fatalf("CreatePage failed: %v", err)
 	}
 	if dateStr != "2026-06-13" {
 		t.Errorf("expected date 2026-06-13, got %q", dateStr)
 	}
 
-	filePath := filepath.Join(app.vaultPath, "Work", "Meeting Notes", "2026-06-13.md")
+	filePath := filepath.Join(app.vaultPath, "Work", "Meeting Notes", "Daily", "2026-06-13.md")
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		t.Fatalf("failed to read scaffolded file: %v", err)
 	}
 	content := string(contentBytes)
-	if !strings.Contains(content, `notebook: "Work"`) || !strings.Contains(content, `section: "Meeting Notes"`) {
+	if !strings.Contains(content, `notebook: "Work"`) || !strings.Contains(content, `section: "Meeting Notes"`) || !strings.Contains(content, `page: "Daily"`) {
 		t.Errorf("scaffolded file is missing frontmatter metadata, got:\n%s", content)
 	}
 }
@@ -316,8 +318,9 @@ func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
 
 	notebook := "Work"
 	section := "Journal"
+	page := "Daily"
 	fileDate := "2026-06-13"
-	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	filePath := filepath.Join(app.vaultPath, notebook, section, page, fileDate+".md")
 	content := "---\n" +
 		"notebook: Work\n" +
 		"section: Journal\n" +
@@ -334,7 +337,7 @@ func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
 		"- [ ] TODO TASK [Bob] remove <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
 	writeFile(t, filePath, content)
 
-	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, fileDate, app.spacesPerTab)
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
@@ -349,7 +352,7 @@ func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
 		updated = append(updated, block)
 	}
 
-	if err := app.SaveFileBlocks(notebook, section, fileDate, updated); err != nil {
+	if err := app.SaveFileBlocks(notebook, section, page, fileDate, updated); err != nil {
 		t.Fatalf("SaveFileBlocks: %v", err)
 	}
 	writtenBytes, err := os.ReadFile(filePath)
@@ -387,7 +390,7 @@ func TestSearchBlocks_FuzzySearch(t *testing.T) {
 			LineNumber: 2,
 		},
 	}
-	if err := app.db.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, nil); err != nil {
+	if err := app.db.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
@@ -437,17 +440,18 @@ func TestFocusLocking_AcquireAndRelease(t *testing.T) {
 
 	notebook := "Work"
 	section := "Journal"
+	page := "Daily"
 	fileDate := "2026-06-13"
-	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	filePath := filepath.Join(app.vaultPath, notebook, section, page, fileDate+".md")
 
-	if err := app.AcquireFocusLock(notebook, section, fileDate); err != nil {
+	if err := app.AcquireFocusLock(notebook, section, page, fileDate); err != nil {
 		t.Fatalf("AcquireFocusLock failed: %v", err)
 	}
 	if !app.watcher.IsFocusLocked(filePath) {
 		t.Errorf("expected file to be focus locked")
 	}
 
-	if err := app.ReleaseFocusLock(notebook, section, fileDate); err != nil {
+	if err := app.ReleaseFocusLock(notebook, section, page, fileDate); err != nil {
 		t.Fatalf("ReleaseFocusLock failed: %v", err)
 	}
 	if app.watcher.IsFocusLocked(filePath) {
@@ -460,8 +464,9 @@ func TestSaveFileBlocks_DeletesMiddleBlockPreservesNonBlockLines(t *testing.T) {
 
 	notebook := "Work"
 	section := "Journal"
+	page := "Daily"
 	fileDate := "2026-06-13"
-	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	filePath := filepath.Join(app.vaultPath, notebook, section, page, fileDate+".md")
 	content := "---\n" +
 		"notebook: Work\n" +
 		"section: Journal\n" +
@@ -478,7 +483,7 @@ func TestSaveFileBlocks_DeletesMiddleBlockPreservesNonBlockLines(t *testing.T) {
 		"- [ ] TODO TASK [Carol] last <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
 	writeFile(t, filePath, content)
 
-	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, fileDate, app.spacesPerTab)
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
@@ -490,7 +495,7 @@ func TestSaveFileBlocks_DeletesMiddleBlockPreservesNonBlockLines(t *testing.T) {
 		updated = append(updated, block)
 	}
 
-	if err := app.SaveFileBlocks(notebook, section, fileDate, updated); err != nil {
+	if err := app.SaveFileBlocks(notebook, section, page, fileDate, updated); err != nil {
 		t.Fatalf("SaveFileBlocks: %v", err)
 	}
 	writtenBytes, err := os.ReadFile(filePath)
@@ -514,8 +519,9 @@ func TestSaveFileBlocks_PreservesUnknownUUIDLine(t *testing.T) {
 
 	notebook := "Work"
 	section := "Journal"
+	page := "Daily"
 	fileDate := "2026-06-13"
-	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	filePath := filepath.Join(app.vaultPath, notebook, section, page, fileDate+".md")
 	content := "---\n" +
 		"notebook: Work\n" +
 		"section: Journal\n" +
@@ -527,12 +533,12 @@ func TestSaveFileBlocks_PreservesUnknownUUIDLine(t *testing.T) {
 		"- [ ] TODO TASK [Bob] also keep <!-- id: 22222222-2222-2222-2222-222222222222 -->\n"
 	writeFile(t, filePath, content)
 
-	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, fileDate, app.spacesPerTab)
 	if err != nil {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
 
-	if err := app.SaveFileBlocks(notebook, section, fileDate, blocks); err != nil {
+	if err := app.SaveFileBlocks(notebook, section, page, fileDate, blocks); err != nil {
 		t.Fatalf("SaveFileBlocks: %v", err)
 	}
 	writtenBytes, err := os.ReadFile(filePath)
@@ -568,7 +574,7 @@ func TestAcquireFocusLock_RejectsTraversalMetadata(t *testing.T) {
 	}
 	app.watcher = watcher
 
-	err = app.AcquireFocusLock("../../..", "etc", "passwd")
+	err = app.AcquireFocusLock("../../..", "etc", "passwd", "2026-01-01")
 	if err == nil {
 		t.Fatalf("expected AcquireFocusLock to reject traversal metadata")
 	}

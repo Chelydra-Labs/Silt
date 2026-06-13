@@ -18,6 +18,7 @@ type ScanResult struct {
 	Path     string
 	Notebook string
 	Section  string
+	Page     string
 	Date     string
 	Blocks   []ParsedBlock
 	Tags     []string
@@ -100,26 +101,37 @@ func ScanWorkspace(vaultPath string, spacesPerTab int) ([]ScanResult, error) {
 func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult {
 	res := ScanResult{Path: path}
 
-	// 1. Resolve default notebook, section, and date from file path
+	// 1. Resolve default notebook, section, page, and date from file path.
+	//
+	// Hierarchy: <vault>/<notebook>/<section>/<page>/<file>.md
+	//   - page     = parent dir of the file (the streaming unit)
+	//   - section  = page's parent dir
+	//   - notebook = section's parent dir (a child of the vault root)
 	relPath, err := filepath.Rel(vaultPath, path)
 	if err != nil {
 		res.Err = err
 		return res
 	}
 
-	// Clean path separators to forward slash
 	relPathClean := filepath.ToSlash(relPath)
 	parts := strings.Split(relPathClean, "/")
-
-	notebook := "General"
-	section := "General"
 	filename := parts[len(parts)-1]
 
-	if len(parts) >= 3 {
-		notebook = parts[0]
-		section = strings.Join(parts[1:len(parts)-1], "/")
-	} else if len(parts) == 2 {
-		notebook = parts[0]
+	var notebook, section, page string
+	// ancestors are the path segments excluding the filename itself.
+	ancestors := parts[:len(parts)-1]
+	switch {
+	case len(ancestors) >= 3:
+		notebook = ancestors[len(ancestors)-3]
+		section = ancestors[len(ancestors)-2]
+		page = ancestors[len(ancestors)-1]
+	default:
+		// Files must live three levels beneath the vault root
+		// (notebook/section/page/file). Anything shallower is a layout
+		// error we surface rather than silently mis-bucket.
+		res.Warnings = append(res.Warnings, fmt.Sprintf("skipped %q: expected to live under <vault>/<notebook>/<section>/<page>/", relPathClean))
+		res.Err = nil
+		return res
 	}
 
 	// Extract date from filename if possible, otherwise use modification date
@@ -143,7 +155,7 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 		return res
 	}
 
-	blocks, meta, newContent, modified, err := ParseFileContent(string(contentBytes), notebook, section, dateStr, spacesPerTab)
+	blocks, meta, newContent, modified, err := ParseFileContent(string(contentBytes), notebook, section, page, dateStr, spacesPerTab)
 	if err != nil {
 		res.Err = err
 		return res
@@ -160,6 +172,7 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 
 	res.Notebook = meta.Notebook
 	res.Section = meta.Section
+	res.Page = meta.Page
 	res.Date = meta.Date
 	res.Blocks = blocks
 	res.Tags = meta.Tags

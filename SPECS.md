@@ -86,7 +86,14 @@ Solution: Daily files are serialized discretely to disk inside the structured no
 
 3.2 Physical Directory Layout
 
-Notebooks/
+Silt uses a OneNote-style three-level hierarchy — **Notebook > Section > Page** — mapped directly onto folders on disk:
+
+- A **Notebook** is a top-level folder directly under the vault root. Users open existing notebook folders or create new ones from the notebook selector. Multiple notebooks can be open at once.
+- A **Section** is a subfolder within a Notebook; it groups related Pages.
+- A **Page** is a subfolder within a Section and is the **streaming unit**: the daily `.md` files inside it are stitched into a single infinite-scroll timeline in the editor.
+
+```
+VaultRoot/
 ├── .system/
 │   ├── config.yaml
 │   ├── plugins/
@@ -95,27 +102,34 @@ Notebooks/
 │   │   └── kanban/
 │   └── themes/
 │       └── cyber_forest.json
-├── Personal/
-│   ├── Journal/
-│   │   ├── 2026-06-11.md
-│   │   ├── 2026-06-12.md
-│   │   └── 2026-06-13.md
-│   └── Travel_Planning/
-│       └── 2026-05-10.md
-└── Work/
-    └── silt_project/
-        ├── 2026-06-11.md
-        ├── 2026-06-12.md
-        └── 2026-06-13.md
+├── Work/                          ← Notebook
+│   └── Projects/                  ← Section
+│       ├── WebsiteRedesign/       ← Page (streams the .md files below)
+│       │   ├── 2026-06-11.md
+│       │   ├── 2026-06-12.md
+│       │   └── 2026-06-13.md
+│       └── MobileApp/
+│           └── 2026-06-13.md
+└── Personal/                      ← another Notebook
+    └── Journal/
+        └── Daily/
+            └── 2026-06-13.md
+```
+
+The directory directly containing a markdown file is its **Page**; its parent is the **Section**; its parent (a child of the vault root) is the **Notebook**. Files must live exactly three levels beneath the vault root; files at shallower depths are skipped with a warning at startup (fail-loudly). Frontmatter values override path-derived defaults.
+
+Silt starts blank — no default notebook or section is created. The user creates or opens their first notebook from the sidebar's notebook selector.
 
 
 3.3 File Boundary Specification & Frontmatter Standard
 
 Every daily file contains a strict YAML metadata block bounded by triple dashes (---). This block allows indexers to map orphaned or moved files without reading the entire file directory tree:
 
+```
 ---
 notebook: Work
-section: silt_project
+section: Projects
+page: WebsiteRedesign
 date: 2026-06-13
 tags: [systems/specs, wails/go]
 ---
@@ -123,6 +137,7 @@ tags: [systems/specs, wails/go]
 
 ## Daily Standup Logging
 - [ ] TODO TASK [Chris](2026-06-13, 2026-06-20)#1 Implement parser tests <!-- id: f1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d -->
+```
 
 
 4. Custom AST Parser & Task Shorthand Grammar

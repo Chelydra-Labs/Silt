@@ -187,8 +187,9 @@ func (a *App) InitializeVault() (bool, error) {
 	return true, nil
 }
 
-// FetchSectionTimeline returns blocks grouped by days for scroll virtualization.
-func (a *App) FetchSectionTimeline(notebook, section string, offset int, limit int) ([]parser.DayGroup, error) {
+// FetchPageTimeline returns blocks grouped by days for the streaming Page
+// (notebook/section/page), paged for scroll virtualization.
+func (a *App) FetchPageTimeline(notebook, section, page string, offset int, limit int) ([]parser.DayGroup, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
 	}
@@ -208,7 +209,7 @@ func (a *App) FetchSectionTimeline(notebook, section string, offset int, limit i
 	var res []parser.DayGroup
 	var err error
 	a.coordinator.WithDBRead(func() {
-		res, err = a.db.FetchTimelineDays(notebook, section, limit, offset)
+		res, err = a.db.FetchTimelineDays(notebook, section, page, limit, offset)
 	})
 
 	return res, err
@@ -236,10 +237,10 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	var notebook, section, fileDate, blockType string
+	var notebook, section, page, fileDate, blockType string
 	err := a.coordinator.WithDBReadResult(func() error {
-		row := a.db.SQLDB().QueryRow("SELECT notebook, section, file_date, type FROM blocks WHERE id = ?", blockID)
-		return row.Scan(&notebook, &section, &fileDate, &blockType)
+		row := a.db.SQLDB().QueryRow("SELECT notebook, section, page, file_date, type FROM blocks WHERE id = ?", blockID)
+		return row.Scan(&notebook, &section, &page, &fileDate, &blockType)
 	})
 	if err != nil {
 		return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
@@ -249,15 +250,16 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		return fmt.Errorf("block %s is not a task", blockID)
 	}
 
-	// Defense-in-depth against path traversal: notebook/section originate
+	// Defense-in-depth against path traversal: notebook/section/page originate
 	// from user-editable YAML frontmatter and date is a filename.
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
 	safeFileDate := sanitizePathSegment(fileDate)
-	if safeNotebook == "" || safeSection == "" || safeFileDate == "" {
-		return fmt.Errorf("invalid file metadata for block %s: notebook=%q section=%q date=%q", blockID, notebook, section, fileDate)
+	if safeNotebook == "" || safeSection == "" || safePage == "" || safeFileDate == "" {
+		return fmt.Errorf("invalid file metadata for block %s: notebook=%q section=%q page=%q date=%q", blockID, notebook, section, page, fileDate)
 	}
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeFileDate+".md")
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
 	if !isPathWithinVault(filePath, a.vaultPath) {
 		return fmt.Errorf("resolved file path %q escapes vault %q", filePath, a.vaultPath)
 	}
@@ -311,14 +313,14 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 
 		// Re-parse with the sanitized metadata so the re-indexed row
 		// uses the same cleaned values that went into the file path.
-		blocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
+		blocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags, meta.Warnings...)
 			})
 			if idxErr != nil {
-				log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Date, idxErr)
+				log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, meta.Date, idxErr)
 			}
 		}
 	})
@@ -397,19 +399,19 @@ func isPathWithinVault(target, vaultRoot string) bool {
 	return strings.HasPrefix(absTarget, prefix)
 }
 
-// ListNotebooksAndSections returns all unique notebooks and their sub-sections.
-func (a *App) ListNotebooksAndSections() (map[string][]string, error) {
+// ListNavigation returns the Notebook > Section > Page tree for the sidebar.
+func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	if a.db == nil {
-		return nil, fmt.Errorf("vault database not loaded")
+		return parser.NavigationTree{}, fmt.Errorf("vault database not loaded")
 	}
 
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	var res map[string][]string
+	var res parser.NavigationTree
 	var err error
 	a.coordinator.WithDBRead(func() {
-		res, err = a.db.ListNotebooksAndSections()
+		res, err = a.db.ListNavigation()
 	})
 
 	return res, err
@@ -434,7 +436,7 @@ func (a *App) SearchBlocks(query string) ([]parser.TaskResult, error) {
 }
 
 // AcquireFocusLock registers a focus lock on a file to ignore fsnotify updates.
-func (a *App) AcquireFocusLock(notebook, section, fileDate string) error {
+func (a *App) AcquireFocusLock(notebook, section, page, fileDate string) error {
 	if a.watcher == nil {
 		return fmt.Errorf("watcher not running")
 	}
@@ -443,11 +445,12 @@ func (a *App) AcquireFocusLock(notebook, section, fileDate string) error {
 
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
 	safeFileDate := sanitizePathSegment(fileDate)
-	if safeNotebook == "" || safeSection == "" || safeFileDate == "" {
+	if safeNotebook == "" || safeSection == "" || safePage == "" || safeFileDate == "" {
 		return fmt.Errorf("invalid path metadata")
 	}
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeFileDate+".md")
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
 	if !isPathWithinVault(filePath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
@@ -456,7 +459,7 @@ func (a *App) AcquireFocusLock(notebook, section, fileDate string) error {
 }
 
 // ReleaseFocusLock removes a focus lock from a file.
-func (a *App) ReleaseFocusLock(notebook, section, fileDate string) error {
+func (a *App) ReleaseFocusLock(notebook, section, page, fileDate string) error {
 	if a.watcher == nil {
 		return fmt.Errorf("watcher not running")
 	}
@@ -465,11 +468,12 @@ func (a *App) ReleaseFocusLock(notebook, section, fileDate string) error {
 
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
 	safeFileDate := sanitizePathSegment(fileDate)
-	if safeNotebook == "" || safeSection == "" || safeFileDate == "" {
+	if safeNotebook == "" || safeSection == "" || safePage == "" || safeFileDate == "" {
 		return fmt.Errorf("invalid path metadata")
 	}
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeFileDate+".md")
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
 	if !isPathWithinVault(filePath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
@@ -477,25 +481,118 @@ func (a *App) ReleaseFocusLock(notebook, section, fileDate string) error {
 	return nil
 }
 
-// CreateNewSection creates and scaffolds a daily note in a section.
-func (a *App) CreateNewSection(notebook, section, dateStr string) (string, error) {
+// CreateNotebook creates a top-level notebook folder under the vault root.
+// Silt starts blank; the user creates or opens notebooks from the sidebar.
+func (a *App) CreateNotebook(name string) error {
+	safeName := sanitizePathSegment(name)
+	if safeName == "" {
+		return fmt.Errorf("notebook name is required")
+	}
+	nbPath := filepath.Join(a.vaultPath, safeName)
+	if !isPathWithinVault(nbPath, a.vaultPath) {
+		return fmt.Errorf("path escapes vault")
+	}
+	if _, err := os.Stat(nbPath); err == nil {
+		return fmt.Errorf("notebook %q already exists", safeName)
+	}
+	if err := os.MkdirAll(nbPath, 0755); err != nil {
+		return fmt.Errorf("failed to create notebook: %w", err)
+	}
+	return nil
+}
+
+// OpenNotebook registers an existing notebook folder. The folder must live
+// inside the vault root (the index is rebuilt from a single watched root);
+// external notebooks are rejected explicitly rather than silently linked.
+// Returns the notebook name (the folder's base name).
+func (a *App) OpenNotebook(folderPath string) (string, error) {
+	absPath, err := filepath.Abs(folderPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid folder path: %w", err)
+	}
+	if !isPathWithinVault(absPath, a.vaultPath) {
+		return "", fmt.Errorf("notebooks must live inside the Silt vault")
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return "", fmt.Errorf("folder not found: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("selected path is not a folder")
+	}
+	// The notebook is a top-level child of the vault root.
+	rel, err := filepath.Rel(a.vaultPath, absPath)
+	if err != nil {
+		return "", err
+	}
+	relClean := filepath.ToSlash(rel)
+	parts := strings.Split(relClean, "/")
+	if len(parts) != 1 {
+		return "", fmt.Errorf("a notebook must be a top-level folder in the vault (got %q)", relClean)
+	}
+	return parts[0], nil
+}
+
+// PickNotebookFolder opens the native folder picker and registers the chosen
+// folder as a notebook. Returns the notebook name, or empty string if the user
+// cancelled. Keeping the dialog on the Go side matches InitializeVault and
+// avoids depending on frontend runtime dialog bindings.
+func (a *App) PickNotebookFolder() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("application context not ready")
+	}
+	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Open Notebook Folder",
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to open folder picker: %w", err)
+	}
+	if selectedPath == "" {
+		return "", nil // user cancelled
+	}
+	return a.OpenNotebook(selectedPath)
+}
+
+// CreateSection creates a section folder inside a notebook. A section groups
+// pages; it has no content of its own.
+func (a *App) CreateSection(notebook, section string) error {
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
-	safeDate := sanitizePathSegment(dateStr)
 	if safeNotebook == "" || safeSection == "" {
-		return "", fmt.Errorf("notebook and section names are required")
+		return fmt.Errorf("notebook and section names are required")
 	}
+	secPath := filepath.Join(a.vaultPath, safeNotebook, safeSection)
+	if !isPathWithinVault(secPath, a.vaultPath) {
+		return fmt.Errorf("path escapes vault")
+	}
+	if err := os.MkdirAll(secPath, 0755); err != nil {
+		return fmt.Errorf("failed to create section: %w", err)
+	}
+	return nil
+}
+
+// CreatePage scaffolds the first daily note inside
+// <vault>/<notebook>/<section>/<page>/ and indexes it, returning the date
+// used. This is the streaming unit shown in the timeline editor.
+func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error) {
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safeSection == "" || safePage == "" {
+		return "", fmt.Errorf("notebook, section, and page names are required")
+	}
+	safeDate := sanitizePathSegment(dateStr)
 	if safeDate == "" {
 		safeDate = time.Now().Format("2006-01-02")
 	}
 
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeDate+".md")
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeDate+".md")
 	if !isPathWithinVault(filePath, a.vaultPath) {
 		return "", fmt.Errorf("path escapes vault")
 	}
 
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return "", fmt.Errorf("failed to create directory: %w", err)
+		return "", fmt.Errorf("failed to create page directory: %w", err)
 	}
 
 	if _, err := os.Stat(filePath); err == nil {
@@ -513,13 +610,14 @@ func (a *App) CreateNewSection(notebook, section, dateStr string) (string, error
 scaffoldContent := fmt.Sprintf(`---
 notebook: %s
 section: %s
+page: %s
 date: %s
 tags: []
 ---
 # %s <!-- id: %s -->
 
 - [ ] TODO TASK [Chris] Start writing in %s <!-- id: %s -->
-`, strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safeDate), formattedDate, headerID, safeSection, taskID)
+`, strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate), formattedDate, headerID, safePage, taskID)
 
 	a.wg.Add(1)
 	defer a.wg.Done()
@@ -532,39 +630,40 @@ tags: []
 			return
 		}
 
-		blocks, meta, _, _, err := parser.ParseFileContent(scaffoldContent, safeNotebook, safeSection, safeDate, a.spacesPerTab)
+		blocks, meta, _, _, err := parser.ParseFileContent(scaffoldContent, safeNotebook, safeSection, safePage, safeDate, a.spacesPerTab)
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags, meta.Warnings...)
 			})
 			if idxErr != nil {
-				log.Printf("CreateNewSection: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Date, idxErr)
+				log.Printf("CreatePage: IndexFileBlocks failed for %s/%s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, meta.Date, idxErr)
 			}
 		}
 	})
 
 	if writeErr != nil {
-		return "", fmt.Errorf("failed to write scaffolded section note: %w", writeErr)
+		return "", fmt.Errorf("failed to write scaffolded page note: %w", writeErr)
 	}
 
 	return safeDate, nil
 }
 
 // SaveFileBlocks writes the updated list of blocks back to the note file.
-func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser.ParsedBlock) error {
+func (a *App) SaveFileBlocks(notebook, section, page, fileDate string, blocks []parser.ParsedBlock) error {
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
 	safeFileDate := sanitizePathSegment(fileDate)
-	if safeNotebook == "" || safeSection == "" || safeFileDate == "" {
+	if safeNotebook == "" || safeSection == "" || safePage == "" || safeFileDate == "" {
 		return fmt.Errorf("invalid path metadata")
 	}
 
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeFileDate+".md")
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
 	if !isPathWithinVault(filePath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
@@ -602,7 +701,7 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 		}
 
 		if frontmatter == "" {
-			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safeFileDate))
+			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeFileDate))
 		}
 
 		updatedByID := make(map[string]parser.ParsedBlock, len(blocks))
@@ -620,7 +719,7 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 		// typed note quoting a commit hash would be silently dropped.
 		oldBlockIDs := make(map[string]bool)
 		if len(lines) > 0 {
-			oldBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
+			oldBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
 			if parseErr == nil {
 				for _, b := range oldBlocks {
 					oldBlockIDs[b.ID] = true
@@ -681,14 +780,14 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 			return
 		}
 
-		parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
+		parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, parsedBlocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, parsedBlocks, meta.Tags, meta.Warnings...)
 			})
 			if idxErr != nil {
-				log.Printf("SaveFileBlocks: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Date, idxErr)
+				log.Printf("SaveFileBlocks: IndexFileBlocks failed for %s/%s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, meta.Date, idxErr)
 			}
 		}
 	})
