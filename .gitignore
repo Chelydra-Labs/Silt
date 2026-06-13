@@ -34,3 +34,6 @@ Thumbs.db
 
 # Temporary planning files
 PLAN.md
+
+# Local PR context / ad-hoc diffs
+*.diff
