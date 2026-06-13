@@ -4,6 +4,7 @@
     IsVaultInitialized,
     InitializeVault
   } from '../wailsjs/go/main/App.js'
+  import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import VirtualScrollContainer from './components/VirtualScrollContainer.svelte'
@@ -150,12 +151,26 @@
     />
 
     <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
+      {#if sidebarCollapsed}
+        <button
+          onclick={() => (sidebarCollapsed = false)}
+          transition:fade={{ duration: 150 }}
+          aria-label="Show sidebar"
+          title="Show sidebar (Ctrl+B)"
+          class="absolute top-4 left-4 z-50 w-8 h-8 rounded-lg bg-bg-surface/80 backdrop-blur-md border border-border-muted text-text-muted hover:text-accent-teal-start hover:border-accent-teal-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
+        >
+          <span class="material-symbols-outlined text-[18px]"
+            >left_panel_open</span
+          >
+        </button>
+      {/if}
+
       <Sidebar
         bind:activeNotebook
         bind:activeSection
         bind:activePage
         bind:activeView
-        collapsed={sidebarCollapsed}
+        bind:collapsed={sidebarCollapsed}
         onSelectNotebook={(nb) => (activeNotebook = nb)}
         onSelectSection={(sec) => (activeSection = sec)}
         onSelectPage={(nb, sec, pg) => {
@@ -182,6 +197,7 @@
               {activeFocusedBlockAncestors}
               onBlockFocus={handleBlockFocus}
               onBlockBlur={handleBlockBlur}
+              {sidebarCollapsed}
             />
           {:else}
             <div
@@ -211,7 +227,10 @@
           {/if}
         {:else}
           <!-- Placeholder views: Agenda/Tags/Calendar/Kanban arrive in later phases -->
-          <div class="flex-1 p-8 flex flex-col select-none">
+          <div
+            class="flex-1 p-8 flex flex-col select-none transition-all duration-200"
+            class:pl-16={sidebarCollapsed}
+          >
             <h1
               class="font-headline-lg text-headline-lg text-text-primary mb-2 capitalize"
             >

@@ -13,6 +13,7 @@
     onBlockFocus?: (blockId: string, ancestors: string[]) => void
     onBlockBlur?: () => void
     activeFocusedBlockAncestors?: string[]
+    sidebarCollapsed?: boolean
   }
 
   let {
@@ -24,7 +25,8 @@
     targetKey = '',
     onBlockFocus,
     onBlockBlur,
-    activeFocusedBlockAncestors = []
+    activeFocusedBlockAncestors = [],
+    sidebarCollapsed = false
   }: Props = $props()
 
   let visibleGroups = $state<any[]>([])
@@ -164,7 +166,10 @@
 <div
   bind:this={containerEl}
   onscroll={handleScroll}
-  class="flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-void flex flex-col min-h-0"
+  class="flex-1 overflow-y-auto py-10 custom-scrollbar bg-void flex flex-col min-h-0 transition-all duration-200"
+  class:px-12={!sidebarCollapsed}
+  class:pl-16={sidebarCollapsed}
+  class:pr-12={sidebarCollapsed}
 >
   <!-- Header/Breadcrumbs -->
   <nav

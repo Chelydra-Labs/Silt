@@ -79,18 +79,6 @@
       >
     </div>
 
-    <!-- Sidebar toggle: rides the sidebar's inner edge (attached to sidebar) -->
-    <button
-      onclick={onToggleSidebar}
-      aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
-      title="Toggle sidebar (Ctrl+B)"
-      class="h-full px-3 flex items-center justify-center text-text-muted hover:text-accent-teal-start hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none flex-shrink-0"
-    >
-      <span class="material-symbols-outlined text-[20px]"
-        >{sidebarCollapsed ? 'left_panel_open' : 'left_panel_close'}</span
-      >
-    </button>
-
     <div class="w-px h-6 bg-border-muted mx-1 flex-shrink-0"></div>
 
     <!-- View switcher (segmented control) -->
