@@ -3,25 +3,248 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"notes-sharp/backend/core"
+	"notes-sharp/backend/db"
+	"notes-sharp/backend/monitor"
+	"notes-sharp/backend/parser"
+	"notes-sharp/backend/vault"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// App struct
 type App struct {
-	ctx context.Context
+	ctx          context.Context
+	db           *db.DatabaseManager
+	coordinator  *core.ExecutionCoordinator
+	watcher      *monitor.DirectoryWatcher
+	tracker      *monitor.WriteTracker
+	vaultPath    string
+	spacesPerTab int
 }
 
-// NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{
+		spacesPerTab: 4,
+	}
 }
 
-// startup is called when the app starts. The context is saved
-// so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Try loading settings on boot
+	settings, err := vault.LoadSettings()
+	if err == nil && settings.VaultPath != "" {
+		if _, err := os.Stat(settings.VaultPath); err == nil {
+			_ = a.initializeVaultServices(settings.VaultPath)
+		}
+	}
 }
 
-// Greet returns a greeting for the given name
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, It's show time!", name)
+func (a *App) shutdown(ctx context.Context) {
+	if a.watcher != nil {
+		_ = a.watcher.Close()
+	}
+	if a.db != nil {
+		_ = a.db.Close()
+	}
+}
+
+func (a *App) initializeVaultServices(vaultPath string) error {
+	a.vaultPath = vaultPath
+
+	// 1. Initialize SQLite Cache Database Manager
+	dbMgr, err := db.NewDatabaseManager()
+	if err != nil {
+		return fmt.Errorf("failed to start database: %w", err)
+	}
+	a.db = dbMgr
+
+	// 2. Initialize Mutex Coordinator
+	a.coordinator = core.NewExecutionCoordinator(dbMgr.DB)
+
+	// 3. Initialize Write Tracker Cooldown
+	a.tracker = monitor.NewWriteTracker()
+
+	// 4. Scan and index entire workspace
+	results, err := parser.ScanWorkspace(vaultPath, a.spacesPerTab)
+	if err != nil {
+		return fmt.Errorf("failed to scan workspace: %w", err)
+	}
+	if len(results) > 0 {
+		_, err = a.db.IndexScanResults(results)
+		if err != nil {
+			return fmt.Errorf("failed to index scan results: %w", err)
+		}
+	}
+
+	// 5. Start fsnotify watcher
+	watcher, err := monitor.NewDirectoryWatcher(vaultPath, a.db, a.tracker, a.spacesPerTab)
+	if err != nil {
+		return fmt.Errorf("failed to start watcher: %w", err)
+	}
+	a.watcher = watcher
+	if err := a.watcher.Start(); err != nil {
+		return fmt.Errorf("failed to execute watcher start: %w", err)
+	}
+
+	return nil
+}
+
+// IsVaultInitialized returns whether a workspace vault has been configured and loaded.
+func (a *App) IsVaultInitialized() bool {
+	return a.vaultPath != ""
+}
+
+// InitializeVault prompts the user for a folder, sets it up, and loads the services.
+func (a *App) InitializeVault() (bool, error) {
+	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select notes# Vault Directory",
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to select vault folder: %w", err)
+	}
+
+	if selectedPath == "" {
+		return false, nil // Cancelled
+	}
+
+	// Create vault folders and default configuration
+	if err := vault.ScaffoldVault(selectedPath); err != nil {
+		return false, fmt.Errorf("failed to scaffold vault: %w", err)
+	}
+
+	// Write to settings.json
+	settings := &vault.AppSettings{
+		VaultPath: selectedPath,
+	}
+	if err := vault.SaveSettings(settings); err != nil {
+		return false, fmt.Errorf("failed to save settings: %w", err)
+	}
+
+	// Boot up database and watcher
+	if err := a.initializeVaultServices(selectedPath); err != nil {
+		return false, fmt.Errorf("failed to boot vault services: %w", err)
+	}
+
+	return true, nil
+}
+
+// FetchSectionTimeline returns blocks grouped by days for scroll virtualization.
+func (a *App) FetchSectionTimeline(notebook, section string, offset int, limit int) ([]parser.DayGroup, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("vault database not loaded")
+	}
+
+	var res []parser.DayGroup
+	var err error
+	a.coordinator.LockDBRead(func() {
+		res, err = a.db.FetchTimelineDays(notebook, section, limit, offset)
+	})
+
+	return res, err
+}
+
+// UpdateBlockState changes task status and updates the file and cache.
+func (a *App) UpdateBlockState(blockID string, newState string) error {
+	if a.db == nil {
+		return fmt.Errorf("vault database not loaded")
+	}
+
+	// 1. Get file and line details
+	var notebook, section, fileDate, blockType string
+	var lineNumber int
+	err := a.db.DB.QueryRow("SELECT notebook, section, file_date, line_number, type FROM blocks WHERE id = ?", blockID).Scan(
+		&notebook, &section, &fileDate, &lineNumber, &blockType,
+	)
+	if err != nil {
+		return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
+	}
+
+	if blockType != string(parser.BlockTask) {
+		return fmt.Errorf("block %s is not a task", blockID)
+	}
+
+	filePath := filepath.Join(a.vaultPath, notebook, section, fileDate+".md")
+
+	// 2. Perform write lock atomic overwrite
+	var writeErr error
+	a.coordinator.LockFileWrite(filePath, func() {
+		contentBytes, err := os.ReadFile(filePath)
+		if err != nil {
+			writeErr = err
+			return
+		}
+
+		lines := strings.Split(string(contentBytes), "\n")
+		if lineNumber <= 0 || lineNumber > len(lines) {
+			writeErr = fmt.Errorf("line number %d out of bounds", lineNumber)
+			return
+		}
+
+		targetLine := lines[lineNumber-1]
+
+		// Regexp to capture checkboxes and keywords
+		taskLineRegex := regexp.MustCompile(`^([\s]*)-\s\[[ x/]\]\s(?:TODO|DOING|DONE)\sTASK(.*)$`)
+		if !taskLineRegex.MatchString(targetLine) {
+			writeErr = fmt.Errorf("target line does not match task syntax")
+			return
+		}
+
+		var newChar string
+		var newKeyword string
+		switch newState {
+		case "TODO":
+			newChar = " "
+			newKeyword = "TODO"
+		case "DOING":
+			newChar = "/"
+			newKeyword = "DOING"
+		case "DONE":
+			newChar = "x"
+			newKeyword = "DONE"
+		default:
+			writeErr = fmt.Errorf("invalid target status: %s", newState)
+			return
+		}
+
+		newLine := taskLineRegex.ReplaceAllString(targetLine, fmt.Sprintf("${1}- [%s] %s TASK${2}", newChar, newKeyword))
+		lines[lineNumber-1] = newLine
+		newContent := strings.Join(lines, "\n")
+
+		// Register write to prevent loop triggers
+		a.tracker.RegisterWrite(filePath)
+
+		// Overwrite atomically
+		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+			writeErr = err
+			return
+		}
+
+		// Update SQLite cache
+		blocks, meta, _, _, err := parser.ParseFileContent(newContent, notebook, section, fileDate, a.spacesPerTab)
+		if err == nil {
+			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags)
+		}
+	})
+
+	return writeErr
+}
+
+// QueryTasks retrieves indexed items matching the active filters.
+func (a *App) QueryTasks(filter parser.TaskQueryFilter) ([]parser.TaskResult, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("vault database not loaded")
+	}
+
+	var res []parser.TaskResult
+	var err error
+	a.coordinator.LockDBRead(func() {
+		res, err = a.db.QueryTasksWithFilters(filter)
+	})
+
+	return res, err
 }
