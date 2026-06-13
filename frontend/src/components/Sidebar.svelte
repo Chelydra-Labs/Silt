@@ -234,17 +234,17 @@
   <div
     class="px-3 py-3 flex flex-col gap-1 relative flex-1 overflow-hidden flex"
   >
-    <!-- Notebook selector and Sidebar collapse -->
-    <div class="px-1 mb-3 relative flex items-center gap-1">
+    <!-- Notebook selector -->
+    <div class="px-1 mb-3 relative">
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         onclick={() => (showNotebookDropdown = !showNotebookDropdown)}
-        class="flex items-center gap-2 cursor-pointer group py-1.5 px-2 rounded hover:bg-bg-hover transition-colors min-w-0 flex-1"
+        class="flex items-center gap-2 cursor-pointer group py-1.5 rounded hover:bg-bg-hover transition-colors"
         role="button"
         tabindex="0"
       >
         <span
-          class="material-symbols-outlined text-accent-teal-start text-[20px] flex-shrink-0"
+          class="material-symbols-outlined text-accent-teal-start text-[20px]"
           >menu_book</span
         >
         <div class="flex flex-col min-w-0 flex-1">
@@ -258,23 +258,11 @@
           >
         </div>
         <span
-          class="material-symbols-outlined text-text-muted text-[18px] group-hover:text-accent-teal-start transition-colors flex-shrink-0"
+          class="material-symbols-outlined text-text-muted text-[18px] group-hover:text-accent-teal-start transition-colors"
         >
           {showNotebookDropdown ? 'expand_less' : 'expand_more'}
         </span>
       </div>
-
-      <!-- Collapse button -->
-      <button
-        onclick={() => (collapsed = true)}
-        aria-label="Hide sidebar"
-        title="Hide sidebar (Ctrl+B)"
-        class="p-2 rounded hover:bg-bg-hover text-text-muted hover:text-accent-teal-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none flex-shrink-0 flex items-center justify-center"
-      >
-        <span class="material-symbols-outlined text-[18px]"
-          >left_panel_close</span
-        >
-      </button>
 
       {#if showNotebookDropdown}
         <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -543,4 +531,19 @@
       </div>
     </div>
   {/if}
+
+  <!-- Sidebar Footer -->
+  <div
+    class="px-3 py-2 border-t border-border-muted flex items-center justify-end bg-bg-surface flex-shrink-0"
+  >
+    <button
+      onclick={() => (collapsed = true)}
+      aria-label="Hide sidebar"
+      title="Hide sidebar (Ctrl+B)"
+      class="p-1.5 rounded hover:bg-bg-hover text-text-muted hover:text-accent-teal-start transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none flex items-center justify-center hover:scale-105 active:scale-95"
+    >
+      <span class="material-symbols-outlined text-[18px]">left_panel_close</span
+      >
+    </button>
+  </div>
 </aside>
