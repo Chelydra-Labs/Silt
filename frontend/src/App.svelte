@@ -106,7 +106,7 @@
   {#if loading}
     <div class="onboarding-container">
       <div class="text-text-muted animate-pulse text-lg font-headline-md">
-        Initializing notes# Core...
+        Initializing Silt Core...
       </div>
     </div>
   {:else if !isInitialized}
@@ -115,10 +115,10 @@
       <div class="onboarding-card">
         <img
           src={logo}
-          alt="notes# Logo"
+          alt="Silt Logo"
           class="onboarding-logo animate-spin-slow"
         />
-        <h1 class="onboarding-title font-headline-lg">notes#</h1>
+        <h1 class="onboarding-title font-headline-lg">Silt</h1>
         <p class="onboarding-description font-body-md">
           A local-first hybrid journal and task manager. Plain-text Markdown on
           your drive, real-time index in memory.

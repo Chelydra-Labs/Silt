@@ -5,13 +5,13 @@
 !include "FileFunc.nsh"
 
 !ifndef INFO_PROJECTNAME
-    !define INFO_PROJECTNAME "notes-sharp"
+    !define INFO_PROJECTNAME "silt"
 !endif
 !ifndef INFO_COMPANYNAME
-    !define INFO_COMPANYNAME "notes-sharp"
+    !define INFO_COMPANYNAME "silt"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "notes-sharp"
+    !define INFO_PRODUCTNAME "Silt"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "1.0.0"

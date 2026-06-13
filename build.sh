@@ -6,8 +6,8 @@ cd "$ROOT"
 
 VERSION_FILE="$ROOT/VERSION"
 DIST_DIR="$ROOT/distributions"
-APP_NAME="notes-sharp"
-PRODUCT_NAME="notes#"
+APP_NAME="silt"
+PRODUCT_NAME="Silt"
 
 # --- helpers ---
 RED='\033[0;31m'

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"notes-sharp/backend/parser"
+	"silt/backend/parser"
 
 	_ "modernc.org/sqlite"
 )

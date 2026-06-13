@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"notes-sharp/backend/core"
-	"notes-sharp/backend/db"
-	"notes-sharp/backend/monitor"
-	"notes-sharp/backend/parser"
-	"notes-sharp/backend/vault"
+	"silt/backend/core"
+	"silt/backend/db"
+	"silt/backend/monitor"
+	"silt/backend/parser"
+	"silt/backend/vault"
 )
 
 func newTestApp(t *testing.T) *App {
@@ -294,7 +294,7 @@ func TestCreateNewSection_Scaffolding(t *testing.T) {
 		t.Fatalf("failed to read scaffolded file: %v", err)
 	}
 	content := string(contentBytes)
-	if !strings.Contains(content, "notebook: Work") || !strings.Contains(content, "section: Meeting Notes") {
+	if !strings.Contains(content, `notebook: "Work"`) || !strings.Contains(content, `section: "Meeting Notes"`) {
 		t.Errorf("scaffolded file is missing frontmatter metadata, got:\n%s", content)
 	}
 }
@@ -422,5 +422,73 @@ func TestFocusLocking_AcquireAndRelease(t *testing.T) {
 	}
 	if app.watcher.IsFocusLocked(filePath) {
 		t.Errorf("expected file to be unlocked")
+	}
+}
+
+func TestSaveFileBlocks_DeletesMiddleBlockPreservesNonBlockLines(t *testing.T) {
+	app := newTestApp(t)
+
+	notebook := "Work"
+	section := "Journal"
+	fileDate := "2026-06-13"
+	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	content := "---\n" +
+		"notebook: Work\n" +
+		"section: Journal\n" +
+		"date: 2026-06-13\n" +
+		"tags: []\n" +
+		"---\n" +
+		"- [ ] TODO TASK [Alice] first <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"\n" +
+		"```go\n" +
+		"// preserved code block\n" +
+		"```\n" +
+		"\n" +
+		"- [ ] TODO TASK [Bob] middle <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [ ] TODO TASK [Carol] last <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
+	writeFile(t, filePath, content)
+
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	var updated []parser.ParsedBlock
+	for _, block := range blocks {
+		if block.ID == "22222222-2222-2222-2222-222222222222" {
+			continue
+		}
+		updated = append(updated, block)
+	}
+
+	if err := app.SaveFileBlocks(notebook, section, fileDate, updated); err != nil {
+		t.Fatalf("SaveFileBlocks: %v", err)
+	}
+	writtenBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	written := string(writtenBytes)
+	if !strings.Contains(written, "// preserved code block") {
+		t.Errorf("expected fenced code content to survive middle-block deletion, got:\n%s", written)
+	}
+	if strings.Contains(written, "middle <!-- id: 22222222-2222-2222-2222-222222222222 -->") {
+		t.Errorf("expected deleted middle block to be gone, got:\n%s", written)
+	}
+	if !strings.Contains(written, "- [ ] TODO TASK [Carol] last <!-- id: 33333333-3333-3333-3333-333333333333 -->") {
+		t.Errorf("expected last block to survive, got:\n%s", written)
+	}
+}
+
+func TestSanitizePathSegment_StripsControlChars(t *testing.T) {
+	// Control characters (including newlines and NUL) must be stripped so
+	// they cannot corrupt YAML frontmatter or inject into file paths.
+	result := sanitizePathSegment("evil\nsection")
+	if strings.ContainsAny(result, "\n\r\x00") {
+		t.Errorf("expected control characters stripped, got %q", result)
+	}
+
+	result = sanitizePathSegment("clean")
+	if result != "clean" {
+		t.Errorf("expected 'clean' unchanged, got %q", result)
 	}
 }

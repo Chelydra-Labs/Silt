@@ -251,6 +251,39 @@ notebook: Engineering:
 	}
 }
 
+func TestFormatBlockToLine_DefaultsBulletForNewBlockNote(t *testing.T) {
+	// Newly created editor blocks arrive with empty RawText. The serializer
+	// must emit a "- " bullet so the outliner round-trips correctly.
+	block := ParsedBlock{
+		ID:        "new-block-id",
+		Type:      BlockNote,
+		RawText:   "",
+		CleanText: "fresh content",
+	}
+	line := FormatBlockToLine(block, 4)
+	if !strings.HasPrefix(strings.TrimSpace(line), "- ") {
+		t.Errorf("expected '- ' bullet for empty-RawText BlockNote, got: %s", line)
+	}
+	if !strings.Contains(line, "fresh content") {
+		t.Errorf("expected clean text in output, got: %s", line)
+	}
+
+	// An existing plain-text note (no bullet marker in RawText) must
+	// serialize without a bullet to preserve the original style.
+	block.RawText = "just plain text <!-- id: new-block-id -->"
+	line = FormatBlockToLine(block, 4)
+	if strings.HasPrefix(strings.TrimSpace(line), "- ") {
+		t.Errorf("expected no bullet for plain-text note, got: %s", line)
+	}
+
+	// An existing bullet note must preserve its specific marker.
+	block.RawText = "* starred note <!-- id: new-block-id -->"
+	line = FormatBlockToLine(block, 4)
+	if !strings.HasPrefix(strings.TrimSpace(line), "* ") {
+		t.Errorf("expected '* ' bullet to be preserved, got: %s", line)
+	}
+}
+
 func BenchmarkScanWorkspace_1000Files(b *testing.B) {
 	for range b.N {
 		dir := b.TempDir()

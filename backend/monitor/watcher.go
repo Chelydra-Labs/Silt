@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"notes-sharp/backend/core"
-	"notes-sharp/backend/db"
-	"notes-sharp/backend/parser"
+	"silt/backend/core"
+	"silt/backend/db"
+	"silt/backend/parser"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -225,6 +225,10 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 	// self-generated writes — it does not protect against genuine
 	// external mutations racing the watcher.
 	dw.coordinator.LockFileWrite(path, func() {
+		if dw.IsFocusLocked(path) {
+			return
+		}
+
 		notebook, section, dateStr := dw.resolveFileMetadata(path)
 		contentBytes, err := os.ReadFile(path)
 		if err != nil {

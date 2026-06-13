@@ -1,4 +1,4 @@
-# Notes# (Notes Sharp)
+# Silt
 
 A lightweight, local-first hybrid note-taking and task-lifecycle engine built for speed, durability, and stream-of-consciousness collection.
 
@@ -6,7 +6,7 @@ A lightweight, local-first hybrid note-taking and task-lifecycle engine built fo
 [![Storage Schema](https://img.shields.io/badge/Storage-Plaintext%20Markdown%20%2B%20SQLite%20Cache-blue)](#-storage-architecture)
 [![License](https://img.shields.io/badge/License-MIT-green)](#)
 
-**notes#** bridges the gap between structured namespace notebooks (like OneNote) and chronological block-based daily streams (like Logseq). It treats human-readable plaintext files as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into fully interactive **Agenda**, **Calendar**, and **Kanban** board interfaces.
+**Silt** bridges the gap between structured namespace notebooks (like OneNote) and chronological block-based daily streams (like Logseq). It treats human-readable plaintext files as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into fully interactive **Agenda**, **Calendar**, and **Kanban** board interfaces.
 
 ---
 
@@ -171,8 +171,8 @@ Ensure your device has **Go (v1.26+)**, **Node.js (v20+)**, and the **Wails CLI*
 
 ```bash
 # Clone the repository source
-git clone https://github.com/ChrisUFO/Notes-Sharp.git
-cd Notes-Sharp
+git clone https://github.com/ChrisUFO/Silt.git
+cd Silt
 
 # Fire up live compilation development mode
 wails dev

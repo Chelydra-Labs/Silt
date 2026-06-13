@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onDestroy, tick } from 'svelte'
   import {
     SaveFileBlocks,
     AcquireFocusLock,
@@ -52,6 +52,7 @@
   let isFocused = $state(false)
   let saveTimeout = $state<any>(null)
   let showSlashMenu = $state(false)
+  let hasFocusLock = false
 
   async function handleCommandSelect(commandId: string) {
     showSlashMenu = false
@@ -122,6 +123,7 @@
     isFocused = true
     try {
       await AcquireFocusLock(notebook, section, fileDate)
+      hasFocusLock = true
     } catch (e) {
       console.error('Focus lock failed:', e)
     }
@@ -137,11 +139,7 @@
   // Handle blur
   async function handleBlur() {
     isFocused = false
-    try {
-      await ReleaseFocusLock(notebook, section, fileDate)
-    } catch (e) {
-      console.error('Focus unlock failed:', e)
-    }
+    await releaseFocusLock()
 
     if (onBlockBlur) {
       onBlockBlur()
@@ -173,6 +171,20 @@
       console.error('Failed to save blocks:', e)
     }
   }
+
+  async function releaseFocusLock() {
+    if (!hasFocusLock) return
+    hasFocusLock = false
+    try {
+      await ReleaseFocusLock(notebook, section, fileDate)
+    } catch (e) {
+      console.error('Focus unlock failed:', e)
+    }
+  }
+
+  onDestroy(() => {
+    void releaseFocusLock()
+  })
 
   // Checkbox state cycle: TODO -> DOING -> DONE -> TODO
   async function handleCheckboxClick() {

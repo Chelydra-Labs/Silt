@@ -22,16 +22,23 @@
 
   // Re-run search whenever query text changes
   $effect(() => {
-    performSearch(query)
+    const trimmed = query.trim()
+    if (!trimmed) {
+      results = []
+      selectedIdx = 0
+      loading = false
+      return
+    }
+
+    const timeout = window.setTimeout(() => {
+      performSearch(trimmed)
+    }, 175)
+
+    return () => window.clearTimeout(timeout)
   })
 
   async function performSearch(q: string) {
     const trimmed = q.trim()
-    if (!trimmed) {
-      results = []
-      selectedIdx = 0
-      return
-    }
 
     loading = true
     try {

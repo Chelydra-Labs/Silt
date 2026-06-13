@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"notes-sharp/backend/parser"
+	"silt/backend/parser"
 )
 
 type AppSettings struct {
@@ -19,7 +19,7 @@ func GetSettingsPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(configDir, "notes-sharp", "settings.json"), nil
+	return filepath.Join(configDir, "silt", "settings.json"), nil
 }
 
 func LoadSettings() (*AppSettings, error) {
@@ -81,7 +81,7 @@ func ScaffoldVault(vaultPath string) error {
 	}
 
 	// 2. Scaffold config.yaml
-	configYAML := `# notes# Global System Settings Configuration
+	configYAML := `# Silt Global System Settings Configuration
 
 # Spatial Mapping
 notebooks:
@@ -115,12 +115,12 @@ hotkeys:
 # Plugin Registry
 plugins:
   active:
-    - "notes-sharp-agenda"
-    - "notes-sharp-calendar"
-    - "notes-sharp-kanban"
+    - "silt-agenda"
+    - "silt-calendar"
+    - "silt-kanban"
   disabled: []
   plugin_settings:
-    notes-sharp-kanban:
+    silt-kanban:
       default_col: "TODO"
       columns: ["TODO", "DOING", "DONE"]
 `
@@ -170,13 +170,13 @@ section: Journal
 date: %s
 tags: [welcome, tutorial]
 ---
-# Welcome to notes# <!-- id: 5ec16086-7cb4-49c8-bf50-c831b79f82de -->
+# Welcome to Silt <!-- id: 5ec16086-7cb4-49c8-bf50-c831b79f82de -->
 
-notes# is an uncompromised, local-first note-taking and task-lifecycle platform. <!-- id: a78d8a0c-51de-46fa-9fe3-c64efb4d1c16 -->
+Silt is an uncompromised, local-first note-taking and task-lifecycle platform. <!-- id: a78d8a0c-51de-46fa-9fe3-c64efb4d1c16 -->
 
 ## Quick Start <!-- id: d5b4c102-482f-410a-b108-a578ee1a221f -->
-- [x] DONE TASK [Chris]#3 Successfully initialize notes# vault <!-- id: b64987dc-e33a-4467-9252-78d12a9e328e -->
-- [ ] TODO TASK [Chris]#1 Explore the notes# interface <!-- id: f437b7dc-d33a-4f67-8252-78d12a9e3290 -->
+- [x] DONE TASK [Chris]#3 Successfully initialize Silt vault <!-- id: b64987dc-e33a-4467-9252-78d12a9e328e -->
+- [ ] TODO TASK [Chris]#1 Explore the Silt interface <!-- id: f437b7dc-d33a-4f67-8252-78d12a9e3290 -->
 - [ ] TODO TASK [Chris]#2 Try typing a new task using the /todo slash menu <!-- id: c537b7dc-c33a-4f67-7252-78d12a9e329f -->
 `
 	dailyFilePath := filepath.Join(vaultPath, "Work", "Journal", todayStr+".md")

@@ -380,14 +380,21 @@ func FormatBlockToLine(block ParsedBlock, spacesPerTab int) string {
 		}
 		return fmt.Sprintf("%s %s%s", hashes, block.CleanText, idSuffix)
 	} else {
-		// BlockNote
-		prefix := ""
-		if strings.HasPrefix(strings.TrimSpace(block.RawText), "- ") {
-			prefix = "- "
-		} else if strings.HasPrefix(strings.TrimSpace(block.RawText), "* ") {
-			prefix = "* "
-		} else if strings.HasPrefix(strings.TrimSpace(block.RawText), "+ ") {
-			prefix = "+ "
+		// BlockNote. Newly created blocks arrive with an empty RawText, so
+		// default to the "- " bullet used by the outliner instead of
+		// dropping the marker on every editor-created line.
+		prefix := "- "
+		trimmedRaw := strings.TrimSpace(block.RawText)
+		if trimmedRaw != "" {
+			if strings.HasPrefix(trimmedRaw, "- ") {
+				prefix = "- "
+			} else if strings.HasPrefix(trimmedRaw, "* ") {
+				prefix = "* "
+			} else if strings.HasPrefix(trimmedRaw, "+ ") {
+				prefix = "+ "
+			} else {
+				prefix = ""
+			}
 		}
 		return fmt.Sprintf("%s%s%s%s", indent, prefix, block.CleanText, idSuffix)
 	}

@@ -6,15 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"notes-sharp/backend/core"
-	"notes-sharp/backend/db"
-	"notes-sharp/backend/monitor"
-	"notes-sharp/backend/parser"
-	"notes-sharp/backend/vault"
+	"silt/backend/core"
+	"silt/backend/db"
+	"silt/backend/monitor"
+	"silt/backend/parser"
+	"silt/backend/vault"
 
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -157,7 +158,7 @@ func (a *App) IsVaultInitialized() bool {
 // InitializeVault prompts the user for a folder, sets it up, and loads the services.
 func (a *App) InitializeVault() (bool, error) {
 	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select notes# Vault Directory",
+		Title: "Select Silt Vault Directory",
 	})
 	if err != nil {
 		return false, fmt.Errorf("failed to select vault folder: %w", err)
@@ -354,7 +355,7 @@ func findLineByBlockID(lines []string, blockID string) int {
 // safely fold untrusted frontmatter strings into file paths.
 func sanitizePathSegment(s string) string {
 	cleaned := strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r == 0 {
+		if r == '/' || r == '\\' || r < 32 {
 			return -1
 		}
 		return r
@@ -487,7 +488,7 @@ func (a *App) CreateNewSection(notebook, section, dateStr string) (string, error
 	headerID := uuid.New().String()
 	taskID := uuid.New().String()
 
-	scaffoldContent := fmt.Sprintf(`---
+scaffoldContent := fmt.Sprintf(`---
 notebook: %s
 section: %s
 date: %s
@@ -496,7 +497,7 @@ tags: []
 # %s <!-- id: %s -->
 
 - [ ] TODO TASK [Chris] Start writing in %s <!-- id: %s -->
-`, notebook, section, safeDate, formattedDate, headerID, section, taskID)
+`, strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safeDate), formattedDate, headerID, safeSection, taskID)
 
 	a.wg.Add(1)
 	defer a.wg.Done()
@@ -511,7 +512,7 @@ tags: []
 
 		blocks, meta, _, _, err := parser.ParseFileContent(scaffoldContent, safeNotebook, safeSection, safeDate, a.spacesPerTab)
 		if err == nil {
-			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags)
+			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
 		}
 	})
 
@@ -573,7 +574,7 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 		}
 
 		if frontmatter == "" {
-			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\ndate: %s\ntags: []\n---\n", notebook, section, fileDate)
+			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safeFileDate))
 		}
 
 		updatedByID := make(map[string]parser.ParsedBlock, len(blocks))
@@ -606,6 +607,9 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 			if len(matches) > 1 {
 				blockID := matches[1]
 				if _, ok := updatedByID[blockID]; ok {
+					if _, assigned := preservedBefore[blockID]; assigned {
+						continue
+					}
 					preservedBefore[blockID] = append(preservedBefore[blockID], pendingPreserved...)
 					pendingPreserved = nil
 				}
@@ -635,7 +639,7 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 
 		parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
 		if err == nil {
-			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, parsedBlocks, meta.Tags)
+			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, parsedBlocks, meta.Tags, meta.Warnings...)
 		}
 	})
 
