@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"silt/backend/db"
 	"silt/backend/monitor"
 	"silt/backend/parser"
+	"silt/backend/plugins"
 	"silt/backend/vault"
 
 	"github.com/google/uuid"
@@ -1076,7 +1078,8 @@ func (a *App) GetPluginRegistry() (parser.PluginRegistry, error) {
 	return registry, nil
 }
 
-// ListPlugins enumerates plugin folders under .system/plugins/.
+// ListPlugins enumerates plugin folders under .system/plugins/, surfacing
+// manifest name/version and the disabled sentinel for the manager UI.
 func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
 	if a.vaultPath == "" {
 		return nil, fmt.Errorf("vault not loaded")
@@ -1099,9 +1102,14 @@ func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
 			continue
 		}
 		dir := filepath.Join(pluginsDir, name)
-		info := parser.PluginInfo{ID: name}
-		if _, err := os.Stat(filepath.Join(dir, "plugin.json")); err == nil {
+		info := parser.PluginInfo{ID: name, Disabled: plugins.IsDisabled(dir)}
+		if manifestBytes, err := os.ReadFile(filepath.Join(dir, "plugin.json")); err == nil {
 			info.HasManifest = true
+			var m parser.PluginManifest
+			if json.Unmarshal(manifestBytes, &m) == nil {
+				info.Name = m.Name
+				info.Version = m.Version
+			}
 		}
 		if _, err := os.Stat(filepath.Join(dir, "index.js")); err == nil {
 			info.HasIndex = true
@@ -1127,4 +1135,98 @@ func (a *App) ReadPluginSource(pluginID string) (string, error) {
 		return "", fmt.Errorf("failed to read plugin source: %w", err)
 	}
 	return string(bytes), nil
+}
+
+// --- Plugin install / uninstall (.silt-plugin) ---------------------------
+
+// ValidatePluginArchive validates a .silt-plugin file without installing it,
+// returning its manifest and any non-fatal warnings.
+func (a *App) ValidatePluginArchive(archivePath string) (parser.PluginManifest, []string, error) {
+	manifest, warnings, err := plugins.Validate(archivePath)
+	if err != nil {
+		return parser.PluginManifest{}, warnings, err
+	}
+	return manifestToParser(manifest), warnings, nil
+}
+
+// PickPluginArchive opens the native file picker (filtered to .silt-plugin)
+// and returns the chosen path, or empty string if cancelled.
+func (a *App) PickPluginArchive() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("application context not ready")
+	}
+	selected, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select a .silt-plugin package",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Silt Plugin (*.silt-plugin)", Pattern: "*.silt-plugin"},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to open file picker: %w", err)
+	}
+	return selected, nil
+}
+
+// InstallPlugin installs a .silt-plugin archive into .system/plugins/<id>/,
+// emits plugins:changed so the loader re-runs, and returns the manifest.
+func (a *App) InstallPlugin(archivePath string) (parser.PluginManifest, error) {
+	if a.vaultPath == "" {
+		return parser.PluginManifest{}, fmt.Errorf("vault not loaded")
+	}
+	manifest, err := plugins.Install(a.vaultPath, archivePath)
+	if err != nil {
+		return parser.PluginManifest{}, err
+	}
+	a.emitPluginsChanged()
+	return manifestToParser(manifest), nil
+}
+
+// UninstallPlugin removes a plugin folder and emits plugins:changed.
+func (a *App) UninstallPlugin(pluginID string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	if err := plugins.Uninstall(a.vaultPath, pluginID); err != nil {
+		return err
+	}
+	a.emitPluginsChanged()
+	return nil
+}
+
+// EnablePlugin / DisablePlugin toggle a per-plugin ".disabled" sentinel
+// (the loader skips disabled plugins), then emit plugins:changed.
+func (a *App) EnablePlugin(pluginID string) error {
+	if err := plugins.SetDisabled(a.vaultPath, pluginID, false); err != nil {
+		return err
+	}
+	a.emitPluginsChanged()
+	return nil
+}
+
+func (a *App) DisablePlugin(pluginID string) error {
+	if err := plugins.SetDisabled(a.vaultPath, pluginID, true); err != nil {
+		return err
+	}
+	a.emitPluginsChanged()
+	return nil
+}
+
+func (a *App) emitPluginsChanged() {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "plugins:changed", struct{}{})
+}
+
+func manifestToParser(m plugins.Manifest) parser.PluginManifest {
+	return parser.PluginManifest{
+		ID:             m.ID,
+		Name:           m.Name,
+		Version:        m.Version,
+		Author:         m.Author,
+		Description:    m.Description,
+		Icon:           m.Icon,
+		Main:           m.Main,
+		MinSiltVersion: m.MinSiltVersion,
+	}
 }

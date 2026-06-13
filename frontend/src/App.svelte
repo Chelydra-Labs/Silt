@@ -11,6 +11,7 @@
   import SearchModal from './components/SearchModal.svelte'
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
+  import PluginManagerModal from './components/PluginManagerModal.svelte'
   import { loadPlugins } from './plugins/loader'
   import logo from './assets/logo.svg'
 
@@ -26,6 +27,7 @@
   // Shell state
   let sidebarCollapsed = $state(false)
   let showSearch = $state(false)
+  let showPluginManager = $state(false)
 
   // Focused block ancestry path highlighting
   let activeFocusedBlockAncestors = $state<string[]>([])
@@ -76,14 +78,28 @@
         activeView = 'tags'
       }
     }
+    function handleOpenPluginManager() {
+      showPluginManager = true
+    }
+    function handlePluginsChanged() {
+      // Re-run discovery with the live location so newly installed/enabled
+      // plugins appear and removed ones drop out.
+      loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
+        console.error('Plugin reload failed:', e)
+      )
+    }
 
     window.addEventListener('keydown', handleGlobalKeyDown)
     window.addEventListener('navigate-to-block', handleNavigateToBlock)
     window.addEventListener('navigate-to-tag', handleNavigateToTag)
+    window.addEventListener('open-plugin-manager', handleOpenPluginManager)
+    window.addEventListener('plugins:changed', handlePluginsChanged)
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
       window.removeEventListener('navigate-to-tag', handleNavigateToTag)
+      window.removeEventListener('open-plugin-manager', handleOpenPluginManager)
+      window.removeEventListener('plugins:changed', handlePluginsChanged)
     }
   })
 
@@ -277,6 +293,15 @@
     <SearchModal
       onClose={() => (showSearch = false)}
       onJump={handleSearchResultJump}
+    />
+  {/if}
+
+  {#if showPluginManager}
+    <PluginManagerModal
+      onClose={() => (showPluginManager = false)}
+      {activeNotebook}
+      {activeSection}
+      {activePage}
     />
   {/if}
 </main>

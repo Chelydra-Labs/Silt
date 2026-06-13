@@ -333,24 +333,24 @@
     <!-- Primary actions (icon-only, consistent style) -->
     <div class="px-1 flex items-center gap-1.5 mb-2">
       <button
-        onclick={() => openCreate('page')}
-        disabled={!activeNotebook}
-        title="New Page"
-        aria-label="New Page"
-        class="flex-1 bg-accent-teal-glow border border-accent-teal-start/30 text-accent-teal-start font-label-sm-bold py-2 rounded flex items-center justify-center hover:brightness-110 hover:border-accent-teal-start transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        <span class="material-symbols-outlined text-[20px]">note_add</span>
-      </button>
-      <button
         onclick={() => openCreate('section')}
         disabled={!activeNotebook}
         title="New Section"
         aria-label="New Section"
-        class="bg-bg-panel border border-border-muted text-text-muted hover:text-accent-teal-start hover:border-accent-teal-start/40 font-label-sm-bold py-2 px-2.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+        class="flex-1 bg-accent-teal-glow border border-accent-teal-start/30 text-accent-teal-start font-label-sm-bold py-2 rounded flex items-center justify-center hover:brightness-110 hover:border-accent-teal-start transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
       >
         <span class="material-symbols-outlined text-[20px]"
           >create_new_folder</span
         >
+      </button>
+      <button
+        onclick={() => openCreate('page')}
+        disabled={!activeNotebook}
+        title="New Page"
+        aria-label="New Page"
+        class="flex-1 bg-bg-panel border border-border-muted text-text-muted hover:text-accent-teal-start hover:border-accent-teal-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        <span class="material-symbols-outlined text-[20px]">note_add</span>
       </button>
     </div>
 

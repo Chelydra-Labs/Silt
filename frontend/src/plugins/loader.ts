@@ -1,6 +1,7 @@
 import {
   GetPluginRegistry,
-  ReadPluginSource
+  ReadPluginSource,
+  ListPlugins
 } from '../../wailsjs/go/main/App.js'
 import { getFirstParty, firstPartyPlugins } from './registry'
 import { makePluginContext } from './context'
@@ -11,9 +12,11 @@ import DiskPluginNotice from './DiskPluginNotice.svelte'
 /**
  * Discover and initialize all active plugins:
  *   1. First-party bundled plugins (always available).
- *   2. On-disk plugins listed in .system/config.yaml under plugins.active,
- *      loaded from .system/plugins/<id>/index.js as a native ESM via a blob
+ *   2. On-disk plugins discovered under .system/plugins/ (skipping any with
+ *      a .disabled sentinel), loaded from index.js as native ESM via a blob
  *      URL (so Vite does not try to resolve them at build time).
+ *      A non-empty .system/config.yaml active list acts as a whitelist, but
+ *      discovery is folder-based so install "just works" without config edits.
  * Each plugin's init(ctx) receives the same PluginContext. Per-plugin load
  * failures are collected rather than aborting the whole boot.
  */
@@ -26,7 +29,7 @@ export async function loadPlugins(
   const plugins = new Map<string, RegisteredPlugin>()
   const errors: { id: string; message: string }[] = []
 
-  // Active ids from config (may be empty on a fresh vault).
+  // Optional whitelist from config (empty on a fresh vault).
   let activeIds: string[] = []
   try {
     const registry = await GetPluginRegistry()
@@ -35,10 +38,25 @@ export async function loadPlugins(
     activeIds = []
   }
 
-  // 1. Disk plugins declared active.
-  for (const id of activeIds) {
+  // Discover on-disk plugins by folder.
+  let installed: { id: string; disabled: boolean; has_index: boolean }[] = []
+  try {
+    installed = (await ListPlugins()) ?? []
+  } catch {
+    installed = []
+  }
+
+  for (const p of installed) {
+    const id = p.id
     if (getFirstParty(id)) continue // first-party wins; handled below
+    if (p.disabled) continue // .disabled sentinel → skip
+    // If a whitelist is configured, only whitelisted plugins load.
+    if (activeIds.length > 0 && !activeIds.includes(id)) continue
     try {
+      if (!p.has_index) {
+        errors.push({ id, message: 'missing index.js' })
+        continue
+      }
       const src = await ReadPluginSource(id)
       const blob = new Blob([src], { type: 'text/javascript' })
       const url = URL.createObjectURL(blob)
@@ -66,7 +84,7 @@ export async function loadPlugins(
     }
   }
 
-  // 2. First-party plugins always available (bundled with the app).
+  // First-party plugins always available (bundled with the app).
   for (const fp of firstPartyPlugins()) {
     if (!plugins.has(fp.manifest.id)) {
       fp.init?.(ctx)

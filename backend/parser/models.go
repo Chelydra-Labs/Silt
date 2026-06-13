@@ -117,6 +117,23 @@ type PluginInfo struct {
 	ID          string `json:"id"`
 	HasManifest bool   `json:"has_manifest"`
 	HasIndex    bool   `json:"has_index"`
+	Disabled    bool   `json:"disabled"`
+	Name        string `json:"name,omitempty"`
+	Version     string `json:"version,omitempty"`
+}
+
+// PluginManifest is the plugin.json schema carried inside a .silt-plugin
+// archive (mirrors backend/plugins.Manifest, re-declared here so it crosses
+// the Wails IPC boundary without an import cycle).
+type PluginManifest struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Version        string `json:"version"`
+	Author         string `json:"author,omitempty"`
+	Description    string `json:"description,omitempty"`
+	Icon           string `json:"icon,omitempty"`
+	Main           string `json:"main,omitempty"`
+	MinSiltVersion string `json:"minSiltVersion,omitempty"`
 }
 
 type TaskResult struct {

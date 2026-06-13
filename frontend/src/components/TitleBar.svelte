@@ -103,10 +103,12 @@
   <div class="flex items-center gap-2 flex-shrink-0 h-full pr-2">
     <button
       onclick={onSearchClick}
-      class="bg-bg-surface border border-border-muted rounded-lg pl-3 pr-8 py-1.5 items-center gap-2 cursor-pointer text-text-muted hover:border-accent-teal-start transition-all duration-200 hidden sm:flex"
+      class="bg-bg-surface border border-border-muted rounded-lg pl-3 pr-8 py-1.5 items-center gap-2 cursor-pointer text-text-muted hover:border-accent-teal-start transition-all duration-200 hidden sm:flex w-72"
     >
       <span class="material-symbols-outlined text-[18px]">search</span>
-      <span class="text-[12px] font-label-sm">Search… (Ctrl+P)</span>
+      <span class="text-[12px] font-label-sm whitespace-nowrap"
+        >Search… (Ctrl+P)</span
+      >
     </button>
 
     <div class="w-px h-6 bg-border-muted mx-1"></div>
