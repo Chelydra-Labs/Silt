@@ -728,8 +728,8 @@ func (dm *DatabaseManager) SearchBlocks(query string) ([]parser.TaskResult, erro
 	var args []interface{}
 
 	for _, word := range words {
-		sqlParts = append(sqlParts, "(b.clean_content LIKE ? OR b.notebook LIKE ? OR b.section LIKE ?)")
-		term := "%" + word + "%"
+		sqlParts = append(sqlParts, "(LOWER(b.clean_content) LIKE LOWER(?) OR LOWER(b.notebook) LIKE LOWER(?) OR LOWER(b.section) LIKE LOWER(?))")
+		term := "%" + strings.ToLower(word) + "%"
 		args = append(args, term, term, term)
 	}
 

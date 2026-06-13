@@ -42,6 +42,9 @@ func TestSanitizePathSegment(t *testing.T) {
 		{"with\x01ctrl", "withctrl"},
 		{"with\x1funit", "withunit"},
 		{"a..b..c", "abc"},
+		{".", ""},
+		{"..", ""},
+		{"foo.bar", "foo.bar"},
 		{"   spaced   ", "spaced"},
 		{"", ""},
 	}

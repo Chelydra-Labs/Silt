@@ -370,6 +370,9 @@ func sanitizePathSegment(s string) string {
 	for strings.Contains(cleaned, "..") {
 		cleaned = strings.ReplaceAll(cleaned, "..", "")
 	}
+	if cleaned == "." {
+		cleaned = ""
+	}
 	return strings.TrimSpace(cleaned)
 }
 
@@ -612,6 +615,19 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 			orderedBlocks = append(orderedBlocks, block)
 		}
 
+		// Distinguish deleted managed blocks from unmanaged lines that
+		// happen to contain a UUID-shaped comment. Without this, a user-
+		// typed note quoting a commit hash would be silently dropped.
+		oldBlockIDs := make(map[string]bool)
+		if len(lines) > 0 {
+			oldBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
+			if parseErr == nil {
+				for _, b := range oldBlocks {
+					oldBlockIDs[b.ID] = true
+				}
+			}
+		}
+
 		preservedBefore := make(map[string][]string)
 		var pendingPreserved []string
 		inCodeBlock := false
@@ -637,8 +653,11 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 					}
 					preservedBefore[blockID] = append(preservedBefore[blockID], pendingPreserved...)
 					pendingPreserved = nil
+					continue
 				}
-				continue
+				if oldBlockIDs[blockID] {
+					continue
+				}
 			}
 
 			pendingPreserved = append(pendingPreserved, line)

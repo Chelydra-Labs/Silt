@@ -406,6 +406,24 @@ func TestSearchBlocks_FuzzySearch(t *testing.T) {
 	if len(res) != 1 || res[0].ID != "b2" {
 		t.Errorf("expected exactly 1 match (b2) for query, got %d results", len(res))
 	}
+
+	// Case-insensitive: lowercase query must match mixed-case content.
+	res, err = app.SearchBlocks("base CONNECTION")
+	if err != nil {
+		t.Fatalf("SearchBlocks failed: %v", err)
+	}
+	if len(res) != 1 || res[0].ID != "b1" {
+		t.Errorf("expected 1 case-insensitive match (b1), got %d results", len(res))
+	}
+
+	// Case-insensitive: uppercase query must match lowercase notebook.
+	res, err = app.SearchBlocks("WORK")
+	if err != nil {
+		t.Fatalf("SearchBlocks failed: %v", err)
+	}
+	if len(res) != 2 {
+		t.Errorf("expected 2 matches for WORK notebook, got %d", len(res))
+	}
 }
 
 func TestFocusLocking_AcquireAndRelease(t *testing.T) {
@@ -488,6 +506,42 @@ func TestSaveFileBlocks_DeletesMiddleBlockPreservesNonBlockLines(t *testing.T) {
 	}
 	if !strings.Contains(written, "- [ ] TODO TASK [Carol] last <!-- id: 33333333-3333-3333-3333-333333333333 -->") {
 		t.Errorf("expected last block to survive, got:\n%s", written)
+	}
+}
+
+func TestSaveFileBlocks_PreservesUnknownUUIDLine(t *testing.T) {
+	app := newTestApp(t)
+
+	notebook := "Work"
+	section := "Journal"
+	fileDate := "2026-06-13"
+	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	content := "---\n" +
+		"notebook: Work\n" +
+		"section: Journal\n" +
+		"date: 2026-06-13\n" +
+		"tags: []\n" +
+		"---\n" +
+		"- [ ] TODO TASK [Alice] keep <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"ref to commit <!-- id: deadbeef-dead-beef-dead-beefdeadbeef -->\n" +
+		"- [ ] TODO TASK [Bob] also keep <!-- id: 22222222-2222-2222-2222-222222222222 -->\n"
+	writeFile(t, filePath, content)
+
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+
+	if err := app.SaveFileBlocks(notebook, section, fileDate, blocks); err != nil {
+		t.Fatalf("SaveFileBlocks: %v", err)
+	}
+	writtenBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	written := string(writtenBytes)
+	if !strings.Contains(written, "deadbeef-dead-beef-dead-beefdeadbeef") {
+		t.Errorf("expected unknown-UUID line to survive, got:\n%s", written)
 	}
 }
 

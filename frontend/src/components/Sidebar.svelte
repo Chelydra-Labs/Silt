@@ -25,6 +25,11 @@
 
   let notebooksMap = $state<Record<string, string[]>>({})
   let showNotebookDropdown = $state(false)
+  let showCreateModal = $state(false)
+  let newSectionName = $state('')
+  let createError = $state('')
+  let creating = $state(false)
+  let modalInputEl = $state<HTMLInputElement | null>(null)
 
   let notebooksList = $derived(Object.keys(notebooksMap))
   let sectionsList = $derived(notebooksMap[activeNotebook] || [])
@@ -77,26 +82,43 @@
   }
 
   async function handleCreateSection() {
-    const sectionName = prompt('Enter new section name:')
-    if (!sectionName) return
-
-    const trimmed = sectionName.trim()
+    const trimmed = newSectionName.trim()
     if (trimmed === '') return
 
+    creating = true
+    createError = ''
     try {
-      // Create new section file with scaffolded daily note
       await CreateNewSection(activeNotebook, trimmed, '')
-
-      // Reload the navigation tree
       await loadNotebooks()
-
-      // Set the newly created section as active
       activeSection = trimmed
       onSelectSection(trimmed)
       activeView = 'notes'
       onSelectView('notes')
+      showCreateModal = false
+      newSectionName = ''
     } catch (e) {
-      alert('Failed to create new section: ' + e)
+      createError = String(e)
+    } finally {
+      creating = false
+    }
+  }
+
+  function openCreateModal() {
+    newSectionName = ''
+    createError = ''
+    showCreateModal = true
+    setTimeout(() => modalInputEl?.focus(), 0)
+  }
+
+  function handleModalKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      e.stopPropagation()
+      handleCreateSection()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      showCreateModal = false
     }
   }
 
@@ -172,12 +194,69 @@
 
     <!-- New Section Button -->
     <button
-      onclick={handleCreateSection}
+      onclick={openCreateModal}
       class="w-full bg-accent-teal-glow border border-accent-teal-start/30 text-accent-teal-start font-label-sm-bold text-label-sm-bold py-2.5 rounded mb-4 flex items-center justify-center gap-2 hover:brightness-110 hover:border-accent-teal-start transition-all cursor-pointer focus:outline-none"
     >
       <span class="material-symbols-outlined text-[18px]">add</span>
       New Section
     </button>
+
+    <!-- Inline Create Section Modal -->
+    {#if showCreateModal}
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div
+        onclick={() => (showCreateModal = false)}
+        class="fixed inset-0 bg-[#000]/60 backdrop-blur-sm z-[160] flex items-start justify-center pt-32"
+      >
+        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+        <div
+          onclick={(e) => e.stopPropagation()}
+          class="w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
+          style="backdrop-filter: blur(16px) saturate(140%); background: rgba(22, 22, 25, 0.9);"
+        >
+          <div class="px-5 py-4 border-b border-border-muted">
+            <h2 class="font-headline-md text-headline-md text-text-primary">
+              New Section
+            </h2>
+            <p class="text-text-muted text-[12px] font-body-md mt-0.5">
+              in {activeNotebook}
+            </p>
+          </div>
+          <div class="px-5 py-4">
+            <input
+              bind:this={modalInputEl}
+              bind:value={newSectionName}
+              onkeydown={handleModalKeydown}
+              type="text"
+              placeholder="Section name..."
+              class="w-full bg-bg-surface border border-border-zinc rounded-lg px-3 py-2.5 text-text-primary text-[14px] font-body-md outline-none focus:border-accent-teal-start transition-colors"
+            />
+            {#if createError}
+              <p class="text-error text-[12px] font-body-md mt-2">
+                {createError}
+              </p>
+            {/if}
+          </div>
+          <div
+            class="flex items-center justify-end gap-2 px-5 py-3 border-t border-border-muted"
+          >
+            <button
+              onclick={() => (showCreateModal = false)}
+              class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              onclick={handleCreateSection}
+              disabled={creating || !newSectionName.trim()}
+              class="px-4 py-2 rounded-lg bg-accent-teal-start/20 border border-accent-teal-start/40 text-accent-teal-start font-label-sm-bold hover:brightness-110 transition-all border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {creating ? 'Creating...' : 'Create'}
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
 
     <!-- Side Menu Categories -->
     <div class="space-y-1">
