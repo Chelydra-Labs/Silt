@@ -1,0 +1,63 @@
+package parser
+
+type BlockType string
+
+const (
+	BlockTask   BlockType = "TASK"
+	BlockNote   BlockType = "NOTE"
+	BlockHeader BlockType = "HEADER"
+)
+
+type ParsedBlock struct {
+	ID         string    `json:"id"`
+	ParentID   string    `json:"parent_id"`
+	Type       BlockType `json:"type"`
+	Depth      int       `json:"depth"`
+	RawText    string    `json:"raw_text"`
+	CleanText  string    `json:"clean_text"`
+	Status     string    `json:"status,omitempty"`
+	Owner      string    `json:"owner,omitempty"`
+	StartDate  string    `json:"start_date,omitempty"`
+	DueDate    string    `json:"due_date,omitempty"`
+	Priority   int       `json:"priority,omitempty"`
+	LineNumber int       `json:"line_number"`
+}
+
+type FileMetadata struct {
+	Notebook string   `yaml:"notebook"`
+	Section  string   `yaml:"section"`
+	Date     string   `yaml:"date"` // YYYY-MM-DD
+	Tags     []string `yaml:"tags"`
+}
+
+type TaskQueryFilter struct {
+	Owner     string   `json:"owner"`
+	Priority  int      `json:"priority"`
+	Tags      []string `json:"tags"`
+	StartDate string   `json:"start_date"`
+	EndDate   string   `json:"end_date"`
+}
+
+type DayGroup struct {
+	Date          string        `json:"date"` // YYYY-MM-DD
+	FormattedDate string        `json:"formattedDate"`
+	Blocks        []ParsedBlock `json:"blocks"`
+}
+
+type TaskResult struct {
+	ID           string    `json:"id"`
+	ParentID     string    `json:"parent_id"`
+	Notebook     string    `json:"notebook"`
+	Section      string    `json:"section"`
+	FileDate     string    `json:"file_date"`
+	Depth        int       `json:"depth"`
+	RawContent   string    `json:"raw_content"`
+	CleanContent string    `json:"clean_content"`
+	LineNumber   int       `json:"line_number"`
+	Status       string    `json:"status"` // TODO, DOING, DONE
+	Owner        string    `json:"owner,omitempty"`
+	StartDate    string    `json:"start_date,omitempty"`
+	DueDate      string    `json:"due_date,omitempty"`
+	Priority     int       `json:"priority,omitempty"`
+	Tags         []string  `json:"tags,omitempty"`
+}
