@@ -572,7 +572,7 @@ func TestAcquireFocusLock_RejectsTraversalMetadata(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected AcquireFocusLock to reject traversal metadata")
 	}
-	if !strings.Contains(err.Error(), "invalid path metadata") && !strings.Contains(err.Error(), "escapes vault") {
-		t.Errorf("expected path-sanitization error, got: %v", err)
+	if !strings.Contains(err.Error(), "invalid path metadata") {
+		t.Errorf("expected 'invalid path metadata' from sanitization, got: %v", err)
 	}
 }

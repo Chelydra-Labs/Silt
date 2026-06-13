@@ -125,6 +125,10 @@ func (dm *DatabaseManager) initSchema() error {
 		"CREATE INDEX IF NOT EXISTS idx_blocks_file ON blocks(notebook, section, file_date);",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_tags_lookup ON tags(level_0, level_1, level_2);",
+		// Functional indexes for case-insensitive search (SearchBlocks).
+		"CREATE INDEX IF NOT EXISTS idx_blocks_clean_lower ON blocks(LOWER(clean_content));",
+		"CREATE INDEX IF NOT EXISTS idx_blocks_notebook_lower ON blocks(LOWER(notebook));",
+		"CREATE INDEX IF NOT EXISTS idx_blocks_section_lower ON blocks(LOWER(section));",
 	}
 
 	for _, idxQuery := range indexes {
