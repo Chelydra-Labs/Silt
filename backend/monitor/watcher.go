@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"notes-sharp/backend/core"
 	"notes-sharp/backend/db"
 	"notes-sharp/backend/parser"
 
@@ -20,11 +21,12 @@ type DirectoryWatcher struct {
 	vaultPath    string
 	dm           *db.DatabaseManager
 	tracker      *WriteTracker
+	coordinator  *core.ExecutionCoordinator
 	spacesPerTab int
 	closeChan    chan struct{}
 }
 
-func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *WriteTracker, spacesPerTab int) (*DirectoryWatcher, error) {
+func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *WriteTracker, coordinator *core.ExecutionCoordinator, spacesPerTab int) (*DirectoryWatcher, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create fsnotify watcher: %w", err)
@@ -35,6 +37,7 @@ func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *Writ
 		vaultPath:    vaultPath,
 		dm:           dm,
 		tracker:      tracker,
+		coordinator:  coordinator,
 		spacesPerTab: spacesPerTab,
 		closeChan:    make(chan struct{}),
 	}, nil
@@ -162,24 +165,33 @@ func (dw *DirectoryWatcher) listenLoop() {
 }
 
 func (dw *DirectoryWatcher) reindexFile(path string) {
-	notebook, section, dateStr := dw.resolveFileMetadata(path)
-	contentBytes, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
+	// Serialize the read/parse/write/index sequence against concurrent
+	// app-driven file mutations (UpdateBlockState). Without this lock a
+	// user-driven checkbox click could land between our initial read and
+	// our eventual write, and the watcher's stale write would silently
+	// clobber the user's change. The WriteTracker cooldown only covers
+	// self-generated writes — it does not protect against genuine
+	// external mutations racing the watcher.
+	dw.coordinator.LockFileWrite(path, func() {
+		notebook, section, dateStr := dw.resolveFileMetadata(path)
+		contentBytes, err := os.ReadFile(path)
+		if err != nil {
+			return
+		}
 
-	blocks, meta, newContent, modified, err := parser.ParseFileContent(string(contentBytes), notebook, section, dateStr, dw.spacesPerTab)
-	if err != nil {
-		return
-	}
+		blocks, meta, newContent, modified, err := parser.ParseFileContent(string(contentBytes), notebook, section, dateStr, dw.spacesPerTab)
+		if err != nil {
+			return
+		}
 
-	if modified {
-		// Register write before modifying the file to prevent loop triggers
-		dw.tracker.RegisterWrite(path)
-		_ = parser.WriteFileAtomic(path, []byte(newContent))
-	}
+		if modified {
+			// Register write before modifying the file to prevent loop triggers
+			dw.tracker.RegisterWrite(path)
+			_ = parser.WriteFileAtomic(path, []byte(newContent))
+		}
 
-	_ = dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags)
+		_ = dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags)
+	})
 }
 
 func (dw *DirectoryWatcher) clearIndexForFile(path string) {

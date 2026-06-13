@@ -55,6 +55,9 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.watcher != nil {
 		_ = a.watcher.Close()
 	}
+	if a.tracker != nil {
+		a.tracker.Stop()
+	}
 	if a.db != nil {
 		_ = a.db.Close()
 	}
@@ -94,7 +97,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	}
 
 	// 5. Start fsnotify watcher
-	watcher, err := monitor.NewDirectoryWatcher(vaultPath, dbMgr, tracker, a.spacesPerTab)
+	watcher, err := monitor.NewDirectoryWatcher(vaultPath, dbMgr, tracker, coord, a.spacesPerTab)
 	if err != nil {
 		_ = dbMgr.Close()
 		return fmt.Errorf("failed to start watcher: %w", err)
