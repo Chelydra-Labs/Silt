@@ -1,0 +1,101 @@
+#!/bin/sh
+echo "Running pre-push hooks..."
+
+# Git can send multiple refs to the pre-push hook via stdin (e.g. when
+# pushing multiple branches/tags in a single command). A bare `read` only
+# processes the first ref, bypassing checks for the rest. We track the
+# aggregate set of changed files across all pushed refs and run the checks
+# once at the end.
+PUSHED_LOCAL_SHAS=""
+PUSHED_REMOTE_SHAS=""
+CHANGED_FILES_ALL=""
+
+while read local_ref local_sha remote_ref remote_sha; do
+  # 1. Exempt branch deletions
+  if [ "$local_sha" = "0000000000000000000000000000000000000000" ] || [ -z "$local_sha" ]; then
+    echo "Branch deletion detected for $local_ref. Exempting pre-push hooks."
+    continue
+  fi
+
+  # 2. Exempt merge-only pushes for this ref
+  if [ -n "$remote_sha" ] && [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
+    NON_MERGES=$(git log --no-merges --oneline $remote_sha..$local_sha)
+    if [ -z "$NON_MERGES" ]; then
+      echo "Only merge commits detected in push for $local_ref. Skipping checks for this ref."
+      continue
+    fi
+  fi
+
+  # Accumulate the SHA pair and the diff for downstream checks.
+  PUSHED_LOCAL_SHAS="$PUSHED_LOCAL_SHAS $local_sha"
+  PUSHED_REMOTE_SHAS="$PUSHED_REMOTE_SHAS $remote_sha"
+
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ] || [ -z "$remote_sha" ]; then
+    # New branch push: diff against origin/main.
+    REF_FILES=$(git diff --name-only origin/main...$local_sha)
+  else
+    # Existing branch: diff between remote and local SHA.
+    REF_FILES=$(git diff --name-only $remote_sha..$local_sha)
+  fi
+  if [ -n "$REF_FILES" ]; then
+    if [ -z "$CHANGED_FILES_ALL" ]; then
+      CHANGED_FILES_ALL="$REF_FILES"
+    else
+      CHANGED_FILES_ALL="$CHANGED_FILES_ALL
+$REF_FILES"
+    fi
+  fi
+done
+
+CHANGED_FILES="$CHANGED_FILES_ALL"
+
+# 3. Exempt documentation and text-only pushes
+CODE_CHANGED=$(echo "$CHANGED_FILES" | grep -v -E '\.(md|txt|png|jpg|jpeg|gif|svg)$')
+if [ -n "$CHANGED_FILES" ] && [ -z "$CODE_CHANGED" ]; then
+  echo "Only documentation, text, or asset changes in this push. Exempting pre-push hooks."
+  exit 0
+fi
+
+# Check for specific component changes
+GO_CHANGED=$(echo "$CHANGED_FILES" | grep -E '\.go$')
+FE_CHANGED=$(echo "$CHANGED_FILES" | grep -E '^frontend/')
+
+RUN_GO=0
+RUN_FE=0
+
+if [ -n "$GO_CHANGED" ]; then
+  RUN_GO=1
+fi
+if [ -n "$FE_CHANGED" ]; then
+  RUN_FE=1
+fi
+
+# Run Go backend unit tests if Go files changed
+if [ $RUN_GO -eq 1 ]; then
+  echo "Go files changed. Running backend unit tests..."
+  go test -v ./...
+  if [ $? -ne 0 ]; then
+    echo "ERROR: Go tests failed! Push aborted."
+    exit 1
+  fi
+else
+  echo "No Go files changed. Skipping Go unit tests."
+fi
+
+# Compile frontend if Svelte/typescript/assets changed
+if [ $RUN_FE -eq 1 ]; then
+  echo "Frontend files changed. Compiling frontend..."
+  # Use a subshell so a failed `cd frontend` cannot leak into the outer
+  # hook's working directory and corrupt subsequent commands.
+  (cd frontend && npm run build)
+  RESULT=$?
+  if [ $RESULT -ne 0 ]; then
+    echo "ERROR: Frontend compilation failed! Push aborted."
+    exit 1
+  fi
+else
+  echo "No frontend files changed. Skipping Svelte/Vite compilation check."
+fi
+
+echo "Pre-push checks passed successfully!"
+exit 0

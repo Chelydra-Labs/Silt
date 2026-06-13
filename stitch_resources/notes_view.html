@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&amp;family=Hanken+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        :root {
+            --transition-standard: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        body {
+            background-color: #0c0c0e;
+            color: #dee3e6;
+            -webkit-font-smoothing: antialiased;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .guide-rail {
+            position: absolute;
+            left: -12px;
+            top: 0;
+            bottom: 0;
+            width: 1px;
+            background-color: #1e1e23;
+            transition: all 220ms var(--transition-standard);
+        }
+        .guide-rail.active {
+            width: 1.5px;
+            background: linear-gradient(to bottom, #38bdf8, #06b6d4);
+        }
+        .glass-palette {
+            backdrop-filter: blur(12px) saturate(140%);
+            background: rgba(22, 22, 25, 0.75);
+        }
+        .todo-check {
+            border: 1px solid #27272a;
+            transition: all 120ms var(--transition-standard);
+        }
+        .todo-check:hover {
+            border-color: #38bdf8;
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
+        }
+        .doing-check {
+            border: 1px solid transparent;
+            background: linear-gradient(#121215, #121215) padding-box, 
+                        linear-gradient(to right, #6366f1, #a855f7) border-box;
+        }
+        .doing-indicator {
+            transform: rotate(12deg);
+        }
+        .done-check {
+            background-color: rgba(6, 182, 212, 0.15);
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #1e1e23;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "primary-container": "#06b6d4",
+                      "error": "#ffb4ab",
+                      "background": "#0e1416",
+                      "surface-tint": "#4cd7f6",
+                      "on-primary-container": "#00424f",
+                      "inverse-primary": "#00687a",
+                      "text-muted": "#71717a",
+                      "on-secondary": "#1000a9",
+                      "inverse-on-surface": "#2b3133",
+                      "on-secondary-fixed-variant": "#2f2ebe",
+                      "outline-variant": "#3d494c",
+                      "tertiary": "#ffb873",
+                      "indigo-end": "#a855f7",
+                      "teal-end": "#06b6d4",
+                      "teal-start": "#38bdf8",
+                      "secondary": "#c0c1ff",
+                      "on-surface": "#dee3e6",
+                      "on-primary-fixed-variant": "#004e5c",
+                      "surface-container-lowest": "#090f11",
+                      "surface-bright": "#343a3c",
+                      "outline": "#869397",
+                      "text-primary": "#e4e4e7",
+                      "on-surface-variant": "#bcc9cd",
+                      "on-error-container": "#ffdad6",
+                      "primary-fixed-dim": "#4cd7f6",
+                      "on-primary": "#003640",
+                      "on-background": "#dee3e6",
+                      "border-zinc": "#27272a",
+                      "primary": "#4cd7f6",
+                      "surface-container-highest": "#303638",
+                      "surface-container-high": "#252b2d",
+                      "secondary-container": "#3131c0",
+                      "on-secondary-container": "#b0b2ff",
+                      "surface-variant": "#303638",
+                      "surface-dim": "#0e1416",
+                      "primary-fixed": "#acedff",
+                      "surface-container": "#1b2122",
+                      "panel": "#161619",
+                      "surface": "#121215",
+                      "tertiary-fixed-dim": "#ffb873",
+                      "on-error": "#690005",
+                      "inverse-surface": "#dee3e6",
+                      "on-tertiary-container": "#5b3200",
+                      "border-muted": "#1e1e23",
+                      "on-tertiary": "#4b2800",
+                      "indigo-start": "#6366f1",
+                      "on-tertiary-fixed-variant": "#6a3b00",
+                      "tertiary-container": "#e89337",
+                      "tertiary-fixed": "#ffdcbf",
+                      "error-container": "#93000a",
+                      "on-primary-fixed": "#001f26",
+                      "secondary-fixed": "#e1e0ff",
+                      "on-tertiary-fixed": "#2d1600",
+                      "surface-container-low": "#171d1e",
+                      "on-secondary-fixed": "#07006c",
+                      "secondary-fixed-dim": "#c0c1ff",
+                      "void": "#0c0c0e"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "guide-offset": "-12px",
+                      "baseline-distance": "28px",
+                      "indent-unit": "24px",
+                      "block-padding-y": "4px"
+              },
+              "fontFamily": {
+                      "label-sm-bold": ["JetBrains Mono"],
+                      "headline-md": ["Hanken Grotesk"],
+                      "headline-lg": ["Hanken Grotesk"],
+                      "label-sm": ["JetBrains Mono"],
+                      "body-md": ["JetBrains Mono"]
+              },
+              "fontSize": {
+                      "label-sm-bold": ["12px", {"lineHeight": "12px", "fontWeight": "700"}],
+                      "headline-md": ["18px", {"lineHeight": "25px", "fontWeight": "600"}],
+                      "headline-lg": ["24px", {"lineHeight": "31px", "fontWeight": "700"}],
+                      "label-sm": ["12px", {"lineHeight": "12px", "fontWeight": "400"}],
+                      "body-md": ["14px", {"lineHeight": "22px", "fontWeight": "400"}]
+              }
+            },
+          },
+        }
+    </script>
+</head>
+<body class="font-body-md text-body-md overflow-hidden h-screen flex flex-col">
+<!-- TopAppBar -->
+<header class="bg-void flex justify-between items-center px-indent-unit h-14 w-full z-50 fixed top-0 border-b border-border-muted">
+<div class="flex items-center gap-8">
+<span class="font-headline-md text-headline-md font-bold text-primary">notes#</span>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-primary font-bold border-b-2 border-primary pb-1" href="#">Home</a>
+<a class="text-text-muted font-body-md hover:text-primary transition-colors duration-200" href="#">Recent</a>
+<a class="text-text-muted font-body-md hover:text-primary transition-colors duration-200" href="#">Starred</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative flex items-center">
+<span class="material-symbols-outlined absolute left-3 text-text-muted text-[20px]">search</span>
+<input class="bg-surface-container-low border border-border-muted rounded-lg pl-10 pr-4 py-1.5 w-64 focus:outline-none focus:border-primary text-label-sm font-label-sm" placeholder="Search..." type="text"/>
+</div>
+<button class="text-text-muted hover:text-primary transition-colors">
+<span class="material-symbols-outlined">help</span>
+</button>
+<button class="text-text-muted hover:text-primary transition-colors">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+</header>
+<div class="flex flex-1 pt-14 h-full">
+<!-- SideNavBar -->
+<aside class="bg-surface border-r border-border-muted w-64 flex flex-col py-block-padding-y fixed left-0 top-14 h-[calc(100vh-56px)]">
+<div class="px-4 py-6 flex flex-col gap-1">
+<div class="flex items-center justify-between mb-4">
+<div class="flex flex-col">
+<span class="text-primary font-headline-md text-headline-md">Workspace</span>
+<span class="text-text-muted text-[10px] uppercase tracking-widest font-bold">Technical Notes</span>
+</div>
+<div class="w-8 h-8 rounded-lg bg-surface-container-high border border-border-muted flex items-center justify-center overflow-hidden">
+<img alt="User Profile" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCFZ_T6sRDXwaM-r-XY_HTbuuXenNX5lsepep3Km4BDTL5_x0rTmY2UCbFMEWdmXoikDvMPQwYrtW3TdZUs12Jiu7qU4Aih8bOEGyXgXrWDCqUcQU9ICVZ9_65a5d-R72RqkxhV8H-e7KWBojNtHl9QvvicTkAtAFpA-ZVcPIdpKZgFjdOayGDObK7jcR_Mp7p9JIkh9gvVFjPnctfDKkVJAQgua867sFyY4qm7yD_k5dUpwpyEW0unwwW6Sx1_1tOF_fCZ4wiIE04"/>
+</div>
+</div>
+<button class="w-full bg-primary-container text-on-primary-container font-label-sm-bold text-label-sm-bold py-2.5 rounded mb-6 flex items-center justify-center gap-2 hover:brightness-110 transition-all">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                    New Page
+                </button>
+<div class="space-y-1">
+<div class="flex items-center gap-3 bg-surface-variant text-primary border-l-2 border-teal-start px-4 py-2 cursor-pointer transition-all">
+<span class="material-symbols-outlined text-[20px]">description</span>
+<span class="font-label-sm text-label-sm">Notes</span>
+</div>
+<div class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface cursor-pointer transition-all">
+<span class="material-symbols-outlined text-[20px]">event_repeat</span>
+<span class="font-label-sm text-label-sm">Agenda</span>
+</div>
+<div class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface cursor-pointer transition-all">
+<span class="material-symbols-outlined text-[20px]">label</span>
+<span class="font-label-sm text-label-sm">Tags</span>
+</div>
+<div class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface cursor-pointer transition-all">
+<span class="material-symbols-outlined text-[20px]">calendar_month</span>
+<span class="font-label-sm text-label-sm">Calendar</span>
+</div>
+<div class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface cursor-pointer transition-all">
+<span class="material-symbols-outlined text-[20px]">view_kanban</span>
+<span class="font-label-sm text-label-sm">Kanban</span>
+</div>
+</div>
+</div>
+<div class="mt-auto pb-4 space-y-1">
+<div class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface cursor-pointer transition-all">
+<span class="material-symbols-outlined text-[20px]">archive</span>
+<span class="font-label-sm text-label-sm">Archive</span>
+</div>
+<div class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface cursor-pointer transition-all">
+<span class="material-symbols-outlined text-[20px]">delete</span>
+<span class="font-label-sm text-label-sm">Trash</span>
+</div>
+<div class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface cursor-pointer transition-all">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+<span class="font-label-sm text-label-sm">Settings</span>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="ml-64 flex-1 bg-void custom-scrollbar overflow-y-auto px-12 py-10">
+<!-- Header/Breadcrumbs -->
+<nav class="mb-6 flex items-center gap-2 text-text-muted font-label-sm text-label-sm">
+<span>Notes</span>
+<span class="material-symbols-outlined text-[14px]">chevron_right</span>
+<span class="text-primary-container">Protocol</span>
+</nav>
+<header class="mb-12">
+<h1 class="font-headline-lg text-headline-lg text-on-surface tracking-tight mb-2">Project: Cyber-Forest Protocol</h1>
+<div class="flex items-center gap-3">
+<span class="bg-[#1e1e23]/50 border border-indigo-start/20 text-indigo-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider">technical-spec</span>
+<span class="bg-[#1e1e23]/50 border border-teal-start/20 text-teal-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider">active-draft</span>
+</div>
+</header>
+<!-- Editor Outliner Content -->
+<div class="max-w-4xl space-y-block-padding-y">
+<!-- Root Level 0 -->
+<div class="relative group py-1">
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-text-muted/30 group-hover:text-primary transition-colors cursor-move mt-1">drag_indicator</span>
+<div class="flex-1">
+<p class="text-on-surface leading-relaxed">Executive summary of the holographic neural ecosystem designed for reforestation simulation.</p>
+</div>
+</div>
+</div>
+<!-- Level 1 Nesting -->
+<div class="ml-indent-unit relative py-1">
+<div class="guide-rail active"></div>
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-text-muted/30 mt-1">drag_indicator</span>
+<div class="flex-1">
+<h3 class="font-headline-md text-headline-md text-primary mb-2">Primary Objectives</h3>
+</div>
+</div>
+<!-- Level 2 Nesting -->
+<div class="ml-indent-unit relative py-1">
+<div class="guide-rail"></div>
+<div class="flex items-start gap-3">
+<div class="w-5 h-5 mt-1 rounded todo-check flex-shrink-0 cursor-pointer"></div>
+<div class="flex-1 flex items-center gap-3">
+<span class="text-on-surface">Establish base node connection parameters</span>
+<span class="bg-red-500/10 border border-red-500/30 text-red-400 px-2 py-0.5 rounded text-[11px] font-label-sm">! CRITICAL</span>
+</div>
+</div>
+</div>
+<div class="ml-indent-unit relative py-1">
+<div class="guide-rail active"></div>
+<div class="flex items-start gap-3">
+<div class="w-5 h-5 mt-1 rounded doing-check flex-shrink-0 flex items-center justify-center">
+<div class="w-2 h-2 bg-indigo-end doing-indicator"></div>
+</div>
+<div class="flex-1 flex items-center gap-3">
+<span class="text-on-surface">Calibrate the luminescence sensors for bio-mimicry</span>
+<span class="bg-indigo-500/10 border border-indigo-500/30 text-indigo-start px-2 py-0.5 rounded text-[11px] font-label-sm">[Chris]</span>
+</div>
+</div>
+</div>
+<!-- Level 3 Nesting with Slash Command -->
+<div class="ml-[48px] relative py-1">
+<div class="guide-rail active"></div>
+<div class="flex items-start gap-3 relative">
+<span class="material-symbols-outlined text-text-muted/30 mt-1">drag_indicator</span>
+<div class="flex-1">
+<div class="flex items-center border-l-2 border-primary pl-2 bg-surface-container-low/50 py-1">
+<span class="text-primary mr-1">/</span>
+<span class="animate-pulse w-[1px] h-5 bg-primary"></span>
+</div>
+<!-- Slash Command Palette -->
+<div class="absolute top-8 left-0 w-64 glass-palette border border-outline-variant rounded shadow-2xl z-40 overflow-hidden py-2 scale-100 origin-top-left transition-transform">
+<div class="px-3 py-1.5 text-[10px] text-text-muted font-bold uppercase tracking-widest border-b border-border-muted mb-1">Commands</div>
+<div class="flex items-center gap-3 px-4 py-2 bg-primary-container/10 text-primary cursor-pointer">
+<span class="material-symbols-outlined text-[18px]">check_box</span>
+<span class="font-label-sm text-label-sm flex-1">Task</span>
+<span class="text-[10px] text-text-muted">[]</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-2 hover:bg-surface-container-high text-on-surface-variant cursor-pointer transition-colors">
+<span class="material-symbols-outlined text-[18px]">article</span>
+<span class="font-label-sm text-label-sm flex-1">Page</span>
+<span class="text-[10px] text-text-muted">P</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-2 hover:bg-surface-container-high text-on-surface-variant cursor-pointer transition-colors">
+<span class="material-symbols-outlined text-[18px]">image</span>
+<span class="font-label-sm text-label-sm flex-1">Image</span>
+<span class="text-[10px] text-text-muted">I</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-2 hover:bg-surface-container-high text-on-surface-variant cursor-pointer transition-colors">
+<span class="material-symbols-outlined text-[18px]">table_chart</span>
+<span class="font-label-sm text-label-sm flex-1">Table</span>
+<span class="text-[10px] text-text-muted">T</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Root Level 0 Task -->
+<div class="relative group py-1">
+<div class="flex items-start gap-3">
+<div class="w-5 h-5 mt-1 rounded done-check flex-shrink-0 flex items-center justify-center">
+<span class="material-symbols-outlined text-teal-start text-[16px] font-bold">check</span>
+</div>
+<div class="flex-1">
+<p class="text-text-muted line-through">Finalize structural integrity reports for the floating canopy.</p>
+</div>
+</div>
+</div>
+<!-- Inline Panel / Callout Example -->
+<div class="ml-indent-unit bg-panel border border-border-muted p-6 rounded-lg my-6">
+<div class="flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-tertiary">info</span>
+<span class="font-label-sm-bold text-label-sm-bold text-tertiary uppercase">Technical Note</span>
+</div>
+<p class="text-on-surface-variant text-sm leading-relaxed">
+                        The 12-degree slant in the core architecture must be strictly maintained for optimal refraction during the sunset phase simulation.
+                    </p>
+</div>
+</div>
+<!-- Float Info Panel (Asymmetric touch) -->
+<div class="fixed bottom-10 right-10 flex flex-col gap-4">
+<div class="bg-surface border border-border-muted p-4 rounded-xl shadow-lg w-48">
+<div class="flex justify-between items-center mb-3">
+<span class="text-[10px] text-text-muted uppercase font-bold tracking-widest">Active Peers</span>
+<span class="w-2 h-2 rounded-full bg-teal-start animate-pulse"></span>
+</div>
+<div class="flex -space-x-2">
+<img alt="Peer 1" class="w-6 h-6 rounded-full border border-void" data-alt="A portrait avatar of a woman with a modern, technical aesthetic. Dark background, cyan accents." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBd3wD_xag7dWw1vM63papWsR0sch8aBkqZyJOrsgArQQ3DXvbnhWbxxzN_IGWHeRuOzn-9ZunNiTegsa_b45bDCA99lXQjJjfu4f1ndqPD1gVFnoRMTPiGyyz-GLCQ02XYFTdtu-4J-e5CU7DkiF-DHWTyHPWz9NXj4yGEv0U_6mjU4uo7hqC4NcYUU5LJRT_HO2E5PZHICLHJNpshYagJC5o1gKgh5EE4iJorpEnfF7bB1OOMxlwFk-kGnMXzRnBpxx6SST-pQL4"/>
+<img alt="Peer 2" class="w-6 h-6 rounded-full border border-void" data-alt="A portrait avatar of a man with minimalist digital features. Tech-focused design system style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAu_T2xmB7Do10cTD1UwN5P3Y2k6kaf4zwDFm4jFVvNms8EVQYBjcjKci-eQOXYVpN6i_H_qj82-J3FOwjMtLw18lqxQpntCXZcyTBbq5m6yQN0ZEe8xLA1wIBGqATirj-Zks9pjobeIXpAVS2WwewmfbF_nrVCbod9jx7P9bMD4wmzmpkWlRqp8cx83aKy7B4CptcnOQ177jez6TkqOvoO_P4LKkvkIC3oz5kKtI_u-vQNjlA-w440qilmGzEmlue0Q1vd2dcOIyg"/>
+<div class="w-6 h-6 rounded-full bg-surface-container-highest border border-void flex items-center justify-center text-[8px] font-bold">+4</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+<script>
+        // Micro-interactions for the outliner
+        document.querySelectorAll('.todo-check').forEach(el => {
+            el.addEventListener('click', function() {
+                this.classList.toggle('bg-teal-glow');
+                const p = this.parentElement.querySelector('span');
+                p.classList.toggle('text-text-muted');
+                p.classList.toggle('line-through');
+                if(this.innerHTML === '') {
+                    this.innerHTML = '<span class="material-symbols-outlined text-teal-start text-[16px] font-bold">check</span>';
+                    this.style.backgroundColor = 'rgba(6, 182, 212, 0.15)';
+                } else {
+                    this.innerHTML = '';
+                    this.style.backgroundColor = 'transparent';
+                }
+            });
+        });
+
+        // Simple slash command hide logic
+        document.addEventListener('keydown', (e) => {
+            if(e.key === 'Escape') {
+                const palette = document.querySelector('.glass-palette');
+                if(palette) palette.classList.add('hidden');
+            }
+        });
+    </script>
+</body></html>

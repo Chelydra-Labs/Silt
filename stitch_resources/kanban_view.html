@@ -1,0 +1,407 @@
+<!DOCTYPE html><html class="dark" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>notes# - Kanban Board</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&amp;family=Hanken+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<style>
+        :root {
+            --teal-grad: linear-gradient(90deg, #38bdf8 0%, #06b6d4 100%);
+            --indigo-grad: linear-gradient(90deg, #6366f1 0%, #a855f7 100%);
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .teal-glow-hover:hover {
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.15);
+        }
+        .drag-state {
+            transform: rotate(2deg);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
+            z-index: 50;
+        }
+        .hairline-border {
+            border: 1px solid #1e1e23;
+        }
+        .active-path-guide {
+            position: absolute;
+            left: -12px;
+            width: 1.5px;
+            height: 100%;
+            background: var(--teal-grad);
+        }
+        /* Custom scrollbar for cyber-ink look */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #0c0c0e; }
+        ::-webkit-scrollbar-thumb { background: #1e1e23; border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: #303638; }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-error-container": "#ffdad6",
+                        "on-secondary-fixed": "#07006c",
+                        "outline-variant": "#3d494c",
+                        "surface-container-high": "#252b2d",
+                        "on-primary-fixed": "#001f26",
+                        "panel": "#161619",
+                        "on-secondary-fixed-variant": "#2f2ebe",
+                        "on-tertiary": "#4b2800",
+                        "primary-fixed-dim": "#4cd7f6",
+                        "error-container": "#93000a",
+                        "surface-container-lowest": "#090f11",
+                        "text-primary": "#e4e4e7",
+                        "border-muted": "#1e1e23",
+                        "surface-container": "#1b2122",
+                        "surface-variant": "#303638",
+                        "primary-fixed": "#acedff",
+                        "teal-start": "#38bdf8",
+                        "teal-end": "#06b6d4",
+                        "on-background": "#dee3e6",
+                        "on-error": "#690005",
+                        "on-primary": "#003640",
+                        "on-tertiary-fixed": "#2d1600",
+                        "inverse-on-surface": "#2b3133",
+                        "surface-container-highest": "#303638",
+                        "primary-container": "#06b6d4",
+                        "outline": "#869397",
+                        "error": "#ffb4ab",
+                        "indigo-end": "#a855f7",
+                        "surface-bright": "#343a3c",
+                        "on-secondary-container": "#b0b2ff",
+                        "tertiary": "#ffb873",
+                        "secondary-container": "#3131c0",
+                        "on-primary-fixed-variant": "#004e5c",
+                        "void": "#0c0c0e",
+                        "surface": "#121215",
+                        "primary": "#4cd7f6",
+                        "on-tertiary-fixed-variant": "#6a3b00",
+                        "inverse-surface": "#dee3e6",
+                        "text-muted": "#71717a",
+                        "tertiary-container": "#e89337",
+                        "surface-tint": "#4cd7f6",
+                        "on-secondary": "#1000a9",
+                        "indigo-start": "#6366f1",
+                        "on-surface-variant": "#bcc9cd",
+                        "tertiary-fixed-dim": "#ffb873",
+                        "surface-dim": "#0e1416",
+                        "background": "#0e1416",
+                        "tertiary-fixed": "#ffdcbf",
+                        "inverse-primary": "#00687a",
+                        "surface-container-low": "#171d1e",
+                        "on-tertiary-container": "#5b3200",
+                        "secondary": "#c0c1ff",
+                        "secondary-fixed-dim": "#c0c1ff",
+                        "on-surface": "#dee3e6",
+                        "border-zinc": "#27272a",
+                        "on-primary-container": "#00424f",
+                        "secondary-fixed": "#e1e0ff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "baseline-distance": "28px",
+                        "indent-unit": "24px",
+                        "guide-offset": "-12px",
+                        "block-padding-y": "4px"
+                    },
+                    "fontFamily": {
+                        "body-md": ["JetBrains Mono"],
+                        "headline-md": ["Hanken Grotesk"],
+                        "headline-lg": ["Hanken Grotesk"],
+                        "label-sm": ["JetBrains Mono"],
+                        "label-sm-bold": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "body-md": ["14px", {"lineHeight": "22px", "fontWeight": "400"}],
+                        "headline-md": ["18px", {"lineHeight": "25px", "fontWeight": "600"}],
+                        "headline-lg": ["24px", {"lineHeight": "31px", "fontWeight": "700"}],
+                        "label-sm": ["12px", {"lineHeight": "12px", "fontWeight": "400"}],
+                        "label-sm-bold": ["12px", {"lineHeight": "12px", "fontWeight": "700"}]
+                    }
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-void text-text-primary selection:bg-teal-start/30 overflow-hidden">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full flex justify-between items-center px-indent-unit h-14 w-full z-50 bg-void border-b border-border-muted">
+<div class="flex items-center gap-8">
+<span class="font-headline-md text-headline-md font-bold text-primary">notes#</span>
+<nav class="hidden md:flex gap-6">
+<a class="text-text-muted font-body-md hover:text-primary transition-colors duration-200" href="#">Home</a>
+<a class="text-text-muted font-body-md hover:text-primary transition-colors duration-200" href="#">Recent</a>
+<a class="text-primary font-bold border-b-2 border-primary pb-1" href="#">Starred</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="bg-surface hairline-border px-3 py-1 flex items-center gap-2">
+<span class="material-symbols-outlined text-text-muted text-[18px]">search</span>
+<span class="text-text-muted font-label-sm">Search Notebook...</span>
+</div>
+<div class="flex gap-2">
+<span class="material-symbols-outlined text-text-muted hover:text-primary cursor-pointer transition-colors">settings</span>
+<span class="material-symbols-outlined text-text-muted hover:text-primary cursor-pointer transition-colors">help</span>
+</div>
+</div>
+</header>
+<div class="flex pt-14 h-screen">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-14 h-[calc(100vh-56px)] w-64 bg-surface border-r border-border-muted flex flex-col py-block-padding-y z-40">
+<div class="px-4 py-3 border-b border-border-muted/30 group cursor-pointer hover:bg-surface-container-high transition-all duration-200">
+<div class="flex items-center justify-between">
+<div class="flex flex-col">
+<div class="flex items-center gap-2">
+<h2 class="font-headline-md text-headline-md text-primary">Notebook</h2>
+<span class="material-symbols-outlined text-text-muted text-[18px] group-hover:text-teal-start transition-colors">keyboard_arrow_down</span>
+</div>
+<p class="text-text-muted font-label-sm text-[10px] uppercase tracking-widest">Technical Notes</p>
+</div>
+<div class="opacity-0 group-hover:opacity-100 transition-opacity">
+<span class="material-symbols-outlined text-text-muted text-[16px] hover:text-primary">more_vert</span>
+</div>
+</div>
+</div>
+<div class="hidden absolute left-4 right-4 top-16 backdrop-blur-xl bg-panel/75 border border-primary/20 rounded-lg shadow-2xl z-[70] py-2">
+<div class="px-4 py-2 hover:bg-surface-variant/50 cursor-pointer flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-[18px]">folder_shared</span>
+<span class="font-label-sm text-label-sm text-text-primary">Notebook</span>
+<span class="material-symbols-outlined text-teal-start text-[16px] ml-auto">check</span>
+</div>
+<div class="px-4 py-2 hover:bg-surface-variant/50 cursor-pointer flex items-center gap-3 text-text-muted">
+<span class="material-symbols-outlined text-[18px]">folder</span>
+<span class="font-label-sm text-label-sm">Personal Vault</span>
+</div>
+<div class="px-4 py-2 hover:bg-surface-variant/50 cursor-pointer flex items-center gap-3 text-text-muted">
+<span class="material-symbols-outlined text-[18px]">folder</span>
+<span class="font-label-sm text-label-sm">Archive 2023</span>
+</div>
+
+</div>
+<div class="mt-6 px-4">
+
+</div>
+<nav class="flex-1 flex flex-col gap-0.5"><a class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface transition-all duration-120 font-label-sm" href="#"><span class="material-symbols-outlined text-[18px]">description</span>Notes</a><a class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface transition-all duration-120 font-label-sm" href="#"><span class="material-symbols-outlined text-[18px]">event_note</span>Agenda</a>
+<a class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface transition-all duration-120 font-label-sm" href="#">
+<span class="material-symbols-outlined text-[18px]">label</span>
+                    Tags
+                </a><a class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface transition-all duration-120 font-label-sm" href="#"><span class="material-symbols-outlined text-[18px]">calendar_today</span>Calendar</a>
+<a class="flex items-center gap-3 bg-surface-variant text-primary border-l-2 border-teal-start px-4 py-2 font-label-sm" href="#">
+<span class="material-symbols-outlined text-[18px]">view_kanban</span>
+                    Kanban
+                </a>
+</nav>
+<div class="mt-auto border-t border-border-muted pt-2 pb-4"><a class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface transition-all duration-120 font-label-sm" href="#"><span class="material-symbols-outlined text-[18px]">archive</span>Archive</a>
+<a class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface transition-all duration-120 font-label-sm" href="#">
+<span class="material-symbols-outlined text-[18px]">delete</span>
+                    Trash
+                </a>
+<a class="flex items-center gap-3 text-text-muted px-4 py-2 hover:bg-surface-container-high hover:text-on-surface transition-all duration-120 font-label-sm" href="#">
+<span class="material-symbols-outlined text-[18px]">settings</span>
+                    Settings
+                </a>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="ml-64 flex-1 bg-void overflow-x-auto overflow-y-hidden">
+<div class="h-full w-full p-8 flex flex-col">
+<!-- Board Header -->
+<div class="mb-8 flex items-end justify-between">
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="material-symbols-outlined text-primary text-[20px]">folder_open</span>
+<span class="text-text-muted font-body-md">Projects /</span>
+<span class="text-text-primary font-body-md font-bold">Cyber-Forest Protocol</span>
+</div>
+<h1 class="font-headline-lg text-headline-lg text-text-primary">Engineering Backlog</h1>
+</div>
+<div class="flex gap-4">
+<div class="flex -space-x-2">
+<div class="w-8 h-8 bg-indigo-start rounded-full border-2 border-void flex items-center justify-center text-[10px] font-bold">C</div>
+<div class="w-8 h-8 bg-surface-variant rounded-full border-2 border-void flex items-center justify-center text-[10px] font-bold text-text-muted">+2</div>
+</div>
+<button class="bg-surface hairline-border px-4 py-2 font-label-sm-bold hover:bg-surface-container-high transition-colors">
+                            Filter
+                        </button>
+</div>
+</div>
+<!-- Kanban Board Grid -->
+<div class="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6 min-h-0">
+<!-- Column: To Do -->
+<div class="flex flex-col min-w-[320px]">
+<div class="flex items-center justify-between mb-4 px-1">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-outline"></div>
+<h3 class="font-label-sm-bold text-text-muted uppercase tracking-widest">To Do</h3>
+<span class="bg-surface-variant text-text-muted text-[10px] px-1.5 py-0.5 ml-2">2</span>
+</div>
+<span class="material-symbols-outlined text-text-muted cursor-pointer hover:text-primary">more_horiz</span>
+</div>
+<div class="flex-1 flex flex-col gap-4 overflow-y-auto pr-2 pb-8">
+<!-- Card 1 -->
+<div class="bg-panel hairline-border p-4 transition-all duration-200 cursor-grab hover:bg-surface-container-high hover:-translate-y-1 teal-glow-hover">
+<div class="flex justify-between items-start mb-3">
+<div class="flex gap-2">
+<span class="px-2 py-0.5 bg-error/10 border border-error/20 text-error font-label-sm text-[10px] uppercase">Critical</span>
+</div>
+<span class="material-symbols-outlined text-text-muted text-[16px]">push_pin</span>
+</div>
+<h4 class="font-body-md text-text-primary mb-4">Optimize shader pipeline</h4>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 bg-indigo-start rounded-full flex items-center justify-center text-[8px] font-bold">C</div>
+<span class="text-text-muted font-label-sm">[Chris]</span>
+</div>
+<div class="flex items-center gap-1 text-text-muted">
+<span class="material-symbols-outlined text-[14px]">chat_bubble</span>
+<span class="text-[10px]">12</span>
+</div>
+</div>
+</div>
+<!-- Card 2 (DRAG STATE) -->
+<div class="bg-panel hairline-border p-4 transition-all duration-200 cursor-grabbing drag-state bg-surface-container-high border-teal-start/40">
+<div class="flex justify-between items-start mb-3">
+<div class="flex gap-2">
+<span class="px-2 py-0.5 bg-primary/10 border border-primary/20 text-primary font-label-sm text-[10px] uppercase">Low</span>
+</div>
+</div>
+<h4 class="font-body-md text-text-primary mb-4">Review kernel parameters</h4>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 bg-indigo-start rounded-full flex items-center justify-center text-[8px] font-bold">C</div>
+<span class="text-text-muted font-label-sm">[Chris]</span>
+</div>
+<div class="flex items-center gap-1 text-text-muted">
+<span class="material-symbols-outlined text-[14px]">link</span>
+<span class="text-[10px]">3</span>
+</div>
+</div>
+</div>
+<button class="w-full border-2 border-dashed border-border-muted py-3 flex items-center justify-center gap-2 text-text-muted hover:border-primary/40 hover:text-primary transition-all group">
+<span class="material-symbols-outlined text-[18px]">add</span>
+<span class="font-label-sm">Add Card</span>
+</button>
+</div>
+</div>
+<!-- Column: In Progress -->
+<div class="flex flex-col min-w-[320px]">
+<div class="flex items-center justify-between mb-4 px-1">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-indigo-start"></div>
+<h3 class="font-label-sm-bold text-text-muted uppercase tracking-widest">In Progress</h3>
+<span class="bg-surface-variant text-text-muted text-[10px] px-1.5 py-0.5 ml-2">1</span>
+</div>
+<span class="material-symbols-outlined text-text-muted cursor-pointer hover:text-primary">more_horiz</span>
+</div>
+<div class="flex-1 flex flex-col gap-4 overflow-y-auto pr-2 pb-8">
+<!-- Card 3 -->
+<div class="bg-panel hairline-border p-4 transition-all duration-200 cursor-grab hover:bg-surface-container-high hover:-translate-y-1 teal-glow-hover border-l-2 border-indigo-start">
+<div class="flex justify-between items-start mb-3">
+<div class="flex gap-2">
+<span class="px-2 py-0.5 bg-primary/10 border border-primary/20 text-primary font-label-sm text-[10px] uppercase">Normal</span>
+</div>
+<div class="flex items-center gap-1 text-indigo-start">
+<span class="material-symbols-outlined text-[16px] animate-pulse">radio_button_checked</span>
+</div>
+</div>
+<h4 class="font-body-md text-text-primary mb-2">Refine UI kernel</h4>
+<div class="w-full h-1 bg-void hairline-border mb-4 overflow-hidden">
+<div class="h-full bg-indigo-start w-3/4"></div>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 bg-indigo-start rounded-full flex items-center justify-center text-[8px] font-bold">C</div>
+<span class="text-text-muted font-label-sm">[Chris]</span>
+</div>
+<div class="text-[10px] text-text-muted">75% Complete</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Column: Done -->
+<div class="flex flex-col min-w-[320px]">
+<div class="flex items-center justify-between mb-4 px-1">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-teal-start"></div>
+<h3 class="font-label-sm-bold text-text-muted uppercase tracking-widest">Done</h3>
+<span class="bg-surface-variant text-text-muted text-[10px] px-1.5 py-0.5 ml-2">1</span>
+</div>
+<span class="material-symbols-outlined text-text-muted cursor-pointer hover:text-primary">more_horiz</span>
+</div>
+<div class="flex-1 flex flex-col gap-4 overflow-y-auto pr-2 pb-8">
+<!-- Card 4 -->
+<div class="bg-teal-start/5 hairline-border p-4 transition-all duration-200 cursor-grab hover:bg-teal-start/10 hover:-translate-y-1 border-teal-start/20 opacity-80">
+<div class="flex justify-between items-start mb-3">
+<div class="flex gap-2">
+<span class="px-2 py-0.5 bg-surface border border-border-muted text-text-muted font-label-sm text-[10px] uppercase line-through">Routine</span>
+</div>
+<span class="material-symbols-outlined text-teal-start text-[18px]">check_circle</span>
+</div>
+<h4 class="font-body-md text-text-muted line-through mb-4">Initial system handshake</h4>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 bg-indigo-start/40 rounded-full flex items-center justify-center text-[8px] font-bold">C</div>
+<span class="text-text-muted font-label-sm">[Chris]</span>
+</div>
+<div class="text-[10px] text-teal-start/60">Oct 24</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+<!-- Right-side Contextual Panel (Invisible initially, ready for interaction) -->
+<div class="fixed right-0 top-14 h-[calc(100vh-56px)] w-80 bg-panel/80 backdrop-blur-xl border-l border-border-muted transform transition-transform duration-300 z-30" id="detail-panel" style="transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);">
+<div class="p-6"><button class="absolute -left-10 top-6 w-10 h-10 bg-panel hairline-border flex items-center justify-center text-text-muted hover:text-primary transition-all duration-200 teal-glow-hover group" onclick="document.getElementById('detail-panel').classList.add('translate-x-full')"><span class="material-symbols-outlined transition-transform group-hover:translate-x-0.5">chevron_right</span></button><div class="flex justify-between items-start mb-6"><div class="flex flex-col gap-2"><span class="px-2 py-0.5 bg-primary/10 border border-primary/20 text-primary font-label-sm text-[10px] uppercase w-fit">Normal</span><h2 class="font-headline-md text-headline-md text-text-primary">Refine UI kernel</h2></div><button class="text-text-muted hover:text-primary transition-colors" onclick="document.getElementById('detail-panel').classList.add('translate-x-full')"><span class="material-symbols-outlined">close</span></button></div><div class="space-y-6"><section><h3 class="text-[10px] text-text-muted uppercase tracking-widest mb-3">Metadata</h3><div class="grid grid-cols-1 gap-4"><div class="flex items-center justify-between"><span class="text-text-muted font-label-sm">Status</span><div class="flex items-center gap-2 text-indigo-start bg-indigo-start/10 px-2 py-1 hairline-border cursor-pointer"><span class="material-symbols-outlined text-[16px]">radio_button_checked</span><span class="font-label-sm">In Progress</span></div></div><div class="flex items-center justify-between"><span class="text-text-muted font-label-sm">Assignee</span><div class="flex items-center gap-2 bg-indigo-start/10 border border-indigo-start/20 px-2 py-1 rounded-full"><div class="w-4 h-4 bg-indigo-start rounded-full flex items-center justify-center text-[6px] font-bold text-white">C</div><span class="text-indigo-start font-label-sm text-[12px]">[Chris]</span></div></div><div class="space-y-2"><div class="flex justify-between text-[10px] text-text-muted"><span class="">Progress</span><span class="">75%</span></div><div class="w-full h-1.5 bg-void hairline-border overflow-hidden"><div class="h-full bg-indigo-start" style="width: 75%"></div></div></div></div></section><section><h3 class="text-[10px] text-text-muted uppercase tracking-widest mb-3">Description</h3><div class="bg-void hairline-border p-3 min-h-[120px]"><p class="text-text-muted font-body-md text-[13px]">Optimization of the core UI rendering kernel. Focus on reducing draw calls and implementing the Refined Cyber-Ink design tokens across all dynamic components.</p></div></section><section><h3 class="text-[10px] text-text-muted uppercase tracking-widest mb-3">Activity Log</h3><div class="space-y-3"><div class="flex gap-3 items-start"><div class="w-1.5 h-1.5 rounded-full bg-indigo-start mt-1.5"></div><div><p class="text-text-primary font-label-sm text-[12px]">Chris changed status to <span class="text-indigo-start">In Progress</span></p><p class="text-[10px] text-text-muted">2 hours ago</p></div></div><div class="flex gap-3 items-start"><div class="w-1.5 h-1.5 rounded-full bg-teal-start mt-1.5"></div><div><p class="text-text-primary font-label-sm text-[12px]">Chris attached <span class="text-teal-start underline cursor-pointer">documentation.md</span></p><p class="text-[10px] text-text-muted">Yesterday</p></div></div></div></section></div></div>
+</div>
+<!-- Atmospheric Shader Background (Subtle) -->
+<div class="fixed inset-0 pointer-events-none opacity-[0.03] z-[-1]">
+</div>
+<script>
+        // Simple micro-interaction for cards
+        document.querySelectorAll('.bg-panel').forEach(card => {
+            card.addEventListener('click', () => {
+                const panel = document.getElementById('detail-panel');
+                panel.classList.toggle('translate-x-full');
+            });
+        });
+
+        // Background atmosphere simulation for the 'void' canvas
+        const createParticle = () => {
+            const particle = document.createElement('div');
+            particle.className = 'fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]';
+            const size = Math.random() * 2 + 1;
+            particle.style.width = `${size}px`;
+            particle.style.height = `${size}px`;
+            particle.style.left = `${Math.random() * 100}vw`;
+            particle.style.top = `${Math.random() * 100}vh`;
+            particle.style.opacity = '0';
+            document.body.appendChild(particle);
+
+            const animation = particle.animate([
+                { opacity: 0, transform: 'translateY(0px)' },
+                { opacity: 0.5, transform: 'translateY(-20px)' },
+                { opacity: 0, transform: 'translateY(-40px)' }
+            ], {
+                duration: 3000 + Math.random() * 4000,
+                iterations: Infinity
+            });
+        };
+
+        for(let i=0; i<15; i++) createParticle();
+    </script><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.48922px; height: 1.48922px; left: 17.4304vw; top: 1.44738vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.11095px; height: 1.11095px; left: 34.5078vw; top: 14.788vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.91539px; height: 1.91539px; left: 78.4893vw; top: 74.1681vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.15246px; height: 1.15246px; left: 34.5646vw; top: 92.9673vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.96764px; height: 2.96764px; left: 97.8661vw; top: 97.7791vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.22395px; height: 2.22395px; left: 9.56766vw; top: 89.1052vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.75136px; height: 2.75136px; left: 44.2374vw; top: 60.6474vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.79128px; height: 2.79128px; left: 55.5553vw; top: 21.7377vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.36795px; height: 1.36795px; left: 44.0857vw; top: 42.6343vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.26884px; height: 1.26884px; left: 74.9747vw; top: 10.5146vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.1976px; height: 2.1976px; left: 17.8519vw; top: 26.6964vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.69494px; height: 1.69494px; left: 26.7137vw; top: 52.3411vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.94196px; height: 1.94196px; left: 45.9514vw; top: 7.52547vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.45856px; height: 2.45856px; left: 79.5293vw; top: 62.4769vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.70537px; height: 1.70537px; left: 56.041vw; top: 69.4626vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.40099px; height: 2.40099px; left: 53.2653vw; top: 74.1145vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.60234px; height: 2.60234px; left: 56.897vw; top: 22.552vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.29872px; height: 2.29872px; left: 60.1261vw; top: 7.313vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.6408px; height: 1.6408px; left: 99.1354vw; top: 81.726vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.73642px; height: 1.73642px; left: 13.2251vw; top: 33.5972vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.13778px; height: 1.13778px; left: 28.3522vw; top: 84.088vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.94361px; height: 2.94361px; left: 37.0288vw; top: 51.7762vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 2.39759px; height: 2.39759px; left: 23.4857vw; top: 99.2652vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.19108px; height: 1.19108px; left: 84.3481vw; top: 73.931vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.8231px; height: 1.8231px; left: 42.4769vw; top: 79.6179vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.90058px; height: 1.90058px; left: 22.5377vw; top: 17.765vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.06195px; height: 1.06195px; left: 92.0007vw; top: 44.4064vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.95703px; height: 1.95703px; left: 29.4394vw; top: 74.3361vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.74524px; height: 1.74524px; left: 19.8662vw; top: 30.6155vh; opacity: 0;"></div><div class="fixed bg-teal-start/20 rounded-full pointer-events-none z-[-1]" style="width: 1.73326px; height: 1.73326px; left: 44.7308vw; top: 36.0466vh; opacity: 0;"></div>
+
+
+</body></html>
