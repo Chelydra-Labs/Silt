@@ -28,6 +28,9 @@ type DirectoryWatcher struct {
 
 	failedMu   sync.Mutex
 	failedPaths []string
+
+	focusMu    sync.RWMutex
+	focusLocks map[string]bool
 }
 
 func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *WriteTracker, coordinator *core.ExecutionCoordinator, spacesPerTab int) (*DirectoryWatcher, error) {
@@ -44,7 +47,34 @@ func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *Writ
 		coordinator:  coordinator,
 		spacesPerTab: spacesPerTab,
 		closeChan:    make(chan struct{}),
+		focusLocks:   make(map[string]bool),
 	}, nil
+}
+
+func (dw *DirectoryWatcher) LockFocus(path string) {
+	dw.focusMu.Lock()
+	defer dw.focusMu.Unlock()
+	if dw.focusLocks == nil {
+		dw.focusLocks = make(map[string]bool)
+	}
+	dw.focusLocks[filepath.Clean(path)] = true
+}
+
+func (dw *DirectoryWatcher) UnlockFocus(path string) {
+	dw.focusMu.Lock()
+	defer dw.focusMu.Unlock()
+	if dw.focusLocks != nil {
+		delete(dw.focusLocks, filepath.Clean(path))
+	}
+}
+
+func (dw *DirectoryWatcher) IsFocusLocked(path string) bool {
+	dw.focusMu.RLock()
+	defer dw.focusMu.RUnlock()
+	if dw.focusLocks == nil {
+		return false
+	}
+	return dw.focusLocks[filepath.Clean(path)]
 }
 
 func (dw *DirectoryWatcher) Close() error {
@@ -155,6 +185,11 @@ func (dw *DirectoryWatcher) listenLoop() {
 
 			// Only process markdown files
 			if strings.ToLower(filepath.Ext(path)) != ".md" {
+				continue
+			}
+
+			// Ignore events if the file is focus-locked by Svelte editor
+			if dw.IsFocusLocked(path) {
 				continue
 			}
 

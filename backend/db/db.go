@@ -686,3 +686,137 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 
 	return results, nil
 }
+
+// ListNotebooksAndSections returns a map of all unique notebooks to their sections.
+func (dm *DatabaseManager) ListNotebooksAndSections() (map[string][]string, error) {
+	rows, err := dm.db.Query("SELECT DISTINCT notebook, section FROM blocks ORDER BY notebook, section")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query notebooks and sections: %w", err)
+	}
+	defer rows.Close()
+
+	res := make(map[string][]string)
+	seen := make(map[string]map[string]bool)
+
+	for rows.Next() {
+		var nb, sec string
+		if err := rows.Scan(&nb, &sec); err != nil {
+			return nil, err
+		}
+		if seen[nb] == nil {
+			seen[nb] = make(map[string]bool)
+		}
+		if !seen[nb][sec] {
+			seen[nb][sec] = true
+			res[nb] = append(res[nb], sec)
+		}
+	}
+
+	return res, nil
+}
+
+// SearchBlocks searches for blocks matching the query. It splits the query into
+// terms and matches each term against clean_content, notebook, or section.
+func (dm *DatabaseManager) SearchBlocks(query string) ([]parser.TaskResult, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []parser.TaskResult{}, nil
+	}
+
+	words := strings.Fields(query)
+	var sqlParts []string
+	var args []interface{}
+
+	for _, word := range words {
+		sqlParts = append(sqlParts, "(b.clean_content LIKE ? OR b.notebook LIKE ? OR b.section LIKE ?)")
+		term := "%" + word + "%"
+		args = append(args, term, term, term)
+	}
+
+	whereClause := strings.Join(sqlParts, " AND ")
+
+	baseQuery := `
+		SELECT b.id, b.parent_id, b.notebook, b.section, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
+		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
+		FROM blocks b
+		LEFT JOIN tasks t ON b.id = t.block_id
+		WHERE ` + whereClause + `
+		ORDER BY b.file_date DESC, b.line_number ASC
+		LIMIT 100
+	`
+
+	rows, err := dm.db.Query(baseQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search blocks: %w", err)
+	}
+	defer rows.Close()
+
+	var results []parser.TaskResult
+	var blockIDs []interface{}
+
+	for rows.Next() {
+		var r parser.TaskResult
+		var parentID sql.NullString
+		var status, owner, start, due string
+		var priority int
+
+		err := rows.Scan(
+			&r.ID, &parentID, &r.Notebook, &r.Section, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
+			&status, &owner, &start, &due, &priority,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if parentID.Valid {
+			r.ParentID = parentID.String
+		}
+		r.Status = status
+		r.Owner = owner
+		r.StartDate = start
+		r.DueDate = due
+		r.Priority = priority
+
+		results = append(results, r)
+		blockIDs = append(blockIDs, r.ID)
+	}
+
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	if len(results) == 0 {
+		return results, nil
+	}
+
+	tagPlaceholders := make([]string, len(blockIDs))
+	for i := range tagPlaceholders {
+		tagPlaceholders[i] = "?"
+	}
+	tagQuery := "SELECT block_id, raw_path FROM tags WHERE block_id IN (" + strings.Join(tagPlaceholders, ",") + ") ORDER BY block_id, raw_path"
+	tagRows, err := dm.db.Query(tagQuery, blockIDs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query search tags: %w", err)
+	}
+	defer tagRows.Close()
+
+	tagIndex := make(map[string][]string, len(results))
+	for tagRows.Next() {
+		var blockID, tag string
+		if err := tagRows.Scan(&blockID, &tag); err != nil {
+			return nil, err
+		}
+		tagIndex[blockID] = append(tagIndex[blockID], tag)
+	}
+	if err := tagRows.Close(); err != nil {
+		return nil, err
+	}
+
+	for i := range results {
+		if tags, ok := tagIndex[results[i].ID]; ok {
+			results[i].Tags = tags
+		}
+	}
+
+	return results, nil
+}
+

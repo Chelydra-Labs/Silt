@@ -276,3 +276,95 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 		t.Errorf("expected tag hydration on result, got empty Tags")
 	}
 }
+
+func TestCreateNewSection_Scaffolding(t *testing.T) {
+	app := newTestApp(t)
+
+	dateStr, err := app.CreateNewSection("Work", "Meeting Notes", "2026-06-13")
+	if err != nil {
+		t.Fatalf("CreateNewSection failed: %v", err)
+	}
+	if dateStr != "2026-06-13" {
+		t.Errorf("expected date 2026-06-13, got %q", dateStr)
+	}
+
+	filePath := filepath.Join(app.vaultPath, "Work", "Meeting Notes", "2026-06-13.md")
+	contentBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("failed to read scaffolded file: %v", err)
+	}
+	content := string(contentBytes)
+	if !strings.Contains(content, "notebook: Work") || !strings.Contains(content, "section: Meeting Notes") {
+		t.Errorf("scaffolded file is missing frontmatter metadata, got:\n%s", content)
+	}
+}
+
+func TestSearchBlocks_FuzzySearch(t *testing.T) {
+	app := newTestApp(t)
+
+	blocks := []parser.ParsedBlock{
+		{
+			ID:         "b1",
+			Type:       parser.BlockNote,
+			RawText:    "Establish base node connection parameters <!-- id: b1 -->",
+			CleanText:  "Establish base node connection parameters",
+			LineNumber: 1,
+		},
+		{
+			ID:         "b2",
+			Type:       parser.BlockHeader,
+			RawText:    "# Cyber-Forest objectives <!-- id: b2 -->",
+			CleanText:  "Cyber-Forest objectives",
+			LineNumber: 2,
+		},
+	}
+	if err := app.db.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	res, err := app.SearchBlocks("base connection")
+	if err != nil {
+		t.Fatalf("SearchBlocks failed: %v", err)
+	}
+	if len(res) != 1 || res[0].ID != "b1" {
+		t.Errorf("expected exactly 1 match (b1) for query, got %d results", len(res))
+	}
+
+	res, err = app.SearchBlocks("Cyber objectives")
+	if err != nil {
+		t.Fatalf("SearchBlocks failed: %v", err)
+	}
+	if len(res) != 1 || res[0].ID != "b2" {
+		t.Errorf("expected exactly 1 match (b2) for query, got %d results", len(res))
+	}
+}
+
+func TestFocusLocking_AcquireAndRelease(t *testing.T) {
+	app := newTestApp(t)
+
+	watcher, err := monitor.NewDirectoryWatcher(app.vaultPath, app.db, app.tracker, app.coordinator, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher failed: %v", err)
+	}
+	app.watcher = watcher
+
+	notebook := "Work"
+	section := "Journal"
+	fileDate := "2026-06-13"
+	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+
+	if err := app.AcquireFocusLock(notebook, section, fileDate); err != nil {
+		t.Fatalf("AcquireFocusLock failed: %v", err)
+	}
+	if !app.watcher.IsFocusLocked(filePath) {
+		t.Errorf("expected file to be focus locked")
+	}
+
+	if err := app.ReleaseFocusLock(notebook, section, fileDate); err != nil {
+		t.Fatalf("ReleaseFocusLock failed: %v", err)
+	}
+	if app.watcher.IsFocusLocked(filePath) {
+		t.Errorf("expected file to be unlocked")
+	}
+}
+
