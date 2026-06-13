@@ -6,11 +6,38 @@ import (
 )
 
 const (
-	writeTrackerCooldown    = 300 * time.Millisecond
-	writeTrackerSweepMargin = 2 // evict entries older than cooldown * this factor
+	defaultCooldown    = 300 * time.Millisecond
+	defaultSweepMargin = 2 // evict entries older than cooldown * margin
 )
 
+// Option configures a WriteTracker.
+type Option func(*WriteTracker)
+
+// WithCooldown overrides how long RegisterWrite → IsSelfGenerated
+// fingerprints are considered self-generated (default 300ms).
+func WithCooldown(d time.Duration) Option {
+	return func(wt *WriteTracker) {
+		if d > 0 {
+			wt.cooldown = d
+		}
+	}
+}
+
+// WithSweepMargin sets the multiplier used for background pruning.
+// Entries older than cooldown * margin are evicted (default 2, so
+// entries older than 600ms get pruned).
+func WithSweepMargin(m int) Option {
+	return func(wt *WriteTracker) {
+		if m > 0 {
+			wt.sweepMargin = m
+		}
+	}
+}
+
 type WriteTracker struct {
+	cooldown    time.Duration
+	sweepMargin int
+
 	mu           sync.Mutex
 	activeWrites map[string]time.Time
 
@@ -18,10 +45,15 @@ type WriteTracker struct {
 	stopCh   chan struct{}
 }
 
-func NewWriteTracker() *WriteTracker {
+func NewWriteTracker(opts ...Option) *WriteTracker {
 	wt := &WriteTracker{
+		cooldown:     defaultCooldown,
+		sweepMargin:  defaultSweepMargin,
 		activeWrites: make(map[string]time.Time),
 		stopCh:       make(chan struct{}),
+	}
+	for _, o := range opts {
+		o(wt)
 	}
 	go wt.runSweeper()
 	return wt
@@ -40,22 +72,18 @@ func (wt *WriteTracker) IsSelfGenerated(filepath string) bool {
 	if !exists {
 		return false
 	}
-	// If write event fired within 300ms of our atomic write, ignore it
-	if time.Since(t) < writeTrackerCooldown {
+	if time.Since(t) < wt.cooldown {
 		delete(wt.activeWrites, filepath)
 		return true
 	}
-	// Expired entry: drop it so the map doesn't grow unbounded for files
-	// that are written but never re-checked within the cooldown window.
 	delete(wt.activeWrites, filepath)
 	return false
 }
 
-// PruneExpired removes entries older than writeTrackerCooldown *
-// writeTrackerSweepMargin. It is safe to call concurrently with
-// RegisterWrite / IsSelfGenerated.
+// PruneExpired removes entries older than cooldown * sweepMargin. Safe
+// to call concurrently with RegisterWrite / IsSelfGenerated.
 func (wt *WriteTracker) PruneExpired() int {
-	cutoff := time.Now().Add(-writeTrackerCooldown * writeTrackerSweepMargin)
+	cutoff := time.Now().Add(-wt.cooldown * time.Duration(wt.sweepMargin))
 	wt.mu.Lock()
 	defer wt.mu.Unlock()
 	pruned := 0
@@ -74,7 +102,8 @@ func (wt *WriteTracker) Stop() {
 }
 
 func (wt *WriteTracker) runSweeper() {
-	ticker := time.NewTicker(writeTrackerCooldown * writeTrackerSweepMargin)
+	period := wt.cooldown * time.Duration(wt.sweepMargin)
+	ticker := time.NewTicker(period)
 	defer ticker.Stop()
 	for {
 		select {

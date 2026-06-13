@@ -1,6 +1,8 @@
 package db
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"notes-sharp/backend/parser"
@@ -549,3 +551,39 @@ func contains(slice []string, want string) bool {
 	}
 	return false
 }
+
+func TestIndexScanResults_ReturnsSkippedFiles(t *testing.T) {
+	// Files that the scanner reports as errored must appear in the skip
+	// slice returned alongside the count. The caller uses this to notify
+	// the user which notes are not indexed.
+	dm := newTestDB(t)
+
+	results := []parser.ScanResult{
+		{
+			Path:     "ok.md",
+			Notebook: "Work",
+			Section:  "Journal",
+			Date:     "2026-06-13",
+			Blocks:   []parser.ParsedBlock{sampleNoteBlock("11111111-1111-1111-1111-111111111111", 1)},
+		},
+		{
+			Path: "bad.md",
+			Err:  errors.New("simulated parse failure"),
+		},
+	}
+
+	count, skipped, err := dm.IndexScanResults(results)
+	if err != nil {
+		t.Fatalf("IndexScanResults: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 indexed file, got %d", count)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 skipped file, got %d", len(skipped))
+	}
+	if !strings.Contains(skipped[0], "bad.md") || !strings.Contains(skipped[0], "simulated parse failure") {
+		t.Errorf("expected skip message to mention bad.md and the error, got: %s", skipped[0])
+	}
+}
+

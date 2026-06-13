@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -24,6 +25,11 @@ func NewDatabaseManager() (*DatabaseManager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite: %w", err)
 	}
+
+	// Cap the connection pool at one. SQLite serializes writers internally;
+	// allowing multiple Go-level connections would only obscure the
+	// locking story without giving us concurrency we could actually use.
+	sqlDB.SetMaxOpenConns(1)
 
 	dm := &DatabaseManager{db: sqlDB}
 	if err := dm.initSchema(); err != nil {
@@ -161,7 +167,16 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, fileDa
 }
 
 // IndexFileBlocks updates the index with a set of blocks in a single transaction.
-func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, blocks []parser.ParsedBlock, fileTags []string) error {
+//
+// fileWarnings is an optional slice of non-fatal diagnostics from the parser
+// (e.g. malformed YAML frontmatter). They are logged at warn level so a
+// maintainer can grep the output without changing the call signature or
+// the public API.
+func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, blocks []parser.ParsedBlock, fileTags []string, fileWarnings ...string) error {
+	for _, w := range fileWarnings {
+		log.Printf("db.IndexFileBlocks(%s/%s/%s): %s", notebook, section, fileDate, w)
+	}
+
 	tx, err := dm.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -280,7 +295,11 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 			}
 			_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
 			if err != nil {
-				// PRIMARY KEY is (block_id, raw_path) so duplicates are silently dropped.
+				// PRIMARY KEY is (block_id, raw_path) so most collisions
+				// are just duplicate tags, but we log to stderr so a
+				// real DB error (constraint violations from a schema
+				// change, for example) is still visible during dev.
+				log.Printf("db.IndexFileBlocks: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
 				continue
 			}
 		}
@@ -408,10 +427,11 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if len(parts) > 2 {
 					level2 = parts[2]
 				}
-				_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
-				if err != nil {
-					continue
-				}
+			_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
+			if err != nil {
+				log.Printf("db.IndexScanResults: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
+				continue
+			}
 			}
 		}
 

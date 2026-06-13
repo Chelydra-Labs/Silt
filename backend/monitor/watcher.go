@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"notes-sharp/backend/core"
@@ -24,6 +25,9 @@ type DirectoryWatcher struct {
 	coordinator  *core.ExecutionCoordinator
 	spacesPerTab int
 	closeChan    chan struct{}
+
+	failedMu   sync.Mutex
+	failedPaths []string
 }
 
 func NewDirectoryWatcher(vaultPath string, dm *db.DatabaseManager, tracker *WriteTracker, coordinator *core.ExecutionCoordinator, spacesPerTab int) (*DirectoryWatcher, error) {
@@ -60,11 +64,24 @@ func (dw *DirectoryWatcher) AddRecursive(path string) error {
 				return filepath.SkipDir
 			}
 			if err := dw.watcher.Add(p); err != nil {
+				dw.failedMu.Lock()
+				dw.failedPaths = append(dw.failedPaths, fmt.Sprintf("%s: %v", p, err))
+				dw.failedMu.Unlock()
 				return fmt.Errorf("failed to add path to watcher %s: %w", p, err)
 			}
 		}
 		return nil
 	})
+}
+
+// FailedPaths returns a copy of the list of paths that the watcher could
+// not subscribe to (fsnotify limits, permissions, removed during
+// traversal, etc.). A non-empty slice means these subtrees are not being
+// monitored.
+func (dw *DirectoryWatcher) FailedPaths() []string {
+	dw.failedMu.Lock()
+	defer dw.failedMu.Unlock()
+	return append([]string(nil), dw.failedPaths...)
 }
 
 func (dw *DirectoryWatcher) Start() error {
@@ -190,7 +207,7 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			_ = parser.WriteFileAtomic(path, []byte(newContent))
 		}
 
-		_ = dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags)
+		_ = dw.dm.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
 	})
 }
 

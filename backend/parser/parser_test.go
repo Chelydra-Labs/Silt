@@ -1,8 +1,12 @@
 package parser
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnsureBlockID(t *testing.T) {
@@ -216,5 +220,61 @@ func TestParseFileContent_HandlesMultipleFencedCodeBlocks(t *testing.T) {
 	}
 	if !strings.Contains(newContent, "end <!-- id: cccc3333-cccc-cccc-cccc-cccccccccccc -->") {
 		t.Errorf("Post-code-block content lost its ID")
+	}
+}
+
+func TestParseFileContent_SurfacesYAMLErrors(t *testing.T) {
+	// Malformed frontmatter must produce a Warning on FileMetadata so the
+	// caller can tell the user their YAML is broken. Falling through
+	// silently to path-derived defaults would lose user-authored metadata.
+	doc := `---
+notebook: Engineering:
+  - broken yaml
+  - indent level inconsistent
+---
+# Header <!-- id: 11111111-1111-1111-1111-111111111111 -->`
+
+	_, meta, _, _, err := ParseFileContent(doc, "DefaultNB", "DefaultSec", "2026-06-01", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if len(meta.Warnings) != 1 {
+		t.Errorf("expected 1 warning for broken YAML frontmatter, got %d: %v", len(meta.Warnings), meta.Warnings)
+	}
+	if meta.Warnings[0] == "" {
+		t.Errorf("warning should carry the parse error detail")
+	}
+	// Also confirm that the defaults are used (the buggy YAML didn't
+	// silently promote a partial parse).
+	if meta.Notebook != "DefaultNB" {
+		t.Errorf("expected default notebook, got %q", meta.Notebook)
+	}
+}
+
+func BenchmarkScanWorkspace_1000Files(b *testing.B) {
+	for range b.N {
+		dir := b.TempDir()
+		writeBenchVault(b, dir, 1000)
+		_, err := ScanWorkspace(dir, 4)
+		if err != nil {
+			b.Fatalf("ScanWorkspace: %v", err)
+		}
+	}
+}
+
+// Helper shared by the benchmark — writes N small daily-note files under
+// Work/Journal/ so the scanner has realistic structure to walk.
+func writeBenchVault(tb interface{ Fatal(args ...any) }, root string, n int) {
+	for i := range n {
+		dateStr := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
+		dir := filepath.Join(root, "Work", "Journal")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			tb.Fatal(err)
+		}
+		day := fmt.Sprintf("---\nnotebook: Work\nsection: Journal\ndate: %s\ntags: [bench]\n---\n# Day %d <!-- id: %08x-1111-1111-1111-111111111111 -->\n\n- [ ] TODO TASK [Bench]#1 Item for day %d <!-- id: %08x-2222-2222-2222-222222222222 -->\n- A note for day %d <!-- id: %08x-3333-3333-3333-333333333333 -->\n", dateStr, i+1, i, i+1, i, i+1, i)
+		path := filepath.Join(dir, dateStr+".md")
+		if err := os.WriteFile(path, []byte(day), 0o644); err != nil {
+			tb.Fatal(err)
+		}
 	}
 }

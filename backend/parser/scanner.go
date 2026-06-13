@@ -21,6 +21,7 @@ type ScanResult struct {
 	Date     string
 	Blocks   []ParsedBlock
 	Tags     []string
+	Warnings []string
 	Err      error
 }
 
@@ -147,6 +148,7 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 		res.Err = err
 		return res
 	}
+	res.Warnings = meta.Warnings
 
 	// 3. Write back atomically if modified (i.e. UUIDs injected)
 	if modified {

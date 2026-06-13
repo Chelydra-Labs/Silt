@@ -247,6 +247,11 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDa
 				if len(parsedMeta.Tags) > 0 {
 					meta.Tags = parsedMeta.Tags
 				}
+			} else {
+				// Surface the parse failure so the caller can warn the
+				// user. Falling through with path-derived defaults would
+				// silently lose the user's authored metadata.
+				meta.Warnings = append(meta.Warnings, "yaml frontmatter parse error: "+err.Error())
 			}
 		}
 	}

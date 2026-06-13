@@ -28,6 +28,12 @@ type FileMetadata struct {
 	Section  string   `yaml:"section"`
 	Date     string   `yaml:"date"` // YYYY-MM-DD
 	Tags     []string `yaml:"tags"`
+
+	// Warnings carries non-fatal parse diagnostics (for example, a
+	// malformed YAML frontmatter that was treated as "no metadata").
+	// Callers should surface these so users can fix the source note
+	// rather than silently inheriting path-derived defaults.
+	Warnings []string `yaml:"-"`
 }
 
 type TaskQueryFilter struct {

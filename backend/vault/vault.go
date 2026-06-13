@@ -61,6 +61,10 @@ func SaveSettings(settings *AppSettings) error {
 }
 
 func ScaffoldVault(vaultPath string) error {
+	// ScaffoldVault is intentionally idempotent: every file/folder create
+	// is guarded by an os.Stat existence check. Re-running it on the
+	// same vault path is safe and will leave custom user content
+	// (e.g. their own themes, plugins, or notes) untouched.
 	// 1. Create folders
 	folders := []string{
 		filepath.Join(vaultPath, ".system"),

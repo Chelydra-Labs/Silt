@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"notes-sharp/backend/core"
 	"notes-sharp/backend/db"
@@ -15,6 +16,11 @@ import (
 	"notes-sharp/backend/vault"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+const (
+	maxTimelineLimit    = 200
+	defaultTimelineLimit = 30
 )
 
 var updateTaskRegex = regexp.MustCompile(`^([\s]*)-\s\[[ x/]\]\s(?:TODO|DOING|DONE)\sTASK(.*)$`)
@@ -29,6 +35,7 @@ type App struct {
 	tracker      *monitor.WriteTracker
 	vaultPath    string
 	spacesPerTab int
+	wg           sync.WaitGroup
 }
 
 func NewApp() *App {
@@ -40,7 +47,17 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	settings, err := vault.LoadSettings()
-	if err == nil && settings.VaultPath != "" {
+	if err != nil {
+		// The settings file exists on disk but is unreadable or
+		// malformed. Don't silently fall through to "no vault" — the
+		// user has a vault setup, something is just broken.
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "vault:init-error",
+				fmt.Sprintf("failed to load settings.json: %v", err))
+		}
+		return
+	}
+	if settings.VaultPath != "" {
 		if _, statErr := os.Stat(settings.VaultPath); statErr == nil {
 			if initErr := a.initializeVaultServices(settings.VaultPath); initErr != nil {
 				if a.ctx != nil {
@@ -52,6 +69,12 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	// Wait for any in-flight Wails-bound calls (UpdateBlockState,
+	// QueryTasks, FetchSectionTimeline) to complete before tearing
+	// down the DB, tracker, and watcher. Without this a fast window
+	// close could race an in-progress file write.
+	a.wg.Wait()
+
 	if a.watcher != nil {
 		_ = a.watcher.Close()
 	}
@@ -64,39 +87,40 @@ func (a *App) shutdown(ctx context.Context) {
 }
 
 func (a *App) initializeVaultServices(vaultPath string) error {
-	// 1. Initialize SQLite Cache Database Manager
 	dbMgr, err := db.NewDatabaseManager()
 	if err != nil {
 		return fmt.Errorf("failed to start database: %w", err)
 	}
 
-	// 2. Initialize Mutex Coordinator
 	coord := core.NewExecutionCoordinator(dbMgr.SQLDB())
-
-	// 3. Initialize Write Tracker Cooldown
 	tracker := monitor.NewWriteTracker()
 
-	// 4. Scan and index entire workspace
 	results, err := parser.ScanWorkspace(vaultPath, a.spacesPerTab)
 	if err != nil {
 		_ = dbMgr.Close()
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
 	if len(results) > 0 {
+		var allWarnings []string
+		for _, res := range results {
+			if len(res.Warnings) > 0 {
+				allWarnings = append(allWarnings, res.Warnings...)
+			}
+		}
+
 		_, skipped, err := dbMgr.IndexScanResults(results)
 		if err != nil {
 			_ = dbMgr.Close()
 			return fmt.Errorf("failed to index scan results: %w", err)
 		}
-		// Per-file failures (unreadable, parse errors) are non-fatal: the
-		// rest of the vault is still usable, but the user must be informed
-		// so they know some notes didn't make it into the index.
 		if len(skipped) > 0 && a.ctx != nil {
 			runtime.EventsEmit(a.ctx, "vault:init-warnings", skipped)
 		}
+		if len(allWarnings) > 0 && a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "vault:init-warnings", allWarnings)
+		}
 	}
 
-	// 5. Start fsnotify watcher
 	watcher, err := monitor.NewDirectoryWatcher(vaultPath, dbMgr, tracker, coord, a.spacesPerTab)
 	if err != nil {
 		_ = dbMgr.Close()
@@ -108,12 +132,17 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		return fmt.Errorf("failed to execute watcher start: %w", err)
 	}
 
-	// Commit state only after every dependency is initialized successfully.
 	a.db = dbMgr
 	a.coordinator = coord
 	a.tracker = tracker
 	a.watcher = watcher
 	a.vaultPath = vaultPath
+
+	// Report any paths the watcher could not subscribe to (fsnotify
+	// limits, permissions, etc.) so the UI can inform the user.
+	if failed := watcher.FailedPaths(); len(failed) > 0 && a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vault:watch-coverage", failed)
+	}
 
 	return nil
 }
@@ -136,12 +165,10 @@ func (a *App) InitializeVault() (bool, error) {
 		return false, nil // Cancelled
 	}
 
-	// Create vault folders and default configuration
 	if err := vault.ScaffoldVault(selectedPath); err != nil {
 		return false, fmt.Errorf("failed to scaffold vault: %w", err)
 	}
 
-	// Write to settings.json
 	settings := &vault.AppSettings{
 		VaultPath: selectedPath,
 	}
@@ -149,7 +176,6 @@ func (a *App) InitializeVault() (bool, error) {
 		return false, fmt.Errorf("failed to save settings: %w", err)
 	}
 
-	// Boot up database and watcher
 	if err := a.initializeVaultServices(selectedPath); err != nil {
 		return false, fmt.Errorf("failed to boot vault services: %w", err)
 	}
@@ -162,6 +188,18 @@ func (a *App) FetchSectionTimeline(notebook, section string, offset int, limit i
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
 	}
+
+	// Clamp server-side so a frontend bug sending limit=1_000_000 cannot
+	// materialize an arbitrarily large in-memory slice.
+	if limit <= 0 || limit > maxTimelineLimit {
+		limit = maxTimelineLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
 
 	var res []parser.DayGroup
 	var err error
@@ -179,11 +217,21 @@ func (a *App) FetchSectionTimeline(notebook, section string, offset int, limit i
 // target line inside the file write lock by scanning for the UUID comment. The
 // UUID is the source of truth for the target line, not the cached line number.
 func (a *App) UpdateBlockState(blockID string, newState string) error {
+	// Guard against a meaningless no-op that the frontend might interpret
+	// as an error. The only valid task status values are TODO, DOING, DONE.
+	switch newState {
+	case "TODO", "DOING", "DONE":
+	default:
+		return fmt.Errorf("invalid target status: %s (valid: TODO, DOING, DONE)", newState)
+	}
+
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
 
-	// 1. Look up file metadata under the DB read lock.
+	a.wg.Add(1)
+	defer a.wg.Done()
+
 	var notebook, section, fileDate, blockType string
 	err := a.coordinator.WithDBReadResult(func() error {
 		row := a.db.SQLDB().QueryRow("SELECT notebook, section, file_date, type FROM blocks WHERE id = ?", blockID)
@@ -198,10 +246,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	}
 
 	// Defense-in-depth against path traversal: notebook/section originate
-	// from user-editable YAML frontmatter and date is a filename, so any of
-	// them could contain `..`, `/`, or `\`. Strip the dangerous characters
-	// and then verify the resolved path is still inside the vault before
-	// touching the filesystem.
+	// from user-editable YAML frontmatter and date is a filename.
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
 	safeFileDate := sanitizePathSegment(fileDate)
@@ -213,9 +258,6 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		return fmt.Errorf("resolved file path %q escapes vault %q", filePath, a.vaultPath)
 	}
 
-	// 2. Acquire per-file write lock. Re-locate target line by UUID inside the
-	//    lock so the operation is self-healing even if the watcher re-indexed
-	//    the file between the DB read and lock acquisition.
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
 		contentBytes, err := os.ReadFile(filePath)
@@ -250,28 +292,24 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		case "DONE":
 			newChar = "x"
 			newKeyword = "DONE"
-		default:
-			writeErr = fmt.Errorf("invalid target status: %s", newState)
-			return
 		}
 
 		newLine := updateTaskRegex.ReplaceAllString(targetLine, fmt.Sprintf("${1}- [%s] %s TASK${2}", newChar, newKeyword))
 		lines[lineIdx] = newLine
 		newContent := strings.Join(lines, "\n")
 
-		// Register write to prevent loop triggers
 		a.tracker.RegisterWrite(filePath)
 
-		// Overwrite atomically
 		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 			writeErr = err
 			return
 		}
 
-		// Update SQLite cache
-		blocks, meta, _, _, err := parser.ParseFileContent(newContent, notebook, section, fileDate, a.spacesPerTab)
+		// Re-parse with the sanitized metadata so the re-indexed row
+		// uses the same cleaned values that went into the file path.
+		blocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safeFileDate, a.spacesPerTab)
 		if err == nil {
-			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags)
+			_ = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Date, blocks, meta.Tags, meta.Warnings...)
 		}
 	})
 
@@ -283,6 +321,9 @@ func (a *App) QueryTasks(filter parser.TaskQueryFilter) ([]parser.TaskResult, er
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
 	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
 
 	var res []parser.TaskResult
 	var err error
@@ -316,7 +357,6 @@ func sanitizePathSegment(s string) string {
 		}
 		return r
 	}, s)
-	// Defang `..` so it can never climb out of the joined path.
 	for strings.Contains(cleaned, "..") {
 		cleaned = strings.ReplaceAll(cleaned, "..", "")
 	}

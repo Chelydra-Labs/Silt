@@ -6,49 +6,54 @@ import (
 )
 
 // WriteFileAtomic writes content to a temporary file, flushes it to disk,
-// and atomically renames it to the target path.
+// and atomically renames it to the target path. The temp file is created
+// via os.CreateTemp so that two concurrent writers of the same target do
+// not clobber each other's temp files; the rename is what makes the
+// visible swap atomic at the filesystem level.
 func WriteFileAtomic(path string, content []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	tmpPath := path + ".tmp"
-
-	// Create or truncate the temp file
-	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	// os.CreateTemp guarantees a unique filename in dir. The pattern
+	// "<basename>.*.tmp" is enough to keep related temps grouped when a
+	// developer inspects the directory.
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return err
 	}
+	tmpPath := tmpFile.Name()
 
-	// Defer cleanup of the temp file in case we return early with an error
+	// success gates the cleanup so a successful rename leaves the new
+	// file in place rather than deleting it as a "failed temp".
+	success := false
 	defer func() {
-		if _, err := os.Stat(tmpPath); err == nil {
+		if !success {
 			_ = os.Remove(tmpPath)
 		}
 	}()
 
-	// Write content
 	if _, err := tmpFile.Write(content); err != nil {
 		_ = tmpFile.Close()
 		return err
 	}
 
-	// Flush to storage hardware
+	// Flush to storage hardware so the rename below is durable across
+	// power loss.
 	if err := tmpFile.Sync(); err != nil {
 		_ = tmpFile.Close()
 		return err
 	}
 
-	// Close the file before renaming
+	// Close before rename on all platforms.
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
 
-	// Atomically rename
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
-
+	success = true
 	return nil
 }
