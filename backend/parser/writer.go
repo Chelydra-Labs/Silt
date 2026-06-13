@@ -3,6 +3,7 @@ package parser
 import (
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // WriteFileAtomic writes content to a temporary file, flushes it to disk,
@@ -51,9 +52,20 @@ func WriteFileAtomic(path string, content []byte) error {
 		return err
 	}
 
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
+	// On Windows, concurrent rename/replace operations on the same file can
+	// cause transient sharing violations or access denied errors.
+	// We retry with a brief backoff to make it robust.
+	for i := 0; ; i++ {
+		err = os.Rename(tmpPath, path)
+		if err == nil {
+			break
+		}
+		if i >= 10 {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+
 	success = true
 	return nil
 }

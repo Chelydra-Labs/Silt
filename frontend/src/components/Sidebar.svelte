@@ -139,17 +139,6 @@
           Active Notebook
         </span>
       </div>
-
-      <!-- Mock Profile Avatar -->
-      <div
-        class="w-8 h-8 rounded-lg bg-surface-container-high border border-border-muted flex items-center justify-center overflow-hidden"
-      >
-        <img
-          alt="Profile Avatar"
-          class="w-full h-full object-cover"
-          src="https://lh3.googleusercontent.com/aida-public/AB6AXuCFZ_T6sRDXwaM-r-XY_HTbuuXenNX5lsepep3Km4BDTL5_x0rTmY2UCbFMEWdmXoikDvMPQwYrtW3TdZUs12Jiu7qU4Aih8bOEGyXgXrWDCqUcQU9ICVZ9_65a5d-R72RqkxhV8H-e7KWBojNtHl9QvvicTkAtAFpA-ZVcPIdpKZgFjdOayGDObK7jcR_Mp7p9JIkh9gvVFjPnctfDKkVJAQgua867sFyY4qm7yD_k5dUpwpyEW0unwwW6Sx1_1tOF_fCZ4wiIE04"
-        />
-      </div>
     </div>
 
     <!-- Notebooks Dropdown Panel -->
