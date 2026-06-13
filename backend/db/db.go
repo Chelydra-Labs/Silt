@@ -13,47 +13,54 @@ import (
 )
 
 type DatabaseManager struct {
-	DB *sql.DB
+	db *sql.DB
 }
 
 func NewDatabaseManager() (*DatabaseManager, error) {
 	// Open a shared in-memory SQLite database.
 	// We use cache=shared so multiple connections can access it if needed,
 	// and it persists as long as the main connection remains open.
-	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	sqlDB, err := sql.Open("sqlite", "file::memory:?cache=shared")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite: %w", err)
 	}
 
-	dm := &DatabaseManager{DB: db}
+	dm := &DatabaseManager{db: sqlDB}
 	if err := dm.initSchema(); err != nil {
-		db.Close()
+		sqlDB.Close()
 		return nil, err
 	}
 
 	return dm, nil
 }
 
+// SQLDB exposes the underlying *sql.DB handle. Callers MUST serialize access
+// through core.ExecutionCoordinator (e.g. WithDBRead/WithDBWrite) to avoid
+// race conditions on the shared in-memory database.
+func (dm *DatabaseManager) SQLDB() *sql.DB {
+	return dm.db
+}
+
 func (dm *DatabaseManager) Close() error {
-	if dm.DB != nil {
-		return dm.DB.Close()
+	if dm.db != nil {
+		return dm.db.Close()
 	}
 	return nil
 }
 
 func (dm *DatabaseManager) initSchema() error {
 	// Enable foreign key constraints
-	_, err := dm.DB.Exec("PRAGMA foreign_keys = ON;")
+	_, err := dm.db.Exec("PRAGMA foreign_keys = ON;")
 	if err != nil {
 		return fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
 	// Optimize pragmas for in-memory speed
-	_, err = dm.DB.Exec("PRAGMA journal_mode = MEMORY;")
+	_, err = dm.db.Exec("PRAGMA journal_mode = MEMORY;")
 	if err != nil {
 		return fmt.Errorf("failed to set journal mode: %w", err)
 	}
-	_, err = dm.DB.Exec("PRAGMA synchronous = OFF;")
+	_, err = dm.db.Exec("PRAGMA synchronous = OFF;")
 	if err != nil {
 		return fmt.Errorf("failed to set synchronous: %w", err)
 	}
@@ -73,7 +80,7 @@ func (dm *DatabaseManager) initSchema() error {
 		line_number INTEGER NOT NULL,
 		FOREIGN KEY(parent_id) REFERENCES blocks(id) ON DELETE SET NULL
 	);`
-	if _, err := dm.DB.Exec(createBlocksTable); err != nil {
+	if _, err := dm.db.Exec(createBlocksTable); err != nil {
 		return fmt.Errorf("failed to create blocks table: %w", err)
 	}
 
@@ -88,7 +95,7 @@ func (dm *DatabaseManager) initSchema() error {
 		priority INTEGER,        -- 1, 2, 3
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
-	if _, err := dm.DB.Exec(createTasksTable); err != nil {
+	if _, err := dm.db.Exec(createTasksTable); err != nil {
 		return fmt.Errorf("failed to create tasks table: %w", err)
 	}
 
@@ -103,7 +110,7 @@ func (dm *DatabaseManager) initSchema() error {
 		PRIMARY KEY(block_id, raw_path),
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
-	if _, err := dm.DB.Exec(createTagsTable); err != nil {
+	if _, err := dm.db.Exec(createTagsTable); err != nil {
 		return fmt.Errorf("failed to create tags table: %w", err)
 	}
 
@@ -115,7 +122,7 @@ func (dm *DatabaseManager) initSchema() error {
 	}
 
 	for _, idxQuery := range indexes {
-		if _, err := dm.DB.Exec(idxQuery); err != nil {
+		if _, err := dm.db.Exec(idxQuery); err != nil {
 			return fmt.Errorf("failed to create index: %w", err)
 		}
 	}
@@ -148,14 +155,14 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, fileDa
 	if tx != nil {
 		_, err = tx.Exec(query, notebook, section, fileDate)
 	} else {
-		_, err = dm.DB.Exec(query, notebook, section, fileDate)
+		_, err = dm.db.Exec(query, notebook, section, fileDate)
 	}
 	return err
 }
 
 // IndexFileBlocks updates the index with a set of blocks in a single transaction.
 func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, blocks []parser.ParsedBlock, fileTags []string) error {
-	tx, err := dm.DB.Begin()
+	tx, err := dm.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -262,7 +269,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 
 // IndexScanResults inserts multiple scan results into the database in a single transaction.
 func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, error) {
-	tx, err := dm.DB.Begin()
+	tx, err := dm.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -373,69 +380,109 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, e
 }
 
 // FetchTimelineDays fetches day-grouped blocks for infinite virtualization.
+//
+// The implementation issues exactly two queries regardless of the number of
+// days requested: one to resolve the paginated date set, and one to load all
+// blocks for those dates in a single round-trip. The results are grouped by
+// file_date in Go and formatted for the timeline view.
 func (dm *DatabaseManager) FetchTimelineDays(notebook, section string, limit, offset int) ([]parser.DayGroup, error) {
-	rows, err := dm.DB.Query("SELECT DISTINCT file_date FROM blocks WHERE notebook = ? AND section = ? ORDER BY file_date DESC LIMIT ? OFFSET ?", notebook, section, limit, offset)
+	// Query 1: resolve paginated distinct dates.
+	dateRows, err := dm.db.Query(
+		"SELECT DISTINCT file_date FROM blocks WHERE notebook = ? AND section = ? ORDER BY file_date DESC LIMIT ? OFFSET ?",
+		notebook, section, limit, offset,
+	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query timeline dates: %w", err)
 	}
-	defer rows.Close()
+	defer dateRows.Close()
 
 	var dates []string
-	for rows.Next() {
+	for dateRows.Next() {
 		var d string
-		if err := rows.Scan(&d); err != nil {
+		if err := dateRows.Scan(&d); err != nil {
 			return nil, err
 		}
 		dates = append(dates, d)
 	}
+	if err := dateRows.Close(); err != nil {
+		return nil, err
+	}
 
-	var groups []parser.DayGroup
-	for _, dateVal := range dates {
-		blocksRows, err := dm.DB.Query(`
-			SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
-			       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
-			FROM blocks b
-			LEFT JOIN tasks t ON b.id = t.block_id
-			WHERE b.notebook = ? AND b.section = ? AND b.file_date = ?
-			ORDER BY b.line_number ASC
-		`, notebook, section, dateVal)
-		if err != nil {
+	if len(dates) == 0 {
+		return []parser.DayGroup{}, nil
+	}
+
+	// Query 2: load all blocks for the resolved dates in a single round-trip.
+	placeholders := make([]string, len(dates))
+	args := make([]interface{}, 0, len(dates)+2)
+	args = append(args, notebook, section)
+	for i, d := range dates {
+		placeholders[i] = "?"
+		args = append(args, d)
+	}
+	query := fmt.Sprintf(`
+		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
+		       b.file_date,
+		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
+		FROM blocks b
+		LEFT JOIN tasks t ON b.id = t.block_id
+		WHERE b.notebook = ? AND b.section = ? AND b.file_date IN (%s)
+		ORDER BY b.file_date DESC, b.line_number ASC
+	`, strings.Join(placeholders, ","))
+
+	rows, err := dm.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query timeline blocks: %w", err)
+	}
+	defer rows.Close()
+
+	// Group blocks by file_date preserving the date order from Query 1.
+	groupOrder := make([]string, 0, len(dates))
+	groupIndex := make(map[string]int, len(dates))
+	grouped := make(map[string][]parser.ParsedBlock, len(dates))
+
+	for rows.Next() {
+		var b parser.ParsedBlock
+		var bType, fileDate string
+		var parentID sql.NullString
+		var status, owner, start, due string
+		var priority int
+
+		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority); err != nil {
+			rows.Close()
 			return nil, err
 		}
-
-		var blocks []parser.ParsedBlock
-		for blocksRows.Next() {
-			var b parser.ParsedBlock
-			var bType string
-			var status, owner, start, due string
-			var priority int
-
-			err := blocksRows.Scan(&b.ID, &b.ParentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &status, &owner, &start, &due, &priority)
-			if err != nil {
-				blocksRows.Close()
-				return nil, err
-			}
-			b.Type = parser.BlockType(bType)
-			b.Status = status
-			b.Owner = owner
-			b.StartDate = start
-			b.DueDate = due
-			b.Priority = priority
-			blocks = append(blocks, b)
+		if parentID.Valid {
+			b.ParentID = parentID.String
 		}
-		blocksRows.Close()
+		b.Type = parser.BlockType(bType)
+		b.Status = status
+		b.Owner = owner
+		b.StartDate = start
+		b.DueDate = due
+		b.Priority = priority
 
-		// Format date cleanly
-		parsedTime, err := time.Parse("2006-01-02", dateVal)
-		formatted := dateVal
-		if err == nil {
+		if _, ok := groupIndex[fileDate]; !ok {
+			groupIndex[fileDate] = len(groupOrder)
+			groupOrder = append(groupOrder, fileDate)
+		}
+		grouped[fileDate] = append(grouped[fileDate], b)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	// Build the result in the original date order (descending).
+	groups := make([]parser.DayGroup, 0, len(groupOrder))
+	for _, d := range groupOrder {
+		formatted := d
+		if parsedTime, err := time.Parse("2006-01-02", d); err == nil {
 			formatted = parsedTime.Format("Monday, January 2, 2006")
 		}
-
 		groups = append(groups, parser.DayGroup{
-			Date:          dateVal,
+			Date:          d,
 			FormattedDate: formatted,
-			Blocks:        blocks,
+			Blocks:        grouped[d],
 		})
 	}
 
@@ -490,7 +537,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 
 	baseQuery += " ORDER BY b.file_date DESC, b.line_number ASC"
 
-	rows, err := dm.DB.Query(baseQuery, args...)
+	rows, err := dm.db.Query(baseQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query tasks: %w", err)
 	}
@@ -499,15 +546,19 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	var results []parser.TaskResult
 	for rows.Next() {
 		var r parser.TaskResult
+		var parentID sql.NullString
 		var status, owner, start, due interface{}
 		var priority int
 
 		err := rows.Scan(
-			&r.ID, &r.ParentID, &r.Notebook, &r.Section, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
+			&r.ID, &parentID, &r.Notebook, &r.Section, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
 			&status, &owner, &start, &due, &priority,
 		)
 		if err != nil {
 			return nil, err
+		}
+		if parentID.Valid {
+			r.ParentID = parentID.String
 		}
 
 		if statusStr, ok := status.(string); ok {
@@ -525,7 +576,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		r.Priority = priority
 
 		// Get tags for this block
-		tagRows, err := dm.DB.Query("SELECT raw_path FROM tags WHERE block_id = ?", r.ID)
+		tagRows, err := dm.db.Query("SELECT raw_path FROM tags WHERE block_id = ?", r.ID)
 		if err == nil {
 			var tags []string
 			for tagRows.Next() {

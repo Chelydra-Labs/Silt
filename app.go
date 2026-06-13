@@ -17,6 +17,10 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+var updateTaskRegex = regexp.MustCompile(`^([\s]*)-\s\[[ x/]\]\s(?:TODO|DOING|DONE)\sTASK(.*)$`)
+
+var updateLineIDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->`)
+
 type App struct {
 	ctx          context.Context
 	db           *db.DatabaseManager
@@ -35,11 +39,14 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// Try loading settings on boot
 	settings, err := vault.LoadSettings()
 	if err == nil && settings.VaultPath != "" {
-		if _, err := os.Stat(settings.VaultPath); err == nil {
-			_ = a.initializeVaultServices(settings.VaultPath)
+		if _, statErr := os.Stat(settings.VaultPath); statErr == nil {
+			if initErr := a.initializeVaultServices(settings.VaultPath); initErr != nil {
+				if a.ctx != nil {
+					runtime.EventsEmit(a.ctx, "vault:init-error", initErr.Error())
+				}
+			}
 		}
 	}
 }
@@ -54,49 +61,57 @@ func (a *App) shutdown(ctx context.Context) {
 }
 
 func (a *App) initializeVaultServices(vaultPath string) error {
-	a.vaultPath = vaultPath
-
 	// 1. Initialize SQLite Cache Database Manager
 	dbMgr, err := db.NewDatabaseManager()
 	if err != nil {
 		return fmt.Errorf("failed to start database: %w", err)
 	}
-	a.db = dbMgr
 
 	// 2. Initialize Mutex Coordinator
-	a.coordinator = core.NewExecutionCoordinator(dbMgr.DB)
+	coord := core.NewExecutionCoordinator(dbMgr.SQLDB())
 
 	// 3. Initialize Write Tracker Cooldown
-	a.tracker = monitor.NewWriteTracker()
+	tracker := monitor.NewWriteTracker()
 
 	// 4. Scan and index entire workspace
 	results, err := parser.ScanWorkspace(vaultPath, a.spacesPerTab)
 	if err != nil {
+		_ = dbMgr.Close()
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
 	if len(results) > 0 {
-		_, err = a.db.IndexScanResults(results)
+		_, err = dbMgr.IndexScanResults(results)
 		if err != nil {
+			_ = dbMgr.Close()
 			return fmt.Errorf("failed to index scan results: %w", err)
 		}
 	}
 
 	// 5. Start fsnotify watcher
-	watcher, err := monitor.NewDirectoryWatcher(vaultPath, a.db, a.tracker, a.spacesPerTab)
+	watcher, err := monitor.NewDirectoryWatcher(vaultPath, dbMgr, tracker, a.spacesPerTab)
 	if err != nil {
+		_ = dbMgr.Close()
 		return fmt.Errorf("failed to start watcher: %w", err)
 	}
-	a.watcher = watcher
-	if err := a.watcher.Start(); err != nil {
+	if err := watcher.Start(); err != nil {
+		_ = watcher.Close()
+		_ = dbMgr.Close()
 		return fmt.Errorf("failed to execute watcher start: %w", err)
 	}
+
+	// Commit state only after every dependency is initialized successfully.
+	a.db = dbMgr
+	a.coordinator = coord
+	a.tracker = tracker
+	a.watcher = watcher
+	a.vaultPath = vaultPath
 
 	return nil
 }
 
 // IsVaultInitialized returns whether a workspace vault has been configured and loaded.
 func (a *App) IsVaultInitialized() bool {
-	return a.vaultPath != ""
+	return a.vaultPath != "" && a.db != nil
 }
 
 // InitializeVault prompts the user for a folder, sets it up, and loads the services.
@@ -141,7 +156,7 @@ func (a *App) FetchSectionTimeline(notebook, section string, offset int, limit i
 
 	var res []parser.DayGroup
 	var err error
-	a.coordinator.LockDBRead(func() {
+	a.coordinator.WithDBRead(func() {
 		res, err = a.db.FetchTimelineDays(notebook, section, limit, offset)
 	})
 
@@ -149,17 +164,22 @@ func (a *App) FetchSectionTimeline(notebook, section string, offset int, limit i
 }
 
 // UpdateBlockState changes task status and updates the file and cache.
+//
+// To avoid TOCTOU races between the DB read and the file write, we look up the
+// block's UUID, file metadata, and the lock by file path, then re-locate the
+// target line inside the file write lock by scanning for the UUID comment. The
+// UUID is the source of truth for the target line, not the cached line number.
 func (a *App) UpdateBlockState(blockID string, newState string) error {
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
 
-	// 1. Get file and line details
+	// 1. Look up file metadata under the DB read lock.
 	var notebook, section, fileDate, blockType string
-	var lineNumber int
-	err := a.db.DB.QueryRow("SELECT notebook, section, file_date, line_number, type FROM blocks WHERE id = ?", blockID).Scan(
-		&notebook, &section, &fileDate, &lineNumber, &blockType,
-	)
+	err := a.coordinator.WithDBReadResult(func() error {
+		row := a.db.SQLDB().QueryRow("SELECT notebook, section, file_date, type FROM blocks WHERE id = ?", blockID)
+		return row.Scan(&notebook, &section, &fileDate, &blockType)
+	})
 	if err != nil {
 		return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
 	}
@@ -170,7 +190,9 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 
 	filePath := filepath.Join(a.vaultPath, notebook, section, fileDate+".md")
 
-	// 2. Perform write lock atomic overwrite
+	// 2. Acquire per-file write lock. Re-locate target line by UUID inside the
+	//    lock so the operation is self-healing even if the watcher re-indexed
+	//    the file between the DB read and lock acquisition.
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
 		contentBytes, err := os.ReadFile(filePath)
@@ -180,16 +202,15 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		}
 
 		lines := strings.Split(string(contentBytes), "\n")
-		if lineNumber <= 0 || lineNumber > len(lines) {
-			writeErr = fmt.Errorf("line number %d out of bounds", lineNumber)
+		lineIdx := findLineByBlockID(lines, blockID)
+		if lineIdx < 0 {
+			writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
 			return
 		}
 
-		targetLine := lines[lineNumber-1]
+		targetLine := lines[lineIdx]
 
-		// Regexp to capture checkboxes and keywords
-		taskLineRegex := regexp.MustCompile(`^([\s]*)-\s\[[ x/]\]\s(?:TODO|DOING|DONE)\sTASK(.*)$`)
-		if !taskLineRegex.MatchString(targetLine) {
+		if !updateTaskRegex.MatchString(targetLine) {
 			writeErr = fmt.Errorf("target line does not match task syntax")
 			return
 		}
@@ -211,8 +232,8 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 			return
 		}
 
-		newLine := taskLineRegex.ReplaceAllString(targetLine, fmt.Sprintf("${1}- [%s] %s TASK${2}", newChar, newKeyword))
-		lines[lineNumber-1] = newLine
+		newLine := updateTaskRegex.ReplaceAllString(targetLine, fmt.Sprintf("${1}- [%s] %s TASK${2}", newChar, newKeyword))
+		lines[lineIdx] = newLine
 		newContent := strings.Join(lines, "\n")
 
 		// Register write to prevent loop triggers
@@ -242,9 +263,22 @@ func (a *App) QueryTasks(filter parser.TaskQueryFilter) ([]parser.TaskResult, er
 
 	var res []parser.TaskResult
 	var err error
-	a.coordinator.LockDBRead(func() {
+	a.coordinator.WithDBRead(func() {
 		res, err = a.db.QueryTasksWithFilters(filter)
 	})
 
 	return res, err
+}
+
+// findLineByBlockID returns the 0-based index of the line in `lines` whose
+// trailing `<!-- id: UUID -->` comment matches blockID, or -1 if no such line
+// exists.
+func findLineByBlockID(lines []string, blockID string) int {
+	for i, line := range lines {
+		matches := updateLineIDRegex.FindStringSubmatch(line)
+		if len(matches) >= 2 && matches[1] == blockID {
+			return i
+		}
+	}
+	return -1
 }
