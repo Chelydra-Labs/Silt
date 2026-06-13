@@ -33,6 +33,12 @@ Each concern has a single source of truth. Refer to the file that owns the topic
 
 ---
 
+## Platform Support
+
+Silt targets **Windows** and **Linux** as first-class platforms — both are built, tested, and shipped. **macOS** is not excluded (Wails and Go are cross-platform), but it is not specifically built or tested against. The release pipeline ([`build.sh`](build.sh)) currently produces Windows NSIS installers and portable zips; Linux AppImage/Flatpak packaging is planned for a future sprint.
+
+---
+
 ## Getting Started
 
 ### Development Prerequisites
