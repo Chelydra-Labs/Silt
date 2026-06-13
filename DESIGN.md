@@ -10,7 +10,7 @@ notes# implements "Refined Cyber-Ink"—a design framework engineered for deep, 
 
 Ink-Rich Canvas: The interface relies on an ultra-dark slate base (#0c0c0e) and dark charcoal panels (#121215). This mimics high-grade dark paper, absorbing light emission to protect eyes on OLED, mini-LED, and high-brightness displays.
 
-Surgical Accents: Highly saturated color gradients are constrained to less than 3% of the active viewport area. They act as glowing signposts (for checkboxes, keyboard navigation path markers, and active selection guides).
+Surgical Accents: Highly saturated color gradients are constrained to less than 3% of the active viewport area. They act as glowing signposts (for checkboxes, keyboard navigation path markers, and active selection guides). The teal accent sits in the teal-400 → teal-600 range (rather than a fully-saturated sky/cyan) so it stays readable across long sessions without inducing visual fatigue; the indigo "in-progress" gradient remains one notch more vivid so the active state still draws the eye.
 
 Hairline Isolation: Visual boundaries use absolute $1\text{px}$ lines with dark metallic borders instead of heavy box-shadow offsets, maintaining a clean, structured appearance.
 
@@ -44,9 +44,9 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
         "disabled": "#4b5563"
       },
       "accent": {
-        "teal-start": "#38bdf8",
-        "teal-end": "#06b6d4",
-        "teal-glow": "rgba(6, 182, 212, 0.15)",
+        "teal-start": "#2dd4bf",
+        "teal-end": "#0d9488",
+        "teal-glow": "rgba(20, 184, 166, 0.15)",
         "indigo-start": "#6366f1",
         "indigo-end": "#a855f7",
         "indigo-glow": "rgba(168, 85, 247, 0.12)"
@@ -76,9 +76,9 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
         "disabled": "#94a3b8"
       },
       "accent": {
-        "teal-start": "#0284c7",
-        "teal-end": "#0891b2",
-        "teal-glow": "rgba(2, 132, 199, 0.10)",
+        "teal-start": "#0d9488",
+        "teal-end": "#115e59",
+        "teal-glow": "rgba(13, 148, 136, 0.10)",
         "indigo-start": "#4f46e5",
         "indigo-end": "#7c3aed",
         "indigo-glow": "rgba(79, 70, 229, 0.08)"

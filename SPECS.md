@@ -247,15 +247,15 @@ Primary Text: #e4e4e7 (Light warm gray)
 
 Muted Text & Metadata: #71717a (Medium cool gray)
 
-Active Highlights & Guideline Markers: #38bdf8 (Vivid sky blue)
+Active Highlights & Guideline Markers: #2dd4bf (Refined teal, 400-shade)
 
 6.2 Visual Guideline Path Highlights
 
-For nested lists, Svelte tracks the active cursor focus and dynamically highlights the current hierarchy path. Vertical guide rules align to the indentation columns. Selecting a nested bullet changes the color of its ancestral parent guidelines from #27272a to #38bdf8, providing instant visual context within deeply nested structures.
+For nested lists, Svelte tracks the active cursor focus and dynamically highlights the current hierarchy path. Vertical guide rules align to the indentation columns. Selecting a nested bullet changes the color of its ancestral parent guidelines from #27272a to #2dd4bf, providing instant visual context within deeply nested structures.
 
   - Root Node Focus
   |   - Sub-Level Node
-  |   |   - Active Cursor Selection Bullet Point  <-- Guideline columns are colored sky blue
+  |   |   - Active Cursor Selection Bullet Point  <-- Guideline columns are colored teal
   |   - Unfocused Parallel Bullet Point           <-- Guideline column is colored dark gray
 
 
@@ -309,8 +309,8 @@ Schema Example (cyber_forest.json):
     "border-active": "#3d5c4b",
     "text-primary": "#e2ebd5",
     "text-muted": "#6a8274",
-    "color-teal-start": "#10b981",
-    "color-teal-end": "#059669",
+    "color-teal-start": "#2dd4bf",
+    "color-teal-end": "#0d9488",
     "color-indigo-start": "#4ade80",
     "color-indigo-end": "#22c55e"
   }
