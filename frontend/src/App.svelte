@@ -8,6 +8,7 @@
   import Sidebar from './components/Sidebar.svelte'
   import VirtualScrollContainer from './components/VirtualScrollContainer.svelte'
   import SearchModal from './components/SearchModal.svelte'
+  import logo from './assets/logo.svg'
 
   let isInitialized = $state(false)
   let loading = $state(true)
@@ -118,7 +119,7 @@
     <div class="onboarding-container select-none">
       <div class="onboarding-card">
         <img
-          src="./assets/logo.svg"
+          src={logo}
           alt="notes# Logo"
           class="onboarding-logo animate-spin-slow"
         />

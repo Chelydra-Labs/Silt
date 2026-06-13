@@ -44,3 +44,8 @@ distributions/
 # Local vaults
 vault/
 
+# Vite build cache timestamps
+frontend/vite.config.ts.timestamp-*.mjs
+
+# NSIS installer generated files
+build/installer/
