@@ -42,3 +42,35 @@ func TestWriteTracker_CooldownTimeout(t *testing.T) {
 		t.Errorf("Expected false after 350ms cooldown timeout")
 	}
 }
+
+func TestWriteTracker_DropsExpiredEntry(t *testing.T) {
+	// After the cooldown elapses, the entry must be removed from the map
+	// to prevent unbounded memory growth across many file writes.
+	wt := NewWriteTracker()
+	filePath := "leak_check.md"
+
+	wt.RegisterWrite(filePath)
+	if len(wt.activeWrites) != 1 {
+		t.Fatalf("expected 1 entry after RegisterWrite, got %d", len(wt.activeWrites))
+	}
+
+	// First check during the cooldown returns true and clears the entry.
+	time.Sleep(50 * time.Millisecond)
+	if !wt.IsSelfGenerated(filePath) {
+		t.Errorf("expected true during cooldown")
+	}
+	if len(wt.activeWrites) != 0 {
+		t.Errorf("expected entry to be cleared during-cooldown check, got %d", len(wt.activeWrites))
+	}
+
+	// Now exercise the post-cooldown path. Register again and wait past the
+	// 300ms window before checking.
+	wt.RegisterWrite(filePath)
+	time.Sleep(350 * time.Millisecond)
+	if wt.IsSelfGenerated(filePath) {
+		t.Errorf("expected false after cooldown")
+	}
+	if len(wt.activeWrites) != 0 {
+		t.Errorf("expected expired entry to be removed, got %d entries", len(wt.activeWrites))
+	}
+}

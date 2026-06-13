@@ -168,7 +168,27 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 	}
 	defer tx.Rollback()
 
-	// Clear old blocks first
+	// Delete any pre-existing rows for the block IDs we're about to (re)insert.
+	// Block IDs are stable across re-parses, but the (notebook, section, file_date)
+	// tuple is denormalized on each row. If the file's frontmatter metadata
+	// changed since the last index, the old rows still sit under the previous
+	// tuple and would collide on PRIMARY KEY. Cascading FKs clean up their
+	// related tasks and tags.
+	if len(blocks) > 0 {
+		placeholders := make([]string, len(blocks))
+		args := make([]interface{}, len(blocks))
+		for i, b := range blocks {
+			placeholders[i] = "?"
+			args[i] = b.ID
+		}
+		query := "DELETE FROM blocks WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+		if _, err := tx.Exec(query, args...); err != nil {
+			return fmt.Errorf("failed to clear blocks by id: %w", err)
+		}
+	}
+
+	// Also clear by metadata to catch blocks that the user removed from the
+	// file (their IDs are no longer in the new parse output).
 	if err := dm.ClearFileBlocks(tx, notebook, section, fileDate); err != nil {
 		return fmt.Errorf("failed to clear old blocks: %w", err)
 	}
@@ -195,7 +215,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 	}
 	defer stmtTag.Close()
 
-	for _, block := range blocks {
+	for blockIdx, block := range blocks {
 		// 1. Insert into blocks
 		var parentID interface{}
 		if block.ParentID != "" {
@@ -226,8 +246,11 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 
 		// 3. Extract and insert tags for this block
 		tags := ExtractTags(block.RawText)
-		// Also index file-level frontmatter tags on the first block of the file
-		if block.LineNumber == 1 || len(blocks) == 1 {
+		// Attach file-level frontmatter tags to the first parsed block. The
+		// previous implementation checked block.LineNumber == 1, which is
+		// never true when the file has YAML frontmatter (the first block
+		// sits after the closing `---`).
+		if blockIdx == 0 {
 			for _, ft := range fileTags {
 				trimmedFT := strings.TrimPrefix(ft, "#")
 				found := false
@@ -257,8 +280,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 			}
 			_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
 			if err != nil {
-				// We can ignore duplicate tags for the same block if it arises,
-				// or handle it. PRIMARY KEY is (block_id, raw_path) so it prevents duplicate entries automatically.
+				// PRIMARY KEY is (block_id, raw_path) so duplicates are silently dropped.
 				continue
 			}
 		}
@@ -300,12 +322,28 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, e
 			continue
 		}
 
-		// Clear old blocks first
+		// Clear any pre-existing rows for these block IDs (handles the case
+		// where frontmatter metadata changed since the previous index, since
+		// block IDs are stable but (notebook, section, date) is denormalized).
+		if len(res.Blocks) > 0 {
+			placeholders := make([]string, len(res.Blocks))
+			args := make([]interface{}, len(res.Blocks))
+			for i, b := range res.Blocks {
+				placeholders[i] = "?"
+				args[i] = b.ID
+			}
+			query := "DELETE FROM blocks WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+			if _, err := tx.Exec(query, args...); err != nil {
+				return 0, fmt.Errorf("failed to clear blocks by id for %s: %w", res.Path, err)
+			}
+		}
+
+		// Also clear by metadata to catch blocks the user removed from the file.
 		if err := dm.ClearFileBlocks(tx, res.Notebook, res.Section, res.Date); err != nil {
 			return 0, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
-		for _, block := range res.Blocks {
+		for blockIdx, block := range res.Blocks {
 			var parentID interface{}
 			if block.ParentID != "" {
 				parentID = block.ParentID
@@ -333,8 +371,10 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, e
 			}
 
 			tags := ExtractTags(block.RawText)
-			// Associate file frontmatter tags to the first block
-			if block.LineNumber == 1 || len(res.Blocks) == 1 {
+			// Associate file frontmatter tags to the first parsed block.
+			// The previous implementation checked block.LineNumber == 1,
+			// which is never true when the file has YAML frontmatter.
+			if blockIdx == 0 {
 				for _, ft := range res.Tags {
 					trimmedFT := strings.TrimPrefix(ft, "#")
 					found := false
@@ -544,6 +584,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	defer rows.Close()
 
 	var results []parser.TaskResult
+	var blockIDs []interface{}
 	for rows.Next() {
 		var r parser.TaskResult
 		var parentID sql.NullString
@@ -575,21 +616,46 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		}
 		r.Priority = priority
 
-		// Get tags for this block
-		tagRows, err := dm.db.Query("SELECT raw_path FROM tags WHERE block_id = ?", r.ID)
-		if err == nil {
-			var tags []string
-			for tagRows.Next() {
-				var tag string
-				if err := tagRows.Scan(&tag); err == nil {
-					tags = append(tags, tag)
-				}
-			}
-			tagRows.Close()
-			r.Tags = tags
-		}
-
 		results = append(results, r)
+		blockIDs = append(blockIDs, r.ID)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	if len(results) == 0 {
+		return results, nil
+	}
+
+	// Fetch all tags for the returned blocks in a single secondary query to
+	// avoid the N+1 pattern of one SELECT per block.
+	tagPlaceholders := make([]string, len(blockIDs))
+	for i := range tagPlaceholders {
+		tagPlaceholders[i] = "?"
+	}
+	tagQuery := "SELECT block_id, raw_path FROM tags WHERE block_id IN (" + strings.Join(tagPlaceholders, ",") + ") ORDER BY block_id, raw_path"
+	tagRows, err := dm.db.Query(tagQuery, blockIDs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query task tags: %w", err)
+	}
+	defer tagRows.Close()
+
+	tagIndex := make(map[string][]string, len(results))
+	for tagRows.Next() {
+		var blockID, tag string
+		if err := tagRows.Scan(&blockID, &tag); err != nil {
+			return nil, err
+		}
+		tagIndex[blockID] = append(tagIndex[blockID], tag)
+	}
+	if err := tagRows.Close(); err != nil {
+		return nil, err
+	}
+
+	for i := range results {
+		if tags, ok := tagIndex[results[i].ID]; ok {
+			results[i].Tags = tags
+		}
 	}
 
 	return results, nil

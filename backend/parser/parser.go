@@ -265,6 +265,7 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDa
 	}
 
 	var activeIDs [100]string
+	inCodeBlock := false
 
 	for i := startIndex; i < len(lines); i++ {
 		line := lines[i]
@@ -272,6 +273,19 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultDa
 
 		// If it's the last line and empty, avoid creating a block but keep the line
 		if i == len(lines)-1 && strings.TrimSpace(line) == "" {
+			outputLines = append(outputLines, line)
+			continue
+		}
+
+		// Track fenced code block state. Lines inside ``` blocks are passed
+		// through verbatim — we must not inject block IDs into code samples,
+		// HTML, or other preformatted content.
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inCodeBlock = !inCodeBlock
+			outputLines = append(outputLines, line)
+			continue
+		}
+		if inCodeBlock {
 			outputLines = append(outputLines, line)
 			continue
 		}

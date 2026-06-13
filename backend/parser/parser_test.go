@@ -158,3 +158,63 @@ tags: [work/sogav, systems/specs]
 		t.Errorf("Content mismatch. Expected:\n%s\nGot:\n%s", doc, newContent)
 	}
 }
+
+func TestParseFileContent_SkipsCodeBlockIDInjection(t *testing.T) {
+	// Lines inside fenced code blocks must NOT receive block ID comments;
+	// doing so would corrupt code samples in the user's notes.
+	doc := "# Example <!-- id: 4a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8a -->\n" +
+		"\n" +
+		"```go\n" +
+		"func hello() string { return \"hi\" }\n" +
+		"// A code comment that must not be touched\n" +
+		"```\n" +
+		"\n" +
+		"- A normal note line <!-- id: 5a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8b -->\n"
+
+	_, _, newContent, modified, err := ParseFileContent(doc, "NB", "Sec", "2026-06-13", 4)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if modified {
+		t.Errorf("Did not expect modifications since both blocks already have IDs")
+	}
+	if strings.Contains(newContent, "func hello() string { return \"hi\" } <!-- id:") {
+		t.Errorf("Code block line was corrupted with an ID comment:\n%s", newContent)
+	}
+	if !strings.Contains(newContent, "// A code comment that must not be touched") {
+		t.Errorf("Comment line was modified:\n%s", newContent)
+	}
+
+	// And the full content should be unchanged.
+	if newContent != doc {
+		t.Errorf("Content changed unexpectedly. Got:\n%s", newContent)
+	}
+}
+
+func TestParseFileContent_HandlesMultipleFencedCodeBlocks(t *testing.T) {
+	// Verify that nesting-style toggles (back-to-back fenced blocks) don't
+	// accidentally leave us in a stuck "in code block" state.
+	doc := "open <!-- id: aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n" +
+		"```\n" +
+		"x <!-- would be corrupted without fix -->\n" +
+		"```\n" +
+		"middle <!-- id: bbbb2222-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->\n" +
+		"```python\n" +
+		"y = 2 <!-- would be corrupted without fix -->\n" +
+		"```\n" +
+		"end <!-- id: cccc3333-cccc-cccc-cccc-cccccccccccc -->\n"
+
+	_, _, newContent, _, err := ParseFileContent(doc, "NB", "Sec", "2026-06-13", 4)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if strings.Contains(newContent, "x <!-- would be corrupted without fix --> <!-- id:") {
+		t.Errorf("First code block content was corrupted")
+	}
+	if strings.Contains(newContent, "y = 2 <!-- would be corrupted without fix --> <!-- id:") {
+		t.Errorf("Second code block content was corrupted")
+	}
+	if !strings.Contains(newContent, "end <!-- id: cccc3333-cccc-cccc-cccc-cccccccccccc -->") {
+		t.Errorf("Post-code-block content lost its ID")
+	}
+}

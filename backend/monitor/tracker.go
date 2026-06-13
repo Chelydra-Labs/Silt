@@ -34,5 +34,8 @@ func (wt *WriteTracker) IsSelfGenerated(filepath string) bool {
 		delete(wt.activeWrites, filepath)
 		return true
 	}
+	// Expired entry: drop it so the map doesn't grow unbounded for files
+	// that are written but never re-checked within the cooldown window.
+	delete(wt.activeWrites, filepath)
 	return false
 }

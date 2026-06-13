@@ -188,7 +188,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "11111111-1111-1111-1111-111111111111",
 			Type:      parser.BlockTask,
-			RawText:   "- [x] DONE TASK [Alice]#1 ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:   "- [x] DONE TASK [Alice]#1 ship #work/sogav <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText: "ship",
 			Status:    "DONE",
 			Owner:     "Alice",
@@ -198,7 +198,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "22222222-2222-2222-2222-222222222222",
 			Type:      parser.BlockTask,
-			RawText:   "- [/] DOING TASK [Bob]#2 fix <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			RawText:   "- [/] DOING TASK [Bob]#2 fix #work/sogav <!-- id: 22222222-2222-2222-2222-222222222222 -->",
 			CleanText: "fix",
 			Status:    "DOING",
 			Owner:     "Bob",
@@ -208,7 +208,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "33333333-3333-3333-3333-333333333333",
 			Type:      parser.BlockTask,
-			RawText:   "- [ ] TODO TASK [Alice]#3 research <!-- id: 33333333-3333-3333-3333-333333333333 -->",
+			RawText:   "- [ ] TODO TASK [Alice]#3 research #work/sogav <!-- id: 33333333-3333-3333-3333-333333333333 -->",
 			CleanText: "research",
 			Status:    "TODO",
 			Owner:     "Alice",
@@ -216,7 +216,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 			LineNumber: 1,
 		},
 	}
-	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, []string{"work/sogav"}); err != nil {
+	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, nil); err != nil {
 		t.Fatalf("index: %v", err)
 	}
 
@@ -373,4 +373,179 @@ func TestSQLDB_ExposesUnderlyingHandle(t *testing.T) {
 	if dm.SQLDB() == nil {
 		t.Fatalf("expected SQLDB to return non-nil handle")
 	}
+}
+
+func TestIndexFileBlocks_AttachesFrontmatterTagsByLoopIndex(t *testing.T) {
+	// Reproduces the welcome-note case: frontmatter pushes the first block
+	// off line 1, so the old `block.LineNumber == 1` check never fired.
+	dm := newTestDB(t)
+
+	blocks := []parser.ParsedBlock{
+		// Mimic a file with frontmatter: first block sits on line 6.
+		{
+			ID:         "11111111-1111-1111-1111-111111111111",
+			Type:       parser.BlockHeader,
+			RawText:    "# Welcome <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			CleanText:  "Welcome",
+			LineNumber: 6,
+		},
+		{
+			ID:         "22222222-2222-2222-2222-222222222222",
+			Type:       parser.BlockTask,
+			RawText:    "- [ ] TODO TASK sample <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			CleanText:  "sample",
+			Status:     "TODO",
+			LineNumber: 7,
+		},
+	}
+	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, []string{"welcome", "tutorial"}); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	// Frontmatter tags should attach to the FIRST block (the header), not
+	// to all blocks, and not be silently dropped due to the line-number check.
+	for _, wantID := range []string{"11111111-1111-1111-1111-111111111111"} {
+		var got int
+		if err := dm.db.QueryRow(
+			"SELECT COUNT(*) FROM tags WHERE block_id = ? AND raw_path IN ('welcome','tutorial')", wantID,
+		).Scan(&got); err != nil {
+			t.Fatalf("count tags for %s: %v", wantID, err)
+		}
+		if got != 2 {
+			t.Errorf("expected first block %s to have 2 frontmatter tags, got %d", wantID, got)
+		}
+	}
+
+	// Second block should not have those tags attached.
+	var got int
+	if err := dm.db.QueryRow(
+		"SELECT COUNT(*) FROM tags WHERE block_id = ?", "22222222-2222-2222-2222-222222222222",
+	).Scan(&got); err != nil {
+		t.Fatalf("count tags for second block: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("expected second block to have no tags, got %d", got)
+	}
+}
+
+func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
+	// When a file's frontmatter metadata (notebook/section/date) changes,
+	// re-indexing must not leave stale rows under the OLD metadata key.
+	// Block IDs are stable, so the new rows must end up at the new metadata.
+	dm := newTestDB(t)
+
+	original := []parser.ParsedBlock{
+		{
+			ID:         "11111111-1111-1111-1111-111111111111",
+			Type:       parser.BlockTask,
+			RawText:    "- [ ] TODO TASK ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			CleanText:  "ship",
+			Status:     "TODO",
+			LineNumber: 1,
+		},
+	}
+	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", original, nil); err != nil {
+		t.Fatalf("first index: %v", err)
+	}
+
+	// Re-index with the same block ID but under a different notebook/section.
+	updated := []parser.ParsedBlock{
+		{
+			ID:         "11111111-1111-1111-1111-111111111111",
+			Type:       parser.BlockTask,
+			RawText:    "- [/] DOING TASK ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			CleanText:  "ship",
+			Status:     "DOING",
+			LineNumber: 1,
+		},
+	}
+	if err := dm.IndexFileBlocks("Personal", "Journal", "2026-06-13", updated, nil); err != nil {
+		t.Fatalf("re-index with new metadata: %v", err)
+	}
+
+	// Old metadata key should have zero rows.
+	var oldRows int
+	if err := dm.db.QueryRow(
+		"SELECT COUNT(*) FROM blocks WHERE notebook = ? AND section = ?",
+		"Work", "Journal",
+	).Scan(&oldRows); err != nil {
+		t.Fatalf("count old metadata: %v", err)
+	}
+	if oldRows != 0 {
+		t.Errorf("expected 0 rows under old metadata, got %d", oldRows)
+	}
+
+	// New metadata key should have exactly one row, with the updated status.
+	var newStatus string
+	if err := dm.db.QueryRow(
+		"SELECT t.status FROM blocks b JOIN tasks t ON b.id = t.block_id WHERE b.notebook = ? AND b.section = ? AND b.id = ?",
+		"Personal", "Journal", "11111111-1111-1111-1111-111111111111",
+	).Scan(&newStatus); err != nil {
+		t.Fatalf("lookup new metadata: %v", err)
+	}
+	if newStatus != "DOING" {
+		t.Errorf("expected status DOING under new metadata, got %q", newStatus)
+	}
+}
+
+func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
+	// Verifies the N+1 fix: tags should be hydrated on the returned
+	// TaskResult slice without an extra query per row.
+	dm := newTestDB(t)
+
+	blocks := []parser.ParsedBlock{
+		{
+			ID:        "11111111-1111-1111-1111-111111111111",
+			Type:      parser.BlockTask,
+			RawText:   "- [x] DONE TASK [Alice] ship #work/sogav #release <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			CleanText: "ship",
+			Status:    "DONE",
+			Owner:     "Alice",
+			Priority:  1,
+			LineNumber: 1,
+		},
+		{
+			ID:        "22222222-2222-2222-2222-222222222222",
+			Type:      parser.BlockTask,
+			RawText:   "- [ ] TODO TASK [Bob] research #work/sogav <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			CleanText: "research",
+			Status:    "TODO",
+			Owner:     "Bob",
+			Priority:  3,
+			LineNumber: 2,
+		},
+	}
+	if err := dm.IndexFileBlocks("Work", "Journal", "2026-06-13", blocks, nil); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	results, err := dm.QueryTasksWithFilters(parser.TaskQueryFilter{})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	tagsByID := map[string][]string{}
+	for _, r := range results {
+		tagsByID[r.ID] = r.Tags
+	}
+	if got := tagsByID["11111111-1111-1111-1111-111111111111"]; len(got) != 2 ||
+		!contains(got, "work/sogav") || !contains(got, "release") {
+		t.Errorf("expected ship task to have tags [work/sogav release], got %v", got)
+	}
+	if got := tagsByID["22222222-2222-2222-2222-222222222222"]; len(got) != 1 ||
+		!contains(got, "work/sogav") {
+		t.Errorf("expected research task to have tag [work/sogav], got %v", got)
+	}
+}
+
+func contains(slice []string, want string) bool {
+	for _, s := range slice {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }

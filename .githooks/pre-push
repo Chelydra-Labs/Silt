@@ -1,32 +1,53 @@
 #!/bin/sh
 echo "Running pre-push hooks..."
 
-# Read local and remote refs/SHAs from stdin (sent by git push)
-read local_ref local_sha remote_ref remote_sha
+# Git can send multiple refs to the pre-push hook via stdin (e.g. when
+# pushing multiple branches/tags in a single command). A bare `read` only
+# processes the first ref, bypassing checks for the rest. We track the
+# aggregate set of changed files across all pushed refs and run the checks
+# once at the end.
+PUSHED_LOCAL_SHAS=""
+PUSHED_REMOTE_SHAS=""
+CHANGED_FILES_ALL=""
 
-# 1. Exempt branch deletions
-if [ "$local_sha" = "0000000000000000000000000000000000000000" ] || [ -z "$local_sha" ]; then
-  echo "Branch deletion detected. Exempting pre-push hooks."
-  exit 0
-fi
-
-# 2. Exempt merge-only pushes
-if [ -n "$remote_sha" ] && [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
-  NON_MERGES=$(git log --no-merges --oneline $remote_sha..$local_sha)
-  if [ -z "$NON_MERGES" ]; then
-    echo "Only merge commits detected in push. Exempting pre-push hooks."
-    exit 0
+while read local_ref local_sha remote_ref remote_sha; do
+  # 1. Exempt branch deletions
+  if [ "$local_sha" = "0000000000000000000000000000000000000000" ] || [ -z "$local_sha" ]; then
+    echo "Branch deletion detected for $local_ref. Exempting pre-push hooks."
+    continue
   fi
-fi
 
-# Detect files changed in this push
-if [ "$remote_sha" = "0000000000000000000000000000000000000000" ] || [ -z "$remote_sha" ]; then
-  # New branch push: check diff against origin/main base branch
-  CHANGED_FILES=$(git diff --name-only origin/main...$local_sha)
-else
-  # Existing branch: check diff between remote SHA and local SHA
-  CHANGED_FILES=$(git diff --name-only $remote_sha..$local_sha)
-fi
+  # 2. Exempt merge-only pushes for this ref
+  if [ -n "$remote_sha" ] && [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
+    NON_MERGES=$(git log --no-merges --oneline $remote_sha..$local_sha)
+    if [ -z "$NON_MERGES" ]; then
+      echo "Only merge commits detected in push for $local_ref. Skipping checks for this ref."
+      continue
+    fi
+  fi
+
+  # Accumulate the SHA pair and the diff for downstream checks.
+  PUSHED_LOCAL_SHAS="$PUSHED_LOCAL_SHAS $local_sha"
+  PUSHED_REMOTE_SHAS="$PUSHED_REMOTE_SHAS $remote_sha"
+
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ] || [ -z "$remote_sha" ]; then
+    # New branch push: diff against origin/main.
+    REF_FILES=$(git diff --name-only origin/main...$local_sha)
+  else
+    # Existing branch: diff between remote and local SHA.
+    REF_FILES=$(git diff --name-only $remote_sha..$local_sha)
+  fi
+  if [ -n "$REF_FILES" ]; then
+    if [ -z "$CHANGED_FILES_ALL" ]; then
+      CHANGED_FILES_ALL="$REF_FILES"
+    else
+      CHANGED_FILES_ALL="$CHANGED_FILES_ALL
+$REF_FILES"
+    fi
+  fi
+done
+
+CHANGED_FILES="$CHANGED_FILES_ALL"
 
 # 3. Exempt documentation and text-only pushes
 CODE_CHANGED=$(echo "$CHANGED_FILES" | grep -v -E '\.(md|txt|png|jpg|jpeg|gif|svg)$')
