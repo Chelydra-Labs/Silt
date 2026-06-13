@@ -162,5 +162,25 @@ plugins:
 		}
 	}
 
+	// 4. Plugins folder README (documents the on-disk plugin layout).
+	pluginsReadme := `# Silt Plugins
+
+Plugins live one-per-folder here, e.g.:
+
+    .system/plugins/<plugin-id>/index.js
+
+Enable a plugin by adding its id to .system/config.yaml under plugins.active.
+Third-party plugins can also be installed from a .silt-plugin archive via the
+in-app plugin manager.
+
+See docs/PLUGIN_DEVELOPMENT.md for the full SDK reference.
+`
+	pluginsReadmePath := filepath.Join(vaultPath, ".system", "plugins", "README.md")
+	if _, err := os.Stat(pluginsReadmePath); os.IsNotExist(err) {
+		if err := os.WriteFile(pluginsReadmePath, []byte(pluginsReadme), 0644); err != nil {
+			return fmt.Errorf("failed to write plugins README: %w", err)
+		}
+	}
+
 	return nil
 }

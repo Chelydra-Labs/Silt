@@ -10,6 +10,8 @@
   import VirtualScrollContainer from './components/VirtualScrollContainer.svelte'
   import SearchModal from './components/SearchModal.svelte'
   import TagsExplorer from './components/TagsExplorer.svelte'
+  import PluginView from './components/PluginView.svelte'
+  import { loadPlugins } from './plugins/loader'
   import logo from './assets/logo.svg'
 
   let isInitialized = $state(false)
@@ -42,6 +44,11 @@
       }
     }
     checkInit()
+    // Discover and initialize plugins once the frontend is mounted. They
+    // load from the (possibly empty) vault registry and first-party bundle.
+    loadPlugins('', '', '').catch((e) =>
+      console.error('Plugin load failed:', e)
+    )
 
     function handleGlobalKeyDown(e: KeyboardEvent) {
       // Ctrl+P → search
@@ -245,17 +252,21 @@
           {/if}
         {:else if activeView === 'tags'}
           <TagsExplorer />
+        {:else if activeView === 'agenda' || activeView === 'calendar' || activeView === 'kanban'}
+          <PluginView
+            pluginId={'silt-' + activeView}
+            {activeNotebook}
+            {activeSection}
+            {activePage}
+          />
         {:else}
-          <!-- Placeholder views: Agenda/Calendar/Kanban arrive in later phases -->
+          <!-- Unknown view -->
           <div class="flex-1 p-8 flex flex-col select-none">
             <h1
               class="font-headline-lg text-headline-lg text-text-primary mb-2 capitalize"
             >
               {activeView}
             </h1>
-            <p class="text-text-muted font-body-md">
-              The {activeView} view loads in a later sprint phase.
-            </p>
           </div>
         {/if}
       </div>
