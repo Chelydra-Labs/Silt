@@ -1,0 +1,36 @@
+# Wails build output
+build/bin/
+*.exe
+wails-*.json
+
+# Go
+go.work
+go.work.sum
+*.test
+*.prof
+
+# Frontend Node modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Frontend Build output
+frontend/dist/
+frontend/node_modules/
+frontend/wailsjs/
+
+# IDEs/OS
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
+
+# Temporary planning files
+PLAN.md

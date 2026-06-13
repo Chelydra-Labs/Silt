@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"notes-sharp/backend/parser"
 
@@ -257,4 +258,288 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, fileDate string, b
 	}
 
 	return tx.Commit()
+}
+
+// IndexScanResults inserts multiple scan results into the database in a single transaction.
+func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, error) {
+	tx, err := dm.DB.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, notebook, section, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	if err != nil {
+		return 0, err
+	}
+	defer stmtBlock.Close()
+
+	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority) VALUES (?, ?, ?, ?, ?, ?)")
+	if err != nil {
+		return 0, err
+	}
+	defer stmtTask.Close()
+
+	stmtTag, err := tx.Prepare("INSERT INTO tags (block_id, raw_path, level_0, level_1, level_2) VALUES (?, ?, ?, ?, ?)")
+	if err != nil {
+		return 0, err
+	}
+	defer stmtTag.Close()
+
+	indexedCount := 0
+
+	for _, res := range results {
+		if res.Err != nil {
+			continue
+		}
+
+		// Clear old blocks first
+		if err := dm.ClearFileBlocks(tx, res.Notebook, res.Section, res.Date); err != nil {
+			return 0, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
+		}
+
+		for _, block := range res.Blocks {
+			var parentID interface{}
+			if block.ParentID != "" {
+				parentID = block.ParentID
+			}
+			_, err = stmtBlock.Exec(block.ID, parentID, res.Notebook, res.Section, res.Date, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
+			if err != nil {
+				return 0, fmt.Errorf("failed to insert block %s: %w", block.ID, err)
+			}
+
+			if block.Type == parser.BlockTask {
+				var owner, startDate, dueDate interface{}
+				if block.Owner != "" {
+					owner = block.Owner
+				}
+				if block.StartDate != "" {
+					startDate = block.StartDate
+				}
+				if block.DueDate != "" {
+					dueDate = block.DueDate
+				}
+				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority)
+				if err != nil {
+					return 0, fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
+				}
+			}
+
+			tags := ExtractTags(block.RawText)
+			// Associate file frontmatter tags to the first block
+			if block.LineNumber == 1 || len(res.Blocks) == 1 {
+				for _, ft := range res.Tags {
+					trimmedFT := strings.TrimPrefix(ft, "#")
+					found := false
+					for _, t := range tags {
+						if t == trimmedFT {
+							found = true
+							break
+						}
+					}
+					if !found && trimmedFT != "" {
+						tags = append(tags, trimmedFT)
+					}
+				}
+			}
+
+			for _, tagPath := range tags {
+				parts := strings.Split(tagPath, "/")
+				var level0, level1, level2 interface{}
+				if len(parts) > 0 {
+					level0 = parts[0]
+				}
+				if len(parts) > 1 {
+					level1 = parts[1]
+				}
+				if len(parts) > 2 {
+					level2 = parts[2]
+				}
+				_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
+				if err != nil {
+					continue
+				}
+			}
+		}
+
+		indexedCount++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return indexedCount, nil
+}
+
+// FetchTimelineDays fetches day-grouped blocks for infinite virtualization.
+func (dm *DatabaseManager) FetchTimelineDays(notebook, section string, limit, offset int) ([]parser.DayGroup, error) {
+	rows, err := dm.DB.Query("SELECT DISTINCT file_date FROM blocks WHERE notebook = ? AND section = ? ORDER BY file_date DESC LIMIT ? OFFSET ?", notebook, section, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var dates []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		dates = append(dates, d)
+	}
+
+	var groups []parser.DayGroup
+	for _, dateVal := range dates {
+		blocksRows, err := dm.DB.Query(`
+			SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
+			       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
+			FROM blocks b
+			LEFT JOIN tasks t ON b.id = t.block_id
+			WHERE b.notebook = ? AND b.section = ? AND b.file_date = ?
+			ORDER BY b.line_number ASC
+		`, notebook, section, dateVal)
+		if err != nil {
+			return nil, err
+		}
+
+		var blocks []parser.ParsedBlock
+		for blocksRows.Next() {
+			var b parser.ParsedBlock
+			var bType string
+			var status, owner, start, due string
+			var priority int
+
+			err := blocksRows.Scan(&b.ID, &b.ParentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &status, &owner, &start, &due, &priority)
+			if err != nil {
+				blocksRows.Close()
+				return nil, err
+			}
+			b.Type = parser.BlockType(bType)
+			b.Status = status
+			b.Owner = owner
+			b.StartDate = start
+			b.DueDate = due
+			b.Priority = priority
+			blocks = append(blocks, b)
+		}
+		blocksRows.Close()
+
+		// Format date cleanly
+		parsedTime, err := time.Parse("2006-01-02", dateVal)
+		formatted := dateVal
+		if err == nil {
+			formatted = parsedTime.Format("Monday, January 2, 2006")
+		}
+
+		groups = append(groups, parser.DayGroup{
+			Date:          dateVal,
+			FormattedDate: formatted,
+			Blocks:        blocks,
+		})
+	}
+
+	return groups, nil
+}
+
+// QueryTasksWithFilters fetches task results matching the provided query filters.
+func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) ([]parser.TaskResult, error) {
+	baseQuery := `
+		SELECT b.id, b.parent_id, b.notebook, b.section, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
+		       t.status, t.owner, t.start_date, t.due_date, t.priority
+		FROM blocks b
+		INNER JOIN tasks t ON b.id = t.block_id
+		WHERE 1=1
+	`
+
+	var args []interface{}
+
+	if filter.Owner != "" {
+		baseQuery += " AND t.owner = ?"
+		args = append(args, filter.Owner)
+	}
+
+	if filter.Priority > 0 {
+		baseQuery += " AND t.priority = ?"
+		args = append(args, filter.Priority)
+	}
+
+	if filter.StartDate != "" {
+		baseQuery += " AND (t.start_date >= ? OR t.due_date >= ?)"
+		args = append(args, filter.StartDate, filter.StartDate)
+	}
+
+	if filter.EndDate != "" {
+		baseQuery += " AND (t.due_date <= ? OR t.start_date <= ?)"
+		args = append(args, filter.EndDate, filter.EndDate)
+	}
+
+	if len(filter.Tags) > 0 {
+		var tagConditions []string
+		for _, tag := range filter.Tags {
+			trimmedTag := strings.TrimPrefix(tag, "#")
+			if trimmedTag != "" {
+				tagConditions = append(tagConditions, "b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ?)")
+				args = append(args, trimmedTag, trimmedTag+"/%")
+			}
+		}
+		if len(tagConditions) > 0 {
+			baseQuery += " AND (" + strings.Join(tagConditions, " OR ") + ")"
+		}
+	}
+
+	baseQuery += " ORDER BY b.file_date DESC, b.line_number ASC"
+
+	rows, err := dm.DB.Query(baseQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var results []parser.TaskResult
+	for rows.Next() {
+		var r parser.TaskResult
+		var status, owner, start, due interface{}
+		var priority int
+
+		err := rows.Scan(
+			&r.ID, &r.ParentID, &r.Notebook, &r.Section, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
+			&status, &owner, &start, &due, &priority,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if statusStr, ok := status.(string); ok {
+			r.Status = statusStr
+		}
+		if ownerStr, ok := owner.(string); ok {
+			r.Owner = ownerStr
+		}
+		if startStr, ok := start.(string); ok {
+			r.StartDate = startStr
+		}
+		if dueStr, ok := due.(string); ok {
+			r.DueDate = dueStr
+		}
+		r.Priority = priority
+
+		// Get tags for this block
+		tagRows, err := dm.DB.Query("SELECT raw_path FROM tags WHERE block_id = ?", r.ID)
+		if err == nil {
+			var tags []string
+			for tagRows.Next() {
+				var tag string
+				if err := tagRows.Scan(&tag); err == nil {
+					tags = append(tags, tag)
+				}
+			}
+			tagRows.Close()
+			r.Tags = tags
+		}
+
+		results = append(results, r)
+	}
+
+	return results, nil
 }

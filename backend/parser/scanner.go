@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"notes-sharp/backend/db"
 )
 
 var DateFileRegex = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\.md$`)
@@ -26,10 +24,8 @@ type ScanResult struct {
 	Err      error
 }
 
-// ScanAndIndexWorkspace scans the vault directory recursively and updates the SQLite index.
-func ScanAndIndexWorkspace(vaultPath string, dm *db.DatabaseManager, spacesPerTab int) (time.Duration, int, error) {
-	startTime := time.Now()
-
+// ScanWorkspace scans the vault directory recursively and returns all parsed file blocks and metadata.
+func ScanWorkspace(vaultPath string, spacesPerTab int) ([]ScanResult, error) {
 	// 1. Gather all markdown files
 	var files []string
 	err := filepath.WalkDir(vaultPath, func(path string, d fs.DirEntry, err error) error {
@@ -52,11 +48,11 @@ func ScanAndIndexWorkspace(vaultPath string, dm *db.DatabaseManager, spacesPerTa
 		return nil
 	})
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to scan directories: %w", err)
+		return nil, fmt.Errorf("failed to scan directories: %w", err)
 	}
 
 	if len(files) == 0 {
-		return time.Since(startTime), 0, nil
+		return nil, nil
 	}
 
 	// 2. Parse files in parallel using a worker pool
@@ -91,120 +87,13 @@ func ScanAndIndexWorkspace(vaultPath string, dm *db.DatabaseManager, spacesPerTa
 	wg.Wait()
 	close(resultsChan)
 
-	// 3. Collect results and insert into SQLite in a single transaction
-	tx, err := dm.DB.Begin()
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to start index transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Prepare SQLite statements
-	stmtBlock, err := tx.Prepare("INSERT INTO blocks (id, parent_id, notebook, section, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-	if err != nil {
-		return 0, 0, err
-	}
-	defer stmtBlock.Close()
-
-	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority) VALUES (?, ?, ?, ?, ?, ?)")
-	if err != nil {
-		return 0, 0, err
-	}
-	defer stmtTask.Close()
-
-	stmtTag, err := tx.Prepare("INSERT INTO tags (block_id, raw_path, level_0, level_1, level_2) VALUES (?, ?, ?, ?, ?)")
-	if err != nil {
-		return 0, 0, err
-	}
-	defer stmtTag.Close()
-
-	indexedCount := 0
-
+	// Collect results
+	var results []ScanResult
 	for res := range resultsChan {
-		if res.Err != nil {
-			// Log error but continue with other files
-			fmt.Printf("Error parsing file %s: %v\n", res.Path, res.Err)
-			continue
-		}
-
-		// Clear old blocks for this file first
-		if err := dm.ClearFileBlocks(tx, res.Notebook, res.Section, res.Date); err != nil {
-			return 0, 0, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
-		}
-
-		for _, block := range res.Blocks {
-			var parentID interface{}
-			if block.ParentID != "" {
-				parentID = block.ParentID
-			}
-
-			_, err = stmtBlock.Exec(block.ID, parentID, res.Notebook, res.Section, res.Date, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber)
-			if err != nil {
-				return 0, 0, fmt.Errorf("failed to insert block %s: %w", block.ID, err)
-			}
-
-			if block.Type == BlockTask {
-				var owner, startDate, dueDate interface{}
-				if block.Owner != "" {
-					owner = block.Owner
-				}
-				if block.StartDate != "" {
-					startDate = block.StartDate
-				}
-				if block.DueDate != "" {
-					dueDate = block.DueDate
-				}
-				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority)
-				if err != nil {
-					return 0, 0, fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
-				}
-			}
-
-			// Extract tags from this block
-			tags := db.ExtractTags(block.RawText)
-			// Associate file frontmatter tags to the first block
-			if block.LineNumber == 1 || len(res.Blocks) == 1 {
-				for _, ft := range res.Tags {
-					trimmedFT := strings.TrimPrefix(ft, "#")
-					found := false
-					for _, t := range tags {
-						if t == trimmedFT {
-							found = true
-							break
-						}
-					}
-					if !found && trimmedFT != "" {
-						tags = append(tags, trimmedFT)
-					}
-				}
-			}
-
-			for _, tagPath := range tags {
-				parts := strings.Split(tagPath, "/")
-				var level0, level1, level2 interface{}
-				if len(parts) > 0 {
-					level0 = parts[0]
-				}
-				if len(parts) > 1 {
-					level1 = parts[1]
-				}
-				if len(parts) > 2 {
-					level2 = parts[2]
-				}
-				_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
-				if err != nil {
-					continue
-				}
-			}
-		}
-
-		indexedCount++
+		results = append(results, res)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return 0, 0, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return time.Since(startTime), indexedCount, nil
+	return results, nil
 }
 
 func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult {
