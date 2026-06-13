@@ -59,15 +59,19 @@
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
+      e.stopPropagation()
       selectedIdx = (selectedIdx + 1) % commands.length
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
+      e.stopPropagation()
       selectedIdx = (selectedIdx - 1 + commands.length) % commands.length
     } else if (e.key === 'Enter') {
       e.preventDefault()
+      e.stopPropagation()
       onSelect(commands[selectedIdx].id)
     } else if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
       onClose()
     }
   }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onMount } from 'svelte'
   import { SearchBlocks } from '../../wailsjs/go/main/App.js'
 
   interface Props {
@@ -36,12 +36,16 @@
     loading = true
     try {
       const hits = await SearchBlocks(trimmed)
-      results = hits || []
-      selectedIdx = 0
+      if (query.trim() === trimmed) {
+        results = hits || []
+        selectedIdx = 0
+      }
     } catch (e) {
       console.error('Search query failed:', e)
     } finally {
-      loading = false
+      if (query.trim() === trimmed) {
+        loading = false
+      }
     }
   }
 

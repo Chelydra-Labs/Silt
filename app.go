@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	maxTimelineLimit    = 200
+	maxTimelineLimit     = 200
 	defaultTimelineLimit = 30
 )
 
@@ -545,15 +545,24 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
+		contentBytes, err := os.ReadFile(filePath)
+		if err != nil && !os.IsNotExist(err) {
+			writeErr = fmt.Errorf("failed to read existing file: %w", err)
+			return
+		}
+
 		frontmatter := ""
-		if bytes, err := os.ReadFile(filePath); err == nil {
-			lines := strings.Split(string(bytes), "\n")
+		bodyStart := 0
+		var lines []string
+		if err == nil {
+			lines = strings.Split(string(contentBytes), "\n")
 			if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
 				var fmParts []string
 				fmParts = append(fmParts, lines[0])
 				for i := 1; i < len(lines); i++ {
 					fmParts = append(fmParts, lines[i])
 					if strings.TrimSpace(lines[i]) == "---" {
+						bodyStart = i + 1
 						break
 					}
 				}
@@ -567,13 +576,53 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\ndate: %s\ntags: []\n---\n", notebook, section, fileDate)
 		}
 
-		var markdownLines []string
+		updatedByID := make(map[string]parser.ParsedBlock, len(blocks))
+		orderedBlocks := make([]parser.ParsedBlock, 0, len(blocks))
 		for _, block := range blocks {
 			if block.ID == "" {
 				block.ID = uuid.New().String()
 			}
+			updatedByID[block.ID] = block
+			orderedBlocks = append(orderedBlocks, block)
+		}
+
+		preservedBefore := make(map[string][]string)
+		var pendingPreserved []string
+		inCodeBlock := false
+		for i := bodyStart; i < len(lines); i++ {
+			line := lines[i]
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "```") {
+				inCodeBlock = !inCodeBlock
+				pendingPreserved = append(pendingPreserved, line)
+				continue
+			}
+			if inCodeBlock || trimmed == "" {
+				pendingPreserved = append(pendingPreserved, line)
+				continue
+			}
+
+			matches := updateLineIDRegex.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				blockID := matches[1]
+				if _, ok := updatedByID[blockID]; ok {
+					preservedBefore[blockID] = append(preservedBefore[blockID], pendingPreserved...)
+					pendingPreserved = nil
+				}
+				continue
+			}
+
+			pendingPreserved = append(pendingPreserved, line)
+		}
+
+		var markdownLines []string
+		for _, block := range orderedBlocks {
+			if preserved, ok := preservedBefore[block.ID]; ok {
+				markdownLines = append(markdownLines, preserved...)
+			}
 			markdownLines = append(markdownLines, parser.FormatBlockToLine(block, a.spacesPerTab))
 		}
+		markdownLines = append(markdownLines, pendingPreserved...)
 
 		newContent := frontmatter + strings.Join(markdownLines, "\n")
 
@@ -592,4 +641,3 @@ func (a *App) SaveFileBlocks(notebook, section, fileDate string, blocks []parser
 
 	return writeErr
 }
-

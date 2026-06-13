@@ -65,7 +65,8 @@
       block.depth = 1
       block.clean_text = ''
     } else if (commandId === 'today') {
-      const todayStr = new Date().toISOString().split('T')[0]
+      const d = new Date()
+      const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
       block.clean_text = todayStr
     } else if (commandId === 'kanban') {
       block.clean_text = ''
@@ -78,8 +79,9 @@
       editableEl.innerText = block.clean_text
       editableEl.focus()
     }
-    triggerAutoSave()
-    onUpdate([...siblings])
+    const updated = [...siblings]
+    triggerAutoSave(updated)
+    onUpdate(updated)
   }
 
   // Find ancestor chain for a block
@@ -154,19 +156,19 @@
   }
 
   // Trigger auto-save with 500ms debounce
-  function triggerAutoSave() {
+  function triggerAutoSave(blocksToSave = siblings) {
     if (saveTimeout) {
       clearTimeout(saveTimeout)
     }
     saveTimeout = setTimeout(() => {
-      saveBlocksDirectly()
+      saveBlocksDirectly(blocksToSave)
       saveTimeout = null
     }, 500)
   }
 
-  async function saveBlocksDirectly() {
+  async function saveBlocksDirectly(blocksToSave = siblings) {
     try {
-      await SaveFileBlocks(notebook, section, fileDate, siblings)
+      await SaveFileBlocks(notebook, section, fileDate, blocksToSave)
     } catch (e) {
       console.error('Failed to save blocks:', e)
     }
@@ -184,8 +186,9 @@
     block.status = nextStatus
 
     // Also update raw text to keep it synchronized
-    triggerAutoSave()
-    onUpdate([...siblings])
+    const updated = [...siblings]
+    triggerAutoSave(updated)
+    onUpdate(updated)
   }
 
   // Handle keydown for outliner actions
@@ -200,10 +203,13 @@
       if (e.shiftKey) {
         // Shift+Tab: Unindent
         if (block.depth > 0) {
-          block.depth--
-          updateParentIDs()
-          triggerAutoSave()
-          onUpdate([...siblings])
+          const updated = getUpdatedParentIDs(
+            siblings.map((b, idx) =>
+              idx === blockIndex ? { ...b, depth: b.depth - 1 } : b
+            )
+          )
+          triggerAutoSave(updated)
+          onUpdate(updated)
         }
       } else {
         // Tab: Indent
@@ -213,10 +219,13 @@
           maxDepth = siblings[blockIndex - 1].depth + 1
         }
         if (block.depth < maxDepth) {
-          block.depth++
-          updateParentIDs()
-          triggerAutoSave()
-          onUpdate([...siblings])
+          const updated = getUpdatedParentIDs(
+            siblings.map((b, idx) =>
+              idx === blockIndex ? { ...b, depth: b.depth + 1 } : b
+            )
+          )
+          triggerAutoSave(updated)
+          onUpdate(updated)
         }
       }
     } else if (e.key === 'Enter') {
@@ -249,15 +258,18 @@
       if (nextNode) {
         nextNode.focus()
       }
-      triggerAutoSave()
+      triggerAutoSave(updated)
     } else if (e.key === 'Backspace' && block.clean_text === '') {
       e.preventDefault()
       // If indent exists, unindent first
       if (block.depth > 0) {
-        block.depth--
-        updateParentIDs()
-        triggerAutoSave()
-        onUpdate([...siblings])
+        const updated = getUpdatedParentIDs(
+          siblings.map((b, idx) =>
+            idx === blockIndex ? { ...b, depth: b.depth - 1 } : b
+          )
+        )
+        triggerAutoSave(updated)
+        onUpdate(updated)
       } else if (siblings.length > 1) {
         // Delete block and focus previous
         const updated = siblings.filter((b) => b.id !== block.id)
@@ -279,7 +291,7 @@
             sel?.addRange(range)
           }
         }
-        triggerAutoSave()
+        triggerAutoSave(updated)
       }
     } else if (e.key === 'ArrowUp' && blockIndex > 0) {
       e.preventDefault()
@@ -297,22 +309,24 @@
   }
 
   // Update parent_id fields recursively based on depth matching
-  function updateParentIDs() {
+  function getUpdatedParentIDs(blocks: Block[]): Block[] {
     const activeIDs: string[] = []
-    siblings.forEach((b) => {
-      if (b.depth > 0 && b.depth - 1 < activeIDs.length) {
-        b.parent_id = activeIDs[b.depth - 1]
+    return blocks.map((b) => {
+      const copy = { ...b }
+      if (copy.depth > 0 && copy.depth - 1 < activeIDs.length) {
+        copy.parent_id = activeIDs[copy.depth - 1]
       } else {
-        b.parent_id = ''
+        copy.parent_id = ''
       }
 
-      if (b.depth >= 0) {
-        while (activeIDs.length <= b.depth) {
+      if (copy.depth >= 0) {
+        while (activeIDs.length <= copy.depth) {
           activeIDs.push('')
         }
-        activeIDs[b.depth] = b.id
-        activeIDs.splice(b.depth + 1)
+        activeIDs[copy.depth] = copy.id
+        activeIDs.splice(copy.depth + 1)
       }
+      return copy
     })
   }
 

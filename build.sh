@@ -33,12 +33,6 @@ check_tool npm
 check_tool wails
 check_tool makensis
 
-# --- generate app icon from logo.svg ---
-log_info "Generating app icon from logo.svg..."
-NODE_PATH="$ROOT/frontend/node_modules" node "$ROOT/scripts/generate-icon.mjs" \
-    "$ROOT/frontend/src/assets/logo.svg" \
-    "$ROOT/build/appicon.png"
-
 # --- read & bump version ---
 if [ ! -f "$VERSION_FILE" ]; then
     echo "0.1.0" > "$VERSION_FILE"
@@ -57,6 +51,13 @@ log_info "Building version: $OLD_VERSION -> $VERSION"
 # first (which requires frontend/dist to exist for the embed directive).
 log_info "Installing frontend dependencies..."
 (cd "$ROOT/frontend" && npm install)
+
+# --- generate app icon from logo.svg ---
+log_info "Generating app icon from logo.svg..."
+NODE_PATH="$ROOT/frontend/node_modules" node "$ROOT/scripts/generate-icon.mjs" \
+    "$ROOT/frontend/src/assets/logo.svg" \
+    "$ROOT/build/appicon.png"
+
 log_info "Building frontend..."
 (cd "$ROOT/frontend" && npm run build)
 
@@ -93,16 +94,19 @@ log_info "  -> $BUILD_DIR/$ZIP_NAME"
 log_info "Building per-user installer..."
 
 INSTALLER_NAME="${APP_NAME}-v${VERSION}-installer-peruser.exe"
-NSI_FILE="$ROOT/build/installer/installer-peruser.nsi"
+NSI_FILE="$ROOT/build/windows/installer/project.nsi"
+NSIS_OUTPUT="$ROOT/build/bin/${APP_NAME}-amd64-installer.exe"
 
 # makensis resolves relative paths (icon, webview2 bootstrapper) from the
 # directory containing the .nsi file, so we cd there.
 (cd "$(dirname "$NSI_FILE")" && makensis \
-    -DVERSION="$VERSION" \
-    -DOUTFILE="$BUILD_DIR/$INSTALLER_NAME" \
-    -DBINARY_AMD64="$BINARY" \
-    -DBINARY_ARM64="$BINARY" \
+    -DINFO_PROJECTNAME="$APP_NAME" \
+    -DINFO_PRODUCTNAME="$PRODUCT_NAME" \
+    -DINFO_PRODUCTVERSION="$VERSION" \
+    -DARG_WAILS_AMD64_BINARY="$BINARY" \
     "$(basename "$NSI_FILE")")
+
+cp "$NSIS_OUTPUT" "$BUILD_DIR/$INSTALLER_NAME"
 
 log_info "  -> $BUILD_DIR/$INSTALLER_NAME"
 

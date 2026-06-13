@@ -210,33 +210,33 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 
 	blocks := []parser.ParsedBlock{
 		{
-			ID:        "t1",
-			Type:      parser.BlockTask,
-			RawText:   "- [x] DONE TASK [Alice] ship #work/sogav <!-- id: t1 -->",
-			CleanText: "ship",
-			Status:    "DONE",
-			Owner:     "Alice",
-			Priority:  1,
+			ID:         "t1",
+			Type:       parser.BlockTask,
+			RawText:    "- [x] DONE TASK [Alice] ship #work/sogav <!-- id: t1 -->",
+			CleanText:  "ship",
+			Status:     "DONE",
+			Owner:      "Alice",
+			Priority:   1,
 			LineNumber: 1,
 		},
 		{
-			ID:        "t2",
-			Type:      parser.BlockTask,
-			RawText:   "- [/] DOING TASK [Bob] fix <!-- id: t2 -->",
-			CleanText: "fix",
-			Status:    "DOING",
-			Owner:     "Bob",
-			Priority:  2,
+			ID:         "t2",
+			Type:       parser.BlockTask,
+			RawText:    "- [/] DOING TASK [Bob] fix <!-- id: t2 -->",
+			CleanText:  "fix",
+			Status:     "DOING",
+			Owner:      "Bob",
+			Priority:   2,
 			LineNumber: 2,
 		},
 		{
-			ID:        "t3",
-			Type:      parser.BlockTask,
-			RawText:   "- [ ] TODO TASK [Alice] research <!-- id: t3 -->",
-			CleanText: "research",
-			Status:    "TODO",
-			Owner:     "Alice",
-			Priority:  3,
+			ID:         "t3",
+			Type:       parser.BlockTask,
+			RawText:    "- [ ] TODO TASK [Alice] research <!-- id: t3 -->",
+			CleanText:  "research",
+			Status:     "TODO",
+			Owner:      "Alice",
+			Priority:   3,
 			LineNumber: 3,
 		},
 	}
@@ -296,6 +296,63 @@ func TestCreateNewSection_Scaffolding(t *testing.T) {
 	content := string(contentBytes)
 	if !strings.Contains(content, "notebook: Work") || !strings.Contains(content, "section: Meeting Notes") {
 		t.Errorf("scaffolded file is missing frontmatter metadata, got:\n%s", content)
+	}
+}
+
+func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
+	app := newTestApp(t)
+
+	notebook := "Work"
+	section := "Journal"
+	fileDate := "2026-06-13"
+	filePath := filepath.Join(app.vaultPath, notebook, section, fileDate+".md")
+	content := "---\n" +
+		"notebook: Work\n" +
+		"section: Journal\n" +
+		"date: 2026-06-13\n" +
+		"tags: []\n" +
+		"---\n" +
+		"# Today <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"\n" +
+		"```go\n" +
+		"fmt.Println(\"keep me\") <!-- id: 99999999-9999-9999-9999-999999999999 -->\n" +
+		"```\n" +
+		"\n" +
+		"- [ ] TODO TASK [Alice] ship <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [ ] TODO TASK [Bob] remove <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
+	writeFile(t, filePath, content)
+
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, fileDate, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	var updated []parser.ParsedBlock
+	for _, block := range blocks {
+		if block.ID == "33333333-3333-3333-3333-333333333333" {
+			continue
+		}
+		if block.ID == "22222222-2222-2222-2222-222222222222" {
+			block.CleanText = "ship the fix"
+		}
+		updated = append(updated, block)
+	}
+
+	if err := app.SaveFileBlocks(notebook, section, fileDate, updated); err != nil {
+		t.Fatalf("SaveFileBlocks: %v", err)
+	}
+	writtenBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	written := string(writtenBytes)
+	if !strings.Contains(written, "fmt.Println(\"keep me\") <!-- id: 99999999-9999-9999-9999-999999999999 -->") {
+		t.Errorf("expected fenced code content to be preserved, got:\n%s", written)
+	}
+	if !strings.Contains(written, "- [ ] TODO TASK [Alice] ship the fix <!-- id: 22222222-2222-2222-2222-222222222222 -->") {
+		t.Errorf("expected updated task text, got:\n%s", written)
+	}
+	if strings.Contains(written, "remove <!-- id: 33333333-3333-3333-3333-333333333333 -->") {
+		t.Errorf("expected removed block to stay deleted, got:\n%s", written)
 	}
 }
 
@@ -367,4 +424,3 @@ func TestFocusLocking_AcquireAndRelease(t *testing.T) {
 		t.Errorf("expected file to be unlocked")
 	}
 }
-

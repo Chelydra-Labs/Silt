@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { tick } from 'svelte'
   import { FetchSectionTimeline } from '../../wailsjs/go/main/App.js'
   import BlockRenderer from './BlockRenderer.svelte'
 
   interface Props {
     notebook: string
     section: string
+    targetDate?: string
+    targetBlockId?: string
+    targetKey?: string
     onBlockFocus?: (blockId: string, ancestors: string[]) => void
     onBlockBlur?: () => void
     activeFocusedBlockAncestors?: string[]
@@ -14,6 +17,9 @@
   let {
     notebook,
     section,
+    targetDate = '',
+    targetBlockId = '',
+    targetKey = '',
     onBlockFocus,
     onBlockBlur,
     activeFocusedBlockAncestors = []
@@ -25,11 +31,18 @@
   let loading = $state(false)
   let hasMore = $state(true)
   let containerEl = $state<HTMLDivElement | null>(null)
+  let handledTargetKey = $state('')
 
   // Reload timeline when notebook or section changes
   $effect(() => {
     if (notebook && section) {
       resetTimeline()
+    }
+  })
+
+  $effect(() => {
+    if (targetDate && targetBlockId && targetKey !== handledTargetKey) {
+      loadTargetBlock(targetKey)
     }
   })
 
@@ -40,9 +53,10 @@
     await loadMoreDays()
   }
 
-  async function loadMoreDays() {
-    if (loading || !hasMore) return
+  async function loadMoreDays(): Promise<number> {
+    if (loading || !hasMore) return 0
     loading = true
+    let loadedCount = 0
 
     try {
       const newDays = await FetchSectionTimeline(
@@ -54,6 +68,7 @@
       if (!newDays || newDays.length === 0) {
         hasMore = false
       } else {
+        loadedCount = newDays.length
         visibleGroups = [...visibleGroups, ...newDays]
         offset += newDays.length
         if (newDays.length < limit) {
@@ -64,6 +79,43 @@
       console.error('Failed to load timeline:', e)
     } finally {
       loading = false
+      await tick()
+      if (
+        containerEl &&
+        containerEl.scrollHeight <= containerEl.clientHeight &&
+        hasMore
+      ) {
+        void loadMoreDays()
+      }
+    }
+
+    return loadedCount
+  }
+
+  async function loadTargetBlock(key: string) {
+    handledTargetKey = key
+
+    while (
+      targetKey === key &&
+      targetDate &&
+      !visibleGroups.some((group) => group.date === targetDate) &&
+      hasMore
+    ) {
+      if (loading) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        continue
+      }
+      const loadedCount = await loadMoreDays()
+      if (loadedCount === 0 && !hasMore) break
+    }
+
+    await tick()
+    if (targetKey !== key || !targetBlockId) return
+
+    const el = document.getElementById(`editable-${targetBlockId}`)
+    if (el instanceof HTMLElement) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      el.focus()
     }
   }
 

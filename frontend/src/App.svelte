@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onMount } from 'svelte'
   import {
     IsVaultInitialized,
     InitializeVault
@@ -23,6 +23,9 @@
 
   // Focused block ancestry path highlighting
   let activeFocusedBlockAncestors = $state<string[]>([])
+  let searchTargetDate = $state('')
+  let searchTargetBlockId = $state('')
+  let searchTargetKey = $state('')
 
   onMount(() => {
     async function checkInit() {
@@ -74,7 +77,7 @@
   }
 
   // Handle fuzzy search selection jump
-  async function handleSearchJump(
+  function handleSearchJump(
     notebook: string,
     section: string,
     date: string,
@@ -83,17 +86,9 @@
     activeNotebook = notebook
     activeSection = section
     activeView = 'notes'
-
-    await tick()
-
-    // Focus and center viewport on the targeted block
-    setTimeout(() => {
-      const el = document.getElementById(`editable-${blockId}`) as HTMLElement
-      if (el) {
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-        el.focus()
-      }
-    }, 150)
+    searchTargetDate = date
+    searchTargetBlockId = blockId
+    searchTargetKey = `${date}:${blockId}:${Date.now()}`
   }
 
   function handleBlockFocus(blockId: string, ancestors: string[]) {
@@ -158,6 +153,9 @@
           <VirtualScrollContainer
             notebook={activeNotebook}
             section={activeSection}
+            targetDate={searchTargetDate}
+            targetBlockId={searchTargetBlockId}
+            targetKey={searchTargetKey}
             {activeFocusedBlockAncestors}
             onBlockFocus={handleBlockFocus}
             onBlockBlur={handleBlockBlur}

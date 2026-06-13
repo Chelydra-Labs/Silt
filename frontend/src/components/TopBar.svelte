@@ -1,6 +1,4 @@
 <script lang="ts">
-  import logo from '../assets/logo.svg'
-
   interface Props {
     onSearchClick: () => void
   }
@@ -11,19 +9,8 @@
 <header
   class="bg-void flex justify-between items-center px-[24px] h-14 w-full z-50 fixed top-0 border-b border-border-muted select-none"
 >
-  <!-- Brand logo and topnav -->
+  <!-- Topnav -->
   <div class="flex items-center gap-8">
-    <div class="flex items-center gap-2">
-      <img
-        src={logo}
-        alt="notes# logo"
-        class="w-6 h-6 filter drop-shadow-[0_0_4px_rgba(6,182,212,0.3)]"
-      />
-      <span
-        class="font-headline-md text-headline-md font-bold text-accent-teal-start"
-        >notes#</span
-      >
-    </div>
     <nav class="hidden md:flex items-center gap-6">
       <a
         class="text-accent-teal-start font-bold border-b-2 border-accent-teal-start pb-1 font-body-md"
