@@ -12,13 +12,14 @@
     ReleaseFocusLock
   } from '../../wailsjs/go/main/App.js'
   import {
-    SiltBlockExtensions,
+    SiltBlockExtensionsWithNodeViews,
     UniqueBlockIds,
     blocksToDoc,
     docToBlocks
   } from '../lib/editor'
   import type { ParsedBlock } from '../lib/editor'
   import { settings } from '../settings/store.svelte'
+  import CommandPalette from './CommandPalette.svelte'
 
   interface Props {
     notebook: string
@@ -49,6 +50,7 @@
   let hasFocusLock = false
   let isFocused = $state(false)
   let suppressUpdate = false
+  let showSlashMenu = $state(false)
 
   onMount(() => {
     const initialDoc = blocksToDoc(blocks)
@@ -65,7 +67,7 @@
           horizontalRule: false,
           trailingNode: false
         }),
-        ...SiltBlockExtensions,
+        ...SiltBlockExtensionsWithNodeViews,
         UniqueBlockIds,
         Placeholder.configure({
           placeholder: 'Type / for commands, or start writing…'
@@ -74,6 +76,7 @@
       content: initialDoc,
       onUpdate: () => {
         if (suppressUpdate) return
+        detectSlashCommand()
         triggerAutoSave()
       },
       onFocus: () => {
@@ -160,6 +163,62 @@
     }
   }
 
+  // --- Slash menu -----------------------------------------------------------
+
+  function detectSlashCommand(): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    const sel = editorInstance.state.selection
+    const textBefore = sel.$from.parent.textContent.slice(
+      0,
+      sel.$from.parentOffset
+    )
+    if (textBefore === '/') {
+      showSlashMenu = true
+    } else if (showSlashMenu && !textBefore.startsWith('/')) {
+      showSlashMenu = false
+    }
+  }
+
+  function setAttrAtSelection(attr: string, value: unknown): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    const pos = editorInstance.state.selection.$from
+    for (let d = pos.depth; d >= 1; d--) {
+      const node = pos.node(d)
+      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
+        const nodePos = pos.before(d)
+        const tr = editorInstance.state.tr.setNodeAttribute(
+          nodePos,
+          attr,
+          value
+        )
+        editorInstance.view.dispatch(tr)
+        return
+      }
+    }
+  }
+
+  function handleSlashSelect(commandId: string): void {
+    showSlashMenu = false
+    if (!editorInstance || editorInstance.isDestroyed) return
+
+    // Delete the "/" character that triggered the menu.
+    const sel = editorInstance.state.selection
+    const from = sel.$from.start() + sel.$from.parentOffset - 1
+    editorInstance.commands.deleteRange({ from, to: from + 1 })
+
+    if (commandId === 'todo') {
+      setAttrAtSelection('status', 'TODO')
+    } else if (commandId === 'h1') {
+      setAttrAtSelection('depth', 1)
+    } else if (commandId === 'today') {
+      const d = new Date()
+      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      editorInstance.commands.insertContent(today)
+    } else if (commandId === 'embed') {
+      editorInstance.commands.insertContent('{{embed:')
+    }
+  }
+
   // --- Focus lock (reuses the #38 TTL-lease bindings) -----------------------
 
   async function acquireFocus(): Promise<void> {
@@ -232,6 +291,12 @@
 <div class="tiptap-editor-host" class:focused={isFocused}>
   {#if editorStore}
     <EditorContent editor={$editorStore} />
+  {/if}
+  {#if showSlashMenu}
+    <CommandPalette
+      onSelect={handleSlashSelect}
+      onClose={() => (showSlashMenu = false)}
+    />
   {/if}
 </div>
 
