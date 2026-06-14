@@ -5,6 +5,9 @@
   let { node, updateAttributes, selected }: NodeViewProps = $props()
 
   const status = $derived(node.attrs.status || 'TODO')
+  let isEmpty = $derived(
+    node.content.size === 0 || node.textContent.trim() === ''
+  )
 
   function cycleStatus() {
     const next =
@@ -23,6 +26,7 @@
   <!-- Drag handle -->
   <span
     class="material-symbols-outlined text-text-muted/30 hover:text-primary transition-colors cursor-move mt-0.5 select-none text-[18px]"
+    class:opacity-0={isEmpty}
     data-drag-handle
   >
     drag_indicator

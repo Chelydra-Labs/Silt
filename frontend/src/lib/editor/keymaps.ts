@@ -77,7 +77,7 @@ export const SiltBlockKeymaps = Extension.create({
             id: null,
             depth: info.depth,
             bullet: '- ',
-            file_date: ''
+            file_date: new Date().toISOString().slice(0, 10)
           }
         }
         const insertPos = info.pos + info.node.nodeSize

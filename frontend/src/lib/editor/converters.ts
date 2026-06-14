@@ -121,7 +121,12 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
   if (content.length === 0) {
     content.push({
       type: 'noteBlock',
-      attrs: { id: null, depth: 0, bullet: '- ' },
+      attrs: {
+        id: null,
+        depth: 0,
+        bullet: '- ',
+        file_date: new Date().toISOString().slice(0, 10)
+      },
       content: []
     })
   }

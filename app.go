@@ -1648,8 +1648,6 @@ func migratePerDayFiles(vaultPath string, spacesPerTab int) []string {
 			}
 			dateStr := parser.DateFileRegex.FindStringSubmatch(dateFile)[1]
 			notebook, section := "", ""
-			parts := strings.Split(strings.TrimSuffix(filepath.ToSlash(strings.TrimPrefix(pd.dir, rootAbs+string(filepath.Separator))), "/"), "/")
-			// parts relative to vault root
 			relParts := strings.Split(strings.Trim(filepath.ToSlash(strings.TrimPrefix(pd.dir, rootAbs)), "/"), "/")
 			if len(relParts) >= 1 {
 				notebook = relParts[0]
@@ -1657,9 +1655,8 @@ func migratePerDayFiles(vaultPath string, spacesPerTab int) []string {
 					section = strings.Join(relParts[1:len(relParts)-1], "/")
 				}
 			}
-			_ = parts // suppress unused
 
-			blocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), notebook, section, pageName, dateStr, spacesPerTab)
+			blocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes), notebook, section, pageName, dateStr, spacesPerTab)
 			if parseErr != nil {
 				warnings = append(warnings, fmt.Sprintf("migration: parse error in %q: %v", dateFilePath, parseErr))
 				continue
@@ -1683,7 +1680,6 @@ func migratePerDayFiles(vaultPath string, spacesPerTab int) []string {
 			}
 
 			allBlocks = append(allBlocks, blocks...)
-			_ = meta
 		}
 
 		if len(allBlocks) == 0 {
@@ -1698,7 +1694,16 @@ func migratePerDayFiles(vaultPath string, spacesPerTab int) []string {
 			continue
 		}
 
-		// Remove the migrated date files individually.
+		// Verify the merged file parses correctly before destroying the
+		// originals. A partial/corrupt write must NOT trigger removal.
+		verifyBlocks, _, _, _, verifyErr := parser.ParseFileContent(mergedContent, "", "", "", "", spacesPerTab)
+		if verifyErr != nil || len(verifyBlocks) != len(allBlocks) {
+			warnings = append(warnings, fmt.Sprintf("migration: verification failed for %q (%d/%d blocks) — keeping originals", targetPath, len(verifyBlocks), len(allBlocks)))
+			_ = os.Remove(targetPath)
+			continue
+		}
+
+		// Remove the migrated date files individually (verified safe).
 		for _, dateFile := range pd.dateFiles {
 			_ = os.Remove(filepath.Join(pd.dir, dateFile))
 		}

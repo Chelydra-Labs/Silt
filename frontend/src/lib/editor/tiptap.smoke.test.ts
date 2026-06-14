@@ -1,16 +1,19 @@
 import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
-import Placeholder from '@tiptap/extension-placeholder'
 
 // Phase 1 smoke test: proves the TipTap v3 + ProseMirror engine boots and
 // round-trips content inside the project's Vitest/jsdom environment. This is
 // the regression gate for the dependency surface itself — if a future
 // @tiptap/* or svelte-tiptap bump breaks basic editing, this fails first.
+//
+// NOTE: Placeholder is intentionally omitted — its viewport tracker calls
+// document.elementFromPoint which jsdom does not implement. The full
+// TipTapEditor component tests Placeholder in the real webview.
 describe('TipTap engine smoke', () => {
   it('boots an editor with StarterKit and round-trips content', () => {
     const editor = new Editor({
-      extensions: [StarterKit, Placeholder.configure({ placeholder: 'empty' })],
+      extensions: [StarterKit],
       content: '<p>hello</p>'
     })
 

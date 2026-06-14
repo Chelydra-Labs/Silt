@@ -138,13 +138,6 @@
           Retry
         </button>
       </div>
-    {:else if blocks.length === 0 && !loading}
-      <div
-        class="text-text-muted py-12 text-center font-body-md border border-dashed border-border-muted rounded-lg"
-      >
-        No blocks recorded for this page yet. Start typing below to add your
-        first note!
-      </div>
     {:else}
       <TipTapEditor
         {notebook}
