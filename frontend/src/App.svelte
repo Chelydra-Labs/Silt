@@ -17,6 +17,7 @@
   import { loadPlugins } from './plugins/loader'
   import { initConfigHotReload, loadConfig, settings } from './settings/store.svelte'
   import { initEditorTokens } from './settings/editor-tokens.svelte'
+  import { initThemes } from './theme/store.svelte'
   import { matchHotkey } from './settings/hotkeys'
   import logo from './assets/logo.svg'
 
@@ -66,6 +67,11 @@
     // The returned disposer is called on unmount to prevent duplicate root
     // effects during dev hot-reload.
     const disposeEditorTokens = initEditorTokens()
+    // Populate the theme listing store (#47) and subscribe to the
+    // backend's "themes:changed" event so an imported theme appears in
+    // the picker immediately. Disposed on unmount alongside the other
+    // store initializers.
+    const disposeThemes = initThemes()
     // Eagerly load the config so config-driven global shortcuts (open_search,
     // toggle_sidebar) work from startup, not only after Settings is opened.
     loadConfig().catch((e) => console.error('Startup config load failed:', e))
@@ -150,6 +156,7 @@
       window.removeEventListener('open-settings', handleOpenSettings)
       offPluginsChanged()
       disposeEditorTokens()
+      disposeThemes()
     }
   })
 
