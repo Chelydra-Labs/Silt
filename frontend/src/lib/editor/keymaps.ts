@@ -173,6 +173,16 @@ export const SiltBlockKeymaps = Extension.create({
       },
 
       'Shift-Tab': () => {
+        const hk = settings.config?.hotkeys ?? {}
+        if (
+          hk.unindent_block &&
+          !matchHotkey(
+            { key: 'Tab', shiftKey: true } as KeyboardEvent,
+            hk.unindent_block
+          )
+        ) {
+          return false
+        }
         const info = currentBlockInfo(this.editor)
         if (!info) return false
         if (info.depth > 0) {

@@ -503,7 +503,14 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		// UpdateBlockState on the same write path as every other writer
 		// (one on-disk format definition) and preserves unmanaged lines via
 		// the original body.
-		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, time.Now().Format("2006-01-02"), a.spacesPerTab)
+		// Use the file's modification time as the default date for blocks
+		// whose comment lacks a @ date suffix — matches the scanner's behavior.
+		// Using time.Now() here would silently shift old blocks' dates to today.
+		fileDate := time.Now().Format("2006-01-02")
+		if fi, statErr := os.Stat(filePath); statErr == nil {
+			fileDate = fi.ModTime().Format("2006-01-02")
+		}
+		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
 		if parseErr != nil {
 			writeErr = fmt.Errorf("failed to parse file for state update: %w", parseErr)
 			return
@@ -908,7 +915,13 @@ func (a *App) MutateBlock(blockID, newText string) error {
 		// preserves unmanaged lines (code fences, prose) via the original
 		// body and keeps MutateBlock on the same write path as every other
 		// writer, so there is one on-disk format definition.
-		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, time.Now().Format("2006-01-02"), a.spacesPerTab)
+		// Use the file's modification time as the default date for blocks
+		// whose comment lacks a @ date suffix — matches the scanner's behavior.
+		fileDate := time.Now().Format("2006-01-02")
+		if fi, statErr := os.Stat(filePath); statErr == nil {
+			fileDate = fi.ModTime().Format("2006-01-02")
+		}
+		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
 		if parseErr != nil {
 			writeErr = fmt.Errorf("failed to parse file for mutation: %w", parseErr)
 			return

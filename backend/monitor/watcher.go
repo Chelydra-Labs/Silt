@@ -285,9 +285,10 @@ func (dw *DirectoryWatcher) listenLoop() {
 			}
 
 			if isDir {
-				// If new directory is created, watch it recursively
 				if event.Has(fsnotify.Create) {
-					_ = dw.AddRecursive(path)
+					if err := dw.AddRecursive(path); err != nil {
+						log.Printf("DirectoryWatcher: failed to watch new directory %s: %v", path, err)
+					}
 				}
 				continue
 			}
@@ -351,11 +352,13 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		}
 		contentBytes, err := os.ReadFile(path)
 		if err != nil {
+			log.Printf("reindexFile: os.ReadFile failed for %s: %v", path, err)
 			return
 		}
 
 		blocks, meta, newContent, modified, err := parser.ParseFileContent(string(contentBytes), notebook, section, page, dateStr, dw.spacesPerTab)
 		if err != nil {
+			log.Printf("reindexFile: ParseFileContent failed for %s: %v", path, err)
 			return
 		}
 

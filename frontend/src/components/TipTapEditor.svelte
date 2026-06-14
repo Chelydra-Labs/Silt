@@ -98,11 +98,8 @@
 
   onDestroy(() => {
     stopHeartbeat()
+    flushPendingSave()
     void releaseFocus()
-    if (saveTimeout) {
-      clearTimeout(saveTimeout)
-      saveTimeout = null
-    }
   })
 
   // --- External content sync ------------------------------------------------
