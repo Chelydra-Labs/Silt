@@ -846,12 +846,55 @@ func TestListNavigation_IncludesEmptySectionsAndNotebooks(t *testing.T) {
 		t.Errorf("expected Projects + EmptySection under Work; got %+v", work.Sections)
 	}
 
-	// The populated page has a block count of 1; verify it is surfaced.
+	// The populated page has a block count of 2; verify it is surfaced.
 	for _, s := range work.Sections {
 		if s.Name == "Projects" {
 			if len(s.Pages) != 1 || s.Pages[0].Name != "Site" || s.Pages[0].Count != 2 {
 				t.Errorf("expected Site page with count 2 (header + task); got %+v", s.Pages)
 			}
+		}
+	}
+}
+
+func TestCreatePage_SectionlessThenListed(t *testing.T) {
+	app := newTestApp(t)
+
+	// A page created directly under the notebook (no section).
+	date, err := app.CreatePage("Work", "", "Inbox", "2026-06-13")
+	if err != nil {
+		t.Fatalf("section-less CreatePage: %v", err)
+	}
+	if date != "2026-06-13" {
+		t.Errorf("expected date 2026-06-13, got %q", date)
+	}
+
+	// The file lives at <vault>/Work/Inbox/... (no section segment).
+	fp := filepath.Join(app.vaultPath, "Work", "Inbox", "2026-06-13.md")
+	if _, err := os.Stat(fp); err != nil {
+		t.Fatalf("expected section-less page file at %s: %v", fp, err)
+	}
+
+	// Navigation surfaces it under the section-less group (section == "").
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	for _, nb := range tree.Notebooks {
+		if nb.Name != "Work" {
+			continue
+		}
+		var found bool
+		for _, sec := range nb.Sections {
+			if sec.Name == "" {
+				for _, pg := range sec.Pages {
+					if pg.Name == "Inbox" {
+						found = true
+					}
+				}
+			}
+		}
+		if !found {
+			t.Errorf("expected section-less Inbox page under Work; got %+v", nb.Sections)
 		}
 	}
 }

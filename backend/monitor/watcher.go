@@ -125,7 +125,8 @@ func (dw *DirectoryWatcher) Start() error {
 
 // resolveFileMetadata derives (notebook, section, page, date) for a markdown
 // file from its path relative to the vault root, mirroring the scanner:
-// page = parent dir, section = grandparent, notebook = great-grandparent.
+// notebook = top folder, page = the folder containing the file, section =
+// the path between them ("" when the page is directly under the notebook).
 // Files too shallow to resolve return empty notebook/section/page so callers
 // can skip them rather than indexing under empty strings.
 func (dw *DirectoryWatcher) resolveFileMetadata(path string) (notebook, section, page, dateStr string) {
@@ -139,12 +140,13 @@ func (dw *DirectoryWatcher) resolveFileMetadata(path string) (notebook, section,
 	filename := parts[len(parts)-1]
 	ancestors := parts[:len(parts)-1]
 
-	if len(ancestors) >= 3 {
-		notebook = ancestors[len(ancestors)-3]
-		section = ancestors[len(ancestors)-2]
+	if len(ancestors) >= 2 {
+		notebook = ancestors[0]
 		page = ancestors[len(ancestors)-1]
+		if len(ancestors) > 2 {
+			section = strings.Join(ancestors[1:len(ancestors)-1], "/")
+		}
 	} else {
-		// Too shallow to map to notebook/section/page; caller should skip.
 		notebook, section, page = "", "", ""
 	}
 

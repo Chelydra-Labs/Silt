@@ -103,10 +103,13 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 
 	// 1. Resolve default notebook, section, page, and date from file path.
 	//
-	// Hierarchy: <vault>/<notebook>/<section>/<page>/<file>.md
-	//   - page     = parent dir of the file (the streaming unit)
-	//   - section  = page's parent dir
-	//   - notebook = section's parent dir (a child of the vault root)
+	// Hierarchy (Section is optional, nesting can be deeper than one level):
+	//   <vault>/<notebook>/[<section>/...]<page>/<file>.md
+	//   - notebook = the top-level folder under the vault
+	//   - page     = the folder directly containing the file (streaming unit)
+	//   - section  = the path between notebook and page ("" when the page
+	//                lives directly under the notebook; one or more segments
+	//                otherwise, joined by "/")
 	relPath, err := filepath.Rel(vaultPath, path)
 	if err != nil {
 		res.Err = err
@@ -120,17 +123,18 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 	var notebook, section, page string
 	// ancestors are the path segments excluding the filename itself.
 	ancestors := parts[:len(parts)-1]
-	switch {
-	case len(ancestors) >= 3:
-		notebook = ancestors[len(ancestors)-3]
-		section = ancestors[len(ancestors)-2]
+	if len(ancestors) >= 2 {
+		notebook = ancestors[0]
 		page = ancestors[len(ancestors)-1]
-	default:
-		// Files must live three levels beneath the vault root
-		// (notebook/section/page/file). Anything shallower is a layout
-		// error we surface rather than silently mis-bucket.
-		res.Warnings = append(res.Warnings, fmt.Sprintf("skipped %q: expected to live under <vault>/<notebook>/<section>/<page>/", relPathClean))
-		res.Err = nil
+		if len(ancestors) > 2 {
+			section = strings.Join(ancestors[1:len(ancestors)-1], "/")
+		}
+	} else {
+		// Files must live at least two levels beneath the vault root
+		// (vault/notebook/page/file.md); anything shallower (e.g. a stray
+		// .md directly inside a notebook folder) is a layout error we
+		// surface rather than silently mis-bucket.
+		res.Warnings = append(res.Warnings, fmt.Sprintf("skipped %q: expected to live under <vault>/<notebook>/[<section>/]<page>/", relPathClean))
 		return res
 	}
 

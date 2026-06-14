@@ -232,13 +232,17 @@ func (a *App) UpdateBlockState(blockID string, newState string) error
 func (a *App) QueryTasks(filter TaskQueryFilter) ([]TaskResult, error)
 
 // Notebook/Section/Page lifecycle. Silt starts blank; the user opens an
-// existing notebook folder or creates one from the sidebar selector.
+// existing notebook folder or creates one from the sidebar selector. The
+// Section layer is optional — a page may live directly under a notebook.
 func (a *App) CreateNotebook(name string) error
 func (a *App) OpenNotebook(folderPath string) (string, error)
+func (a *App) PickNotebookFolder() (string, error)
 func (a *App) CreateSection(notebook, section string) error
-func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error)
+func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error) // section may be ""
 
-// ListNavigation returns the Notebook > Section > Page tree for the sidebar.
+// ListNavigation returns the Notebook > Section > Page tree for the sidebar,
+// enumerated from the on-disk folder structure (source of truth) with block
+// counts merged from the index. Section-less pages group under section "".
 func (a *App) ListNavigation() (NavigationTree, error)
 
 

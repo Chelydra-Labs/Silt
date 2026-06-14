@@ -66,29 +66,22 @@
     tree.notebooks.find((nb) => nb.name === activeNotebook)
   )
 
-  // Informative hover/next-step hints for the disabled New Section / New Page
-  // actions (a native title on a disabled button never shows, so the wrapper
-  // span carries it; the nextStep line is shown visibly under the actions).
+  // Sections are optional — a page can live directly under a notebook — so the
+  // only persistent hint is "create/open a notebook"; section guidance is
+  // hover-only on the buttons. A native title on a disabled button never shows,
+  // so the wrapper span carries it.
   let sectionHint = $derived(
     activeNotebook ? 'New Section' : 'Create or open a Notebook first'
   )
   let pageHint = $derived(
-    !activeNotebook
-      ? 'Create or open a Notebook first'
-      : !activeNotebookObj || activeNotebookObj.sections.length === 0
-        ? 'Create a Section first'
-        : !activeSection
-          ? 'Select a Section first'
-          : 'New Page'
+    activeNotebook
+      ? activeSection
+        ? 'New Page in ' + activeSection
+        : 'New Page (no section)'
+      : 'Create or open a Notebook first'
   )
   let nextStep = $derived(
-    !activeNotebook
-      ? 'Create or open a Notebook to get started.'
-      : !activeNotebookObj || activeNotebookObj.sections.length === 0
-        ? 'Create a Section to add Pages.'
-        : !activeSection
-          ? 'Select a Section to add Pages.'
-          : ''
+    !activeNotebook ? 'Create or open a Notebook to get started.' : ''
   )
 
   async function loadNavigation() {
@@ -379,7 +372,7 @@
       <span title={pageHint} class="flex-1 flex">
         <button
           onclick={() => openCreate('page')}
-          disabled={!activeNotebook || !activeSection}
+          disabled={!activeNotebook}
           title={pageHint}
           aria-label="New Page"
           class="w-full bg-bg-panel border border-border-muted text-text-muted hover:text-accent-teal-start hover:border-accent-teal-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
@@ -439,11 +432,11 @@
               </span>
               <span
                 class="material-symbols-outlined text-text-muted text-[17px]"
-                >folder</span
+                >{sec.name ? 'folder' : 'drafts'}</span
               >
               <span
                 class="font-label-sm-bold text-label-sm-bold uppercase tracking-wider text-text-primary truncate flex-1"
-                >{sec.name}</span
+                >{sec.name ? sec.name : 'Pages (no section)'}</span
               >
               <span
                 class="text-[9px] font-label-sm text-text-muted bg-bg-panel border border-border-muted rounded-full px-1.5 py-0.5"

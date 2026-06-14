@@ -262,12 +262,13 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	}
 
 	// Defense-in-depth against path traversal: notebook/section/page originate
-	// from user-editable YAML frontmatter and date is a filename.
+	// from user-editable YAML frontmatter and date is a filename. Section may
+	// be empty (a page living directly under its notebook).
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
 	safePage := sanitizePathSegment(page)
 	safeFileDate := sanitizePathSegment(fileDate)
-	if safeNotebook == "" || safeSection == "" || safePage == "" || safeFileDate == "" {
+	if safeNotebook == "" || safePage == "" || safeFileDate == "" {
 		return fmt.Errorf("invalid file metadata for block %s: notebook=%q section=%q page=%q date=%q", blockID, notebook, section, page, fileDate)
 	}
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
@@ -434,7 +435,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 	safeSection := sanitizePathSegment(section)
 	safePage := sanitizePathSegment(page)
 	safeFileDate := sanitizePathSegment(fileDate)
-	if safeNotebook == "" || safeSection == "" || safePage == "" || safeFileDate == "" {
+	if safeNotebook == "" || safePage == "" || safeFileDate == "" {
 		return fmt.Errorf("invalid file metadata for block %s", blockID)
 	}
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
@@ -546,11 +547,15 @@ func isPathWithinVault(target, vaultRoot string) bool {
 
 // ListNavigation returns the Notebook > Section > Page tree for the sidebar.
 //
-// The directory structure on disk is the single source of truth, so the tree
-// is enumerated from the filesystem (every <vault>/<nb>/<sec>/<page>/ folder,
-// including empty ones with no notes yet). Block counts are merged from the
-// index so the sidebar can show per-page badges. Inferring the tree from
-// `blocks` alone would hide newly-created, still-empty sections/notebooks.
+// The directory structure on disk is the single source of truth. Disambiguation
+// is by what a folder directly contains:
+//   - A depth-1 folder under a Notebook that contains .md files is a
+//     section-less PAGE (section = "").
+//   - A depth-1 folder under a Notebook that does NOT contain .md files is a
+//     SECTION (shown even when empty, so a freshly created section appears).
+//   - Pages within a section are the .md-containing folders nested beneath it.
+//
+// Block counts are merged from the index for per-page badges.
 func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	if a.vaultPath == "" {
 		return parser.NavigationTree{}, fmt.Errorf("vault not loaded")
@@ -560,8 +565,8 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	defer a.wg.Done()
 
 	// 1. Block counts per (notebook, section, page) from the index.
-	type npKey struct{ n, s, p string }
-	counts := map[npKey]int{}
+	type nspKey struct{ n, s, p string }
+	counts := map[nspKey]int{}
 	if a.db != nil {
 		a.coordinator.WithDBRead(func() {
 			rows, err := a.db.SQLDB().Query("SELECT notebook, section, page, COUNT(*) FROM blocks GROUP BY notebook, section, page")
@@ -573,56 +578,130 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 				var n, s, p string
 				var c int
 				if err := rows.Scan(&n, &s, &p, &c); err == nil {
-					counts[npKey{n, s, p}] = c
+					counts[nspKey{n, s, p}] = c
 				}
 			}
 		})
 	}
 
-	// 2. Walk the filesystem three levels deep: notebook / section / page.
 	tree := parser.NavigationTree{Notebooks: []parser.NavigationNotebook{}}
 	nbEntries, err := os.ReadDir(a.vaultPath)
 	if err != nil {
 		return tree, fmt.Errorf("failed to read vault: %w", err)
 	}
+
 	for _, nbE := range nbEntries {
-		name := nbE.Name()
-		if !nbE.IsDir() || strings.HasPrefix(name, ".") {
+		nbName := nbE.Name()
+		if !nbE.IsDir() || strings.HasPrefix(nbName, ".") {
 			continue // skip .system and hidden dirs
 		}
-		nbPath := filepath.Join(a.vaultPath, name)
-		nn := parser.NavigationNotebook{Name: name, Sections: []parser.NavigationSection{}}
-		secEntries, err := os.ReadDir(nbPath)
+		nbPath := filepath.Join(a.vaultPath, nbName)
+
+		// sections: name -> pages (name "" holds section-less pages).
+		secPages := map[string][]parser.NavigationPage{}
+
+		depth1, err := os.ReadDir(nbPath)
 		if err != nil {
 			continue
 		}
-		for _, secE := range secEntries {
-			secName := secE.Name()
-			if !secE.IsDir() || strings.HasPrefix(secName, ".") {
+		for _, d1 := range depth1 {
+			if !d1.IsDir() || strings.HasPrefix(d1.Name(), ".") {
 				continue
 			}
-			secPath := filepath.Join(nbPath, secName)
-			ns := parser.NavigationSection{Name: secName, Pages: []parser.NavigationPage{}}
-			pageEntries, err := os.ReadDir(secPath)
+			d1Path := filepath.Join(nbPath, d1.Name())
+			if dirHasMarkdown(d1Path) {
+				// Section-less page: lives directly under the notebook.
+				secPages[""] = append(secPages[""], parser.NavigationPage{
+					Name:  d1.Name(),
+					Count: counts[nspKey{nbName, "", d1.Name()}],
+				})
+				continue
+			}
+			// Section (possibly empty): register it even before it has pages
+			// so a freshly created section appears in the navigator.
+			if _, ok := secPages[d1.Name()]; !ok {
+				secPages[d1.Name()] = []parser.NavigationPage{}
+			}
+			// Pages within the section: .md-containing folders nested beneath it.
+			subs, err := os.ReadDir(d1Path)
 			if err != nil {
-				nn.Sections = append(nn.Sections, ns)
 				continue
 			}
-			for _, pgE := range pageEntries {
-				pgName := pgE.Name()
-				if !pgE.IsDir() || strings.HasPrefix(pgName, ".") {
+			for _, d2 := range subs {
+				if !d2.IsDir() || strings.HasPrefix(d2.Name(), ".") {
 					continue
 				}
-				ns.Pages = append(ns.Pages, parser.NavigationPage{
-					Name:  pgName,
-					Count: counts[npKey{name, secName, pgName}],
-				})
+				d2Path := filepath.Join(d1Path, d2.Name())
+				if dirHasMarkdown(d2Path) {
+					secPages[d1.Name()] = append(secPages[d1.Name()], parser.NavigationPage{
+						Name:  d2.Name(),
+						Count: counts[nspKey{nbName, d1.Name(), d2.Name()}],
+					})
+				}
 			}
-			nn.Sections = append(nn.Sections, ns)
+		}
+
+		nn := parser.NavigationNotebook{Name: nbName, Sections: []parser.NavigationSection{}}
+		secNames := make([]string, 0, len(secPages))
+		for s := range secPages {
+			secNames = append(secNames, s)
+		}
+		// Surface the section-less group ("") last under a friendly label.
+		sortStrings(secNames)
+		moveStringToEnd(secNames, "")
+		for _, s := range secNames {
+			pages := secPages[s]
+			sortNavPages(pages)
+			nn.Sections = append(nn.Sections, parser.NavigationSection{Name: s, Pages: pages})
 		}
 		tree.Notebooks = append(tree.Notebooks, nn)
 	}
 	return tree, nil
+}
+
+// dirHasMarkdown reports whether a directory directly contains a .md file.
+func dirHasMarkdown(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.EqualFold(filepath.Ext(e.Name()), ".md") {
+			return true
+		}
+	}
+	return false
+}
+
+func moveStringToEnd(s []string, v string) {
+	idx := -1
+	for i, x := range s {
+		if x == v {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	copy(s[idx:], s[idx+1:])
+	s[len(s)-1] = v
+}
+
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
+}
+
+func sortNavPages(p []parser.NavigationPage) {
+	for i := 1; i < len(p); i++ {
+		for j := i; j > 0 && p[j-1].Name > p[j].Name; j-- {
+			p[j-1], p[j] = p[j], p[j-1]
+		}
+	}
 }
 
 // QueryTagHierarchy returns the hierarchical tag tree for the Tags Explorer.
@@ -681,7 +760,7 @@ func (a *App) AcquireFocusLock(notebook, section, page, fileDate string) error {
 	safeSection := sanitizePathSegment(section)
 	safePage := sanitizePathSegment(page)
 	safeFileDate := sanitizePathSegment(fileDate)
-	if safeNotebook == "" || safeSection == "" || safePage == "" || safeFileDate == "" {
+	if safeNotebook == "" || safePage == "" || safeFileDate == "" {
 		return fmt.Errorf("invalid path metadata")
 	}
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
@@ -704,7 +783,7 @@ func (a *App) ReleaseFocusLock(notebook, section, page, fileDate string) error {
 	safeSection := sanitizePathSegment(section)
 	safePage := sanitizePathSegment(page)
 	safeFileDate := sanitizePathSegment(fileDate)
-	if safeNotebook == "" || safeSection == "" || safePage == "" || safeFileDate == "" {
+	if safeNotebook == "" || safePage == "" || safeFileDate == "" {
 		return fmt.Errorf("invalid path metadata")
 	}
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
@@ -806,14 +885,15 @@ func (a *App) CreateSection(notebook, section string) error {
 }
 
 // CreatePage scaffolds the first daily note inside
-// <vault>/<notebook>/<section>/<page>/ and indexes it, returning the date
-// used. This is the streaming unit shown in the timeline editor.
+// <vault>/<notebook>/[<section>/]<page>/ and indexes it, returning the date
+// used. Section may be empty, in which case the page lives directly under the
+// notebook. This is the streaming unit shown in the timeline editor.
 func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error) {
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
 	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safeSection == "" || safePage == "" {
-		return "", fmt.Errorf("notebook, section, and page names are required")
+	if safeNotebook == "" || safePage == "" {
+		return "", fmt.Errorf("notebook and page names are required (section is optional)")
 	}
 	safeDate := sanitizePathSegment(dateStr)
 	if safeDate == "" {
@@ -893,7 +973,7 @@ func (a *App) SaveFileBlocks(notebook, section, page, fileDate string, blocks []
 	safeSection := sanitizePathSegment(section)
 	safePage := sanitizePathSegment(page)
 	safeFileDate := sanitizePathSegment(fileDate)
-	if safeNotebook == "" || safeSection == "" || safePage == "" || safeFileDate == "" {
+	if safeNotebook == "" || safePage == "" || safeFileDate == "" {
 		return fmt.Errorf("invalid path metadata")
 	}
 

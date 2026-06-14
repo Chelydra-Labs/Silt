@@ -86,11 +86,11 @@ Solution: Daily files are serialized discretely to disk inside the structured no
 
 3.2 Physical Directory Layout
 
-Silt uses a OneNote-style three-level hierarchy — **Notebook > Section > Page** — mapped directly onto folders on disk:
+Silt uses a OneNote-style three-level hierarchy — **Notebook > Section > Page** — mapped directly onto folders on disk, where the **Section layer is optional**:
 
 - A **Notebook** is a top-level folder directly under the vault root. Users open existing notebook folders or create new ones from the notebook selector. Multiple notebooks can be open at once.
-- A **Section** is a subfolder within a Notebook; it groups related Pages.
-- A **Page** is a subfolder within a Section and is the **streaming unit**: the daily `.md` files inside it are stitched into a single infinite-scroll timeline in the editor.
+- A **Section** is an optional grouping folder within a Notebook. Sections are shown even when empty, so a freshly created section appears immediately.
+- A **Page** is a folder that directly contains `.md` files and is the **streaming unit**: the daily note files inside it are stitched into a single infinite-scroll timeline in the editor. A page may live directly under a Notebook (no section) or nested within a Section.
 
 ```
 VaultRoot/
@@ -103,10 +103,11 @@ VaultRoot/
 │   └── themes/
 │       └── cyber_forest.json
 ├── Work/                          ← Notebook
+│   ├── Inbox/                     ← Page directly under the Notebook (no section)
+│   │   └── 2026-06-13.md
 │   └── Projects/                  ← Section
 │       ├── WebsiteRedesign/       ← Page (streams the .md files below)
 │       │   ├── 2026-06-11.md
-│       │   ├── 2026-06-12.md
 │       │   └── 2026-06-13.md
 │       └── MobileApp/
 │           └── 2026-06-13.md
@@ -116,7 +117,7 @@ VaultRoot/
             └── 2026-06-13.md
 ```
 
-The directory directly containing a markdown file is its **Page**; its parent is the **Section**; its parent (a child of the vault root) is the **Notebook**. Files must live exactly three levels beneath the vault root; files at shallower depths are skipped with a warning at startup (fail-loudly). Frontmatter values override path-derived defaults.
+Path resolution: the **notebook** is the top folder under the vault; the **page** is the folder directly containing the `.md` file; the **section** is the path between them (`""` when the page sits directly under the notebook). Frontmatter values override path-derived defaults. Files at shallower depths (e.g. a stray `.md` directly in a Notebook folder) are skipped with a warning at startup (fail-loudly).
 
 Silt starts blank — no default notebook or section is created. The user creates or opens their first notebook from the sidebar's notebook selector.
 
@@ -128,7 +129,7 @@ Every daily file contains a strict YAML metadata block bounded by triple dashes 
 ```
 ---
 notebook: Work
-section: Projects
+section: Projects        # optional; omit (or leave empty) for a section-less page
 page: WebsiteRedesign
 date: 2026-06-13
 tags: [systems/specs, wails/go]

@@ -11,7 +11,7 @@ Silt is a simple, super-fast, and lightweight note-taking app designed to captur
 
 **Silt** bridges the gap between structured namespace notebooks and chronological block-based daily streams. It treats human-readable plaintext files as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into fully interactive **Agenda**, **Calendar**, and **Kanban** board interfaces.
 
-Notes are organized **Notebook › Section › Page** (OneNote-style): each Page is a streaming timeline of daily Markdown files stitched into one continuous document. Silt starts blank — you create or open notebooks and build your own hierarchy.
+Notes are organized **Notebook › Section › Page** (OneNote-style): each Page is a streaming timeline of daily Markdown files stitched into one continuous document. The Section layer is optional — pages can live directly under a notebook. Silt starts blank — you create or open notebooks and build your own hierarchy.
 
 ---
 
