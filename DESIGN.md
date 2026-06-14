@@ -282,7 +282,7 @@ Kanban Card Drag-Reorder: Uses compile-time svelte/animate (using Svelte's nativ
 
 7. Dynamic Theme Injection Runtime
 
-To support user-defined styling, Silt implements a runtime CSS Custom Property injector. The active theme and dark/light mode are persisted in AppSettings (user-global settings.json) and resolved over the Wails IPC bridge; a Svelte theme store injects the resolved token map onto :root in a single paint frame.
+To support user-defined styling, Silt implements a runtime CSS Custom Property injector. The active theme and dark/light mode are persisted in AppSettings (user-global settings.json) and resolved over the Wails IPC bridge; a Svelte theme store injects the resolved token map onto :root in a single paint frame. The token map includes both color tokens (--bg-*, --border-*, --text-*, --accent-*, --status-*) and, when the theme defines them, typography tokens (--font-headline, --font-body, --font-mono). Typography is theme-level (not per-mode): each theme can optionally declare font-family choices that override the config-driven editor.* defaults via CSS fallback chains in index.css (e.g. `var(--font-body, var(--editor-font-family), 'Plus Jakarta Sans', sans-serif)`). Themes without a typography section are fully backward compatible — the config values remain in effect.
 
 ```
                 +------------------------------------------+

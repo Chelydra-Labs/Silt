@@ -307,7 +307,7 @@ Transforms the active block into a first-level markdown header (# ).
 
 To prevent styling stagnation, Silt provides a built-in user theme engine mapping to CSS Custom Properties.
 
-Theme Files: Parsed dynamically from canonical modes-based JSON files inside `<vault>/.system/themes/`. Each theme carries a `schema_version`, `id`, `name`, and a `modes.dark` / `modes.light` token set (bg, border, text, accent.primary / accent.secondary × start/end/glow, status). Accent tokens are hue-agnostic and semantic: components reference only `--accent-primary-*` / `--accent-secondary-*`, and each theme maps its concrete hues onto them.
+Theme Files: Parsed dynamically from canonical modes-based JSON files inside `<vault>/.system/themes/`. Each theme carries a `schema_version`, `id`, `name`, an optional `typography` section, and a `modes.dark` / `modes.light` token set (bg, border, text, accent.primary / accent.secondary × start/end/glow, status). Accent tokens are hue-agnostic and semantic: components reference only `--accent-primary-*` / `--accent-secondary-*`, and each theme maps its concrete hues onto them. The optional `typography` section (theme-level, not per-mode) defines font-family choices (`font_family`, `mono_font_family`, `headline_font`) that are injected as `--font-body`, `--font-mono`, `--font-headline` CSS custom properties; the CSS classes use fallback chains (`var(--font-body, var(--editor-font-family), <hardcoded>)`) so themes without typography inherit the config-driven fonts. Typography values are validated via `isValidFontFamily` which rejects CSS-breaking characters as a sandbox defense.
 
 Default Theme: A canonical default theme (`cyber_forest`) is embedded in the Go binary (`backend/themes`, via `embed.FS`) so the app always has a guaranteed-correct fallback — it works before a vault exists, when the themes directory is empty/wiped, and when the active theme id is missing or invalid.
 
@@ -325,6 +325,11 @@ Schema Example (cyber_forest.json, dark mode shown):
   "name": "Cyber Forest",
   "author": "System Designer",
   "description": "...",
+  "typography": {
+    "font_family": "'Plus Jakarta Sans', sans-serif",
+    "mono_font_family": "'JetBrains Mono', monospace",
+    "headline_font": "'Hanken Grotesk', sans-serif"
+  },
   "modes": {
     "dark": {
       "bg": { "void": "#0c0c0e", "surface": "#121215", "panel": "#161619", "hover": "#1c1c21", "active": "#222226" },
