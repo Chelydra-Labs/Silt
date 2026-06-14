@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 )
 
@@ -231,7 +232,10 @@ func copyZipEntry(f *zip.File, target string) error {
 	return err
 }
 
-// isWithin reports whether target is contained within base after cleaning.
+// isWithin reports whether target is contained within base. It cleans both
+// paths, resolves symlinks when possible (so a symlink in the vault cannot
+// mask an escape), and compares case-insensitively on Windows where the
+// filesystem itself is case-insensitive.
 func isWithin(target, base string) bool {
 	absTarget, err := filepath.Abs(filepath.Clean(target))
 	if err != nil {
@@ -241,10 +245,24 @@ func isWithin(target, base string) bool {
 	if err != nil {
 		return false
 	}
+	// Resolve symlinks for defense in depth: a symlink inside the vault
+	// pointing outside it must not satisfy a containment check that only
+	// inspects the lexical path. Ignore errors (e.g. non-existent paths
+	// during construction) and fall back to the lexical form.
+	if resolved, err := filepath.EvalSymlinks(absTarget); err == nil {
+		absTarget = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(absBase); err == nil {
+		absBase = resolved
+	}
+	sep := string(os.PathSeparator)
 	if absTarget == absBase {
 		return true
 	}
-	return strings.HasPrefix(absTarget, absBase+string(os.PathSeparator))
+	if runtime.GOOS == "windows" {
+		return strings.HasPrefix(strings.ToLower(absTarget), strings.ToLower(absBase+sep))
+	}
+	return strings.HasPrefix(absTarget, absBase+sep)
 }
 
 // sanitizeID strips path separators and traversal so a caller-supplied id

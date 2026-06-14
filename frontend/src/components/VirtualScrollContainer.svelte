@@ -71,14 +71,29 @@
     let loadedCount = 0
     let succeeded = false
 
+    // Capture the active location at request time. If the user switches
+    // notebook/section/page before this fetch resolves, we must discard
+    // the result so the slower response cannot append stale groups into a
+    // timeline the user has already navigated away from.
+    const reqNotebook = notebook
+    const reqSection = section
+    const reqPage = page
+
     try {
       const newDays = await FetchPageTimeline(
-        notebook,
-        section,
-        page,
+        reqNotebook,
+        reqSection,
+        reqPage,
         offset,
         limit
       )
+      if (
+        notebook !== reqNotebook ||
+        section !== reqSection ||
+        page !== reqPage
+      ) {
+        return 0
+      }
       succeeded = true
       if (!newDays || newDays.length === 0) {
         hasMore = false
@@ -91,6 +106,13 @@
         }
       }
     } catch (e) {
+      if (
+        notebook !== reqNotebook ||
+        section !== reqSection ||
+        page !== reqPage
+      ) {
+        return 0
+      }
       // Surface the failure to the user instead of swallowing it. Halt
       // pagination so a persistent backend error cannot drive an unbounded
       // retry loop via the viewport-fill recursion below.
@@ -100,9 +122,14 @@
       loading = false
       await tick()
       // Only keep filling the viewport after a successful load with more
-      // data available. Errors must not trigger a retry cascade.
+      // data available. Errors must not trigger a retry cascade. The
+      // staleness check above also prevents the recursive call from
+      // appending to a timeline the user has navigated away from.
       if (
         succeeded &&
+        notebook === reqNotebook &&
+        section === reqSection &&
+        page === reqPage &&
         containerEl &&
         containerEl.scrollHeight <= containerEl.clientHeight &&
         hasMore

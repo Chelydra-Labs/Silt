@@ -677,6 +677,41 @@ func TestPluginRawQuery_AllowsSelectRejectsWrite(t *testing.T) {
 	}
 }
 
+func TestPluginRawQuery_RejectsStackedWrite(t *testing.T) {
+	// Even with a leading SELECT, a stacked write statement must be rejected
+	// at the connection level (PRAGMA query_only = ON), not just by the
+	// prefix check.
+	app := newTestApp(t)
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", "66666666-6666-6666-6666-666666666666", "stacked")
+
+	if _, err := app.PluginRawQuery("SELECT 1; DROP TABLE blocks", nil); err == nil {
+		t.Fatalf("expected stacked write to be rejected by read-only connection")
+	}
+	// Sanity: the index must still be intact.
+	rows, err := app.PluginRawQuery("SELECT COUNT(*) AS n FROM blocks", nil)
+	if err != nil {
+		t.Fatalf("SELECT after rejected stacked write: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+}
+
+func TestPluginRawQuery_AllowsBlockCommentPrefix(t *testing.T) {
+	// A leading block comment is common in authored SQL; the stripper must
+	// handle it so a perfectly valid SELECT is not falsely rejected.
+	app := newTestApp(t)
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", "77777777-7777-7777-7777-777777777777", "commented")
+
+	rows, err := app.PluginRawQuery("/* explain */ SELECT id FROM blocks LIMIT 1", nil)
+	if err != nil {
+		t.Fatalf("PluginRawQuery with leading block comment: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(rows))
+	}
+}
+
 func TestPluginUpdateBlockState_WrapsUpdate(t *testing.T) {
 	app := newTestApp(t)
 	taskID := "55555555-5555-5555-5555-555555555555"

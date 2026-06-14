@@ -1,12 +1,25 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, getContext, setContext } from 'svelte'
   import {
     ResolveBlockReference,
     PluginMutateBlock
   } from '../../wailsjs/go/main/App.js'
   import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import RichText from './RichText.svelte'
-  import { embedRenderStack } from '../lib/embedGuard'
+
+  // Per-branch chain of embed UUIDs currently being rendered. Each
+  // EmbedPortal inherits its ancestor's chain via Svelte context, checks
+  // whether its own UUID is already on it, and then publishes a fresh
+  // chain with its UUID appended for its own descendants. Siblings of the
+  // same block share the parent chain, so a second sibling sees only the
+  // chain above the parent — never its own UUID — and renders normally.
+  //
+  // This replaces a previous global Set which incorrectly flagged any
+  // second mount of the same block as recursive even when the two embeds
+  // were siblings rather than an ancestor/descendant pair.
+  const EMBED_CHAIN_KEY = Symbol('embed-chain')
+  type EmbedChain = { has(uuid: string): boolean }
+  const parentChain = getContext<EmbedChain | undefined>(EMBED_CHAIN_KEY)
 
   interface Props {
     uuid: string
@@ -19,9 +32,8 @@
   let { uuid, hostNotebook, hostSection, hostPage, hostFileDate }: Props =
     $props()
 
-  // Recursion guard: track the chain of embeds currently being rendered.
-  // If this uuid is already an ancestor, render a placeholder instead of
-  // descending into an infinite embed loop (A embeds B embeds A).
+  // Recursion guard: an embed is recursive only when it appears in its
+  // own ancestor chain. Sibling embeds of the same block are not.
   let isRecursive = $state(false)
 
   let ref = $state<any>(null)
@@ -66,12 +78,19 @@
   }
 
   onMount(() => {
-    if (embedRenderStack.has(uuid)) {
+    if (parentChain?.has(uuid)) {
       isRecursive = true
       loading = false
       return
     }
-    embedRenderStack.add(uuid)
+    // Publish a fresh chain to descendants with this UUID appended. The
+    // chain object is captured by closure, so when this component unmounts
+    // the chain it created simply goes out of scope — no explicit cleanup
+    // or global mutation needed.
+    setContext(EMBED_CHAIN_KEY, {
+      has: (id: string) =>
+        id === uuid || (parentChain ? parentChain.has(id) : false)
+    } satisfies EmbedChain)
     load()
     // Live sync: refresh when the source block changes anywhere.
     offEvent = EventsOn('block:changed', (ev: any) => {
@@ -82,7 +101,6 @@
   })
 
   onDestroy(() => {
-    embedRenderStack.delete(uuid)
     if (offEvent) offEvent()
     if (saveTimer) clearTimeout(saveTimer)
   })

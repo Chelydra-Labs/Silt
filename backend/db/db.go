@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -710,28 +711,32 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 }
 
 // QueryTagHierarchy returns the hierarchical tag tree with per-node distinct
-// block counts (a node's count includes blocks tagged at or beneath it, so
-// clicking #work surfaces everything under #work/sogav/milestone-one).
+// block counts. A node's count is the number of distinct blocks that are
+// tagged at or beneath that path, so clicking #work surfaces every block
+// reachable via #work or any of its descendants — without double-counting a
+// block that happens to carry several nested tags (e.g. #work and
+// #work/sogav/milestone-one).
 func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
-	rows, err := dm.db.Query("SELECT raw_path, COUNT(DISTINCT block_id) FROM tags GROUP BY raw_path")
+	rows, err := dm.db.Query("SELECT raw_path, block_id FROM tags")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query tag hierarchy: %w", err)
 	}
 	defer rows.Close()
 
-	// direct counts per exact raw_path.
-	direct := map[string]int{}
-	var paths []string
+	// direct maps each exact raw_path to the set of block_ids tagged with it.
+	// Keeping the set (rather than just a count) is what lets us compute a
+	// node's count as the *distinct* number of blocks at-or-beneath it via
+	// a bottom-up union pass over the trie.
+	direct := map[string]map[string]struct{}{}
 	for rows.Next() {
-		var p string
-		var c int
-		if err := rows.Scan(&p, &c); err != nil {
+		var p, id string
+		if err := rows.Scan(&p, &id); err != nil {
 			return nil, err
 		}
-		if _, seen := direct[p]; !seen {
-			paths = append(paths, p)
+		if direct[p] == nil {
+			direct[p] = make(map[string]struct{})
 		}
-		direct[p] = c
+		direct[p][id] = struct{}{}
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -742,9 +747,13 @@ func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 		name     string
 		path     string
 		children map[string]*node
+		// blocks is the union of (a) blocks tagged exactly at this path and
+		// (b) blocks tagged at any descendant path. Populated bottom-up by
+		// aggregate below.
+		blocks map[string]struct{}
 	}
 	root := &node{name: "", path: "", children: map[string]*node{}}
-	for _, p := range paths {
+	for p := range direct {
 		segs := strings.Split(p, "/")
 		cur := root
 		acc := ""
@@ -762,41 +771,45 @@ func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 		}
 	}
 
-	// A node's aggregate count = sum of direct counts of raw_paths equal to or
-	// prefixed by the node's path.
-	var aggregate func(path string) int
-	aggregate = func(path string) int {
-		total := direct[path]
-		prefix := path + "/"
-		for _, p := range paths {
-			if p != path && strings.HasPrefix(p, prefix) {
-				// Only count leaf-ish direct entries; we sum all direct counts
-				// beneath, which correctly aggregates distinct-path counts.
-				total += direct[p]
+	// Bottom-up pass: each node's blocks-set starts with the blocks tagged
+	// exactly at that path, then absorbs the union of its children's sets.
+	// The size of the resulting set is the count we surface to the UI.
+	var aggregate func(n *node) map[string]struct{}
+	aggregate = func(n *node) map[string]struct{} {
+		merged := make(map[string]struct{}, len(direct[n.path]))
+		for id := range direct[n.path] {
+			merged[id] = struct{}{}
+		}
+		for _, child := range n.children {
+			for id := range aggregate(child) {
+				merged[id] = struct{}{}
 			}
 		}
-		return total
+		n.blocks = merged
+		return merged
 	}
-
-	// Note: aggregate above double-counts when a path has both a direct entry
-	// and descendants, but since direct[] stores distinct blocks per EXACT
-	// path and a block can carry multiple paths, summing distinct-path counts
-	// is the intended "blocks at or beneath" semantics for navigation.
+	aggregate(root)
 
 	var build func(parent *node) []parser.TagNode
 	build = func(parent *node) []parser.TagNode {
 		var kids []parser.TagNode
-		for _, child := range parent.children {
+		// Sort the children map by name for deterministic output independent
+		// of Go's randomized map iteration order.
+		names := make([]string, 0, len(parent.children))
+		for name := range parent.children {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			child := parent.children[name]
 			node := parser.TagNode{
 				Name:  child.name,
 				Path:  child.path,
-				Count: aggregate(child.path),
+				Count: len(child.blocks),
 			}
 			node.Children = build(child)
 			kids = append(kids, node)
 		}
-		// Stable-ish ordering by name.
-		sortTagNodes(kids)
 		return kids
 	}
 
@@ -804,12 +817,10 @@ func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 }
 
 func sortTagNodes(nodes []parser.TagNode) {
-	// In-place alphabetical sort to keep tree output deterministic.
-	for i := 1; i < len(nodes); i++ {
-		for j := i; j > 0 && nodes[j-1].Name > nodes[j].Name; j-- {
-			nodes[j-1], nodes[j] = nodes[j], nodes[j-1]
-		}
-	}
+	// Alphabetical sort to keep tree output deterministic.
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Name < nodes[j].Name
+	})
 }
 
 // QueryBlocksByTag returns blocks whose tag path equals tagPath or is nested

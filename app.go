@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -43,6 +44,13 @@ type App struct {
 	vaultPath    string
 	spacesPerTab int
 	wg           sync.WaitGroup
+
+	// pluginRODB is a lazy read-only handle to the in-memory index, used
+	// exclusively by PluginRawQuery so a plugin can never mutate the index
+	// or schema even if a prefix check or comment-stripping is bypassed.
+	pluginRODBOnce sync.Once
+	pluginRODB     *sql.DB
+	pluginRODBErr  error
 }
 
 func NewApp() *App {
@@ -969,34 +977,89 @@ func (a *App) SaveFileBlocks(notebook, section, page, fileDate string, blocks []
 
 // --- Plugin SDK bindings -------------------------------------------------
 
+// pluginRODSN is the DSN used to open a second, read-only *sql.DB handle to
+// the same shared in-memory index. The shared in-memory cache is identified
+// by the "file::memory:?cache=shared" prefix; setting PRAGMA query_only on
+// that handle causes SQLite to reject any write at the engine level.
+const pluginRODSN = "file::memory:?cache=shared"
+
+// openPluginRODB lazily opens (and caches) a read-only handle to the in-memory
+// index for use by PluginRawQuery. The handle is capped at one connection to
+// match the main DB's pool size and to keep the locking story simple. If the
+// open or PRAGMA setup fails, the error is cached and returned on every call
+// so the caller sees a stable, actionable message rather than a transient one.
+func (a *App) openPluginRODB() (*sql.DB, error) {
+	a.pluginRODBOnce.Do(func() {
+		ro, err := sql.Open("sqlite", pluginRODSN)
+		if err != nil {
+			a.pluginRODBErr = fmt.Errorf("failed to open read-only plugin DB: %w", err)
+			return
+		}
+		ro.SetMaxOpenConns(1)
+		if _, err := ro.Exec("PRAGMA query_only = ON"); err != nil {
+			ro.Close()
+			a.pluginRODBErr = fmt.Errorf("failed to enable query_only on plugin DB: %w", err)
+			return
+		}
+		a.pluginRODB = ro
+	})
+	return a.pluginRODB, a.pluginRODBErr
+}
+
+// stripSQLComments removes leading SQL line ("--") and block ("/* ... */")
+// comments and surrounding whitespace. The result is then checked against
+// the SELECT/WITH prefix list. This is intentionally narrow: a real SQL
+// parser would be a heavier dependency for a defense-in-depth check, and the
+// connection-level read-only mode is the primary guarantee.
+func stripSQLComments(s string) string {
+	for {
+		s = strings.TrimSpace(s)
+		if strings.HasPrefix(s, "--") {
+			if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+				s = s[idx+1:]
+				continue
+			}
+			return ""
+		}
+		if strings.HasPrefix(s, "/*") {
+			if idx := strings.Index(s, "*/"); idx >= 0 {
+				s = s[idx+2:]
+				continue
+			}
+			return ""
+		}
+		return s
+	}
+}
+
 // PluginRawQuery runs a read-only SQL query against the in-memory index.
 // Only SELECT / WITH statements are permitted; anything else is rejected so a
-// plugin can never mutate the index or schema through this hook. Results are
-// returned as a slice of column→value maps.
+// plugin can never mutate the index or schema through this hook. The query
+// is also executed against a connection with `PRAGMA query_only = ON`, which
+// makes the engine reject any write attempt (including stacked queries like
+// `SELECT 1; DROP TABLE blocks;`) regardless of how the prefix check is
+// bypassed. Results are returned as a slice of column→value maps.
 func (a *App) PluginRawQuery(sqlText string, params []any) ([]map[string]any, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
 	}
-	trimmed := strings.TrimSpace(sqlText)
-	// Strip a leading SQL line comment if present.
-	for strings.HasPrefix(trimmed, "--") {
-		if idx := strings.IndexByte(trimmed, '\n'); idx >= 0 {
-			trimmed = strings.TrimSpace(trimmed[idx+1:])
-		} else {
-			trimmed = ""
-		}
-	}
+	trimmed := stripSQLComments(sqlText)
 	upper := strings.ToUpper(trimmed)
 	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
 		return nil, fmt.Errorf("PluginRawQuery permits only SELECT/WITH statements")
+	}
+
+	roDB, err := a.openPluginRODB()
+	if err != nil {
+		return nil, err
 	}
 
 	a.wg.Add(1)
 	defer a.wg.Done()
 
 	var out []map[string]any
-	err := a.coordinator.WithDBReadResult(func() error {
-		rows, err := a.db.SQLDB().Query(trimmed, params...)
+	err = a.coordinator.WithDBReadResult(func() error {
+		rows, err := roDB.Query(trimmed, params...)
 		if err != nil {
 			return err
 		}

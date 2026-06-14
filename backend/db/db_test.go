@@ -588,3 +588,87 @@ func TestIndexScanResults_ReturnsSkippedFiles(t *testing.T) {
 	}
 }
 
+func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Three blocks, indexed in a single file so they all share the
+	// (notebook, section, page, file_date) tuple and are not wiped by
+	// the per-file replace in IndexFileBlocks.
+	//
+	// Block A: tagged with the parent path only.
+	// Block B: tagged with both the parent path and a child path — this
+	//   is the case that previously double-counted: distinct-path
+	//   counts summed to 2 for #work even though there is only one
+	//   block B reachable at-or-beneath #work.
+	// Block C: tagged with a child of a child of the parent.
+	blocks := []parser.ParsedBlock{
+		{
+			ID:        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			Type:      parser.BlockNote,
+			RawText:   "#work alpha <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->",
+			CleanText: "alpha",
+			Depth:     0,
+			LineNumber: 1,
+		},
+		{
+			ID:        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+			Type:      parser.BlockNote,
+			RawText:   "#work and #work/sogav beta <!-- id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb -->",
+			CleanText: "and beta",
+			Depth:     0,
+			LineNumber: 2,
+		},
+		{
+			ID:        "cccccccc-cccc-cccc-cccc-cccccccccccc",
+			Type:      parser.BlockNote,
+			RawText:   "#work/sogav/milestone-one gamma <!-- id: cccccccc-cccc-cccc-cccc-cccccccccccc -->",
+			CleanText: "gamma",
+			Depth:     0,
+			LineNumber: 3,
+		},
+	}
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", blocks, nil); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	tree, err := dm.QueryTagHierarchy()
+	if err != nil {
+		t.Fatalf("QueryTagHierarchy: %v", err)
+	}
+
+	find := func(path string) *parser.TagNode {
+		var walk func([]parser.TagNode) *parser.TagNode
+		walk = func(nodes []parser.TagNode) *parser.TagNode {
+			for i := range nodes {
+				if nodes[i].Path == path {
+					return &nodes[i]
+				}
+				if found := walk(nodes[i].Children); found != nil {
+					return found
+				}
+			}
+			return nil
+		}
+		return walk(tree)
+	}
+
+	cases := []struct {
+		path string
+		want int
+	}{
+		{"work", 3},                     // A, B, C all reachable at or beneath
+		{"work/sogav", 2},               // B, C
+		{"work/sogav/milestone-one", 1}, // C
+	}
+	for _, c := range cases {
+		got := find(c.path)
+		if got == nil {
+			t.Errorf("path %q missing from hierarchy", c.path)
+			continue
+		}
+		if got.Count != c.want {
+			t.Errorf("path %q: got count %d, want %d", c.path, got.Count, c.want)
+		}
+	}
+}
+
