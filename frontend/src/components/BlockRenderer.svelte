@@ -72,7 +72,7 @@
     heartbeatInterval = setInterval(() => {
       // RefreshFocusLock is a no-op if the lease already expired; a stale
       // editor that lost focus without firing blur just stops refreshing.
-      RefreshFocusLock(notebook, section, page, fileDate).catch(() => {
+      RefreshFocusLock(notebook, section, page).catch(() => {
         // Ignore transient IPC errors — the next tick retries.
       })
     }, 20000)
@@ -161,7 +161,8 @@
     // Respect the editor.focus_highlight_ancestors config: when explicitly
     // disabled, guide rails still render (they show indentation depth) but
     // never light up with the active highlight gradient.
-    if (settings.config?.editor?.focus_highlight_ancestors === false) return guides
+    if (settings.config?.editor?.focus_highlight_ancestors === false)
+      return guides
     if (activeFocusedBlockAncestors.length === 0) return guides
 
     // Trace parent chain for this block
@@ -185,7 +186,7 @@
   async function handleFocus() {
     isFocused = true
     try {
-      await AcquireFocusLock(notebook, section, page, fileDate)
+      await AcquireFocusLock(notebook, section, page)
       hasFocusLock = true
       startHeartbeat()
     } catch (e) {
@@ -229,7 +230,10 @@
       clearTimeout(saveTimeout)
       saveTimeout = null
     }
-    const delay = Math.max(settings.config?.editor?.auto_save_delay_ms ?? 500, 50)
+    const delay = Math.max(
+      settings.config?.editor?.auto_save_delay_ms ?? 500,
+      50
+    )
     saveTimeout = setTimeout(() => {
       saveBlocksDirectly(blocksToSave)
       saveTimeout = null
@@ -238,7 +242,7 @@
 
   async function saveBlocksDirectly(blocksToSave = siblings) {
     try {
-      await SaveFileBlocks(notebook, section, page, fileDate, blocksToSave)
+      await SaveFileBlocks(notebook, section, page, blocksToSave)
     } catch (e) {
       console.error('Failed to save blocks:', e)
     }
@@ -248,7 +252,7 @@
     if (!hasFocusLock) return
     hasFocusLock = false
     try {
-      await ReleaseFocusLock(notebook, section, page, fileDate)
+      await ReleaseFocusLock(notebook, section, page)
     } catch (e) {
       console.error('Focus unlock failed:', e)
     }
