@@ -23,7 +23,6 @@ import (
 	"silt/backend/themes"
 	"silt/backend/vault"
 
-	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gopkg.in/yaml.v3"
 )
@@ -32,8 +31,6 @@ const (
 	maxTimelineLimit     = 200
 	defaultTimelineLimit = 30
 )
-
-var updateTaskRegex = regexp.MustCompile(`^([\s]*)-\s\[[ x/]\]\s(?:TODO|DOING|DONE)\sTASK(.*)$`)
 
 var updateLineIDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->`)
 
@@ -297,37 +294,40 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 			return
 		}
 
-		lines := strings.Split(string(contentBytes), "\n")
-		lineIdx := findLineByBlockID(lines, blockID)
-		if lineIdx < 0 {
+		// Parse the whole file, flip the target task's status in the parsed
+		// slice, then re-render through the single serializer. This keeps
+		// UpdateBlockState on the same write path as every other writer
+		// (one on-disk format definition) and preserves unmanaged lines via
+		// the original body.
+		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
+		if parseErr != nil {
+			writeErr = fmt.Errorf("failed to parse file for state update: %w", parseErr)
+			return
+		}
+		found := false
+		for i := range parsedBlocks {
+			if parsedBlocks[i].ID == blockID {
+				if parsedBlocks[i].Type != parser.BlockTask {
+					writeErr = fmt.Errorf("block %s is not a task", blockID)
+					return
+				}
+				parsedBlocks[i].Status = newState
+				found = true
+				break
+			}
+		}
+		if !found {
 			writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
 			return
 		}
 
-		targetLine := lines[lineIdx]
-
-		if !updateTaskRegex.MatchString(targetLine) {
-			writeErr = fmt.Errorf("target line does not match task syntax")
-			return
+		frontmatter, body := splitFrontmatter(string(contentBytes))
+		if frontmatter == "" {
+			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeFileDate))
+			body = string(contentBytes)
 		}
 
-		var newChar string
-		var newKeyword string
-		switch newState {
-		case "TODO":
-			newChar = " "
-			newKeyword = "TODO"
-		case "DOING":
-			newChar = "/"
-			newKeyword = "DOING"
-		case "DONE":
-			newChar = "x"
-			newKeyword = "DONE"
-		}
-
-		newLine := updateTaskRegex.ReplaceAllString(targetLine, fmt.Sprintf("${1}- [%s] %s TASK${2}", newChar, newKeyword))
-		lines[lineIdx] = newLine
-		newContent := strings.Join(lines, "\n")
+		newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
 		a.tracker.RegisterWrite(filePath)
 
@@ -338,14 +338,14 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 
 		// Re-parse with the sanitized metadata so the re-indexed row
 		// uses the same cleaned values that went into the file path.
-		blocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
+		blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks(remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, blocks, remeta.Tags, remeta.Warnings...)
 			})
 			if idxErr != nil {
-				log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, meta.Date, idxErr)
+				log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
 			}
 		}
 	})
@@ -603,22 +603,36 @@ func (a *App) MutateBlock(blockID, newText string) error {
 			writeErr = err
 			return
 		}
-		lines := strings.Split(string(contentBytes), "\n")
-		lineIdx := findLineByBlockID(lines, blockID)
-		if lineIdx < 0 {
+
+		// Parse the whole file, mutate the target block in the slice, then
+		// re-render through the single serializer (RenderFileContent). This
+		// preserves unmanaged lines (code fences, prose) via the original
+		// body and keeps MutateBlock on the same write path as every other
+		// writer, so there is one on-disk format definition.
+		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
+		if parseErr != nil {
+			writeErr = fmt.Errorf("failed to parse file for mutation: %w", parseErr)
+			return
+		}
+		found := false
+		for i := range parsedBlocks {
+			if parsedBlocks[i].ID == blockID {
+				parsedBlocks[i].CleanText = cleanText
+				found = true
+				break
+			}
+		}
+		if !found {
 			writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
 			return
 		}
 
-		// Round-trip through parse→format to preserve type/indent/status/metadata.
-		block, _, _ := parser.ParseLine(lines[lineIdx], lineIdx+1, a.spacesPerTab)
-		if block.ID == "" {
-			writeErr = fmt.Errorf("could not parse target line for block %s", blockID)
-			return
+		frontmatter, body := splitFrontmatter(string(contentBytes))
+		if frontmatter == "" {
+			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeFileDate))
 		}
-		block.CleanText = cleanText
-		lines[lineIdx] = parser.FormatBlockToLine(block, a.spacesPerTab)
-		newContent := strings.Join(lines, "\n")
+
+		newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
 		a.tracker.RegisterWrite(filePath)
 		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
@@ -626,14 +640,17 @@ func (a *App) MutateBlock(blockID, newText string) error {
 			return
 		}
 
-		blocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
+		// Re-parse the rendered output and reindex so the cache reflects the
+		// canonical on-disk state (RenderFileContent may have normalized the
+		// mutated line's format).
+		reblocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, meta.Date, blocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks(remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, reblocks, remeta.Tags, remeta.Warnings...)
 			})
 			if idxErr != nil {
-				log.Printf("MutateBlock: IndexFileBlocks failed for %s/%s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, meta.Date, idxErr)
+				log.Printf("MutateBlock: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
 			}
 		}
 	})
@@ -675,6 +692,29 @@ func sanitizePathSegment(s string) string {
 		cleaned = ""
 	}
 	return strings.TrimSpace(cleaned)
+}
+
+// splitFrontmatter separates a leading YAML frontmatter block (--- ... ---)
+// from the body. It returns the frontmatter exactly as it appears in content
+// (including the trailing newline after the closing ---), and the body with
+// the frontmatter stripped. If content has no frontmatter, frontmatter is ""
+// and body is the full content. Callers pair this with parser.RenderFileContent
+// so every writer extracts frontmatter the same way.
+func splitFrontmatter(content string) (frontmatter, body string) {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return "", content
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			fm := strings.Join(lines[:i+1], "\n") + "\n"
+			body := strings.Join(lines[i+1:], "\n")
+			return fm, body
+		}
+	}
+	// Opening --- with no closing ---: treat the whole thing as body so we
+	// don't silently drop user content.
+	return "", content
 }
 
 // isPathWithinVault reports whether target is the same as or a descendant of
@@ -1071,20 +1111,18 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 		formattedDate = t.Format("Monday, January 2, 2006")
 	}
 
-	headerID := uuid.New().String()
-	taskID := uuid.New().String()
-
-scaffoldContent := fmt.Sprintf(`---
-notebook: %s
-section: %s
-page: %s
-date: %s
-tags: []
----
-# %s <!-- id: %s -->
-
-- [ ] TODO TASK [Chris] Start writing in %s <!-- id: %s -->
-`, strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate), formattedDate, headerID, safePage, taskID)
+	// Build the scaffold through the single serializer so even the very
+	// first write to a new page uses the canonical on-disk format (no inline
+	// fmt.Sprintf parallel serializer that could drift from the parser).
+	// RenderFileContent assigns the UUIDs, so the blocks start ID-less.
+	scaffoldBlocks := []parser.ParsedBlock{
+		{Type: parser.BlockHeader, Depth: 1, CleanText: formattedDate},
+		{Type: parser.BlockTask, Status: "TODO", Owner: "Chris", Priority: 3,
+			CleanText: "Start writing in " + safePage},
+	}
+	scaffoldFrontmatter := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
+		strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate))
+	scaffoldContent := parser.RenderFileContent(scaffoldBlocks, "", scaffoldFrontmatter, a.spacesPerTab)
 
 	a.wg.Add(1)
 	defer a.wg.Done()
@@ -1146,99 +1184,22 @@ func (a *App) SaveFileBlocks(notebook, section, page, fileDate string, blocks []
 			return
 		}
 
-		frontmatter := ""
-		bodyStart := 0
-		var lines []string
-		if err == nil {
-			lines = strings.Split(string(contentBytes), "\n")
-			if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
-				var fmParts []string
-				fmParts = append(fmParts, lines[0])
-				for i := 1; i < len(lines); i++ {
-					fmParts = append(fmParts, lines[i])
-					if strings.TrimSpace(lines[i]) == "---" {
-						bodyStart = i + 1
-						break
-					}
-				}
-				if len(fmParts) > 1 && strings.TrimSpace(fmParts[len(fmParts)-1]) == "---" {
-					frontmatter = strings.Join(fmParts, "\n") + "\n"
-				}
-			}
-		}
+		// Split frontmatter from body. The body (frontmatter stripped) is
+		// handed to RenderFileContent so it can preserve unmanaged lines
+		// (code fences, blanks, prose) in their relative position to the
+		// managed blocks. The frontmatter is emitted verbatim; if the file
+		// had none, synthesize the default so the note stays self-describing.
+		frontmatter, body := splitFrontmatter(string(contentBytes))
 
 		if frontmatter == "" {
 			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeFileDate))
+			body = string(contentBytes)
 		}
 
-		updatedByID := make(map[string]parser.ParsedBlock, len(blocks))
-		orderedBlocks := make([]parser.ParsedBlock, 0, len(blocks))
-		for _, block := range blocks {
-			if block.ID == "" {
-				block.ID = uuid.New().String()
-			}
-			updatedByID[block.ID] = block
-			orderedBlocks = append(orderedBlocks, block)
-		}
-
-		// Distinguish deleted managed blocks from unmanaged lines that
-		// happen to contain a UUID-shaped comment. Without this, a user-
-		// typed note quoting a commit hash would be silently dropped.
-		oldBlockIDs := make(map[string]bool)
-		if len(lines) > 0 {
-			oldBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, safeFileDate, a.spacesPerTab)
-			if parseErr == nil {
-				for _, b := range oldBlocks {
-					oldBlockIDs[b.ID] = true
-				}
-			}
-		}
-
-		preservedBefore := make(map[string][]string)
-		var pendingPreserved []string
-		inCodeBlock := false
-		for i := bodyStart; i < len(lines); i++ {
-			line := lines[i]
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "```") {
-				inCodeBlock = !inCodeBlock
-				pendingPreserved = append(pendingPreserved, line)
-				continue
-			}
-			if inCodeBlock || trimmed == "" {
-				pendingPreserved = append(pendingPreserved, line)
-				continue
-			}
-
-			matches := updateLineIDRegex.FindStringSubmatch(line)
-			if len(matches) > 1 {
-				blockID := matches[1]
-				if _, ok := updatedByID[blockID]; ok {
-					if _, assigned := preservedBefore[blockID]; assigned {
-						continue
-					}
-					preservedBefore[blockID] = append(preservedBefore[blockID], pendingPreserved...)
-					pendingPreserved = nil
-					continue
-				}
-				if oldBlockIDs[blockID] {
-					continue
-				}
-			}
-
-			pendingPreserved = append(pendingPreserved, line)
-		}
-
-		var markdownLines []string
-		for _, block := range orderedBlocks {
-			if preserved, ok := preservedBefore[block.ID]; ok {
-				markdownLines = append(markdownLines, preserved...)
-			}
-			markdownLines = append(markdownLines, parser.FormatBlockToLine(block, a.spacesPerTab))
-		}
-		markdownLines = append(markdownLines, pendingPreserved...)
-
-		newContent := frontmatter + strings.Join(markdownLines, "\n")
+		// RenderFileContent is the single serializer: it assigns any missing
+		// block IDs, weaves preserved unmanaged lines around the managed
+		// blocks, and emits the canonical per-block format.
+		newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
 
 		a.tracker.RegisterWrite(filePath)
 
