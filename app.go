@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"silt/backend/config"
 	"silt/backend/core"
 	"silt/backend/db"
 	"silt/backend/monitor"
@@ -25,7 +26,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -58,6 +58,14 @@ type App struct {
 	vaultPath    string
 	spacesPerTab int
 	wg           sync.WaitGroup
+
+	// cfg is the parsed .system/config.yaml, the single source of truth for
+	// non-vault-path settings. configMu guards it; it is replaced wholesale on
+	// reload (never mutated in place) so a struct read under RLock is a safe
+	// snapshot even though its map/slice fields share references.
+	cfg           config.SystemConfig
+	configMu      sync.RWMutex
+	configWatcher *config.ConfigWatcher
 
 	// pluginRODB is a lazy read-only handle to the in-memory index, used
 	// exclusively by PluginRawQuery so a plugin can never mutate the index
@@ -106,6 +114,9 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.watcher != nil {
 		_ = a.watcher.Close()
 	}
+	if a.configWatcher != nil {
+		_ = a.configWatcher.Close()
+	}
 	if a.tracker != nil {
 		a.tracker.Stop()
 	}
@@ -115,6 +126,16 @@ func (a *App) shutdown(ctx context.Context) {
 }
 
 func (a *App) initializeVaultServices(vaultPath string) error {
+	// Load system config first: its editor.tab_indent_spaces drives
+	// ScanWorkspace and every subsequent parse, so it must be applied before
+	// the initial index is built. A missing/invalid config is non-fatal —
+	// defaults keep the vault usable — but a parse error is surfaced.
+	cfg, cfgErr := config.Load(vaultPath)
+	if cfgErr != nil && a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "config:error", cfgErr.Error())
+	}
+	a.applyConfigLocked(cfg) // sets a.cfg + a.spacesPerTab before scanning
+
 	dbMgr, err := db.NewDatabaseManager()
 	if err != nil {
 		return fmt.Errorf("failed to start database: %w", err)
@@ -166,6 +187,21 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.watcher = watcher
 	a.vaultPath = vaultPath
 
+	// Start hot-reload of .system/config.yaml. External edits re-parse and
+	// emit config:changed without a restart (SPECS.md §9.2). Silt's own
+	// SaveSystemWrite is ignored via the watcher's self-loop tracker.
+	if a.ctx != nil {
+		cw, wErr := config.NewConfigWatcher(vaultPath,
+			func(reloaded config.SystemConfig) { a.applyConfig(reloaded) },
+			func(e error) { runtime.EventsEmit(a.ctx, "config:error", e.Error()) })
+		if wErr != nil {
+			log.Printf("config watcher disabled: %v", wErr)
+		} else {
+			cw.Start()
+			a.configWatcher = cw
+		}
+	}
+
 	// Report any paths the watcher could not subscribe to (fsnotify
 	// limits, permissions, etc.) so the UI can inform the user.
 	if failed := watcher.FailedPaths(); len(failed) > 0 && a.ctx != nil {
@@ -178,6 +214,12 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 // IsVaultInitialized returns whether a workspace vault has been configured and loaded.
 func (a *App) IsVaultInitialized() bool {
 	return a.vaultPath != "" && a.db != nil
+}
+
+// GetAppVersion returns the Silt version (embedded from the VERSION file at
+// build time). Surfaced for the About tab and plugin minSiltVersion checks.
+func (a *App) GetAppVersion() string {
+	return appVersion
 }
 
 // InitializeVault prompts the user for a folder, sets it up, and loads the services.
@@ -1410,41 +1452,97 @@ func (a *App) PluginUpdateBlockState(blockID, status string) (bool, error) {
 	return true, nil
 }
 
-// pluginConfigSchema mirrors the relevant fields of .system/config.yaml.
-type pluginConfigSchema struct {
-	Plugins struct {
-		Active   []string              `yaml:"active"`
-		Disabled []string              `yaml:"disabled"`
-		Settings map[string]any        `yaml:"plugin_settings"`
-	} `yaml:"plugins"`
-}
-
-// GetPluginRegistry parses the `plugins:` block of .system/config.yaml.
+// GetPluginRegistry returns the `plugins:` block of .system/config.yaml from
+// the in-memory config (the single source of truth maintained by the config
+// package + hot-reload watcher), so callers never re-read the file.
 func (a *App) GetPluginRegistry() (parser.PluginRegistry, error) {
 	registry := parser.PluginRegistry{Active: []string{}, Disabled: []string{}}
 	if a.vaultPath == "" {
 		return registry, fmt.Errorf("vault not loaded")
 	}
-	configPath := filepath.Join(a.vaultPath, ".system", "config.yaml")
-	bytes, err := os.ReadFile(configPath)
-	if err != nil {
-		// No config file → empty registry (no plugins active).
-		return registry, nil
-	}
-	var schema pluginConfigSchema
-	if err := yaml.Unmarshal(bytes, &schema); err != nil {
-		return registry, fmt.Errorf("failed to parse config.yaml: %w", err)
-	}
-	registry.Active = schema.Plugins.Active
-	registry.Disabled = schema.Plugins.Disabled
-	registry.Settings = schema.Plugins.Settings
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	registry.Active = a.cfg.Plugins.Active
+	registry.Disabled = a.cfg.Plugins.Disabled
+	registry.Settings = a.cfg.Plugins.PluginSettings
 	if registry.Active == nil {
 		registry.Active = []string{}
 	}
 	if registry.Disabled == nil {
 		registry.Disabled = []string{}
 	}
+	if registry.Settings == nil {
+		registry.Settings = map[string]any{}
+	}
 	return registry, nil
+}
+
+// GetSystemConfig returns the parsed system config (a value copy under the
+// read lock). The map/slice fields are shared references that are only ever
+// replaced wholesale under the write lock, so they are safe to read/marshal
+// after the lock is released.
+func (a *App) GetSystemConfig() (config.SystemConfig, error) {
+	if a.vaultPath == "" {
+		return config.Defaults(), fmt.Errorf("vault not loaded")
+	}
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	return a.cfg, nil
+}
+
+// SaveSystemConfig validates, persists atomically, and applies the new config.
+// The self-write is registered first so the hot-reload watcher ignores the
+// fsnotify event from our own atomic write.
+func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	if cfg.Editor.TabIndentSpaces <= 0 {
+		return fmt.Errorf("invalid config: editor.tab_indent_spaces must be positive")
+	}
+	if cfg.Editor.FontSizePx <= 0 {
+		return fmt.Errorf("invalid config: editor.font_size_px must be positive")
+	}
+	if cfg.Editor.LineHeight <= 0 {
+		return fmt.Errorf("invalid config: editor.line_height must be positive")
+	}
+	if cfg.Editor.AutoSaveDelayMs < 0 {
+		return fmt.Errorf("invalid config: editor.auto_save_delay_ms must be non-negative")
+	}
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	if err := config.Save(a.vaultPath, cfg); err != nil {
+		return err
+	}
+	// Apply live Go-side knobs without emitting config:changed. The frontend
+	// store already updates optimistically in saveConfig(); emitting here would
+	// race the store's dirty flag and could spuriously flip pendingExternal.
+	// External edits still flow through the watcher → applyConfig (with emit).
+	a.applyConfigLocked(cfg)
+	return nil
+}
+
+// applyConfig stores the parsed config under configMu, applies the live
+// Go-side knobs (tab indent width), then emits config:changed so the frontend
+// refreshes editor settings, hotkeys, and per-plugin settings.
+func (a *App) applyConfig(cfg config.SystemConfig) {
+	a.applyConfigLocked(cfg)
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "config:changed", cfg)
+	}
+}
+
+// applyConfigLocked updates a.cfg + live knobs under the write lock. Split out
+// so initializeVaultServices can set the config (and spacesPerTab) before the
+// first scan without emitting an event for a vault the frontend hasn't seen yet.
+func (a *App) applyConfigLocked(cfg config.SystemConfig) {
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	a.cfg = cfg
+	if cfg.Editor.TabIndentSpaces > 0 {
+		a.spacesPerTab = cfg.Editor.TabIndentSpaces
+	}
 }
 
 // ListPlugins enumerates plugin folders under .system/plugins/, surfacing
@@ -1478,6 +1576,9 @@ func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
 			if json.Unmarshal(manifestBytes, &m) == nil {
 				info.Name = m.Name
 				info.Version = m.Version
+				info.Author = m.Author
+				info.Description = m.Description
+				info.Icon = m.Icon
 			}
 		}
 		if _, err := os.Stat(filepath.Join(dir, "index.js")); err == nil {
@@ -1509,16 +1610,20 @@ func (a *App) ReadPluginSource(pluginID string) (string, error) {
 // --- Plugin install / uninstall (.silt-plugin) ---------------------------
 
 // ValidatePluginArchive validates a .silt-plugin file without installing it,
-// returning its manifest and any non-fatal warnings.
-func (a *App) ValidatePluginArchive(archivePath string) (parser.PluginManifest, []string, error) {
+// returning its manifest and any non-fatal warnings bundled in a single struct
+// (so both cross the Wails IPC boundary together).
+func (a *App) ValidatePluginArchive(archivePath string) (parser.PluginValidationResult, error) {
 	manifest, warnings, err := plugins.Validate(archivePath)
 	if err != nil {
-		return parser.PluginManifest{}, warnings, err
+		return parser.PluginValidationResult{Warnings: warnings}, err
 	}
 	if verr := enforceMinVersion(manifest.MinSiltVersion); verr != nil {
-		return parser.PluginManifest{}, warnings, verr
+		return parser.PluginValidationResult{Warnings: warnings}, verr
 	}
-	return manifestToParser(manifest), warnings, nil
+	return parser.PluginValidationResult{
+		Manifest: manifestToParser(manifest),
+		Warnings: warnings,
+	}, nil
 }
 
 // PickPluginArchive opens the native file picker (filtered to .silt-plugin)
