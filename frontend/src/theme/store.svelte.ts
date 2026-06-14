@@ -104,6 +104,31 @@ let started = false
 let themesStarted = false
 let offThemesChanged: (() => void) | null = null
 
+/**
+ * Test-only: reset module-level state (the `started` / `themesStarted`
+ * idempotency guards + the cached MQL + the event subscription).
+ * Exported for the vitest coverage of this store; not used in app
+ * code (and intentionally not re-exported from the public surface).
+ */
+export function _resetForTests(): void {
+  schemeMedia = null
+  started = false
+  themesStarted = false
+  offThemesChanged?.()
+  offThemesChanged = null
+  themeState.id = ''
+  themeState.name = ''
+  themeState.mode = 'dark'
+  themeState.darkTokens = {}
+  themeState.lightTokens = {}
+  themeState.error = null
+  themesState.items = []
+  themesState.flatTokens = {}
+  themesState.loadError = null
+  themesState.loading = false
+  clearStatus()
+}
+
 /** Returns true when the OS prefers light mode (used to resolve "system").
  * Reads the cached MQL rather than allocating one per repaint; null pre-init
  * or with no window → default to dark. The query is explicitly for "light"
