@@ -78,12 +78,17 @@
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
   )
 
+  let markDoneError = $state('')
+
   async function markDone(item: AgendaItem) {
+    markDoneError = ''
     try {
       await ctx.updateBlockState(item.id, 'DONE')
+      // Only remove from the list once the backend confirmed the change;
+      // otherwise the UI would drift from the index on failure.
       items = items.filter((i) => i.id !== item.id)
     } catch (e) {
-      console.error('markDone failed:', e)
+      markDoneError = e instanceof Error ? e.message : String(e)
     }
   }
 
@@ -120,6 +125,14 @@
       {items.length} active task{items.length === 1 ? '' : 's'}
     </span>
   </header>
+
+  {#if markDoneError}
+    <div
+      class="px-6 py-2 bg-error-bg border-b border-error-border text-error text-[12px] font-body-md"
+    >
+      Couldn't mark task done: {markDoneError}
+    </div>
+  {/if}
 
   <div
     class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-6 max-w-4xl w-full"

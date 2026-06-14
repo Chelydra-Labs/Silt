@@ -172,6 +172,30 @@
     )
   }
 
+  // Keyboard navigation across month cells: arrows move focus by day (clamping
+  // to the grid), Enter opens the focused day's first task.
+  function onCellKeydown(e: KeyboardEvent, day: Date) {
+    const map: Record<string, number> = {
+      ArrowRight: 1,
+      ArrowLeft: -1,
+      ArrowDown: 7,
+      ArrowUp: -7
+    }
+    const delta = map[e.key]
+    if (delta === undefined) return
+    e.preventDefault()
+    const grid = monthWeeks.flat()
+    const idx = grid.findIndex((d) => ymd(d) === ymd(day))
+    if (idx < 0) return
+    const next = Math.min(Math.max(idx + delta, 0), grid.length - 1)
+    const targetDt = grid[next]
+    if (!targetDt) return
+    const el = document.querySelector<HTMLElement>(
+      `[data-celldate="${ymd(targetDt)}"]`
+    )
+    el?.focus()
+  }
+
   onMount(() => {
     reload()
   })
@@ -249,7 +273,19 @@
             {@const isToday = isSameDay(day, new Date())}
             {@const items = byDate[ymd(day)] ?? []}
             <div
-              class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 {inMonth
+              role="gridcell"
+              tabindex="0"
+              data-celldate={ymd(day)}
+              aria-label={`${day.toDateString()}${items.length ? ', ' + items.length + ' task' + (items.length === 1 ? '' : 's') : ''}`}
+              onkeydown={(e) => {
+                if (e.key === 'Enter' && items[0]) {
+                  e.preventDefault()
+                  openItem(items[0])
+                } else {
+                  onCellKeydown(e, day)
+                }
+              }}
+              class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 focus:outline-none focus:border-accent-teal-start focus:ring-1 focus:ring-accent-teal-start/40 {inMonth
                 ? 'border-border-muted bg-bg-panel'
                 : 'border-border-muted/30 bg-transparent'}"
             >

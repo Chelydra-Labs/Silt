@@ -801,3 +801,57 @@ func sampleTaskBlockWithText(id string, line int, text string) parser.ParsedBloc
 		LineNumber: line,
 	}
 }
+
+func TestListNavigation_IncludesEmptySectionsAndNotebooks(t *testing.T) {
+	app := newTestApp(t)
+
+	// A populated page (notebook/section/page) with one indexed block.
+	writeSamplePage(t, app, "Work", "Projects", "Site", "2026-06-13",
+		"66666666-6666-6666-6666-666666666666", "index me")
+
+	// An empty section under Work (folder only — no pages, no blocks).
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, "Work", "EmptySection"), 0o755); err != nil {
+		t.Fatalf("mkdir empty section: %v", err)
+	}
+	// An empty notebook (folder only — no sections).
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, "Personal"), 0o755); err != nil {
+		t.Fatalf("mkdir empty notebook: %v", err)
+	}
+
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+
+	nbByName := map[string]*parser.NavigationNotebook{}
+	for i := range tree.Notebooks {
+		nbByName[tree.Notebooks[i].Name] = &tree.Notebooks[i]
+	}
+
+	// Both notebooks exist, including the empty Personal one.
+	if _, ok := nbByName["Work"]; !ok {
+		t.Errorf("expected Work notebook; got %+v", tree.Notebooks)
+	}
+	if _, ok := nbByName["Personal"]; !ok {
+		t.Errorf("expected empty Personal notebook to appear; got %+v", tree.Notebooks)
+	}
+
+	// Work has both the populated Projects section and the empty EmptySection.
+	work := nbByName["Work"]
+	secByName := map[string]bool{}
+	for _, s := range work.Sections {
+		secByName[s.Name] = true
+	}
+	if !secByName["Projects"] || !secByName["EmptySection"] {
+		t.Errorf("expected Projects + EmptySection under Work; got %+v", work.Sections)
+	}
+
+	// The populated page has a block count of 1; verify it is surfaced.
+	for _, s := range work.Sections {
+		if s.Name == "Projects" {
+			if len(s.Pages) != 1 || s.Pages[0].Name != "Site" || s.Pages[0].Count != 2 {
+				t.Errorf("expected Site page with count 2 (header + task); got %+v", s.Pages)
+			}
+		}
+	}
+}

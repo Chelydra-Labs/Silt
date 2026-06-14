@@ -23,6 +23,7 @@
   let activeSection = $state('')
   let activePage = $state('')
   let activeView = $state('notes')
+  let selectedTag = $state('')
 
   // Shell state
   let sidebarCollapsed = $state(false)
@@ -75,6 +76,7 @@
     function handleNavigateToTag(e: Event) {
       const tagPath = (e as CustomEvent).detail
       if (tagPath) {
+        selectedTag = tagPath
         activeView = 'tags'
       }
     }
@@ -267,7 +269,7 @@
             </div>
           {/if}
         {:else if activeView === 'tags'}
-          <TagsExplorer />
+          <TagsExplorer {selectedTag} />
         {:else if activeView === 'agenda' || activeView === 'calendar' || activeView === 'kanban'}
           <PluginView
             pluginId={'silt-' + activeView}

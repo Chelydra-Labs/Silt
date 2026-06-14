@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import {
     QueryTagHierarchy,
     QueryBlocksByTag
@@ -12,6 +12,12 @@
     count: number
     children: TagNode[]
   }
+
+  interface Props {
+    selectedTag?: string
+  }
+
+  let { selectedTag = '' }: Props = $props()
 
   let tree = $state<TagNode[]>([])
   let expanded = $state<Set<string>>(new Set())
@@ -88,6 +94,23 @@
     const refresh = () => loadTree()
     window.addEventListener('refresh-navigation', refresh)
     return () => window.removeEventListener('refresh-navigation', refresh)
+  })
+
+  // When an inline tag-pill sends navigate-to-tag, select that tag and expand
+  // its ancestor chain so it's visible in the tree. Only selectedTag drives
+  // this effect; expanded is read via untrack to avoid a re-trigger loop.
+  $effect(() => {
+    const tag = selectedTag
+    if (!tag) return
+    const parts = tag.split('/')
+    const acc: string[] = []
+    const next = new Set(untrack(() => expanded))
+    for (const part of parts) {
+      acc.push(part)
+      next.add(acc.join('/'))
+    }
+    expanded = next
+    void selectTag(tag)
   })
 </script>
 

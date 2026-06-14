@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import {
     ListNavigation,
     CreateNotebook,
@@ -66,6 +66,31 @@
     tree.notebooks.find((nb) => nb.name === activeNotebook)
   )
 
+  // Informative hover/next-step hints for the disabled New Section / New Page
+  // actions (a native title on a disabled button never shows, so the wrapper
+  // span carries it; the nextStep line is shown visibly under the actions).
+  let sectionHint = $derived(
+    activeNotebook ? 'New Section' : 'Create or open a Notebook first'
+  )
+  let pageHint = $derived(
+    !activeNotebook
+      ? 'Create or open a Notebook first'
+      : !activeNotebookObj || activeNotebookObj.sections.length === 0
+        ? 'Create a Section first'
+        : !activeSection
+          ? 'Select a Section first'
+          : 'New Page'
+  )
+  let nextStep = $derived(
+    !activeNotebook
+      ? 'Create or open a Notebook to get started.'
+      : !activeNotebookObj || activeNotebookObj.sections.length === 0
+        ? 'Create a Section to add Pages.'
+        : !activeSection
+          ? 'Select a Section to add Pages.'
+          : ''
+  )
+
   async function loadNavigation() {
     try {
       const data = await ListNavigation()
@@ -100,13 +125,17 @@
     }
   }
 
-  // Keep the active section expanded.
+  // Keep the active section expanded. Only `activeSection` drives this effect;
+  // the expandedSections mutation runs under untrack so the write can't
+  // re-trigger the effect (which previously caused an update-depth loop).
   $effect(() => {
-    if (activeSection) {
-      expandedSections.add(activeSection)
-      // Trigger reactivity by reassigning.
-      expandedSections = new Set(expandedSections)
-    }
+    const sec = activeSection
+    if (!sec) return
+    untrack(() => {
+      if (!expandedSections.has(sec)) {
+        expandedSections = new Set(expandedSections).add(sec)
+      }
+    })
   })
 
   function toggleSection(name: string) {
@@ -330,29 +359,46 @@
       {/if}
     </div>
 
-    <!-- Primary actions (icon-only, consistent style) -->
-    <div class="px-1 flex items-center gap-1.5 mb-2">
-      <button
-        onclick={() => openCreate('section')}
-        disabled={!activeNotebook}
-        title="New Section"
-        aria-label="New Section"
-        class="flex-1 bg-accent-teal-glow border border-accent-teal-start/30 text-accent-teal-start font-label-sm-bold py-2 rounded flex items-center justify-center hover:brightness-110 hover:border-accent-teal-start transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        <span class="material-symbols-outlined text-[20px]"
-          >create_new_folder</span
+    <!-- Primary actions (icon-only, consistent style). Each button is wrapped
+         in a span whose title gives the prerequisite reason — a native title
+         on a disabled button doesn't show, but on the wrapper it does. -->
+    <div class="px-1 flex items-center gap-1.5 mb-1">
+      <span title={sectionHint} class="flex-1 flex">
+        <button
+          onclick={() => openCreate('section')}
+          disabled={!activeNotebook}
+          title={sectionHint}
+          aria-label="New Section"
+          class="w-full bg-accent-teal-glow border border-accent-teal-start/30 text-accent-teal-start font-label-sm-bold py-2 rounded flex items-center justify-center hover:brightness-110 hover:border-accent-teal-start transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
         >
-      </button>
-      <button
-        onclick={() => openCreate('page')}
-        disabled={!activeNotebook}
-        title="New Page"
-        aria-label="New Page"
-        class="flex-1 bg-bg-panel border border-border-muted text-text-muted hover:text-accent-teal-start hover:border-accent-teal-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        <span class="material-symbols-outlined text-[20px]">note_add</span>
-      </button>
+          <span class="material-symbols-outlined text-[20px]"
+            >create_new_folder</span
+          >
+        </button>
+      </span>
+      <span title={pageHint} class="flex-1 flex">
+        <button
+          onclick={() => openCreate('page')}
+          disabled={!activeNotebook || !activeSection}
+          title={pageHint}
+          aria-label="New Page"
+          class="w-full bg-bg-panel border border-border-muted text-text-muted hover:text-accent-teal-start hover:border-accent-teal-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <span class="material-symbols-outlined text-[20px]">note_add</span>
+        </button>
+      </span>
     </div>
+    {#if nextStep}
+      <div
+        class="px-2 pb-2 text-[10px] text-text-muted font-label-sm flex items-center gap-1"
+      >
+        <span
+          class="material-symbols-outlined text-[12px] text-accent-teal-start/70"
+          >info</span
+        >
+        {nextStep}
+      </div>
+    {/if}
 
     <!-- Navigation tree -->
     <div class="flex-1 overflow-y-auto custom-scrollbar px-1">

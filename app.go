@@ -545,21 +545,84 @@ func isPathWithinVault(target, vaultRoot string) bool {
 }
 
 // ListNavigation returns the Notebook > Section > Page tree for the sidebar.
+//
+// The directory structure on disk is the single source of truth, so the tree
+// is enumerated from the filesystem (every <vault>/<nb>/<sec>/<page>/ folder,
+// including empty ones with no notes yet). Block counts are merged from the
+// index so the sidebar can show per-page badges. Inferring the tree from
+// `blocks` alone would hide newly-created, still-empty sections/notebooks.
 func (a *App) ListNavigation() (parser.NavigationTree, error) {
-	if a.db == nil {
-		return parser.NavigationTree{}, fmt.Errorf("vault database not loaded")
+	if a.vaultPath == "" {
+		return parser.NavigationTree{}, fmt.Errorf("vault not loaded")
 	}
 
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	var res parser.NavigationTree
-	var err error
-	a.coordinator.WithDBRead(func() {
-		res, err = a.db.ListNavigation()
-	})
+	// 1. Block counts per (notebook, section, page) from the index.
+	type npKey struct{ n, s, p string }
+	counts := map[npKey]int{}
+	if a.db != nil {
+		a.coordinator.WithDBRead(func() {
+			rows, err := a.db.SQLDB().Query("SELECT notebook, section, page, COUNT(*) FROM blocks GROUP BY notebook, section, page")
+			if err != nil {
+				return
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var n, s, p string
+				var c int
+				if err := rows.Scan(&n, &s, &p, &c); err == nil {
+					counts[npKey{n, s, p}] = c
+				}
+			}
+		})
+	}
 
-	return res, err
+	// 2. Walk the filesystem three levels deep: notebook / section / page.
+	tree := parser.NavigationTree{Notebooks: []parser.NavigationNotebook{}}
+	nbEntries, err := os.ReadDir(a.vaultPath)
+	if err != nil {
+		return tree, fmt.Errorf("failed to read vault: %w", err)
+	}
+	for _, nbE := range nbEntries {
+		name := nbE.Name()
+		if !nbE.IsDir() || strings.HasPrefix(name, ".") {
+			continue // skip .system and hidden dirs
+		}
+		nbPath := filepath.Join(a.vaultPath, name)
+		nn := parser.NavigationNotebook{Name: name, Sections: []parser.NavigationSection{}}
+		secEntries, err := os.ReadDir(nbPath)
+		if err != nil {
+			continue
+		}
+		for _, secE := range secEntries {
+			secName := secE.Name()
+			if !secE.IsDir() || strings.HasPrefix(secName, ".") {
+				continue
+			}
+			secPath := filepath.Join(nbPath, secName)
+			ns := parser.NavigationSection{Name: secName, Pages: []parser.NavigationPage{}}
+			pageEntries, err := os.ReadDir(secPath)
+			if err != nil {
+				nn.Sections = append(nn.Sections, ns)
+				continue
+			}
+			for _, pgE := range pageEntries {
+				pgName := pgE.Name()
+				if !pgE.IsDir() || strings.HasPrefix(pgName, ".") {
+					continue
+				}
+				ns.Pages = append(ns.Pages, parser.NavigationPage{
+					Name:  pgName,
+					Count: counts[npKey{name, secName, pgName}],
+				})
+			}
+			nn.Sections = append(nn.Sections, ns)
+		}
+		tree.Notebooks = append(tree.Notebooks, nn)
+	}
+	return tree, nil
 }
 
 // QueryTagHierarchy returns the hierarchical tag tree for the Tags Explorer.
