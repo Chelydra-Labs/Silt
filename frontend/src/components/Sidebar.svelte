@@ -575,8 +575,16 @@
 
   <!-- Sidebar Footer -->
   <div
-    class="px-3 py-2 border-t border-border-muted flex items-center justify-end bg-bg-surface flex-shrink-0"
+    class="px-3 py-2 border-t border-border-muted flex items-center justify-end gap-1 bg-bg-surface flex-shrink-0"
   >
+    <button
+      onclick={() => window.dispatchEvent(new CustomEvent('open-settings', { detail: 'general' }))}
+      aria-label="Settings"
+      title="Settings"
+      class="p-1.5 rounded hover:bg-bg-hover text-text-muted hover:text-accent-primary-start transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none flex items-center justify-center hover:scale-105 active:scale-95"
+    >
+      <span class="material-symbols-outlined text-[18px]">settings</span>
+    </button>
     <button
       onclick={() => (collapsed = true)}
       aria-label="Hide sidebar"
