@@ -169,8 +169,11 @@ function effectiveTokens(s: ThemeState): Record<string, string> {
   return osPrefersLight() ? s.lightTokens : s.darkTokens
 }
 
-/** Re-inject the effective tokens for the current state (same-tick). */
-function repaint(): void {
+/** Re-inject the effective tokens for the current state (same-tick).
+ * Exported so the AppearanceTab can restore the active theme when a
+ * live-preview ends (the picker calls it from the $effect's else
+ * branch — see AppearanceTab.svelte). */
+export function restoreActiveTheme(): void {
   injectTokens(effectiveTokens(themeState))
 }
 
@@ -190,7 +193,7 @@ export async function initTheme(): Promise<void> {
   if (typeof window !== 'undefined' && window.matchMedia) {
     schemeMedia = window.matchMedia('(prefers-color-scheme: light)')
     schemeMedia.addEventListener('change', () => {
-      if (themeState.mode === 'system') repaint()
+      if (themeState.mode === 'system') restoreActiveTheme()
     })
   }
 
@@ -244,7 +247,7 @@ function applyResult(res: {
   themeState.darkTokens = res.dark_tokens || {}
   themeState.lightTokens = res.light_tokens || {}
   themeState.error = null
-  repaint()
+  restoreActiveTheme()
 }
 
 /**

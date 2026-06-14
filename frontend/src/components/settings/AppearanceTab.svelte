@@ -21,6 +21,7 @@
     importThemeFromPath,
     loadThemes,
     pickAndImportTheme,
+    restoreActiveTheme,
     themeState,
     themesState,
     themeStatus,
@@ -164,18 +165,16 @@
   // Side-effect: when previewTokens changes (hover/unhover) or the
   // active mode flips, re-inject the right token map. The injector
   // uses a single textContent rewrite so the repaint is same-tick.
+  // The else branch is critical: when a preview ends (mouseleave,
+  // blur, Esc), previewTokens goes null and we MUST re-inject the
+  // active theme's tokens — otherwise the page stays visually locked
+  // to the last-hovered theme until the user manually clicks one.
   $effect(() => {
     if (previewTokens !== null) {
-      // Use the preview map; the inject call must not run through the
-      // store's repaint (which is bound to the active theme) so we
-      // call the injector directly.
       injectTokens(previewTokens)
+    } else {
+      restoreActiveTheme()
     }
-    // When previewTokens is null, the regular themeState repaint path
-    // handles injection (initTheme / theme:changed events already call
-    // repaint; we just need to make sure the active tokens are
-    // up-to-date when the preview ends). The store's applyTheme path
-    // re-injects automatically.
   })
 
   // --- Helpers -------------------------------------------------------------
@@ -288,9 +287,6 @@
       <div
         role="listbox"
         aria-label="Available themes"
-        aria-activedescendant={focusIndex !== null
-          ? `theme-row-${themesState.items[focusIndex]?.id ?? ''}`
-          : undefined}
         class="space-y-2"
       >
         {#each themesState.items as theme, i (theme.id)}
