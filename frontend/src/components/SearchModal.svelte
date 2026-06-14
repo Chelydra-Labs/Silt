@@ -95,14 +95,14 @@
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div
   onclick={onClose}
-  class="fixed inset-0 bg-[#000]/60 backdrop-blur-sm z-[150] flex items-start justify-center pt-28"
+  class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-start justify-center pt-28"
 >
   <!-- Modal Frame (Frosted Glass Panel) -->
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     onclick={(e) => e.stopPropagation()}
     class="w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
-    style="backdrop-filter: blur(16px) saturate(140%); background: rgba(22, 22, 25, 0.8);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 80%, transparent);"
   >
     <!-- Search Input Area -->
     <div
@@ -121,7 +121,7 @@
       />
       {#if loading}
         <span
-          class="material-symbols-outlined text-accent-teal-start animate-spin text-[20px] select-none"
+          class="material-symbols-outlined text-accent-primary-start animate-spin text-[20px] select-none"
         >
           sync
         </span>
@@ -143,9 +143,9 @@
           <button
             onclick={() => selectResult(res)}
             class="w-full px-5 py-3 border-none flex flex-col gap-1 text-left cursor-pointer transition-colors focus:outline-none"
-            class:bg-accent-teal-glow={idx === selectedIdx}
+            class:bg-accent-primary-glow={idx === selectedIdx}
             class:border-l-2={idx === selectedIdx}
-            class:border-accent-teal-start={idx === selectedIdx}
+            class:border-accent-primary-start={idx === selectedIdx}
           >
             <!-- Breadcrumb metadata -->
             <div
@@ -159,7 +159,7 @@
               <span class="material-symbols-outlined text-[10px]"
                 >chevron_right</span
               >
-              <span class="text-accent-teal-start">{res.file_date}</span>
+              <span class="text-accent-primary-start">{res.file_date}</span>
             </div>
 
             <!-- Content preview -->
@@ -168,7 +168,7 @@
             >
               {#if res.status}
                 <span
-                  class="material-symbols-outlined text-[16px] text-accent-teal-start select-none"
+                  class="material-symbols-outlined text-[16px] text-accent-primary-start select-none"
                 >
                   {res.status === 'DONE'
                     ? 'check_circle'

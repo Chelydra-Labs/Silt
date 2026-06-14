@@ -68,7 +68,7 @@
   {:else if seg.type === 'tag'}
     <button
       onclick={() => clickTag(seg.value)}
-      class="inline-flex items-center align-baseline bg-accent-indigo-glow border border-accent-indigo-start/30 text-accent-indigo-start rounded px-1.5 py-0 mx-0.5 text-[0.85em] font-label-sm hover:brightness-110 transition-all cursor-pointer border"
+      class="inline-flex items-center align-baseline bg-accent-secondary-glow border border-accent-secondary-start/30 text-accent-secondary-start rounded px-1.5 py-0 mx-0.5 text-[0.85em] font-label-sm hover:brightness-110 transition-all cursor-pointer border"
       title={'#' + seg.value}
     >
       <span class="material-symbols-outlined text-[0.9em] mr-0.5">label</span

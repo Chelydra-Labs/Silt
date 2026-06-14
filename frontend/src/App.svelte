@@ -205,7 +205,7 @@
           transition:fade={{ duration: 150 }}
           aria-label="Show sidebar"
           title="Show sidebar (Ctrl+B)"
-          class="absolute bottom-4 left-4 z-50 w-8 h-8 rounded-lg bg-bg-surface/80 backdrop-blur-md border border-border-muted text-text-muted hover:text-accent-teal-start hover:border-accent-teal-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
+          class="absolute bottom-4 left-4 z-50 w-8 h-8 rounded-lg bg-bg-surface/80 backdrop-blur-md border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
         >
           <span class="material-symbols-outlined text-[18px]"
             >left_panel_open</span

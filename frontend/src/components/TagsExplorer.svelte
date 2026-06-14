@@ -119,7 +119,7 @@
   <div class="w-72 border-r border-border-muted flex flex-col min-h-0">
     <div class="p-3 border-b border-border-muted">
       <div class="flex items-center gap-2 mb-2">
-        <span class="material-symbols-outlined text-accent-teal-start"
+        <span class="material-symbols-outlined text-accent-primary-start"
           >label</span
         >
         <h1 class="font-headline-md text-headline-md text-text-primary">
@@ -130,14 +130,14 @@
         bind:value={query}
         type="text"
         placeholder="Filter tags…"
-        class="w-full bg-bg-surface border border-border-zinc rounded-lg px-3 py-1.5 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-teal-start transition-colors"
+        class="w-full bg-bg-surface border border-border-zinc rounded-lg px-3 py-1.5 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
       />
     </div>
     <div class="flex-1 overflow-y-auto custom-scrollbar p-2">
       {#if filteredTree.length === 0}
         <div class="text-text-muted text-center py-10 font-body-md text-[13px]">
           {#if tree.length === 0}
-            No tags yet. Add <span class="text-accent-indigo-start"
+            No tags yet. Add <span class="text-accent-secondary-start"
               >#tag/path</span
             > to a block.
           {:else}
@@ -163,10 +163,10 @@
   <div class="flex-1 flex flex-col min-h-0">
     <div class="px-6 py-3 border-b border-border-muted flex items-center gap-2">
       {#if activeTag}
-        <span class="material-symbols-outlined text-accent-indigo-start"
+        <span class="material-symbols-outlined text-accent-secondary-start"
           >label</span
         >
-        <span class="text-accent-indigo-start font-label-sm-bold"
+        <span class="text-accent-secondary-start font-label-sm-bold"
           >#{activeTag}</span
         >
         <span class="text-text-muted text-[12px]"

@@ -113,7 +113,7 @@
   <header
     class="px-6 py-4 border-b border-border-muted flex items-center gap-3"
   >
-    <span class="material-symbols-outlined text-accent-teal-start"
+    <span class="material-symbols-outlined text-accent-primary-start"
       >event_repeat</span
     >
     <h1 class="font-headline-lg text-headline-lg text-text-primary">
@@ -144,14 +144,14 @@
         Nothing scheduled. Add a due date to a task to see it here.
       </div>
     {:else}
-      {#each [{ label: 'Overdue', list: overdue, tone: 'error' }, { label: 'Today', list: todayItems, tone: 'teal' }, { label: 'Tomorrow', list: tomorrowItems, tone: 'indigo' }, { label: 'Upcoming', list: upcoming, tone: 'muted' }] as group (group.label)}
+      {#each [{ label: 'Overdue', list: overdue, tone: 'error' }, { label: 'Today', list: todayItems, tone: 'primary' }, { label: 'Tomorrow', list: tomorrowItems, tone: 'secondary' }, { label: 'Upcoming', list: upcoming, tone: 'muted' }] as group (group.label)}
         {#if group.list.length > 0}
           <section>
             <h2
               class="font-label-sm-bold uppercase tracking-widest text-[11px] mb-2 flex items-center gap-2"
               class:text-error={group.tone === 'error'}
-              class:text-accent-teal-start={group.tone === 'teal'}
-              class:text-accent-indigo-start={group.tone === 'indigo'}
+              class:text-accent-primary-start={group.tone === 'primary'}
+              class:text-accent-secondary-start={group.tone === 'secondary'}
               class:text-text-muted={group.tone === 'muted'}
             >
               {group.label}
@@ -171,7 +171,7 @@
                       markDone(item)
                     }}
                     title="Mark done"
-                    class="w-5 h-5 rounded todo-check flex-shrink-0 cursor-pointer hover:border-accent-teal-start"
+                    class="w-5 h-5 rounded todo-check flex-shrink-0 cursor-pointer hover:border-accent-primary-start"
                     aria-label="Mark done"
                   ></button>
                   <div class="flex-1 min-w-0">
@@ -188,7 +188,7 @@
                   </div>
                   {#if item.owner}
                     <span
-                      class="text-[10px] text-accent-indigo-start bg-accent-indigo-glow border border-accent-indigo-start/30 rounded px-1.5 py-0.5"
+                      class="text-[10px] text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded px-1.5 py-0.5"
                       >[{item.owner}]</span
                     >
                   {/if}

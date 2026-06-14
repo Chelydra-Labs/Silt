@@ -266,12 +266,12 @@
         tabindex="0"
       >
         <span
-          class="material-symbols-outlined text-accent-teal-start text-[20px]"
+          class="material-symbols-outlined text-accent-primary-start text-[20px]"
           >menu_book</span
         >
         <div class="flex flex-col min-w-0 flex-1">
           <span
-            class="text-accent-teal-start font-headline-md text-headline-md truncate"
+            class="text-accent-primary-start font-headline-md text-headline-md truncate"
             >{activeNotebook || 'No Notebook'}</span
           >
           <span
@@ -280,7 +280,7 @@
           >
         </div>
         <span
-          class="material-symbols-outlined text-text-muted text-[18px] group-hover:text-accent-teal-start transition-colors"
+          class="material-symbols-outlined text-text-muted text-[18px] group-hover:text-accent-primary-start transition-colors"
         >
           {showNotebookDropdown ? 'expand_less' : 'expand_more'}
         </span>
@@ -293,8 +293,8 @@
           class="fixed inset-0 z-[60]"
         ></div>
         <div
-          class="absolute left-1 right-1 top-14 glass-palette border border-accent-teal-start/20 rounded-lg shadow-2xl z-[70] py-2 max-h-[60vh] overflow-y-auto custom-scrollbar"
-          style="backdrop-filter: blur(16px); background: rgba(22, 22, 25, 0.92);"
+          class="absolute left-1 right-1 top-14 glass-palette border border-accent-primary-start/20 rounded-lg shadow-2xl z-[70] py-2 max-h-[60vh] overflow-y-auto custom-scrollbar"
+          style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--bg-panel) 92%, transparent);"
         >
           {#if tree.notebooks.length === 0}
             <div class="px-4 py-3 text-text-muted text-[12px] font-body-md">
@@ -307,7 +307,7 @@
                 class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-bg-hover transition-colors font-body-md border-none bg-transparent"
               >
                 <span
-                  class="material-symbols-outlined text-accent-teal-start text-[18px]"
+                  class="material-symbols-outlined text-accent-primary-start text-[18px]"
                   >folder_special</span
                 >
                 <span
@@ -316,7 +316,7 @@
                 >
                 {#if nb.name === activeNotebook}
                   <span
-                    class="material-symbols-outlined text-accent-teal-start text-[16px]"
+                    class="material-symbols-outlined text-accent-primary-start text-[16px]"
                     >check</span
                   >
                 {/if}
@@ -330,7 +330,7 @@
                 showNotebookDropdown = false
                 openCreate('notebook')
               }}
-              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-bg-hover transition-colors font-body-md border-none bg-transparent text-accent-teal-start"
+              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-bg-hover transition-colors font-body-md border-none bg-transparent text-accent-primary-start"
             >
               <span class="material-symbols-outlined text-[18px]"
                 >create_new_folder</span
@@ -362,7 +362,7 @@
           disabled={!activeNotebook}
           title={sectionHint}
           aria-label="New Section"
-          class="w-full bg-accent-teal-glow border border-accent-teal-start/30 text-accent-teal-start font-label-sm-bold py-2 rounded flex items-center justify-center hover:brightness-110 hover:border-accent-teal-start transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+          class="w-full bg-accent-primary-glow border border-accent-primary-start/30 text-accent-primary-start font-label-sm-bold py-2 rounded flex items-center justify-center hover:brightness-110 hover:border-accent-primary-start transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <span class="material-symbols-outlined text-[20px]"
             >create_new_folder</span
@@ -375,7 +375,7 @@
           disabled={!activeNotebook}
           title={pageHint}
           aria-label="New Page"
-          class="w-full bg-bg-panel border border-border-muted text-text-muted hover:text-accent-teal-start hover:border-accent-teal-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+          class="w-full bg-bg-panel border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <span class="material-symbols-outlined text-[20px]">note_add</span>
         </button>
@@ -386,7 +386,7 @@
         class="px-2 pb-2 text-[10px] text-text-muted font-label-sm flex items-center gap-1"
       >
         <span
-          class="material-symbols-outlined text-[12px] text-accent-teal-start/70"
+          class="material-symbols-outlined text-[12px] text-accent-primary-start/70"
           >info</span
         >
         {nextStep}
@@ -450,7 +450,7 @@
                   openCreate('page')
                 }}
                 title="New page in this section"
-                class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent-teal-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
+                class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
               >
                 <span class="material-symbols-outlined text-[16px]">add</span>
               </button>
@@ -473,14 +473,14 @@
                       onclick={() => handleSelectPage(sec.name, pg.name)}
                       class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
                       class:bg-bg-hover={isActive}
-                      class:text-accent-teal-start={isActive}
+                      class:text-accent-primary-start={isActive}
                       class:text-text-muted={!isActive}
                       class:hover:text-text-primary={!isActive}
                       role="treeitem"
                     >
                       {#if isActive}
                         <span
-                          class="absolute left-0 top-1 bottom-1 w-[2px] bg-accent-teal-start rounded-full"
+                          class="absolute left-0 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
                         ></span>
                       {/if}
                       <span class="material-symbols-outlined text-[15px]"
@@ -505,13 +505,13 @@
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div
       onclick={() => (createMode = '')}
-      class="fixed inset-0 bg-[#000]/60 backdrop-blur-sm z-[160] flex items-start justify-center pt-32"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[160] flex items-start justify-center pt-32"
     >
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         onclick={(e) => e.stopPropagation()}
         class="w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
-        style="backdrop-filter: blur(16px) saturate(140%); background: rgba(22, 22, 25, 0.9);"
+        style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--bg-panel) 90%, transparent);"
       >
         <div class="px-5 py-4 border-b border-border-muted">
           <h2 class="font-headline-md text-headline-md text-text-primary">
@@ -544,7 +544,7 @@
               : createMode === 'section'
                 ? 'Section name…'
                 : 'Page name…'}
-            class="w-full bg-bg-surface border border-border-zinc rounded-lg px-3 py-2.5 text-text-primary text-[14px] font-body-md outline-none focus:border-accent-teal-start transition-colors"
+            class="w-full bg-bg-surface border border-border-zinc rounded-lg px-3 py-2.5 text-text-primary text-[14px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
           />
           {#if createError}
             <p class="text-error text-[12px] font-body-md mt-2">
@@ -564,7 +564,7 @@
           <button
             onclick={handleCreate}
             disabled={creating || !newName.trim()}
-            class="px-4 py-2 rounded-lg bg-accent-teal-start/20 border border-accent-teal-start/40 text-accent-teal-start font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-4 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {creating ? 'Creating…' : 'Create'}
           </button>
@@ -581,7 +581,7 @@
       onclick={() => (collapsed = true)}
       aria-label="Hide sidebar"
       title="Hide sidebar (Ctrl+B)"
-      class="p-1.5 rounded hover:bg-bg-hover text-text-muted hover:text-accent-teal-start transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none flex items-center justify-center hover:scale-105 active:scale-95"
+      class="p-1.5 rounded hover:bg-bg-hover text-text-muted hover:text-accent-primary-start transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none flex items-center justify-center hover:scale-105 active:scale-95"
     >
       <span class="material-symbols-outlined text-[18px]">left_panel_close</span
       >

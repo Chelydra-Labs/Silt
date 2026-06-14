@@ -72,7 +72,7 @@
     >
       <img src={logo} alt="Silt" class="w-6 h-6 flex-shrink-0" />
       <span
-        class="font-headline-md text-headline-md text-accent-teal-start font-bold tracking-tight whitespace-nowrap"
+        class="font-headline-md text-headline-md text-accent-primary-start font-bold tracking-tight whitespace-nowrap"
         >Silt</span
       >
     </div>
@@ -86,7 +86,7 @@
           onclick={() => selectView(v.id)}
           class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-label-sm text-label-sm transition-all border-none cursor-pointer focus:outline-none whitespace-nowrap"
           class:bg-bg-hover={activeView === v.id}
-          class:text-accent-teal-start={activeView === v.id}
+          class:text-accent-primary-start={activeView === v.id}
           class:text-text-muted={activeView !== v.id}
           aria-pressed={activeView === v.id}
         >
@@ -101,7 +101,7 @@
   <div class="flex items-center gap-2 flex-shrink-0 h-full pr-2">
     <button
       onclick={onSearchClick}
-      class="bg-bg-surface border border-border-muted rounded-lg pl-3 pr-8 py-1.5 items-center gap-2 cursor-pointer text-text-muted hover:border-accent-teal-start transition-all duration-200 hidden sm:flex w-72"
+      class="bg-bg-surface border border-border-muted rounded-lg pl-3 pr-8 py-1.5 items-center gap-2 cursor-pointer text-text-muted hover:border-accent-primary-start transition-all duration-200 hidden sm:flex w-72"
     >
       <span class="material-symbols-outlined text-[18px]">search</span>
       <span class="text-[12px] font-label-sm whitespace-nowrap"

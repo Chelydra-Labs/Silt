@@ -201,7 +201,7 @@
     <span class="material-symbols-outlined text-[14px]">chevron_right</span>
     <span>{section}</span>
     <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-    <span class="text-accent-teal-start">{page}</span>
+    <span class="text-accent-primary-start">{page}</span>
   </nav>
 
   <header class="mb-8">
@@ -212,12 +212,12 @@
     </h1>
     <div class="flex items-center gap-3">
       <span
-        class="bg-[#1e1e23]/50 border border-accent-indigo-start/20 text-accent-indigo-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
+        class="bg-border-muted/50 border border-accent-secondary-start/20 text-accent-secondary-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
       >
         {notebook}
       </span>
       <span
-        class="bg-[#1e1e23]/50 border border-accent-teal-start/20 text-accent-teal-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
+        class="bg-border-muted/50 border border-accent-primary-start/20 text-accent-primary-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
       >
         {section}
       </span>
@@ -251,7 +251,7 @@
         >
           <!-- Date Sticky Header -->
           <h2
-            class="text-accent-teal-start font-bold text-headline-md font-headline-md mb-6 sticky top-0 bg-void py-2 z-10"
+            class="text-accent-primary-start font-bold text-headline-md font-headline-md mb-6 sticky top-0 bg-void py-2 z-10"
           >
             {group.formattedDate}
           </h2>
@@ -280,7 +280,7 @@
 
     {#if loading}
       <div class="flex justify-center py-6">
-        <span class="text-accent-teal-start font-body-md animate-pulse"
+        <span class="text-accent-primary-start font-body-md animate-pulse"
           >Loading logs...</span
         >
       </div>

@@ -1,9 +1,12 @@
 package vault
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"silt/backend/themes"
 )
 
 func TestLoadSettings_CorruptJSON(t *testing.T) {
@@ -39,7 +42,9 @@ func TestSaveSettings_RoundTrip(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
 	original := &AppSettings{
-		VaultPath: filepath.Join(dir, "my-vault"),
+		VaultPath:   filepath.Join(dir, "my-vault"),
+		ActiveTheme: "terra_noir",
+		ThemeMode:   "light",
 	}
 	if err := SaveSettings(original); err != nil {
 		t.Fatalf("SaveSettings: %v", err)
@@ -50,6 +55,124 @@ func TestSaveSettings_RoundTrip(t *testing.T) {
 		t.Fatalf("LoadSettings: %v", err)
 	}
 	if loaded.VaultPath != original.VaultPath {
-		t.Errorf("round-trip mismatch: got %q, want %q", loaded.VaultPath, original.VaultPath)
+		t.Errorf("round-trip mismatch vault_path: got %q, want %q", loaded.VaultPath, original.VaultPath)
+	}
+	if loaded.ActiveTheme != "terra_noir" {
+		t.Errorf("round-trip mismatch active_theme: got %q, want %q", loaded.ActiveTheme, "terra_noir")
+	}
+	if loaded.ThemeMode != "light" {
+		t.Errorf("round-trip mismatch theme_mode: got %q, want %q", loaded.ThemeMode, "light")
 	}
 }
+
+// TestLoadSettings_BackwardCompat covers an older settings.json written
+// before the theme fields existed. It must load with the default theme/mode
+// rather than crashing or returning empty values.
+func TestLoadSettings_BackwardCompat(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	path, err := GetSettingsPath()
+	if err != nil {
+		t.Skipf("cannot determine config path on this platform: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Pre-theme-era settings.json: only vault_path.
+	legacy := []byte(`{"vault_path":"/old/vault"}`)
+	if err := os.WriteFile(path, legacy, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	loaded, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings legacy: %v", err)
+	}
+	if loaded.VaultPath != "/old/vault" {
+		t.Errorf("legacy vault_path lost: got %q", loaded.VaultPath)
+	}
+	if loaded.ActiveTheme != themes.DefaultThemeID {
+		t.Errorf("legacy active_theme should default to %q, got %q", themes.DefaultThemeID, loaded.ActiveTheme)
+	}
+	if loaded.ThemeMode != "dark" {
+		t.Errorf("legacy theme_mode should default to dark, got %q", loaded.ThemeMode)
+	}
+}
+
+// TestLoadSettings_FirstRunDefaults covers the no-settings-file case (fresh
+// install): LoadSettings returns valid defaults instead of a zero struct.
+func TestLoadSettings_FirstRunDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	loaded, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings first run: %v", err)
+	}
+	if loaded.ActiveTheme != themes.DefaultThemeID {
+		t.Errorf("first-run active_theme should be %q, got %q", themes.DefaultThemeID, loaded.ActiveTheme)
+	}
+	if loaded.ThemeMode != "dark" {
+		t.Errorf("first-run theme_mode should be dark, got %q", loaded.ThemeMode)
+	}
+}
+
+// TestThemeModeNormalization ensures an unrecognized ThemeMode persisted to
+// disk (or passed by a caller) normalizes to "dark" on load and save.
+func TestThemeModeNormalization(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	path, err := GetSettingsPath()
+	if err != nil {
+		t.Skipf("cannot determine config path on this platform: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	bad := []byte(`{"vault_path":"/v","active_theme":"terra_noir","theme_mode":"neon"}`)
+	if err := os.WriteFile(path, bad, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	loaded, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	if loaded.ThemeMode != "dark" {
+		t.Errorf("invalid theme_mode should normalize to dark, got %q", loaded.ThemeMode)
+	}
+
+	// Saving a struct with an invalid mode persists the normalized value.
+	if err := SaveSettings(&AppSettings{VaultPath: "/v", ActiveTheme: "x", ThemeMode: "neon"}); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	raw, _ := os.ReadFile(path)
+	var onDisk struct {
+		ThemeMode string `json:"theme_mode"`
+	}
+	if err := json.Unmarshal(raw, &onDisk); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if onDisk.ThemeMode != "dark" {
+		t.Errorf("saved theme_mode should be normalized to dark, got %q", onDisk.ThemeMode)
+	}
+}
+
+func TestValidThemeMode(t *testing.T) {
+	for _, m := range []string{"dark", "light", "system"} {
+		if !ValidThemeMode(m) {
+			t.Errorf("ValidThemeMode(%q) = false, want true", m)
+		}
+	}
+	for _, m := range []string{"", "neon", "DARK", "dark "} {
+		if ValidThemeMode(m) {
+			t.Errorf("ValidThemeMode(%q) = true, want false", m)
+		}
+	}
+}
+

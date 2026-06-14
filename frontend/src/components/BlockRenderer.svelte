@@ -424,7 +424,7 @@
         class="w-5 h-5 mt-0.5 rounded doing-check flex-shrink-0 flex items-center justify-center cursor-pointer focus:outline-none"
       >
         <div
-          class="w-2 h-2 bg-accent-indigo-end doing-indicator rounded-full"
+          class="w-2 h-2 bg-accent-secondary-end doing-indicator rounded-full"
         ></div>
       </button>
     {:else if block.status === 'DONE'}
@@ -434,7 +434,7 @@
         class="w-5 h-5 mt-0.5 rounded done-check flex-shrink-0 flex items-center justify-center cursor-pointer focus:outline-none"
       >
         <span
-          class="material-symbols-outlined text-accent-teal-start text-[14px] font-bold select-none"
+          class="material-symbols-outlined text-accent-primary-start text-[14px] font-bold select-none"
         >
           check
         </span>
@@ -508,7 +508,7 @@
     {#if block.type === 'TASK' && block.status !== 'DONE'}
       {#if block.owner}
         <span
-          class="bg-accent-indigo-glow border border-accent-indigo-start/30 text-accent-indigo-start px-2 py-0.5 rounded text-[11px] font-label-sm select-none"
+          class="bg-accent-secondary-glow border border-accent-secondary-start/30 text-accent-secondary-start px-2 py-0.5 rounded text-[11px] font-label-sm select-none"
         >
           [{block.owner}]
         </span>
@@ -516,7 +516,7 @@
 
       {#if block.due_date}
         <span
-          class="bg-accent-teal-glow border border-accent-teal-start/30 text-accent-teal-start px-2 py-0.5 rounded text-[11px] font-label-sm select-none"
+          class="bg-accent-primary-glow border border-accent-primary-start/30 text-accent-primary-start px-2 py-0.5 rounded text-[11px] font-label-sm select-none"
         >
           {block.due_date}
         </span>
