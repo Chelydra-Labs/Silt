@@ -70,20 +70,36 @@ export async function initTheme(): Promise<void> {
     })
   }
 
-  // Re-paint when the backend reports a theme change from elsewhere.
-  EventsOn('theme:changed', async () => {
-    try {
-      const res = await GetActiveTheme()
-      applyResult(res)
-    } catch (err) {
-      themeState.error = err instanceof Error ? err.message : String(err)
+  // Re-paint when the backend reports a theme change. The event carries the
+  // resolved {id, mode}; if it matches what this window already applied
+  // (the common case -- our own applyTheme call), skip the redundant
+  // GetActiveTheme round-trip + re-inject. Falls through to a re-fetch when
+  // the change is external or the local state hasn't caught up yet.
+  EventsOn(
+    'theme:changed',
+    async (payload: { id?: string; mode?: string } | null) => {
+      if (
+        payload &&
+        payload.id === themeState.id &&
+        payload.mode === themeState.mode
+      ) {
+        return
+      }
+      try {
+        const res = await GetActiveTheme()
+        applyResult(res)
+      } catch (err) {
+        console.error('theme: failed to apply theme:changed event:', err)
+        themeState.error = err instanceof Error ? err.message : String(err)
+      }
     }
-  })
+  )
 
   try {
     const res = await GetActiveTheme()
     applyResult(res)
   } catch (err) {
+    console.error('theme: failed to load active theme on startup:', err)
     themeState.error = err instanceof Error ? err.message : String(err)
     // Even on error, drop the loading flag so the UI can render with the
     // index.css :root fallbacks rather than hang on a loader.
@@ -122,6 +138,7 @@ export async function applyTheme(
     applyResult(res)
     return true
   } catch (err) {
+    console.error('theme: ApplyTheme failed:', err)
     themeState.error = err instanceof Error ? err.message : String(err)
     return false
   }

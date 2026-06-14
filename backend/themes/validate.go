@@ -3,6 +3,7 @@ package themes
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -123,8 +124,10 @@ func validateMode(prefix string, m Mode) ValidationErrors {
 
 // isValidColor accepts the color forms used by the canonical theme:
 // #rgb / #rrggbb / #rrggbbaa hex, and rgb()/rgba() functional notation. It
-// is intentionally narrow (no hsl/named-colors) so malformed values are
-// caught early.
+// is intentionally narrow (no hsl/named-colors) and validates component
+// ranges (rgb 0-255 or 0%-100%, alpha 0-1) so malformed values like
+// rgba(999,0,0,0.5) are caught at validation time rather than silently
+// clamped by the CSS engine.
 func isValidColor(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -144,23 +147,44 @@ func isValidColor(s string) bool {
 		}
 		return false
 	}
-	if strings.HasPrefix(s, "rgba(") && strings.HasSuffix(s, ")") {
-		return commaCount(s) == 3
+	inner, wantParts := "", 0
+	switch {
+	case strings.HasPrefix(s, "rgba(") && strings.HasSuffix(s, ")"):
+		inner, wantParts = s[len("rgba("):len(s)-1], 4
+	case strings.HasPrefix(s, "rgb(") && strings.HasSuffix(s, ")"):
+		inner, wantParts = s[len("rgb("):len(s)-1], 3
+	default:
+		return false
 	}
-	if strings.HasPrefix(s, "rgb(") && strings.HasSuffix(s, ")") {
-		return commaCount(s) == 2
+	parts := strings.Split(inner, ",")
+	if len(parts) != wantParts {
+		return false
 	}
-	return false
-}
-
-func commaCount(s string) int {
-	n := 0
-	for _, r := range s {
-		if r == ',' {
-			n++
+	for i, p := range parts {
+		p = strings.TrimSpace(p)
+		percent := strings.HasSuffix(p, "%")
+		num := p
+		if percent {
+			num = p[:len(p)-1]
+		}
+		v, err := strconv.ParseFloat(num, 64)
+		if err != nil {
+			return false
+		}
+		if i == wantParts-1 && wantParts == 4 {
+			// alpha channel
+			if v < 0 || v > 1 {
+				return false
+			}
+		} else if percent {
+			if v < 0 || v > 100 {
+				return false
+			}
+		} else if v < 0 || v > 255 {
+			return false
 		}
 	}
-	return n
+	return true
 }
 
 // ParseAndValidate unmarshals theme JSON and runs Validate in one step.

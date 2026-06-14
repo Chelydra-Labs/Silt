@@ -494,12 +494,15 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 		return ActiveThemeResult{}, err
 	}
 
-	// Persist the selection atomically.
+	// Persist the selection atomically. Use the actually-resolved theme id
+	// (t.ID) rather than the requested id: if ResolveActive fell back to the
+	// embedded default (e.g. the file vanished between the ListThemes check
+	// and resolution), settings stays consistent with what is rendered.
 	settings, err := vault.LoadSettings()
 	if err != nil {
 		return ActiveThemeResult{}, fmt.Errorf("failed to load settings: %w", err)
 	}
-	settings.ActiveTheme = id
+	settings.ActiveTheme = t.ID
 	settings.ThemeMode = mode
 	if err := vault.SaveSettings(settings); err != nil {
 		return ActiveThemeResult{}, fmt.Errorf("failed to persist theme selection: %w", err)

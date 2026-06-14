@@ -108,13 +108,26 @@ func TestValidate_UnparseableJSON(t *testing.T) {
 }
 
 func TestIsValidColor(t *testing.T) {
-	good := []string{"#fff", "#ffffff", "#ffffffff", "rgba(0,0,0,0.5)", "rgb(1,2,3)"}
+	good := []string{
+		"#fff", "#ffffff", "#ffffffff",
+		"rgba(0,0,0,0.5)", "rgba(0, 0, 0, 0)", "rgba(255,255,255,1)",
+		"rgb(1,2,3)", "rgb(100%, 0%, 0%)",
+	}
 	for _, c := range good {
 		if !isValidColor(c) {
 			t.Errorf("isValidColor(%q) = false, want true", c)
 		}
 	}
-	bad := []string{"", "white", "#ff", "#gggggg", "rgba(0,0,0)", "hsl(0,0%,0%)"}
+	bad := []string{
+		"", "white", "#ff", "#gggggg", "hsl(0,0%,0%)",
+		"rgba(0,0,0)",       // missing alpha
+		"rgba(999,0,0,0.5)", // rgb component out of range
+		"rgba(0,0,0,2)",     // alpha > 1
+		"rgba(0,0,0,-1)",    // alpha < 0
+		"rgb(1,2,3,4)",      // too many components
+		"rgb(300,0,0)",      // out of range
+		"rgba(a,b,c,d)",     // non-numeric
+	}
 	for _, c := range bad {
 		if isValidColor(c) {
 			t.Errorf("isValidColor(%q) = true, want false", c)
