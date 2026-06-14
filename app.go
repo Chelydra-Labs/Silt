@@ -506,10 +506,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		// Use the file's modification time as the default date for blocks
 		// whose comment lacks a @ date suffix — matches the scanner's behavior.
 		// Using time.Now() here would silently shift old blocks' dates to today.
-		fileDate := time.Now().Format("2006-01-02")
-		if fi, statErr := os.Stat(filePath); statErr == nil {
-			fileDate = fi.ModTime().Format("2006-01-02")
-		}
+		fileDate := fileOrDefaultDate(filePath)
 		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
 		if parseErr != nil {
 			writeErr = fmt.Errorf("failed to parse file for state update: %w", parseErr)
@@ -917,10 +914,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 		// writer, so there is one on-disk format definition.
 		// Use the file's modification time as the default date for blocks
 		// whose comment lacks a @ date suffix — matches the scanner's behavior.
-		fileDate := time.Now().Format("2006-01-02")
-		if fi, statErr := os.Stat(filePath); statErr == nil {
-			fileDate = fi.ModTime().Format("2006-01-02")
-		}
+		fileDate := fileOrDefaultDate(filePath)
 		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
 		if parseErr != nil {
 			writeErr = fmt.Errorf("failed to parse file for mutation: %w", parseErr)
@@ -972,6 +966,18 @@ func (a *App) MutateBlock(blockID, newText string) error {
 
 	a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, "")
 	return nil
+}
+
+// fileOrDefaultDate returns the file's modification date (YYYY-MM-DD), falling
+// back to today if the stat fails. Used consistently by SaveFileBlocks,
+// MutateBlock, and UpdateBlockState as the defaultDate passed to
+// ParseFileContent — ensures old blocks without a @ date suffix inherit the
+// file's actual mtime rather than silently shifting to today.
+func fileOrDefaultDate(filePath string) string {
+	if fi, err := os.Stat(filePath); err == nil {
+		return fi.ModTime().Format("2006-01-02")
+	}
+	return time.Now().Format("2006-01-02")
 }
 
 // findLineByBlockID returns the 0-based index of the line in `lines` whose
@@ -1544,7 +1550,7 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 			return
 		}
 
-		parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, time.Now().Format("2006-01-02"), a.spacesPerTab)
+		parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
@@ -1600,6 +1606,7 @@ func migratePerDayFiles(vaultPath string, spacesPerTab int) []string {
 
 	_ = filepath.WalkDir(rootAbs, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			warnings = append(warnings, fmt.Sprintf("migration: cannot traverse %q: %v", path, walkErr))
 			return nil
 		}
 		if !d.IsDir() {
