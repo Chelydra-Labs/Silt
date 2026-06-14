@@ -10,8 +10,50 @@ import (
 	"silt/backend/themes"
 )
 
+// AppSettings is the user-global Silt settings, persisted at
+// <UserConfigDir>/silt/settings.json. It is written atomically via
+// parser.WriteFileAtomic so a crash never leaves a half-written file.
+//
+// Storage scope decision: theme selection is USER-GLOBAL (it follows the
+// user's OS profile, not the vault). A vault-scoped override via
+// .system/config.yaml is a documented future option, not implemented today.
 type AppSettings struct {
 	VaultPath string `json:"vault_path"`
+
+	// ActiveTheme is the id of the theme to apply. When empty or unset it
+	// defaults to the bundled primary theme id (themes.DefaultThemeID). The
+	// theme loader (#45) validates this against available themes and falls
+	// back to the default when the id is missing/invalid.
+	ActiveTheme string `json:"active_theme"`
+
+	// ThemeMode selects which mode of the active theme to render.
+	// Valid values: "dark", "light", "system" (honor prefers-color-scheme).
+	// An empty or unrecognized value normalizes to "dark", which matches the
+	// shipped dark-first behavior.
+	ThemeMode string `json:"theme_mode"`
+}
+
+// ValidThemeMode reports whether mode is a recognized ThemeMode value.
+func ValidThemeMode(mode string) bool {
+	switch mode {
+	case "dark", "light", "system":
+		return true
+	}
+	return false
+}
+
+// withDefaults returns a copy of s with zero-valued theme fields filled in
+// with their defaults. It keeps LoadSettings the single place that applies
+// defaults so every caller (fresh settings, old settings.json, explicit
+// accessors) observes the same baseline.
+func (s AppSettings) withDefaults() AppSettings {
+	if s.ActiveTheme == "" {
+		s.ActiveTheme = themes.DefaultThemeID
+	}
+	if !ValidThemeMode(s.ThemeMode) {
+		s.ThemeMode = "dark"
+	}
+	return s
 }
 
 func GetSettingsPath() (string, error) {
@@ -28,7 +70,10 @@ func LoadSettings() (*AppSettings, error) {
 		return nil, err
 	}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return &AppSettings{}, nil
+		// No settings file yet (first run): return defaults rather than a
+		// zero struct so callers see a valid ActiveTheme/ThemeMode.
+		out := AppSettings{}.withDefaults()
+		return &out, nil
 	}
 	bytes, err := os.ReadFile(path)
 	if err != nil {
@@ -38,10 +83,21 @@ func LoadSettings() (*AppSettings, error) {
 	if err := json.Unmarshal(bytes, &settings); err != nil {
 		return nil, err
 	}
+	// Backward compatibility: an older settings.json written before theme
+	// fields existed unmarshals with zero values, which withDefaults()
+	// normalizes to the dark default theme. This also normalizes any
+	// unrecognized ThemeMode to "dark".
+	settings = settings.withDefaults()
 	return &settings, nil
 }
 
 func SaveSettings(settings *AppSettings) error {
+	if settings == nil {
+		return fmt.Errorf("settings must not be nil")
+	}
+	// Persist canonical values so the on-disk file is self-describing and a
+	// later read never observes an empty/invalid theme field.
+	normalized := settings.withDefaults()
 	path, err := GetSettingsPath()
 	if err != nil {
 		return err
@@ -49,7 +105,7 @@ func SaveSettings(settings *AppSettings) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	bytes, err := json.MarshalIndent(settings, "", "  ")
+	bytes, err := json.MarshalIndent(&normalized, "", "  ")
 	if err != nil {
 		return err
 	}
