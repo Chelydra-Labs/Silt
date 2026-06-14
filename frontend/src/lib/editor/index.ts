@@ -11,6 +11,7 @@ export {
 export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
 export { UniqueBlockIds, freshId } from './uniqueIdPlugin'
+export { SiltBlockKeymaps } from './keymaps'
 export type {
   ParsedBlock,
   BlockType,

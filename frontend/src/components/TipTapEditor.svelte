@@ -14,6 +14,7 @@
   import {
     SiltBlockExtensionsWithNodeViews,
     UniqueBlockIds,
+    SiltBlockKeymaps,
     blocksToDoc,
     docToBlocks
   } from '../lib/editor'
@@ -69,6 +70,7 @@
         }),
         ...SiltBlockExtensionsWithNodeViews,
         UniqueBlockIds,
+        SiltBlockKeymaps,
         Placeholder.configure({
           placeholder: 'Type / for commands, or start writing…'
         })
@@ -91,13 +93,11 @@
         void releaseFocus()
         flushPendingSave()
         onBlockBlur?.()
+      },
+      onCreate: ({ editor }) => {
+        editorInstance = editor as Editor
       }
     })
-    // Capture the Editor instance synchronously from the store.
-    const unsub = store.subscribe((e) => {
-      editorInstance = e
-    })
-    unsub()
     editorStore = store
   })
 

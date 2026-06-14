@@ -1344,23 +1344,11 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 		return safeDate, nil // already exists
 	}
 
-	formattedDate := safeDate
-	if t, err := time.Parse("2006-01-02", safeDate); err == nil {
-		formattedDate = t.Format("Monday, January 2, 2006")
-	}
-
-	// Build the scaffold through the single serializer so even the very
-	// first write to a new page uses the canonical on-disk format (no inline
-	// fmt.Sprintf parallel serializer that could drift from the parser).
-	// RenderFileContent assigns the UUIDs, so the blocks start ID-less.
-	scaffoldBlocks := []parser.ParsedBlock{
-		{Type: parser.BlockHeader, Depth: 1, CleanText: formattedDate, FileDate: safeDate},
-		{Type: parser.BlockTask, Status: "TODO", Owner: "Chris", Priority: 3,
-			CleanText: "Start writing in " + safePage, FileDate: safeDate},
-	}
+	// Create an empty page — just frontmatter, no scaffold blocks. The user
+	// starts with a blank editor; the page's date lives in the frontmatter
+	// metadata, not as a visible content block.
 	scaffoldFrontmatter := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
 		strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate))
-	scaffoldContent := parser.RenderFileContent(scaffoldBlocks, "", scaffoldFrontmatter, a.spacesPerTab)
 
 	a.wg.Add(1)
 	defer a.wg.Done()
@@ -1368,12 +1356,12 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
 		a.tracker.RegisterWrite(filePath)
-		if err := parser.WriteFileAtomic(filePath, []byte(scaffoldContent)); err != nil {
+		if err := parser.WriteFileAtomic(filePath, []byte(scaffoldFrontmatter)); err != nil {
 			writeErr = err
 			return
 		}
 
-		blocks, meta, _, _, err := parser.ParseFileContent(scaffoldContent, safeNotebook, safeSection, safePage, safeDate, a.spacesPerTab)
+		blocks, meta, _, _, err := parser.ParseFileContent(scaffoldFrontmatter, safeNotebook, safeSection, safePage, safeDate, a.spacesPerTab)
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {

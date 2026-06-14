@@ -76,6 +76,26 @@
   function handleBlocksUpdated(updatedBlocks: ParsedBlock[]) {
     blocks = updatedBlocks
   }
+
+  function formatDate(d: string): string {
+    const parsed = new Date(d + 'T00:00:00')
+    if (isNaN(parsed.getTime())) return d
+    return parsed.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric'
+    })
+  }
+
+  let pageDate = $derived.by(() => {
+    const dates = blocks
+      .map((b) => b.file_date)
+      .filter((d): d is string => !!d)
+      .sort()
+    if (dates.length > 0) return dates[0]
+    return new Date().toISOString().slice(0, 10)
+  })
 </script>
 
 <div
@@ -96,24 +116,13 @@
 
   <header class="mb-8">
     <h1
-      class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-2"
+      class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1"
     >
       {page}
     </h1>
-    <div class="flex items-center gap-3">
-      <span
-        class="bg-border-muted/50 border border-accent-secondary-start/20 text-accent-secondary-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
-      >
-        {notebook}
-      </span>
-      {#if section}
-        <span
-          class="bg-border-muted/50 border border-accent-primary-start/20 text-accent-primary-start px-2 py-0.5 rounded text-[10px] font-label-sm-bold uppercase tracking-wider"
-        >
-          {section}
-        </span>
-      {/if}
-    </div>
+    <p class="text-text-muted/60 text-sm font-body-sm">
+      {formatDate(pageDate)}
+    </p>
   </header>
 
   <div class="max-w-4xl w-full flex-1 flex flex-col gap-4">
