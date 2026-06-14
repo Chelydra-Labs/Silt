@@ -28,13 +28,16 @@ export const themeState: ThemeState = $state({
   error: null
 })
 
-let darkMedia: MediaQueryList | null = null
+let schemeMedia: MediaQueryList | null = null
 let started = false
 
-/** Returns true when the OS prefers light mode (used to resolve "system"). */
+/** Returns true when the OS prefers light mode (used to resolve "system").
+ * Reads the cached MQL rather than allocating one per repaint; null pre-init
+ * or with no window → default to dark. The query is explicitly for "light"
+ * so the (rare) "no preference" state stays dark, matching the prior
+ * per-call semantics. */
 function osPrefersLight(): boolean {
-  if (typeof window === 'undefined' || !window.matchMedia) return false
-  return window.matchMedia('(prefers-color-scheme: light)').matches
+  return schemeMedia ? schemeMedia.matches : false
 }
 
 /** Pick the concrete token map for the active mode, resolving "system". */
@@ -59,10 +62,12 @@ export async function initTheme(): Promise<void> {
   started = true
 
   // Watch prefers-color-scheme so "system" mode follows the OS live, with
-  // no second IPC round-trip (both token maps are already in hand).
+  // no second IPC round-trip (both token maps are already in hand). The
+  // cached MQL is the "light" query so osPrefersLight can read .matches
+  // directly; its change listener fires on any dark↔light transition.
   if (typeof window !== 'undefined' && window.matchMedia) {
-    darkMedia = window.matchMedia('(prefers-color-scheme: dark)')
-    darkMedia.addEventListener('change', () => {
+    schemeMedia = window.matchMedia('(prefers-color-scheme: light)')
+    schemeMedia.addEventListener('change', () => {
       if (themeState.mode === 'system') repaint()
     })
   }
