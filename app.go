@@ -20,6 +20,7 @@ import (
 	"silt/backend/monitor"
 	"silt/backend/parser"
 	"silt/backend/plugins"
+	"silt/backend/themes"
 	"silt/backend/vault"
 
 	"github.com/google/uuid"
@@ -384,6 +385,135 @@ func (a *App) emitBlockChanged(id, notebook, section, page, fileDate string) {
 		ID: id, Notebook: notebook, Section: section, Page: page, FileDate: fileDate,
 	})
 }
+
+// --- Theme engine IPC (#45) -----------------------------------------------
+
+// ActiveThemeResult is the IPC payload returned by GetActiveTheme /
+// ApplyTheme. It carries the active theme id/name, the STORED mode
+// (dark|light|system), the effective token map for the first paint, both
+// dark/light maps so the frontend can resolve "system" locally without a
+// second round-trip, and the resolved bg.void for the native webview
+// background.
+type ActiveThemeResult struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Mode        string            `json:"mode"`         // stored: dark|light|system
+	Tokens      map[string]string `json:"tokens"`       // effective (first-paint) map
+	DarkTokens  map[string]string `json:"dark_tokens"`  // always present
+	LightTokens map[string]string `json:"light_tokens"` // always present
+	BGVoid      string            `json:"bg_void"`      // effective bg.void for webview
+}
+
+// effectiveMode resolves a stored ThemeMode to a concrete dark/light for the
+// first paint. "system" is resolved to "dark" here as the shipped default;
+// the frontend re-resolves "system" via prefers-color-scheme using both
+// token maps, so the backend never needs to query the OS.
+func effectiveMode(mode string) string {
+	if mode == "light" {
+		return "light"
+	}
+	return "dark" // dark + system + unknown → dark first paint
+}
+
+// buildThemeResult assembles the IPC payload from a parsed theme + stored mode.
+func buildThemeResult(t *themes.Theme, mode string) ActiveThemeResult {
+	em := effectiveMode(mode)
+	return ActiveThemeResult{
+		ID:          t.ID,
+		Name:        t.Name,
+		Mode:        mode,
+		Tokens:      t.Flatten(em),
+		DarkTokens:  t.Flatten("dark"),
+		LightTokens: t.Flatten("light"),
+		BGVoid:      t.BGVoid(em),
+	}
+}
+
+// themesDir returns <vault>/.system/themes, or "" before a vault is open.
+func (a *App) themesDir() string {
+	if a.vaultPath == "" {
+		return ""
+	}
+	return filepath.Join(a.vaultPath, ".system", "themes")
+}
+
+// ListThemes enumerates available themes (on-disk + the embedded default)
+// and any per-file load errors. Works before a vault is open (returns just
+// the embedded default).
+func (a *App) ListThemes() (*themes.ListThemesResult, error) {
+	return themes.ListThemes(a.themesDir())
+}
+
+// GetActiveTheme reads AppSettings, resolves the active theme (falling back
+// to the embedded default when the id is missing/invalid), and returns the
+// token maps for injection. Always succeeds with the default theme on a
+// fresh/empty vault so the app can render on first paint.
+func (a *App) GetActiveTheme() (ActiveThemeResult, error) {
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		// Settings exist but are unreadable — surface it rather than
+		// masking with the default (matches the startup() policy).
+		return ActiveThemeResult{}, fmt.Errorf("failed to load settings: %w", err)
+	}
+	t, err := themes.ResolveActive(a.themesDir(), settings.ActiveTheme, settings.ThemeMode)
+	if err != nil {
+		return ActiveThemeResult{}, err
+	}
+	return buildThemeResult(t, settings.ThemeMode), nil
+}
+
+// ApplyTheme selects a theme and mode, persists it to settings, and returns
+// the new token maps. Both id and mode are validated: an unknown id or an
+// invalid mode returns a structured error and is NOT persisted.
+func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
+	if !vault.ValidThemeMode(mode) {
+		return ActiveThemeResult{}, fmt.Errorf("invalid mode %q (valid: dark, light, system)", mode)
+	}
+	// Confirm the requested id is selectable (on-disk or the embedded
+	// default). A typo or stale id errors here rather than silently
+	// snapping to the default.
+	listing, err := themes.ListThemes(a.themesDir())
+	if err != nil {
+		return ActiveThemeResult{}, fmt.Errorf("failed to enumerate themes: %w", err)
+	}
+	if id != themes.DefaultThemeID {
+		known := false
+		for _, ti := range listing.Themes {
+			if ti.ID == id {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return ActiveThemeResult{}, fmt.Errorf("theme %q is not available", id)
+		}
+	}
+
+	t, err := themes.ResolveActive(a.themesDir(), id, mode)
+	if err != nil {
+		return ActiveThemeResult{}, err
+	}
+
+	// Persist the selection atomically.
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		return ActiveThemeResult{}, fmt.Errorf("failed to load settings: %w", err)
+	}
+	settings.ActiveTheme = id
+	settings.ThemeMode = mode
+	if err := vault.SaveSettings(settings); err != nil {
+		return ActiveThemeResult{}, fmt.Errorf("failed to persist theme selection: %w", err)
+	}
+
+	res := buildThemeResult(t, mode)
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "theme:changed", map[string]string{
+			"id": t.ID, "mode": mode,
+		})
+	}
+	return res, nil
+}
+
 
 // ResolveBlockReference looks up a ((uuid)) reference, returning its content
 // and location for hover previews and scroll-to-source navigation. Missing
