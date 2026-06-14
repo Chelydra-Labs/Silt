@@ -184,19 +184,16 @@ func Install(vaultPath, archivePath string) (Manifest, error) {
 	return manifest, nil
 }
 
-// Uninstall removes a plugin directory from the vault. The id is sanitized
-// and the resolved path is checked to stay within the vault.
+// Uninstall removes a plugin directory from the vault. The id is validated
+// against idRegex (not sanitized) so dot-segment tricks like "..." can never
+// resolve to the parent plugins directory.
 func Uninstall(vaultPath, pluginID string) error {
-	safe := sanitizeID(pluginID)
-	if safe == "" {
-		return fmt.Errorf("invalid plugin id")
+	if !idRegex.MatchString(pluginID) {
+		return fmt.Errorf("invalid plugin id %q", pluginID)
 	}
-	dir := filepath.Join(vaultPath, ".system", "plugins", safe)
-	if !isWithin(dir, filepath.Join(vaultPath, ".system", "plugins")) {
-		return fmt.Errorf("plugin id escapes the plugins directory")
-	}
+	dir := filepath.Join(vaultPath, ".system", "plugins", pluginID)
 	if _, err := os.Stat(dir); err != nil {
-		return fmt.Errorf("plugin %q is not installed", safe)
+		return fmt.Errorf("plugin %q is not installed", pluginID)
 	}
 	return os.RemoveAll(dir)
 }
@@ -204,13 +201,12 @@ func Uninstall(vaultPath, pluginID string) error {
 // SetDisabled toggles a sentinel ".disabled" file inside the plugin folder;
 // the loader skips plugins that have it. Avoids fragile config.yaml edits.
 func SetDisabled(vaultPath, pluginID string, disabled bool) error {
-	safe := sanitizeID(pluginID)
-	if safe == "" {
-		return fmt.Errorf("invalid plugin id")
+	if !idRegex.MatchString(pluginID) {
+		return fmt.Errorf("invalid plugin id %q", pluginID)
 	}
-	dir := filepath.Join(vaultPath, ".system", "plugins", safe)
+	dir := filepath.Join(vaultPath, ".system", "plugins", pluginID)
 	if _, err := os.Stat(dir); err != nil {
-		return fmt.Errorf("plugin %q is not installed", safe)
+		return fmt.Errorf("plugin %q is not installed", pluginID)
 	}
 	sentinel := filepath.Join(dir, ".disabled")
 	if disabled {
@@ -231,6 +227,12 @@ func IsDisabled(dir string) bool {
 	return err == nil
 }
 
+// maxPluginFileSize bounds a single extracted file. The per-file cap is
+// defense-in-depth alongside the total-archive cap; it also bounds the
+// io.LimitReader so a forged-header zip-bomb cannot expand past the declared
+// size during extraction.
+const maxPluginFileSize = 10 * 1024 * 1024 // 10 MB
+
 func copyZipEntry(f *zip.File, target string) error {
 	rc, err := f.Open()
 	if err != nil {
@@ -242,7 +244,14 @@ func copyZipEntry(f *zip.File, target string) error {
 		return err
 	}
 	defer out.Close()
-	_, err = io.Copy(out, rc)
+	// Bound the decompressed stream to the declared uncompressed size (plus a
+	// 1 KB margin for trailing data). A zip-bomb with forged headers that
+	// claims 1 KB but decompresses to 10 GB will be cut off here.
+	limit := int64(f.UncompressedSize64) + 1024
+	if limit > maxPluginFileSize+1024 {
+		return fmt.Errorf("plugin file %q exceeds the %d-byte per-file limit", f.Name, maxPluginFileSize)
+	}
+	_, err = io.Copy(out, io.LimitReader(rc, limit))
 	return err
 }
 
@@ -277,19 +286,4 @@ func isWithin(target, base string) bool {
 		return strings.HasPrefix(strings.ToLower(absTarget), strings.ToLower(absBase+sep))
 	}
 	return strings.HasPrefix(absTarget, absBase+sep)
-}
-
-// sanitizeID strips path separators and traversal so a caller-supplied id
-// cannot escape .system/plugins/.
-func sanitizeID(id string) string {
-	cleaned := strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r < 32 {
-			return -1
-		}
-		return r
-	}, id)
-	for strings.Contains(cleaned, "..") {
-		cleaned = strings.ReplaceAll(cleaned, "..", "")
-	}
-	return strings.TrimSpace(cleaned)
 }

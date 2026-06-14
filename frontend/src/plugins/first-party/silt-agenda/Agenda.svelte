@@ -51,7 +51,8 @@
          FROM blocks b JOIN tasks t ON b.id = t.block_id
          WHERE t.status != 'DONE'
            AND (t.due_date IS NOT NULL AND t.due_date != '')
-         ORDER BY t.due_date ASC, t.priority ASC`
+         ORDER BY t.due_date ASC, t.priority ASC
+         LIMIT 500`
       )
       items = (rows as unknown as AgendaItem[]) ?? []
     } catch (e) {

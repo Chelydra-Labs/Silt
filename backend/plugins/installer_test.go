@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -173,12 +172,15 @@ func TestEnableDisable_SentinelToggle(t *testing.T) {
 	}
 }
 
-func TestSanitizeID(t *testing.T) {
-	if got := sanitizeID("../evil"); strings.Contains(got, "..") {
-		t.Errorf("expected traversal stripped, got %q", got)
-	}
-	if sanitizeID("normal-id") != "normal-id" {
-		t.Errorf("expected normal id unchanged")
+func TestUninstall_RejectsDotSegmentAndTraversal(t *testing.T) {
+	vault := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(vault, ".system", "plugins"), 0o755)
+
+	// "..." must NOT resolve to "." (which would wipe the entire plugins dir).
+	for _, evil := range []string{"...", ".", "", "..", "../escape", "/etc"} {
+		if err := Uninstall(vault, evil); err == nil {
+			t.Errorf("expected Uninstall(%q) to be rejected", evil)
+		}
 	}
 }
 

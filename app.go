@@ -61,9 +61,8 @@ type App struct {
 	// pluginRODB is a lazy read-only handle to the in-memory index, used
 	// exclusively by PluginRawQuery so a plugin can never mutate the index
 	// or schema even if a prefix check or comment-stripping is bypassed.
-	pluginRODBOnce sync.Once
-	pluginRODB     *sql.DB
-	pluginRODBErr  error
+	pluginRODBMu sync.Mutex
+	pluginRODB   *sql.DB
 }
 
 func NewApp() *App {
@@ -1139,6 +1138,10 @@ func (a *App) SaveFileBlocks(notebook, section, page, fileDate string, blocks []
 	return nil
 }
 
+// maxPluginQueryRows caps the number of rows returned by PluginRawQuery so a
+// plugin can't exhaust frontend memory with an unbounded SELECT.
+const maxPluginQueryRows = 5000
+
 // --- Plugin SDK bindings -------------------------------------------------
 
 // pluginRODSN is the DSN used to open a second, read-only *sql.DB handle to
@@ -1147,27 +1150,28 @@ func (a *App) SaveFileBlocks(notebook, section, page, fileDate string, blocks []
 // that handle causes SQLite to reject any write at the engine level.
 const pluginRODSN = "file::memory:?cache=shared"
 
-// openPluginRODB lazily opens (and caches) a read-only handle to the in-memory
-// index for use by PluginRawQuery. The handle is capped at one connection to
-// match the main DB's pool size and to keep the locking story simple. If the
-// open or PRAGMA setup fails, the error is cached and returned on every call
-// so the caller sees a stable, actionable message rather than a transient one.
+// openPluginRODB lazily opens a read-only handle to the in-memory index for
+// use by PluginRawQuery. The handle is capped at one connection to match the
+// main DB's pool size. On success the handle is cached; on failure it is NOT
+// cached — the next call retries — so a transient startup error doesn't
+// permanently break plugin queries.
 func (a *App) openPluginRODB() (*sql.DB, error) {
-	a.pluginRODBOnce.Do(func() {
-		ro, err := sql.Open("sqlite", pluginRODSN)
-		if err != nil {
-			a.pluginRODBErr = fmt.Errorf("failed to open read-only plugin DB: %w", err)
-			return
-		}
-		ro.SetMaxOpenConns(1)
-		if _, err := ro.Exec("PRAGMA query_only = ON"); err != nil {
-			ro.Close()
-			a.pluginRODBErr = fmt.Errorf("failed to enable query_only on plugin DB: %w", err)
-			return
-		}
-		a.pluginRODB = ro
-	})
-	return a.pluginRODB, a.pluginRODBErr
+	a.pluginRODBMu.Lock()
+	defer a.pluginRODBMu.Unlock()
+	if a.pluginRODB != nil {
+		return a.pluginRODB, nil
+	}
+	ro, err := sql.Open("sqlite", pluginRODSN)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open read-only plugin DB: %w", err)
+	}
+	ro.SetMaxOpenConns(1)
+	if _, err := ro.Exec("PRAGMA query_only = ON"); err != nil {
+		ro.Close()
+		return nil, fmt.Errorf("failed to enable query_only on plugin DB: %w", err)
+	}
+	a.pluginRODB = ro
+	return ro, nil
 }
 
 // stripSQLComments removes leading SQL line ("--") and block ("/* ... */")
@@ -1246,6 +1250,11 @@ func (a *App) PluginRawQuery(sqlText string, params []any) ([]map[string]any, er
 				row[c] = values[i]
 			}
 			out = append(out, row)
+			// Cap the result set so a malicious plugin can't exhaust memory
+			// with SELECT * FROM blocks on a large vault.
+			if len(out) >= maxPluginQueryRows {
+				break
+			}
 		}
 		return rows.Err()
 	})

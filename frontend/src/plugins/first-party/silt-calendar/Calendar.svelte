@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
 
   interface Props {
@@ -26,6 +26,20 @@
   let byDate = $state<Record<string, CalItem[]>>({})
   let loading = $state(true)
   let errorMsg = $state('')
+
+  // Reactive "now" so the today-highlight updates if the calendar stays
+  // mounted past midnight (ticks every 60s; only re-evaluates isToday).
+  let nowTick = $state(0)
+  let nowInterval: ReturnType<typeof setInterval> | undefined
+  onMount(() => {
+    reload()
+    nowInterval = setInterval(() => {
+      nowTick++
+    }, 60_000)
+  })
+  onDestroy(() => {
+    if (nowInterval) clearInterval(nowInterval)
+  })
 
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
   const MONTHS = [
@@ -196,8 +210,11 @@
     el?.focus()
   }
 
-  onMount(() => {
-    reload()
+  // Reactive today string — re-evaluates when the 60s tick fires so the
+  // today-highlight updates if the calendar stays mounted past midnight.
+  let todayKey = $derived.by(() => {
+    void nowTick
+    return ymd(new Date())
   })
 </script>
 
@@ -270,7 +287,7 @@
         {#each monthWeeks as week}
           {#each week as day}
             {@const inMonth = day.getMonth() === cursor.getMonth()}
-            {@const isToday = isSameDay(day, new Date())}
+            {@const isToday = ymd(day) === todayKey}
             {@const items = byDate[ymd(day)] ?? []}
             <div
               role="gridcell"
@@ -317,7 +334,7 @@
       <!-- Week view: day columns -->
       <div class="grid grid-cols-7 gap-2 min-w-[700px]">
         {#each weekDays as day}
-          {@const isToday = isSameDay(day, new Date())}
+          {@const isToday = ymd(day) === todayKey}
           {@const items = byDate[ymd(day)] ?? []}
           <div class="flex flex-col gap-1.5">
             <div class="text-center pb-2 border-b border-border-muted">

@@ -12,14 +12,12 @@
     activeView: string
     sidebarCollapsed: boolean
     onSearchClick: () => void
-    onToggleSidebar: () => void
   }
 
   let {
     activeView = $bindable(),
     sidebarCollapsed = $bindable(),
-    onSearchClick,
-    onToggleSidebar
+    onSearchClick
   }: Props = $props()
 
   const views: { id: string; label: string; icon: string }[] = [

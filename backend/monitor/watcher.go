@@ -271,5 +271,10 @@ func (dw *DirectoryWatcher) clearIndexForFile(path string) {
 	if notebook == "" {
 		return
 	}
-	_ = dw.dm.ClearFileBlocks(nil, notebook, section, page, dateStr)
+	// Serialize the DB deletion through the coordinator, matching reindexFile
+	// and all other DB-touching paths. Without this, a concurrent file event
+	// can race an in-flight query and produce database-locked errors.
+	dw.coordinator.WithDBWrite(func() {
+		_ = dw.dm.ClearFileBlocks(nil, notebook, section, page, dateStr)
+	})
 }

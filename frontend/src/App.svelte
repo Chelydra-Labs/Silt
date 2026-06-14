@@ -196,7 +196,6 @@
       bind:activeView
       bind:sidebarCollapsed
       onSearchClick={() => (showSearch = true)}
-      onToggleSidebar={() => (sidebarCollapsed = !sidebarCollapsed)}
     />
 
     <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
