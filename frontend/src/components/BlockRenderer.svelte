@@ -9,6 +9,7 @@
   import RichText from './RichText.svelte'
   import BlockPickerModal from './BlockPickerModal.svelte'
   import { settings } from '../settings/store.svelte'
+  import { matchHotkey } from '../settings/hotkeys'
 
   interface Block {
     id: string
@@ -244,10 +245,15 @@
       showSlashMenu = false
       return
     }
-    if (e.key === 'Tab') {
+    // Config-driven indent / unindent hotkeys. Default bindings are Tab /
+    // Shift+Tab, but the user can remap or disable them from Settings → General.
+    const hk = settings.config?.hotkeys ?? {}
+    const isIndent = matchHotkey(e, hk.indent_block)
+    const isUnindent = matchHotkey(e, hk.unindent_block)
+    if (isIndent || isUnindent) {
       e.preventDefault()
-      if (e.shiftKey) {
-        // Shift+Tab: Unindent
+      if (isUnindent) {
+        // Unindent
         if (block.depth > 0) {
           const updated = getUpdatedParentIDs(
             siblings.map((b, idx) =>
@@ -258,8 +264,7 @@
           onUpdate(updated)
         }
       } else {
-        // Tab: Indent
-        // Max indent is previous sibling's depth + 1
+        // Indent — max indent is previous sibling's depth + 1
         let maxDepth = 0
         if (blockIndex > 0) {
           maxDepth = siblings[blockIndex - 1].depth + 1

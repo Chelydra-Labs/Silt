@@ -75,7 +75,9 @@
       // Config-driven global shortcuts. Read live from the settings store so
       // edits made in Settings → General take effect after Save (no rebind
       // needed — the store is a reactive proxy read at event time). Editor-
-      // internal shortcuts (indent/cycle-view) are consumed by the editor.
+      // internal shortcuts (indent/unindent) are consumed by the editor's
+      // own keydown handler; cycle_view_layout is global (it changes the
+      // main view, not anything inside the contenteditable).
       const hotkeys = settings.config?.hotkeys ?? {}
       if (matchHotkey(e, hotkeys.open_search)) {
         e.preventDefault()
@@ -84,6 +86,10 @@
       if (matchHotkey(e, hotkeys.toggle_sidebar)) {
         e.preventDefault()
         sidebarCollapsed = !sidebarCollapsed
+      }
+      if (matchHotkey(e, hotkeys.cycle_view_layout)) {
+        e.preventDefault()
+        cycleView()
       }
     }
 
@@ -198,6 +204,19 @@
   function openSettings(tab?: string) {
     settingsTab = tab || 'general'
     showSettings = true
+  }
+
+  // Ordered view cycle for the cycle_view_layout hotkey (default Alt+Tab).
+  // If the current view is not in the list (e.g. a plugin view), jump to
+  // 'notes' as the anchor.
+  const VIEW_CYCLE = ['notes', 'tags', 'agenda', 'calendar', 'kanban'] as const
+  function cycleView() {
+    const idx = VIEW_CYCLE.indexOf(activeView as (typeof VIEW_CYCLE)[number])
+    if (idx === -1) {
+      activeView = 'notes'
+    } else {
+      activeView = VIEW_CYCLE[(idx + 1) % VIEW_CYCLE.length]
+    }
   }
 </script>
 
