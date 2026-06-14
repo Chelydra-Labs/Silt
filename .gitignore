@@ -49,3 +49,52 @@ frontend/vite.config.ts.timestamp-*.mjs
 
 # NSIS installer generated files
 build/installer/
+
+# --- Public-repo protections (never commit these) ---------------------------
+
+# Secrets / credentials / env files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.crt
+*.csr
+id_rsa
+id_ed25519
+
+# Local SQLite databases + WAL sidecars (vault index, stray dev DBs)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Go coverage / test output
+coverage.out
+coverage.txt
+
+# Logs
+*.log
+
+# OS extras
+desktop.ini
+ehthumbs.db
+*.lnk
+._*
+$RECYCLE.BIN/
+
+# IDE extras
+.history/
+*.code-workspace
+.fleet/
+*.iml
+
+# Local workflow scratch (opencode / agent temp files)
+.git_commit_msg.txt
+pr_body.md
+.issue*.md
+
+# Wails package-hash cache (regenerated locally on build; do not version)
+frontend/package.json.md5
