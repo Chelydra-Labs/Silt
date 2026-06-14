@@ -394,9 +394,10 @@ export async function exportActiveTheme(): Promise<boolean> {
   }
   try {
     await ExportActiveTheme(dst)
+    const basename = dst.split(/[/\\]/).pop() || dst
     setStatus({
       kind: 'success',
-      message: `Exported "${themeState.id}" to ${dst}.`,
+      message: `Exported "${themeState.id}" to ${basename}.`,
       fields: []
     })
     return true

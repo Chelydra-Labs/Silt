@@ -31,6 +31,13 @@ type themeCacheEntry struct {
 	modTime  time.Time // modtime on disk at load time; mismatch → reload
 }
 
+// cacheTTL bounds how long a cached entry is considered fresh even if
+// the mtime check hasn't triggered a reload. The mtime check is the
+// primary freshness gate; this TTL is defense-in-depth against
+// filesystems with coarse mtime resolution where a quick edit-then-read
+// could see the same mtime.
+const cacheTTL = 5 * time.Minute
+
 var globalThemeCache = &themeCache{
 	entries: map[string]themeCacheEntry{},
 }
@@ -64,7 +71,7 @@ func CachedThemeByID(themesDir, id string) (*Theme, error) {
 	globalThemeCache.mu.RLock()
 	entry, ok := globalThemeCache.entries[id]
 	globalThemeCache.mu.RUnlock()
-	if ok && entry.t != nil && entry.modTime.Equal(info.ModTime()) && now.Sub(entry.loadedAt) < 5*time.Minute {
+	if ok && entry.t != nil && entry.modTime.Equal(info.ModTime()) && now.Sub(entry.loadedAt) < cacheTTL {
 		return entry.t, nil
 	}
 

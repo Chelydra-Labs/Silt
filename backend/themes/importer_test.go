@@ -316,18 +316,15 @@ func TestExportThemeToPath_EmbeddedDefault(t *testing.T) {
 	}
 }
 
-func TestExportThemeToPath_MissingID_FallsBackToDefault(t *testing.T) {
-	// ResolveActive (called internally) always succeeds because the
-	// embedded default is the final fallback. A "missing" id is therefore
-	// exported as the canonical default — which is the same behavior the
-	// runtime uses when the user-selected theme's file vanishes, so the
-	// export stays consistent with what the user is actually seeing.
+func TestExportThemeToPath_MissingCustomIDErrors(t *testing.T) {
+	// A custom theme id that's not on disk must error — the user
+	// expects to export their actual theme, not a surprise fallback
+	// to the embedded default. (Old behavior was to silently write
+	// the default; changed because it was misleading.)
 	dst := filepath.Join(t.TempDir(), "out.json")
-	if err := ExportThemeToPath(t.TempDir(), "no-such-theme", dst); err != nil {
-		t.Fatalf("expected default fallback, got error: %v", err)
-	}
-	if _, err := ParseAndValidate(mustReadFile(t, dst)); err != nil {
-		t.Errorf("exported default fails validation: %v", err)
+	err := ExportThemeToPath(t.TempDir(), "no-such-theme", dst)
+	if err == nil {
+		t.Fatal("expected error for missing custom theme id")
 	}
 }
 
@@ -340,6 +337,27 @@ func TestExportThemeToPath_EmptyDest(t *testing.T) {
 func TestExportThemeToPath_NoThemesDir(t *testing.T) {
 	if err := ExportThemeToPath("", DefaultThemeID, filepath.Join(t.TempDir(), "out.json")); err == nil {
 		t.Fatal("expected error for empty themes dir")
+	}
+}
+
+// TestExportThemeToPath_MissingCustomID: exporting a custom theme whose
+// file is absent must error, not silently fall back to the embedded default.
+func TestExportThemeToPath_MissingCustomID(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "out.json")
+	if err := ExportThemeToPath(t.TempDir(), "ghost-theme", dst); err == nil {
+		t.Fatal("expected error for missing custom theme id")
+	}
+}
+
+// TestExportThemeToPath_DefaultIDStillWorks: exporting the embedded
+// default (DefaultThemeID) always works even when the on-disk copy is absent.
+func TestExportThemeToPath_DefaultIDStillWorks(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "out.json")
+	if err := ExportThemeToPath(t.TempDir(), DefaultThemeID, dst); err != nil {
+		t.Fatalf("export default should work: %v", err)
+	}
+	if _, err := ParseAndValidate(mustReadFile(t, dst)); err != nil {
+		t.Errorf("exported default fails validation: %v", err)
 	}
 }
 
@@ -401,6 +419,36 @@ func TestLoadByID_EmptyThemesDir(t *testing.T) {
 	}
 	if found || t1 != nil {
 		t.Errorf("expected empty result, got %+v found=%v", t1, found)
+	}
+}
+
+// TestLoadByID_PropagatesIOError: a permission-denied directory must
+// surface as an error, not be swallowed as "not found".
+func TestLoadByID_PropagatesIOError(t *testing.T) {
+	dir := t.TempDir()
+	// Create a subdirectory, remove its read permission.
+	subdir := filepath.Join(dir, "noperm")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Write a dummy file inside, then strip read permission from the dir.
+	if err := os.WriteFile(filepath.Join(subdir, "x.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chmod(subdir, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(subdir, 0o755) })
+
+	// On some platforms (root user, or certain CI runners) the chmod is
+	// not effective. Skip rather than fail in those environments.
+	if _, err := os.ReadDir(subdir); err == nil {
+		t.Skip("os.Chmod 0o000 not enforced in this environment")
+	}
+
+	_, _, err := LoadByID(subdir, "anything")
+	if err == nil {
+		t.Fatal("expected LoadByID to propagate I/O error, got nil")
 	}
 }
 

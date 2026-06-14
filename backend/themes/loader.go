@@ -1,6 +1,7 @@
 package themes
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -8,6 +9,12 @@ import (
 	"sort"
 	"strings"
 )
+
+// ErrThemeNotFound is returned (wrapped) by loadThemeByID when no theme
+// with the requested id lives on disk. Callers use errors.Is to
+// distinguish "not found" (benign — fall back to default) from genuine
+// I/O errors (permission denied, etc.) which should propagate.
+var ErrThemeNotFound = errors.New("theme not found")
 
 // ParseDefault parses the embedded canonical default theme. It is the
 // guaranteed fallback used when no vault/themes exist or the active id is
@@ -171,12 +178,13 @@ func ResolveActive(themesDir, activeID, mode string) (*Theme, error) {
 }
 
 // loadThemeByID scans themesDir for the first valid theme whose id matches.
-// It intentionally does not assume the filename equals the id.
+// It intentionally does not assume the filename equals the id. Returns
+// ErrThemeNotFound (wrapped) when no matching id is on disk; returns the
+// raw os.ReadDir error on genuine I/O failures so callers don't confuse
+// a permission fault with a missing theme.
 func loadThemeByID(themesDir, id string) (*Theme, error) {
 	if themesDir == "" {
-		// No vault open → nothing to scan. The caller (ResolveActive) falls
-		// back to the embedded default.
-		return nil, fmt.Errorf("themes directory is empty")
+		return nil, ErrThemeNotFound
 	}
 	entries, err := os.ReadDir(themesDir)
 	if err != nil {
@@ -194,7 +202,7 @@ func loadThemeByID(themesDir, id string) (*Theme, error) {
 			return t, nil
 		}
 	}
-	return nil, fmt.Errorf("no theme with id %q in %s", id, themesDir)
+	return nil, fmt.Errorf("%w: %q in %s", ErrThemeNotFound, id, themesDir)
 }
 
 // LoadByID is the public version of loadThemeByID: a single os.ReadDir scan
@@ -210,9 +218,10 @@ func LoadByID(themesDir, id string) (*Theme, bool, error) {
 	}
 	t, err := loadThemeByID(themesDir, id)
 	if err != nil {
-		// "not found" is not an error here — caller decides whether to
-		// fall back to the embedded default or reject the request.
-		return nil, false, nil
+		if errors.Is(err, ErrThemeNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
 	}
 	return t, true, nil
 }

@@ -9,9 +9,19 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"silt/backend/parser"
 )
+
+// importMu serializes concurrent ImportThemeFromPath calls so the
+// namespace-then-write sequence is atomic with respect to other
+// imports. Without this, a rapid multi-file drag-drop could race:
+// import A checks os.Stat (id not on disk), import B checks os.Stat
+// (same id, also not on disk), both proceed to WriteFileAtomic, and
+// one clobbers the other. The mutex makes the check-then-write
+// critical section indivisible within the process.
+var importMu sync.Mutex
 
 // ImportResult is the IPC payload returned by App.ImportTheme: the metadata
 // of the imported theme, whether its id was renamed (and what it was renamed
@@ -88,6 +98,13 @@ func ImportThemeFromPath(themesDir, srcPath string) (*ImportResult, error) {
 		return nil, fmt.Errorf("theme ID %q is invalid after sanitization", originalID)
 	}
 
+	// The namespace-check-then-write sequence must be atomic with
+	// respect to other concurrent imports (rapid multi-file drag-drop).
+	// Without the lock, two imports of the same id could both pass the
+	// os.Stat existence check and then race to WriteFileAtomic.
+	importMu.Lock()
+	defer importMu.Unlock()
+
 	// Reject any built-in id outright? The issue says "Sanitize/namespace
 	// imported theme ids to avoid collisions with built-in themes" — a
 	// built-in (e.g. cyber_forest) is the canonical default shipped from
@@ -134,12 +151,28 @@ func ImportThemeFromPath(themesDir, srcPath string) (*ImportResult, error) {
 // writes it verbatim to dstPath as JSON. Used by the picker to let the
 // user download the active theme for round-trip editing. Atomic write
 // follows the same temp+rename protocol as every other writer.
+//
+// When the active id is a custom theme that is NOT on disk (file deleted,
+// corrupted, stale id), the function errors rather than silently writing
+// the embedded default — the user expects to export their actual theme,
+// not a surprise fallback.
 func ExportThemeToPath(themesDir, id, dstPath string) error {
 	if dstPath == "" {
 		return fmt.Errorf("destination path is empty")
 	}
 	if themesDir == "" {
 		return fmt.Errorf("themes directory is empty (vault not loaded)")
+	}
+	// Guard against silent default-fallback: if the user's active id is a
+	// custom theme but the file is missing/corrupted, ResolveActive would
+	// silently return the embedded default. Error instead so the user knows
+	// their theme file is gone.
+	if id != "" && id != DefaultThemeID {
+		if _, found, err := LoadByID(themesDir, id); err != nil {
+			return fmt.Errorf("failed to look up theme %q for export: %w", id, err)
+		} else if !found {
+			return fmt.Errorf("active theme %q is not on disk; cannot export (the file may have been moved or deleted)", id)
+		}
 	}
 	t, err := ResolveActive(themesDir, id, "dark")
 	if err != nil {
