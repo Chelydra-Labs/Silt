@@ -181,3 +181,31 @@ func TestSanitizeID(t *testing.T) {
 		t.Errorf("expected normal id unchanged")
 	}
 }
+
+func TestValidate_RejectsCustomMain(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "custom.silt-plugin")
+	// manifest with a non-index.js main
+	customMain, _ := json.Marshal(map[string]string{
+		"id":   "custom",
+		"name": "Custom",
+		"main": "foo.js",
+	})
+	writeZip(t, archive, map[string]string{
+		"plugin.json": string(customMain),
+		"foo.js":      "x",
+	})
+	if _, _, err := Validate(archive); err == nil {
+		t.Errorf("expected Validate to reject a manifest.main other than index.js")
+	}
+}
+
+func TestValidate_AcceptsEmptyMain(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "ok.silt-plugin")
+	writeZip(t, archive, map[string]string{
+		"plugin.json": manifestJSON("ok", "Ok", "1.0.0"),
+		"index.js":    "x",
+	})
+	if _, _, err := Validate(archive); err != nil {
+		t.Errorf("expected Validate to accept an empty main (defaults to index.js): %v", err)
+	}
+}

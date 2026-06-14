@@ -42,6 +42,7 @@
   let editEl = $state<HTMLDivElement | null>(null)
   let saveTimer: any = null
   let offEvent: (() => void) | null = null
+  let persistError = $state('')
 
   async function load() {
     loading = true
@@ -57,11 +58,19 @@
   async function persist(text: string, attempt = 0) {
     try {
       await PluginMutateBlock(uuid, text)
+      persistError = ''
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
       // The source block is being edited in another view (focus lock held).
       // Retry shortly instead of silently overwriting or dropping the edit.
-      if (String(e).includes('being edited') && attempt < 5) {
+      if (msg.includes('being edited') && attempt < 5) {
         saveTimer = setTimeout(() => void persist(text, attempt + 1), 800)
+      } else {
+        // Exhausted retries or a non-transient error — surface it so the
+        // user knows their edit didn't save.
+        persistError = msg.includes('being edited')
+          ? 'Source block is busy — edit not saved yet'
+          : `Save failed: ${msg}`
       }
     }
   }
@@ -69,6 +78,7 @@
   function handleInput(e: Event) {
     const text = (e.target as HTMLDivElement).innerText.replace(/[\r\n]+/g, ' ')
     if (ref) ref.clean_text = text
+    persistError = ''
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       void persist(text)
@@ -106,7 +116,7 @@
     load()
     // Live sync: refresh when the source block changes anywhere.
     offEvent = EventsOn('block:changed', (ev: any) => {
-      if (ev && ev.id === uuid && !editing) {
+      if (ev && ev.id === uuid && !editing && !saveTimer) {
         load()
       }
     })
@@ -175,5 +185,11 @@
         />
       {/if}
     </div>
+    {#if persistError}
+      <div class="text-[10px] text-error mt-1 flex items-center gap-1">
+        <span class="material-symbols-outlined text-[11px]">error</span>
+        {persistError}
+      </div>
+    {/if}
   </div>
 {/if}

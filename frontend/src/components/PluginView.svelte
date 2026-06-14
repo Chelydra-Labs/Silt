@@ -55,5 +55,6 @@
     </p>
   </div>
 {:else}
-  <svelte:component this={plugin.component} {ctx} manifest={plugin.manifest} />
+  {@const Plugin = plugin.component}
+  <Plugin {ctx} manifest={plugin.manifest} />
 {/if}

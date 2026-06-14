@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -39,6 +40,13 @@ var updateLineIDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->`)
 // focus-locked (a user is editing it in another view). Callers retry rather
 // than silently overwriting the in-flight edit.
 var errBlockBeingEdited = fmt.Errorf("block is being edited in another view")
+
+//go:embed VERSION
+var versionBytes []byte
+
+// appVersion is the current Silt version, embedded at build time from the
+// VERSION file. Used for plugin minSiltVersion enforcement.
+var appVersion = strings.TrimSpace(string(versionBytes))
 
 type App struct {
 	ctx          context.Context
@@ -1365,6 +1373,9 @@ func (a *App) ValidatePluginArchive(archivePath string) (parser.PluginManifest, 
 	if err != nil {
 		return parser.PluginManifest{}, warnings, err
 	}
+	if verr := enforceMinVersion(manifest.MinSiltVersion); verr != nil {
+		return parser.PluginManifest{}, warnings, verr
+	}
 	return manifestToParser(manifest), warnings, nil
 }
 
@@ -1395,6 +1406,11 @@ func (a *App) InstallPlugin(archivePath string) (parser.PluginManifest, error) {
 	manifest, err := plugins.Install(a.vaultPath, archivePath)
 	if err != nil {
 		return parser.PluginManifest{}, err
+	}
+	if verr := enforceMinVersion(manifest.MinSiltVersion); verr != nil {
+		// Roll back the install since the version requirement isn't met.
+		_ = plugins.Uninstall(a.vaultPath, manifest.ID)
+		return parser.PluginManifest{}, verr
 	}
 	a.emitPluginsChanged()
 	return manifestToParser(manifest), nil
@@ -1435,6 +1451,34 @@ func (a *App) emitPluginsChanged() {
 		return
 	}
 	runtime.EventsEmit(a.ctx, "plugins:changed", struct{}{})
+}
+
+// enforceMinVersion rejects a plugin whose minSiltVersion exceeds the current
+// app version (semver-style segment-by-segment comparison).
+func enforceMinVersion(minSiltVersion string) error {
+	if minSiltVersion == "" {
+		return nil
+	}
+	if versionLessThan(appVersion, minSiltVersion) {
+		return fmt.Errorf("plugin requires Silt %s or later (current: %s)", minSiltVersion, appVersion)
+	}
+	return nil
+}
+
+func versionLessThan(a, b string) bool {
+	ap := strings.Split(a, ".")
+	bp := strings.Split(b, ".")
+	for i := 0; i < len(ap) && i < len(bp); i++ {
+		ai, _ := strconv.Atoi(ap[i])
+		bi, _ := strconv.Atoi(bp[i])
+		if ai < bi {
+			return true
+		}
+		if ai > bi {
+			return false
+		}
+	}
+	return len(ap) < len(bp) // shorter = older if all segments equal so far
 }
 
 func manifestToParser(m plugins.Manifest) parser.PluginManifest {

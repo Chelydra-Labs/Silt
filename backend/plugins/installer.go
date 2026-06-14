@@ -30,6 +30,10 @@ type Manifest struct {
 
 var idRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+// maxArchiveUncompressedSize bounds the total extracted size of a .silt-plugin
+// archive so a hostile or accidental huge file can't exhaust the user's disk.
+const maxArchiveUncompressedSize = 100 * 1024 * 1024 // 100 MB
+
 // Validate opens a .silt-plugin archive and checks it is safe and complete
 // without extracting. It returns the parsed manifest and any non-fatal
 // warnings (e.g. missing optional fields).
@@ -87,11 +91,17 @@ func Validate(archivePath string) (Manifest, []string, error) {
 		manifest.Version = "0.0.0"
 		warnings = append(warnings, "manifest has no version; defaulting to 0.0.0")
 	}
-	if manifest.Main != "" {
-		mainName = filepath.ToSlash(manifest.Main)
+	// The loader reads a fixed index.js; the manifest Main field must match
+	// that contract. Reject anything else so a plugin author who sets a
+	// custom main gets a clear install-time error instead of a silent
+	// load-time failure.
+	if manifest.Main != "" && filepath.ToSlash(manifest.Main) != "index.js" {
+		return Manifest{}, warnings, fmt.Errorf("manifest main must be \"index.js\" (got %q)", manifest.Main)
 	}
 
-	// Second pass: zip-slip / absolute-path guard + main-file presence.
+	// Second pass: zip-slip / absolute-path guard + main-file presence +
+	// uncompressed-size cap.
+	var totalUncompressed uint64
 	for _, f := range r.File {
 		name := filepath.ToSlash(f.Name)
 		if strings.HasPrefix(name, "/") || filepath.IsAbs(name) {
@@ -103,9 +113,13 @@ func Validate(archivePath string) (Manifest, []string, error) {
 		if name == mainName {
 			foundMain = true
 		}
+		totalUncompressed += f.UncompressedSize64
 	}
 	if !foundMain {
 		return Manifest{}, warnings, fmt.Errorf("archive is missing the entry module %q", mainName)
+	}
+	if totalUncompressed > maxArchiveUncompressedSize {
+		return Manifest{}, warnings, fmt.Errorf("archive uncompressed size %d bytes exceeds the %d-byte limit", totalUncompressed, maxArchiveUncompressedSize)
 	}
 
 	return manifest, warnings, nil
