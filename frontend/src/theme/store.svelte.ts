@@ -1,10 +1,16 @@
-// Theme store (#46): holds the active theme/mode and the dark/light token
-// maps, subscribes to the backend GetActiveTheme / ApplyTheme IPC methods,
-// re-resolves "system" mode locally via prefers-color-scheme, and drives
-// the runtime injector. Svelte 5 $state runes in a .svelte.ts module
-// (matches plugins/store.svelte.ts).
-import { ApplyTheme, GetActiveTheme } from '../../wailsjs/go/main/App.js'
+// Theme store (#46, #47): holds the active theme/mode and the dark/light
+// token maps, the listing of available themes, subscribes to the backend
+// GetActiveTheme / ApplyTheme / ListThemes IPC methods, re-resolves "system"
+// mode locally via prefers-color-scheme, and drives the runtime injector.
+// Svelte 5 $state runes in a .svelte.ts module (matches
+// plugins/store.svelte.ts and settings/store.svelte.ts).
+import {
+  ApplyTheme,
+  GetActiveTheme,
+  ListThemes
+} from '../../wailsjs/go/main/App.js'
 import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+import type { themes } from '../../wailsjs/go/models'
 import { injectTokens } from './inject'
 
 export type ThemeMode = 'dark' | 'light' | 'system'
@@ -28,8 +34,30 @@ export const themeState: ThemeState = $state({
   error: null
 })
 
+/**
+ * Listing store (#47): every theme currently selectable, populated from
+ * `ListThemes()`. Decoupled from the active theme (themeState): the
+ * picker renders `themesState.items` and the highlighted row matches
+ * `themeState.id`. Re-fetched on the backend's `themes:changed` event
+ * (emitted by the importer — see backend/themes/importer.go) so an
+ * imported theme appears in the picker immediately, no restart.
+ */
+export interface ThemesListingState {
+  items: themes.ThemeInfo[]
+  loadError: string | null
+  loading: boolean
+}
+
+export const themesState: ThemesListingState = $state({
+  items: [],
+  loadError: null,
+  loading: false
+})
+
 let schemeMedia: MediaQueryList | null = null
 let started = false
+let themesStarted = false
+let offThemesChanged: (() => void) | null = null
 
 /** Returns true when the OS prefers light mode (used to resolve "system").
  * Reads the cached MQL rather than allocating one per repaint; null pre-init
@@ -141,5 +169,46 @@ export async function applyTheme(
     console.error('theme: ApplyTheme failed:', err)
     themeState.error = err instanceof Error ? err.message : String(err)
     return false
+  }
+}
+
+/**
+ * Load the listing of selectable themes. Safe to call repeatedly; subsequent
+ * calls overwrite the previous result (used as the `themes:changed`
+ * event handler in `initThemes()`).
+ */
+export async function loadThemes(): Promise<void> {
+  themesState.loading = true
+  themesState.loadError = null
+  try {
+    const res = await ListThemes()
+    themesState.items = res?.themes ?? []
+  } catch (err) {
+    console.error('theme: ListThemes failed:', err)
+    themesState.loadError = err instanceof Error ? err.message : String(err)
+  } finally {
+    themesState.loading = false
+  }
+}
+
+/**
+ * Wire the theme-listing store: one initial load plus a subscription to
+ * the backend's `themes:changed` event so an imported theme appears
+ * immediately. Idempotent; safe to call once from `App.svelte onMount`.
+ * Returns a disposer that unsubscribes from the event — call it on
+ * unmount to prevent duplicate listeners during dev hot-reload
+ * (mirrors the initConfigHotReload pattern in settings/store.svelte.ts).
+ */
+export function initThemes(): () => void {
+  if (themesStarted) return () => {}
+  themesStarted = true
+  void loadThemes()
+  offThemesChanged = EventsOn('themes:changed', () => {
+    void loadThemes()
+  })
+  return () => {
+    offThemesChanged?.()
+    offThemesChanged = null
+    themesStarted = false
   }
 }
