@@ -228,7 +228,78 @@ func (dm *DatabaseManager) initSchema() error {
 		}
 	}
 
+	// FTS5 full-text index for SearchBlocks (#39). External-content table
+	// linked to blocks by rowid, kept in sync by AFTER INSERT/UPDATE/DELETE
+	// triggers so every code path that mutates blocks (IndexFileBlocks,
+	// IndexScanResults, ClearFileBlocks) keeps the FTS index consistent
+	// without each caller knowing about FTS. Created once; on first creation
+	// we rebuild from any pre-existing blocks rows so the migration is
+	// additive and lossless.
+	if err := dm.ensureFTS(); err != nil {
+		return fmt.Errorf("failed to initialize FTS index: %w", err)
+	}
+
 	return nil
+}
+
+// ensureFTS creates the blocks_fts virtual table and its sync triggers if they
+// do not yet exist, and (on first creation) repopulates FTS from the current
+// blocks table. Idempotent: a no-op on every subsequent open where the FTS
+// table already exists and the triggers are in place.
+func (dm *DatabaseManager) ensureFTS() error {
+	var ftsExists int
+	if err := dm.db.QueryRow(
+		"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='blocks_fts'").Scan(&ftsExists); err != nil {
+		return fmt.Errorf("failed to check blocks_fts existence: %w", err)
+	}
+
+	// External-content FTS5: the virtual table mirrors blocks.clean_content,
+	// notebook, and section, linked by the implicit rowid. Queries join back
+	// to blocks on rowid.
+	createFTS := []string{
+		`CREATE VIRTUAL TABLE IF NOT EXISTS blocks_fts USING fts5(
+			clean_content, notebook, section,
+			content='blocks', content_rowid='rowid',
+			tokenize='unicode61'
+		);`,
+		`CREATE TRIGGER IF NOT EXISTS blocks_fts_ai AFTER INSERT ON blocks BEGIN
+			INSERT INTO blocks_fts(rowid, clean_content, notebook, section)
+			VALUES (new.rowid, new.clean_content, new.notebook, new.section);
+		END;`,
+		`CREATE TRIGGER IF NOT EXISTS blocks_fts_ad AFTER DELETE ON blocks BEGIN
+			INSERT INTO blocks_fts(blocks_fts, rowid, clean_content, notebook, section)
+			VALUES ('delete', old.rowid, old.clean_content, old.notebook, old.section);
+		END;`,
+		`CREATE TRIGGER IF NOT EXISTS blocks_fts_au AFTER UPDATE ON blocks BEGIN
+			INSERT INTO blocks_fts(blocks_fts, rowid, clean_content, notebook, section)
+			VALUES ('delete', old.rowid, old.clean_content, old.notebook, old.section);
+			INSERT INTO blocks_fts(rowid, clean_content, notebook, section)
+			VALUES (new.rowid, new.clean_content, new.notebook, new.section);
+		END;`,
+	}
+	for _, q := range createFTS {
+		if _, err := dm.db.Exec(q); err != nil {
+			return fmt.Errorf("failed to create FTS object: %w", err)
+		}
+	}
+
+	// First creation: populate FTS from whatever blocks rows already exist
+	// (the migration case — an upgraded vault with blocks but no FTS yet).
+	if ftsExists == 0 {
+		if _, err := dm.db.Exec("INSERT INTO blocks_fts(blocks_fts) VALUES ('rebuild');"); err != nil {
+			return fmt.Errorf("failed to rebuild FTS index: %w", err)
+		}
+	}
+	return nil
+}
+
+// RebuildFTSIndex forces a full repopulation of blocks_fts from the current
+// blocks table. Call this after a bulk reindex or any path that bypassed the
+// sync triggers (none in normal operation, but available for recovery). On an
+// empty blocks table this is a no-op.
+func (dm *DatabaseManager) RebuildFTSIndex() error {
+	_, err := dm.db.Exec("INSERT INTO blocks_fts(blocks_fts) VALUES ('rebuild');")
+	return err
 }
 
 // IsFileUnchanged reports whether the file at `path` was previously indexed
@@ -1063,57 +1134,106 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 	return results, nil
 }
 
-// SearchBlocks searches for blocks matching the query. It splits the query into
-// terms and matches each term against clean_content, notebook, or section.
+// searchMaxPerGroup caps how many hits SearchBlocks returns from any single
+// page (notebook/section/page) before moving on, so one verbose page can't
+// monopolize the result list. Tunable; 3 keeps the modal diverse.
+const searchMaxPerGroup = 3
+
+// buildFTSQuery turns a free-text user query into a safe FTS5 MATCH
+// expression. It strips FTS5 query-syntax characters (", *, (, ), ^, :, -),
+// drops sub-2-char noise, and appends a `*` prefix-glob to each surviving term
+// so "sprint" matches "sprinting" (closer to the old LIKE %term% feel than
+// bare-token exact matching). Terms are space-joined → FTS5 implicit AND.
+func buildFTSQuery(query string) string {
+	var parts []string
+	for _, w := range strings.Fields(query) {
+		clean := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+				return r
+			}
+			return -1
+		}, w)
+		if len(clean) < 2 {
+			continue
+		}
+		parts = append(parts, clean+"*")
+	}
+	return strings.Join(parts, " ")
+}
+
+// SearchBlocks searches indexed blocks via the FTS5 virtual table, ranked by
+// bm25 relevance, with highlighted snippets and per-page grouping. It is a
+// thin wrapper over SearchBlocksPaged returning the first page (offset 0,
+// limit 50) for backwards compatibility with the original single-shot binding.
 func (dm *DatabaseManager) SearchBlocks(query string) ([]parser.TaskResult, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return []parser.TaskResult{}, nil
-	}
-
-	words := strings.Fields(query)
-	var sqlParts []string
-	var args []interface{}
-
-	for _, word := range words {
-		sqlParts = append(sqlParts, "(LOWER(b.clean_content) LIKE LOWER(?) OR LOWER(b.notebook) LIKE LOWER(?) OR LOWER(b.section) LIKE LOWER(?))")
-		term := "%" + strings.ToLower(word) + "%"
-		args = append(args, term, term, term)
-	}
-
-	whereClause := strings.Join(sqlParts, " AND ")
-
-	baseQuery := `
-		SELECT b.id, b.parent_id, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
-		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
-		FROM blocks b
-		LEFT JOIN tasks t ON b.id = t.block_id
-		WHERE ` + whereClause + `
-		ORDER BY b.file_date DESC, b.line_number ASC
-		LIMIT 100
-	`
-
-	rows, err := dm.db.Query(baseQuery, args...)
+	res, err := dm.SearchBlocksPaged(query, 0, 50)
 	if err != nil {
-		return nil, fmt.Errorf("failed to search blocks: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
+	return res.Results, nil
+}
 
-	var results []parser.TaskResult
-	var blockIDs []interface{}
+// searchFlatCap bounds the flat ranked fetch that feeds the Go-side per-page
+// grouping. A common-term query on a large vault can match many blocks; this
+// cap keeps the query fast and memory bounded while still returning far more
+// than any reasonable modal needs to display. (FTS5 helper functions like
+// snippet()/bm25() only work when the FTS table is in the direct FROM clause,
+// so per-page grouping via a window-function subquery is not possible — we
+// group in Go instead.)
+const searchFlatCap = 500
 
+// SearchBlocksPaged runs the FTS5 search and returns a ranked, paginated
+// envelope with highlighted snippets, the total match count, and a HasMore
+// flag so the frontend knows whether to fetch the next page.
+//
+// The query selects flat bm25-ranked matches with snippet() highlights (capped
+// at searchFlatCap rows). Per-page grouping (top searchMaxPerGroup hits per
+// notebook/section/page) is applied in Go because FTS5 helper functions
+// cannot survive a window-function subquery wrap. Tag hydration is a single
+// secondary SELECT (no N+1).
+func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int) (parser.SearchResult, error) {
+	query = strings.TrimSpace(query)
+	if query == "" || offset < 0 || limit <= 0 {
+		return parser.SearchResult{Results: []parser.TaskResult{}, Total: 0, Offset: offset, Limit: limit}, nil
+	}
+	fts := buildFTSQuery(query)
+	if fts == "" {
+		return parser.SearchResult{Results: []parser.TaskResult{}, Total: 0, Offset: offset, Limit: limit}, nil
+	}
+
+	pageQuery := `
+		SELECT b.id, b.parent_id, b.notebook, b.section, b.page, b.file_date, b.depth,
+		       b.raw_content, b.clean_content, b.line_number,
+		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''),
+		       COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
+		       snippet(blocks_fts, 0, '<mark>', '</mark>', '...', 12),
+		       bm25(blocks_fts) AS rank
+		FROM blocks_fts
+		JOIN blocks b ON b.rowid = blocks_fts.rowid
+		LEFT JOIN tasks t ON b.id = t.block_id
+		WHERE blocks_fts MATCH ?
+		ORDER BY rank
+		LIMIT ?`
+	rows, err := dm.db.Query(pageQuery, fts, searchFlatCap)
+	if err != nil {
+		return parser.SearchResult{}, fmt.Errorf("failed to search blocks: %w", err)
+	}
+
+	var flat []parser.TaskResult
 	for rows.Next() {
 		var r parser.TaskResult
 		var parentID sql.NullString
 		var status, owner, start, due string
 		var priority int
-
-		err := rows.Scan(
-			&r.ID, &parentID, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
+		var rank float64
+		if err := rows.Scan(
+			&r.ID, &parentID, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth,
+			&r.RawContent, &r.CleanContent, &r.LineNumber,
 			&status, &owner, &start, &due, &priority,
-		)
-		if err != nil {
-			return nil, err
+			&r.Snippet, &rank,
+		); err != nil {
+			rows.Close()
+			return parser.SearchResult{}, err
 		}
 		if parentID.Valid {
 			r.ParentID = parentID.String
@@ -1123,48 +1243,78 @@ func (dm *DatabaseManager) SearchBlocks(query string) ([]parser.TaskResult, erro
 		r.StartDate = start
 		r.DueDate = due
 		r.Priority = priority
-
-		results = append(results, r)
-		blockIDs = append(blockIDs, r.ID)
+		flat = append(flat, r)
 	}
-
 	if err := rows.Close(); err != nil {
-		return nil, err
+		return parser.SearchResult{}, err
 	}
 
-	if len(results) == 0 {
-		return results, nil
-	}
-
-	tagPlaceholders := make([]string, len(blockIDs))
-	for i := range tagPlaceholders {
-		tagPlaceholders[i] = "?"
-	}
-	tagQuery := "SELECT block_id, raw_path FROM tags WHERE block_id IN (" + strings.Join(tagPlaceholders, ",") + ") ORDER BY block_id, raw_path"
-	tagRows, err := dm.db.Query(tagQuery, blockIDs...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query search tags: %w", err)
-	}
-	defer tagRows.Close()
-
-	tagIndex := make(map[string][]string, len(results))
-	for tagRows.Next() {
-		var blockID, tag string
-		if err := tagRows.Scan(&blockID, &tag); err != nil {
-			return nil, err
+	// Per-page grouping: keep at most searchMaxPerGroup hits per
+	// (notebook, section, page), preserving the bm25 rank order from SQL.
+	grouped := make([]parser.TaskResult, 0, len(flat))
+	perPage := make(map[string]int, len(flat))
+	for _, r := range flat {
+		key := r.Notebook + "\x00" + r.Section + "\x00" + r.Page
+		if perPage[key] >= searchMaxPerGroup {
+			continue
 		}
-		tagIndex[blockID] = append(tagIndex[blockID], tag)
+		perPage[key]++
+		grouped = append(grouped, r)
 	}
-	if err := tagRows.Close(); err != nil {
-		return nil, err
+	total := len(grouped)
+
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	var page []parser.TaskResult
+	if offset < total {
+		page = grouped[offset:end]
+	}
+	if page == nil {
+		page = []parser.TaskResult{}
 	}
 
-	for i := range results {
-		if tags, ok := tagIndex[results[i].ID]; ok {
-			results[i].Tags = tags
+	// Tag hydration for just this page (single secondary SELECT).
+	if len(page) > 0 {
+		blockIDs := make([]interface{}, len(page))
+		for i, r := range page {
+			blockIDs[i] = r.ID
+		}
+		placeholders := make([]string, len(page))
+		for i := range placeholders {
+			placeholders[i] = "?"
+		}
+		tagQuery := "SELECT block_id, raw_path FROM tags WHERE block_id IN (" + strings.Join(placeholders, ",") + ") ORDER BY block_id, raw_path"
+		tagRows, err := dm.db.Query(tagQuery, blockIDs...)
+		if err != nil {
+			return parser.SearchResult{}, fmt.Errorf("failed to query search tags: %w", err)
+		}
+		tagIndex := make(map[string][]string, len(page))
+		for tagRows.Next() {
+			var blockID, tag string
+			if err := tagRows.Scan(&blockID, &tag); err != nil {
+				tagRows.Close()
+				return parser.SearchResult{}, err
+			}
+			tagIndex[blockID] = append(tagIndex[blockID], tag)
+		}
+		if err := tagRows.Close(); err != nil {
+			return parser.SearchResult{}, err
+		}
+		for i := range page {
+			if tags, ok := tagIndex[page[i].ID]; ok {
+				page[i].Tags = tags
+			}
 		}
 	}
 
-	return results, nil
+	return parser.SearchResult{
+		Results: page,
+		Total:   total,
+		Offset:  offset,
+		Limit:   limit,
+		HasMore: end < total,
+	}, nil
 }
 

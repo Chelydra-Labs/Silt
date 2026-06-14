@@ -994,7 +994,10 @@ func (a *App) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
 	return res, err
 }
 
-// SearchBlocks fuzzy searches blocks and headings matching the query.
+// SearchBlocks fuzzy searches blocks and headings matching the query. Returns
+// the first page (offset 0, limit 50) of FTS5-ranked results for backwards
+// compatibility with the original binding; the Svelte search modal that needs
+// pagination/snippets calls SearchBlocksPaged instead.
 func (a *App) SearchBlocks(query string) ([]parser.TaskResult, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
@@ -1007,6 +1010,26 @@ func (a *App) SearchBlocks(query string) ([]parser.TaskResult, error) {
 	var err error
 	a.coordinator.WithDBRead(func() {
 		res, err = a.db.SearchBlocks(query)
+	})
+
+	return res, err
+}
+
+// SearchBlocksPaged runs the FTS5 search and returns a ranked, paginated
+// envelope with highlighted snippets, the total match count, and a HasMore
+// flag. offset/limit control the page (defaults applied by the caller).
+func (a *App) SearchBlocksPaged(query string, offset, limit int) (parser.SearchResult, error) {
+	if a.db == nil {
+		return parser.SearchResult{}, fmt.Errorf("vault database not loaded")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var res parser.SearchResult
+	var err error
+	a.coordinator.WithDBRead(func() {
+		res, err = a.db.SearchBlocksPaged(query, offset, limit)
 	})
 
 	return res, err

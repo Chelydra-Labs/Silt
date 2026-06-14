@@ -1011,3 +1011,249 @@ func itoa(i int) string {
 	return string(buf[pos:])
 }
 
+// --- Phase 4: FTS5 search (#39) ---
+
+// indexSearchable seeds a DB with a handful of blocks across two pages so the
+// FTS ranking/grouping/pagination tests have realistic data. Returns the dm.
+func indexSearchable(t *testing.T) *DatabaseManager {
+	t.Helper()
+	dm := newTestDB(t)
+	// Page A (Work/Journal/Daily) — three blocks, "sprint planning" appears
+	// most in the first one so bm25 should rank it above the others.
+	a1 := parser.ParsedBlock{ID: "a1a1a1a1-1111-1111-1111-111111111111", Type: parser.BlockNote, CleanText: "sprint planning notes for the sprint planning meeting", LineNumber: 1}
+	a2 := parser.ParsedBlock{ID: "a2a2a2a2-2222-2222-2222-222222222222", Type: parser.BlockTask, CleanText: "sprint review prep", Status: "TODO", LineNumber: 2}
+	a3 := parser.ParsedBlock{ID: "a3a3a3a3-3333-3333-3333-333333333333", Type: parser.BlockNote, CleanText: "a totally unrelated line about weather", LineNumber: 3}
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", "2026-06-13", []parser.ParsedBlock{a1, a2, a3}, []string{"work"}); err != nil {
+		t.Fatalf("index page A: %v", err)
+	}
+	// Page B (Work/Journal/Retros) — one highly relevant block from a different
+	// page, used to verify per-page grouping surfaces both pages.
+	b1 := parser.ParsedBlock{ID: "b1b1b1b1-1111-1111-1111-111111111111", Type: parser.BlockNote, CleanText: "last sprint retrospective action items", LineNumber: 1}
+	if err := dm.IndexFileBlocks("Work", "Journal", "Retros", "2026-06-13", []parser.ParsedBlock{b1}, []string{"work"}); err != nil {
+		t.Fatalf("index page B: %v", err)
+	}
+	return dm
+}
+
+func TestSearch_FTS5SmokeAndSync(t *testing.T) {
+	dm := indexSearchable(t)
+	// The triggers must have kept blocks_fts in sync: a search for "sprint"
+	// returns rows from both indexed pages without an explicit rebuild.
+	res, err := dm.SearchBlocksPaged("sprint", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total == 0 {
+		t.Fatal("FTS5 returned no results — triggers did not sync blocks_fts")
+	}
+}
+
+func TestSearch_RankingPutsMostRelevantFirst(t *testing.T) {
+	dm := indexSearchable(t)
+	res, err := dm.SearchBlocksPaged("sprint planning", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if len(res.Results) == 0 {
+		t.Fatal("no results")
+	}
+	// a1 mentions both "sprint" and "planning" multiple times → highest bm25.
+	if res.Results[0].ID != "a1a1a1a1-1111-1111-1111-111111111111" {
+		t.Errorf("expected most-relevant block first, got %s (clean=%q)", res.Results[0].ID, res.Results[0].CleanContent)
+	}
+}
+
+func TestSearch_SnippetContainsHighlightMarkers(t *testing.T) {
+	dm := indexSearchable(t)
+	res, err := dm.SearchBlocksPaged("weather", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if len(res.Results) == 0 {
+		t.Fatal("no results for 'weather'")
+	}
+	if !strings.Contains(res.Results[0].Snippet, "<mark>") || !strings.Contains(res.Results[0].Snippet, "</mark>") {
+		t.Errorf("snippet missing <mark> highlight: %q", res.Results[0].Snippet)
+	}
+	if !strings.Contains(res.Results[0].Snippet, "weather") {
+		t.Errorf("snippet does not contain the matched term: %q", res.Results[0].Snippet)
+	}
+}
+
+func TestSearch_MultiTermIsImplicitAND(t *testing.T) {
+	dm := indexSearchable(t)
+	// "sprint weather" must AND: only blocks containing BOTH survive. No
+	// single block has both terms, so the result set is empty.
+	res, err := dm.SearchBlocksPaged("sprint weather", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 0 {
+		t.Errorf("AND of disjoint terms should return 0, got %d", res.Total)
+	}
+	// "sprint review" matches a2 only.
+	res, err = dm.SearchBlocksPaged("sprint review", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 1 || res.Results[0].ID != "a2a2a2a2-2222-2222-2222-222222222222" {
+		t.Errorf("expected single 'sprint review' hit on a2, got total=%d first=%s", res.Total, firstID(res.Results))
+	}
+}
+
+func TestSearch_PerPageGroupingCapsResultsPerPage(t *testing.T) {
+	// Index 5 same-page blocks all matching "alpha" so grouping must cap them.
+	dm := newTestDB(t)
+	var blocks []parser.ParsedBlock
+	for i := 0; i < 5; i++ {
+		blocks = append(blocks, parser.ParsedBlock{
+			ID:        blockID("caf", i),
+			Type:      parser.BlockNote,
+			CleanText: "alpha beta gamma item number",
+			LineNumber: i + 1,
+		})
+	}
+	if err := dm.IndexFileBlocks("NB", "", "PG", "2026-06-14", blocks, nil); err != nil {
+		t.Fatal(err)
+	}
+	res, err := dm.SearchBlocksPaged("alpha", 0, 50)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total > searchMaxPerGroup {
+		t.Errorf("per-page grouping failed: total=%d, expected <= %d", res.Total, searchMaxPerGroup)
+	}
+}
+
+func TestSearch_PaginationAndHasMore(t *testing.T) {
+	dm := indexSearchable(t)
+	// "sprint" matches a1, a2 (page A) + b1 (page B). After per-page grouping
+	// (<=3/page) all three survive. Page size 2 → HasMore on the first page.
+	page1, err := dm.SearchBlocksPaged("sprint", 0, 2)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1.Results) != 2 {
+		t.Errorf("page1 expected 2 results, got %d", len(page1.Results))
+	}
+	if !page1.HasMore {
+		t.Error("page1 HasMore should be true when total > offset+limit")
+	}
+	if page1.Total < 3 {
+		t.Errorf("total expected >=3, got %d", page1.Total)
+	}
+	page2, err := dm.SearchBlocksPaged("sprint", 2, 2)
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if page2.HasMore {
+		t.Error("page2 HasMore should be false when offset+limit >= total")
+	}
+	// No overlap between pages.
+	seen := map[string]bool{}
+	for _, r := range page1.Results {
+		seen[r.ID] = true
+	}
+	for _, r := range page2.Results {
+		if seen[r.ID] {
+			t.Errorf("block %s appeared on both pages", r.ID)
+		}
+	}
+}
+
+func TestSearch_EmptyQueryReturnsEmpty(t *testing.T) {
+	dm := indexSearchable(t)
+	res, err := dm.SearchBlocksPaged("   ", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 0 || len(res.Results) != 0 {
+		t.Errorf("empty query should return no results, got total=%d len=%d", res.Total, len(res.Results))
+	}
+}
+
+func TestSearch_TagHydrationSurvivesFTS(t *testing.T) {
+	dm := newTestDB(t)
+	b := parser.ParsedBlock{
+		ID: "dddddddd-1111-1111-1111-111111111111", Type: parser.BlockTask,
+		CleanText: "ship the release", Status: "TODO",
+		RawText: "- [ ] TODO TASK ship the release #dev/release <!-- id: dddddddd-1111-1111-1111-111111111111 -->",
+		LineNumber: 1,
+	}
+	if err := dm.IndexFileBlocks("Work", "", "Daily", "2026-06-14", []parser.ParsedBlock{b}, []string{"dev/release"}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := dm.SearchBlocksPaged("release", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(res.Results))
+	}
+	if len(res.Results[0].Tags) == 0 {
+		t.Errorf("tag hydration broke post-FTS: %+v", res.Results[0])
+	}
+}
+
+func TestSearch_RebuildFTSIndexRepairs(t *testing.T) {
+	dm := indexSearchable(t)
+	// A forced rebuild must not error and must preserve searchability.
+	if err := dm.RebuildFTSIndex(); err != nil {
+		t.Fatalf("RebuildFTSIndex: %v", err)
+	}
+	res, err := dm.SearchBlocksPaged("sprint", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged after rebuild: %v", err)
+	}
+	if res.Total == 0 {
+		t.Error("rebuild lost all FTS data")
+	}
+}
+
+func TestSearch_UpdateReplacesOldFTSContent(t *testing.T) {
+	// Re-indexing a page (delete-then-insert) must replace the old FTS row,
+	// not duplicate it. Search for the old term should drop to 0 after the
+	// block's text changes.
+	dm := newTestDB(t)
+	orig := parser.ParsedBlock{ID: "eeeeeeee-1111-1111-1111-111111111111", Type: parser.BlockNote, CleanText: "needle in a haystack", LineNumber: 1}
+	if err := dm.IndexFileBlocks("NB", "", "PG", "2026-06-14", []parser.ParsedBlock{orig}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := dm.SearchBlocksPaged("needle", 0, 10); res.Total != 1 {
+		t.Fatalf("pre-update: expected 1 needle, got %d", res.Total)
+	}
+	updated := parser.ParsedBlock{ID: orig.ID, Type: parser.BlockNote, CleanText: "the needle is gone now replaced by thread", LineNumber: 1}
+	if err := dm.IndexFileBlocks("NB", "", "PG", "2026-06-14", []parser.ParsedBlock{updated}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := dm.SearchBlocksPaged("needle", 0, 10); res.Total == 0 {
+		// "needle" still present in the updated text, so this should still hit.
+		t.Errorf("update lost the FTS row entirely")
+	}
+	// A term that was ONLY in the old text must no longer match.
+	if res, _ := dm.SearchBlocksPaged("haystack", 0, 10); res.Total != 0 {
+		t.Errorf("stale FTS row: 'haystack' still matches after update (total=%d)", res.Total)
+	}
+}
+
+// blockID builds a deterministic UUID-shaped id from a 3-char prefix and an
+// index, for the grouping test's batch of blocks.
+func blockID(prefix string, i int) string {
+	p := prefix + "00000000000000000000000000000" // pad
+	p = p[:8] + "-1111-1111-1111-111111111111"
+	// overwrite first chars with prefix to keep ids distinct
+	b := []byte(p)
+	for j := 0; j < len(prefix) && j < 8; j++ {
+		b[j] = prefix[j]
+	}
+	b[7] = byte('a' + i%26)
+	return string(b)
+}
+
+func firstID(rs []parser.TaskResult) string {
+	if len(rs) == 0 {
+		return ""
+	}
+	return rs[0].ID
+}
+
