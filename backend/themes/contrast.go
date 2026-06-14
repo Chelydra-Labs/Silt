@@ -107,5 +107,12 @@ func parseColorAny(s string) (r, g, b uint8, ok bool) {
 			ch[i] = uint8(v + 0.5)
 		}
 	}
+	if wantParts == 4 {
+		alphaStr := strings.TrimSpace(parts[3])
+		alpha, err := strconv.ParseFloat(alphaStr, 64)
+		if err != nil || alpha < 0 || alpha > 1 {
+			return 0, 0, 0, false
+		}
+	}
 	return ch[0], ch[1], ch[2], true
 }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,9 @@ import (
 func TestMigrationInvariant_NoOldHueTokens(t *testing.T) {
 	if testing.Short() {
 		t.Skip("migration invariant walks the whole tree; skip under -short")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not found in PATH, skipping migration invariant check")
 	}
 	repoRoot := findRepoRoot(t)
 
@@ -97,7 +101,7 @@ func formatHit(file string, line int, needle, src string) string {
 	if len(trim) > 120 {
 		trim = trim[:120] + "…"
 	}
-	return "  • " + file + ":" + itoa(line) + " contains \"" + needle + "\": " + trim
+	return "  • " + file + ":" + strconv.Itoa(line) + " contains \"" + needle + "\": " + trim
 }
 
 // findRepoRoot locates the directory containing go.mod (the module root
@@ -128,7 +132,7 @@ func findRepoRoot(t *testing.T) string {
 // (node_modules, frontend/dist, frontend/wailsjs) are gitignored and
 // therefore never listed by ls-files, so no manual exclusion is needed.
 func trackedTextFiles(repoRoot string) ([]string, error) {
-	cmd := exec.Command("git", "ls-files")
+	cmd := exec.Command("git", "ls-files", "-z")
 	cmd.Dir = repoRoot
 	out, err := cmd.Output()
 	if err != nil {
@@ -143,7 +147,7 @@ func trackedTextFiles(repoRoot string) ([]string, error) {
 		".yaml": true, ".yml": true, ".toml": true, ".svg": true,
 	}
 	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(string(out), "\x00") {
 		if line == "" {
 			continue
 		}
@@ -154,25 +158,4 @@ func trackedTextFiles(repoRoot string) ([]string, error) {
 	return files, nil
 }
 
-// itoa is a dependency-free int->string for the failure formatter.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
-}
+

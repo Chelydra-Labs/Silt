@@ -67,6 +67,12 @@ func TestContrastRatio_AcceptedColorForms(t *testing.T) {
 			t.Errorf("expected %q to be rejected, got ok", bad)
 		}
 	}
+	// Malformed alpha values are rejected.
+	for _, bad := range []string{"rgba(12,12,14,bad)", "rgba(12,12,14,2)", "rgba(12,12,14,-1)"} {
+		if _, ok := ContrastRatio(bad, "#fff"); ok {
+			t.Errorf("expected %q to be rejected (bad alpha), got ok", bad)
+		}
+	}
 }
 
 // contrastPairs enumerates the text/background pairs the shipped default
