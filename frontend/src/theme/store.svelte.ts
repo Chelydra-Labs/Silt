@@ -6,10 +6,13 @@
 // plugins/store.svelte.ts and settings/store.svelte.ts).
 import {
   ApplyTheme,
+  ExportActiveTheme,
   GetActiveTheme,
-  ListThemes
+  ImportTheme,
+  ListThemes,
+  PickThemeFile
 } from '../../wailsjs/go/main/App.js'
-import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+import { EventsOn, SaveFileDialog } from '../../wailsjs/runtime/runtime.js'
 import type { themes } from '../../wailsjs/go/models'
 import { injectTokens } from './inject'
 
@@ -41,18 +44,60 @@ export const themeState: ThemeState = $state({
  * `themeState.id`. Re-fetched on the backend's `themes:changed` event
  * (emitted by the importer — see backend/themes/importer.go) so an
  * imported theme appears in the picker immediately, no restart.
+ *
+ * `flatTokens` carries the per-mode CSS custom-property map keyed by
+ * ThemeInfo.ID so the picker can render hover previews without a
+ * second IPC call. The map is rebuilt on every `loadThemes` call.
  */
 export interface ThemesListingState {
   items: themes.ThemeInfo[]
+  flatTokens: Record<string, { dark: Record<string, string>; light: Record<string, string> }>
   loadError: string | null
   loading: boolean
 }
 
 export const themesState: ThemesListingState = $state({
   items: [],
+  flatTokens: {},
   loadError: null,
   loading: false
 })
+
+/**
+ * Transient status surface for the picker (#47, #48). The picker renders
+ * `themeStatus.message` in a `role="status" aria-live="polite"` region so
+ * "Theme X applied", "Imported as <id>", and error notices are
+ * announced to screen readers without stealing focus. `kind` drives
+ * the styling and the aria role (alert vs. status). An empty
+ * `message` is the "no status" sentinel.
+ */
+export type ThemeStatusKind = 'info' | 'success' | 'error'
+
+export interface ThemeStatus {
+  kind: ThemeStatusKind
+  message: string
+  /** Per-field validation details (from themes.ValidationErrors). */
+  fields: { field: string; message: string }[]
+}
+
+export const themeStatus: ThemeStatus = $state({
+  kind: 'info',
+  message: '',
+  fields: []
+})
+
+/** Replace the status with a fresh message; clear with `clearStatus()`. */
+export function setStatus(s: ThemeStatus): void {
+  themeStatus.kind = s.kind
+  themeStatus.message = s.message
+  themeStatus.fields = s.fields
+}
+
+export function clearStatus(): void {
+  themeStatus.kind = 'info'
+  themeStatus.message = ''
+  themeStatus.fields = []
+}
 
 let schemeMedia: MediaQueryList | null = null
 let started = false
@@ -183,12 +228,149 @@ export async function loadThemes(): Promise<void> {
   try {
     const res = await ListThemes()
     themesState.items = res?.themes ?? []
+    themesState.flatTokens = (res?.flat_tokens as ThemesListingState['flatTokens']) ?? {}
   } catch (err) {
     console.error('theme: ListThemes failed:', err)
     themesState.loadError = err instanceof Error ? err.message : String(err)
   } finally {
     themesState.loading = false
   }
+}
+
+/**
+ * Open the native file picker and import the chosen theme. The backend
+ * validates, namespaces, and writes the file; on success the
+ * `themes:changed` event fires and `loadThemes` repopulates the listing.
+ * Returns the imported id (which may differ from the source id if the
+ * importer renamed it for collision safety) or null on cancel/error.
+ */
+export async function pickAndImportTheme(): Promise<string | null> {
+  let path: string
+  try {
+    path = await PickThemeFile()
+  } catch (err) {
+    setStatus({
+      kind: 'error',
+      message: `Could not open file picker: ${errMsg(err)}`,
+      fields: []
+    })
+    return null
+  }
+  if (!path) {
+    return null // user cancelled
+  }
+  return importThemeFromPath(path)
+}
+
+/** Import a theme from a known path (used by both the picker button and
+ * the OnFileDrop drop zone). */
+export async function importThemeFromPath(path: string): Promise<string | null> {
+  try {
+    const res = await ImportTheme(path)
+    const id = res.info.id
+    if (res.renamed) {
+      setStatus({
+        kind: 'success',
+        message: `Imported as "${id}" (renamed from "${res.renamed_from_id}").`,
+        fields: []
+      })
+    } else {
+      setStatus({
+        kind: 'success',
+        message: `Imported "${id}".`,
+        fields: []
+      })
+    }
+    return id
+  } catch (err) {
+    // The backend's themes.ValidationErrors is a JSON array; when it
+    // comes back over Wails the Wails binding layer decodes it as a
+    // plain JS array of {field, message}. Render per-field so the
+    // user sees exactly which token failed and why.
+    const fields = validationFieldsFromError(err)
+    if (fields.length > 0) {
+      setStatus({
+        kind: 'error',
+        message: 'Theme import failed:',
+        fields
+      })
+    } else {
+      setStatus({
+        kind: 'error',
+        message: `Theme import failed: ${errMsg(err)}`,
+        fields: []
+      })
+    }
+    return null
+  }
+}
+
+/** Export the active theme to a user-chosen JSON path. */
+export async function exportActiveTheme(): Promise<boolean> {
+  if (!themeState.id) {
+    setStatus({
+      kind: 'error',
+      message: 'No active theme to export.',
+      fields: []
+    })
+    return false
+  }
+  let dst: string
+  try {
+    dst = await SaveFileDialog({
+      title: 'Export active theme',
+      defaultFilename: `${themeState.id}.json`,
+      filters: [{ displayName: 'Silt Theme (*.json)', pattern: '*.json' }]
+    })
+  } catch (err) {
+    setStatus({
+      kind: 'error',
+      message: `Could not open save dialog: ${errMsg(err)}`,
+      fields: []
+    })
+    return false
+  }
+  if (!dst) {
+    return false // user cancelled
+  }
+  try {
+    await ExportActiveTheme(dst)
+    setStatus({
+      kind: 'success',
+      message: `Exported "${themeState.id}" to ${dst}.`,
+      fields: []
+    })
+    return true
+  } catch (err) {
+    setStatus({
+      kind: 'error',
+      message: `Export failed: ${errMsg(err)}`,
+      fields: []
+    })
+    return false
+  }
+}
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+function validationFieldsFromError(err: unknown): { field: string; message: string }[] {
+  // The Go-side `themes.ValidationErrors` is a slice of ValidationError
+  // (Field, Message). Wails JSON-decodes the slice into an array of
+  // {field, message} objects — we accept either the array directly or
+  // a wrapped Error whose message is the joined text. Per-field
+  // rendering is the user-friendly path.
+  if (Array.isArray(err)) {
+    return err
+      .filter((e) => e && typeof e.field === 'string' && typeof e.message === 'string')
+      .map((e) => ({ field: e.field, message: e.message }))
+  }
+  if (err && typeof err === 'object') {
+    const anyErr = err as { field?: string; message?: string; fields?: { field: string; message: string }[] }
+    if (Array.isArray(anyErr.fields)) return anyErr.fields
+  }
+  return []
 }
 
 /**

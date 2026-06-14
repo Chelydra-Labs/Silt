@@ -44,12 +44,25 @@ type ThemeLoadError struct {
 	Message string `json:"message"`
 }
 
+// FlatTokensPerMode is the per-theme flat CSS-token map for each mode.
+// Used by the picker to render live previews on hover without an
+// extra roundtrip per preview. The picker receives one pair per theme
+// (one dark + one light map) so it can preview in the user's current
+// mode without a second IPC call when the mode changes.
+type FlatTokensPerMode struct {
+	Dark  map[string]string `json:"dark"`
+	Light map[string]string `json:"light"`
+}
+
 // ListThemesResult is returned by ListThemes: the valid themes (always
 // including the embedded default, deduped by id) plus any per-file load
-// errors.
+// errors. FlatTokens (Sprint 6, #47) carries the per-mode CSS custom-
+// property map keyed by ThemeInfo.ID so the picker can render live
+// previews without a second IPC call per hover.
 type ListThemesResult struct {
-	Themes []ThemeInfo      `json:"themes"`
-	Errors []ThemeLoadError `json:"errors"`
+	Themes     []ThemeInfo                  `json:"themes"`
+	Errors     []ThemeLoadError             `json:"errors"`
+	FlatTokens map[string]FlatTokensPerMode `json:"flat_tokens,omitempty"`
 }
 
 // ListThemes enumerates <themesDir>/*.json, returning metadata for every
@@ -57,10 +70,16 @@ type ListThemesResult struct {
 // embedded default theme is always present (deduped by id) so the picker
 // always has at least one selectable theme even on an empty/wiped vault.
 // A missing themesDir is not an error — it yields just the default.
+//
+// Since Sprint 6 (#47) the result also carries FlatTokens: the per-mode
+// CSS-token map keyed by ThemeInfo.ID, used by the picker for live
+// previews. The cost is one extra Flatten call per parsed theme (cheap;
+// the theme is already in memory after ParseAndValidate).
 func ListThemes(themesDir string) (*ListThemesResult, error) {
 	res := &ListThemesResult{
-		Themes: []ThemeInfo{},
-		Errors: []ThemeLoadError{},
+		Themes:     []ThemeInfo{},
+		Errors:     []ThemeLoadError{},
+		FlatTokens: map[string]FlatTokensPerMode{},
 	}
 
 	seenIDs := map[string]bool{}
@@ -89,6 +108,10 @@ func ListThemes(themesDir string) (*ListThemesResult, error) {
 				}
 				seenIDs[t.ID] = true
 				res.Themes = append(res.Themes, t.AsInfo("disk"))
+				res.FlatTokens[t.ID] = FlatTokensPerMode{
+					Dark:  t.Flatten("dark"),
+					Light: t.Flatten("light"),
+				}
 			}
 		} else if !os.IsNotExist(err) {
 			// A real I/O error (permissions, etc.) — surface it. A missing dir
@@ -103,6 +126,10 @@ func ListThemes(themesDir string) (*ListThemesResult, error) {
 	if !seenIDs[DefaultThemeID] {
 		if dt, derr := ParseDefault(); derr == nil {
 			res.Themes = append(res.Themes, dt.AsInfo("default"))
+			res.FlatTokens[DefaultThemeID] = FlatTokensPerMode{
+				Dark:  dt.Flatten("dark"),
+				Light: dt.Flatten("light"),
+			}
 		}
 	}
 
