@@ -33,35 +33,64 @@ type ScanResult struct {
 	Size  int64
 }
 
-// ScanWorkspace scans the vault directory recursively and returns all parsed file blocks and metadata.
-func ScanWorkspace(vaultPath string, spacesPerTab int) ([]ScanResult, error) {
-	// 1. Gather all markdown files
-	var files []string
-	err := filepath.WalkDir(vaultPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+// WalkMarkdown recursively enumerates the .md files under root, with explicit
+// symlink and hidden-directory handling shared by the scanner (#32).
+//
+// filepath.WalkDir does not follow symlinks, so a symlink loop (e.g.
+// Work -> ../Work) cannot cause infinite recursion on its own. We make the
+// skip explicit AND surface it as a warning so the user knows the symlinked
+// directory's contents are not indexed (and so a symlink pointing outside the
+// vault is skipped deliberately rather than silently). System/hidden
+// directories (leading ".") are pruned.
+//
+// Returns the markdown file list, non-fatal warnings (per symlink/perms
+// errors), and a fatal error only if the root cannot be walked at all.
+func WalkMarkdown(root string) (files []string, warnings []string, err error) {
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Surface walker errors (permission denied, removed during
+			// traversal, etc.) as warnings rather than aborting the whole
+			// scan — one unreadable subtree shouldn't block startup.
+			warnings = append(warnings, fmt.Sprintf("%s: %v", path, walkErr))
+			return nil
+		}
+		// Explicit symlink handling: WalkDir already does not follow them,
+		// but skipping silently leaves the user wondering why a symlinked
+		// folder's notes never appear. Warn so it's discoverable.
+		if d.Type()&fs.ModeSymlink != 0 {
+			warnings = append(warnings, fmt.Sprintf("%s: symlink not followed", path))
+			return nil
 		}
 		if d.IsDir() {
-			// Skip system and hidden directories
 			name := d.Name()
-			if strings.HasPrefix(name, ".") {
+			// Skip system and hidden directories (but keep the root itself
+			// when its name legitimately starts with "." — the root is the
+			// entry point, not a child to prune).
+			if path != root && strings.HasPrefix(name, ".") {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-
-		// Only parse markdown files
 		if strings.ToLower(filepath.Ext(path)) == ".md" {
 			files = append(files, path)
 		}
 		return nil
 	})
+	return files, warnings, err
+}
+
+// ScanWorkspace scans the vault directory recursively and returns all parsed
+// file blocks and metadata, plus walk-level warnings (symlink skips,
+// permission errors) for the caller to surface as init-warnings (#32).
+func ScanWorkspace(vaultPath string, spacesPerTab int) (results []ScanResult, walkWarnings []string, err error) {
+	// 1. Gather all markdown files via the shared symlink-aware walker.
+	files, walkWarnings, err := WalkMarkdown(vaultPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan directories: %w", err)
+		return nil, walkWarnings, fmt.Errorf("failed to scan directories: %w", err)
 	}
 
 	if len(files) == 0 {
-		return nil, nil
+		return nil, walkWarnings, nil
 	}
 
 	// 2. Parse files in parallel using a worker pool
@@ -71,6 +100,9 @@ func ScanWorkspace(vaultPath string, spacesPerTab int) ([]ScanResult, error) {
 	}
 	if numWorkers > len(files) {
 		numWorkers = len(files)
+	}
+	if numWorkers < 1 {
+		numWorkers = 1
 	}
 
 	pathsChan := make(chan string, len(files))
@@ -97,12 +129,12 @@ func ScanWorkspace(vaultPath string, spacesPerTab int) ([]ScanResult, error) {
 	close(resultsChan)
 
 	// Collect results
-	var results []ScanResult
+	collected := make([]ScanResult, 0, len(files))
 	for res := range resultsChan {
-		results = append(results, res)
+		collected = append(collected, res)
 	}
 
-	return results, nil
+	return collected, walkWarnings, nil
 }
 
 func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult {

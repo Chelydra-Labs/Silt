@@ -462,11 +462,132 @@ func splitFrontmatterForTest(content string) (frontmatter, body string) {
 	return "", content
 }
 
+// --- Phase 5c: symlink loop handling (#32) ---
+
+// writeFile is a tiny helper for the symlink tests.
+func writeMdFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWalkMarkdown_SelfReferencingSymlinkDoesNotLoop(t *testing.T) {
+	dir := t.TempDir()
+	writeMdFile(t, filepath.Join(dir, "NB", "PG", "2026-06-14.md"), "real note")
+	// Self-referencing symlink: NB/loop -> NB/loop (a degenerate cycle).
+	loopDir := filepath.Join(dir, "NB", "loop")
+	if err := os.Symlink(loopDir, loopDir); err != nil {
+		// Some platforms / CI runners disable symlink creation; skip gracefully.
+		t.Skipf("cannot create symlink: %v", err)
+	}
+	files, warnings, err := WalkMarkdown(dir)
+	if err != nil {
+		t.Fatalf("WalkMarkdown: %v", err)
+	}
+	if len(files) != 1 {
+		t.Errorf("expected 1 real file (symlink not followed), got %d: %v", len(files), files)
+	}
+	if len(warnings) == 0 {
+		t.Error("expected a symlink warning, got none")
+	}
+}
+
+func TestWalkMarkdown_MutualSymlinkCycleIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeMdFile(t, filepath.Join(dir, "NB", "PG", "2026-06-14.md"), "real note")
+	// Mutual cycle: NB/a -> NB/b, NB/b -> NB/a.
+	a := filepath.Join(dir, "NB", "a")
+	b := filepath.Join(dir, "NB", "b")
+	if err := os.Symlink(b, a); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+	if err := os.Symlink(a, b); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+	files, warnings, err := WalkMarkdown(dir)
+	if err != nil {
+		t.Fatalf("WalkMarkdown: %v", err)
+	}
+	if len(files) != 1 {
+		t.Errorf("expected only the 1 real file, got %d: %v", len(files), files)
+	}
+	if len(warnings) < 2 {
+		t.Errorf("expected >=2 symlink warnings (one per symlink), got %d", len(warnings))
+	}
+}
+
+func TestWalkMarkdown_OneHopSymlinkIsSkippedWithWarning(t *testing.T) {
+	dir := t.TempDir()
+	// A real subdirectory with a note, plus a symlink pointing at it.
+	target := filepath.Join(dir, "Real", "PG")
+	writeMdFile(t, filepath.Join(target, "2026-06-14.md"), "via target")
+	link := filepath.Join(dir, "Shortcut")
+	if err := os.Symlink(filepath.Join(dir, "Real"), link); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+	files, warnings, err := WalkMarkdown(dir)
+	if err != nil {
+		t.Fatalf("WalkMarkdown: %v", err)
+	}
+	// The real target's note is indexed; the symlink is skipped (not followed).
+	if len(files) != 1 {
+		t.Errorf("expected 1 file (real target only), got %d: %v", len(files), files)
+	}
+	foundSymlinkWarn := false
+	for _, w := range warnings {
+		if strings.Contains(w, "symlink not followed") {
+			foundSymlinkWarn = true
+			break
+		}
+	}
+	if !foundSymlinkWarn {
+		t.Errorf("expected a 'symlink not followed' warning, got %v", warnings)
+	}
+}
+
+func TestScanWorkspace_NoCrashOnSymlinkLoop(t *testing.T) {
+	// Integration: ScanWorkspace must not hang or crash on a symlink loop,
+	// and must still return the real file's blocks.
+	dir := t.TempDir()
+	writeMdFile(t, filepath.Join(dir, "NB", "PG", "2026-06-14.md"),
+		"# Real <!-- id: 11111111-1111-1111-1111-111111111111 -->\n")
+	loopDir := filepath.Join(dir, "NB", "loop")
+	if err := os.Symlink(filepath.Join(dir, "NB"), loopDir); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+	done := make(chan struct{})
+	var results []ScanResult
+	var warnings []string
+	var scanErr error
+	go func() {
+		defer close(done)
+		results, warnings, scanErr = ScanWorkspace(dir, 4)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ScanWorkspace hung on a symlink loop")
+	}
+	if scanErr != nil {
+		t.Fatalf("ScanWorkspace error: %v", scanErr)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result, got %d", len(results))
+	}
+	if len(warnings) == 0 {
+		t.Error("expected symlink warnings, got none")
+	}
+}
+
 func BenchmarkScanWorkspace_1000Files(b *testing.B) {
 	for range b.N {
 		dir := b.TempDir()
 		writeBenchVault(b, dir, 1000)
-		_, err := ScanWorkspace(dir, 4)
+		_, _, err := ScanWorkspace(dir, 4)
 		if err != nil {
 			b.Fatalf("ScanWorkspace: %v", err)
 		}

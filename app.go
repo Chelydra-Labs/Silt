@@ -101,6 +101,9 @@ func (a *App) shutdown(ctx context.Context) {
 	a.wg.Wait()
 
 	if a.watcher != nil {
+		// Drop every focus lease before tearing the watcher down so a clean
+		// exit can't strand a file under fsnotify suppression (#38).
+		a.watcher.ReleaseAllFocus()
 		_ = a.watcher.Close()
 	}
 	if a.tracker != nil {
@@ -129,7 +132,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	coord := core.NewExecutionCoordinator(dbMgr.SQLDB())
 	tracker := monitor.NewWriteTracker()
 
-	results, err := parser.ScanWorkspace(vaultPath, a.spacesPerTab)
+	results, walkWarnings, err := parser.ScanWorkspace(vaultPath, a.spacesPerTab)
 	if err != nil {
 		_ = dbMgr.Close()
 		return fmt.Errorf("failed to scan workspace: %w", err)
@@ -205,6 +208,8 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 
 	// Merge the indexer's per-file skip list into the warning stream.
 	allWarnings = append(allWarnings, skipped...)
+	// Surface walk-level warnings (symlink skips, permission errors) from #32.
+	allWarnings = append(allWarnings, walkWarnings...)
 
 	if indexedCount > 0 {
 		// A checkpoint after the bulk insert keeps the WAL bounded for the
@@ -1078,6 +1083,31 @@ func (a *App) ReleaseFocusLock(notebook, section, page, fileDate string) error {
 		return fmt.Errorf("path escapes vault")
 	}
 	a.watcher.UnlockFocus(filePath)
+	return nil
+}
+
+// RefreshFocusLock extends an existing focus lease for a file. Called by the
+// Svelte editor's heartbeat while it stays focused (#38); a no-op if the
+// lease already expired (the editor must re-acquire).
+func (a *App) RefreshFocusLock(notebook, section, page, fileDate string) error {
+	if a.watcher == nil {
+		return fmt.Errorf("watcher not running")
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	safeFileDate := sanitizePathSegment(fileDate)
+	if safeNotebook == "" || safePage == "" || safeFileDate == "" {
+		return fmt.Errorf("invalid path metadata")
+	}
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage, safeFileDate+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return fmt.Errorf("path escapes vault")
+	}
+	a.watcher.RefreshFocus(filePath)
 	return nil
 }
 

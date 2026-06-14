@@ -449,16 +449,7 @@ If you edit a markdown file in VS Code while the Silt dashboard is open, the fil
 
 Mitigation Plan:
 
-Focus Locking: While Svelte has focus on an active text field, the backend monitor pauses external sync operations for that specific block file.
-
-> **PENDING AMENDMENT (Phase 5 of the hardening sprint, #38):** the focus-lock
-> model is changing from a plain boolean held per file path to TTL leases
-> (default 60s) refreshed on focus + on save, with a background sweeper that
-> expires abandoned leases. This self-heals the failure mode where a Svelte
-> component unmounts without releasing the lock (route change, crash,
-> hot-reload) and fsnotify suppression never recovers for that file. The
-> `WriteTracker` self-write cooldown is unaffected. Full detail lands with the
-> Phase 5 implementation.
+Focus Locking (TTL leases): While Svelte has focus on an active text field, the backend monitor holds a time-limited lease on that file and pauses external sync operations for it. The Svelte editor acquires the lease on focus, refreshes it on a 20s heartbeat while focused (and on every save), and releases on blur. The Go side runs a background sweeper (`monitor.DirectoryWatcher.startLeaseSweeper`) that drops expired leases every `TTL/2` (default TTL 60s), so if a component unmounts without releasing — route change, crash, hot-reload — fsnotify suppression self-heals within a minute instead of leaking forever (#38). `RefreshFocusLock` is a no-op on an already-expired lease (the editor must re-acquire), so a stale heartbeat can't resurrect suppression. On shutdown / `CloseVault`, `ReleaseAllFocus` clears every outstanding lease so a clean exit can't strand a file. The `WriteTracker` self-write cooldown is unaffected.
 
 Deterministic Diff Verification: Instead of overwriting entire files when external changes occur, Go computes a diff patch based on block IDs to preserve uncommitted cursor inputs.
 
