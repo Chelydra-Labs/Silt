@@ -89,7 +89,19 @@
     if (isFocused) return
     isFocused = true
     await tick()
-    editableEl?.focus()
+    // Initialize the contenteditable imperatively ONCE on entry. We
+    // deliberately do NOT bind {block.clean_text} inside the contenteditable:
+    // a reactive text binding there + handleInput writing clean_text back is
+    // a feedback loop — Svelte re-renders the text node on every keystroke,
+    // the browser's contenteditable DOM has diverged from Svelte's tracked
+    // node, and the re-render duplicates content (compounding per keystroke
+    // into "abcdefgabcdefabcdeabcdabcaba"). The contenteditable owns its
+    // text during focus; handleInput syncs OUT to clean_text (for save),
+    // never back in.
+    if (editableEl) {
+      editableEl.innerText = block.clean_text
+      editableEl.focus()
+    }
   }
 
   async function handleCommandSelect(commandId: string) {
@@ -486,9 +498,7 @@
         class="flex-1 focus:outline-none text-on-surface leading-relaxed whitespace-pre-wrap break-words min-h-[22px] min-w-[150px]"
         class:text-text-muted={block.status === 'DONE'}
         class:line-through={block.status === 'DONE'}
-      >
-        {block.clean_text}
-      </div>
+      ></div>
     {:else}
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div

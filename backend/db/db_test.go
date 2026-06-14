@@ -1257,3 +1257,58 @@ func firstID(rs []parser.TaskResult) string {
 	return rs[0].ID
 }
 
+// TestBuildFTSQuery_PreservesUnicode verifies the MATCH-query builder keeps
+// Unicode word characters (CJK, accented Latin) so non-English search works
+// against the unicode61-tokenized index. The previous ASCII-only filter
+// stripped them, silently returning zero results for "café" / "中文".
+func TestBuildFTSQuery_PreservesUnicode(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"café", "café*"},
+		{"über road", "über* road*"},
+		{"中文 笔记", "中文* 笔记*"},
+		{"кирриллица", "кирриллица*"},
+		// FTS5 query-syntax chars (ASCII punctuation) are still stripped.
+		{`"inject" OR (*)`, "inject* OR*"},
+		// <2-char noise dropped; FTS5 syntax stripped even when ASCII.
+		{"a * b", ""}, // "a" too short, "*" all-stripped, "b" too short
+	}
+	for _, c := range cases {
+		got := buildFTSQuery(c.in)
+		if got != c.want {
+			t.Errorf("buildFTSQuery(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestSearch_UnicodeContentMatches exercises the end-to-end path for the
+// scripts the default unicode61 tokenizer handles as whole words: accented
+// Latin (é is part of the word, tokenized as one token). This is exactly the
+// case the old ASCII-only buildFTSQuery broke ("café" → "caf").
+//
+// NOTE: multi-character CJK search (e.g. "会議") needs a trigram/ICU
+// tokenizer — unicode61 has no CJK word-segmentation dictionary and splits
+// CJK into single-character tokens, so a 2-char query finds nothing. The
+// buildFTSQuery fix preserves CJK in the query string (covered by
+// TestBuildFTSQuery_PreservesUnicode); end-to-end CJK search is tracked as a
+// follow-up tokenizer change, not a regression here.
+func TestSearch_UnicodeContentMatches(t *testing.T) {
+	dm := newTestDB(t)
+	b := parser.ParsedBlock{
+		ID: "ffffffff-1111-1111-1111-111111111111", Type: parser.BlockNote,
+		CleanText: "résumé review for the café launch", LineNumber: 1,
+	}
+	if err := dm.IndexFileBlocks("NB", "", "PG", "2026-06-14", []parser.ParsedBlock{b}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// accented-Latin term that the old filter would have stripped to "caf"/"resum".
+	res, err := dm.SearchBlocksPaged("café", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if res.Total != 1 {
+		t.Errorf("expected the accented-Latin block to match the accented query; got total=%d (old ASCII filter would have returned 0)", res.Total)
+	}
+}
+

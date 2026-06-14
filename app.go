@@ -111,22 +111,67 @@ func (a *App) shutdown(ctx context.Context) {
 	// down the DB, tracker, and watcher. Without this a fast window
 	// close could race an in-progress file write.
 	a.wg.Wait()
+	// Share the exact teardown path with CloseVault so both nil every
+	// service field. Nilling here matters: if a "change vault" IPC lands
+	// during OS-driven close (race), CloseVault's nothing-to-close guard
+	// sees the nil'd fields and becomes a no-op instead of double-closing
+	// already-closed handles.
+	a.teardownVaultServices()
+}
 
+// teardownVaultServices closes and nils every vault-scoped service in the
+// reverse order of initializeVaultServices. Shared by shutdown (app exit)
+// and CloseVault (workspace switch) so the two paths can't drift. Safe to
+// call when services are already nil (each close is guarded).
+func (a *App) teardownVaultServices() {
 	if a.watcher != nil {
 		// Drop every focus lease before tearing the watcher down so a clean
 		// exit can't strand a file under fsnotify suppression (#38).
 		a.watcher.ReleaseAllFocus()
 		_ = a.watcher.Close()
+		a.watcher = nil
 	}
 	if a.configWatcher != nil {
 		_ = a.configWatcher.Close()
+		a.configWatcher = nil
 	}
 	if a.tracker != nil {
 		a.tracker.Stop()
+		a.tracker = nil
 	}
+	// Close the read-only plugin handle too (it points at the closing index).
+	a.pluginRODBMu.Lock()
+	if a.pluginRODB != nil {
+		_ = a.pluginRODB.Close()
+		a.pluginRODB = nil
+	}
+	a.pluginRODBMu.Unlock()
 	if a.db != nil {
+		// Close runs PRAGMA wal_checkpoint(TRUNCATE) so the WAL is merged
+		// into the main index file on a clean close (#29).
 		_ = a.db.Close()
+		a.db = nil
 	}
+	a.coordinator = nil
+	a.vaultPath = ""
+}
+
+// CloseVault tears down the active vault's services in the reverse order of
+// initializeVaultServices (via the shared teardownVaultServices helper).
+// After it returns, IsVaultInitialized is false so the UI re-shows the
+// onboarding screen. It does NOT clear the saved settings.json path — the
+// user can re-open the same vault via InitializeVault / a new selection.
+// Idempotent: safe to call when no vault is open. Waits on any in-flight
+// Wails-bound calls (a.wg) so a close can't race an in-progress write.
+func (a *App) CloseVault() error {
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	if a.vaultPath == "" && a.db == nil {
+		return nil // nothing to close
+	}
+	a.teardownVaultServices()
+	return nil
 }
 
 func (a *App) initializeVaultServices(vaultPath string) error {
@@ -195,6 +240,10 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		changed = append(changed, res)
 	}
 
+	// indexedCount = files that passed metadata validation and were actually
+	// written to the index (NOT len(changed); errored/unresolvable files in
+	// `changed` are reported in `skipped` and excluded from this count). Used
+	// below to decide whether a post-index WAL checkpoint is worth running.
 	indexedCount, skipped, err := dbMgr.IndexScanResults(changed)
 	if err != nil {
 		_ = dbMgr.Close()
@@ -297,54 +346,6 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 // IsVaultInitialized returns whether a workspace vault has been configured and loaded.
 func (a *App) IsVaultInitialized() bool {
 	return a.vaultPath != "" && a.db != nil
-}
-
-// CloseVault tears down the active vault's services in the reverse order of
-// initializeVaultServices: release all focus leases, close the watcher, stop
-// the write tracker, stop the config watcher, and close (with a WAL
-// checkpoint) the on-disk index. After it returns, IsVaultInitialized is
-// false so the UI re-shows the onboarding screen. It does NOT clear the
-// saved settings.json path — the user can re-open the same vault via
-// InitializeVault / a new selection. Idempotent: safe to call when no vault
-// is open. Waits on any in-flight Wails-bound calls (a.wg) so a close can't
-// race an in-progress write.
-func (a *App) CloseVault() error {
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	if a.vaultPath == "" && a.db == nil {
-		return nil // nothing to close
-	}
-
-	if a.watcher != nil {
-		a.watcher.ReleaseAllFocus()
-		_ = a.watcher.Close()
-		a.watcher = nil
-	}
-	if a.configWatcher != nil {
-		_ = a.configWatcher.Close()
-		a.configWatcher = nil
-	}
-	if a.tracker != nil {
-		a.tracker.Stop()
-		a.tracker = nil
-	}
-	// Close the read-only plugin handle too (it points at the closing index).
-	a.pluginRODBMu.Lock()
-	if a.pluginRODB != nil {
-		_ = a.pluginRODB.Close()
-		a.pluginRODB = nil
-	}
-	a.pluginRODBMu.Unlock()
-	if a.db != nil {
-		// Close runs PRAGMA wal_checkpoint(TRUNCATE) so the WAL is merged
-		// into the main index file on a clean close (#29).
-		_ = a.db.Close()
-		a.db = nil
-	}
-	a.coordinator = nil
-	a.vaultPath = ""
-	return nil
 }
 
 // GetAppVersion returns the Silt version (embedded from the VERSION file at

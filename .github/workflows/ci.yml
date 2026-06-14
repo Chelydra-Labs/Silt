@@ -39,10 +39,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Wails CLI
-        # wails generate module reflects the Go App signatures into JS. The
-        # version is pinned to wails.json so generated output matches what
-        # developers produce locally.
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+        # wails generate module reflects the Go App signatures into JS.
+        # Derive the CLI version from go.mod so CI always matches the
+        # library the project actually builds against (a hardcoded pin here
+        # would silently drift the moment go.mod bumps wails).
+        run: |
+          WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
+          go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
 
       - name: Install frontend dependencies
         working-directory: frontend

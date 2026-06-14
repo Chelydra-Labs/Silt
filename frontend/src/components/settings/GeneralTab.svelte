@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { settings, saveConfig, reloadFromBackend } from '../../settings/store.svelte'
+  import { untrack } from 'svelte'
+  import {
+    settings,
+    saveConfig,
+    reloadFromBackend
+  } from '../../settings/store.svelte'
   import type { SystemConfig } from '../../settings/store.svelte'
   import { parseHotkey } from '../../settings/hotkeys'
 
@@ -21,10 +26,19 @@
 
   // Sync the draft whenever the store config changes and the user has no
   // unsaved local edits (avoid clobbering in-progress edits).
+  //
+  // The guard reads `draft` and `settings.dirty`, but this effect ALSO writes
+  // `draft`/`lastSaved`. If those reads were tracked, the write would re-trigger
+  // the effect → infinite loop → the modal freezes for ~10-20s (and may never
+  // recover). `untrack` lets us read the guard state WITHOUT subscribing to it,
+  // so the effect depends ONLY on `settings.config` (the real external trigger)
+  // and the write doesn't loop back into itself.
   $effect(() => {
     const cfg = settings.config
     if (!cfg) return
-    if (draft && settings.dirty) return // keep local edits
+    const hasDraft = untrack(() => draft)
+    const dirty = untrack(() => settings.dirty)
+    if (hasDraft && dirty) return // keep local edits
     draft = deepClone(cfg)
     lastSaved = deepClone(cfg)
   })
@@ -48,11 +62,15 @@
       draft.editor.tab_indent_spaces > 0 &&
       draft.editor.line_height > 0 &&
       draft.editor.auto_save_delay_ms >= 0 &&
-      Object.values(draft.hotkeys).every((h) => h.trim() === '' || parseHotkey(h) !== null)
+      Object.values(draft.hotkeys).every(
+        (h) => h.trim() === '' || parseHotkey(h) !== null
+      )
   )
 
   let hotkeyEntries = $derived(
-    draft ? Object.entries(draft.hotkeys).sort((a, b) => a[0].localeCompare(b[0])) : []
+    draft
+      ? Object.entries(draft.hotkeys).sort((a, b) => a[0].localeCompare(b[0]))
+      : []
   )
 
   async function handleSave() {
@@ -73,9 +91,7 @@
   }
 
   function prettyLabel(key: string): string {
-    return key
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, (c) => c.toUpperCase())
+    return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
   }
 </script>
 
@@ -85,13 +101,18 @@
   <div class="p-6 space-y-8 max-w-2xl">
     <!-- External update notice (unsaved edits preserved, not clobbered) -->
     {#if settings.pendingExternal}
-      <div class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-[12px] font-body-md">
+      <div
+        class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-[12px] font-body-md"
+      >
         <span class="material-symbols-outlined text-[18px]">sync</span>
         <span class="flex-1">
           Settings were updated externally. Your unsaved edits are preserved.
         </span>
         <button
-          onclick={async () => { settings.dirty = false; await reloadFromBackend() }}
+          onclick={async () => {
+            settings.dirty = false
+            await reloadFromBackend()
+          }}
           class="font-label-sm-bold underline hover:brightness-110 bg-transparent border-none cursor-pointer text-accent-primary-start"
         >
           Reload
@@ -100,12 +121,20 @@
     {/if}
     <!-- Vault path -->
     <section>
-      <h3 class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3">
+      <h3
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      >
         Workspace
       </h3>
-      <div class="flex items-center gap-2 bg-bg-surface border border-border-muted rounded-lg px-3 py-2.5">
-        <span class="material-symbols-outlined text-text-muted text-[18px]">folder</span>
-        <span class="text-text-primary text-[13px] font-body-md truncate flex-1">
+      <div
+        class="flex items-center gap-2 bg-bg-surface border border-border-muted rounded-lg px-3 py-2.5"
+      >
+        <span class="material-symbols-outlined text-text-muted text-[18px]"
+          >folder</span
+        >
+        <span
+          class="text-text-primary text-[13px] font-body-md truncate flex-1"
+        >
           {draft.notebooks.path || '—'}
         </span>
       </div>
@@ -116,12 +145,16 @@
 
     <!-- Editor defaults -->
     <section>
-      <h3 class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3">
+      <h3
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      >
         Editor
       </h3>
       <div class="grid grid-cols-2 gap-4">
         <label class="flex flex-col gap-1.5">
-          <span class="text-text-muted text-[11px] font-label-sm-bold">Font family</span>
+          <span class="text-text-muted text-[11px] font-label-sm-bold"
+            >Font family</span
+          >
           <input
             bind:value={draft.editor.font_family}
             oninput={touch}
@@ -130,7 +163,9 @@
           />
         </label>
         <label class="flex flex-col gap-1.5">
-          <span class="text-text-muted text-[11px] font-label-sm-bold">Monospace font</span>
+          <span class="text-text-muted text-[11px] font-label-sm-bold"
+            >Monospace font</span
+          >
           <input
             bind:value={draft.editor.mono_font_family}
             oninput={touch}
@@ -139,7 +174,9 @@
           />
         </label>
         <label class="flex flex-col gap-1.5">
-          <span class="text-text-muted text-[11px] font-label-sm-bold">Font size (px)</span>
+          <span class="text-text-muted text-[11px] font-label-sm-bold"
+            >Font size (px)</span
+          >
           <input
             bind:value={draft.editor.font_size_px}
             oninput={touch}
@@ -150,7 +187,9 @@
           />
         </label>
         <label class="flex flex-col gap-1.5">
-          <span class="text-text-muted text-[11px] font-label-sm-bold">Line height</span>
+          <span class="text-text-muted text-[11px] font-label-sm-bold"
+            >Line height</span
+          >
           <input
             bind:value={draft.editor.line_height}
             oninput={touch}
@@ -162,7 +201,9 @@
           />
         </label>
         <label class="flex flex-col gap-1.5">
-          <span class="text-text-muted text-[11px] font-label-sm-bold">Tab width (spaces)</span>
+          <span class="text-text-muted text-[11px] font-label-sm-bold"
+            >Tab width (spaces)</span
+          >
           <input
             bind:value={draft.editor.tab_indent_spaces}
             oninput={touch}
@@ -173,7 +214,9 @@
           />
         </label>
         <label class="flex flex-col gap-1.5">
-          <span class="text-text-muted text-[11px] font-label-sm-bold">Auto-save delay (ms)</span>
+          <span class="text-text-muted text-[11px] font-label-sm-bold"
+            >Auto-save delay (ms)</span
+          >
           <input
             bind:value={draft.editor.auto_save_delay_ms}
             oninput={touch}
@@ -199,7 +242,9 @@
 
     <!-- Hotkeys -->
     <section>
-      <h3 class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3">
+      <h3
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      >
         Hotkeys
       </h3>
       <div class="space-y-2">
@@ -210,11 +255,13 @@
         {:else}
           {#each hotkeyEntries as [key, value] (key)}
             <label class="flex items-center gap-3">
-              <span class="text-text-muted text-[12px] font-label-sm w-48 truncate">
+              <span
+                class="text-text-muted text-[12px] font-label-sm w-48 truncate"
+              >
                 {prettyLabel(key)}
               </span>
               <input
-                value={value}
+                {value}
                 oninput={(e) => {
                   draft!.hotkeys[key] = e.currentTarget.value
                   touch()
@@ -230,14 +277,18 @@
 
     <!-- Error banner -->
     {#if settings.error}
-      <div class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md">
+      <div
+        class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md"
+      >
         <span class="material-symbols-outlined text-[18px]">error</span>
         <span class="flex-1">{settings.error}</span>
       </div>
     {/if}
 
     <!-- Actions -->
-    <div class="flex items-center justify-end gap-2 pt-2 border-t border-border-muted">
+    <div
+      class="flex items-center justify-end gap-2 pt-2 border-t border-border-muted"
+    >
       <button
         onclick={handleRevert}
         disabled={!changed()}

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"silt/backend/parser"
 
@@ -1140,15 +1141,21 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 const searchMaxPerGroup = 3
 
 // buildFTSQuery turns a free-text user query into a safe FTS5 MATCH
-// expression. It strips FTS5 query-syntax characters (", *, (, ), ^, :, -),
-// drops sub-2-char noise, and appends a `*` prefix-glob to each surviving term
-// so "sprint" matches "sprinting" (closer to the old LIKE %term% feel than
-// bare-token exact matching). Terms are space-joined → FTS5 implicit AND.
+// expression. The index uses tokenize='unicode61', so non-ASCII content
+// (CJK, accented Latin, Cyrillic, …) IS tokenized and searchable — the query
+// builder must not strip those code points. We keep Unicode letters and
+// digits (covering every script unicode61 would treat as word characters)
+// and drop everything else, which removes ALL FTS5 query-syntax characters
+// (`"`, `*`, `(`, `)`, `:`, `^`, `-` are ASCII punctuation, never letters or
+// digits). Each surviving term gets a trailing `*` for prefix matching
+// (closer to the old LIKE %term% feel than bare-token exact matching). Terms
+// are space-joined → FTS5 implicit AND. Returns "" when no usable terms
+// survive, which the caller treats as "no search".
 func buildFTSQuery(query string) string {
 	var parts []string
 	for _, w := range strings.Fields(query) {
 		clean := strings.Map(func(r rune) rune {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
 				return r
 			}
 			return -1
