@@ -8,6 +8,8 @@
   import CommandPalette from './CommandPalette.svelte'
   import RichText from './RichText.svelte'
   import BlockPickerModal from './BlockPickerModal.svelte'
+  import { settings } from '../settings/store.svelte'
+  import { matchHotkey } from '../settings/hotkeys'
 
   interface Block {
     id: string
@@ -120,6 +122,10 @@
   // Determine if a guide rail at depth `d` (0-indexed) is active
   let activeGuides = $derived.by(() => {
     const guides = Array(block.depth).fill(false)
+    // Respect the editor.focus_highlight_ancestors config: when explicitly
+    // disabled, guide rails still render (they show indentation depth) but
+    // never light up with the active highlight gradient.
+    if (settings.config?.editor?.focus_highlight_ancestors === false) return guides
     if (activeFocusedBlockAncestors.length === 0) return guides
 
     // Trace parent chain for this block
@@ -174,15 +180,22 @@
     }
   }
 
-  // Trigger auto-save with 500ms debounce
+  // Trigger auto-save with a config-driven debounce (editor.auto_save_delay_ms).
+  // A floor of 50ms is enforced even when the user configures 0: each save
+  // performs an atomic file write (temp + fsync + rename) and triggers a
+  // re-index, so per-keystroke saves would thrash the disk. 50ms is
+  // imperceptible to the user but coalesces rapid typing into one write.
+  // The value is read fresh on every call so config changes apply live.
   function triggerAutoSave(blocksToSave = siblings) {
     if (saveTimeout) {
       clearTimeout(saveTimeout)
+      saveTimeout = null
     }
+    const delay = Math.max(settings.config?.editor?.auto_save_delay_ms ?? 500, 50)
     saveTimeout = setTimeout(() => {
       saveBlocksDirectly(blocksToSave)
       saveTimeout = null
-    }, 500)
+    }, delay)
   }
 
   async function saveBlocksDirectly(blocksToSave = siblings) {
@@ -231,10 +244,15 @@
       showSlashMenu = false
       return
     }
-    if (e.key === 'Tab') {
+    // Config-driven indent / unindent hotkeys. Default bindings are Tab /
+    // Shift+Tab, but the user can remap or disable them from Settings → General.
+    const hk = settings.config?.hotkeys ?? {}
+    const isIndent = matchHotkey(e, hk.indent_block)
+    const isUnindent = matchHotkey(e, hk.unindent_block)
+    if (isIndent || isUnindent) {
       e.preventDefault()
-      if (e.shiftKey) {
-        // Shift+Tab: Unindent
+      if (isUnindent) {
+        // Unindent
         if (block.depth > 0) {
           const updated = getUpdatedParentIDs(
             siblings.map((b, idx) =>
@@ -245,8 +263,7 @@
           onUpdate(updated)
         }
       } else {
-        // Tab: Indent
-        // Max indent is previous sibling's depth + 1
+        // Indent — max indent is previous sibling's depth + 1
         let maxDepth = 0
         if (blockIndex > 0) {
           maxDepth = siblings[blockIndex - 1].depth + 1
@@ -456,7 +473,8 @@
         onblur={handleBlur}
         onkeydown={handleKeyDown}
         oninput={handleInput}
-        class="flex-1 focus:outline-none text-on-surface leading-relaxed whitespace-pre-wrap break-words min-h-[22px] min-w-[150px]"
+        class="flex-1 focus:outline-none text-on-surface whitespace-pre-wrap break-words min-h-[22px] min-w-[150px]"
+        style="font-family: var(--editor-font-family); font-size: var(--editor-font-size); line-height: var(--editor-line-height);"
         class:text-text-muted={block.status === 'DONE'}
         class:line-through={block.status === 'DONE'}
       >
@@ -470,7 +488,8 @@
         tabindex="0"
         onfocus={beginEdit}
         onclick={beginEdit}
-        class="flex-1 text-on-surface leading-relaxed whitespace-pre-wrap break-words min-h-[22px] min-w-[150px] cursor-text rounded"
+        class="flex-1 text-on-surface whitespace-pre-wrap break-words min-h-[22px] min-w-[150px] cursor-text rounded"
+        style="font-family: var(--editor-font-family); font-size: var(--editor-font-size); line-height: var(--editor-line-height);"
         class:text-text-muted={block.status === 'DONE'}
         class:line-through={block.status === 'DONE'}
       >

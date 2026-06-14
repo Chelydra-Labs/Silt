@@ -15,6 +15,7 @@
   import SettingsShell from './components/settings/SettingsShell.svelte'
   import { loadPlugins } from './plugins/loader'
   import { initConfigHotReload, loadConfig, settings } from './settings/store.svelte'
+  import { initEditorTokens } from './settings/editor-tokens.svelte'
   import { matchHotkey } from './settings/hotkeys'
   import logo from './assets/logo.svg'
 
@@ -59,6 +60,11 @@
     // Subscribe to config hot-reload (config:changed from Go) so the settings
     // store refreshes on external edits to .system/config.yaml.
     initConfigHotReload()
+    // Inject editor typography CSS variables from config and re-inject on
+    // hot-reload. Uses $effect.root to watch the reactive settings store.
+    // The returned disposer is called on unmount to prevent duplicate root
+    // effects during dev hot-reload.
+    const disposeEditorTokens = initEditorTokens()
     // Eagerly load the config so config-driven global shortcuts (open_search,
     // toggle_sidebar) work from startup, not only after Settings is opened.
     loadConfig().catch((e) => console.error('Startup config load failed:', e))
@@ -71,7 +77,9 @@
       // Config-driven global shortcuts. Read live from the settings store so
       // edits made in Settings → General take effect after Save (no rebind
       // needed — the store is a reactive proxy read at event time). Editor-
-      // internal shortcuts (indent/cycle-view) are consumed by the editor.
+      // internal shortcuts (indent/unindent) are consumed by the editor's
+      // own keydown handler; cycle_view_layout is global (it changes the
+      // main view, not anything inside the contenteditable).
       const hotkeys = settings.config?.hotkeys ?? {}
       if (matchHotkey(e, hotkeys.open_search)) {
         e.preventDefault()
@@ -80,6 +88,10 @@
       if (matchHotkey(e, hotkeys.toggle_sidebar)) {
         e.preventDefault()
         sidebarCollapsed = !sidebarCollapsed
+      }
+      if (matchHotkey(e, hotkeys.cycle_view_layout)) {
+        e.preventDefault()
+        cycleView()
       }
     }
 
@@ -136,6 +148,7 @@
       window.removeEventListener('open-plugin-manager', handleOpenPluginManager)
       window.removeEventListener('open-settings', handleOpenSettings)
       offPluginsChanged()
+      disposeEditorTokens()
     }
   })
 
@@ -194,6 +207,19 @@
   function openSettings(tab?: string) {
     settingsTab = tab || 'general'
     showSettings = true
+  }
+
+  // Ordered view cycle for the cycle_view_layout hotkey (default Alt+Tab).
+  // If the current view is not in the list (e.g. a plugin view), jump to
+  // 'notes' as the anchor.
+  const VIEW_CYCLE = ['notes', 'tags', 'agenda', 'calendar', 'kanban'] as const
+  function cycleView() {
+    const idx = VIEW_CYCLE.indexOf(activeView as (typeof VIEW_CYCLE)[number])
+    if (idx === -1) {
+      activeView = 'notes'
+    } else {
+      activeView = VIEW_CYCLE[(idx + 1) % VIEW_CYCLE.length]
+    }
   }
 </script>
 

@@ -139,3 +139,29 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` (frontend, sve
 - The Appearance tab is a placeholder; wiring the theme picker + dark/light mode toggle into Settings is tracked in #47 (Sprint 6). The theme engine core landed in Sprint 5 (#43–#46), and Sprint 10 code uses its canonical semantic accent tokens.
 - Per-plugin settings in the detail panel are read-only; an editing UI is future work.
 - Community plugin marketplace/registry browsing is out of scope (separate future issue).
+
+---
+
+# #72 — Apply editor.* config + editor-internal hotkeys to the live editor
+
+## Automated Tests
+
+Run with: `npm run check` (frontend, svelte-check) and `go test -race -count=1 ./...` (Go, regression only — this is a frontend-only change).
+
+### Frontend
+
+`npm run check` reports **0 errors**. New module `settings/editor-tokens.svelte.ts` type-checks against the generated `config.EditorConfig` model. Updated components (`BlockRenderer.svelte`, `App.svelte`) pass with no new errors or warnings.
+
+### Go
+
+All existing Go tests pass unchanged (`go test -race -count=1 ./...`) — no backend changes in this PR.
+
+## Manual Verification Matrix (`wails dev`)
+
+1. **Editor typography (font_family / mono_font_family / font_size_px / line_height):** Open Settings → General → change font family to `Inter`, font size to `16`, line height to `1.8` → Save → editor text and shell body text immediately re-render at the new proportional font/size/line-height (no restart). `mono_font_family` drives `.font-label-sm` labels and badges. Inspect `document.documentElement` computed `--editor-font-size` → `16px`.
+2. **Auto-save delay:** Change `auto_save_delay_ms` to `2000` → type in a block → verify the save fires ~2s after the last keystroke (check backend log / file mtime). Set to `0` → saves are debounced at a 50ms floor (prevents per-keystroke disk thrashing while remaining effectively immediate).
+3. **Indent / unindent hotkeys:** Defaults (Tab / Shift+Tab) indent/outdent as before. Remap `indent_block` to `Ctrl+]` and `unindent_block` to `Ctrl+[` → Save → Tab no longer indents but Ctrl+] does.
+4. **cycle_view_layout:** Press `Alt+Tab` (default) → the main view cycles notes → tags → agenda → calendar → kanban → notes.
+5. **focus_highlight_ancestors:** Uncheck the checkbox → Save → focus a nested block → guide rails still render (showing indentation) but never light up with the active highlight gradient.
+6. **Hot-reload:** With Settings closed, edit `.system/config.yaml` externally (change `font_size_px`) → editor re-renders at the new size without restart (the `$effect.root` in `initEditorTokens` re-injects CSS variables from the updated store).
+7. **Disabled hotkeys:** Set `indent_block` to `""` (empty) in config.yaml → Tab falls through to the browser default (moves focus, does not indent).
