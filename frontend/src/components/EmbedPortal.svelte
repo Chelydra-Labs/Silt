@@ -149,15 +149,16 @@
   </span>
 {:else}
   <div
-    class="my-1 border border-accent-teal-start/30 bg-accent-teal-glow/40 rounded-lg p-2 pl-3 relative"
+    class="my-1 border border-accent-primary-start/30 bg-accent-primary-glow/40 rounded-lg p-2 pl-3 relative"
   >
     <div
-      class="absolute left-0 top-0 bottom-0 w-[2px] bg-accent-teal-start/40 rounded-l"
+      class="absolute left-0 top-0 bottom-0 w-[2px] bg-accent-primary-start/40 rounded-l"
     ></div>
     <div
       class="flex items-center gap-1 text-[9px] uppercase tracking-widest font-label-sm-bold text-text-muted mb-1"
     >
-      <span class="material-symbols-outlined text-[10px] text-accent-teal-start"
+      <span
+        class="material-symbols-outlined text-[10px] text-accent-primary-start"
         >clone</span
       >
       embed · {ref.notebook} › {ref.section} › {ref.page}

@@ -99,7 +99,7 @@
       />
       {#if loading}
         <span
-          class="material-symbols-outlined text-accent-teal-start animate-spin text-[20px]"
+          class="material-symbols-outlined text-accent-primary-start animate-spin text-[20px]"
           >sync</span
         >
       {/if}
@@ -118,7 +118,7 @@
           <button
             onclick={() => pick(res)}
             class="w-full px-5 py-3 border-none flex flex-col gap-1 text-left cursor-pointer transition-colors focus:outline-none"
-            class:bg-accent-teal-glow={idx === selectedIdx}
+            class:bg-accent-primary-glow={idx === selectedIdx}
           >
             <div
               class="flex items-center gap-1.5 text-[10px] text-text-muted uppercase tracking-widest font-label-sm-bold"

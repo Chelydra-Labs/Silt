@@ -136,7 +136,7 @@
     style="backdrop-filter: blur(16px) saturate(140%); background: rgba(22, 22, 25, 0.94);"
   >
     <div class="px-5 py-4 border-b border-border-muted flex items-center gap-2">
-      <span class="material-symbols-outlined text-accent-teal-start"
+      <span class="material-symbols-outlined text-accent-primary-start"
         >extension</span
       >
       <h2 class="font-headline-md text-headline-md text-text-primary">
@@ -149,7 +149,7 @@
       <div class="px-5 py-4 border-b border-border-muted">
         <button
           onclick={chooseArchive}
-          class="bg-accent-teal-glow border border-accent-teal-start/30 text-accent-teal-start font-label-sm-bold px-3 py-2 rounded flex items-center gap-2 hover:brightness-110 hover:border-accent-teal-start transition-all cursor-pointer"
+          class="bg-accent-primary-glow border border-accent-primary-start/30 text-accent-primary-start font-label-sm-bold px-3 py-2 rounded flex items-center gap-2 hover:brightness-110 hover:border-accent-primary-start transition-all cursor-pointer"
         >
           <span class="material-symbols-outlined text-[18px]"
             >file_download</span
@@ -184,7 +184,7 @@
             <button
               onclick={confirmInstall}
               disabled={installing}
-              class="bg-accent-teal-start/20 border border-accent-teal-start/40 text-accent-teal-start font-label-sm-bold px-3 py-1.5 rounded hover:brightness-110 transition-all cursor-pointer disabled:opacity-50"
+              class="bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold px-3 py-1.5 rounded hover:brightness-110 transition-all cursor-pointer disabled:opacity-50"
             >
               {installing ? 'Installing…' : 'Install'}
             </button>
@@ -235,7 +235,7 @@
               <button
                 onclick={() => toggle(p.id, p.disabled)}
                 title={p.disabled ? 'Enable' : 'Disable'}
-                class="text-text-muted hover:text-accent-teal-start border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
+                class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
               >
                 <span class="material-symbols-outlined text-[18px]"
                   >{p.disabled ? 'toggle_off' : 'toggle_on'}</span

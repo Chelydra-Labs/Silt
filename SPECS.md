@@ -307,28 +307,32 @@ Transforms the active block into a first-level markdown header (# ).
 
 To prevent styling stagnation, Silt provides a built-in user theme engine mapping to CSS Custom Properties.
 
-Theme Files: Parsed dynamically from JSON files inside Notebooks/.system/themes/.
+Theme Files: Parsed dynamically from canonical modes-based JSON files inside `<vault>/.system/themes/`. Each theme carries a `schema_version`, `id`, `name`, and a `modes.dark` / `modes.light` token set (bg, border, text, accent.primary / accent.secondary × start/end/glow, status). Accent tokens are hue-agnostic and semantic: components reference only `--accent-primary-*` / `--accent-secondary-*`, and each theme maps its concrete hues onto them.
 
-Mechanism: Upon initialization, the Go backend reads the configured active theme file, serializes key-value mappings to a Svelte configuration state, and CSS variables are dynamically generated and injected into a global :root style block.
+Default Theme: A canonical default theme (`cyber_forest`) is embedded in the Go binary (`backend/themes`, via `embed.FS`) so the app always has a guaranteed-correct fallback — it works before a vault exists, when the themes directory is empty/wiped, and when the active theme id is missing or invalid.
 
-Schema Example (cyber_forest.json):
+Mechanism: On startup the Go backend reads the active theme + mode from `AppSettings`, resolves the theme file (falling back to the embedded default), and exposes it over the Wails IPC bridge (`ListThemes` / `GetActiveTheme` / `ApplyTheme`). A Svelte theme store receives the flattened token map and injects every token as a CSS custom property on `document.documentElement` by rewriting a single generated `:root { … }` style block — one DOM write, one recalc, same-tick repaint, no flicker. The `index.css :root` values are retained as startup fallbacks only, overridden once the IPC round-trip completes. The native webview `BackgroundColour` is resolved at launch from the embedded default theme's `bg.void` so there is no pre-CSS flash.
+
+Schema Example (cyber_forest.json, dark mode shown):
 
 {
+  "schema_version": "1.0.0",
+  "id": "cyber_forest",
   "name": "Cyber Forest",
   "author": "System Designer",
-  "colors": {
-    "bg-void": "#080b09",
-    "bg-surface": "#0d1310",
-    "bg-panel": "#121b16",
-    "bg-hover": "#1a2620",
-    "border-zinc": "#22332a",
-    "border-active": "#3d5c4b",
-    "text-primary": "#e2ebd5",
-    "text-muted": "#6a8274",
-    "color-teal-start": "#2dd4bf",
-    "color-teal-end": "#0d9488",
-    "color-indigo-start": "#4ade80",
-    "color-indigo-end": "#22c55e"
+  "description": "...",
+  "modes": {
+    "dark": {
+      "bg": { "void": "#0c0c0e", "surface": "#121215", "panel": "#161619", "hover": "#1c1c21", "active": "#222226" },
+      "border": { "muted": "#1e1e23", "zinc": "#27272a", "active": "#3f3f46", "focus": "#52525b" },
+      "text": { "primary": "#dee3e6", "muted": "#71717a", "disabled": "#4b5563" },
+      "accent": {
+        "primary": { "start": "#2dd4bf", "end": "#0d9488", "glow": "rgba(20, 184, 166, 0.15)" },
+        "secondary": { "start": "#6366f1", "end": "#a855f7", "glow": "rgba(168, 85, 247, 0.12)" }
+      },
+      "status": { "warn": "#fbbf24", "danger": "#f43f5e" }
+    },
+    "light": { "..." : "..." }
   }
 }
 

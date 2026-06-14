@@ -10,7 +10,8 @@
 
 <div class="flex-1 p-8 flex flex-col select-none">
   <div class="flex items-center gap-3 mb-3">
-    <span class="material-symbols-outlined text-accent-teal-start text-[28px]"
+    <span
+      class="material-symbols-outlined text-accent-primary-start text-[28px]"
       >extension</span
     >
     <div>

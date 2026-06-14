@@ -28,13 +28,13 @@
 <div style="padding-left: {depth * 14}px">
   <div
     class="group flex items-center gap-1 px-2 py-1 rounded transition-colors"
-    class:bg-accent-teal-glow={isActive}
+    class:bg-accent-primary-glow={isActive}
   >
     {#if node.children.length > 0}
       <button
         onclick={() => onToggle(node.path)}
         aria-label={isOpen ? 'Collapse' : 'Expand'}
-        class="text-text-muted hover:text-accent-teal-start border-none bg-transparent cursor-pointer p-0 w-4 flex-shrink-0"
+        class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0 w-4 flex-shrink-0"
       >
         <span
           class="material-symbols-outlined text-[14px] transition-transform inline-block"
@@ -53,12 +53,12 @@
       onclick={() => onSelect(node.path)}
       onkeydown={(e) => e.key === 'Enter' && onSelect(node.path)}
       class="flex items-center gap-1.5 flex-1 cursor-pointer rounded px-1 py-0.5 min-w-0"
-      class:text-accent-teal-start={isActive}
+      class:text-accent-primary-start={isActive}
       class:hover:text-text-primary={!isActive}
       class:text-text-primary={!isActive}
     >
       <span
-        class="material-symbols-outlined text-[15px] text-accent-indigo-start/70"
+        class="material-symbols-outlined text-[15px] text-accent-secondary-start/70"
         >label</span
       >
       <span class="font-body-md text-[13px] truncate" title={node.name}

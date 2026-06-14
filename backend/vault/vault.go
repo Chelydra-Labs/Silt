@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"silt/backend/parser"
+	"silt/backend/themes"
 )
 
 type AppSettings struct {
@@ -134,30 +135,13 @@ plugins:
 		}
 	}
 
-	// 3. Scaffold default theme (cyber_forest.json)
-	cyberForestJSON := `{
-  "name": "Cyber Forest",
-  "author": "System Designer",
-  "colors": {
-    "bg-void": "#080b09",
-    "bg-surface": "#0d1310",
-    "bg-panel": "#121b16",
-    "bg-hover": "#1a2620",
-    "border-zinc": "#22332a",
-    "border-active": "#3d5c4b",
-    "text-primary": "#e2ebd5",
-    "text-muted": "#6a8274",
-    "color-teal-start": "#10b981",
-    "color-teal-end": "#059669",
-    "color-indigo-start": "#4ade80",
-    "color-indigo-end": "#22c55e"
-  }
-}
-`
+	// 3. Scaffold default theme (cyber_forest.json). The canonical theme
+	// content lives in backend/themes and is embedded in the binary; writing
+	// it from that single source of truth keeps the scaffolded file identical
+	// to the runtime fallback theme.
 	themePath := filepath.Join(vaultPath, ".system", "themes", "cyber_forest.json")
 	if _, err := os.Stat(themePath); os.IsNotExist(err) {
-		err = os.WriteFile(themePath, []byte(cyberForestJSON), 0644)
-		if err != nil {
+		if err := os.WriteFile(themePath, themes.DefaultThemeJSON(), 0644); err != nil {
 			return fmt.Errorf("failed to write cyber_forest.json theme: %w", err)
 		}
 	}

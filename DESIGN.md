@@ -20,9 +20,14 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
 
 2.1 Color Tokens Schema
 
+The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hue-agnostic **semantic accent tokens**. Components reference only the semantic accents (`--accent-primary-*` = the "go / done" hue, `--accent-secondary-*` = the "in progress" hue); each theme maps its concrete hues onto them. This is the single source of truth shared by the Go theme loader (`backend/themes`), the runtime CSS injector, and `cyber_forest.json`.
+
 {
-  "system": "silt-core",
-  "version": "1.0.0",
+  "schema_version": "1.0.0",
+  "id": "cyber_forest",
+  "name": "Cyber Forest",
+  "author": "System Designer",
+  "description": "...",
   "modes": {
     "dark": {
       "bg": {
@@ -39,17 +44,21 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
         "focus": "#52525b"
       },
       "text": {
-        "primary": "#e4e4e7",
+        "primary": "#dee3e6",
         "muted": "#71717a",
         "disabled": "#4b5563"
       },
       "accent": {
-        "teal-start": "#2dd4bf",
-        "teal-end": "#0d9488",
-        "teal-glow": "rgba(20, 184, 166, 0.15)",
-        "indigo-start": "#6366f1",
-        "indigo-end": "#a855f7",
-        "indigo-glow": "rgba(168, 85, 247, 0.12)"
+        "primary": {
+          "start": "#2dd4bf",
+          "end": "#0d9488",
+          "glow": "rgba(20, 184, 166, 0.15)"
+        },
+        "secondary": {
+          "start": "#6366f1",
+          "end": "#a855f7",
+          "glow": "rgba(168, 85, 247, 0.12)"
+        }
       },
       "status": {
         "warn": "#fbbf24",
@@ -76,12 +85,16 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
         "disabled": "#94a3b8"
       },
       "accent": {
-        "teal-start": "#0d9488",
-        "teal-end": "#115e59",
-        "teal-glow": "rgba(13, 148, 136, 0.10)",
-        "indigo-start": "#4f46e5",
-        "indigo-end": "#7c3aed",
-        "indigo-glow": "rgba(79, 70, 229, 0.08)"
+        "primary": {
+          "start": "#0d9488",
+          "end": "#115e59",
+          "glow": "rgba(13, 148, 136, 0.10)"
+        },
+        "secondary": {
+          "start": "#4f46e5",
+          "end": "#7c3aed",
+          "glow": "rgba(79, 70, 229, 0.08)"
+        }
       },
       "status": {
         "warn": "#d97706",
@@ -130,9 +143,9 @@ Custom checkbox rendering mimics the structural rounded-corner boundaries (rx="1
    │               │           │    │  /  │    │           │     \   /     │
    │               │           │    └─────┘    │           │      \ /      │
    └───────────────┘           └───────────────┘           └───────────────┘
-  Border: zinc-400            Border: indigo-500          Border: teal-500
-  BG: --bg-surface            BG: --bg-surface            BG: --teal-glow
-                              Inside: indigo-grad         Inside: teal-check SVG
+       Border: zinc-400            Border: indigo-500          Border: teal-500
+   BG: --bg-surface            BG: --bg-surface            BG: --accent-primary-glow
+                               Inside: secondary-grad      Inside: primary-check SVG
 
 
 Token Rules
@@ -145,21 +158,21 @@ Background: var(--bg-surface)
 
 Hover Transition: border-color 150ms ease, box-shadow 150ms ease
 
-Hover Style: Border: var(--color-teal-start), Glow: 0 0 8px var(--teal-glow)
+Hover Style: Border: var(--accent-primary-start), Glow: 0 0 8px var(--accent-primary-glow)
 
 In-Progress State (DOING):
 
-Border: linear-gradient(to bottom right, var(--color-indigo-start), var(--color-indigo-end))
+Border: linear-gradient(to bottom right, var(--accent-secondary-start), var(--accent-secondary-end))
 
 Content: Inner indicator square rotated $12^\circ$ to match the logo slant (M 28,14 L 20,50).
 
 Completed State (DONE):
 
-Border: var(--color-teal-end)
+Border: var(--accent-primary-end)
 
-Background: var(--teal-glow)
+Background: var(--accent-primary-glow)
 
-Content: SVG checkmark colored in var(--color-teal-start). Text within the block is struck through and shifted to color var(--text-disabled).
+Content: SVG checkmark colored in var(--accent-primary-start). Text within the block is struck through and shifted to color var(--text-disabled).
 
 4.2 Dynamic Guideline Guide Rails
 
@@ -173,7 +186,7 @@ To prevent visual disorientation in deeply nested lists, the vertical guidelines
 
 Standard Guide Rail: Width: $1\text{px}$ solid, offset by $-12\text{px}$ to the left of the child text node. Color: var(--border-muted).
 
-Active Ancestral Path Guide Rail: Width: $1.5\text{px}$ solid. Undergoes color-blend shift to linear-gradient(to bottom, var(--color-teal-start), var(--color-teal-end)) when a child node receives active keyboard or mouse focus.
+Active Ancestral Path Guide Rail: Width: $1.5\text{px}$ solid. Undergoes color-blend shift to linear-gradient(to bottom, var(--accent-primary-start), var(--accent-primary-end)) when a child node receives active keyboard or mouse focus.
 
 Path-Trace Duration: 250ms cubic-bezier(0.16, 1, 0.3, 1).
 
@@ -231,7 +244,7 @@ Transparent background, standard guide rails
 
 Light background highlight (var(--bg-hover)), shows line grab icon
 
-var(--bg-surface), guideline color transitions to teal
+var(--bg-surface), guideline color transitions to the primary accent
 
 N/A
 
@@ -239,7 +252,7 @@ Checklist Toggle
 
 var(--border-zinc) border
 
-var(--color-teal-start) border, subtle glow
+var(--accent-primary-start) border, subtle glow
 
 Standard glow ring
 

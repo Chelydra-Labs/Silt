@@ -92,8 +92,8 @@
       <button
         onclick={() => onSelect(cmd.id)}
         class="flex items-center gap-3 px-4 py-2 w-full text-left transition-colors font-body-md border-none focus:outline-none cursor-pointer"
-        class:bg-accent-teal-glow={idx === selectedIdx}
-        class:text-accent-teal-start={idx === selectedIdx}
+        class:bg-accent-primary-glow={idx === selectedIdx}
+        class:text-accent-primary-start={idx === selectedIdx}
         class:text-text-primary={idx !== selectedIdx}
       >
         <span class="material-symbols-outlined text-[18px] select-none"

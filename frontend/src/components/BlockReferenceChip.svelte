@@ -75,7 +75,7 @@
       onkeydown={(e) => e.key === 'Enter' && click()}
       onmouseenter={enter}
       onmouseleave={leave}
-      class="inline-flex items-center align-baseline gap-1 text-accent-teal-start hover:text-accent-teal-end underline decoration-dotted underline-offset-4 cursor-pointer mx-0.5"
+      class="inline-flex items-center align-baseline gap-1 text-accent-primary-start hover:text-accent-primary-end underline decoration-dotted underline-offset-4 cursor-pointer mx-0.5"
       title={ref.notebook + ' › ' + ref.section + ' › ' + ref.page}
     >
       <span class="material-symbols-outlined text-[0.9em]">link</span>
@@ -101,7 +101,7 @@
           <span class="material-symbols-outlined text-[10px]"
             >chevron_right</span
           >
-          <span class="text-accent-teal-start">{ref.page}</span>
+          <span class="text-accent-primary-start">{ref.page}</span>
         </div>
         <div
           class="font-body-md text-sm text-text-primary line-clamp-6 whitespace-pre-wrap"

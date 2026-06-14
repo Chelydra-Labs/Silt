@@ -222,7 +222,7 @@
   <header
     class="px-6 py-4 border-b border-border-muted flex items-center gap-3 flex-wrap"
   >
-    <span class="material-symbols-outlined text-accent-teal-start"
+    <span class="material-symbols-outlined text-accent-primary-start"
       >calendar_month</span
     >
     <h1 class="font-headline-lg text-headline-lg text-text-primary">
@@ -231,19 +231,19 @@
     <div class="flex items-center gap-1 ml-2">
       <button
         onclick={prev}
-        class="p-1.5 rounded hover:bg-bg-hover text-text-muted hover:text-accent-teal-start border-none bg-transparent cursor-pointer"
+        class="p-1.5 rounded hover:bg-bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
         aria-label="Previous"
       >
         <span class="material-symbols-outlined text-[18px]">chevron_left</span>
       </button>
       <button
         onclick={goToday}
-        class="px-2.5 py-1 rounded border border-border-muted text-text-muted hover:text-accent-teal-start hover:border-accent-teal-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
+        class="px-2.5 py-1 rounded border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
         >Today</button
       >
       <button
         onclick={next}
-        class="p-1.5 rounded hover:bg-bg-hover text-text-muted hover:text-accent-teal-start border-none bg-transparent cursor-pointer"
+        class="p-1.5 rounded hover:bg-bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
         aria-label="Next"
       >
         <span class="material-symbols-outlined text-[18px]">chevron_right</span>
@@ -256,14 +256,14 @@
         onclick={() => (mode = 'month')}
         class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
         class:bg-bg-hover={mode === 'month'}
-        class:text-accent-teal-start={mode === 'month'}
+        class:text-accent-primary-start={mode === 'month'}
         class:text-text-muted={mode !== 'month'}>Month</button
       >
       <button
         onclick={() => (mode = 'week')}
         class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
         class:bg-bg-hover={mode === 'week'}
-        class:text-accent-teal-start={mode === 'week'}
+        class:text-accent-primary-start={mode === 'week'}
         class:text-text-muted={mode !== 'week'}>Week</button
       >
     </div>
@@ -302,13 +302,13 @@
                   onCellKeydown(e, day)
                 }
               }}
-              class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 focus:outline-none focus:border-accent-teal-start focus:ring-1 focus:ring-accent-teal-start/40 {inMonth
+              class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {inMonth
                 ? 'border-border-muted bg-bg-panel'
                 : 'border-border-muted/30 bg-transparent'}"
             >
               <span
                 class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
-                class:bg-accent-teal-start={isToday}
+                class:bg-accent-primary-start={isToday}
                 class:text-bg-void={isToday}
                 class:text-text-muted={!isToday && !inMonth}
                 class:text-text-primary={!isToday && inMonth}
@@ -317,7 +317,7 @@
               {#each items.slice(0, 3) as item (item.id)}
                 <button
                   onclick={() => openItem(item)}
-                  class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-teal-glow border border-accent-teal-start/20 text-accent-teal-start hover:brightness-110 transition-all cursor-pointer"
+                  class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer"
                   title={item.clean_content}>{item.clean_content}</button
                 >
               {/each}
@@ -345,7 +345,7 @@
               </div>
               <span
                 class="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px] font-label-sm-bold mt-1"
-                class:bg-accent-teal-start={isToday}
+                class:bg-accent-primary-start={isToday}
                 class:text-bg-void={isToday}
                 class:text-text-primary={!isToday}>{day.getDate()}</span
               >
@@ -353,7 +353,7 @@
             {#each items as item (item.id)}
               <button
                 onclick={() => openItem(item)}
-                class="text-left text-[12px] px-2 py-1.5 rounded bg-bg-panel border border-border-muted hover:border-accent-teal-start/40 text-text-primary transition-all cursor-pointer"
+                class="text-left text-[12px] px-2 py-1.5 rounded bg-bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer"
                 title={item.clean_content}>{item.clean_content}</button
               >
             {/each}
