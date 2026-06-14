@@ -169,3 +169,23 @@ func loadThemeByID(themesDir, id string) (*Theme, error) {
 	}
 	return nil, fmt.Errorf("no theme with id %q in %s", id, themesDir)
 }
+
+// LoadByID is the public version of loadThemeByID: a single os.ReadDir scan
+// that returns the parsed theme for the given id (or false if absent). Used
+// by ApplyTheme to validate the requested id and obtain the theme in one
+// directory read (the previous implementation called ListThemes — which
+// reads + parses every file — and then ResolveActive — which read the
+// directory a second time — making ApplyTheme double the file system work
+// for every switch).
+func LoadByID(themesDir, id string) (*Theme, bool, error) {
+	if themesDir == "" {
+		return nil, false, nil
+	}
+	t, err := loadThemeByID(themesDir, id)
+	if err != nil {
+		// "not found" is not an error here — caller decides whether to
+		// fall back to the embedded default or reject the request.
+		return nil, false, nil
+	}
+	return t, true, nil
+}
