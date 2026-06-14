@@ -133,11 +133,13 @@ func validateTypographyField(field, value string) ValidationErrors {
 // that could break out of a CSS property declaration context. Font-family
 // values are free-form (font names, generic families like sans-serif,
 // comma-separated stacks), so the check is intentionally narrow: block
-// only the structural escape characters.
+// only the structural escape characters. Backslash is included because
+// CSS escape sequences (\3B → ;) could bypass the literal-character
+// checks and inject declaration-breaking values at CSS-parse time.
 func isValidFontFamily(s string) bool {
 	for _, c := range s {
 		switch c {
-		case ';', '{', '}', '<', '>':
+		case ';', '{', '}', '<', '>', '\\':
 			return false
 		}
 	}

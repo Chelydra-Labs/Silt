@@ -441,6 +441,9 @@ func TestIsValidFontFamily(t *testing.T) {
 		"'Inter'; body{",
 		"'Inter'} div{",
 		"'><script>",
+		// CSS escape-sequence bypass: \3B resolves to ; at CSS-parse time.
+		"'Inter'\\3B background:red;/*",
+		"'Inter'\\7D body{",
 	}
 	for _, v := range good {
 		if !isValidFontFamily(v) {
