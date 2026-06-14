@@ -36,31 +36,35 @@ types into `frontend/wailsjs/go/models.ts`. The frontend imports those
 generated files; they must match the live Go signatures or the frontend calls a
 function that does not exist (or with the wrong arg shape).
 
-**Any time you add, remove, rename, or change the signature of a Wails-bound
-method on `App`**, regenerate the bindings from the `frontend/` directory:
+`frontend/wailsjs/` is **gitignored** — it is a build artifact, never
+committed. So every developer (and CI) regenerates it locally:
 
 ```sh
 cd frontend
 npm run generate      # runs `wails generate module`
 ```
 
-Commit the regenerated `frontend/wailsjs/` files in the same commit as the Go
-change. Both the pre-push hook (`.githooks/pre-push`) and the CI workflow
-(`.github/workflows/ci.yml`) **fail** if the committed bindings are out of date
-— if you see *"Wails JS bindings are out of date"*, run `npm run generate` and
-commit the result.
+Run this after you add, remove, rename, or change the signature of a
+Wails-bound method on `App`, so your local frontend imports resolve.
+**Any time you edit Go bindings, run `npm run generate`** before the frontend
+will type-check/build against the new signatures.
+
+CI (`.github/workflows/ci.yml`) regenerates the bindings fresh on every run as
+part of the build, then runs `svelte-check` + `vite build` — that is the real
+Go↔binding consistency guarantee (if a signature changed and the frontend
+import went stale, the type-check fails the build).
 
 ## Pre-push hook
 
-`git config core.hooksPath .githooks` enables three gates on every push:
+`git config core.hooksPath .githooks` enables two gates on every push:
 
 1. **Go tests** (`go test -race -count=1 ./...`) when any `.go` file changed.
 2. **Frontend build** (`npm run build` in `frontend/`) when any `frontend/`
    file changed.
-3. **Binding-drift check** when any `.go` file changed — runs
-   `npm run generate` and fails if it would change `frontend/wailsjs/`.
 
-Documentation-only / asset-only pushes are exempt automatically.
+Documentation-only / asset-only pushes are exempt automatically. (There is no
+binding-drift gate in the hook because `frontend/wailsjs/` is gitignored and
+therefore has no committed state to compare against; CI regenerates it instead.)
 
 ## Testing
 

@@ -1,8 +1,18 @@
 name: CI
 
 # Mirrors the local .githooks/pre-push gates so PRs are gated even when a
-# contributor has not installed the hooks locally. A push that fails any of
-# these is a push that would have failed the pre-push hook.
+# contributor has not installed the hooks locally.
+#
+# Note on generated assets: both `frontend/dist/` (the vite build output) and
+# `frontend/wailsjs/` (the Go→JS binding stubs) are gitignored build artifacts.
+# They are NOT committed, so a fresh CI checkout has neither. CI regenerates
+# them in the right order before any step that consumes them:
+#   1. placeholder frontend/dist  (lets `wails generate module` compile the
+#      //go:embed all:frontend/dist directive)
+#   2. npm run generate           (writes frontend/wailsjs from live Go sigs)
+#   3. npm run build              (real vite build → real frontend/dist, and
+#                                  resolves the wailsjs imports)
+#   4. npm run check / go build / go test
 
 on:
   push:
@@ -11,68 +21,55 @@ on:
     branches: [main]
 
 jobs:
-  go:
-    name: Go (test -race)
+  build-and-test:
+    name: Build & test (Go -race + frontend check/build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: Build
-        run: go build ./...
-      - name: Test with race detector
-        run: go test -race -count=1 ./...
 
-  frontend:
-    name: Frontend (check + build)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        run: npm ci || npm install
-      - name: svelte-check
-        run: npm run check
-      - name: vite build
-        run: npm run build
 
-  binding-drift:
-    name: Wails binding freshness
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
       - name: Install Wails CLI
-        # wails generate module needs the CLI on PATH. Pin to the version in
-        # wails.json so the generated output matches what developers run.
+        # wails generate module reflects the Go App signatures into JS. The
+        # version is pinned to wails.json so generated output matches what
+        # developers produce locally.
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
-      - name: Install frontend deps
+
+      - name: Install frontend dependencies
         working-directory: frontend
-        run: npm ci || npm install
-      - name: Regenerate bindings
+        run: npm ci
+
+      - name: Placeholder frontend/dist
+        # `wails generate module` compiles main.go, whose //go:embed
+        # all:frontend/dist requires the directory to exist. Drop a minimal
+        # placeholder so generation can run before the real vite build.
+        run: |
+          mkdir -p frontend/dist
+          printf '<!doctype html><html><head><title>ci</title></head><body></body></html>' > frontend/dist/index.html
+
+      - name: Regenerate Wails bindings
         working-directory: frontend
         run: npm run generate
-      - name: Fail on drift
-        run: |
-          if [ -n "$(git status --porcelain frontend/wailsjs)" ]; then
-            echo "::error::Wails JS bindings are out of date. Run 'npm run generate' (from frontend/) and commit the result."
-            git status --porcelain frontend/wailsjs
-            exit 1
-          fi
+
+      - name: Build frontend (vite)
+        working-directory: frontend
+        run: npm run build
+
+      - name: svelte-check
+        working-directory: frontend
+        run: npm run check
+
+      - name: Build Go
+        run: go build ./...
+
+      - name: Test with race detector
+        run: go test -race -count=1 ./...
