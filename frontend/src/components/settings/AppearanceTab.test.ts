@@ -6,6 +6,7 @@
 // AppearanceTab.svelte implements.
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+import { tick } from 'svelte'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 // jest-dom matchers are registered via vitest.setup.ts (the /vitest
 // entry); no inline import needed here.
@@ -86,6 +87,9 @@ describe('AppearanceTab picker a11y (#50)', () => {
     mocks.applyTheme.mockReset()
     mocks.restoreActiveTheme.mockReset()
     mocks.injectTokens.mockReset()
+    // Each test starts with no preview-token data; the Esc test
+    // populates this for the focus-driven preview path.
+    mocks.themesState.flatTokens = {}
   })
 
   afterEach(() => {
@@ -190,5 +194,33 @@ describe('AppearanceTab picker a11y (#50)', () => {
     const [id, mode] = mocks.applyTheme.mock.calls[0]
     expect(id).toBe('cyber_forest') // mode change never changes the theme
     expect(mode).toBe('light')
+  })
+
+  it('Escape cancels an in-flight live preview and restores the active theme', async () => {
+    // Populate flatTokens so a focus-driven preview is observable: the
+    // component's previewTokens derived reads themesState.flatTokens[id]
+    // and, when non-null, the $effect injects the preview theme's tokens
+    // instead of the active theme's. Empty flatTokens short-circuits the
+    // preview to null, so we must provide data to exercise the path.
+    mocks.themesState.flatTokens = {
+      'terra-test': { dark: { '--bg-void': '#1a0f0a' }, light: { '--bg-void': '#faf6f2' } }
+    }
+    render(AppearanceTab)
+    // Let the initial mount effect (restoreActiveTheme for the null
+    // preview) flush before we start counting preview/restore calls.
+    await tick()
+
+    const terra = screen.getByRole('option', { name: /Terra Test/i })
+    // Focusing a row starts a live preview (onfocus → onRowEnter).
+    terra.focus()
+    await tick()
+    // The preview theme's dark tokens are injected in place of the active.
+    expect(mocks.injectTokens).toHaveBeenCalledWith({ '--bg-void': '#1a0f0a' })
+
+    // Escape cancels the preview (onRowKey → previewId = null).
+    await fireEvent.keyDown(terra, { key: 'Escape' })
+    await tick()
+    // The active theme is restored (the $effect's else branch).
+    expect(mocks.restoreActiveTheme).toHaveBeenCalled()
   })
 })

@@ -308,15 +308,18 @@ accessibility bug in the shipped default: `text.muted` rendered below
 the **AA 4.5:1** target that `DESIGN.md §8` already documents ("above
 4.5:1 for secondary tags"):
 
-| Token | Before | After | Ratio range (both modes) |
+| Token | Before | After | Min ratio across all 5 backgrounds (both modes) |
 |---|---|---|---|
-| `modes.dark.text.muted` | `#71717a` (3.74–4.04:1) | `#8b8b94` | 5.35–5.79:1 |
-| `modes.light.text.muted` | `#64748b` (4.34:1 on panel) | `#586478` | 5.46–5.98:1 |
+| `modes.dark.text.muted` | `#71717a` (3.74–4.04:1) | `#8b8b94` | 4.69:1 (`bg.active`, the lightest dark bg) |
+| `modes.light.text.muted` | `#64748b` (4.03:1 on `bg.active`) | `#4d5667` | 4.98:1 (`bg.active`) |
 
+The assertion matrix covers **all five** backgrounds (`void`/`surface`/
+`panel`/`hover`/`active`) for both primary (≥7:1 AAA) and muted (≥4.5:1
+AA) text — the earlier 3-background version passed while light-muted
+actually failed on `bg.active`; the full matrix closes that gap.
 Primary text (13–18:1, AAA) and accents (≥3:1, AA non-text) already
-passed and are unchanged. The doc examples (`SPECS.md` §6.1/§6.4,
-`DESIGN.md` §2.1, `docs/THEMING.md`) and the `index.css :root` startup
-fallbacks were updated to match the corrected tokens. **WCAG matrix
+passed and are unchanged. The doc examples (`SPECS.md` §6.4, `DESIGN.md`
+§2.1, `docs/THEMING.md`) were updated to match. **WCAG matrix
 extensibility:** the harness asserts the shipped Default (cyber_forest)
 now; Sprint 8's Terra Noir / Linen (#42) plug into the same table when
 they land — no harness change required.

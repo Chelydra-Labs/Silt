@@ -12,12 +12,13 @@ import (
 // shipped default — an accidental token edit, a migration regression, a
 // palette change without intent — fails here with a precise diff.
 //
-// The text.muted values were corrected during #50 (dark #71717a →
-// #8b8b94, light #64748b → #586478) to bring muted/metadata text up to
-// the WCAG AA 4.5:1 target documented in DESIGN.md §8 (see
-// contrast_test.go). Update these two values only if the muted token is
+// The text.muted values were corrected during #50 to bring
+// muted/metadata text up to the WCAG AA 4.5:1 target documented in
+// DESIGN.md §8 (see contrast_test.go), across ALL FIVE backgrounds
+// (void/surface/panel/hover/active): dark #71717a → #8b8b94, light
+// #64748b → #4d5667. Update these only if the muted token is
 // intentionally re-tuned, and re-run the WCAG assertions to confirm AA
-// is still met.
+// is still met on every background.
 var goldenDefaultDark = map[string]string{
 	"--bg-void":               "#0c0c0e",
 	"--bg-surface":            "#121215",
@@ -55,7 +56,7 @@ var goldenDefaultLight = map[string]string{
 	"--border-active":         "#94a3b8",
 	"--border-focus":          "#64748b",
 	"--text-primary":          "#0f172a",
-	"--text-muted":            "#586478",
+	"--text-muted":            "#4d5667",
 	"--text-disabled":         "#94a3b8",
 	"--accent-primary-start":  "#0d9488",
 	"--accent-primary-end":    "#115e59",

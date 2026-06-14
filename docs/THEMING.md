@@ -2,7 +2,7 @@
 
 Silt's entire visual surface — backgrounds, borders, text, accents, status colors, and optionally fonts — is driven by a single **theme**. Themes are plain JSON files. You can write one in any text editor, drop it into your vault, and select it from **Settings → Appearance**. No restart, no recompile.
 
-> **Engineering docs.** This is the *end-user* guide. For the internal pipeline (Go loader → Wails IPC → Svelte store → `:root` injection), see [`ARCHITECTURE.md` §4.4](../ARCHITECTURE.md). For the product spec, see [`SPECS.md` §6.4](../SPECS.md). For the design-system token vision, see [`DESIGN.md` §7](../DESIGN.md). This document is the authoritative authoring reference; the schema table below is kept in lock-step with the Go validator (`backend/themes/validate.go`).
+> **Engineering docs.** This is the *end-user* guide. For the internal pipeline (Go loader → Wails IPC → Svelte store → `:root` injection), see [`ARCHITECTURE.md` §4.4](../ARCHITECTURE.md). For the product spec, see [`SPECS.md` §6.4](../SPECS.md). For the design-system token vision, see [`DESIGN.md` §7](../DESIGN.md). This document is the authoritative authoring reference; the schema table below mirrors the Go validator (`backend/themes/validate.go`) and is kept in sync by hand (see the note under the table).
 
 ---
 
@@ -46,7 +46,7 @@ Each accent is a **triple**: `start` / `end` (a gradient pair) plus `glow` (a tr
 
 Every theme is a JSON object. The table below lists **every token the validator requires** (both `modes.dark` and `modes.light` must define the full set), plus the optional typography fields. The "JSON path" is relative to a `mode` object (e.g. `modes.dark.bg.void`).
 
-> This table is the single source of truth for required tokens and mirrors `requiredTokens` in `backend/themes/validate.go` exactly. If you add a row here, add it there too.
+> This table mirrors `requiredTokens` in `backend/themes/validate.go`. The two are kept in sync by hand: when you add a token to the schema, add a row here **and** an entry there. (There is no automated coupling today — the doc is the author-facing reference, the Go slice is the enforcement.)
 
 ### Identity (top-level, not per-mode)
 
@@ -145,7 +145,7 @@ The smallest theme that passes validation — both modes, every required token. 
     "light": {
       "bg":      { "void": "#f8fafc", "surface": "#ffffff", "panel": "#f1f5f9", "hover": "#e2e8f0", "active": "#cbd5e1" },
       "border":  { "muted": "#e2e8f0", "zinc": "#cbd5e1", "active": "#94a3b8", "focus": "#64748b" },
-      "text":    { "primary": "#0f172a", "muted": "#586478", "disabled": "#94a3b8" },
+      "text":    { "primary": "#0f172a", "muted": "#4d5667", "disabled": "#94a3b8" },
       "accent":  {
         "primary":   { "start": "#0d9488", "end": "#115e59", "glow": "rgba(13,148,136,0.10)" },
         "secondary": { "start": "#4f46e5", "end": "#7c3aed", "glow": "rgba(79,70,229,0.08)" }

@@ -87,7 +87,11 @@ func themePairs(t *Theme) map[string][]contrastPair {
 	pairs := map[string][]contrastPair{}
 	for _, mode := range []string{"dark", "light"} {
 		flat := t.Flatten(mode)
-		bgs := []string{"--bg-void", "--bg-surface", "--bg-panel"}
+		// All five backgrounds a token can render on. The earlier
+		// 3-background matrix missed bg.hover/bg.active, where a
+		// medium-gray muted text can dip below AA on the lighter
+		// active/hover surfaces — exactly the gap the audit caught.
+		bgs := []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"}
 		textFgs := []string{"--text-primary", "--text-muted"}
 		var ps []contrastPair
 		for _, fg := range textFgs {
@@ -96,7 +100,7 @@ func themePairs(t *Theme) map[string][]contrastPair {
 			}
 		}
 		// Accents are non-text UI (focus rings, swatches, icons): AA
-		// non-text threshold is 3:1.
+		// non-text threshold is 3:1, measured against the canvas.
 		for _, fg := range []string{"--accent-primary-start", "--accent-secondary-start"} {
 			ps = append(ps, contrastPair{fg + " on --bg-void", flat[fg], flat["--bg-void"]})
 		}
@@ -121,8 +125,8 @@ func TestWCAG_DefaultTheme_ReportsAllRatios(t *testing.T) {
 }
 
 // TestWCAG_DefaultTheme_PrimaryTextAAA asserts primary text meets AAA
-// (>=7:1) against every background it is rendered on, in both modes.
-// Primary text is body copy — the highest-contrast requirement.
+// (>=7:1) against every background it is rendered on (all five, both
+// modes). Primary text is body copy — the highest-contrast requirement.
 func TestWCAG_DefaultTheme_PrimaryTextAAA(t *testing.T) {
 	th, err := ParseDefault()
 	if err != nil {
@@ -131,7 +135,7 @@ func TestWCAG_DefaultTheme_PrimaryTextAAA(t *testing.T) {
 	const min = 7.0
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
-		for _, bg := range []string{"--bg-void", "--bg-surface", "--bg-panel"} {
+		for _, bg := range []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"} {
 			r := approxRatio(t, flat["--text-primary"], flat[bg])
 			if r < min {
 				t.Errorf("%s: text.primary on %s = %.2f:1, want >= %.1f:1 (AAA)", mode, bg, r, min)
@@ -161,9 +165,12 @@ func TestWCAG_DefaultTheme_AccentsNonTextAA(t *testing.T) {
 }
 
 // TestWCAG_DefaultTheme_MutedTextAA asserts muted text (labels,
-// metadata, secondary text) meets AA (>=4.5:1) against every
-// background in both modes. This is the documented DESIGN.md §8 target
-// for secondary text.
+// metadata, secondary text) meets AA (>=4.5:1) against ALL FIVE
+// backgrounds in both modes — including bg.hover/bg.active, the lighter
+// surfaces where a medium-gray muted token is most at risk. This is the
+// documented DESIGN.md §8 target for secondary text. (An earlier
+// 3-background version passed while light-muted actually failed on
+// bg.active; the full matrix closes that gap.)
 func TestWCAG_DefaultTheme_MutedTextAA(t *testing.T) {
 	th, err := ParseDefault()
 	if err != nil {
@@ -172,7 +179,7 @@ func TestWCAG_DefaultTheme_MutedTextAA(t *testing.T) {
 	const min = 4.5
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
-		for _, bg := range []string{"--bg-void", "--bg-surface", "--bg-panel"} {
+		for _, bg := range []string{"--bg-void", "--bg-surface", "--bg-panel", "--bg-hover", "--bg-active"} {
 			r := approxRatio(t, flat["--text-muted"], flat[bg])
 			if r < min {
 				t.Errorf("%s: text.muted on %s = %.2f:1, want >= %.1f:1 (AA). "+
