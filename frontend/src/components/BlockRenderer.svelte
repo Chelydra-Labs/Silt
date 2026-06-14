@@ -179,15 +179,23 @@
     }
   }
 
-  // Trigger auto-save with 500ms debounce
+  // Trigger auto-save with a config-driven debounce (editor.auto_save_delay_ms).
+  // A delay of 0 saves immediately (no debounce). The value is read fresh on
+  // every call so config changes apply live without a timer lifecycle teardown.
   function triggerAutoSave(blocksToSave = siblings) {
     if (saveTimeout) {
       clearTimeout(saveTimeout)
+      saveTimeout = null
+    }
+    const delay = settings.config?.editor?.auto_save_delay_ms ?? 500
+    if (delay <= 0) {
+      saveBlocksDirectly(blocksToSave)
+      return
     }
     saveTimeout = setTimeout(() => {
       saveBlocksDirectly(blocksToSave)
       saveTimeout = null
-    }, 500)
+    }, delay)
   }
 
   async function saveBlocksDirectly(blocksToSave = siblings) {
