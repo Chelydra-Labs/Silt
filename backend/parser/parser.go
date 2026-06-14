@@ -25,10 +25,10 @@ var IDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->\s*$`)
 // BlockRefRegex matches a global block reference ((uuid)). Read-only detector
 // used by the resolver; it never injects IDs (code-fence protection in
 // ParseFileContent already prevents ID injection inside ``` blocks).
-var BlockRefRegex = regexp.MustCompile(`\(\(([a-f0-9\-]{36})\)\)`)
+var BlockRefRegex = regexp.MustCompile(`\(\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)\)`)
 
 // EmbedRegex matches a live block embed {{embed:uuid}}.
-var EmbedRegex = regexp.MustCompile(`\{\{embed:([a-f0-9\-]{36})\}\}`)
+var EmbedRegex = regexp.MustCompile(`\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}`)
 
 func generateUUIDv4() string {
 	return uuid.New().String()

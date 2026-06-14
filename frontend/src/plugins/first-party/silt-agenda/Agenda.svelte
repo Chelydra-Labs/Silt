@@ -45,7 +45,6 @@
     loading = true
     errorMsg = ''
     try {
-      const today = todayStr()
       const rows = await ctx.sqliteQuery(
         `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
                 b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority
@@ -55,8 +54,6 @@
          ORDER BY t.due_date ASC, t.priority ASC`
       )
       items = (rows as unknown as AgendaItem[]) ?? []
-      // touch `today` so it's referenced even if items is empty (groups use it)
-      void today
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e)
     } finally {

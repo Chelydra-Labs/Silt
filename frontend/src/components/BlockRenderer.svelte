@@ -83,9 +83,6 @@
       const d = new Date()
       const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
       block.clean_text = todayStr
-    } else if (commandId === 'kanban') {
-      block.clean_text = ''
-      window.dispatchEvent(new CustomEvent('switch-view', { detail: 'kanban' }))
     } else if (commandId === 'embed') {
       // Open the block picker; insert {{embed:<id>}} once a block is chosen.
       showBlockPicker = true

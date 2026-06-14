@@ -4,6 +4,7 @@
     IsVaultInitialized,
     InitializeVault
   } from '../wailsjs/go/main/App.js'
+  import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -95,13 +96,17 @@
     window.addEventListener('navigate-to-block', handleNavigateToBlock)
     window.addEventListener('navigate-to-tag', handleNavigateToTag)
     window.addEventListener('open-plugin-manager', handleOpenPluginManager)
-    window.addEventListener('plugins:changed', handlePluginsChanged)
+    // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
+    // be received via EventsOn — a DOM addEventListener would never fire.
+    const offPluginsChanged = EventsOn('plugins:changed', () =>
+      handlePluginsChanged()
+    )
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
       window.removeEventListener('navigate-to-tag', handleNavigateToTag)
       window.removeEventListener('open-plugin-manager', handleOpenPluginManager)
-      window.removeEventListener('plugins:changed', handlePluginsChanged)
+      offPluginsChanged()
     }
   })
 

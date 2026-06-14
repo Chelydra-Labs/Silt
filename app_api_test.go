@@ -802,6 +802,42 @@ func sampleTaskBlockWithText(id string, line int, text string) parser.ParsedBloc
 	}
 }
 
+func TestMutateBlock_RefusesWhileFocusLocked(t *testing.T) {
+	app := newTestApp(t)
+
+	watcher, err := monitor.NewDirectoryWatcher(app.vaultPath, app.db, app.tracker, app.coordinator, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+	app.watcher = watcher
+
+	taskID := "77777777-7777-7777-7777-777777777777"
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "original")
+
+	// Simulate the user editing this file in the timeline editor.
+	if err := app.AcquireFocusLock("Work", "Journal", "Daily", "2026-06-13"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+
+	// An embed (or any plugin) trying to mutate the same block must be refused
+	// rather than silently overwriting the in-flight edit.
+	err = app.MutateBlock(taskID, "embed edit")
+	if err == nil {
+		t.Fatalf("expected MutateBlock to be refused while the file is focus-locked")
+	}
+	if !strings.Contains(err.Error(), "being edited") {
+		t.Errorf("expected a 'being edited' refusal, got: %v", err)
+	}
+
+	// Once the editor releases the lock, the mutation succeeds.
+	if err := app.ReleaseFocusLock("Work", "Journal", "Daily", "2026-06-13"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	if err := app.MutateBlock(taskID, "embed edit"); err != nil {
+		t.Fatalf("MutateBlock after unlock: %v", err)
+	}
+}
+
 func TestListNavigation_IncludesEmptySectionsAndNotebooks(t *testing.T) {
 	app := newTestApp(t)
 

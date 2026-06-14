@@ -54,12 +54,24 @@
     }
   }
 
+  async function persist(text: string, attempt = 0) {
+    try {
+      await PluginMutateBlock(uuid, text)
+    } catch (e) {
+      // The source block is being edited in another view (focus lock held).
+      // Retry shortly instead of silently overwriting or dropping the edit.
+      if (String(e).includes('being edited') && attempt < 5) {
+        saveTimer = setTimeout(() => void persist(text, attempt + 1), 800)
+      }
+    }
+  }
+
   function handleInput(e: Event) {
     const text = (e.target as HTMLDivElement).innerText.replace(/[\r\n]+/g, ' ')
     if (ref) ref.clean_text = text
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
-      void PluginMutateBlock(uuid, text)
+      void persist(text)
     }, 500)
   }
 
@@ -73,7 +85,7 @@
       clearTimeout(saveTimer)
       saveTimer = null
       const text = editEl?.innerText.replace(/[\r\n]+/g, ' ') ?? ''
-      void PluginMutateBlock(uuid, text)
+      void persist(text)
     }
   }
 

@@ -1,8 +1,4 @@
-import {
-  GetPluginRegistry,
-  ReadPluginSource,
-  ListPlugins
-} from '../../wailsjs/go/main/App.js'
+import { ReadPluginSource, ListPlugins } from '../../wailsjs/go/main/App.js'
 import { getFirstParty, firstPartyPlugins } from './registry'
 import { makePluginContext } from './context'
 import { loadedPlugins } from './store.svelte'
@@ -14,9 +10,10 @@ import DiskPluginNotice from './DiskPluginNotice.svelte'
  *   1. First-party bundled plugins (always available).
  *   2. On-disk plugins discovered under .system/plugins/ (skipping any with
  *      a .disabled sentinel), loaded from index.js as native ESM via a blob
- *      URL (so Vite does not try to resolve them at build time).
- *      A non-empty .system/config.yaml active list acts as a whitelist, but
- *      discovery is folder-based so install "just works" without config edits.
+ *      URL (so Vite does not try to resolve them at build time). Discovery is
+ *      purely folder-based + the .disabled sentinel, so install "just works"
+ *      with no config.yaml editing. (The legacy `plugins.active` list in
+ *      config.yaml is no longer a whitelist.)
  * Each plugin's init(ctx) receives the same PluginContext. Per-plugin load
  * failures are collected rather than aborting the whole boot.
  */
@@ -28,15 +25,6 @@ export async function loadPlugins(
   const ctx = makePluginContext(activeNotebook, activeSection, activePage)
   const plugins = new Map<string, RegisteredPlugin>()
   const errors: { id: string; message: string }[] = []
-
-  // Optional whitelist from config (empty on a fresh vault).
-  let activeIds: string[] = []
-  try {
-    const registry = await GetPluginRegistry()
-    activeIds = registry?.active ?? []
-  } catch {
-    activeIds = []
-  }
 
   // Discover on-disk plugins by folder.
   let installed: { id: string; disabled: boolean; has_index: boolean }[] = []
@@ -50,8 +38,6 @@ export async function loadPlugins(
     const id = p.id
     if (getFirstParty(id)) continue // first-party wins; handled below
     if (p.disabled) continue // .disabled sentinel → skip
-    // If a whitelist is configured, only whitelisted plugins load.
-    if (activeIds.length > 0 && !activeIds.includes(id)) continue
     try {
       if (!p.has_index) {
         errors.push({ id, message: 'missing index.js' })

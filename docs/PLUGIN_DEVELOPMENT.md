@@ -155,20 +155,21 @@ You can also drop a plugin folder directly into `.system/plugins/<id>/` (with `p
 
 ---
 
-## 5. Optional: declaring active plugins in config
+## 5. Enabling/disabling plugins
 
-`.system/config.yaml` may carry an optional `plugins.active` list which acts as a **whitelist** when non-empty:
+Plugin loading is **folder-based**: every plugin discovered under `.system/plugins/` is loaded at boot (first-party bundled plugins always load too). Install "just works" — no config editing required.
+
+To disable a plugin without uninstalling it, use the **Plugin Manager** (or drop a `.disabled` sentinel file into the plugin folder). The loader skips any folder containing `.disabled`. Re-enable by removing the sentinel.
+
+`.system/config.yaml` may still carry a `plugins.active`/`disabled` list for reference, but it is **not** a whitelist — discovery + the `.disabled` sentinel are the source of truth.
 
 ```yaml
 plugins:
-  active:
+  active:        # informational only; not a whitelist
     - silt-agenda
     - silt-calendar
-    - my-plugin
   disabled: []
 ```
-
-If `active` is present, only listed plugins load (plus all first-party bundled plugins, which are always available). If it's empty or absent, every discovered plugin loads. Per-plugin enable/disable via the manager uses the `.disabled` sentinel and does **not** require editing this file.
 
 ---
 

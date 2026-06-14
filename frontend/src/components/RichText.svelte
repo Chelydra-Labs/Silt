@@ -13,8 +13,9 @@
   let { text, notebook, section, page, fileDate }: Props = $props()
 
   // One combined scanner for refs ((uuid)), embeds {{embed:uuid}}, and tags.
+  // UUIDs use the strict 8-4-4-4-12 hex format to match the Go-side regexes.
   const TOKEN =
-    /(\(\([0-9a-f-]{36}\)\))|(\{\{embed:[0-9a-f-]{36}\}\})|(\B#[a-zA-Z][a-zA-Z0-9_/-]*)/g
+    /(\(\([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)\))|(\{\{embed:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}\})|(\B#[a-zA-Z][a-zA-Z0-9_/-]*)/g
 
   interface Segment {
     type: 'text' | 'tag' | 'ref' | 'embed'

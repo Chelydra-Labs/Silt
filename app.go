@@ -35,6 +35,11 @@ var updateTaskRegex = regexp.MustCompile(`^([\s]*)-\s\[[ x/]\]\s(?:TODO|DOING|DO
 
 var updateLineIDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->`)
 
+// errBlockBeingEdited is returned by MutateBlock when the target file is
+// focus-locked (a user is editing it in another view). Callers retry rather
+// than silently overwriting the in-flight edit.
+var errBlockBeingEdited = fmt.Errorf("block is being edited in another view")
+
 type App struct {
 	ctx          context.Context
 	db           *db.DatabaseManager
@@ -445,6 +450,14 @@ func (a *App) MutateBlock(blockID, newText string) error {
 
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
+		// Don't clobber a block the user is actively editing in another view
+		// (the timeline editor holds a focus lock on the file while focused).
+		// Refuse rather than silently overwrite; callers (e.g. EmbedPortal)
+		// retry once the editor releases the lock.
+		if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+			writeErr = errBlockBeingEdited
+			return
+		}
 		contentBytes, err := os.ReadFile(filePath)
 		if err != nil {
 			writeErr = err
