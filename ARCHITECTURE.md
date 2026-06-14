@@ -142,6 +142,17 @@ func EnsureBlockID(line string) (string, string, bool) {
 
 SQLite acts strictly as an volatile, in-memory index. If the application is restarted, the index is entirely rebuilt from the Markdown directories in < 450ms.
 
+> **PENDING AMENDMENT (Phase 3 of the hardening sprint, #29):** this contract
+> is changing. The index is moving from in-memory to a persistent on-disk
+> WAL-mode database at `<vault>/.system/index.sqlite`, with a `files` table
+> recording each indexed file's `path`/`mtime`/`size`/`indexed_at`. On restart
+> only changed files are re-indexed (mtime+size diff against `files`); cold
+> start (no index file, or the 3 index files deleted) performs a full scan and
+> rebuild. Markdown remains the source of truth; the index is disposable. The
+> full rationale, pragma set (`journal_mode=WAL`, `synchronous=NORMAL`,
+> `temp_store=MEMORY`, `mmap_size`, `busy_timeout`, `cache_size`), and the
+> NFS/SMB caveat land with the Phase 3 implementation.
+
 -- Disable disk synchandles for maximum in-memory speed
 PRAGMA journal_mode = MEMORY;
 PRAGMA synchronous = OFF;
@@ -424,6 +435,15 @@ If you edit a markdown file in VS Code while the Silt dashboard is open, the fil
 Mitigation Plan:
 
 Focus Locking: While Svelte has focus on an active text field, the backend monitor pauses external sync operations for that specific block file.
+
+> **PENDING AMENDMENT (Phase 5 of the hardening sprint, #38):** the focus-lock
+> model is changing from a plain boolean held per file path to TTL leases
+> (default 60s) refreshed on focus + on save, with a background sweeper that
+> expires abandoned leases. This self-heals the failure mode where a Svelte
+> component unmounts without releasing the lock (route change, crash,
+> hot-reload) and fsnotify suppression never recovers for that file. The
+> `WriteTracker` self-write cooldown is unaffected. Full detail lands with the
+> Phase 5 implementation.
 
 Deterministic Diff Verification: Instead of overwriting entire files when external changes occur, Go computes a diff patch based on block IDs to preserve uncommitted cursor inputs.
 
