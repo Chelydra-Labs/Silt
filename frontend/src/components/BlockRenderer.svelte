@@ -181,18 +181,17 @@
   }
 
   // Trigger auto-save with a config-driven debounce (editor.auto_save_delay_ms).
-  // A delay of 0 saves immediately (no debounce). The value is read fresh on
-  // every call so config changes apply live without a timer lifecycle teardown.
+  // A floor of 50ms is enforced even when the user configures 0: each save
+  // performs an atomic file write (temp + fsync + rename) and triggers a
+  // re-index, so per-keystroke saves would thrash the disk. 50ms is
+  // imperceptible to the user but coalesces rapid typing into one write.
+  // The value is read fresh on every call so config changes apply live.
   function triggerAutoSave(blocksToSave = siblings) {
     if (saveTimeout) {
       clearTimeout(saveTimeout)
       saveTimeout = null
     }
-    const delay = settings.config?.editor?.auto_save_delay_ms ?? 500
-    if (delay <= 0) {
-      saveBlocksDirectly(blocksToSave)
-      return
-    }
+    const delay = Math.max(settings.config?.editor?.auto_save_delay_ms ?? 500, 50)
     saveTimeout = setTimeout(() => {
       saveBlocksDirectly(blocksToSave)
       saveTimeout = null
@@ -475,7 +474,7 @@
         onkeydown={handleKeyDown}
         oninput={handleInput}
         class="flex-1 focus:outline-none text-on-surface whitespace-pre-wrap break-words min-h-[22px] min-w-[150px]"
-        style="font-family: var(--editor-mono-font-family); font-size: var(--editor-font-size); line-height: var(--editor-line-height);"
+        style="font-family: var(--editor-font-family); font-size: var(--editor-font-size); line-height: var(--editor-line-height);"
         class:text-text-muted={block.status === 'DONE'}
         class:line-through={block.status === 'DONE'}
       >
@@ -490,7 +489,7 @@
         onfocus={beginEdit}
         onclick={beginEdit}
         class="flex-1 text-on-surface whitespace-pre-wrap break-words min-h-[22px] min-w-[150px] cursor-text rounded"
-        style="font-family: var(--editor-mono-font-family); font-size: var(--editor-font-size); line-height: var(--editor-line-height);"
+        style="font-family: var(--editor-font-family); font-size: var(--editor-font-size); line-height: var(--editor-line-height);"
         class:text-text-muted={block.status === 'DONE'}
         class:line-through={block.status === 'DONE'}
       >

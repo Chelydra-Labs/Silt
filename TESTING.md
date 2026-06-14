@@ -158,8 +158,8 @@ All existing Go tests pass unchanged (`go test -race -count=1 ./...`) — no bac
 
 ## Manual Verification Matrix (`wails dev`)
 
-1. **Editor typography (font_family / mono_font_family / font_size_px / line_height):** Open Settings → General → change font size to `16`, line height to `1.8` → Save → editor text immediately re-renders at the new size/line-height (no restart). Inspect `document.documentElement` computed `--editor-font-size` → `16px`.
-2. **Auto-save delay:** Change `auto_save_delay_ms` to `2000` → type in a block → verify the save fires ~2s after the last keystroke (check backend log / file mtime). Set to `0` → save is immediate on each keystroke.
+1. **Editor typography (font_family / mono_font_family / font_size_px / line_height):** Open Settings → General → change font family to `Inter`, font size to `16`, line height to `1.8` → Save → editor text and shell body text immediately re-render at the new proportional font/size/line-height (no restart). `mono_font_family` drives `.font-label-sm` labels and badges. Inspect `document.documentElement` computed `--editor-font-size` → `16px`.
+2. **Auto-save delay:** Change `auto_save_delay_ms` to `2000` → type in a block → verify the save fires ~2s after the last keystroke (check backend log / file mtime). Set to `0` → saves are debounced at a 50ms floor (prevents per-keystroke disk thrashing while remaining effectively immediate).
 3. **Indent / unindent hotkeys:** Defaults (Tab / Shift+Tab) indent/outdent as before. Remap `indent_block` to `Ctrl+]` and `unindent_block` to `Ctrl+[` → Save → Tab no longer indents but Ctrl+] does.
 4. **cycle_view_layout:** Press `Alt+Tab` (default) → the main view cycles notes → tags → agenda → calendar → kanban → notes.
 5. **focus_highlight_ancestors:** Uncheck the checkbox → Save → focus a nested block → guide rails still render (showing indentation) but never light up with the active highlight gradient.

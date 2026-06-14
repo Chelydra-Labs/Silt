@@ -62,7 +62,9 @@
     initConfigHotReload()
     // Inject editor typography CSS variables from config and re-inject on
     // hot-reload. Uses $effect.root to watch the reactive settings store.
-    initEditorTokens()
+    // The returned disposer is called on unmount to prevent duplicate root
+    // effects during dev hot-reload.
+    const disposeEditorTokens = initEditorTokens()
     // Eagerly load the config so config-driven global shortcuts (open_search,
     // toggle_sidebar) work from startup, not only after Settings is opened.
     loadConfig().catch((e) => console.error('Startup config load failed:', e))
@@ -146,6 +148,7 @@
       window.removeEventListener('open-plugin-manager', handleOpenPluginManager)
       window.removeEventListener('open-settings', handleOpenSettings)
       offPluginsChanged()
+      disposeEditorTokens()
     }
   })
 
