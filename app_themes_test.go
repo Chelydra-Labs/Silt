@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -241,8 +240,6 @@ func TestEmbeddedDefaultAvailable(t *testing.T) {
 	if _, err := themes.ParseDefault(); err != nil {
 		t.Fatalf("embedded default invalid: %v", err)
 	}
-	// Avoid unused-import warnings if the file evolves.
-	_ = os.Stat
 }
 
 func TestEffectiveMode(t *testing.T) {

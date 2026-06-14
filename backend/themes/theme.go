@@ -126,11 +126,13 @@ func (t *Theme) BGVoid(mode string) string {
 
 // HexToRGB parses a #rgb / #rrggbb / #rrggbbaa hex color into its 8-bit
 // components. The 8-digit form (with alpha) is accepted but the alpha
-// channel is ignored, mirroring isValidColor so any color that passes
-// validation can also seed the native webview BackgroundColour. It is used
-// at launch to turn the active theme's bg.void into that BackgroundColour
-// before the webview renders. Non-hex inputs return ok=false so the caller
-// can keep a safe default.
+// channel is intentionally dropped: this seeds the native webview
+// BackgroundColour, which is an opaque window background where alpha has no
+// meaning. This mirrors isValidColor (which accepts #rrggbbaa) so any color
+// that passes validation can seed the BackgroundColour; the full alpha-bearing
+// value is still injected verbatim into CSS by the frontend injector, where it
+// applies correctly. Non-hex inputs return ok=false so the caller can keep a
+// safe default.
 func HexToRGB(s string) (r, g, b uint8, ok bool) {
 	s = strings.TrimSpace(s)
 	if len(s) == 0 || s[0] != '#' {

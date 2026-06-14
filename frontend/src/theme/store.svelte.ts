@@ -15,8 +15,6 @@ export interface ThemeState {
   mode: ThemeMode
   darkTokens: Record<string, string>
   lightTokens: Record<string, string>
-  /** True until the first IPC-driven injection completes. */
-  loading: boolean
   /** Last error from a theme IPC call (surfaced so the UI can show it). */
   error: string | null
 }
@@ -27,7 +25,6 @@ export const themeState: ThemeState = $state({
   mode: 'dark',
   darkTokens: {},
   lightTokens: {},
-  loading: true,
   error: null
 })
 
@@ -101,9 +98,8 @@ export async function initTheme(): Promise<void> {
   } catch (err) {
     console.error('theme: failed to load active theme on startup:', err)
     themeState.error = err instanceof Error ? err.message : String(err)
-    // Even on error, drop the loading flag so the UI can render with the
-    // index.css :root fallbacks rather than hang on a loader.
-    themeState.loading = false
+    // On error the shell still renders from the index.css :root fallbacks;
+    // initTheme is fire-and-forget so nothing blocks on a loader.
   }
 }
 
@@ -120,7 +116,6 @@ function applyResult(res: {
   themeState.mode = (res.mode as ThemeMode) || 'dark'
   themeState.darkTokens = res.dark_tokens || {}
   themeState.lightTokens = res.light_tokens || {}
-  themeState.loading = false
   themeState.error = null
   repaint()
 }
