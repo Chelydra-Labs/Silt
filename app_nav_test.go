@@ -234,6 +234,91 @@ func TestDeleteSection_DeletesAllPages(t *testing.T) {
 	}
 }
 
+// --- Notebook-level tests (#62) ---
+
+func TestRenameNotebook_UpdatesAllFiles(t *testing.T) {
+	app := newTestApp(t)
+
+	// Seed a section-less page and a sectioned page.
+	if _, err := app.CreatePage("OldNB", "", "TopPage", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage TopPage: %v", err)
+	}
+	if _, err := app.CreatePage("OldNB", "Sec1", "NestedPage", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage NestedPage: %v", err)
+	}
+
+	if err := app.RenameNotebook("OldNB", "NewNB"); err != nil {
+		t.Fatalf("RenameNotebook: %v", err)
+	}
+
+	// Old notebook folder should not exist.
+	oldDir := filepath.Join(app.vaultPath, "OldNB")
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Fatalf("old notebook dir should not exist after rename")
+	}
+
+	// Both files should be under NewNB with updated notebook: frontmatter.
+	checks := []struct {
+		relPath string
+	}{
+		{filepath.Join("NewNB", "TopPage.md")},
+		{filepath.Join("NewNB", "Sec1", "NestedPage.md")},
+	}
+	for _, c := range checks {
+		full := filepath.Join(app.vaultPath, c.relPath)
+		content, err := os.ReadFile(full)
+		if err != nil {
+			t.Fatalf("file %s should exist under NewNB: %v", c.relPath, err)
+		}
+		if !strings.Contains(string(content), `"NewNB"`) {
+			t.Fatalf("frontmatter in %s should contain notebook:\"NewNB\": %s", c.relPath, content)
+		}
+	}
+}
+
+func TestDeleteNotebook_TrashesAll(t *testing.T) {
+	app := newTestApp(t)
+
+	if _, err := app.CreatePage("DoomNB", "", "P1", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage P1: %v", err)
+	}
+	if _, err := app.CreatePage("DoomNB", "Sub", "P2", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage P2: %v", err)
+	}
+
+	nbPath := filepath.Join(app.vaultPath, "DoomNB")
+	if _, err := os.Stat(nbPath); err != nil {
+		t.Fatalf("notebook should exist: %v", err)
+	}
+
+	if err := app.DeleteNotebook("DoomNB"); err != nil {
+		t.Fatalf("DeleteNotebook: %v", err)
+	}
+
+	// Notebook folder should be gone from vault root.
+	if _, err := os.Stat(nbPath); !os.IsNotExist(err) {
+		t.Fatalf("notebook should not exist after delete")
+	}
+
+	// Notebook content should be in trash.
+	trashDir := filepath.Join(app.vaultPath, ".system", "trash")
+	entries, err := os.ReadDir(trashDir)
+	if err != nil {
+		t.Fatalf("trash dir should exist: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		trashNB := filepath.Join(trashDir, e.Name(), "DoomNB")
+		if _, err := os.Stat(trashNB); err == nil {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("notebook subtree should exist under .system/trash/<ts>/DoomNB/")
+	}
+}
+
 // --- Per-block write-intent lock test (#64) ---
 
 func TestLockBlocksWrite_NoDeadlock(t *testing.T) {

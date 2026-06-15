@@ -71,6 +71,10 @@ var BlockRefRegex = regexp.MustCompile(`\(\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}
 // EmbedRegex matches a live block embed {{embed:uuid}}.
 var EmbedRegex = regexp.MustCompile(`\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}`)
 
+// whitespaceRunRegex collapses consecutive whitespace into a single space.
+// Hoisted to package-level so scanTaskTokens doesn't recompile it per line.
+var whitespaceRunRegex = regexp.MustCompile(`\s+`)
+
 func generateUUIDv4() string {
 	return uuid.New().String()
 }
@@ -176,7 +180,7 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 	description = strings.TrimSpace(TaskTokenRegex.ReplaceAllString(remainder, ""))
 	// Collapse multiple spaces left by token removal (e.g. "text  more"
 	// after a token between them was stripped).
-	description = regexp.MustCompile(`\s+`).ReplaceAllString(description, " ")
+	description = whitespaceRunRegex.ReplaceAllString(description, " ")
 
 	for _, m := range matches {
 		key := strings.ToLower(m[1])
