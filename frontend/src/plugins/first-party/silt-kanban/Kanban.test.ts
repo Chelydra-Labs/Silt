@@ -9,6 +9,46 @@ if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => []
 }
 
+// jsdom doesn't implement the Web Animations API, which Svelte 5 transitions
+// (the CardDetailPanel slide-out uses transition:fly) drive via
+// element.animate(). Stub a resolved no-op Animation so the panel mounts in
+// jsdom without throwing `element.animate is not a function`.
+if (!Element.prototype.animate) {
+  Element.prototype.animate = function () {
+    return {
+      cancel() {},
+      finish() {},
+      play() {},
+      pause() {},
+      reverse() {},
+      commitStyles() {},
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent() {
+        return true
+      },
+      onfinish: null,
+      oncancel: null,
+      onremove: null,
+      currentTime: 0,
+      startTime: null,
+      playbackRate: 1,
+      playState: 'finished',
+      replaceState: 'active',
+      pending: false,
+      id: '',
+      effect: null,
+      timeline: null,
+      get finished() {
+        return Promise.resolve()
+      },
+      get ready() {
+        return Promise.resolve()
+      }
+    }
+  } as unknown as Element['animate']
+}
+
 // Hoisted mutable mock state.
 const mocks = vi.hoisted(() => ({
   settings: {
@@ -24,11 +64,14 @@ const mocks = vi.hoisted(() => ({
     }
   },
   sqliteQuery: vi.fn(),
-  updateBlockState: vi.fn()
+  updateBlockState: vi.fn(),
+  updateTaskMeta: vi.fn(),
+  saveConfig: vi.fn().mockResolvedValue(true)
 }))
 
 vi.mock('../../../settings/store.svelte', () => ({
-  settings: mocks.settings
+  settings: mocks.settings,
+  saveConfig: mocks.saveConfig
 }))
 
 import Kanban from './Kanban.svelte'
@@ -65,7 +108,12 @@ const SAMPLE_ROWS = [
     owner: 'Alice',
     start_date: '',
     due_date: '2026-06-20',
-    priority: 3
+    priority: 3,
+    pinned: 0,
+    progress: 0,
+    comments_count: 2,
+    links_count: 1,
+    tags: 'work/milestone-one'
   },
   {
     id: 't2',
@@ -78,7 +126,12 @@ const SAMPLE_ROWS = [
     owner: '',
     start_date: '',
     due_date: '',
-    priority: 2
+    priority: 2,
+    pinned: 1,
+    progress: 50,
+    comments_count: 0,
+    links_count: 0,
+    tags: ''
   },
   {
     id: 't3',
@@ -91,7 +144,12 @@ const SAMPLE_ROWS = [
     owner: '',
     start_date: '',
     due_date: '',
-    priority: 1
+    priority: 1,
+    pinned: 0,
+    progress: 0,
+    comments_count: 0,
+    links_count: 0,
+    tags: ''
   }
 ]
 
@@ -177,7 +235,23 @@ describe('Kanban plugin (#19)', () => {
     expect(params).toEqual([])
   })
 
-  it('clicking a card dispatches navigate-to-block', async () => {
+  it('clicking a card opens the detail panel', async () => {
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')
+    expect(todoCard).toBeTruthy()
+    await fireEvent.click(todoCard!)
+
+    // The slide-out detail panel renders as a dialog with the card title.
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toBeInTheDocument()
+    expect(dialog.textContent).toContain('Write tests')
+  })
+
+  it('detail panel "Open in editor" dispatches navigate-to-block', async () => {
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
@@ -187,8 +261,10 @@ describe('Kanban plugin (#19)', () => {
     const todoCard = screen
       .getByRole('group', { name: 'To Do' })
       .querySelector<HTMLElement>('[data-card]')
-    expect(todoCard).toBeTruthy()
     await fireEvent.click(todoCard!)
+
+    const openBtn = screen.getByRole('button', { name: /open in editor/i })
+    await fireEvent.click(openBtn)
 
     expect(handler).toHaveBeenCalledTimes(1)
     const detail = (handler.mock.calls[0][0] as CustomEvent).detail
@@ -253,12 +329,9 @@ describe('Kanban plugin (#19)', () => {
     expect(doingLane.textContent).toContain('No in progress tasks')
   })
 
-  it('keyboard Enter on a focused card dispatches navigate-to-block (a11y)', async () => {
+  it('keyboard Enter on a focused card opens the detail panel (a11y)', async () => {
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
-
-    const handler = vi.fn()
-    window.addEventListener('navigate-to-block', handler)
 
     const todoCard = screen
       .getByRole('group', { name: 'To Do' })
@@ -268,20 +341,14 @@ describe('Kanban plugin (#19)', () => {
 
     await fireEvent.keyDown(todoCard!, { key: 'Enter' })
 
-    expect(handler).toHaveBeenCalledTimes(1)
-    const detail = (handler.mock.calls[0][0] as CustomEvent).detail
-    expect(detail.blockId).toBe('t1')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
     // Enter must NOT trigger a status change.
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
-    window.removeEventListener('navigate-to-block', handler)
   })
 
-  it('keyboard Space on a focused card dispatches navigate-to-block (a11y)', async () => {
+  it('keyboard Space on a focused card opens the detail panel (a11y)', async () => {
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
-
-    const handler = vi.fn()
-    window.addEventListener('navigate-to-block', handler)
 
     const todoCard = screen
       .getByRole('group', { name: 'To Do' })
@@ -291,9 +358,8 @@ describe('Kanban plugin (#19)', () => {
 
     await fireEvent.keyDown(todoCard!, { key: ' ' })
 
-    expect(handler).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
-    window.removeEventListener('navigate-to-block', handler)
   })
 
   it('disables Notebook/Section/Page scope buttons when their context is missing', async () => {

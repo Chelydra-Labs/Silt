@@ -2,8 +2,10 @@
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
   import type { PluginContext, PluginManifest, TaskStatus } from '../../sdk'
-  import { settings } from '../../../settings/store.svelte'
+  import { settings, saveConfig } from '../../../settings/store.svelte'
   import { measureFrameBudget } from '../../../lib/perf/frame-budget'
+  import FilterBar, { type KanbanFilters } from './FilterBar.svelte'
+  import CardDetailPanel, { type KanbanCard } from './CardDetailPanel.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -11,20 +13,6 @@
   }
 
   let { ctx, manifest }: Props = $props()
-
-  interface KanbanCard {
-    id: string
-    notebook: string
-    section: string
-    page: string
-    file_date: string
-    clean_content: string
-    status: TaskStatus
-    owner: string
-    start_date: string
-    due_date: string
-    priority: number
-  }
 
   type Scope = 'vault' | 'notebook' | 'section' | 'page'
 
@@ -52,18 +40,57 @@
   let truncated = $state(false)
 
   // Columns come from config.yaml (plugins.plugin_settings.silt-kanban.columns),
-  // falling back to the canonical TODO/DOING/DONE triple.
-  let columns = $derived.by(() => {
+  // falling back to the canonical TODO/DOING/DONE triple. Now mutable: the
+  // user can add / rename / remove / reorder lanes, and changes persist back
+  // to config via saveConfig. Custom (non-status) lanes render as empty —
+  // cards are bucketed by status, so only TODO/DOING/DONE lanes fill.
+  function initialColumns(): string[] {
     const cfgCols = settings.config?.plugins?.plugin_settings?.['silt-kanban']
       ?.columns as string[] | undefined
-    const cols =
-      cfgCols?.filter((c) => ALL_STATUSES.includes(c as TaskStatus)) ?? []
-    return cols.length > 0 ? (cols as TaskStatus[]) : [...ALL_STATUSES]
-  })
+    return cfgCols && cfgCols.length ? [...cfgCols] : [...ALL_STATUSES]
+  }
+  let columns = $state<string[]>(initialColumns())
+
+  // Filter state — persisted (debounced) to config so a board reload
+  // restores the active filter selection.
+  function initialFilters(): KanbanFilters {
+    const f = settings.config?.plugins?.plugin_settings?.['silt-kanban']
+      ?.filters as Partial<KanbanFilters> | undefined
+    return {
+      owners: f?.owners ?? [],
+      priorities: f?.priorities ?? [],
+      dueDate: f?.dueDate ?? '',
+      tags: f?.tags ?? []
+    }
+  }
+  let filters = $state<KanbanFilters>(initialFilters())
+
+  // Card selected for the slide-out detail panel (null = closed).
+  let selectedCard = $state<KanbanCard | null>(null)
 
   let totalCards = $derived(
     Object.values(lanes).reduce((sum, lane) => sum + lane.length, 0)
   )
+
+  // Distinct owner / tag option lists derived from the currently-loaded
+  // cards (a single query feeds both the board and these option lists via
+  // the GROUP_CONCAT tags subquery, so no extra round-trip is needed).
+  let allOwners = $derived.by(() => {
+    const set = new Set<string>()
+    for (const lane of Object.values(lanes)) {
+      for (const c of lane) if (c.owner) set.add(c.owner)
+    }
+    return [...set].sort()
+  })
+  let allTags = $derived.by(() => {
+    const set = new Set<string>()
+    for (const lane of Object.values(lanes)) {
+      for (const c of lane) {
+        if (c.tags) for (const t of c.tags.split('|')) if (t) set.add(t)
+      }
+    }
+    return [...set].sort()
+  })
 
   // Breadcrumb showing the active scope context.
   let scopeCrumb = $derived.by(() => {
@@ -79,33 +106,64 @@
     }
   })
 
-  function buildQuery(s: Scope): { sql: string; params: unknown[] } {
+  function buildQuery(
+    s: Scope,
+    f: KanbanFilters
+  ): { sql: string; params: unknown[] } {
     const baseSelect = `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
-           b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority
+           b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
+           t.pinned, t.progress, t.comments_count, t.links_count,
+           (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags
     FROM blocks b JOIN tasks t ON b.id = t.block_id`
     const orderBy = ` ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`
+    const where: string[] = []
+    const params: unknown[] = []
     switch (s) {
       case 'vault':
-        return { sql: baseSelect + ' WHERE 1=1' + orderBy, params: [] }
+        break
       case 'notebook':
-        return {
-          sql: baseSelect + ' WHERE b.notebook = ?' + orderBy,
-          params: [ctx.activeNotebook]
-        }
+        where.push('b.notebook = ?')
+        params.push(ctx.activeNotebook)
+        break
       case 'section':
-        return {
-          sql: baseSelect + ' WHERE b.notebook = ? AND b.section = ?' + orderBy,
-          params: [ctx.activeNotebook, ctx.activeSection]
-        }
+        where.push('b.notebook = ?', 'b.section = ?')
+        params.push(ctx.activeNotebook, ctx.activeSection)
+        break
       case 'page':
-        return {
-          sql:
-            baseSelect +
-            ' WHERE b.notebook = ? AND b.section = ? AND b.page = ?' +
-            orderBy,
-          params: [ctx.activeNotebook, ctx.activeSection, ctx.activePage]
-        }
+        where.push('b.notebook = ?', 'b.section = ?', 'b.page = ?')
+        params.push(ctx.activeNotebook, ctx.activeSection, ctx.activePage)
+        break
     }
+    // Active filters contribute parameterised WHERE fragments so the board
+    // narrows in place (the scope + filter effects re-run reload()).
+    if (f.owners.length) {
+      where.push(`t.owner IN (${f.owners.map(() => '?').join(', ')})`)
+      params.push(...f.owners)
+    }
+    if (f.priorities.length) {
+      where.push(`t.priority IN (${f.priorities.map(() => '?').join(', ')})`)
+      params.push(...f.priorities)
+    }
+    if (f.dueDate) {
+      if (f.dueDate === 'overdue') where.push("t.due_date < date('now')")
+      else if (f.dueDate === 'today') where.push("t.due_date = date('now')")
+      else if (f.dueDate === 'week')
+        where.push("t.due_date BETWEEN date('now') AND date('now', '+7 days')")
+      else if (f.dueDate === 'none')
+        where.push("(t.due_date IS NULL OR t.due_date = '')")
+    }
+    if (f.tags.length) {
+      where.push(
+        `b.id IN (SELECT block_id FROM tags WHERE raw_path IN (${f.tags
+          .map(() => '?')
+          .join(', ')}))`
+      )
+      params.push(...f.tags)
+    }
+    const whereClause = where.length
+      ? ' WHERE ' + where.join(' AND ')
+      : ' WHERE 1=1'
+    return { sql: baseSelect + whereClause + orderBy, params }
   }
 
   // Monotonic token so concurrent reload() calls can identify their own
@@ -118,7 +176,7 @@
     loading = true
     errorMsg = ''
     try {
-      const { sql, params } = buildQuery(scope)
+      const { sql, params } = buildQuery(scope, filters)
       const { rows, truncated: wasTruncated } = await ctx.sqliteQuery(
         sql,
         params
@@ -129,7 +187,10 @@
       const bucket: Record<string, KanbanCard[]> = {}
       for (const col of columns) bucket[col] = []
       for (const r of rows as unknown as KanbanCard[]) {
-        if (bucket[r.status]) bucket[r.status].push(r)
+        // SQLite stores pinned as INTEGER (0/1); coerce to boolean so the
+        // card shape matches the interface and `!card.pinned` toggles work.
+        const card: KanbanCard = { ...r, pinned: !!r.pinned }
+        if (bucket[card.status]) bucket[card.status].push(card)
       }
       lanes = bucket
       truncated = wasTruncated
@@ -141,15 +202,124 @@
     }
   }
 
-  // Reload whenever scope or the active nav changes. The effect fires on
-  // mount too, so there's no separate onMount load.
+  // Reload whenever scope, the active nav, or any active filter changes. The
+  // effect fires on mount too, so there's no separate onMount load.
   $effect(() => {
     void scope
     void ctx.activeNotebook
     void ctx.activeSection
     void ctx.activePage
+    void filters.owners
+    void filters.priorities
+    void filters.dueDate
+    void filters.tags
     reload()
   })
+
+  // --- Filter persistence (debounced) ---
+  // Apply immediately to the board, but defer the config write so rapid
+  // checkbox toggles don't hammer saveConfig. 500ms of quiet commits.
+  let saveFiltersTimer: ReturnType<typeof setTimeout> | null = null
+  function handleFiltersChange(f: KanbanFilters) {
+    filters = f
+    if (saveFiltersTimer) clearTimeout(saveFiltersTimer)
+    saveFiltersTimer = setTimeout(() => {
+      void persistFilters(f)
+    }, 500)
+  }
+  async function persistFilters(f: KanbanFilters) {
+    const cfg = settings.config
+    if (!cfg) return
+    if (!cfg.plugins) {
+      cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
+    }
+    const ps = cfg.plugins.plugin_settings ?? {}
+    ps['silt-kanban'] = { ...(ps['silt-kanban'] ?? {}), filters: f }
+    cfg.plugins.plugin_settings = ps
+    await saveConfig(cfg)
+  }
+
+  // --- Column management ---
+  let menuCol = $state<string | null>(null)
+  let renamingCol = $state<string | null>(null)
+  let renameValue = $state('')
+  let colDragIndex = $state<number | null>(null)
+
+  function toggleColMenu(col: string) {
+    menuCol = menuCol === col ? null : col
+  }
+  function startRename(col: string) {
+    renamingCol = col
+    renameValue = col
+    menuCol = null
+  }
+  function commitRename() {
+    const old = renamingCol
+    const v = renameValue.trim()
+    renamingCol = null
+    if (!old || !v || v === old || columns.includes(v)) return
+    columns = columns.map((c) => (c === old ? v : c))
+    void persistColumns()
+  }
+  function cancelRename() {
+    renamingCol = null
+  }
+  async function addColumn() {
+    const name = window.prompt('New column name')?.trim()
+    if (!name || columns.includes(name)) return
+    columns = [...columns, name]
+    await persistColumns()
+  }
+  async function removeColumn(col: string) {
+    menuCol = null
+    if (
+      !window.confirm(
+        `Remove column "${laneLabel(col)}"? Cards keep their status.`
+      )
+    )
+      return
+    columns = columns.filter((c) => c !== col)
+    await persistColumns()
+  }
+  async function persistColumns() {
+    const cfg = settings.config
+    if (!cfg) return
+    if (!cfg.plugins) {
+      cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
+    }
+    const ps = cfg.plugins.plugin_settings ?? {}
+    ps['silt-kanban'] = { ...(ps['silt-kanban'] ?? {}), columns: [...columns] }
+    cfg.plugins.plugin_settings = ps
+    await saveConfig(cfg)
+  }
+
+  // Column drag-reorder: a dedicated handle on each header sets the source
+  // index; dropping on another header splices the array and persists. Kept
+  // separate from card DnD (which keys off dragCard) so the two can't clash.
+  function onColDragStart(e: DragEvent, i: number) {
+    colDragIndex = i
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', `col:${i}`)
+    }
+  }
+  function onColDragOver(e: DragEvent, i: number) {
+    if (colDragIndex === null) return
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  }
+  function onColDrop(e: DragEvent, i: number) {
+    if (colDragIndex === null) return
+    e.preventDefault()
+    const from = colDragIndex
+    colDragIndex = null
+    if (from === i) return
+    const next = [...columns]
+    const [moved] = next.splice(from, 1)
+    next.splice(i, 0, moved)
+    columns = next
+    void persistColumns()
+  }
 
   // --- Drag-and-drop state ---
   let dragCard: KanbanCard | null = null
@@ -160,13 +330,15 @@
 
   // --- Keyboard status change (a11y) ---
   // ArrowLeft/Right directly move the focused card between lanes;
-  // Enter/Space falls through to native button click (navigate to source).
+  // Enter/Space opens the detail panel (navigation lives behind the panel's
+  // "Open in editor" button so the source jump is an explicit action).
   let liveMessage = $state('')
 
   function onDragStart(e: DragEvent, card: KanbanCard, fromStatus: TaskStatus) {
     dragCard = card
     dragFromStatus = fromStatus
     draggingId = card.id
+    colDragIndex = null // card drag, not column drag
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move'
       e.dataTransfer.setData('text/plain', card.id)
@@ -235,7 +407,7 @@
       lanes = newLanes
     })
 
-    liveMessage = `Task moved to ${toStatus === 'TODO' ? 'To Do' : toStatus === 'DOING' ? 'In Progress' : 'Done'}`
+    liveMessage = `Task moved to ${laneLabel(toStatus)}`
 
     try {
       await ctx.updateBlockState(card.id, toStatus)
@@ -259,33 +431,19 @@
     if (e.key === 'ArrowRight') {
       e.preventDefault()
       const next = Math.min(idx + 1, columns.length - 1)
-      if (next !== idx) {
-        void commitMove(card, fromStatus, columns[next], -1)
+      if (next !== idx && ALL_STATUSES.includes(columns[next] as TaskStatus)) {
+        void commitMove(card, fromStatus, columns[next] as TaskStatus, -1)
       }
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault()
       const prev = Math.max(idx - 1, 0)
-      if (prev !== idx) {
-        void commitMove(card, fromStatus, columns[prev], -1)
+      if (prev !== idx && ALL_STATUSES.includes(columns[prev] as TaskStatus)) {
+        void commitMove(card, fromStatus, columns[prev] as TaskStatus, -1)
       }
     } else if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
-      openCard(card)
+      selectedCard = card
     }
-  }
-
-  function openCard(card: KanbanCard) {
-    window.dispatchEvent(
-      new CustomEvent('navigate-to-block', {
-        detail: {
-          notebook: card.notebook,
-          section: card.section,
-          page: card.page,
-          date: card.file_date,
-          blockId: card.id
-        }
-      })
-    )
   }
 
   const PRIORITY_LABELS: Record<number, string> = {
@@ -299,8 +457,12 @@
       return 'text-accent-primary-start border-accent-primary-start/20 bg-accent-primary-glow'
     return 'text-text-muted border-border-muted bg-bg-surface'
   }
-  function statusLabel(s: TaskStatus): string {
-    return s === 'TODO' ? 'To Do' : s === 'DOING' ? 'In Progress' : 'Done'
+  // Standard statuses get friendly labels; custom lanes show their raw name.
+  function laneLabel(s: string): string {
+    if (s === 'TODO') return 'To Do'
+    if (s === 'DOING') return 'In Progress'
+    if (s === 'DONE') return 'Done'
+    return s
   }
 </script>
 
@@ -342,10 +504,27 @@
         </button>
       {/each}
     </div>
+    <!-- Add Column -->
+    <button
+      type="button"
+      onclick={addColumn}
+      class="flex items-center gap-1 px-2.5 py-1 rounded border border-border-muted bg-bg-surface text-[12px] font-label-sm text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
+      aria-label="Add column"
+    >
+      <span class="material-symbols-outlined text-[16px]">add</span>
+      <span>Column</span>
+    </button>
     <span class="text-text-muted text-[12px] font-body-md ml-auto">
       {scopeCrumb} · {totalCards} task{totalCards === 1 ? '' : 's'}
     </span>
   </header>
+
+  <FilterBar
+    {filters}
+    owners={allOwners}
+    tags={allTags}
+    onFiltersChange={handleFiltersChange}
+  />
 
   {#if moveError}
     <div
@@ -379,37 +558,112 @@
       <div class="text-error p-6">{errorMsg}</div>
     {:else}
       <div class="h-full flex gap-4 p-4 overflow-x-auto custom-scrollbar">
-        {#each columns as col}
+        {#each columns as col, colIdx (col)}
           {@const laneCards = lanes[col] ?? []}
           <section
-            class="flex flex-col min-w-[280px] flex-1 max-w-[400px] rounded-lg border border-border-muted bg-bg-surface/50"
+            class="flex flex-col min-w-[280px] flex-1 max-w-[400px] rounded-lg border border-border-muted bg-bg-surface/50 {colDragIndex ===
+            colIdx
+              ? 'opacity-50'
+              : ''}"
             role="group"
-            aria-label={statusLabel(col)}
-            ondragover={(e) => onLaneDragOver(e, col)}
-            ondrop={(e) => onLaneDrop(e, col)}
+            aria-label={laneLabel(col)}
+            ondragover={(e) => onLaneDragOver(e, col as TaskStatus)}
+            ondrop={(e) => onLaneDrop(e, col as TaskStatus)}
             ondragleave={() => {
-              if (dragOverStatus === col) dragOverStatus = null
+              if (dragOverStatus === (col as TaskStatus)) dragOverStatus = null
             }}
           >
+            <!-- svelte-ignore a11y_no_static_element_interactions
+                 Column drag-reorder is a pointer-only affordance; the header
+                 exposes Rename/Remove via its menu button for keyboard users. -->
             <div
               class="flex items-center justify-between px-3 py-2.5 border-b border-border-muted"
+              draggable="true"
+              ondragstart={(e) => onColDragStart(e, colIdx)}
+              ondragover={(e) => onColDragOver(e, colIdx)}
+              ondrop={(e) => onColDrop(e, colIdx)}
+              ondragend={() => (colDragIndex = null)}
             >
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 min-w-0">
                 <span
-                  class="w-2 h-2 rounded-full"
-                  class:bg-text-muted={col === 'TODO'}
+                  class="material-symbols-outlined text-[14px] text-text-muted cursor-grab active:cursor-grabbing shrink-0"
+                  title="Drag to reorder">drag_indicator</span
+                >
+                <span
+                  class="w-2 h-2 rounded-full shrink-0"
+                  class:bg-text-muted={col === 'TODO' ||
+                    !ALL_STATUSES.includes(col as TaskStatus)}
                   class:bg-accent-secondary-start={col === 'DOING'}
                   class:bg-accent-primary-start={col === 'DONE'}
                 ></span>
-                <h2
-                  class="font-label-sm-bold uppercase tracking-widest text-[11px] text-text-muted"
-                >
-                  {statusLabel(col)}
-                </h2>
+                {#if renamingCol === col}
+                  <input
+                    type="text"
+                    bind:value={renameValue}
+                    onkeydown={(e) => {
+                      if (e.key === 'Enter') commitRename()
+                      else if (e.key === 'Escape') cancelRename()
+                    }}
+                    onblur={commitRename}
+                    class="bg-bg-surface border border-accent-primary-start/40 rounded px-1.5 py-0.5 text-[11px] font-label-sm-bold uppercase tracking-widest text-text-primary outline-none w-28"
+                    aria-label="Rename column"
+                  />
+                {:else}
+                  <h2
+                    class="font-label-sm-bold uppercase tracking-widest text-[11px] text-text-muted truncate cursor-text"
+                    ondblclick={() => startRename(col)}
+                    title="Double-click to rename"
+                  >
+                    {laneLabel(col)}
+                  </h2>
+                {/if}
                 <span
                   class="bg-bg-hover text-text-muted text-[10px] px-1.5 py-0.5 rounded-sm font-label-sm"
                   >{laneCards.length}</span
                 >
+              </div>
+              <div class="relative shrink-0">
+                <button
+                  type="button"
+                  onclick={() => toggleColMenu(col)}
+                  aria-label="Column actions"
+                  aria-expanded={menuCol === col}
+                  aria-haspopup="true"
+                  class="text-text-muted hover:text-text-primary transition-colors p-0.5"
+                >
+                  <span class="material-symbols-outlined text-[16px]"
+                    >more_horiz</span
+                  >
+                </button>
+                {#if menuCol === col}
+                  <div
+                    class="absolute right-0 top-full mt-1 z-50 min-w-[140px] bg-bg-panel border border-border-muted rounded-lg shadow-xl py-1"
+                    role="menu"
+                  >
+                    <button
+                      type="button"
+                      onclick={() => startRename(col)}
+                      class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-[12px] font-label-sm text-text-primary"
+                      role="menuitem"
+                    >
+                      <span class="material-symbols-outlined text-[14px]"
+                        >edit</span
+                      >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      onclick={() => removeColumn(col)}
+                      class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-[12px] font-label-sm text-error"
+                      role="menuitem"
+                    >
+                      <span class="material-symbols-outlined text-[14px]"
+                        >delete</span
+                      >
+                      Remove
+                    </button>
+                  </div>
+                {/if}
               </div>
             </div>
             <div
@@ -422,18 +676,24 @@
                   role="button"
                   tabindex="0"
                   aria-grabbed={draggingId === card.id ? 'true' : 'false'}
-                  aria-label={`${card.clean_content}, ${statusLabel(col)}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}. Arrow keys change status.`}
+                  aria-label={`${card.clean_content}, ${laneLabel(col)}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}. Arrow keys change status.`}
                   draggable="true"
                   animate:flip={{ duration: 200, easing: cubicOut }}
-                  class="group bg-bg-panel border border-border-muted rounded-lg p-3 cursor-grab transition-all duration-200 hover:bg-bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {draggingId ===
-                  card.id
-                    ? 'opacity-40 rotate-2'
-                    : ''}"
-                  ondragstart={(e) => onDragStart(e, card, col)}
+                  class="group relative bg-bg-panel border border-border-muted rounded-lg p-3 cursor-grab transition-all duration-200 hover:bg-bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {card.status ===
+                  'DOING'
+                    ? 'border-l-2 border-l-accent-secondary-start'
+                    : ''} {draggingId === card.id ? 'opacity-40 rotate-2' : ''}"
+                  ondragstart={(e) => onDragStart(e, card, col as TaskStatus)}
                   ondragend={cleanupDrag}
-                  onkeydown={(e) => onCardKeydown(e, card, col)}
-                  onclick={() => openCard(card)}
+                  onkeydown={(e) => onCardKeydown(e, card, col as TaskStatus)}
+                  onclick={() => (selectedCard = card)}
                 >
+                  {#if card.pinned}
+                    <span
+                      class="material-symbols-outlined absolute top-2 right-2 text-[14px] text-accent-primary-start"
+                      aria-label="pinned">push_pin</span
+                    >
+                  {/if}
                   <div class="flex justify-between items-start mb-2 gap-2">
                     {#if card.priority && card.priority <= 3}
                       <span
@@ -446,8 +706,9 @@
                     {/if}
                     {#if col === 'DONE'}
                       <span
-                        class="material-symbols-outlined text-accent-primary-start text-[16px] ml-auto"
-                        >check_circle</span
+                        class="material-symbols-outlined text-accent-primary-start text-[16px] {card.pinned
+                          ? ''
+                          : 'ml-auto'}">check_circle</span
                       >
                     {/if}
                   </div>
@@ -459,6 +720,16 @@
                   >
                     {card.clean_content}
                   </p>
+                  {#if card.progress > 0}
+                    <div
+                      class="h-0.5 bg-bg-surface rounded overflow-hidden mb-2"
+                    >
+                      <div
+                        class="h-full bg-accent-secondary-start transition-all"
+                        style="width: {card.progress}%"
+                      ></div>
+                    </div>
+                  {/if}
                   <div class="flex justify-between items-center gap-2">
                     <div class="flex items-center gap-1.5">
                       {#if card.owner}
@@ -469,16 +740,40 @@
                         </span>
                       {/if}
                     </div>
-                    {#if card.due_date}
-                      <span
-                        class="text-[9px] text-text-muted font-label-sm flex items-center gap-0.5"
-                      >
-                        <span class="material-symbols-outlined text-[12px]"
-                          >schedule</span
+                    <div class="flex items-center gap-1.5">
+                      {#if card.comments_count > 0}
+                        <span
+                          class="text-[9px] text-text-muted font-label-sm flex items-center gap-0.5"
+                          title="{card.comments_count} comments"
                         >
-                        {card.due_date}
-                      </span>
-                    {/if}
+                          <span class="material-symbols-outlined text-[12px]"
+                            >chat_bubble</span
+                          >
+                          {card.comments_count}
+                        </span>
+                      {/if}
+                      {#if card.links_count > 0}
+                        <span
+                          class="text-[9px] text-text-muted font-label-sm flex items-center gap-0.5"
+                          title="{card.links_count} links"
+                        >
+                          <span class="material-symbols-outlined text-[12px]"
+                            >link</span
+                          >
+                          {card.links_count}
+                        </span>
+                      {/if}
+                      {#if card.due_date}
+                        <span
+                          class="text-[9px] text-text-muted font-label-sm flex items-center gap-0.5"
+                        >
+                          <span class="material-symbols-outlined text-[12px]"
+                            >schedule</span
+                          >
+                          {card.due_date}
+                        </span>
+                      {/if}
+                    </div>
                   </div>
                 </div>
               {/each}
@@ -486,7 +781,7 @@
                 <div
                   class="text-center text-text-muted text-[11px] font-body-md py-6 border border-dashed border-border-muted rounded-lg"
                 >
-                  No {statusLabel(col).toLowerCase()} tasks
+                  No {laneLabel(col).toLowerCase()} tasks
                 </div>
               {/if}
             </div>
@@ -496,6 +791,22 @@
     {/if}
   </div>
 </div>
+
+<CardDetailPanel
+  card={selectedCard}
+  {ctx}
+  onClose={() => (selectedCard = null)}
+/>
+
+{#if menuCol}
+  <!-- Click-away for the column action menu. -->
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-40"
+    aria-hidden="true"
+    onclick={() => (menuCol = null)}
+  ></div>
+{/if}
 
 <style>
   .sr-only {
