@@ -30,6 +30,18 @@
     "vitest": "^2.1.9"
   },
   "dependencies": {
+    "@fontsource/bricolage-grotesque": "^5.2.10",
+    "@fontsource/fira-code": "^5.2.7",
+    "@fontsource/hanken-grotesk": "^5.2.8",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/lexend": "^5.2.11",
+    "@fontsource/manrope": "^5.2.8",
+    "@fontsource/plus-jakarta-sans": "^5.2.8",
+    "@fontsource/sora": "^5.2.8",
+    "@fontsource/space-mono": "^5.2.9",
+    "@fontsource/work-sans": "^5.2.8",
     "@tailwindcss/vite": "^4.3.1",
     "tailwindcss": "^4.3.1"
   }

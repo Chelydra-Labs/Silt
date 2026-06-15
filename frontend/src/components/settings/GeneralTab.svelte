@@ -7,6 +7,12 @@
   } from '../../settings/store.svelte'
   import type { SystemConfig } from '../../settings/store.svelte'
   import { parseHotkey } from '../../settings/hotkeys'
+  import {
+    bundledByCategory,
+    displayNameForCssFamily,
+    systemFonts
+  } from '../../theme/fonts'
+  import { themeState } from '../../theme/store.svelte'
 
   // Local editable draft. Initialized from the store config; the user edits
   // here and commits with Save (so an external hot-reload doesn't fight a
@@ -72,6 +78,28 @@
       ? Object.entries(draft.hotkeys).sort((a, b) => a[0].localeCompare(b[0]))
       : []
   )
+
+  // --- Font picker (#82) --------------------------------------------------
+  // Curated, bundled font options grouped for the <select> dropdowns. Body
+  // text may use any sans or display family; the mono field is mono-only.
+  // System fallbacks are always available offline and sit in their own group.
+  const bodyOptions = [...bundledByCategory('sans'), ...bundledByCategory('display')]
+  const monoOptions = bundledByCategory('mono')
+  const systemSans = systemFonts().filter((f) => f.category === 'sans')
+  const systemMono = systemFonts().filter((f) => f.category === 'mono')
+
+  // The active theme's typography overrides (theme-level, identical in both
+  // modes). When present, the matching field gets a "Reset to theme default"
+  // affordance: clearing the config value makes the CSS fallback chain
+  // resolve to the theme-injected --font-* variable.
+  let themeBodyFont = $derived(themeState.darkTokens['--font-body'] ?? '')
+  let themeMonoFont = $derived(themeState.darkTokens['--font-mono'] ?? '')
+
+  function resetFont(field: 'font_family' | 'mono_font_family') {
+    if (!draft) return
+    draft.editor[field] = ''
+    touch()
+  }
 
   async function handleSave() {
     if (!draft) return
@@ -155,23 +183,80 @@
           <span class="text-text-muted text-[11px] font-label-sm-bold"
             >Font family</span
           >
-          <input
-            bind:value={draft.editor.font_family}
-            oninput={touch}
-            type="text"
-            class="bg-bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
-          />
+          <div class="flex items-center gap-2">
+            <select
+              bind:value={draft.editor.font_family}
+              onchange={touch}
+              class="flex-1 bg-bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer"
+            >
+              {#if themeBodyFont}
+                <option value="">Theme default ({displayNameForCssFamily(themeBodyFont)})</option>
+              {/if}
+              <optgroup label="Sans-serif">
+                {#each bodyOptions.filter((f) => f.category === 'sans') as f (f.id)}
+                  <option value={f.cssFamily} style="font-family: {f.cssFamily}">{f.displayName}</option>
+                {/each}
+              </optgroup>
+              <optgroup label="Display">
+                {#each bodyOptions.filter((f) => f.category === 'display') as f (f.id)}
+                  <option value={f.cssFamily} style="font-family: {f.cssFamily}">{f.displayName}</option>
+                {/each}
+              </optgroup>
+              <optgroup label="System">
+                {#each systemSans as f (f.id)}
+                  <option value={f.cssFamily}>{f.displayName}</option>
+                {/each}
+              </optgroup>
+            </select>
+            {#if themeBodyFont}
+              <button
+                type="button"
+                onclick={() => resetFont('font_family')}
+                title="Reset to theme default ({displayNameForCssFamily(themeBodyFont)})"
+                aria-label="Reset body font to theme default"
+                class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-bg-surface border border-border-zinc text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
+              >
+                <span class="material-symbols-outlined text-[18px]">restart_alt</span>
+              </button>
+            {/if}
+          </div>
         </label>
         <label class="flex flex-col gap-1.5">
           <span class="text-text-muted text-[11px] font-label-sm-bold"
             >Monospace font</span
           >
-          <input
-            bind:value={draft.editor.mono_font_family}
-            oninput={touch}
-            type="text"
-            class="bg-bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
-          />
+          <div class="flex items-center gap-2">
+            <select
+              bind:value={draft.editor.mono_font_family}
+              onchange={touch}
+              class="flex-1 bg-bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer"
+            >
+              {#if themeMonoFont}
+                <option value="">Theme default ({displayNameForCssFamily(themeMonoFont)})</option>
+              {/if}
+              <optgroup label="Monospace">
+                {#each monoOptions as f (f.id)}
+                  <option value={f.cssFamily} style="font-family: {f.cssFamily}">{f.displayName}</option>
+                {/each}
+              </optgroup>
+              <optgroup label="System">
+                {#each systemMono as f (f.id)}
+                  <option value={f.cssFamily}>{f.displayName}</option>
+                {/each}
+              </optgroup>
+            </select>
+            {#if themeMonoFont}
+              <button
+                type="button"
+                onclick={() => resetFont('mono_font_family')}
+                title="Reset to theme default ({displayNameForCssFamily(themeMonoFont)})"
+                aria-label="Reset monospace font to theme default"
+                class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-bg-surface border border-border-zinc text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
+              >
+                <span class="material-symbols-outlined text-[18px]">restart_alt</span>
+              </button>
+            {/if}
+          </div>
         </label>
         <label class="flex flex-col gap-1.5">
           <span class="text-text-muted text-[11px] font-label-sm-bold"
