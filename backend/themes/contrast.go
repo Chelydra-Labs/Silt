@@ -59,8 +59,9 @@ func linear(c uint8) float64 {
 // rgba() functional notation, returning 8-bit sRGB channels. It mirrors
 // isValidColor's accepted grammar (validate.go) so any color that
 // passes theme validation can be measured for contrast. Non-matching
-// inputs return ok=false. The alpha of #rrggbbaa is dropped (luminance
-// is defined over opaque colors).
+// inputs — including NaN/Inf components, which strconv.ParseFloat
+// accepts with a nil error — return ok=false. The alpha of #rrggbbaa
+// is dropped (luminance is defined over opaque colors).
 func parseColorAny(s string) (r, g, b uint8, ok bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -92,7 +93,7 @@ func parseColorAny(s string) (r, g, b uint8, ok bool) {
 			num = p[:len(p)-1]
 		}
 		v, err := strconv.ParseFloat(num, 64)
-		if err != nil {
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 			return 0, 0, 0, false
 		}
 		if percent {

@@ -208,6 +208,14 @@ func TestIsValidColor(t *testing.T) {
 		"rgb(1,2,3,4)",      // too many components
 		"rgb(300,0,0)",      // out of range
 		"rgba(a,b,c,d)",     // non-numeric
+		// NaN/Inf: strconv.ParseFloat accepts them with a nil error, and
+		// NaN range comparisons (v < 0 || v > 255) are both false, so
+		// without an explicit non-finite guard these slip through the
+		// schema sandbox (#48).
+		"rgba(NaN,0,0,0.5)",  // NaN rgb component
+		"rgba(12,12,14,NaN)", // NaN alpha channel
+		"rgb(Inf,0,0)",       // +Inf component
+		"rgb(-Inf,0,0)",      // -Inf component
 	}
 	for _, c := range bad {
 		if isValidColor(c) {

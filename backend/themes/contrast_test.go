@@ -73,6 +73,19 @@ func TestContrastRatio_AcceptedColorForms(t *testing.T) {
 			t.Errorf("expected %q to be rejected (bad alpha), got ok", bad)
 		}
 	}
+	// NaN/Inf in an RGB component are rejected (strconv.ParseFloat
+	// accepts them with nil error; without the non-finite guard the
+	// harness would coerce NaN->0 and return a bogus ratio). Note: a
+	// NaN in the ALPHA channel (e.g. rgba(12,12,14,NaN)) is NOT rejected
+	// here — the harness intentionally drops alpha (luminance is over
+	// opaque colors), so alpha-NaN never reaches a range check. The
+	// validator (isValidColor) rejects alpha-NaN because it validates
+	// the full color spec; see TestIsValidColor.
+	for _, bad := range []string{"rgba(NaN,0,0,0.5)", "rgb(Inf,0,0)", "rgb(-Inf,0,0)"} {
+		if _, ok := ContrastRatio(bad, "#fff"); ok {
+			t.Errorf("expected %q to be rejected (non-finite RGB component), got ok", bad)
+		}
+	}
 }
 
 // contrastPairs enumerates the text/background pairs the shipped default
