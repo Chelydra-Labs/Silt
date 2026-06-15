@@ -384,6 +384,23 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 // counts merged from the index. Section-less pages group under section "".
 func (a *App) ListNavigation() (NavigationTree, error)
 
+// Rename/Delete lifecycle (#62, #83). Rename updates frontmatter in every
+// affected .md file and re-indexes (block UUIDs are preserved so references
+// and embeds keep resolving). Delete moves to .system/trash/ for recovery.
+func (a *App) RenamePage(notebook, section, oldName, newName string) error
+func (a *App) RenameSection(notebook, oldName, newName string) error
+func (a *App) RenameNotebook(oldName, newName string) error
+func (a *App) DeletePage(notebook, section, page string) error
+func (a *App) DeleteSection(notebook, section string) error
+func (a *App) DeleteNotebook(notebook string) error
+
+// UI preferences (#63, #68). Sidebar width and nav ordering persist in
+// config.yaml under the ui: block (per-vault YAML tier per §0).
+func (a *App) GetSidebarWidth() int
+func (a *App) SetSidebarWidth(px int) error
+func (a *App) GetNavOrder() (config.NavOrder, error)
+func (a *App) SetNavOrder(order config.NavOrder) error
+
 // System configuration (see §8). GetSystemConfig returns the parsed
 // .system/config.yaml; SaveSystemConfig validates + atomically persists +
 // applies live knobs (editor.tab_indent_spaces drives parsing) and emits
@@ -638,7 +655,7 @@ Global settings — editor defaults, parsing rules, hotkeys, and the plugin regi
 
 8.1 Parser (backend/config)
 
-config.SystemConfig mirrors the SPECS §9.1 schema (notebooks / editor / parsing / hotkeys / plugins). Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
+config.SystemConfig mirrors the SPECS §9.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui). The `ui:` block holds per-vault UI preferences: `sidebar_width` (px, clamped 200–480, default 256, #63) and `nav_order` (explicit ordering for the sidebar navigator tree, #68). Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
 
 8.2 Hot-Reload (backend/config.ConfigWatcher)
 

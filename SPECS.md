@@ -517,6 +517,10 @@ hotkeys:
   indent_block: "Tab"
   unindent_block: "Shift+Tab"
 
+# UI Preferences (per-vault)
+ui:
+  sidebar_width: 256
+
 # Plugin Registry
 plugins:
   active:
