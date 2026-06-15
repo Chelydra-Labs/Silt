@@ -1959,25 +1959,29 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 	// Lock the notebook root to prevent interleaving with the scanner.
 	nbRoot := filepath.Join(a.vaultPath, safeNotebook)
 	a.coordinator.LockFileWrite(nbRoot, func() {
-		// 1. Read + update frontmatter page: value in the old file.
+		// 1. Read the file content before renaming.
 		contentBytes, err := os.ReadFile(oldFile)
 		if err != nil {
 			runErr = err
 			return
 		}
-		content := updateFrontmatterField(string(contentBytes), "page", safeNewPage)
 
-		// 2. Write atomically to old path (frontmatter change).
+		// 2. Rename old → new FIRST. If this fails, nothing was modified
+		// (clean state). This avoids the stale-frontmatter-at-old-path
+		// inconsistency that would occur if we wrote frontmatter first.
 		a.tracker.RegisterWrite(oldFile)
-		if err := parser.WriteFileAtomic(oldFile, []byte(content)); err != nil {
+		a.tracker.RegisterWrite(newFile)
+		if err := os.Rename(oldFile, newFile); err != nil {
 			runErr = err
 			return
 		}
 
-		// 3. Rename old → new.
-		a.tracker.RegisterWrite(oldFile)
+		// 3. Update frontmatter at the new path. If this fails, the file
+		// is at the correct new path with stale frontmatter — the scanner
+		// will use the path-derived page name, which matches the sidebar.
+		content := updateFrontmatterField(string(contentBytes), "page", safeNewPage)
 		a.tracker.RegisterWrite(newFile)
-		if err := os.Rename(oldFile, newFile); err != nil {
+		if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
 			runErr = err
 			return
 		}
@@ -2026,40 +2030,32 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 	var runErr error
 	nbRoot := filepath.Join(a.vaultPath, safeNotebook)
 	a.coordinator.LockFileWrite(nbRoot, func() {
-		// 1. Walk all .md files in the old section, update section: frontmatter.
+		// 1. Read all .md files from the old section BEFORE renaming.
 		entries, err := os.ReadDir(oldDir)
 		if err != nil {
 			runErr = err
 			return
 		}
-		var pageFiles []string
+		type fileContent struct {
+			name    string
+			content []byte
+		}
+		var files []fileContent
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 				continue
 			}
-			pageFiles = append(pageFiles, entry.Name())
-		}
-
-		var writeErrs []string
-		for _, pageFile := range pageFiles {
-			oldPath := filepath.Join(oldDir, pageFile)
-			contentBytes, err := os.ReadFile(oldPath)
+			oldPath := filepath.Join(oldDir, entry.Name())
+			b, err := os.ReadFile(oldPath)
 			if err != nil {
-				writeErrs = append(writeErrs, fmt.Sprintf("read %s: %v", pageFile, err))
-				continue
+				runErr = fmt.Errorf("RenameSection: read %s: %w", entry.Name(), err)
+				return
 			}
-			content := updateFrontmatterField(string(contentBytes), "section", safeNewSection)
-			a.tracker.RegisterWrite(oldPath)
-			if err := parser.WriteFileAtomic(oldPath, []byte(content)); err != nil {
-				writeErrs = append(writeErrs, fmt.Sprintf("write %s: %v", pageFile, err))
-			}
-		}
-		if len(writeErrs) > 0 {
-			runErr = fmt.Errorf("RenameSection: %d file(s) failed frontmatter update: %s", len(writeErrs), strings.Join(writeErrs, "; "))
-			return
+			files = append(files, fileContent{name: entry.Name(), content: b})
 		}
 
-		// 2. Rename the section folder.
+		// 2. Rename the section folder FIRST. If this fails, nothing was
+		// modified (clean state — avoids stale frontmatter at old paths).
 		a.tracker.RegisterWrite(oldDir)
 		a.tracker.RegisterWrite(newDir)
 		if err := os.Rename(oldDir, newDir); err != nil {
@@ -2067,7 +2063,29 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 			return
 		}
 
-		// 3. Clear old index entries + re-index all pages at new paths.
+		// 3. Update section: frontmatter in each file at the new path.
+		// If any write fails, the folder is at the correct new path;
+		// the scanner will derive section from the path (which matches
+		// the sidebar), and stale frontmatter self-heals on next rename.
+		var writeErrs []string
+		for _, fc := range files {
+			newPath := filepath.Join(newDir, fc.name)
+			updated := updateFrontmatterField(string(fc.content), "section", safeNewSection)
+			a.tracker.RegisterWrite(newPath)
+			if err := parser.WriteFileAtomic(newPath, []byte(updated)); err != nil {
+				writeErrs = append(writeErrs, fmt.Sprintf("write %s: %v", fc.name, err))
+			}
+		}
+		if len(writeErrs) > 0 {
+			runErr = fmt.Errorf("RenameSection: %d file(s) failed frontmatter update at new path: %s", len(writeErrs), strings.Join(writeErrs, "; "))
+			return
+		}
+
+		// 4. Clear old index entries + re-index all pages at new paths.
+		var pageFiles []string
+		for _, fc := range files {
+			pageFiles = append(pageFiles, fc.name)
+		}
 		a.coordinator.WithDBWrite(func() {
 			_ = a.db.ClearFileBlocks(nil, safeNotebook, safeOldSection, "")
 		})
@@ -2114,38 +2132,35 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 
 	var runErr error
 	a.coordinator.LockFileWrite(oldDir, func() {
-		// 1. Walk all .md files under the old notebook recursively.
-		var mdFiles []string
+		// 1. Walk all .md files under the old notebook recursively and
+		// read their content BEFORE renaming.
+		type fileContent struct {
+			oldPath string
+			relPath string
+			content []byte
+		}
+		var files []fileContent
 		_ = filepath.WalkDir(oldDir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil
 			}
 			if !d.IsDir() && strings.HasSuffix(path, ".md") {
-				mdFiles = append(mdFiles, path)
+				b, readErr := os.ReadFile(path)
+				if readErr != nil {
+					runErr = fmt.Errorf("RenameNotebook: read %s: %w", path, readErr)
+					return filepath.SkipDir
+				}
+				rel, _ := filepath.Rel(oldDir, path)
+				files = append(files, fileContent{oldPath: path, relPath: rel, content: b})
 			}
 			return nil
 		})
-
-		// 2. Update notebook: frontmatter in each file.
-		var writeErrs []string
-		for _, mdPath := range mdFiles {
-			contentBytes, err := os.ReadFile(mdPath)
-			if err != nil {
-				writeErrs = append(writeErrs, fmt.Sprintf("read %s: %v", mdPath, err))
-				continue
-			}
-			content := updateFrontmatterField(string(contentBytes), "notebook", safeNewNotebook)
-			a.tracker.RegisterWrite(mdPath)
-			if err := parser.WriteFileAtomic(mdPath, []byte(content)); err != nil {
-				writeErrs = append(writeErrs, fmt.Sprintf("write %s: %v", mdPath, err))
-			}
-		}
-		if len(writeErrs) > 0 {
-			runErr = fmt.Errorf("RenameNotebook: %d file(s) failed frontmatter update: %s", len(writeErrs), strings.Join(writeErrs, "; "))
+		if runErr != nil {
 			return
 		}
 
-		// 3. Rename the notebook folder.
+		// 2. Rename the notebook folder FIRST. If this fails, nothing
+		// was modified (clean state).
 		a.tracker.RegisterWrite(oldDir)
 		a.tracker.RegisterWrite(newDir)
 		if err := os.Rename(oldDir, newDir); err != nil {
@@ -2153,7 +2168,26 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 			return
 		}
 
+		// 3. Update notebook: frontmatter in each file at the new path.
+		var writeErrs []string
+		for _, fc := range files {
+			newMdPath := filepath.Join(newDir, fc.relPath)
+			updated := updateFrontmatterField(string(fc.content), "notebook", safeNewNotebook)
+			a.tracker.RegisterWrite(newMdPath)
+			if err := parser.WriteFileAtomic(newMdPath, []byte(updated)); err != nil {
+				writeErrs = append(writeErrs, fmt.Sprintf("write %s: %v", fc.relPath, err))
+			}
+		}
+		if len(writeErrs) > 0 {
+			runErr = fmt.Errorf("RenameNotebook: %d file(s) failed frontmatter update at new path: %s", len(writeErrs), strings.Join(writeErrs, "; "))
+			return
+		}
+
 		// 4. Clear old index entries + re-index all files at new paths.
+		var mdFiles []string
+		for _, fc := range files {
+			mdFiles = append(mdFiles, fc.oldPath)
+		}
 		a.coordinator.WithDBWrite(func() {
 			_, _ = a.db.SQLDB().Exec("DELETE FROM blocks WHERE notebook = ?", safeOldNotebook)
 		})
