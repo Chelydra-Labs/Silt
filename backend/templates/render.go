@@ -70,7 +70,19 @@ func Render(t *Template, vars map[string]string, opts RenderOptions) (string, []
 		PlaceholderISODate: now.Format(time.RFC3339),
 		PlaceholderWeekday: now.Weekday().String(),
 	}
+	// recognized is the set of names that are KNOWN (declared or default) even
+	// when they have no value. A declared-but-unprovided placeholder stays
+	// literal in the output (so the user sees {{meeting_title}} and knows what
+	// to fill) WITHOUT raising a warning — it is a known, intentional token,
+	// not an unknown one. Only truly-unknown tokens warn (forward-compat).
+	recognized := map[string]bool{
+		PlaceholderDate:    true,
+		PlaceholderTime:    true,
+		PlaceholderISODate: true,
+		PlaceholderWeekday: true,
+	}
 	for _, p := range t.Placeholders {
+		recognized[p.Name] = true
 		if p.Name != "" && p.Default != "" {
 			if _, ok := values[p.Name]; !ok {
 				values[p.Name] = p.Default
@@ -79,6 +91,7 @@ func Render(t *Template, vars map[string]string, opts RenderOptions) (string, []
 	}
 	for k, v := range vars {
 		values[k] = v
+		recognized[k] = true
 	}
 
 	var warnings []string
@@ -91,6 +104,11 @@ func Render(t *Template, vars map[string]string, opts RenderOptions) (string, []
 		name := sub[1]
 		if v, ok := values[name]; ok {
 			return v
+		}
+		// Declared/default but no value: leave literal, no warning (the token
+		// is known — the user just hasn't filled it in yet).
+		if recognized[name] {
+			return match
 		}
 		// Unknown token: leave it verbatim (forward-compat + smart-graph
 		// passthrough) and warn once per name.
