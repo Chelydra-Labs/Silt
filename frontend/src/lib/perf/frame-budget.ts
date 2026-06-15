@@ -35,6 +35,9 @@ export function measureFrameBudget<T>(label: string, fn: () => T): T {
   performance.measure(`perf:${label}`, startMark, endMark)
 
   // Report after paint so the timestamp includes the browser's commit cost.
+  // Clear marks/measures after reading so they don't accumulate in the
+  // performance timeline (relevant for the Kanban drag-heavy path the probe
+  // is designed to monitor).
   requestAnimationFrame(() => {
     const entries = performance.getEntriesByName(`perf:${label}`, 'measure')
     const measure = entries[entries.length - 1]
@@ -43,6 +46,9 @@ export function measureFrameBudget<T>(label: string, fn: () => T): T {
       const flag = measure.duration > 16 ? '⚠️' : '✓'
       console.log(`[perf] ${flag} ${label}: ${ms}ms (budget 16ms)`)
     }
+    performance.clearMarks(startMark)
+    performance.clearMarks(endMark)
+    performance.clearMeasures(`perf:${label}`)
   })
 
   return result

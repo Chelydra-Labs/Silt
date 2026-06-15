@@ -227,9 +227,10 @@
     }
   }
 
-  // --- Keyboard status change (a11y) ---
-  // ArrowLeft/Right move the card between lanes; Enter/Space navigates to
-  // the source block (native button activation, no preventDefault needed).
+  // --- Keyboard navigation (a11y) ---
+  // Cards are <div role="button">, so the browser does NOT fire onclick on
+  // Enter/Space the way a real <button> would. We handle all three keys
+  // explicitly here. (Pattern mirrors Calendar.svelte onCellKeydown.)
   function onCardKeydown(
     e: KeyboardEvent,
     card: KanbanCard,
@@ -248,6 +249,9 @@
       if (prev !== idx) {
         void commitMove(card, fromStatus, columns[prev], -1)
       }
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      openCard(card)
     }
   }
 
@@ -302,7 +306,15 @@
           onclick={() => (scope = s as Scope)}
           role="radio"
           aria-checked={scope === s}
-          class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
+          disabled={(s === 'notebook' && !ctx.activeNotebook) ||
+            (s === 'section' && !ctx.activeSection) ||
+            (s === 'page' && !ctx.activePage)}
+          title={(s === 'notebook' && !ctx.activeNotebook) ||
+          (s === 'section' && !ctx.activeSection) ||
+          (s === 'page' && !ctx.activePage)
+            ? `Select a ${String(s)} first`
+            : undefined}
+          class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           class:bg-bg-hover={scope === s}
           class:text-accent-primary-start={scope === s}
           class:text-text-muted={scope !== s}

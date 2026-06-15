@@ -148,6 +148,12 @@
         // First-party plugins are disabled via the config disabled list
         // (there's no on-disk folder for a .disabled sentinel).
         const cfg = settings.config!
+        // Defensive: the Go backend always populates cfg.plugins, but the
+        // wails-generated SystemConfig class returns undefined for missing
+        // keys, and a hand-edited config.yaml could omit the section.
+        if (!cfg.plugins) {
+          cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
+        }
         const disabled = new Set(cfg.plugins.disabled ?? [])
         if (card.disabled) {
           disabled.delete(card.id)

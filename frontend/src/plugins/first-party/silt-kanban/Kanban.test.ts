@@ -242,4 +242,85 @@ describe('Kanban plugin (#19)', () => {
     const doingLane = screen.getByRole('group', { name: 'In Progress' })
     expect(doingLane.textContent).toContain('No in progress tasks')
   })
+
+  it('keyboard Enter on a focused card dispatches navigate-to-block (a11y)', async () => {
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-block', handler)
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')
+    expect(todoCard).toBeTruthy()
+    todoCard!.focus()
+
+    await fireEvent.keyDown(todoCard!, { key: 'Enter' })
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    const detail = (handler.mock.calls[0][0] as CustomEvent).detail
+    expect(detail.blockId).toBe('t1')
+    // Enter must NOT trigger a status change.
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    window.removeEventListener('navigate-to-block', handler)
+  })
+
+  it('keyboard Space on a focused card dispatches navigate-to-block (a11y)', async () => {
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-block', handler)
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')
+    expect(todoCard).toBeTruthy()
+    todoCard!.focus()
+
+    await fireEvent.keyDown(todoCard!, { key: ' ' })
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    window.removeEventListener('navigate-to-block', handler)
+  })
+
+  it('disables Notebook/Section/Page scope buttons when their context is missing', async () => {
+    render(Kanban, {
+      ctx: makeCtx({ activeNotebook: '', activeSection: '', activePage: '' }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    const vault = screen.getByRole('radio', { name: 'Vault' })
+    const notebook = screen.getByRole('radio', { name: 'Notebook' })
+    const section = screen.getByRole('radio', { name: 'Section' })
+    const page = screen.getByRole('radio', { name: 'Page' })
+
+    expect(vault).not.toBeDisabled()
+    expect(notebook).toBeDisabled()
+    expect(section).toBeDisabled()
+    expect(page).toBeDisabled()
+  })
+
+  it('enables Notebook scope button when an active notebook is set', async () => {
+    render(Kanban, {
+      ctx: makeCtx({
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: ''
+      }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    const notebook = screen.getByRole('radio', { name: 'Notebook' })
+    const section = screen.getByRole('radio', { name: 'Section' })
+    const page = screen.getByRole('radio', { name: 'Page' })
+
+    expect(notebook).not.toBeDisabled()
+    expect(section).toBeDisabled()
+    expect(page).toBeDisabled()
+  })
 })
