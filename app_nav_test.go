@@ -139,9 +139,14 @@ func TestRenamePage_PathTraversal(t *testing.T) {
 	if _, err := os.Stat(origPath); !os.IsNotExist(err) {
 		t.Fatalf("old file should not exist after rename")
 	}
-	// /etc/passwd should NOT exist as a result (path stayed in vault).
-	if _, err := os.Stat("/etc/passwd.silt"); err == nil {
+	// /etc/passwd.md should NOT exist as a result (path stayed in vault).
+	if _, err := os.Stat("/etc/passwd.md"); err == nil {
 		t.Fatalf("path traversal escaped the vault!")
+	}
+	// The sanitized file (etcpasswd.md) should exist inside the vault.
+	sanitizedPath := filepath.Join(app.vaultPath, "TestNB", "etcpasswd.md")
+	if _, err := os.Stat(sanitizedPath); err != nil {
+		t.Fatalf("sanitized file should exist inside vault: %v", err)
 	}
 }
 

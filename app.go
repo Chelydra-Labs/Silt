@@ -1895,21 +1895,32 @@ func (a *App) reindexFile(filePath, notebook, section, page string) {
 func updateFrontmatterField(content, key, newVal string) string {
 	lines := strings.Split(content, "\n")
 	inFM := false
+	closeIdx := -1
+	found := false
 	for i, line := range lines {
 		if strings.TrimSpace(line) == "---" {
 			if !inFM {
 				inFM = true
 				continue
 			}
+			closeIdx = i
 			break // closing ---
 		}
 		if inFM {
 			prefix := key + ":"
 			if strings.HasPrefix(strings.TrimSpace(line), prefix) {
 				lines[i] = fmt.Sprintf("%s: %s", key, strconv.Quote(newVal))
+				found = true
 				break
 			}
 		}
+	}
+	// If the frontmatter exists but the key was absent, insert it before
+	// the closing --- so externally-authored files (Obsidian/VS Code) that
+	// lack the key gain it on rename rather than silently no-oping.
+	if inFM && !found && closeIdx >= 0 {
+		newLine := fmt.Sprintf("%s: %s", key, strconv.Quote(newVal))
+		lines = append(lines[:closeIdx], append([]string{newLine}, lines[closeIdx:]...)...)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -2029,15 +2040,23 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 			pageFiles = append(pageFiles, entry.Name())
 		}
 
+		var writeErrs []string
 		for _, pageFile := range pageFiles {
 			oldPath := filepath.Join(oldDir, pageFile)
 			contentBytes, err := os.ReadFile(oldPath)
 			if err != nil {
+				writeErrs = append(writeErrs, fmt.Sprintf("read %s: %v", pageFile, err))
 				continue
 			}
 			content := updateFrontmatterField(string(contentBytes), "section", safeNewSection)
 			a.tracker.RegisterWrite(oldPath)
-			_ = parser.WriteFileAtomic(oldPath, []byte(content))
+			if err := parser.WriteFileAtomic(oldPath, []byte(content)); err != nil {
+				writeErrs = append(writeErrs, fmt.Sprintf("write %s: %v", pageFile, err))
+			}
+		}
+		if len(writeErrs) > 0 {
+			runErr = fmt.Errorf("RenameSection: %d file(s) failed frontmatter update: %s", len(writeErrs), strings.Join(writeErrs, "; "))
+			return
 		}
 
 		// 2. Rename the section folder.
@@ -2108,14 +2127,22 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 		})
 
 		// 2. Update notebook: frontmatter in each file.
+		var writeErrs []string
 		for _, mdPath := range mdFiles {
 			contentBytes, err := os.ReadFile(mdPath)
 			if err != nil {
+				writeErrs = append(writeErrs, fmt.Sprintf("read %s: %v", mdPath, err))
 				continue
 			}
 			content := updateFrontmatterField(string(contentBytes), "notebook", safeNewNotebook)
 			a.tracker.RegisterWrite(mdPath)
-			_ = parser.WriteFileAtomic(mdPath, []byte(content))
+			if err := parser.WriteFileAtomic(mdPath, []byte(content)); err != nil {
+				writeErrs = append(writeErrs, fmt.Sprintf("write %s: %v", mdPath, err))
+			}
+		}
+		if len(writeErrs) > 0 {
+			runErr = fmt.Errorf("RenameNotebook: %d file(s) failed frontmatter update: %s", len(writeErrs), strings.Join(writeErrs, "; "))
+			return
 		}
 
 		// 3. Rename the notebook folder.
