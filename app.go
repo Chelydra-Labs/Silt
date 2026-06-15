@@ -1034,6 +1034,36 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 	return safeDate, nil
 }
 
+// RenderTemplateBlocks renders the template with the given id and parses the
+// rendered Markdown into ParsedBlocks for the "insert at cursor" flow. Each
+// call produces blocks with fresh UUIDs (the rendered body has no <!-- id: -->
+// comments, so EnsureBlockID mints new ones), so inserting the same template
+// twice never collides in the blocks-table PK. The frontend converts the
+// returned blocks via blocksToDoc() → editor.commands.insertContent; the
+// UniqueBlockIds extension also guards against any residual collision.
+func (a *App) RenderTemplateBlocks(id string, vars map[string]string) ([]parser.ParsedBlock, error) {
+	if id == "" {
+		return nil, fmt.Errorf("template id is required")
+	}
+	t, err := templates.CachedGetTemplate(a.templatesDir(), id)
+	if err != nil {
+		return nil, err
+	}
+	rendered, warnings := templates.Render(t, vars, templates.RenderOptions{})
+	for _, w := range warnings {
+		log.Printf("templates: RenderTemplateBlocks(%q) warning: %s", id, w)
+	}
+	spaces := a.spacesPerTab
+	if spaces <= 0 {
+		spaces = 4
+	}
+	blocks, _, _, _, perr := parser.ParseFileContent(rendered, "", "", "", "", spaces)
+	if perr != nil {
+		return nil, fmt.Errorf("failed to parse rendered template %q: %w", id, perr)
+	}
+	return blocks, nil
+}
+
 
 // ResolveBlockReference looks up a ((uuid)) reference, returning its content
 // and location for hover previews and scroll-to-source navigation. Missing
