@@ -11,7 +11,7 @@ import (
 
 func TestEnsureBlockID(t *testing.T) {
 	// Line without ID
-	line1 := "- [ ] TODO TASK Draft README definition file"
+	line1 := "- [ ] Draft README definition file"
 	id1, _, newLine1, modified1 := EnsureBlockID(line1)
 	if !modified1 {
 		t.Errorf("Expected line to be modified")
@@ -24,7 +24,7 @@ func TestEnsureBlockID(t *testing.T) {
 	}
 
 	// Line with ID (old format, no date)
-	line2 := "- [ ] TODO TASK Draft README <!-- id: 8fa72c3b-d1e5-4b0d-8ea2-bfcfd2ee7f8a -->"
+	line2 := "- [ ] Draft README <!-- id: 8fa72c3b-d1e5-4b0d-8ea2-bfcfd2ee7f8a -->"
 	id2, fileDate2, newLine2, modified2 := EnsureBlockID(line2)
 	if modified2 {
 		t.Errorf("Expected line not to be modified")
@@ -75,7 +75,7 @@ func TestNormalizeDate(t *testing.T) {
 
 func TestParseLine(t *testing.T) {
 	// Test task line
-	taskLine := "- [ ] TODO TASK [Chris](2026-06-13, 2026-08-03)#1 Draft README <!-- id: 8fa72c3b-d1e5-4b0d-8ea2-bfcfd2ee7f8a -->"
+	taskLine := "- [ ] Draft README [owner:: Chris] [start:: 2026-06-13] [due:: 2026-08-03] [priority:: 1] <!-- id: 8fa72c3b-d1e5-4b0d-8ea2-bfcfd2ee7f8a -->"
 	block, _, _ := ParseLine(taskLine, 1, 4)
 
 	if block.Type != BlockTask {
@@ -121,13 +121,96 @@ func TestParseLine(t *testing.T) {
 	}
 }
 
+// TestParseLine_PinAndProgress covers the [pin:: true] and [progress:: N]
+// Dataview inline metadata tokens in the task syntax. Both are file-
+// resident user intent (ARCHITECTURE §0) so the parser is the canonical
+// reader — a round trip (parse → render → parse) must be stable.
+//
+// Syntax convention (matches the renderer output):
+//   - [x] description [priority:: N] [start:: DATE] [due:: DATE] [owner:: name] [pin:: true] [progress:: N]
+// Metadata tokens follow the description in Dataview [key:: value] format.
+func TestParseLine_PinAndProgress(t *testing.T) {
+	t.Run("pin flag parsed from [pin:: true] token", func(t *testing.T) {
+		line := "- [ ] Draft release notes [pin:: true] <!-- id: 11111111-1111-1111-1111-111111111111 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if !block.Pinned {
+			t.Errorf("expected Pinned=true for [pin:: true] token, got false")
+		}
+		if block.Progress != 0 {
+			t.Errorf("expected Progress=0 when no [progress:: N] present, got %d", block.Progress)
+		}
+	})
+	t.Run("progress parsed from [progress:: N] marker", func(t *testing.T) {
+		line := "- [/] Refine UI kernel [owner:: Alice] [priority:: 2] [progress:: 50] <!-- id: 22222222-2222-2222-2222-222222222222 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Progress != 50 {
+			t.Errorf("expected Progress=50 from [progress:: 50], got %d", block.Progress)
+		}
+		if block.Pinned {
+			t.Errorf("expected Pinned=false when no [pin:: true] present, got true")
+		}
+	})
+	t.Run("pin + progress coexist with full metadata", func(t *testing.T) {
+		line := "- [/] Critical workstream [priority:: 1] [start:: 2026-06-13] [due:: 2026-08-03] [owner:: Bob] [pin:: true] [progress:: 75] <!-- id: 33333333-3333-3333-3333-333333333333 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if !block.Pinned {
+			t.Errorf("expected Pinned=true with [pin:: true] present")
+		}
+		if block.Progress != 75 {
+			t.Errorf("expected Progress=75, got %d", block.Progress)
+		}
+		if block.Owner != "Bob" {
+			t.Errorf("expected Owner=Bob, got %q", block.Owner)
+		}
+		if block.Priority != 1 {
+			t.Errorf("expected Priority=1, got %d", block.Priority)
+		}
+		if block.CleanText != "Critical workstream" {
+			t.Errorf("expected CleanText='Critical workstream', got %q", block.CleanText)
+		}
+	})
+	t.Run("bare word `pin` in description does not count as pinned", func(t *testing.T) {
+		// Defensive: a copy-paste of "pin this" or a sentence containing
+		// the word should never flip Pinned=true. Only the [pin:: ...]
+		// Dataview token sets the flag.
+		line := "- [ ] pin this later <!-- id: 44444444-4444-4444-4444-444444444444 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Pinned {
+			t.Errorf("bare word `pin` must not set Pinned=true")
+		}
+	})
+	t.Run("progress > 100 clamps to 100", func(t *testing.T) {
+		line := "- [ ] Overflow [progress:: 999] <!-- id: 55555555-5555-5555-5555-555555555555 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Progress != 100 {
+			t.Errorf("expected Progress clamped to 100, got %d", block.Progress)
+		}
+	})
+	t.Run("round trip — parse then render preserves pin + progress", func(t *testing.T) {
+		line := "- [x] Ship release [priority:: 2] [owner:: Eve] [pin:: true] [progress:: 100] <!-- id: 66666666-6666-6666-6666-666666666666 -->"
+		parsed, _, _ := ParseLine(line, 1, 4)
+		rendered := renderBlock(parsed, 4)
+		// Re-parse the rendered line to confirm stability.
+		parsed2, _, _ := ParseLine(rendered, 1, 4)
+		if parsed2.Pinned != parsed.Pinned {
+			t.Errorf("round-trip Pinned drift: %v → %v", parsed.Pinned, parsed2.Pinned)
+		}
+		if parsed2.Progress != parsed.Progress {
+			t.Errorf("round-trip Progress drift: %d → %d", parsed.Progress, parsed2.Progress)
+		}
+		if parsed2.CleanText != parsed.CleanText {
+			t.Errorf("round-trip CleanText drift: %q → %q", parsed.CleanText, parsed2.CleanText)
+		}
+	})
+}
+
 // TestParseLine_EdgeCases covers the task-shorthand branches the
 // all-metadata TestParseLine case does not exercise: minimal task (no
 // metadata at all), DOING/DONE checkbox states, and partial metadata
 // (owner without dates, priority without owner).
 func TestParseLine_EdgeCases(t *testing.T) {
 	t.Run("minimal task — no owner/dates/priority", func(t *testing.T) {
-		line := "- [ ] TODO TASK Just a description <!-- id: 11111111-1111-1111-1111-111111111111 -->"
+		line := "- [ ] Just a description <!-- id: 11111111-1111-1111-1111-111111111111 -->"
 		block, _, _ := ParseLine(line, 1, 4)
 		if block.Type != BlockTask {
 			t.Fatalf("expected BlockTask, got %s", block.Type)
@@ -150,7 +233,7 @@ func TestParseLine_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("DOING state", func(t *testing.T) {
-		line := "- [/] DOING TASK [Bob] In progress task <!-- id: 22222222-2222-2222-2222-222222222222 -->"
+		line := "- [/] In progress task [owner:: Bob] <!-- id: 22222222-2222-2222-2222-222222222222 -->"
 		block, _, _ := ParseLine(line, 1, 4)
 		if block.Status != "DOING" {
 			t.Errorf("expected status DOING, got %q", block.Status)
@@ -161,7 +244,7 @@ func TestParseLine_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("DONE state", func(t *testing.T) {
-		line := "- [x] DONE TASK [Carol](2026-01-01, 2026-06-01)#2 Completed task <!-- id: 33333333-3333-3333-3333-333333333333 -->"
+		line := "- [x] Completed task [start:: 2026-01-01] [due:: 2026-06-01] [owner:: Carol] [priority:: 2] <!-- id: 33333333-3333-3333-3333-333333333333 -->"
 		block, _, _ := ParseLine(line, 1, 4)
 		if block.Status != "DONE" {
 			t.Errorf("expected status DONE, got %q", block.Status)
@@ -175,8 +258,7 @@ func TestParseLine_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("priority without owner or dates", func(t *testing.T) {
-		// #priority must immediately follow TASK when no [owner] or (dates).
-		line := "- [ ] TODO TASK#1 Urgent task no owner <!-- id: 44444444-4444-4444-4444-444444444444 -->"
+		line := "- [ ] Urgent task no owner [priority:: 1] <!-- id: 44444444-4444-4444-4444-444444444444 -->"
 		block, _, _ := ParseLine(line, 1, 4)
 		if block.Priority != 1 {
 			t.Errorf("expected priority 1, got %d", block.Priority)
@@ -201,8 +283,8 @@ tags: [work/project, systems/specs]
 # Saturday, June 13, 2026 <!-- id: 0a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8a -->
 
 ## Stream Logging <!-- id: 1a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8b -->
-- [ ] TODO TASK [Chris](2026-06-13)#1 Draft README <!-- id: 2a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8c -->
-    - [/] DOING TASK [Jenny]#2 Research subtasks <!-- id: 3a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8d -->
+- [ ] Draft README [due:: 2026-06-13] [owner:: Chris] [priority:: 1] <!-- id: 2a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8c -->
+    - [/] Research subtasks [owner:: Jenny] [priority:: 2] <!-- id: 3a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8d -->
 - A general note <!-- id: 4a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8e -->`
 
 	blocks, meta, newContent, modified, err := ParseFileContent(doc, "DefaultNB", "DefaultSec", "DefaultPage", "2026-06-01", 4)
@@ -409,16 +491,16 @@ func TestRenderFileContent_RoundTripIdentity(t *testing.T) {
 			name: "task_note_header",
 			src: "---\nnotebook: Work\nsection: Journal\npage: Daily\ndate: 2026-06-14\ntags: []\n---\n" +
 				"# Sprint Plan <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
-				"- [ ] TODO TASK [Chris]#1 Ship the feature <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+				"- [ ] Ship the feature [priority:: 1] [owner:: Chris] <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
 				"- A plain note <!-- id: 33333333-3333-3333-3333-333333333333 -->\n",
 		},
 		{
 			name: "nested_depths_and_states",
 			src: "---\nnotebook: NB\nsection: \npage: PG\ndate: 2026-06-14\ntags: []\n---\n" +
 				"# Top <!-- id: aaaaaaaa-1111-1111-1111-111111111111 -->\n" +
-				"- [ ] TODO TASK Parent <!-- id: aaaaaaaa-2222-2222-2222-111111111111 -->\n" +
-				"    - [/] DOING TASK(2026-06-14, 2026-06-20)[Sam]#1 Child <!-- id: aaaaaaaa-3333-3333-3333-111111111111 -->\n" +
-				"        - [x] DONE TASK Grandchild <!-- id: aaaaaaaa-4444-4444-4444-111111111111 -->\n",
+				"- [ ] Parent <!-- id: aaaaaaaa-2222-2222-2222-111111111111 -->\n" +
+				"    - [/] Child [priority:: 1] [start:: 2026-06-14] [due:: 2026-06-20] [owner:: Sam] <!-- id: aaaaaaaa-3333-3333-3333-111111111111 -->\n" +
+				"        - [x] Grandchild <!-- id: aaaaaaaa-4444-4444-4444-111111111111 -->\n",
 		},
 		{
 			name: "code_fence_preserved",
@@ -513,7 +595,7 @@ func TestRenderFileContent_ScaffoldSnapshot(t *testing.T) {
 	if !strings.Contains(got, "# Sunday, June 14, 2026") {
 		t.Errorf("header line missing/wrong:\n%s", got)
 	}
-	if !strings.Contains(got, "- [ ] TODO TASK [Chris] Start writing in Daily") {
+	if !strings.Contains(got, "- [ ] Start writing in Daily [owner:: Chris]") {
 		t.Errorf("task line missing/wrong:\n%s", got)
 	}
 	// The scaffolded output must parse cleanly (round trip back to blocks).
@@ -716,7 +798,7 @@ func writeBenchVault(tb interface{ Fatal(args ...any) }, root string, n int) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			tb.Fatal(err)
 		}
-		day := fmt.Sprintf("---\nnotebook: Work\nsection: Journal\npage: Daily\ndate: %s\ntags: [bench]\n---\n# Day %d <!-- id: %08x-1111-1111-1111-111111111111 -->\n\n- [ ] TODO TASK [Bench]#1 Item for day %d <!-- id: %08x-2222-2222-2222-222222222222 -->\n- A note for day %d <!-- id: %08x-3333-3333-3333-333333333333 -->\n", dateStr, i+1, i, i+1, i, i+1, i)
+		day := fmt.Sprintf("---\nnotebook: Work\nsection: Journal\npage: Daily\ndate: %s\ntags: [bench]\n---\n# Day %d <!-- id: %08x-1111-1111-1111-111111111111 -->\n\n- [ ] Item for day %d [priority:: 1] [owner:: Bench] <!-- id: %08x-2222-2222-2222-222222222222 -->\n- A note for day %d <!-- id: %08x-3333-3333-3333-333333333333 -->\n", dateStr, i+1, i, i+1, i, i+1, i)
 		path := filepath.Join(dir, dateStr+".md")
 		if err := os.WriteFile(path, []byte(day), 0o644); err != nil {
 			tb.Fatal(err)

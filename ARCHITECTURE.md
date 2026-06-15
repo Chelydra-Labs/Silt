@@ -2,6 +2,61 @@ Engineering Architecture: Silt
 
 This document details the low-level system design, state machines, data pipelines, and performance constraints of Silt. It acts as the direct engineering blueprint for developers implementing the Go core and Svelte interface layers.
 
+## Storage-of-Truth Tiers (Read First)
+
+Silt's persistent storage is layered into four tiers with **deliberate,
+non-overlapping responsibilities**. Every new feature MUST be designed
+against this map before writing code. Violating these tiers is a
+correctness regression, not a style choice.
+
+| Tier | Format | Location | Holds | Example |
+|---|---|---|---|---|
+| **Content** | Markdown (`.md`) | Vault root + per-page files | Block bodies, task markers, per-task metadata, block identity (`<!-- id: uuid @ YYYY-MM-DD -->`) | `[/] DOING TASK [Alice] (2026-06-15) #2 !pin [p:50] Implement search <!-- id: 7c2a… @ 2026-06-15 -->` |
+| **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Kanban columns, Kanban filter state, hotkey bindings, editor font sizes, theme typography overrides | `plugins.plugin_settings.silt-kanban.columns: [Backlog, In Progress, Review, Done]` |
+| **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
+| **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized counts (comments, links), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
+
+**The cardinal rules:**
+
+1. **Markdown is the source of truth for content.** Every per-block
+   metadata field (status, owner, priority, dates, pin, progress) MUST
+   round-trip through the markdown inline task syntax. The block
+   identity comment is the only identifier stored in the file; the file
+   position and the inline syntax are the source for everything else.
+   Deleting the entire `<vault>` should be recoverable by re-creating
+   the YAML config — the markdown files are the *product*.
+
+2. **YAML holds per-vault, per-user, per-plugin UI preferences** that
+   don't belong in any individual block. If two plugins want different
+   values, they live in YAML, not in markdown.
+
+3. **JSON holds user-global, pre-vault settings.** A user can have a
+   theme picked before they ever open a vault. The active theme id
+   cannot wait for a vault to be loaded; it must live in user-global
+   JSON.
+
+4. **SQLite is working memory, not a system of record.** Every row in
+   the index MUST be reproducible from the markdown + YAML above. The
+   recovery path for any SQLite corruption is *delete the index file
+   and relaunch* — that is the documented, supported operation. SQLite
+   is allowed to hold the block↔location projection, FTS5, file
+   mtime/size caches, and computed counts (comments, links). It is
+   **forbidden** to hold user intent: pin state, progress, custom
+   column names, filter state, theme id, hotkey bindings. New
+   features that need persistent per-task state must extend the
+   markdown inline task syntax and round-trip through the parser +
+   renderer; per-vault UI state goes in YAML.
+
+5. **Settings can be stored in JSON** (the pre-vault / user-global
+   tier), but only when the data must be available before a vault is
+   open. Everything else that is per-vault goes in YAML.
+
+This is the local-first contract: the user's files on disk *are* the
+product. The Svelte UI, the Go backend, and the SQLite index are all
+projections of those files, not the other way around.
+
+---
+
 1. System Topology & Process Boundaries
 
 The Silt system runs as a single local process. The operating system boundary separates the low-level compiled disk-access layer from the lightweight front-end view frame using native platform Webview IPC handles:
@@ -140,7 +195,62 @@ func EnsureBlockID(line string) (string, string, bool) {
 
 3. SQLite Schema & Query Optimization Layer
 
-SQLite is a persistent on-disk index in WAL mode at `<vault>/.system/index.sqlite` (+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose `mtime`+`size` differ from the last successful index are re-parsed and re-indexed; a cold start (no index file yet, or the 3 index files deleted by the user) performs a full scan and rebuild. Markdown remains the source of truth — the index is disposable and disposable only; deleting the 3 `.system/index.sqlite*` files is the documented recovery path. This durable, incremental model is what lets Silt scale to dozens of notebooks and thousands of pages without rebuilding the whole index on every launch.
+**Storage-of-truth principle.** Silt's persistent storage is layered with
+deliberate, non-overlapping responsibilities:
+
+- **Markdown files** (`.md` in the vault) are the **source of truth for
+  content**. Every block, every task marker, every per-task flag (status,
+  owner, priority, dates, pin, progress) round-trips through the markdown
+  inline syntax. The block identity comment (`<!-- id: uuid @ YYYY-MM-DD -->`)
+  is the only identifier stored in the file; everything else is derived
+  from the line's position in the file.
+- **YAML** (`<vault>/.system/config.yaml`) is the **source of truth for
+  per-user, per-vault, per-plugin UI preferences**: active plugin list,
+  disabled plugin list, per-plugin settings (e.g. Kanban column list,
+  Kanban filter state, theme typography overrides, hotkey bindings,
+  editor font sizes).
+- **JSON** is the **source of truth for user-global, pre-vault settings**:
+  `settings.json` (the active theme + mode) lives at
+  `<config>/silt/settings.json` and is the only disk write in the theme
+  pipeline, because the active theme must be known *before* a vault is
+  open. It is also where non-vault, non-theme user preferences go (font
+  pickers, etc.).
+- **SQLite** (`<vault>/.system/index.sqlite*`) is **working memory only**:
+  a derived, re-derivable cache. It is not a system of record. Any data
+  in SQLite must be reproducible from the markdown + YAML above; deleting
+  the index file is the documented recovery path. SQLite is *allowed* to
+  hold:
+  - The block ↔ file-location projection (notebook/section/page/line/file_date),
+    so the editor can jump-to-source by block id in O(1).
+  - Denormalized per-task caches that are expensive to recompute on
+    every query (e.g. `comments_count` = number of child NOTE blocks,
+    `links_count` = number of `((uuid))` references in the block body).
+    These are **derived** from markdown structure (parent_id, raw_content)
+    and re-derived on every re-index; they live in SQLite for query speed,
+    not because they are user state.
+  - The FTS5 full-text index over `clean_content` for `SearchBlocks`.
+  - The `files` table (path → mtime/size) that powers incremental re-index.
+
+**It is not allowed to store user intent in SQLite.** Pin, progress, custom
+column names, filter state, theme id, hotkey bindings — these are all user
+intent and must live in the markdown inline syntax (for per-block
+metadata) or in YAML/JSON (for per-vault / per-user preferences). New
+features that need persistent per-task state must extend the markdown
+inline task syntax (`!pin`, `[p:N]`, etc.) and round-trip through the
+parser + renderer; if the data is per-user/per-vault, it goes in YAML
+config. This is what "local-first" means: the user's files on disk
+*are* the product.
+
+The on-disk SQLite lives in WAL mode at `<vault>/.system/index.sqlite`
+(+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose
+`mtime`+`size` differ from the last successful index are re-parsed and
+re-indexed; a cold start (no index file yet, or the 3 index files
+deleted by the user) performs a full scan and rebuild. The recovery
+path is documented and intentional: deleting the 3 `.system/index.sqlite*`
+files is safe because every row in them is re-derivable from the
+markdown + YAML on the next launch. This durable, incremental model is
+what lets Silt scale to dozens of notebooks and thousands of pages
+without rebuilding the whole index on every launch.
 
 The connection is opened by `db.NewDatabaseManager(dbPath)` (pass `""` for an ephemeral in-memory shared-cache DB, used in tests and before a vault is open). The pragmas below run on every open. `journal_mode=WAL` is persistent in the file header, so once the first on-disk open creates a WAL-mode file, every later connection — including the plugin SDK's read-only handle — inherits it without re-running the pragma.
 

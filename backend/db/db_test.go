@@ -30,7 +30,7 @@ func sampleTaskBlock(id string, line int) parser.ParsedBlock {
 		ID:         id,
 		Type:       parser.BlockTask,
 		Depth:      0,
-		RawText:    "- [ ] TODO TASK [Alice] sample task <!-- id: " + id + " -->",
+		RawText:    "- [ ] sample task [owner:: Alice] <!-- id: " + id + " -->",
 		CleanText:  "sample task",
 		Status:     "TODO",
 		Owner:      "Alice",
@@ -195,7 +195,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "11111111-1111-1111-1111-111111111111",
 			Type:      parser.BlockTask,
-			RawText:   "- [x] DONE TASK [Alice]#1 ship #work/project <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:   "- [x] ship [priority:: 1] [owner:: Alice] #work/project <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText: "ship",
 			Status:    "DONE",
 			Owner:     "Alice",
@@ -205,7 +205,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "22222222-2222-2222-2222-222222222222",
 			Type:      parser.BlockTask,
-			RawText:   "- [/] DOING TASK [Bob]#2 fix #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			RawText:   "- [/] fix [priority:: 2] [owner:: Bob] #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
 			CleanText: "fix",
 			Status:    "DOING",
 			Owner:     "Bob",
@@ -215,7 +215,7 @@ func TestQueryTasksWithFilters_FilterCombinations(t *testing.T) {
 		{
 			ID:        "33333333-3333-3333-3333-333333333333",
 			Type:      parser.BlockTask,
-			RawText:   "- [ ] TODO TASK [Alice]#3 research #work/project <!-- id: 33333333-3333-3333-3333-333333333333 -->",
+			RawText:   "- [ ] research [priority:: 3] [owner:: Alice] #work/project <!-- id: 33333333-3333-3333-3333-333333333333 -->",
 			CleanText: "research",
 			Status:    "TODO",
 			Owner:     "Alice",
@@ -309,7 +309,7 @@ func TestIndexFileBlocks_AttachesFrontmatterTagsByLoopIndex(t *testing.T) {
 		{
 			ID:         "22222222-2222-2222-2222-222222222222",
 			Type:       parser.BlockTask,
-			RawText:    "- [ ] TODO TASK sample <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			RawText:    "- [ ] sample <!-- id: 22222222-2222-2222-2222-222222222222 -->",
 			CleanText:  "sample",
 			Status:     "TODO",
 			LineNumber: 7,
@@ -355,7 +355,7 @@ func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
 		{
 			ID:         "11111111-1111-1111-1111-111111111111",
 			Type:       parser.BlockTask,
-			RawText:    "- [ ] TODO TASK ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:    "- [ ] ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText:  "ship",
 			Status:     "TODO",
 			LineNumber: 1,
@@ -370,7 +370,7 @@ func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
 		{
 			ID:         "11111111-1111-1111-1111-111111111111",
 			Type:       parser.BlockTask,
-			RawText:    "- [/] DOING TASK ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:    "- [/] ship <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText:  "ship",
 			Status:     "DOING",
 			LineNumber: 1,
@@ -414,7 +414,7 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 		{
 			ID:        "11111111-1111-1111-1111-111111111111",
 			Type:      parser.BlockTask,
-			RawText:   "- [x] DONE TASK [Alice] ship #work/project #release <!-- id: 11111111-1111-1111-1111-111111111111 -->",
+			RawText:   "- [x] ship [owner:: Alice] #work/project #release <!-- id: 11111111-1111-1111-1111-111111111111 -->",
 			CleanText: "ship",
 			Status:    "DONE",
 			Owner:     "Alice",
@@ -424,7 +424,7 @@ func TestQueryTasksWithFilters_PopulatesTags(t *testing.T) {
 		{
 			ID:        "22222222-2222-2222-2222-222222222222",
 			Type:      parser.BlockTask,
-			RawText:   "- [ ] TODO TASK [Bob] research #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
+			RawText:   "- [ ] research [owner:: Bob] #work/project <!-- id: 22222222-2222-2222-2222-222222222222 -->",
 			CleanText: "research",
 			Status:    "TODO",
 			Owner:     "Bob",
@@ -1233,7 +1233,7 @@ func TestSearch_TagHydrationSurvivesFTS(t *testing.T) {
 	b := parser.ParsedBlock{
 		ID: "dddddddd-1111-1111-1111-111111111111", Type: parser.BlockTask,
 		CleanText: "ship the release", Status: "TODO",
-		RawText: "- [ ] TODO TASK ship the release #dev/release <!-- id: dddddddd-1111-1111-1111-111111111111 -->",
+		RawText: "- [ ] ship the release #dev/release <!-- id: dddddddd-1111-1111-1111-111111111111 -->",
 		LineNumber: 1,
 	}
 	if err := dm.IndexFileBlocks("Work", "", "Daily", []parser.ParsedBlock{b}, []string{"dev/release"}); err != nil {

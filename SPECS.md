@@ -139,27 +139,26 @@ tags: [systems/specs, wails/go]
 # Saturday, June 13, 2026
 
 ## Daily Standup Logging
-- [ ] TODO TASK [Chris](2026-06-13, 2026-06-20)#1 Implement parser tests <!-- id: f1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d -->
+- [ ] Implement parser tests [owner:: Chris] [start:: 2026-06-13] [due:: 2026-06-20] [priority:: 1] <!-- id: f1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d -->
 ```
 
 
 4. Custom AST Parser & Task Shorthand Grammar
 
-The Go backend uses a custom tokenizer layered onto a Markdown syntax tree engine (such as yuin/goldmark) to parse, match, and modify inline task properties.
+The Go backend uses a custom tokenizer layered onto a Markdown syntax tree engine to parse, match, and modify inline task properties.
 
-4.1 Parser Shorthand Specification
+4.1 Task Syntax — Dataview Inline Metadata
 
-An active task block is declared anywhere within a bulleted list hierarchy via the explicit keyword TASK immediately following a checkbox token, followed by optional contextual tokens:
+Silt tasks are GFM checkbox items enriched with Dataview-style inline
+metadata tokens (`[key:: value]`). The `TASK` keyword is dropped — any
+GFM checkbox (`- [ ]`, `- [/]`, `- [x]`) is a task. Metadata is
+order-independent and extensible.
 
-^([ ]|[/]|[x])\s(TODO|DOING|DONE)\sTASK\s(?:\[([^\]]*)\])?(?:\(([^)]*)\))?(?:#(\d+))?\s(.*)$
+```
+- [/] Critical workstream [priority:: 1] [due:: 2026-08-03] [owner:: Bob] [pin:: true] [progress:: 50] #work/sprint-4
+```
 
-
-4.2 AST Syntax Mappings
-
-[/] DOING TASK [Chris](2026-06-13, 2026-06-20)#1 Implement parser tests <!-- id: f1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d -->
-
-
-Checkbox State Marker: Maps directly to standard markdown checkbox lists.
+Checkbox State Marker (GFM convention):
 
 [ ] = TODO
 
@@ -167,60 +166,67 @@ Checkbox State Marker: Maps directly to standard markdown checkbox lists.
 
 [x] = DONE
 
-Owner Token: Indicated by bracketed text immediately following TASK. E.g., [Chris].
+Metadata Tokens (Dataview `[key:: value]` format):
 
-Temporal Boundaries: Bounded by parentheses containing either a single date token (assigned as the Due Date), or a comma-separated date pair (representing Start Date, Due Date). Supported formats: M/D/YY, MM/DD/YYYY, or standard ISO-8601 YYYY-MM-DD.
+| Key | Shorthand | Format | Example |
+|---|---|---|---|
+| `due` | — | `[due:: YYYY-MM-DD]` | `[due:: 2026-08-03]` |
+| `start` | — | `[start:: YYYY-MM-DD]` | `[start:: 2026-06-13]` |
+| `owner` | `[o:: name]` | `[owner:: name]` | `[owner:: Bob]` |
+| `priority` | `[p:: N]` | `[priority:: N]` (1=critical, 2=normal, 3=low) | `[priority:: 1]` |
+| `pin` | `[pinned:: true]` | `[pin:: true]` (boolean) | `[pin:: true]` |
+| `progress` | `[prog:: N]` | `[progress:: N]` (0-100) | `[progress:: 50]` |
 
-Priority Token: Indicated by a trailing hashtag and digit (e.g., #1 representing highest priority, down to #3 representing lowest).
+Tags: Standard markdown hashtags (`#work/project/milestone-one`) —
+unaffected by the metadata token system.
 
-Persistent Identifier comment: A hidden HTML comment <!-- id: UUIDv4 --> automatically generated and appended to the block by the parser if one is missing.
+Persistent Identifier comment: A hidden HTML comment
+`<!-- id: UUIDv4 @ YYYY-MM-DD -->` automatically generated and appended
+to the block by the parser if one is missing.
+
+4.2 Editor Input Paths
+
+Three input paths produce the same Dataview `[key:: value]` storage
+format:
+
+1. **`%` prefix autocomplete**: User types `%` → instant popup showing
+   all available metadata keys (scoped to task metadata only, unlike
+   the general `/` command palette). Typing filters; selecting inserts
+   `[key:: ]` with cursor positioned for value entry.
+2. **`/` slash commands**: TipTap's command palette. Richer UI: date
+   pickers for `/due`, priority selector for `/priority`, toggle for
+   `/pin`.
+3. **Direct typing**: Power users type `[key:: value]` directly — what
+   you type is what's stored (WYSIWYG).
 
 4.3 Task Token State Matrix
 
-File Plaintext State
-
-UI Checkbox Representation
-
-Kanban Column
-
-Calendar/Agenda Placement
-
-[ ] TODO TASK ...
-
-Unchecked box [ ]
-
-"To Do" Column
-
-Assigned to Due Date
-
-[/] DOING TASK ...
-
-Half-filled box [/]
-
-"In Progress" Column
-
-Spans Start to Due Dates
-
-[x] DONE TASK ...
-
-Checked box [x]
-
-"Done" Column
-
-Stays on original timeline date
+| File Plaintext State | UI Checkbox | Kanban Column | Calendar/Agenda |
+|---|---|---|---|
+| `- [ ] ...` | Unchecked `[ ]` | "To Do" | Assigned to Due Date |
+| `- [/] ...` | Half-filled `[/]` | "In Progress" | Spans Start to Due |
+| `- [x] ...` | Checked `[x]` | "Done" | Stays on original date |
 
 4.4 Indentation and Nested Hierarchies
 
 Indentation depths are defined by hard tabs ($T_{level}$).
 If a block with nesting depth $T_{n}$ resides under a block at depth $T_{n-1}$, the parser evaluates the relationship and indexes a parent-child dependency map inside the SQLite database:
 
-- [ ] TODO TASK [Chris]#1 Implement AST backend core <!-- id: parent-uuid -->
-    - [ ] TODO TASK [Jenny]#2 Write lexer token rules <!-- id: child-uuid-1 -->
-    - [ ] TODO TASK [Jenny]#2 Write file synchronization loop <!-- id: child-uuid-2 -->
+- [ ] Implement AST backend core [priority:: 1] [owner:: Chris] <!-- id: parent-uuid -->
+    - [ ] Write lexer token rules [priority:: 2] [owner:: Jenny] <!-- id: child-uuid-1 -->
+    - [ ] Write file synchronization loop [priority:: 2] [owner:: Jenny] <!-- id: child-uuid-2 -->
 
 
 SQLite mapping schema:
-INSERT INTO tasks (id, parent_id, owner, start_date, due_date, priority, body) VALUES ('child-uuid-1', 'parent-uuid', 'Jenny', NULL, NULL, 2, 'Write lexer token rules');
+INSERT INTO tasks (block_id, status, owner, priority) VALUES ('child-uuid-1', 'TODO', 'Jenny', 2);
+
+4.5 Storage-of-Truth Tiers
+
+See ARCHITECTURE.md §0 for the full storage-of-truth contract. Summary:
+task metadata (`[key:: value]`) is **file-resident user intent** — the
+markdown file is the source of truth. SQLite caches derived values
+(comments count, links count) and the parsed projection for query speed,
+but every SQLite row is re-derivable from the markdown.
 
 5. Smart Graph Features: Namespaces & Block Links
 
@@ -287,7 +293,7 @@ Action Result
 
 /todo
 
-Automatically appends - [ ] TODO TASK []()#3  and focuses the owner field.
+Automatically appends `- [ ] ` (empty GFM checkbox) and triggers the `%` metadata autocomplete so the user can add owner, due date, priority, etc.
 
 /today
 
@@ -499,7 +505,8 @@ editor:
 # Task Parse Rules
 parsing:
   auto_inject_uuid: true
-  shorthand_regex: "^([ ]|[/]|[x])\\s(TODO|DOING|DONE)\\sTASK\\s(?:\\[([^\\]]*)\\])?(?:\\(([^)]*)\\))?(?:#(\\d+))?\\s(.*)$"
+  checkbox_regex: "^([\\s]*)-\\s\\[([ x/])\\]\\s+(.*)$"
+  metadata_token_regex: "\\[([\\w]+)::\\s*([^\\]]*)\\]"
   default_task_priority: 3
 
 # Key-Binding Map

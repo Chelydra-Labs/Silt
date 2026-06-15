@@ -16,7 +16,8 @@ function makeCtx(): PluginContext {
     activePage: 'Daily',
     sqliteQuery: mocks.sqliteQuery,
     updateBlockState: vi.fn(),
-    mutateBlock: vi.fn()
+    mutateBlock: vi.fn(),
+    updateTaskMeta: vi.fn()
   }
 }
 
@@ -43,18 +44,21 @@ describe('Calendar plugin', () => {
   it('renders a month grid with tasks from ctx.sqliteQuery', async () => {
     const now = new Date()
     const ymd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    mocks.sqliteQuery.mockResolvedValue([
-      {
-        id: 'c1',
-        notebook: 'Work',
-        section: 'Journal',
-        page: 'Daily',
-        file_date: ymd,
-        clean_content: 'Meeting today',
-        status: 'TODO',
-        due_date: ymd
-      }
-    ])
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'c1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: ymd,
+          clean_content: 'Meeting today',
+          status: 'TODO',
+          due_date: ymd
+        }
+      ],
+      truncated: false
+    })
 
     render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
@@ -65,7 +69,7 @@ describe('Calendar plugin', () => {
   })
 
   it('Today button resets the cursor to the current date', async () => {
-    mocks.sqliteQuery.mockResolvedValue([])
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
 
     render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
@@ -82,18 +86,21 @@ describe('Calendar plugin', () => {
   it('clicking a task dispatches navigate-to-block', async () => {
     const now = new Date()
     const ymd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    mocks.sqliteQuery.mockResolvedValue([
-      {
-        id: 'c1',
-        notebook: 'Work',
-        section: 'Journal',
-        page: 'Daily',
-        file_date: ymd,
-        clean_content: 'Standup meeting',
-        status: 'TODO',
-        due_date: ymd
-      }
-    ])
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'c1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: ymd,
+          clean_content: 'Standup meeting',
+          status: 'TODO',
+          due_date: ymd
+        }
+      ],
+      truncated: false
+    })
 
     const handler = vi.fn()
     window.addEventListener('navigate-to-block', handler)

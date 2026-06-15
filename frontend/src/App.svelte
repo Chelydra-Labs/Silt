@@ -18,7 +18,8 @@
   import {
     initConfigHotReload,
     loadConfig,
-    settings
+    settings,
+    type SystemConfig
   } from './settings/store.svelte'
   import { initEditorTokens } from './settings/editor-tokens.svelte'
   import { initThemes } from './theme/store.svelte'
@@ -62,11 +63,19 @@
       }
     }
     checkInit()
-    // Discover and initialize plugins once the frontend is mounted. They
-    // load from the (possibly empty) vault registry and first-party bundle.
-    loadPlugins('', '', '').catch((e) =>
-      console.error('Plugin load failed:', e)
-    )
+    // Best-effort: load the config first so the initial loadPlugins call
+    // observes plugins.disabled on a cold start (a config.yaml that ships
+    // with a pre-disabled first-party plugin must NOT load it on the first
+    // paint). loadConfig errors out before a vault is open; that's fine —
+    // loadPlugins will then see an empty disabled set, matching the
+    // pre-PR behavior.
+    loadConfig()
+      .catch((e) => console.error('Startup config load failed:', e))
+      .finally(() => {
+        loadPlugins('', '', '').catch((e) =>
+          console.error('Plugin load failed:', e)
+        )
+      })
     // Subscribe to config hot-reload (config:changed from Go) so the settings
     // store refreshes on external edits to .system/config.yaml.
     initConfigHotReload()
@@ -81,9 +90,25 @@
     // store initializers.
     const disposeThemes = initThemes()
     const disposeTemplates = initTemplates()
-    // Eagerly load the config so config-driven global shortcuts (open_search,
-    // toggle_sidebar) work from startup, not only after Settings is opened.
-    loadConfig().catch((e) => console.error('Startup config load failed:', e))
+
+    // Hot-reload the plugin registry when an external config.yaml edit
+    // changes plugins.disabled (e.g. the user hand-edits the file as
+    // documented in docs/PLUGIN_DEVELOPMENT.md). Diff against the last
+    // seen value so unrelated config changes (theme, hotkeys, etc.) do
+    // not pay the ESM-import + plugin init cost.
+    let prevDisabled: string[] = settings.config?.plugins?.disabled ?? []
+    const offConfigChangedReload = EventsOn(
+      'config:changed',
+      (cfg: SystemConfig) => {
+        const next = (cfg?.plugins?.disabled ?? []) as string[]
+        if (!arraysEqual(prevDisabled, next)) {
+          prevDisabled = [...next]
+          loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
+            console.error('Plugin reload after config change failed:', e)
+          )
+        }
+      }
+    )
 
     function handleOpenSettings(e: Event) {
       const detail = (e as CustomEvent).detail
@@ -175,6 +200,7 @@
       window.removeEventListener('open-settings', handleOpenSettings)
       window.removeEventListener('open-template-picker', handleOpenTemplatePicker)
       offPluginsChanged()
+      offConfigChangedReload()
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()
@@ -277,6 +303,16 @@
     } else {
       activeView = VIEW_CYCLE[(idx + 1) % VIEW_CYCLE.length]
     }
+  }
+
+  // Order-independent string-array equality (the disabled list is a set
+  // semantically — config.yaml can re-order it without changing meaning).
+  // Used by the config:changed handler to decide whether to re-run
+  // loadPlugins on a hot-reload.
+  function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
+    if (a.length !== b.length) return false
+    const setA = new Set(a)
+    return b.every((x) => setA.has(x))
   }
 </script>
 

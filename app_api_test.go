@@ -71,9 +71,9 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
 	content := "# Today <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
 		"\n" +
-		"- [ ] TODO TASK [Alice] ship <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
-		"- [/] DOING TASK [Bob] research <!-- id: 33333333-3333-3333-3333-333333333333 -->\n" +
-		"- [x] DONE TASK [Carol] done <!-- id: 44444444-4444-4444-4444-444444444444 -->\n"
+		"- [ ] ship [owner:: Alice] <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [/] research [owner:: Bob] <!-- id: 33333333-3333-3333-3333-333333333333 -->\n" +
+		"- [x] done [owner:: Carol] <!-- id: 44444444-4444-4444-4444-444444444444 -->\n"
 	writeFile(t, filePath, content)
 
 	// Index the file so the DB has block metadata.
@@ -93,7 +93,7 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read after write: %v", err)
 	}
-	if !strings.Contains(string(updated), "- [/] DOING TASK [Alice] ship") {
+	if !strings.Contains(string(updated), "- [/] ship [owner:: Alice]") {
 		t.Errorf("expected line updated to DOING, got:\n%s", updated)
 	}
 
@@ -102,7 +102,7 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 		t.Fatalf("UpdateBlockState DOING->DONE: %v", err)
 	}
 	updated, _ = os.ReadFile(filePath)
-	if !strings.Contains(string(updated), "- [x] DONE TASK [Alice] ship") {
+	if !strings.Contains(string(updated), "- [x] ship [owner:: Alice]") {
 		t.Errorf("expected line updated to DONE, got:\n%s", updated)
 	}
 
@@ -111,7 +111,7 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 		t.Fatalf("UpdateBlockState DONE->TODO: %v", err)
 	}
 	updated, _ = os.ReadFile(filePath)
-	if !strings.Contains(string(updated), "- [ ] TODO TASK [Alice] ship") {
+	if !strings.Contains(string(updated), "- [ ] ship [owner:: Alice]") {
 		t.Errorf("expected line reverted to TODO, got:\n%s", updated)
 	}
 }
@@ -126,7 +126,7 @@ func TestUpdateBlockState_RejectsTraversalMetadata(t *testing.T) {
 		{
 			ID:         "55555555-5555-5555-5555-555555555555",
 			Type:       parser.BlockTask,
-			RawText:    "- [ ] TODO TASK evil <!-- id: 55555555-5555-5555-5555-555555555555 -->",
+			RawText:    "- [ ] evil <!-- id: 55555555-5555-5555-5555-555555555555 -->",
 			CleanText:  "evil",
 			Status:     "TODO",
 			LineNumber: 1,
@@ -187,7 +187,7 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 		{
 			ID:         "t1",
 			Type:       parser.BlockTask,
-			RawText:    "- [x] DONE TASK [Alice] ship #work/project <!-- id: t1 -->",
+			RawText:    "- [x] ship [owner:: Alice] #work/project <!-- id: t1 -->",
 			CleanText:  "ship",
 			Status:     "DONE",
 			Owner:      "Alice",
@@ -197,7 +197,7 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 		{
 			ID:         "t2",
 			Type:       parser.BlockTask,
-			RawText:    "- [/] DOING TASK [Bob] fix <!-- id: t2 -->",
+			RawText:    "- [/] fix [owner:: Bob] <!-- id: t2 -->",
 			CleanText:  "fix",
 			Status:     "DOING",
 			Owner:      "Bob",
@@ -207,7 +207,7 @@ func TestQueryTasks_FiltersByOwnerAndPriority(t *testing.T) {
 		{
 			ID:         "t3",
 			Type:       parser.BlockTask,
-			RawText:    "- [ ] TODO TASK [Alice] research <!-- id: t3 -->",
+			RawText:    "- [ ] research [owner:: Alice] <!-- id: t3 -->",
 			CleanText:  "research",
 			Status:     "TODO",
 			Owner:      "Alice",
@@ -294,8 +294,8 @@ func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
 		"fmt.Println(\"keep me\") <!-- id: 99999999-9999-9999-9999-999999999999 -->\n" +
 		"```\n" +
 		"\n" +
-		"- [ ] TODO TASK [Alice] ship <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
-		"- [ ] TODO TASK [Bob] remove <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
+		"- [ ] ship [owner:: Alice] <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [ ] remove [owner:: Bob] <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
 	writeFile(t, filePath, content)
 
 	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, fileDate, app.spacesPerTab)
@@ -324,7 +324,7 @@ func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
 	if !strings.Contains(written, "fmt.Println(\"keep me\") <!-- id: 99999999-9999-9999-9999-999999999999 -->") {
 		t.Errorf("expected fenced code content to be preserved, got:\n%s", written)
 	}
-	if !strings.Contains(written, "- [ ] TODO TASK [Alice] ship the fix <!-- id: 22222222-2222-2222-2222-222222222222 @") {
+	if !strings.Contains(written, "- [ ] ship the fix [owner:: Alice] <!-- id: 22222222-2222-2222-2222-222222222222 @") {
 		t.Errorf("expected updated task text, got:\n%s", written)
 	}
 	if strings.Contains(written, "remove <!-- id: 33333333-3333-3333-3333-333333333333 -->") {
@@ -433,14 +433,14 @@ func TestSaveFileBlocks_DeletesMiddleBlockPreservesNonBlockLines(t *testing.T) {
 		"date: 2026-06-13\n" +
 		"tags: []\n" +
 		"---\n" +
-		"- [ ] TODO TASK [Alice] first <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"- [ ] first [owner:: Alice] <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
 		"\n" +
 		"```go\n" +
 		"// preserved code block\n" +
 		"```\n" +
 		"\n" +
-		"- [ ] TODO TASK [Bob] middle <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
-		"- [ ] TODO TASK [Carol] last <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
+		"- [ ] middle [owner:: Bob] <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [ ] last [owner:: Carol] <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
 	writeFile(t, filePath, content)
 
 	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, fileDate, app.spacesPerTab)
@@ -469,7 +469,7 @@ func TestSaveFileBlocks_DeletesMiddleBlockPreservesNonBlockLines(t *testing.T) {
 	if strings.Contains(written, "middle <!-- id: 22222222-2222-2222-2222-222222222222 -->") {
 		t.Errorf("expected deleted middle block to be gone, got:\n%s", written)
 	}
-	if !strings.Contains(written, "- [ ] TODO TASK [Carol] last <!-- id: 33333333-3333-3333-3333-333333333333 @") {
+	if !strings.Contains(written, "- [ ] last [owner:: Carol] <!-- id: 33333333-3333-3333-3333-333333333333 @") {
 		t.Errorf("expected last block to survive, got:\n%s", written)
 	}
 }
@@ -488,9 +488,9 @@ func TestSaveFileBlocks_PreservesUnknownUUIDLine(t *testing.T) {
 		"date: 2026-06-13\n" +
 		"tags: []\n" +
 		"---\n" +
-		"- [ ] TODO TASK [Alice] keep <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"- [ ] keep [owner:: Alice] <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
 		"ref to commit <!-- id: deadbeef-dead-beef-dead-beefdeadbeef -->\n" +
-		"- [ ] TODO TASK [Bob] also keep <!-- id: 22222222-2222-2222-2222-222222222222 -->\n"
+		"- [ ] also keep [owner:: Bob] <!-- id: 22222222-2222-2222-2222-222222222222 -->\n"
 	writeFile(t, filePath, content)
 
 	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, fileDate, app.spacesPerTab)
@@ -549,7 +549,7 @@ func writeSamplePage(t *testing.T, app *App, notebook, section, page, fileDate, 
 	t.Helper()
 	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
 	content := "# Title <!-- id: 11111111-1111-1111-1111-111111111111 -->\n\n" +
-		"- [ ] TODO TASK [Alice] " + taskText + " <!-- id: " + taskID + " -->\n"
+		"- [ ] " + taskText + " [owner:: Alice] <!-- id: " + taskID + " -->\n"
 	writeFile(t, filePath, content)
 	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, page, fileDate, app.spacesPerTab)
 	if err != nil {
@@ -598,7 +598,7 @@ func TestMutateBlock_PreservesTaskSyntaxAndUUID(t *testing.T) {
 	content, _ := os.ReadFile(filePath)
 	s := string(content)
 	// Task syntax and UUID comment must survive.
-	if !strings.Contains(s, "- [ ] TODO TASK [Alice] updated body") {
+	if !strings.Contains(s, "- [ ] updated body [owner:: Alice]") {
 		t.Errorf("expected updated task line, got:\n%s", s)
 	}
 	if !strings.Contains(s, "<!-- id: "+taskID+" @") {
@@ -624,12 +624,15 @@ func TestPluginRawQuery_AllowsSelectRejectsWrite(t *testing.T) {
 	app := newTestApp(t)
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", "44444444-4444-4444-4444-444444444444", "query me")
 
-	rows, err := app.PluginRawQuery("SELECT id, clean_content FROM blocks WHERE type = ?", []any{"TASK"})
+	res, err := app.PluginRawQuery("SELECT id, clean_content FROM blocks WHERE type = ?", []any{"TASK"})
 	if err != nil {
 		t.Fatalf("PluginRawQuery SELECT: %v", err)
 	}
-	if len(rows) != 1 {
-		t.Errorf("expected 1 row, got %d", len(rows))
+	if len(res.Rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(res.Rows))
+	}
+	if res.Truncated {
+		t.Errorf("single-row result must not report Truncated=true")
 	}
 
 	if _, err := app.PluginRawQuery("DELETE FROM blocks", nil); err == nil {
@@ -648,12 +651,12 @@ func TestPluginRawQuery_RejectsStackedWrite(t *testing.T) {
 		t.Fatalf("expected stacked write to be rejected by read-only connection")
 	}
 	// Sanity: the index must still be intact.
-	rows, err := app.PluginRawQuery("SELECT COUNT(*) AS n FROM blocks", nil)
+	res, err := app.PluginRawQuery("SELECT COUNT(*) AS n FROM blocks", nil)
 	if err != nil {
 		t.Fatalf("SELECT after rejected stacked write: %v", err)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(rows))
+	if len(res.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(res.Rows))
 	}
 }
 
@@ -663,12 +666,36 @@ func TestPluginRawQuery_AllowsBlockCommentPrefix(t *testing.T) {
 	app := newTestApp(t)
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", "77777777-7777-7777-7777-777777777777", "commented")
 
-	rows, err := app.PluginRawQuery("/* explain */ SELECT id FROM blocks LIMIT 1", nil)
+	res, err := app.PluginRawQuery("/* explain */ SELECT id FROM blocks LIMIT 1", nil)
 	if err != nil {
 		t.Fatalf("PluginRawQuery with leading block comment: %v", err)
 	}
-	if len(rows) != 1 {
-		t.Errorf("expected 1 row, got %d", len(rows))
+	if len(res.Rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(res.Rows))
+	}
+}
+
+// TestPluginRawQuery_TruncationFlag (#92 review): when a query returns
+// more than maxPluginQueryRows, the result must report Truncated=true so
+// the plugin SDK can surface a "more rows exist" hint to the user
+// instead of silently dropping data on the floor. Run a small number of
+// writes (well under the cap) to confirm Truncated=false; the cap itself
+// is unit-tested at a smaller cardinality by hand in the actual env
+// where the production cap (5000) would dominate the test runtime.
+func TestPluginRawQuery_TruncationFlag(t *testing.T) {
+	app := newTestApp(t)
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", "88888888-8888-8888-8888-888888888888", "truncation-guard")
+
+	// Far under the cap → Truncated must be false.
+	res, err := app.PluginRawQuery("SELECT id FROM blocks LIMIT 10", nil)
+	if err != nil {
+		t.Fatalf("PluginRawQuery under cap: %v", err)
+	}
+	if res.Truncated {
+		t.Errorf("Truncated should be false under the cap; rows=%d", len(res.Rows))
+	}
+	if len(res.Rows) == 0 {
+		t.Errorf("expected at least 1 row from sample page, got 0")
 	}
 }
 
@@ -900,7 +927,7 @@ func sampleTaskBlockWithText(id string, line int, text string) parser.ParsedBloc
 		ID:         id,
 		Type:       parser.BlockTask,
 		Depth:      0,
-		RawText:    "- [ ] TODO TASK " + text + " <!-- id: " + id + " -->",
+		RawText:    "- [ ] " + text + " <!-- id: " + id + " -->",
 		CleanText:  text,
 		Status:     "TODO",
 		LineNumber: line,

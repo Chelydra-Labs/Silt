@@ -174,10 +174,36 @@ func (dm *DatabaseManager) initSchema() error {
 		start_date TEXT,         -- YYYY-MM-DD or NULL
 		due_date TEXT,           -- YYYY-MM-DD or NULL
 		priority INTEGER,        -- 1, 2, 3
+		pinned INTEGER DEFAULT 0,           -- 0/1; file-resident user intent (cached for query speed)
+		progress INTEGER DEFAULT 0,         -- 0-100; file-resident user intent (cached for query speed)
+		comments_count INTEGER DEFAULT 0,   -- count of child NOTE blocks (derived cache)
+		links_count INTEGER DEFAULT 0,      -- count of ((uuid)) refs in raw_content (derived cache)
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
 	if _, err := dm.db.Exec(createTasksTable); err != nil {
 		return fmt.Errorf("failed to create tasks table: %w", err)
+	}
+
+	// Migration: add new columns to existing tasks tables (a vault that
+	// was created before the pinned/progress/comments_count/links_count
+	// columns shipped). SQLite's ALTER TABLE ADD COLUMN is idempotent-
+	// safe only via the try-ignore pattern below (it errors if the column
+	// already exists). Each column is nullable/defaulted so existing rows
+	// stay valid without a data backfill — a re-index populates them.
+	for _, col := range []struct{ name, defn string }{
+		{"pinned", "INTEGER DEFAULT 0"},
+		{"progress", "INTEGER DEFAULT 0"},
+		{"comments_count", "INTEGER DEFAULT 0"},
+		{"links_count", "INTEGER DEFAULT 0"},
+	} {
+		alter := fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s", col.name, col.defn)
+		if _, err := dm.db.Exec(alter); err != nil {
+			// "duplicate column name" → already migrated; ignore.
+			// Any other error is real.
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("failed to migrate tasks table (add %s): %w", col.name, err)
+			}
+		}
 	}
 
 	// Tags Table
@@ -497,7 +523,7 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 	}
 	defer stmtBlock.Close()
 
-	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority) VALUES (?, ?, ?, ?, ?, ?)")
+	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, comments_count, links_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -508,6 +534,17 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 		return err
 	}
 	defer stmtTag.Close()
+
+	// Pre-compute comments_count per task: the number of child NOTE blocks
+	// (indented reply bullets in the Stitch "comments on a task" sense).
+	// A child is any block whose ParentID points at a TASK block AND whose
+	// Type is NOTE. We walk the blocks slice once and count.
+	childNotesByParent := make(map[string]int)
+	for _, b := range blocks {
+		if b.ParentID != "" && b.Type == parser.BlockNote {
+			childNotesByParent[b.ParentID]++
+		}
+	}
 
 	for blockIdx, block := range blocks {
 		// 1. Insert into blocks — each block carries its own file_date.
@@ -536,7 +573,12 @@ func (dm *DatabaseManager) IndexFileBlocks(notebook, section, page string, block
 			if block.DueDate != "" {
 				dueDate = block.DueDate
 			}
-			_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority)
+			pinnedVal := 0
+			if block.Pinned {
+				pinnedVal = 1
+			}
+			linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
+			_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, childNotesByParent[block.ID], linksCount)
 			if err != nil {
 				return fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 			}
@@ -609,7 +651,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	}
 	defer stmtBlock.Close()
 
-	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority) VALUES (?, ?, ?, ?, ?, ?)")
+	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, comments_count, links_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -692,7 +734,21 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if block.DueDate != "" {
 					dueDate = block.DueDate
 				}
-				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority)
+				pinnedVal := 0
+				if block.Pinned {
+					pinnedVal = 1
+				}
+				// Compute comments_count (child NOTE blocks) and links_count
+				// ((uuid) refs) for this task — same derived-cache approach
+				// as IndexFileBlocks (see childNotesByParent + BlockRefRegex).
+				commentsCount := 0
+				for _, b2 := range res.Blocks {
+					if b2.ParentID == block.ID && b2.Type == parser.BlockNote {
+						commentsCount++
+					}
+				}
+				linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
+				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, commentsCount, linksCount)
 				if err != nil {
 					return 0, skipped, fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 				}

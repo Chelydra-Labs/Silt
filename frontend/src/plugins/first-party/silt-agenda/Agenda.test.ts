@@ -17,7 +17,8 @@ function makeCtx(): PluginContext {
     activePage: 'Daily',
     sqliteQuery: mocks.sqliteQuery,
     updateBlockState: mocks.updateBlockState,
-    mutateBlock: vi.fn()
+    mutateBlock: vi.fn(),
+    updateTaskMeta: vi.fn()
   }
 }
 
@@ -50,34 +51,37 @@ describe('Agenda plugin', () => {
 
   it('loads tasks via ctx.sqliteQuery and buckets them by date group', async () => {
     const today = todayStr()
-    mocks.sqliteQuery.mockResolvedValue([
-      {
-        id: 'a1',
-        notebook: 'Work',
-        section: 'Journal',
-        page: 'Daily',
-        file_date: today,
-        clean_content: 'Overdue task',
-        status: 'TODO',
-        owner: '',
-        start_date: '',
-        due_date: '2020-01-01',
-        priority: 3
-      },
-      {
-        id: 'a2',
-        notebook: 'Work',
-        section: 'Journal',
-        page: 'Daily',
-        file_date: today,
-        clean_content: 'Today task',
-        status: 'TODO',
-        owner: '',
-        start_date: '',
-        due_date: today,
-        priority: 2
-      }
-    ])
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'a1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: today,
+          clean_content: 'Overdue task',
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: '2020-01-01',
+          priority: 3
+        },
+        {
+          id: 'a2',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: today,
+          clean_content: 'Today task',
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: today,
+          priority: 2
+        }
+      ],
+      truncated: false
+    })
 
     render(Agenda, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
@@ -88,21 +92,24 @@ describe('Agenda plugin', () => {
 
   it('mark-done calls ctx.updateBlockState with DONE and removes the row', async () => {
     const today = todayStr()
-    mocks.sqliteQuery.mockResolvedValue([
-      {
-        id: 'a1',
-        notebook: 'Work',
-        section: 'Journal',
-        page: 'Daily',
-        file_date: today,
-        clean_content: 'Task to complete',
-        status: 'TODO',
-        owner: '',
-        start_date: '',
-        due_date: today,
-        priority: 3
-      }
-    ])
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'a1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: today,
+          clean_content: 'Task to complete',
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: today,
+          priority: 3
+        }
+      ],
+      truncated: false
+    })
 
     render(Agenda, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
@@ -119,21 +126,24 @@ describe('Agenda plugin', () => {
 
   it('clicking a task dispatches navigate-to-block', async () => {
     const today = todayStr()
-    mocks.sqliteQuery.mockResolvedValue([
-      {
-        id: 'a1',
-        notebook: 'Work',
-        section: 'Journal',
-        page: 'Daily',
-        file_date: today,
-        clean_content: 'Clickable task',
-        status: 'TODO',
-        owner: '',
-        start_date: '',
-        due_date: today,
-        priority: 3
-      }
-    ])
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'a1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: today,
+          clean_content: 'Clickable task',
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: today,
+          priority: 3
+        }
+      ],
+      truncated: false
+    })
 
     const handler = vi.fn()
     window.addEventListener('navigate-to-block', handler)
@@ -153,7 +163,7 @@ describe('Agenda plugin', () => {
   })
 
   it('shows empty state when no tasks are returned', async () => {
-    mocks.sqliteQuery.mockResolvedValue([])
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
 
     render(Agenda, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()

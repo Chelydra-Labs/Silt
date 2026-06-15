@@ -42,6 +42,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     sqliteQuery: mocks.sqliteQuery,
     updateBlockState: mocks.updateBlockState,
     mutateBlock: vi.fn(),
+    updateTaskMeta: vi.fn(),
     ...overrides
   }
 }
@@ -103,7 +104,13 @@ describe('Kanban plugin (#19)', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset()
     mocks.updateBlockState.mockReset()
-    mocks.sqliteQuery.mockResolvedValue(SAMPLE_ROWS)
+    // PluginContext.sqliteQuery now returns {rows, truncated} (the SDK
+    // shape mirroring Go's PluginRawQueryResult). Tests that don't care
+    // about truncation can pass the rows straight through.
+    mocks.sqliteQuery.mockImplementation(async () => ({
+      rows: SAMPLE_ROWS,
+      truncated: false
+    }))
     mocks.updateBlockState.mockResolvedValue(true)
   })
 
@@ -235,7 +242,10 @@ describe('Kanban plugin (#19)', () => {
   })
 
   it('shows empty-lane message when no tasks exist for a status', async () => {
-    mocks.sqliteQuery.mockResolvedValue([{ ...SAMPLE_ROWS[0] }])
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [{ ...SAMPLE_ROWS[0] }],
+      truncated: false
+    })
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
@@ -322,5 +332,84 @@ describe('Kanban plugin (#19)', () => {
     expect(notebook).not.toBeDisabled()
     expect(section).toBeDisabled()
     expect(page).toBeDisabled()
+  })
+
+  it('surfaces a truncation banner when the Go cap is hit (vault-scope)', async () => {
+    // sqliteQuery signals that the Go-side maxPluginQueryRows cap fired.
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: SAMPLE_ROWS,
+      truncated: true
+    })
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // The status region explains the cap + tells the user how to recover.
+    const status = screen.getByRole('status')
+    expect(status.textContent).toContain('5000')
+    expect(status.textContent).toMatch(/narrow.*scope/i)
+  })
+
+  it('does not show the truncation banner when the result fits within the cap', async () => {
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: SAMPLE_ROWS,
+      truncated: false
+    })
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('rapid scope switches do not clobber the freshest data (race guard)', async () => {
+    // Simulate a stale page-scope response landing after a fresh
+    // vault-scope response. We resolve calls in reverse-registration
+    // order so the first call's promise settles last.
+    let resolveFirst!: (v: { rows: unknown[]; truncated: boolean }) => void
+    let resolveSecond!: (v: { rows: unknown[]; truncated: boolean }) => void
+    mocks.sqliteQuery
+      .mockImplementationOnce(
+        () => new Promise((r) => (resolveFirst = r)) as any
+      )
+      .mockImplementationOnce(
+        () => new Promise((r) => (resolveSecond = r)) as any
+      )
+
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // The first call (page-scope) is in flight; flip to vault and let
+    // the second call (vault-scope) register.
+    const vaultRadio = screen.getByRole('radio', { name: 'Vault' })
+    await fireEvent.click(vaultRadio)
+    await flush()
+
+    // Now resolve them in stale-then-fresh order. Without the race
+    // guard, the late-arriving page-scope data would clobber the
+    // vault-scope data, leaving a "b.page = ?" WHERE clause's rows
+    // showing for what the user asked to be the vault view.
+    const staleRows = [
+      {
+        ...SAMPLE_ROWS[0],
+        id: 'stale',
+        clean_content: 'STALE PAGE TASK'
+      }
+    ]
+    const freshRows = [
+      { ...SAMPLE_ROWS[0], id: 'fresh', clean_content: 'FRESH VAULT TASK' }
+    ]
+    resolveSecond({
+      rows: freshRows,
+      truncated: false
+    })
+    await flush()
+    resolveFirst({
+      rows: staleRows,
+      truncated: false
+    })
+    await flush()
+
+    // The board should reflect the most recent call (vault), not the
+    // late-arriving page-scope data.
+    expect(screen.queryByText('STALE PAGE TASK')).not.toBeInTheDocument()
+    expect(screen.getByText('FRESH VAULT TASK')).toBeInTheDocument()
   })
 })

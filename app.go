@@ -696,7 +696,18 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 			return ActiveThemeResult{}, fmt.Errorf("failed to look up theme %q: %w", id, err)
 		}
 		if !found {
-			return ActiveThemeResult{}, fmt.Errorf("theme %q is not available", id)
+			// Not on disk: a first-class id may still be available from the
+			// embedded roster (a wiped or pre-Sprint-8 themes dir shouldn't
+			// prevent switching to a shipped theme). ResolveActive does the
+			// same fallback for the startup path; mirror it here so the
+			// picker's "apply" and the launch-time resolve can't disagree
+			// on whether a theme is selectable. A genuinely unknown id
+			// (e.g. typo) still falls through to the error below.
+			if et, ok := themes.ParseEmbeddedByID(id); ok {
+				t = et
+			} else {
+				return ActiveThemeResult{}, fmt.Errorf("theme %q is not available", id)
+			}
 		}
 	}
 
@@ -2026,32 +2037,46 @@ func stripSQLComments(s string) string {
 	}
 }
 
+// PluginRawQueryResult is the structured return value for PluginRawQuery.
+// `Rows` is the row slice; `Truncated` is true when the result hit
+// `maxPluginQueryRows` and the caller should warn the user that more
+// rows exist beyond the cap. The cap itself is a security/memory
+// safeguard against malicious or accidentally unbounded SELECTs, not a
+// design limit on legitimate queries — surfacing `Truncated` lets the
+// plugin SDK give the UI a chance to render a "N+ more rows" hint
+// rather than silently dropping data on the floor.
+type PluginRawQueryResult struct {
+	Rows      []map[string]any `json:"rows"`
+	Truncated bool             `json:"truncated"`
+}
+
 // PluginRawQuery runs a read-only SQL query against the in-memory index.
 // Only SELECT / WITH statements are permitted; anything else is rejected so a
 // plugin can never mutate the index or schema through this hook. The query
 // is also executed against a connection with `PRAGMA query_only = ON`, which
 // makes the engine reject any write attempt (including stacked queries like
 // `SELECT 1; DROP TABLE blocks;`) regardless of how the prefix check is
-// bypassed. Results are returned as a slice of column→value maps.
-func (a *App) PluginRawQuery(sqlText string, params []any) ([]map[string]any, error) {
+// bypassed. Results are returned as PluginRawQueryResult: the row slice plus
+// a Truncated flag the SDK can surface when the result hit maxPluginQueryRows.
+func (a *App) PluginRawQuery(sqlText string, params []any) (PluginRawQueryResult, error) {
 	if a.db == nil {
-		return nil, fmt.Errorf("vault database not loaded")
+		return PluginRawQueryResult{}, fmt.Errorf("vault database not loaded")
 	}
 	trimmed := stripSQLComments(sqlText)
 	upper := strings.ToUpper(trimmed)
 	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
-		return nil, fmt.Errorf("PluginRawQuery permits only SELECT/WITH statements")
+		return PluginRawQueryResult{}, fmt.Errorf("PluginRawQuery permits only SELECT/WITH statements")
 	}
 
 	roDB, err := a.openPluginRODB()
 	if err != nil {
-		return nil, err
+		return PluginRawQueryResult{}, err
 	}
 
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	var out []map[string]any
+	out := PluginRawQueryResult{Rows: []map[string]any{}}
 	err = a.coordinator.WithDBReadResult(func() error {
 		rows, err := roDB.Query(trimmed, params...)
 		if err != nil {
@@ -2075,10 +2100,12 @@ func (a *App) PluginRawQuery(sqlText string, params []any) ([]map[string]any, er
 			for i, c := range cols {
 				row[c] = values[i]
 			}
-			out = append(out, row)
+			out.Rows = append(out.Rows, row)
 			// Cap the result set so a malicious plugin can't exhaust memory
-			// with SELECT * FROM blocks on a large vault.
-			if len(out) >= maxPluginQueryRows {
+			// with SELECT * FROM blocks on a large vault. Surface the cap
+			// hit to the caller via Truncated; stop scanning after.
+			if len(out.Rows) >= maxPluginQueryRows {
+				out.Truncated = true
 				break
 			}
 		}
@@ -2099,6 +2126,124 @@ func (a *App) PluginMutateBlock(blockID, newText string) (bool, error) {
 func (a *App) PluginUpdateBlockState(blockID, status string) (bool, error) {
 	if err := a.UpdateBlockState(blockID, status); err != nil {
 		return false, err
+	}
+	return true, nil
+}
+
+// PluginUpdateTaskMeta updates per-task metadata (pin, progress) by
+// round-tripping through the markdown file. Both fields are file-resident
+// user intent (ARCHITECTURE §0) — the change is written to the .md file
+// as [pin:: true] / [progress:: N] tokens via the parser + renderer, then
+// re-indexed so SQLite reflects the new state.
+//
+// Sentinels allow partial updates:
+//   pin:      -1 = no change, 0 = unpin, 1 = pin
+//   progress: -1 = no change, 0-100 = set value (0 clears the token)
+func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool, error) {
+	if pin != -1 && pin != 0 && pin != 1 {
+		return false, fmt.Errorf("invalid pin value %d (valid: -1=no change, 0=unpin, 1=pin)", pin)
+	}
+	if progress < -1 || progress > 100 {
+		return false, fmt.Errorf("invalid progress value %d (valid: -1=no change, 0-100)", progress)
+	}
+	if pin == -1 && progress == -1 {
+		return true, nil // no-op
+	}
+
+	if a.db == nil {
+		return false, fmt.Errorf("vault database not loaded")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var notebook, section, page, blockType string
+	err := a.coordinator.WithDBReadResult(func() error {
+		row := a.db.SQLDB().QueryRow("SELECT notebook, section, page, type FROM blocks WHERE id = ?", blockID)
+		return row.Scan(&notebook, &section, &page, &blockType)
+	})
+	if err != nil {
+		return false, fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
+	}
+	if blockType != string(parser.BlockTask) {
+		return false, fmt.Errorf("block %s is not a task", blockID)
+	}
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return false, fmt.Errorf("invalid file metadata for block %s", blockID)
+	}
+	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
+	if !isPathWithinVault(filePath, a.vaultPath) {
+		return false, fmt.Errorf("resolved file path escapes vault")
+	}
+
+	var writeErr error
+	a.coordinator.LockFileWrite(filePath, func() {
+		contentBytes, err := os.ReadFile(filePath)
+		if err != nil {
+			writeErr = err
+			return
+		}
+		fileDate := fileOrDefaultDate(filePath)
+		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
+		if parseErr != nil {
+			writeErr = fmt.Errorf("failed to parse file for task meta update: %w", parseErr)
+			return
+		}
+		found := false
+		for i := range parsedBlocks {
+			if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
+				if pin != -1 {
+					parsedBlocks[i].Pinned = pin == 1
+				}
+				if progress != -1 {
+					parsedBlocks[i].Progress = progress
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
+			return
+		}
+
+		frontmatter, body := splitFrontmatter(string(contentBytes))
+		if frontmatter == "" {
+			today := time.Now().Format("2006-01-02")
+			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
+			body = string(contentBytes)
+		}
+		newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
+		a.tracker.RegisterWrite(filePath)
+		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+			writeErr = err
+			return
+		}
+
+		// Re-index so SQLite reflects the new pin/progress values.
+		blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
+		if err == nil {
+			var idxErr error
+			a.coordinator.WithDBWrite(func() {
+				idxErr = a.db.IndexFileBlocks(remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
+			})
+			if idxErr != nil {
+				log.Printf("PluginUpdateTaskMeta: IndexFileBlocks failed: %v", idxErr)
+			}
+		}
+
+		for _, b := range blocks {
+			if b.ID == blockID {
+				a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)
+			}
+		}
+	})
+	if writeErr != nil {
+		return false, writeErr
 	}
 	return true, nil
 }

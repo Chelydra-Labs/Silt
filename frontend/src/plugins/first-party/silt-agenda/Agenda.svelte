@@ -45,7 +45,7 @@
     loading = true
     errorMsg = ''
     try {
-      const rows = await ctx.sqliteQuery(
+      const { rows } = await ctx.sqliteQuery(
         `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
                 b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority
          FROM blocks b JOIN tasks t ON b.id = t.block_id

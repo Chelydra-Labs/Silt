@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
   import type { PluginContext, PluginManifest, TaskStatus } from '../../sdk'
@@ -45,6 +44,12 @@
   let loading = $state(true)
   let errorMsg = $state('')
   let moveError = $state('')
+  // The Go-side PluginRawQuery caps results at maxPluginQueryRows (5000) —
+  // a defense-in-depth memory safeguard, not a deliberate design limit.
+  // When the result hits the cap we surface a non-blocking hint so the
+  // user knows to narrow the scope (Vault → Notebook/Section/Page) rather
+  // than silently missing tasks.
+  let truncated = $state(false)
 
   // Columns come from config.yaml (plugins.plugin_settings.silt-kanban.columns),
   // falling back to the canonical TODO/DOING/DONE triple.
@@ -103,22 +108,36 @@
     }
   }
 
+  // Monotonic token so concurrent reload() calls can identify their own
+  // response vs a later one. Without this, a slow page-scope query landing
+  // after a fast vault-scope query would silently overwrite the fresh data.
+  let loadSeq = 0
+
   async function reload() {
+    const my = ++loadSeq
     loading = true
     errorMsg = ''
     try {
       const { sql, params } = buildQuery(scope)
-      const rows = await ctx.sqliteQuery(sql, params)
+      const { rows, truncated: wasTruncated } = await ctx.sqliteQuery(
+        sql,
+        params
+      )
+      // A newer reload (e.g. a rapid scope switch) has started; abandon
+      // this stale response so it can't clobber the fresh data.
+      if (my !== loadSeq) return
       const bucket: Record<string, KanbanCard[]> = {}
       for (const col of columns) bucket[col] = []
       for (const r of rows as unknown as KanbanCard[]) {
         if (bucket[r.status]) bucket[r.status].push(r)
       }
       lanes = bucket
+      truncated = wasTruncated
     } catch (e) {
+      if (my !== loadSeq) return
       errorMsg = e instanceof Error ? e.message : String(e)
     } finally {
-      loading = false
+      if (my === loadSeq) loading = false
     }
   }
 
@@ -334,6 +353,19 @@
       role="alert"
     >
       Couldn't move task: {moveError}
+    </div>
+  {/if}
+
+  {#if truncated}
+    <div
+      class="px-6 py-2 bg-yellow-500/10 border-b border-yellow-500/30 text-yellow-200 text-[12px] font-body-md flex items-center gap-2"
+      role="status"
+    >
+      <span class="material-symbols-outlined text-[16px]">info</span>
+      <span>
+        Showing the first 5000 tasks. Narrow the scope to a Notebook, Section,
+        or Page to see tasks beyond the cap.
+      </span>
     </div>
   {/if}
 
