@@ -16,8 +16,17 @@
     displayFamilyName,
     type FontEntry
   } from '../../theme/fonts'
+  import { sanitizeFontFamilyCSS } from '../../theme/sanitize'
 
   type Category = 'body' | 'mono'
+
+  // Unique, stable id for this instance's listbox so the combobox trigger can
+  // reference it via aria-controls (the ARIA combobox contract: role=combobox
+  // requires aria-expanded + aria-controls). A random suffix guarantees
+  // uniqueness across the two pickers (body + mono) regardless of labels; it is
+  // generated once per instance and stable across re-renders. Tests assert the
+  // aria-controls → id linkage, not a specific value.
+  const listboxId = `font-select-listbox-${Math.random().toString(36).slice(2, 10)}`
 
   let {
     value = $bindable(''),
@@ -86,7 +95,9 @@
       return {
         value,
         label: `${displayFamilyName(value)} (custom)`,
-        cssFamily: value,
+        // Sanitize before this lands in a style attribute (sandbox-by-
+        // validation, mirroring editor-tokens + themes.isValidFontFamily).
+        cssFamily: sanitizeFontFamilyCSS(value),
         group: ''
       }
     }
@@ -116,7 +127,10 @@
   let triggerFontStyle = $derived.by(() => {
     const o = options[selectedIndex]
     if (!o || !o.cssFamily) return ''
-    return `font-family: ${o.cssFamily}`
+    // cssFamily is already sanitized at the option source (registry names are
+    // static/trusted; the unlisted branch strips breakouts), but apply again
+    // here as the render boundary so a future option source can't bypass it.
+    return `font-family: ${sanitizeFontFamilyCSS(o.cssFamily)}`
   })
 
   let open = $state(false)
@@ -190,6 +204,7 @@
     role="combobox"
     aria-haspopup="listbox"
     aria-expanded={open}
+    aria-controls={open ? listboxId : undefined}
     aria-label={label}
     onclick={toggle}
     onkeydown={onTriggerKey}
@@ -204,6 +219,7 @@
 
   {#if open}
     <div
+      id={listboxId}
       role="listbox"
       aria-label={label}
       tabindex="-1"
@@ -224,7 +240,7 @@
           bind:this={optionEls[i]}
           onclick={() => commit(i)}
           onkeydown={(e) => onOptionKey(e, i)}
-          style={o.cssFamily ? `font-family: ${o.cssFamily}` : ''}
+          style={o.cssFamily ? `font-family: ${sanitizeFontFamilyCSS(o.cssFamily)}` : ''}
           class="w-full text-left px-3 py-1.5 text-[13px] text-text-primary outline-none hover:bg-bg-hover focus:bg-bg-hover transition-colors cursor-pointer {i ===
           selectedIndex
             ? 'font-label-sm-bold'
