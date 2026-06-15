@@ -4,7 +4,7 @@ id: standup-notes
 title: Project Standup Notes
 description: Daily standup / sync notes — yesterday, today, blockers, per attendee.
 category: meetings
-icon: sprint
+icon: groups
 placeholders:
   - name: project_name
     description: The project or team name.

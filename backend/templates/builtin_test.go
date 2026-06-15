@@ -1,7 +1,6 @@
 package templates
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -85,34 +84,68 @@ func TestEmbeddedTemplates_RoundTripParseFileContent(t *testing.T) {
 	}
 }
 
-// TestEmbeddedTemplates_ActionItemsAreTasks verifies the templates that declare
-// action items render them as recognized TASK blocks (the Kanban/Agenda/Calendar
-// integration point). A TODO TASK line must parse to a TASK block.
-func TestEmbeddedTemplates_ActionItemsAreTasks(t *testing.T) {
-	tpl, err := GetTemplate("", "meeting-notes")
+// TestEmbeddedTemplates_AllActionItemsAreTasks verifies EVERY built-in that
+// carries TODO TASK lines produces recognized TASK blocks after rendering +
+// parsing. This is the comprehensive regression guard for the Kanban/Agenda/
+// Calendar contract — the original meeting-notes-only test let the
+// weekly-review ordered-list bug slip through.
+func TestEmbeddedTemplates_AllActionItemsAreTasks(t *testing.T) {
+	// expectedTasks maps template id → expected number of TASK blocks after
+	// render + ParseFileContent. Templates without TODO TASK lines expect 0.
+	expectedTasks := map[string]int{
+		"notes":         0,
+		"meeting-notes": 2,
+		"standup-notes": 0,
+		"daily-note":    1,
+		"project-brief": 2,
+		"one-on-one":    2,
+		"weekly-review": 2,
+		"decision-log":  0,
+		"reading-notes": 0,
+		"retrospective": 2,
+	}
+	// placeholderVars supplies the required user-declared placeholder for
+	// templates that declare one, so no token stays unresolved.
+	placeholderVars := map[string]map[string]string{
+		"notes":         {"title": "Test Note"},
+		"meeting-notes": {"meeting_title": "Test Meeting"},
+		"standup-notes": {"project_name": "Test Project"},
+		"project-brief": {"project_name": "Test Project"},
+		"one-on-one":    {"with": "Test Person"},
+		"decision-log":  {"title": "Test Decision"},
+		"reading-notes": {"title": "Test Book"},
+	}
+
+	all, err := EmbeddedTemplates()
 	if err != nil {
-		t.Fatalf("GetTemplate(meeting-notes): %v", err)
+		t.Fatalf("EmbeddedTemplates: %v", err)
 	}
-	rendered, _ := Render(tpl, map[string]string{"meeting_title": "Sprint Planning"}, RenderOptions{
-		Now: time.Date(2026, 6, 15, 9, 30, 0, 0, time.UTC),
-	})
-	if !strings.Contains(rendered, "Sprint Planning") {
-		t.Errorf("meeting_title var not substituted: %q", rendered)
-	}
-	blocks, _, _, _, err := parser.ParseFileContent(
-		"---\nnotebook: nb\nsection: \npage: pg\ndate: 2026-06-15\ntags: []\n---\n"+rendered,
-		"nb", "", "pg", "2026-06-15", 4,
-	)
-	if err != nil {
-		t.Fatalf("ParseFileContent: %v", err)
-	}
-	var tasks int
-	for _, b := range blocks {
-		if b.Type == parser.BlockTask {
-			tasks++
-		}
-	}
-	if tasks == 0 {
-		t.Errorf("meeting-notes rendered %d TASK blocks; expected action items to parse as tasks", tasks)
+	frozen := time.Date(2026, 6, 15, 9, 30, 0, 0, time.UTC)
+
+	for _, tpl := range all {
+		t.Run(tpl.ID, func(t *testing.T) {
+			vars := placeholderVars[tpl.ID]
+			rendered, warnings := Render(tpl, vars, RenderOptions{Now: frozen, Timezone: time.UTC})
+			for _, w := range warnings {
+				t.Errorf("template %q rendered with warning: %s", tpl.ID, w)
+			}
+			blocks, _, _, _, perr := parser.ParseFileContent(
+				"---\nnotebook: nb\nsection: \npage: pg\ndate: 2026-06-15\ntags: []\n---\n"+rendered,
+				"nb", "", "pg", "2026-06-15", 4,
+			)
+			if perr != nil {
+				t.Fatalf("template %q ParseFileContent: %v", tpl.ID, perr)
+			}
+			var tasks int
+			for _, b := range blocks {
+				if b.Type == parser.BlockTask {
+					tasks++
+				}
+			}
+			want := expectedTasks[tpl.ID]
+			if tasks != want {
+				t.Errorf("template %q rendered %d TASK blocks, want %d\n--- rendered ---\n%s", tpl.ID, tasks, want, rendered)
+			}
+		})
 	}
 }
