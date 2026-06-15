@@ -78,7 +78,7 @@
     const baseSelect = `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
            b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority
     FROM blocks b JOIN tasks t ON b.id = t.block_id`
-    const orderBy = ` ORDER BY t.priority DESC, COALESCE(t.due_date, '9999-12-31') ASC`
+    const orderBy = ` ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`
     switch (s) {
       case 'vault':
         return { sql: baseSelect + ' WHERE 1=1' + orderBy, params: [] }

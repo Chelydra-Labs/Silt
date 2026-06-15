@@ -121,6 +121,75 @@ func TestParseLine(t *testing.T) {
 	}
 }
 
+// TestParseLine_EdgeCases covers the task-shorthand branches the
+// all-metadata TestParseLine case does not exercise: minimal task (no
+// metadata at all), DOING/DONE checkbox states, and partial metadata
+// (owner without dates, priority without owner).
+func TestParseLine_EdgeCases(t *testing.T) {
+	t.Run("minimal task — no owner/dates/priority", func(t *testing.T) {
+		line := "- [ ] TODO TASK Just a description <!-- id: 11111111-1111-1111-1111-111111111111 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Type != BlockTask {
+			t.Fatalf("expected BlockTask, got %s", block.Type)
+		}
+		if block.Owner != "" {
+			t.Errorf("expected empty owner, got %q", block.Owner)
+		}
+		if block.StartDate != "" || block.DueDate != "" {
+			t.Errorf("expected empty dates, got start=%q due=%q", block.StartDate, block.DueDate)
+		}
+		if block.Priority != 3 {
+			t.Errorf("expected default priority 3, got %d", block.Priority)
+		}
+		if block.CleanText != "Just a description" {
+			t.Errorf("expected 'Just a description', got %q", block.CleanText)
+		}
+		if block.Status != "TODO" {
+			t.Errorf("expected status TODO, got %q", block.Status)
+		}
+	})
+
+	t.Run("DOING state", func(t *testing.T) {
+		line := "- [/] DOING TASK [Bob] In progress task <!-- id: 22222222-2222-2222-2222-222222222222 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Status != "DOING" {
+			t.Errorf("expected status DOING, got %q", block.Status)
+		}
+		if block.Owner != "Bob" {
+			t.Errorf("expected owner Bob, got %q", block.Owner)
+		}
+	})
+
+	t.Run("DONE state", func(t *testing.T) {
+		line := "- [x] DONE TASK [Carol](2026-01-01, 2026-06-01)#2 Completed task <!-- id: 33333333-3333-3333-3333-333333333333 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Status != "DONE" {
+			t.Errorf("expected status DONE, got %q", block.Status)
+		}
+		if block.Priority != 2 {
+			t.Errorf("expected priority 2, got %d", block.Priority)
+		}
+		if block.StartDate != "2026-01-01" || block.DueDate != "2026-06-01" {
+			t.Errorf("unexpected dates: start=%q due=%q", block.StartDate, block.DueDate)
+		}
+	})
+
+	t.Run("priority without owner or dates", func(t *testing.T) {
+		// #priority must immediately follow TASK when no [owner] or (dates).
+		line := "- [ ] TODO TASK#1 Urgent task no owner <!-- id: 44444444-4444-4444-4444-444444444444 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Priority != 1 {
+			t.Errorf("expected priority 1, got %d", block.Priority)
+		}
+		if block.Owner != "" {
+			t.Errorf("expected empty owner, got %q", block.Owner)
+		}
+		if block.CleanText != "Urgent task no owner" {
+			t.Errorf("expected 'Urgent task no owner', got %q", block.CleanText)
+		}
+	})
+}
+
 func TestParseFileContent(t *testing.T) {
 	doc := `---
 notebook: Engineering

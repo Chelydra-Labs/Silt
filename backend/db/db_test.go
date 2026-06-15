@@ -587,6 +587,91 @@ func TestQueryTagHierarchy_DistinctCountsAtOrBeneath(t *testing.T) {
 	}
 }
 
+// TestIndexer_KanbanQueryPath is a regression guard for the Kanban plugin
+// (#19). It runs the EXACT SQL the Kanban component sends via
+// ctx.sqliteQuery — including the COALESCE(due_date, '9999-12-31') ORDER BY
+// — and asserts status bucketing, priority ordering, due-date ordering,
+// and section scoping (tasks in other sections are excluded).
+func TestIndexer_KanbanQueryPath(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Seed tasks across all three statuses with varying priority + due dates
+	// in the target section.
+	tasks := []parser.ParsedBlock{
+		{ID: "k-aaa-1111", Type: parser.BlockTask, CleanText: "low-prio todo", Status: "TODO", Priority: 3, DueDate: "2026-09-01", LineNumber: 1},
+		{ID: "k-aaa-2222", Type: parser.BlockTask, CleanText: "high-prio todo", Status: "TODO", Priority: 1, DueDate: "2026-07-01", LineNumber: 2},
+		{ID: "k-aaa-3333", Type: parser.BlockTask, CleanText: "doing task", Status: "DOING", Priority: 2, DueDate: "", LineNumber: 3},
+		{ID: "k-aaa-4444", Type: parser.BlockTask, CleanText: "done task", Status: "DONE", Priority: 1, DueDate: "2026-06-01", LineNumber: 4},
+	}
+	if err := dm.IndexFileBlocks("Work", "Sprint", "Board", tasks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	// A task in a DIFFERENT section — must be excluded by the section filter.
+	other := []parser.ParsedBlock{
+		{ID: "k-bbb-5555", Type: parser.BlockTask, CleanText: "other section", Status: "TODO", Priority: 1, LineNumber: 1},
+	}
+	if err := dm.IndexFileBlocks("Work", "Other", "Board", other, nil); err != nil {
+		t.Fatalf("IndexFileBlocks other: %v", err)
+	}
+
+	// Run the exact Kanban SQL scoped to the Work/Sprint section.
+	rows, err := dm.SQLDB().Query(
+		`SELECT b.id, b.clean_content, t.status, t.priority, COALESCE(t.due_date, '') as due_date
+		 FROM blocks b JOIN tasks t ON b.id = t.block_id
+		 WHERE b.notebook = ? AND b.section = ?
+		 ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`,
+		"Work", "Sprint",
+	)
+	if err != nil {
+		t.Fatalf("Kanban query: %v", err)
+	}
+	defer rows.Close()
+
+	var results []struct {
+		id, content, status, due string
+		priority                 int
+	}
+	for rows.Next() {
+		var r struct {
+			id, content, status, due string
+			priority                 int
+		}
+		if err := rows.Scan(&r.id, &r.content, &r.status, &r.priority, &r.due); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		results = append(results, r)
+	}
+
+	// Section scoping: only 4 rows (the other section's task is excluded).
+	if len(results) != 4 {
+		t.Fatalf("expected 4 rows for Work/Sprint, got %d", len(results))
+	}
+
+	// Ordering: priority ASC (1=Critical first, 3=Low last) then due_date ASC.
+	// Priority 1 tasks: done task (due 2026-06-01) before high-todo (due 2026-07-01).
+	// Then priority 2: doing task (no due date → '9999-12-31' sorts last within p2).
+	// Then priority 3: low-prio todo.
+	if results[0].id != "k-aaa-4444" {
+		t.Errorf("expected done task (p1, due 06-01) first, got %s", results[0].id)
+	}
+	if results[1].id != "k-aaa-2222" {
+		t.Errorf("expected high-prio todo (p1, due 07-01) second, got %s", results[1].id)
+	}
+	if results[2].id != "k-aaa-3333" {
+		t.Errorf("expected doing task (p2) third, got %s", results[2].id)
+	}
+	if results[3].id != "k-aaa-1111" {
+		t.Errorf("expected low-prio todo (p3) last, got %s", results[3].id)
+	}
+
+	// Verify the other-section task was never returned.
+	for _, r := range results {
+		if r.id == "k-bbb-5555" {
+			t.Error("other-section task leaked into section-scoped query")
+		}
+	}
+}
+
 // --- Phase 3: persistent on-disk WAL index + incremental re-indexing (#29) ---
 
 // newOnDiskDB opens a DatabaseManager against a fresh on-disk path in the
