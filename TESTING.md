@@ -440,6 +440,4 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test`
 6. Drop a custom `.md` into `<vault>/.system/templates/` → it appears in the picker without a restart (watcher hot-reload).
 7. Smart-graph passthrough: author a template body containing `{{embed:abc-123}}` → insert → the embed token survives rendering intact.
 
-> **Note:** Playwright e2e coverage for the keyboard + insertion flow is deferred — the project does not yet have a `test:e2e` infrastructure. Tracked in a follow-up issue.
-
 
