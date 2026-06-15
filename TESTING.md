@@ -98,9 +98,9 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` (frontend, sve
 
 | Package | Tests | What is covered |
 |---|---|---|
-| `silt` (main) | 3-level model migration of all existing tests + `ResolveBlockReference` (found/dangling), `MutateBlock` (preserves UUID + task syntax, unknown id), `PluginRawQuery` (SELECT allowed, non-SELECT rejected), `PluginUpdateBlockState`, `GetPluginRegistry`, `ReadPluginSource` (+ traversal), `QueryBlocksByTag` (prefix semantics), `CreatePage` scaffolding, `CreateNotebook`/`OpenNotebook`/`PickNotebookFolder`/`CreateSection`, `FetchPageTimeline` | Wails API surface for the 3-level model + smart graph + plugin SDK |
+| `silt` (main) | 3-level model migration of all existing tests + `ResolveBlockReference` (found/dangling), `MutateBlock` (preserves UUID + task syntax, unknown id), `PluginRawQuery` (SELECT allowed, non-SELECT rejected), `PluginUpdateBlockState`, `GetPluginRegistry`, `ReadPluginSource` (+ traversal), `QueryBlocksByTag` (prefix semantics), `CreatePage` scaffolding, `CreateNotebook`/`OpenNotebook`/`PickNotebookFolder`/`CreateSection`, `FetchPageBlocks` | Wails API surface for the 3-level model + smart graph + plugin SDK |
 | `backend/plugins` (new) | `Validate`/`Install` happy path, bad-archive rejections (missing manifest, bad id, missing main, zip-slip, absolute path), duplicate-install refusal, `Uninstall` (+ traversal rejection), `Enable`/`Disable` sentinel toggle, `sanitizeID` | `.silt-plugin` packaging/install lifecycle |
-| `backend/db` | `QueryTagHierarchy` (prefix-count aggregation), `QueryBlocksByTag`, 3-level `FetchTimelineDays`/`IndexFileBlocks`/`ClearFileBlocks`/`ListNavigation`, `ExtractTags` now supports hyphenated tags | DatabaseManager + hierarchical tags |
+| `backend/db` | `QueryTagHierarchy` (prefix-count aggregation), `QueryBlocksByTag`, 3-level `IndexFileBlocks`/`ClearFileBlocks`/`ListNavigation`, `ExtractTags` now supports hyphenated tags | DatabaseManager + hierarchical tags |
 | `backend/parser` | `BlockRefRegex`/`EmbedRegex` detectors, `page` dimension in `ParseFileContent` + scanner 3-level resolution + depth warn/skip | AST parser + scanner |
 | `backend/monitor` | watcher 3-level `resolveFileMetadata` + reindex/focus-lock updated to the page model | DirectoryWatcher |
 | `backend/vault` | blank-start scaffolding (no default Work/Journal), plugins README written | Settings durability |
@@ -110,7 +110,7 @@ Frontend: `npm run check` reports **0 errors** across the smart-graph components
 ## Manual Verification Matrix (`wails dev`)
 
 1. **Onboarding (blank start):** `wails dev` → Initialize Workspace → `.system/` only (no Work/Journal). Onboarding empty state prompts to create a notebook.
-2. **3-level navigation:** Create a Notebook → Section → Page via the sidebar tree; the page timeline loads; breadcrumb shows Notebook › Section › Page.
+2. **3-level navigation:** Create a Notebook → Section → Page via the sidebar tree; the page editor loads; breadcrumb shows Notebook › Section › Page.
 3. **Sidebar collapse:** Collapse button (sidebar) hides the navigator; floating reopen button + Ctrl+B restore it; content reflows.
 4. **Custom titlebar (#41):** frameless window; drag the empty header to move; min/max-restore/close work; double-click header toggles maximize.
 5. **Smart Graph:** add `#work/project/milestone-one` to a block (renders as a pill, appears in Tags view); type `((uuid))` (renders as a link with hover preview, click scrolls to source); use `/embed` → picker → `{{embed:uuid}}` renders a live portal; edit the source block elsewhere and watch the embed update.
@@ -459,13 +459,13 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 
 | File | Tests | What is covered |
 |---|---|---|
-| `frontend/src/plugins/first-party/silt-kanban/Kanban.test.ts` (8 tests) | 3-lane render, task bucketing, default page-scope, scope-change re-query, click → navigate-to-block, ArrowRight keyboard status change, error revert, empty state | Kanban plugin IPC boundary |
+| `frontend/src/plugins/first-party/silt-kanban/Kanban.test.ts` (20 tests) | 3-lane render, task bucketing, default page-scope, scope-change re-query, click → detail panel, "Open in editor" → navigate-to-block, ArrowRight/Enter/Space keyboard, error revert, empty state, scope-button enable/disable, truncation banner, race guard, owner/priority filter SQL clauses, Add/Remove column persistence | Kanban plugin IPC boundary |
 | `frontend/src/plugins/first-party/silt-agenda/Agenda.test.ts` (4 tests) | Date-bucket loading, mark-done → ctx.updateBlockState, click → navigate-to-block, empty state | Agenda plugin IPC boundary |
 | `frontend/src/plugins/first-party/silt-calendar/Calendar.test.ts` (3 tests) | Month-grid rendering, Today button, click → navigate-to-block | Calendar plugin IPC boundary |
 | `frontend/src/components/PluginView.test.ts` (3 tests) | Happy-path render, load-error path, not-registered empty state | Plugin host view |
 | `frontend/src/components/Sidebar.test.ts` (2 tests) | Collapse render, Change Vault handler | Sidebar interactions |
 
-`npm test` now runs **66 vitest tests** across 11 files (was 46 across 6). `npm run check` reports **0 errors**.
+`npm test` now runs **123 vitest tests** across 20 files (was 46 across 6). `npm run check` reports **0 errors**.
 
 ### Dead-code cleanup
 

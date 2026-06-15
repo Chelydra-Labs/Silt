@@ -478,4 +478,101 @@ describe('Kanban plugin (#19)', () => {
     expect(screen.queryByText('STALE PAGE TASK')).not.toBeInTheDocument()
     expect(screen.getByText('FRESH VAULT TASK')).toBeInTheDocument()
   })
+
+  it('owner filter narrows the result and the SQL includes t.owner IN (?)', async () => {
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    mocks.sqliteQuery.mockClear()
+
+    // Open the Owner chip popover and select "Alice". Case-sensitive so
+    // it matches the chip ("Owner") and not the card aria-labels that
+    // contain lowercase "owner Alice".
+    const ownerChip = screen.getByRole('button', { name: /Owner/ })
+    await fireEvent.click(ownerChip)
+    await flush()
+
+    const aliceCheckbox = screen.getByLabelText('Alice')
+    await fireEvent.click(aliceCheckbox)
+    await flush()
+
+    // The reload effect should have re-run with an owner IN clause.
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    const sql = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
+    expect(sql).toContain('t.owner IN (?')
+    const params = mocks.sqliteQuery.mock.calls.at(-1)![1] as unknown[]
+    expect(params).toContain('Alice')
+  })
+
+  it('priority filter narrows the result and the SQL includes t.priority IN (?)', async () => {
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    mocks.sqliteQuery.mockClear()
+
+    // Open the Priority chip popover and select "Critical".
+    const priorityChip = screen.getByRole('button', { name: /Priority/ })
+    await fireEvent.click(priorityChip)
+    await flush()
+
+    const criticalCheckbox = screen.getByLabelText('Critical')
+    await fireEvent.click(criticalCheckbox)
+    await flush()
+
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    const sql = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
+    expect(sql).toContain('t.priority IN (?')
+    const params = mocks.sqliteQuery.mock.calls.at(-1)![1] as unknown[]
+    expect(params).toContain(1)
+  })
+
+  it('clicking "+ Add column" prompts for a name and persists via saveConfig', async () => {
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('Backlog')
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    mocks.saveConfig.mockClear()
+
+    const addBtn = screen.getByRole('button', { name: /add column/i })
+    await fireEvent.click(addBtn)
+    await flush()
+
+    expect(promptSpy).toHaveBeenCalled()
+    // The new column renders as a lane group.
+    expect(screen.getByRole('group', { name: 'Backlog' })).toBeInTheDocument()
+    // The column list was persisted to config.
+    expect(mocks.saveConfig).toHaveBeenCalledTimes(1)
+    promptSpy.mockRestore()
+  })
+
+  it('column more_horiz → Remove confirms and drops the lane', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    mocks.saveConfig.mockClear()
+
+    // Three columns exist initially (TODO / DOING / DONE). Open the
+    // actions menu on the first lane (To Do) and remove it.
+    expect(screen.getByRole('group', { name: 'To Do' })).toBeInTheDocument()
+
+    const menus = screen.getAllByRole('button', { name: 'Column actions' })
+    await fireEvent.click(menus[0]!)
+    await flush()
+
+    const removeBtn = screen.getByRole('menuitem', { name: /remove/i })
+    await fireEvent.click(removeBtn)
+    await flush()
+
+    expect(confirmSpy).toHaveBeenCalled()
+    // The To Do lane is gone; the other two remain.
+    expect(
+      screen.queryByRole('group', { name: 'To Do' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('group', { name: 'In Progress' })
+    ).toBeInTheDocument()
+    expect(mocks.saveConfig).toHaveBeenCalledTimes(1)
+    confirmSpy.mockRestore()
+  })
 })

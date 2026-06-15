@@ -32,6 +32,10 @@
   let loading = $state(true)
   let errorMsg = $state('')
   let moveError = $state('')
+  // Config-write failures (column + filter persistence) surface here so a
+  // silent saveConfig rejection can't leave the user believing their
+  // board layout persisted when it didn't.
+  let configError = $state('')
   // The Go-side PluginRawQuery caps results at maxPluginQueryRows (5000) —
   // a defense-in-depth memory safeguard, not a deliberate design limit.
   // When the result hits the cap we surface a non-blocking hint so the
@@ -236,7 +240,12 @@
     const ps = cfg.plugins.plugin_settings ?? {}
     ps['silt-kanban'] = { ...(ps['silt-kanban'] ?? {}), filters: f }
     cfg.plugins.plugin_settings = ps
-    await saveConfig(cfg)
+    configError = ''
+    try {
+      await saveConfig(cfg)
+    } catch (e) {
+      configError = e instanceof Error ? e.message : String(e)
+    }
   }
 
   // --- Column management ---
@@ -290,7 +299,12 @@
     const ps = cfg.plugins.plugin_settings ?? {}
     ps['silt-kanban'] = { ...(ps['silt-kanban'] ?? {}), columns: [...columns] }
     cfg.plugins.plugin_settings = ps
-    await saveConfig(cfg)
+    configError = ''
+    try {
+      await saveConfig(cfg)
+    } catch (e) {
+      configError = e instanceof Error ? e.message : String(e)
+    }
   }
 
   // Column drag-reorder: a dedicated handle on each header sets the source
@@ -532,6 +546,16 @@
       role="alert"
     >
       Couldn't move task: {moveError}
+    </div>
+  {/if}
+
+  {#if configError}
+    <div
+      class="px-6 py-2 bg-yellow-500/10 border-b border-yellow-500/30 text-yellow-200 text-[12px] font-body-md flex items-center gap-2"
+      role="status"
+    >
+      <span class="material-symbols-outlined text-[16px]">save</span>
+      <span>Couldn't save board layout: {configError}</span>
     </div>
   {/if}
 

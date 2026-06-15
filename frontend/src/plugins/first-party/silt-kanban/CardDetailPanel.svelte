@@ -52,15 +52,48 @@
 
   let tagList = $derived(card?.tags ? card.tags.split('|').filter(Boolean) : [])
 
-  function togglePin() {
+  // Local optimistic mirrors for the two mutable metadata fields (pin +
+  // progress). The panel is the only writer for these while open, so an
+  // optimistic update + revert-on-failure matches the board's `commitMove`
+  // contract: the UI reflects the change immediately, and if the markdown
+  // write fails (focus lock held, disk error) we revert + surface the
+  // reason in an aria-live region instead of silently drifting.
+  let pinState = $state(false)
+  let progressState = $state(0)
+  let metaError = $state('')
+  $effect(() => {
+    pinState = card?.pinned ?? false
+    progressState = card?.progress ?? 0
+    metaError = ''
+  })
+
+  async function togglePin() {
     if (!card) return
-    void ctx.updateTaskMeta(card.id, { pinned: !card.pinned })
+    const prev = pinState
+    pinState = !pinState
+    metaError = ''
+    try {
+      await ctx.updateTaskMeta(card.id, { pinned: pinState })
+    } catch (e) {
+      pinState = prev
+      metaError = e instanceof Error ? e.message : String(e)
+    }
   }
 
   function onProgressChange(e: Event) {
     if (!card) return
     const v = Number((e.target as HTMLInputElement).value)
-    void ctx.updateTaskMeta(card.id, { progress: v })
+    const prev = progressState
+    progressState = v
+    metaError = ''
+    void (async () => {
+      try {
+        await ctx.updateTaskMeta(card.id, { progress: v })
+      } catch (err) {
+        progressState = prev
+        metaError = err instanceof Error ? err.message : String(err)
+      }
+    })()
   }
 
   function openInEditor() {
@@ -140,6 +173,17 @@
     </div>
 
     <div class="px-5 py-4 space-y-6">
+      {#if metaError}
+        <div
+          class="flex items-start gap-2 px-3 py-2 rounded border border-error-border bg-error-bg text-error text-[12px] font-body-md"
+          role="alert"
+        >
+          <span class="material-symbols-outlined text-[14px] shrink-0"
+            >error</span
+          >
+          <span>Couldn't save: {metaError}</span>
+        </div>
+      {/if}
       <!-- Metadata -->
       <section>
         <h3
@@ -209,15 +253,15 @@
           type="button"
           onclick={togglePin}
           class="w-full flex items-center justify-between px-3 py-2 rounded border border-border-muted bg-bg-surface hover:bg-bg-hover transition-colors"
-          aria-pressed={card.pinned}
+          aria-pressed={pinState}
         >
           <span
             class="flex items-center gap-2 text-[12px] font-label-sm text-text-primary"
           >
             <span class="material-symbols-outlined text-[16px]">push_pin</span>
-            {card.pinned ? 'Pinned' : 'Pin'}
+            {pinState ? 'Pinned' : 'Pin'}
           </span>
-          {#if card.pinned}
+          {#if pinState}
             <span
               class="material-symbols-outlined text-[16px] text-accent-primary-start"
               >check</span
@@ -235,14 +279,14 @@
             Progress
           </h3>
           <span class="text-[11px] font-label-sm text-text-primary"
-            >{card.progress}%</span
+            >{progressState}%</span
           >
         </div>
         <input
           type="range"
           min="0"
           max="100"
-          value={card.progress}
+          value={progressState}
           onchange={onProgressChange}
           aria-label="Task progress"
           class="w-full accent-accent-secondary-start"
@@ -252,7 +296,7 @@
         >
           <div
             class="h-full bg-accent-secondary-start transition-all"
-            style="width: {card.progress}%"
+            style="width: {progressState}%"
           ></div>
         </div>
       </section>
