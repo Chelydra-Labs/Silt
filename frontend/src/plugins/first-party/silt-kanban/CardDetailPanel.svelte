@@ -80,16 +80,26 @@
     }
   }
 
+  // Monotonic token so a failed earlier slider write can't revert over a
+  // successful later one. Without this, rapid 0 → 50 → 100 changes where
+  // call #1 fails transiently would snap the slider back to 0 even though
+  // the in-flight/later writes already moved it forward. Mirrors the
+  // loadSeq race guard in Kanban.svelte.
+  let progressSeq = 0
   function onProgressChange(e: Event) {
     if (!card) return
     const v = Number((e.target as HTMLInputElement).value)
     const prev = progressState
+    const my = ++progressSeq
     progressState = v
     metaError = ''
     void (async () => {
       try {
         await ctx.updateTaskMeta(card.id, { progress: v })
       } catch (err) {
+        // A newer change superseded this one; its value is authoritative,
+        // so don't revert to the stale snapshot.
+        if (my !== progressSeq) return
         progressState = prev
         metaError = err instanceof Error ? err.message : String(err)
       }

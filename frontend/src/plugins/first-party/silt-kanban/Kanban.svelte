@@ -42,6 +42,10 @@
   // user knows to narrow the scope (Vault → Notebook/Section/Page) rather
   // than silently missing tasks.
   let truncated = $state(false)
+  // Raw row count from the last query, surfaced in the truncation banner
+  // so the copy stays in sync with the Go-side cap (maxPluginQueryRows)
+  // instead of hard-coding a literal that can drift if the cap is tuned.
+  let loadedCount = $state(0)
 
   // Columns come from config.yaml (plugins.plugin_settings.silt-kanban.columns),
   // falling back to the canonical TODO/DOING/DONE triple. Now mutable: the
@@ -198,6 +202,7 @@
       }
       lanes = bucket
       truncated = wasTruncated
+      loadedCount = (rows as unknown[]).length
     } catch (e) {
       if (my !== loadSeq) return
       errorMsg = e instanceof Error ? e.message : String(e)
@@ -566,7 +571,7 @@
     >
       <span class="material-symbols-outlined text-[16px]">info</span>
       <span>
-        Showing the first 5000 tasks. Narrow the scope to a Notebook, Section,
+        Showing the first {loadedCount} tasks. Narrow the scope to a Notebook, Section,
         or Page to see tasks beyond the cap.
       </span>
     </div>

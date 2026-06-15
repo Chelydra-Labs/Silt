@@ -151,7 +151,16 @@ package parser
 
 import "regexp"
 
-var TaskRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s(TODO|DOING|DONE)\sTASK(?:\s\[([^\]]*)\])?(?:\(([^)]*)\))?(?:#(\d+))?\s(.*)$`)
+// TaskCheckboxRegex matches a GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`)
+// plus the remainder of the line. Any checkbox item is a task — the legacy
+// TASK keyword was dropped in favour of the Dataview inline-metadata
+// standard (SPECS.md §4.1).
+var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
+
+// TaskTokenRegex scans the checkbox remainder for `[key:: value]` Dataview
+// tokens (due, start, owner, priority, pin, progress). Order-independent
+// and extensible via a one-line addition to the scanTaskTokens dispatch.
+var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
 
 type BlockType string
 

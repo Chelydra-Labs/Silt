@@ -50,11 +50,6 @@ var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
 // the switch in scanTaskTokens. Keys are case-insensitive.
 var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
 
-// TaskRegex is an alias for TaskCheckboxRegex, kept for backward
-// compatibility with external callers that reference it. The actual
-// parsing now flows through TaskCheckboxRegex + TaskTokenRegex.
-var TaskRegex = TaskCheckboxRegex
-
 // IDRegex captures the trailing block-identity comment. The format is:
 //   <!-- id: uuid -->
 // or (with per-block file_date, post per-day-file-model removal):

@@ -409,9 +409,10 @@ describe('Kanban plugin (#19)', () => {
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    // The status region explains the cap + tells the user how to recover.
+    // The status region shows the loaded count (derived from rows.length,
+    // not a hard-coded literal) + tells the user how to recover.
     const status = screen.getByRole('status')
-    expect(status.textContent).toContain('5000')
+    expect(status.textContent).toContain(String(SAMPLE_ROWS.length))
     expect(status.textContent).toMatch(/narrow.*scope/i)
   })
 
