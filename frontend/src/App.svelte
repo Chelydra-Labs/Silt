@@ -455,6 +455,9 @@
               {activeFocusedBlockAncestors}
               onBlockFocus={handleBlockFocus}
               onBlockBlur={handleBlockBlur}
+              onPageRenamed={(newName) => {
+                activePage = newName
+              }}
             />
           {:else}
             <div

@@ -5,7 +5,13 @@
     CreateNotebook,
     CreateSection,
     CreatePage,
-    PickNotebookFolder
+    PickNotebookFolder,
+    RenamePage,
+    RenameSection,
+    RenameNotebook,
+    DeletePage,
+    DeleteSection,
+    DeleteNotebook
   } from '../../wailsjs/go/main/App.js'
 
   interface NavPage {
@@ -57,12 +63,33 @@
   let tree = $state<NavigationTree>({ notebooks: [] })
   let showNotebookDropdown = $state(false)
 
-  // Creation modals
-  let createMode = $state<'' | 'notebook' | 'section' | 'page'>('')
+  // Creation/rename modal state
+  let createMode = $state<'' | 'notebook' | 'section'>('')
+  let editingMode = $state<'create' | 'rename'>('create')
+  let renameCtx = $state<{ level: 'notebook' | 'section'; notebook: string; section?: string } | null>(null)
   let newName = $state('')
   let createError = $state('')
   let creating = $state(false)
   let modalInputEl = $state<HTMLInputElement | null>(null)
+
+  // Context menu state (#62)
+  let contextMenu = $state<{
+    x: number
+    y: number
+    level: 'notebook' | 'section' | 'page'
+    notebook: string
+    section?: string
+    page?: string
+  } | null>(null)
+
+  // Delete confirmation dialog state
+  let deleteTarget = $state<{
+    level: 'notebook' | 'section' | 'page'
+    notebook: string
+    section?: string
+    page?: string
+    label: string
+  } | null>(null)
 
   // Expanded section names (within the active notebook). The active section is
   // always expanded so the active path stays visible (spatial memory).
@@ -166,9 +193,20 @@
     onSelectPage(activeNotebook, section, page)
   }
 
-  function openCreate(mode: 'notebook' | 'section' | 'page') {
+  function openCreate(mode: 'notebook' | 'section') {
     createMode = mode
+    editingMode = 'create'
+    renameCtx = null
     newName = ''
+    createError = ''
+    setTimeout(() => modalInputEl?.focus(), 0)
+  }
+
+  function openRename(level: 'notebook' | 'section', notebook: string, section: string | undefined, currentName: string) {
+    createMode = level
+    editingMode = 'rename'
+    renameCtx = { level, notebook, section }
+    newName = currentName
     createError = ''
     setTimeout(() => modalInputEl?.focus(), 0)
   }
@@ -201,7 +239,23 @@
     creating = true
     createError = ''
     try {
-      if (createMode === 'notebook') {
+      if (editingMode === 'rename' && renameCtx) {
+        if (renameCtx.level === 'notebook') {
+          await RenameNotebook(renameCtx.notebook, trimmed)
+          await loadNavigation()
+          if (activeNotebook === renameCtx.notebook) {
+            activeNotebook = trimmed
+            handleSelectNotebook(trimmed)
+          }
+        } else if (renameCtx.level === 'section') {
+          await RenameSection(renameCtx.notebook, renameCtx.section ?? '', trimmed)
+          await loadNavigation()
+          if (activeSection === renameCtx.section) {
+            activeSection = trimmed
+            onSelectSection(trimmed)
+          }
+        }
+      } else if (createMode === 'notebook') {
         await CreateNotebook(trimmed)
         await loadNavigation()
         handleSelectNotebook(trimmed)
@@ -211,18 +265,10 @@
         activeSection = trimmed
         onSelectSection(trimmed)
         expandedSections = new Set([...expandedSections, trimmed])
-      } else if (createMode === 'page') {
-        const sectionForPage = activeSection || ''
-        await CreatePage(activeNotebook, sectionForPage, trimmed, '')
-        await loadNavigation()
-        activeSection = sectionForPage
-        activePage = trimmed
-        onSelectPage(activeNotebook, sectionForPage, trimmed)
-        activeView = 'notes'
-        onSelectView('notes')
       }
       createMode = ''
       newName = ''
+      renameCtx = null
     } catch (e) {
       createError = e instanceof Error ? e.message : String(e)
     } finally {
@@ -240,6 +286,124 @@
       e.stopPropagation()
       createMode = ''
     }
+  }
+
+  // --- Inline page creation (#83) ---
+  // OneNote model: create "Untitled" immediately and navigate; the editor's
+  // title field auto-focuses so the user can type the real name inline.
+  async function handleCreatePageInline(sectionName: string) {
+    creating = true
+    try {
+      const pageName = await generateUniquePageName(sectionName)
+      await CreatePage(activeNotebook, sectionName, pageName, '')
+      await loadNavigation()
+      activeSection = sectionName
+      activePage = pageName
+      onSelectPage(activeNotebook, sectionName, pageName)
+      activeView = 'notes'
+      onSelectView('notes')
+      // Signal the editor to focus the title for inline rename.
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('focus-page-title'))
+      }, 100)
+    } catch (e) {
+      console.error('CreatePage inline failed:', e)
+    } finally {
+      creating = false
+    }
+  }
+
+  async function generateUniquePageName(sectionName: string): Promise<string> {
+    const base = 'Untitled'
+    const nb = tree.notebooks.find((n) => n.name === activeNotebook)
+    if (!nb) return base
+    const sec = nb.sections.find((s) => s.name === sectionName)
+    if (!sec) return base
+    const existing = new Set(sec.pages.map((p) => p.name))
+    if (!existing.has(base)) return base
+    let i = 2
+    while (existing.has(`${base} ${i}`)) i++
+    return `${base} ${i}`
+  }
+
+  // --- Context menu handlers (#62) ---
+  function openContextMenu(
+    e: MouseEvent,
+    level: 'notebook' | 'section' | 'page',
+    notebook: string,
+    section?: string,
+    page?: string
+  ) {
+    e.preventDefault()
+    contextMenu = { x: e.clientX, y: e.clientY, level, notebook, section, page }
+  }
+
+  function closeContextMenu() {
+    contextMenu = null
+  }
+
+  function handleContextRename() {
+    if (!contextMenu) return
+    const { level, notebook, section, page } = contextMenu
+    contextMenu = null
+    if (level === 'page' && section !== undefined && page !== undefined) {
+      activeSection = section
+      activePage = page
+      onSelectPage(notebook, section, page)
+      activeView = 'notes'
+      onSelectView('notes')
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('focus-page-title'))
+      }, 100)
+    } else if (level === 'section' && section !== undefined) {
+      openRename('section', notebook, section, section)
+    } else if (level === 'notebook') {
+      openRename('notebook', notebook, undefined, notebook)
+    }
+  }
+
+  function handleContextDelete() {
+    if (!contextMenu) return
+    const { level, notebook, section, page } = contextMenu
+    contextMenu = null
+    let label = ''
+    if (level === 'page' && page) label = `page "${page}"`
+    else if (level === 'section' && section) label = `section "${section}" and all its pages`
+    else if (level === 'notebook') label = `notebook "${notebook}" and all its content`
+    deleteTarget = { level, notebook, section, page, label }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    const { level, notebook, section, page } = deleteTarget
+    deleteTarget = null
+    try {
+      if (level === 'page' && page !== undefined) {
+        await DeletePage(notebook, section ?? '', page)
+      } else if (level === 'section' && section !== undefined) {
+        await DeleteSection(notebook, section)
+      } else if (level === 'notebook') {
+        await DeleteNotebook(notebook)
+      }
+      await loadNavigation()
+      // Navigate away if the active item was deleted.
+      if (level === 'notebook' && activeNotebook === notebook) {
+        activeNotebook = ''
+        activeSection = ''
+        activePage = ''
+      } else if (level === 'section' && activeSection === section) {
+        activeSection = ''
+        activePage = ''
+      } else if (level === 'page' && activePage === page) {
+        activePage = ''
+      }
+    } catch (e) {
+      console.error('Delete failed:', e)
+    }
+  }
+
+  function cancelDelete() {
+    deleteTarget = null
   }
 
   onMount(() => {
@@ -377,7 +541,7 @@
       </span>
       <span title={pageHint} class="flex-1 flex">
         <button
-          onclick={() => openCreate('page')}
+          onclick={() => handleCreatePageInline(activeSection || '')}
           disabled={!activeNotebook}
           title={pageHint}
           aria-label="New Page"
@@ -437,6 +601,7 @@
             <div
               class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-bg-hover transition-colors"
               onclick={() => toggleSection(sec.name)}
+              oncontextmenu={(e) => openContextMenu(e, 'section', activeNotebook, sec.name)}
               role="treeitem"
               tabindex="0"
               aria-expanded={isExpanded}
@@ -464,7 +629,7 @@
                   e.stopPropagation()
                   activeSection = sec.name
                   onSelectSection(sec.name)
-                  openCreate('page')
+                  handleCreatePageInline(sec.name)
                 }}
                 title="New page in this section"
                 class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
@@ -488,6 +653,7 @@
                       activeSection === sec.name && activePage === pg.name}
                     <button
                       onclick={() => handleSelectPage(sec.name, pg.name)}
+                      oncontextmenu={(e) => openContextMenu(e, 'page', activeNotebook, sec.name, pg.name)}
                       class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
                       class:bg-bg-hover={isActive}
                       class:text-accent-primary-start={isActive}
@@ -532,11 +698,9 @@
       >
         <div class="px-5 py-4 border-b border-border-muted">
           <h2 class="font-headline-md text-headline-md text-text-primary">
-            New {createMode === 'notebook'
+            {editingMode === 'rename' ? 'Rename' : 'New'} {createMode === 'notebook'
               ? 'Notebook'
-              : createMode === 'section'
-                ? 'Section'
-                : 'Page'}
+              : 'Section'}
           </h2>
           <p class="text-text-muted text-[12px] font-body-md mt-0.5">
             {#if createMode === 'notebook'}
@@ -556,11 +720,13 @@
             bind:value={newName}
             onkeydown={handleModalKeydown}
             type="text"
-            placeholder={createMode === 'notebook'
-              ? 'Notebook name…'
-              : createMode === 'section'
-                ? 'Section name…'
-                : 'Page name…'}
+            placeholder={editingMode === 'rename'
+              ? createMode === 'notebook'
+                ? 'New notebook name…'
+                : 'New section name…'
+              : createMode === 'notebook'
+                ? 'Notebook name…'
+                : 'Section name…'}
             class="w-full bg-bg-surface border border-border-zinc rounded-lg px-3 py-2.5 text-text-primary text-[14px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
           />
           {#if createError}
@@ -583,7 +749,7 @@
             disabled={creating || !newName.trim()}
             class="px-4 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {creating ? 'Creating…' : 'Create'}
+            {creating ? (editingMode === 'rename' ? 'Renaming…' : 'Creating…') : (editingMode === 'rename' ? 'Rename' : 'Create')}
           </button>
         </div>
       </div>
@@ -616,3 +782,115 @@
     </button>
   </div>
 </aside>
+
+<!-- Context menu (#62) -->
+{#if contextMenu}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    onclick={closeContextMenu}
+    oncontextmenu={(e) => { e.preventDefault(); closeContextMenu() }}
+    class="fixed inset-0 z-[180]"
+  >
+    <div
+      class="fixed context-menu-card"
+      style:left={contextMenu.x + 'px'}
+      style:top={contextMenu.y + 'px'}
+      onclick={(e) => e.stopPropagation()}
+      role="menu"
+      aria-label="Actions"
+    >
+      <button
+        type="button"
+        onclick={handleContextRename}
+        role="menuitem"
+        class="context-menu-item"
+      >
+        <span class="material-symbols-outlined text-[16px]">edit</span>
+        Rename
+      </button>
+      <button
+        type="button"
+        onclick={handleContextDelete}
+        role="menuitem"
+        class="context-menu-item text-status-danger"
+      >
+        <span class="material-symbols-outlined text-[16px]">delete</span>
+        Delete
+      </button>
+    </div>
+  </div>
+{/if}
+
+<!-- Delete confirmation dialog (#62) -->
+{#if deleteTarget}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    onclick={cancelDelete}
+    class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[190] flex items-center justify-center"
+  >
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Confirm delete"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      class="bg-bg-panel border border-border-active rounded-xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden"
+    >
+      <div class="px-5 py-4 border-b border-border-muted">
+        <h2 class="font-headline-md text-headline-md text-text-primary">
+          Delete {deleteTarget.level}?
+        </h2>
+        <p class="text-text-muted text-[12px] font-body-md mt-1">
+          This will move the {deleteTarget.label} to <code>.system/trash/</code>.
+          You can recover it from there manually.
+        </p>
+      </div>
+      <div class="flex items-center justify-end gap-2 px-5 py-3">
+        <button
+          onclick={cancelDelete}
+          class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer"
+        >
+          Cancel
+        </button>
+        <button
+          onclick={confirmDelete}
+          class="px-4 py-2 rounded-lg bg-status-danger/20 border border-status-danger/40 text-status-danger font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<style>
+  .context-menu-card {
+    background-color: rgba(22, 22, 25, 0.9);
+    backdrop-filter: blur(12px) saturate(140%);
+    border: 1px solid var(--border-active);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    padding: 4px;
+    min-width: 160px;
+    z-index: 181;
+  }
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: var(--font-body, inherit);
+    text-align: left;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background-color 120ms ease-out;
+  }
+  .context-menu-item:hover {
+    background-color: var(--bg-hover);
+  }
+</style>
