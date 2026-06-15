@@ -1131,6 +1131,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 	}
 
 	var writeErr error
+	a.coordinator.LockBlockWrite(blockID, func() {
 	a.coordinator.LockFileWrite(filePath, func() {
 		// Don't clobber a block the user is actively editing in another view
 		// (the timeline editor holds a focus lock on the file while focused).
@@ -1199,6 +1200,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 			}
 		}
 	})
+	}) // LockBlockWrite
 	if writeErr != nil {
 		return writeErr
 	}
@@ -1756,7 +1758,18 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	// Extract block IDs for per-block write-intent locking (#64). This
+	// serializes the full-page save against any concurrent MutateBlock for
+	// the same block, preventing last-writer-wins clobbering.
+	blockIDs := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b.ID != "" {
+			blockIDs = append(blockIDs, b.ID)
+		}
+	}
+
 	var writeErr error
+	a.coordinator.LockBlocksWrite(blockIDs, func() {
 	a.coordinator.LockFileWrite(filePath, func() {
 		contentBytes, err := os.ReadFile(filePath)
 		if err != nil && !os.IsNotExist(err) {
@@ -1800,6 +1813,7 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 			}
 		}
 	})
+	}) // LockBlocksWrite
 
 	if writeErr != nil {
 		return writeErr

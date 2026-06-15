@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
   import { FetchPageBlocks, RenamePage } from '../../wailsjs/go/main/App.js'
+  import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import TipTapEditor from './TipTapEditor.svelte'
   import type { ParsedBlock } from '../lib/editor'
 
@@ -44,6 +45,19 @@
     if (targetBlockId && targetKey !== handledTargetKey) {
       scrollToBlock(targetKey)
     }
+  })
+
+  // Subscribe to block:changed events (#64). When an external mutation
+  // (embed edit, VS Code edit) changes a block on the current page, reload
+  // the block list so the editor sees the update. The editor's own $effect
+  // handles applying the update when the user is not actively editing.
+  $effect(() => {
+    const off = EventsOn('block:changed', (ev: { notebook: string; section: string; page: string }) => {
+      if (ev.notebook === notebook && ev.section === section && ev.page === page) {
+        loadPage()
+      }
+    })
+    return () => off()
   })
 
   async function loadPage() {
