@@ -1906,7 +1906,7 @@ func updateFrontmatterField(content, key, newVal string) string {
 		if inFM {
 			prefix := key + ":"
 			if strings.HasPrefix(strings.TrimSpace(line), prefix) {
-				lines[i] = fmt.Sprintf("%s %s", key, strconv.Quote(newVal))
+				lines[i] = fmt.Sprintf("%s: %s", key, strconv.Quote(newVal))
 				break
 			}
 		}
@@ -1944,12 +1944,14 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	var runErr error
 	// Lock the notebook root to prevent interleaving with the scanner.
 	nbRoot := filepath.Join(a.vaultPath, safeNotebook)
 	a.coordinator.LockFileWrite(nbRoot, func() {
 		// 1. Read + update frontmatter page: value in the old file.
 		contentBytes, err := os.ReadFile(oldFile)
 		if err != nil {
+			runErr = err
 			return
 		}
 		content := updateFrontmatterField(string(contentBytes), "page", safeNewPage)
@@ -1957,6 +1959,7 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 		// 2. Write atomically to old path (frontmatter change).
 		a.tracker.RegisterWrite(oldFile)
 		if err := parser.WriteFileAtomic(oldFile, []byte(content)); err != nil {
+			runErr = err
 			return
 		}
 
@@ -1964,6 +1967,7 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 		a.tracker.RegisterWrite(oldFile)
 		a.tracker.RegisterWrite(newFile)
 		if err := os.Rename(oldFile, newFile); err != nil {
+			runErr = err
 			return
 		}
 
@@ -1977,7 +1981,7 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 		a.reindexFile(newFile, safeNotebook, safeSection, safeNewPage)
 	})
 
-	return nil
+	return runErr
 }
 
 // RenameSection renames a section folder and updates the section: frontmatter
@@ -2008,11 +2012,13 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	var runErr error
 	nbRoot := filepath.Join(a.vaultPath, safeNotebook)
 	a.coordinator.LockFileWrite(nbRoot, func() {
 		// 1. Walk all .md files in the old section, update section: frontmatter.
 		entries, err := os.ReadDir(oldDir)
 		if err != nil {
+			runErr = err
 			return
 		}
 		var pageFiles []string
@@ -2038,6 +2044,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 		a.tracker.RegisterWrite(oldDir)
 		a.tracker.RegisterWrite(newDir)
 		if err := os.Rename(oldDir, newDir); err != nil {
+			runErr = err
 			return
 		}
 
@@ -2056,7 +2063,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 		}
 	})
 
-	return nil
+	return runErr
 }
 
 // RenameNotebook renames a notebook folder and updates the notebook: frontmatter
@@ -2086,6 +2093,7 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	var runErr error
 	a.coordinator.LockFileWrite(oldDir, func() {
 		// 1. Walk all .md files under the old notebook recursively.
 		var mdFiles []string
@@ -2114,6 +2122,7 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 		a.tracker.RegisterWrite(oldDir)
 		a.tracker.RegisterWrite(newDir)
 		if err := os.Rename(oldDir, newDir); err != nil {
+			runErr = err
 			return
 		}
 
@@ -2144,7 +2153,7 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 		}
 	})
 
-	return nil
+	return runErr
 }
 
 // DeletePage moves a single page file to .system/trash/ and clears its index
@@ -2171,10 +2180,11 @@ func (a *App) DeletePage(notebook, section, page string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	var runErr error
 	a.coordinator.LockFileWrite(filePath, func() {
 		a.tracker.RegisterWrite(filePath)
 		if _, err := a.moveToTrash(filePath); err != nil {
-			log.Printf("DeletePage: moveToTrash failed: %v", err)
+			runErr = err
 			return
 		}
 		a.coordinator.WithDBWrite(func() {
@@ -2183,7 +2193,7 @@ func (a *App) DeletePage(notebook, section, page string) error {
 		})
 	})
 
-	return nil
+	return runErr
 }
 
 // DeleteSection moves a section folder (all pages) to .system/trash/ and clears
@@ -2209,6 +2219,7 @@ func (a *App) DeleteSection(notebook, section string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	var runErr error
 	a.coordinator.LockFileWrite(secPath, func() {
 		// Collect page files before trashing for index cleanup.
 		entries, _ := os.ReadDir(secPath)
@@ -2221,7 +2232,7 @@ func (a *App) DeleteSection(notebook, section string) error {
 
 		a.tracker.RegisterWrite(secPath)
 		if _, err := a.moveToTrash(secPath); err != nil {
-			log.Printf("DeleteSection: moveToTrash failed: %v", err)
+			runErr = err
 			return
 		}
 
@@ -2232,7 +2243,7 @@ func (a *App) DeleteSection(notebook, section string) error {
 		})
 	})
 
-	return nil
+	return runErr
 }
 
 // DeleteNotebook moves a notebook folder (all sections + pages) to
@@ -2257,10 +2268,11 @@ func (a *App) DeleteNotebook(notebook string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	var runErr error
 	a.coordinator.LockFileWrite(nbPath, func() {
 		a.tracker.RegisterWrite(nbPath)
 		if _, err := a.moveToTrash(nbPath); err != nil {
-			log.Printf("DeleteNotebook: moveToTrash failed: %v", err)
+			runErr = err
 			return
 		}
 		// Clear all blocks for this notebook in one shot.
@@ -2269,7 +2281,7 @@ func (a *App) DeleteNotebook(notebook string) error {
 		})
 	})
 
-	return nil
+	return runErr
 }
 
 // --- Sidebar width / nav order IPC (#63, #68) -----------------------------
@@ -2297,8 +2309,8 @@ func (a *App) SetSidebarWidth(px int) error {
 		px = 480
 	}
 	a.configMu.Lock()
+	a.cfg.UI.SidebarWidth = px
 	cfg := a.cfg
-	cfg.UI.SidebarWidth = px
 	a.configMu.Unlock()
 
 	if a.configWatcher != nil {
@@ -2317,8 +2329,8 @@ func (a *App) GetNavOrder() (config.NavOrder, error) {
 // SetNavOrder persists a new navigation ordering to config.yaml.
 func (a *App) SetNavOrder(order config.NavOrder) error {
 	a.configMu.Lock()
+	a.cfg.UI.NavOrder = order
 	cfg := a.cfg
-	cfg.UI.NavOrder = order
 	a.configMu.Unlock()
 
 	if a.configWatcher != nil {

@@ -149,10 +149,10 @@
       params.push(...f.priorities)
     }
     if (f.dueDate) {
-      if (f.dueDate === 'overdue') where.push("t.due_date < date('now')")
-      else if (f.dueDate === 'today') where.push("t.due_date = date('now')")
+      if (f.dueDate === 'overdue') where.push("t.due_date < date('now', 'localtime')")
+      else if (f.dueDate === 'today') where.push("t.due_date = date('now', 'localtime')")
       else if (f.dueDate === 'week')
-        where.push("t.due_date BETWEEN date('now') AND date('now', '+7 days')")
+        where.push("t.due_date BETWEEN date('now', 'localtime') AND date('now', 'localtime', '+7 days')")
       else if (f.dueDate === 'none')
         where.push("(t.due_date IS NULL OR t.due_date = '')")
     }

@@ -5,19 +5,16 @@ package db
 import (
 	"fmt"
 	"strings"
-	"syscall"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
 // Windows network-filesystem names returned by GetVolumeInformationW.
 var windowsNetworkFSNames = map[string]bool{
-	"NFS":     true,
-	"CDFS":    true, // CD-ROM (not network, but read-only)
-	"DFS":     true, // Distributed File System
-	"WebDAV":  true,
-	"CBFS":    true,
+	"NFS":    true,
+	"DFS":    true, // Distributed File System
+	"WebDAV": true,
+	"CBFS":   true,
 }
 
 // Common network filesystem names that contain SMB/CIFS in their identifier.
@@ -27,29 +24,33 @@ func detectNetworkFilesystem(path string) error {
 	if len(path) == 0 {
 		return nil
 	}
-	// GetVolumeInformationW needs a drive root or UNC path with a trailing backslash.
-	volumePath := path
-	if !strings.HasSuffix(volumePath, "\\") {
-		volumePath += "\\"
+
+	pathUTF16, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil
 	}
 
-	pathUTF16, err := windows.UTF16PtrFromString(volumePath)
+	// GetVolumeInformationW requires a volume root path (e.g. "C:\"), not an
+	// arbitrary subdirectory. Resolve the volume root first via
+	// GetVolumePathName (#79 review fix).
+	var volumeRoot [260]uint16
+	err = windows.GetVolumePathName(pathUTF16, &volumeRoot[0], uint32(len(volumeRoot)))
 	if err != nil {
-		return nil // If we can't convert, let sql.Open surface the real error
+		return nil
 	}
 
 	var fsName [256]uint16
-	err = syscall.GetVolumeInformation(
-		(*uint16)(unsafe.Pointer(pathUTF16)),
-		nil, 0,        // volume name buffer + size
-		nil,            // volume serial number
-		nil,            // max component length
-		nil,            // filesystem flags
-		&fsName[0],     // filesystem name buffer
+	err = windows.GetVolumeInformation(
+		&volumeRoot[0],
+		nil, 0,
+		nil,
+		nil,
+		nil,
+		&fsName[0],
 		uint32(len(fsName)),
 	)
 	if err != nil {
-		return nil // If we can't query, let sql.Open surface the real error
+		return nil
 	}
 
 	fstype := windows.UTF16ToString(fsName[:])

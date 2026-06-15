@@ -287,6 +287,7 @@
           min="0"
           max="100"
           value={progressState}
+          oninput={(e) => (progressState = Number((e.currentTarget as HTMLInputElement).value))}
           onchange={onProgressChange}
           aria-label="Task progress"
           class="w-full accent-accent-secondary-start"
