@@ -366,6 +366,11 @@
 
   function onLaneDragOver(e: DragEvent, status: TaskStatus) {
     if (!dragCard) return
+    // Custom (non-status) columns don't accept card drops — skip
+    // preventDefault so the browser shows a "no-drop" cursor and the
+    // drop event never fires. Matches the keyboard path's guard in
+    // onCardKeydown (ALL_STATUSES.includes).
+    if (!ALL_STATUSES.includes(status)) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
     dragOverStatus = status
@@ -385,6 +390,14 @@
   function onLaneDrop(e: DragEvent, toStatus: TaskStatus) {
     e.preventDefault()
     if (!dragCard || !dragFromStatus) return
+    // Defense-in-depth: onLaneDragOver already blocks custom columns,
+    // but if a drop somehow fires, reject it here rather than sending
+    // an invalid status to Go (which would reject + trigger a confusing
+    // optimistic-move-then-revert error banner).
+    if (!ALL_STATUSES.includes(toStatus)) {
+      cleanupDrag()
+      return
+    }
     const card = dragCard
     const from = dragFromStatus
     const targetIndex = dragOverStatus === toStatus ? dragOverIndex : -1

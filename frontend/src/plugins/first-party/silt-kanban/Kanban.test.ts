@@ -662,4 +662,33 @@ describe('Kanban plugin (#19)', () => {
     expect(updateTaskMeta).toHaveBeenCalledTimes(1)
     expect(mocks.sqliteQuery).toHaveBeenCalledTimes(1)
   })
+
+  it('dropping a card on a custom (non-status) column is a no-op', async () => {
+    // Add a custom column alongside the standard statuses.
+    mocks.settings.config.plugins.plugin_settings['silt-kanban'].columns = [
+      'TODO',
+      'DOING',
+      'DONE',
+      'Backlog'
+    ]
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const backlogSection = screen.getByRole('group', { name: 'Backlog' })
+
+    // Simulate a drag from To Do + drop on Backlog. The dragStart sets
+    // the module-scoped dragCard; the drop fires onLaneDrop with
+    // toStatus='Backlog', which the guard rejects.
+    await fireEvent.dragStart(todoCard)
+    await fireEvent.drop(backlogSection)
+    await flush()
+
+    // No status mutation dispatched — the Go handler never sees an
+    // invalid status, and no error banner is shown.
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
 })
