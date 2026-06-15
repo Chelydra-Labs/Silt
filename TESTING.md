@@ -475,11 +475,16 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 
 1. **Kanban board (#19):** Navigate to a section with mixed TODO/DOING/DONE tasks → switch to the Kanban view → 3 columns render with correct counts.
 2. **Kanban scope selector:** Switch between Vault / Notebook / Section / Page → the board re-queries and the card set narrows/widens; the breadcrumb shows the active scope. Default scope follows the active navigation (navigate to a page → board defaults to page scope).
-3. **Kanban drag-and-drop:** Drag a card TODO → DOING → file on disk reads `[/] DOING TASK ...`. Drag DOING → DONE → file reads `[x] DONE TASK ...`. Reload → persisted state reflects the markdown.
-4. **Kanban keyboard:** Focus a card → ArrowRight moves it to the next lane; ArrowLeft moves back. Enter/click navigates to the source block.
-5. **Plugin disable:** Settings → Plugins → toggle off Kanban → the Kanban view shows the "not registered" empty state. Toggle back on → it reappears. Works for both first-party and third-party plugins.
-6. **Frame-budget probe (#21):** Open `wails dev` with `?perf=1` appended to the URL. Perform Kanban drag-drop, editor typing, and theme switching → console logs each measurement with ✓ (<16ms) or ⚠️ (>16ms).
-7. **Production build (#23):** `./build.sh --no-bump` (Windows) or `./build-linux.sh --no-bump` (Linux) produces the platform artifacts. Launch the binary, open a vault with ≥10 pages, idle 60s → peak RSS < 65MB (Task Manager on Windows, `ps -o rss=` on Linux).
+3. **Kanban drag-and-drop:** Drag a card TODO → DOING → file on disk now reads `[/] description [key:: value]...`. Drag DOING → DONE → file reads `[x] description [key:: value]...`. Reload → persisted state reflects the markdown.
+4. **Kanban keyboard:** Focus a card → ArrowRight moves it to the next lane; ArrowLeft moves back. Enter/Space opens the card detail panel.
+5. **Kanban filter bar:** Click Owner chip → multi-select owners → board narrows. Stack Owner + Priority → both filter clauses active. "Clear all" restores the full set. Filters persist across reload (stored in config.yaml plugin_settings.silt-kanban.filters).
+6. **Kanban custom columns:** Click "+ Add Column" → type name → new column appears and persists across reload. Click more_horiz → Rename → inline edit → persists. Click more_horiz → Remove → confirm → column drops (cards keep their status). Drag column headers to reorder → persists.
+7. **Kanban card detail panel:** Click a card → right-side panel slides in. Toggle pin → file updates with `[pin:: true]`. Adjust progress slider → file updates with `[progress:: N]`. Comments/links counts display correctly. "Open in editor" jumps to the source block. Esc closes.
+8. **Kanban card visuals:** Pinned cards show push_pin icon. Cards with progress > 0 show a progress bar. Comment/link counts appear at the bottom. DOING cards have a left-edge indigo border.
+9. **Task metadata autocomplete (%):** In the editor, type a task line (`- [ ] some task`). Type `%` → popup shows all 6 metadata keys. Type `%d` → filters to "due". Select "due" → `[due:: ]` inserted with cursor positioned. Type a date → `[due:: 2026-08-03]` stored in file. Select "pin" → `[pin:: true]` auto-filled.
+10. **Plugin disable:** Settings → Plugins → toggle off Kanban → the Kanban view shows the "not registered" empty state. Toggle back on → it reappears. Works for both first-party and third-party plugins.
+11. **Frame-budget probe (#21):** Open `wails dev` with `?perf=1` appended to the URL. Perform Kanban drag-drop, editor typing, and theme switching → console logs each measurement with ✓ (<16ms) or ⚠️ (>16ms).
+12. **Production build (#23):** `./build.sh --no-bump` (Windows) or `./build-linux.sh --no-bump` (Linux) produces the platform artifacts. Launch the binary, open a vault with ≥10 pages, idle 60s → peak RSS < 65MB (Task Manager on Windows, `ps -o rss=` on Linux).
 
 ## Known Gaps (deferred)
 
