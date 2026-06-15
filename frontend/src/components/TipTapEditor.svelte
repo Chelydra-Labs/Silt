@@ -14,10 +14,13 @@
     SiltBlockExtensionsWithNodeViews,
     UniqueBlockIds,
     SiltBlockKeymaps,
+    TaskMetaSuggest,
+    applyMetaSuggestion,
+    filterMetaKeys,
     blocksToDoc,
     docToBlocks
   } from '../lib/editor'
-  import type { ParsedBlock } from '../lib/editor'
+  import type { ParsedBlock, MetaKey, SuggestContext } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings } from '../settings/store.svelte'
   import { measureFrameBudget } from '../lib/perf/frame-budget'
@@ -54,6 +57,56 @@
   let showSlashMenu = $state(false)
   let showTemplatePicker = $state(false)
 
+  // --- Task metadata suggest (%-autocomplete) ------------------------------
+  // `metaPopup` is null when the popup is closed. While open it carries the
+  // active context (range/position), the filtered key list, and the
+  // highlighted index navigated by ↑/↓.
+  let metaPopup = $state<{
+    ctx: SuggestContext
+    items: MetaKey[]
+    selected: number
+  } | null>(null)
+
+  function onMetaChange(ctx: SuggestContext | null): void {
+    if (!ctx) {
+      metaPopup = null
+      return
+    }
+    const items = filterMetaKeys(ctx.query)
+    metaPopup = items.length === 0 ? null : { ctx, items, selected: 0 }
+  }
+
+  function onMetaNavigate(dir: 1 | -1): void {
+    if (!metaPopup) return
+    const n = metaPopup.items.length
+    metaPopup.selected = (metaPopup.selected + dir + n) % n
+  }
+
+  function onMetaSelectActive(): void {
+    if (!metaPopup || !editorInstance || editorInstance.isDestroyed) {
+      metaPopup = null
+      return
+    }
+    const item = metaPopup.items[metaPopup.selected]
+    metaPopup = null
+    if (item) applyMetaSuggestion(editorInstance, item.key)
+  }
+
+  function onMetaPick(key: string): void {
+    if (!editorInstance || editorInstance.isDestroyed) {
+      metaPopup = null
+      return
+    }
+    metaPopup = null
+    applyMetaSuggestion(editorInstance, key)
+  }
+
+  function metaPopupCoords(): { left: number; top: number } | null {
+    if (!metaPopup || !editorInstance || editorInstance.isDestroyed) return null
+    const c = editorInstance.view.coordsAtPos(metaPopup.ctx.from)
+    return { left: c.left, top: c.bottom }
+  }
+
   const initialDoc = blocksToDoc(blocks)
   const initialKey = `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
   let lastSyncedBlocksKey = $state(initialKey)
@@ -72,6 +125,11 @@
       }),
       ...SiltBlockExtensionsWithNodeViews,
       UniqueBlockIds,
+      TaskMetaSuggest.configure({
+        onChange: onMetaChange,
+        onNavigate: onMetaNavigate,
+        onSelectActive: onMetaSelectActive
+      }),
       SiltBlockKeymaps,
       Placeholder.configure({
         placeholder: 'Type / for commands, or start writing…'
@@ -334,6 +392,26 @@
       onClose={() => (showSlashMenu = false)}
     />
   {/if}
+  {#if metaPopup}
+    {@const c = metaPopupCoords()}
+    {#if c}
+      <div class="meta-suggest" style="left:{c.left}px; top:{c.top}px">
+        {#each metaPopup.items as item, i}
+          <button
+            type="button"
+            class="meta-suggest-item"
+            class:selected={i === metaPopup.selected}
+            role="option"
+            aria-selected={i === metaPopup.selected}
+            onclick={() => onMetaPick(item.key)}
+          >
+            <span class="meta-suggest-key">{item.key}</span>
+            <span class="meta-suggest-desc">{item.description}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  {/if}
 </div>
 
 {#if showTemplatePicker}
@@ -355,5 +433,50 @@
   .tiptap-editor-host :global(.ProseMirror) {
     min-height: 22px;
     outline: none;
+  }
+
+  .meta-suggest {
+    position: fixed;
+    z-index: 50;
+    min-width: 240px;
+    margin-top: 4px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--bg-surface, #1e1e22);
+    border: 1px solid var(--border-subtle, #33333a);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .meta-suggest-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 6px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-primary, #e6e6e6);
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .meta-suggest-item.selected {
+    background: var(--accent-primary-start, #4f7cff);
+    color: #fff;
+  }
+
+  .meta-suggest-key {
+    font-family: var(--font-mono, monospace);
+    font-weight: 600;
+    font-size: 0.85rem;
+    min-width: 64px;
+  }
+
+  .meta-suggest-desc {
+    font-size: 0.8rem;
+    opacity: 0.8;
   }
 </style>
