@@ -17,6 +17,7 @@
   type Scope = 'vault' | 'notebook' | 'section' | 'page'
 
   const ALL_STATUSES: TaskStatus[] = ['TODO', 'DOING', 'DONE']
+  const SCOPES: Scope[] = ['vault', 'notebook', 'section', 'page']
 
   // Scope defaults to the most-specific active nav level; the user can
   // widen/narrow via the segmented control.
@@ -25,6 +26,38 @@
     if (ctx.activeSection) return 'section'
     if (ctx.activeNotebook) return 'notebook'
     return 'vault'
+  }
+
+  function isScopeDisabled(s: string): boolean {
+    if (s === 'notebook') return !ctx.activeNotebook
+    if (s === 'section') return !ctx.activeSection
+    if (s === 'page') return !ctx.activePage
+    return false
+  }
+
+  // WAI-ARIA radiogroup keyboard pattern: ArrowLeft/Right move selection
+  // between enabled options (wrapping), Home/End jump to the boundaries.
+  // Roving tabindex (checked radio = 0, others = -1) ensures Tab enters
+  // the group on the active option and leaves on the next Tab.
+  function onScopeKeydown(e: KeyboardEvent) {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
+    e.preventDefault()
+    const dir = e.key === 'ArrowLeft' || e.key === 'End' ? -1 : 1
+    let start: number
+    if (e.key === 'Home') start = 0
+    else if (e.key === 'End') start = SCOPES.length - 1
+    else start = (SCOPES.indexOf(scope) + dir + SCOPES.length) % SCOPES.length
+    for (let i = 0; i < SCOPES.length; i++) {
+      const next =
+        (((start + i * dir) % SCOPES.length) + SCOPES.length) % SCOPES.length
+      if (!isScopeDisabled(SCOPES[next])) {
+        scope = SCOPES[next]
+        ;(e.currentTarget as HTMLElement)
+          .querySelector<HTMLElement>(`[data-scope="${SCOPES[next]}"]`)
+          ?.focus()
+        return
+      }
+    }
   }
 
   let scope = $state<Scope>(defaultScope())
@@ -509,24 +542,25 @@
       {manifest.name}
     </h1>
     <!-- Scope selector (segmented control) -->
+    <!-- svelte-ignore a11y_no_static_element_interactions
+         role="radiogroup" is a composite widget that handles arrow-key
+         navigation for its radio children per WAI-ARIA APG. -->
     <div
       class="flex items-center gap-0.5 bg-bg-surface border border-border-muted rounded-lg p-0.5 ml-2"
       role="radiogroup"
       aria-label="Board scope"
+      tabindex="-1"
+      onkeydown={onScopeKeydown}
     >
-      {#each ['vault', 'notebook', 'section', 'page'] as s}
+      {#each SCOPES as s}
         <button
-          onclick={() => (scope = s as Scope)}
+          data-scope={s}
+          onclick={() => (scope = s)}
           role="radio"
           aria-checked={scope === s}
-          disabled={(s === 'notebook' && !ctx.activeNotebook) ||
-            (s === 'section' && !ctx.activeSection) ||
-            (s === 'page' && !ctx.activePage)}
-          title={(s === 'notebook' && !ctx.activeNotebook) ||
-          (s === 'section' && !ctx.activeSection) ||
-          (s === 'page' && !ctx.activePage)
-            ? `Select a ${String(s)} first`
-            : undefined}
+          tabindex={scope === s ? 0 : -1}
+          disabled={isScopeDisabled(s)}
+          title={isScopeDisabled(s) ? `Select a ${String(s)} first` : undefined}
           class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           class:bg-bg-hover={scope === s}
           class:text-accent-primary-start={scope === s}

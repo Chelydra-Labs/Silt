@@ -2234,6 +2234,12 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 			if idxErr != nil {
 				log.Printf("PluginUpdateTaskMeta: IndexFileBlocks failed: %v", idxErr)
 			}
+		} else {
+			// The file write succeeded but re-parsing the rendered content
+			// failed — the index stays stale until the next fsnotify scan.
+			// This should never happen (the content was just rendered from
+			// successfully-parsed blocks) but log it so the gap is observable.
+			log.Printf("PluginUpdateTaskMeta: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
 		}
 
 		for _, b := range blocks {

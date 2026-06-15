@@ -691,4 +691,31 @@ describe('Kanban plugin (#19)', () => {
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
+
+  it('scope radiogroup supports arrow-key navigation (WAI-ARIA)', async () => {
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const radiogroup = screen.getByRole('radiogroup', { name: 'Board scope' })
+
+    // Default scope is 'page' (activePage set). ArrowLeft moves to Section.
+    mocks.sqliteQuery.mockClear()
+    await fireEvent.keyDown(radiogroup, { key: 'ArrowLeft' })
+    await flush()
+
+    // The reload fired with a section-scope WHERE clause (no b.page).
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    const sql = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
+    expect(sql).toContain('b.section = ?')
+    expect(sql).not.toContain('b.page = ?')
+
+    // ArrowRight moves back to page scope.
+    mocks.sqliteQuery.mockClear()
+    await fireEvent.keyDown(radiogroup, { key: 'ArrowRight' })
+    await flush()
+
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    const sql2 = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
+    expect(sql2).toContain('b.page = ?')
+  })
 })

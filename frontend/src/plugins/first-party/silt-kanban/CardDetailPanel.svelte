@@ -144,9 +144,11 @@
     }
   }
 
-  // Esc-to-close listener is bound for the panel's lifetime.
+  // Esc-to-close listener is bound only while the panel is open (card
+  // is non-null). When closed, no global keydown listener intercepts
+  // Esc presses that other handlers (Settings, command palette) may need.
   $effect(() => {
-    void card
+    if (!card) return
     window.addEventListener('keydown', onWindowKeydown)
     return () => window.removeEventListener('keydown', onWindowKeydown)
   })
