@@ -55,15 +55,20 @@ func TestMigrationInvariant_NoOldHueTokens(t *testing.T) {
 		t.Fatalf("enumerate tracked files: %v", err)
 	}
 
-	// Skip files that legitimately name the banned tokens in their
-	// definition: this test, and any other migration-invariant guard.
-	skip := func(path string) bool {
-		base := filepath.Base(path)
-		if strings.Contains(base, "migration_invariant") {
-			return true
-		}
-		return false
+	// allowlist is the explicit set of source files permitted to name
+	// the banned tokens in their own definition — currently just this
+	// test, which constructs the banned substrings to scan for. It is
+	// the ONLY escape hatch: if a future source file legitimately
+	// references the migration (e.g. a dedicated migration test), add
+	// its tracked basename here. (Documentation prose is excluded
+	// wholesale by the extension filter in trackedTextFiles.) Keyed by
+	// basename and matched exactly so the intent is obvious; if a file
+	// is renamed without updating this set, the test fails loudly on
+	// its own tokens rather than silently skipping.
+	allowlist := map[string]bool{
+		"theme_migration_invariant_test.go": true,
 	}
+	skip := func(path string) bool { return allowlist[filepath.Base(path)] }
 
 	var hits []string
 	for _, rel := range files {

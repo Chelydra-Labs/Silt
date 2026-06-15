@@ -60,8 +60,16 @@ func linear(c uint8) float64 {
 // isValidColor's accepted grammar (validate.go) so any color that
 // passes theme validation can be measured for contrast. Non-matching
 // inputs — including NaN/Inf components, which strconv.ParseFloat
-// accepts with a nil error — return ok=false. The alpha of #rrggbbaa
-// is dropped (luminance is defined over opaque colors).
+// accepts with a nil error — return ok=false.
+//
+// Asymmetry with isValidColor: only the 3 RGB components are parsed
+// (the loop below reads parts[0..2]); the alpha channel is never read,
+// so it is dropped rather than validated. Therefore a malformed alpha
+// (e.g. rgba(12,12,14,NaN)) is ACCEPTED here even though isValidColor
+// rejects it (isValidColor validates the full color spec, alpha
+// included). This is deliberate — luminance is defined over opaque
+// colors — and is pinned by TestContrastRatio_AcceptedColorForms. Do
+// not add an alpha guard here without updating that contract.
 func parseColorAny(s string) (r, g, b uint8, ok bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
