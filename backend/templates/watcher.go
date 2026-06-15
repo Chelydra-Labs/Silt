@@ -124,12 +124,14 @@ func (w *TemplateWatcher) Close() error {
 }
 
 // isTemplateFile reports whether an event path is a .md file directly inside
-// templatesDir (the only events the watcher reacts to).
+// templatesDir (the only events the watcher reacts to). Path comparison uses
+// EqualFold because case-insensitive filesystems (Windows, macOS) can report
+// the same path with different casing (e.g. C:\\ vs c:\\).
 func (w *TemplateWatcher) isTemplateFile(name string) bool {
 	if !strings.EqualFold(filepath.Ext(name), ".md") {
 		return false
 	}
-	return filepath.Dir(name) == filepath.Clean(w.templatesDir)
+	return strings.EqualFold(filepath.Clean(filepath.Dir(name)), filepath.Clean(w.templatesDir))
 }
 
 func (w *TemplateWatcher) loop() {
@@ -146,7 +148,7 @@ func (w *TemplateWatcher) loop() {
 			// Detect the creation of the templates directory itself (seen via
 			// the parent watch) and add it to the fsnotify watcher so future
 			// file-level events are observed.
-			if !w.watchingDir && filepath.Clean(ev.Name) == filepath.Clean(w.templatesDir) {
+			if !w.watchingDir && strings.EqualFold(filepath.Clean(ev.Name), filepath.Clean(w.templatesDir)) {
 				if ev.Op&(fsnotify.Create) != 0 {
 					if err := w.watcher.Add(w.templatesDir); err == nil {
 						w.watchingDir = true

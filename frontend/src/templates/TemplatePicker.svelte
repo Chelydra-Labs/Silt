@@ -104,7 +104,8 @@
   })
 
   // Re-render the preview whenever the selection or placeholder values change.
-  // Templates are tiny so no debounce is needed.
+  // A 100ms debounce coalesces rapid keystrokes in placeholder fields into a
+  // single Wails IPC call so the bridge is not flooded on every keypress.
   $effect(() => {
     const id = selectedId
     const vars = { ...placeholderValues }
@@ -113,25 +114,29 @@
       return
     }
     previewLoading = true
-    // Abort guard: if selection changes before the IPC resolves, drop the
-    // stale result (the next $effect run will pick up the new one).
+    // Abort guard: if selection/values change before the IPC resolves, drop
+    // the stale result (the next $effect run will pick up the new one). The
+    // debounce timer is also cleared so only the latest keystroke burst fires.
     let cancelled = false
-    RenderTemplate(id, vars)
-      .then((r) => {
-        if (!cancelled) {
-          preview = r
-          previewLoading = false
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          preview = ''
-          previewLoading = false
-          console.error('TemplatePicker: RenderTemplate failed:', e)
-        }
-      })
+    const timer = setTimeout(() => {
+      RenderTemplate(id, vars)
+        .then((r) => {
+          if (!cancelled) {
+            preview = r
+            previewLoading = false
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            preview = ''
+            previewLoading = false
+            console.error('TemplatePicker: RenderTemplate failed:', e)
+          }
+        })
+    }, 100)
     return () => {
       cancelled = true
+      clearTimeout(timer)
     }
   })
 

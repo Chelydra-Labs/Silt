@@ -213,22 +213,19 @@ func ListTemplates(templatesDir string) (*ListTemplatesResult, error) {
 // embedded set. Returns the full Template (including Body) so the caller can
 // render it. ErrTemplateNotFound (wrapped) is returned when the id is on
 // neither tier; genuine I/O errors propagate.
+//
+// The on-disk tier is an O(1) direct file lookup (<id>.md) rather than a
+// directory scan — this mirrors CachedGetTemplate and SaveTemplate, both of
+// which enforce the filename-matches-id convention (<id>.md). An id that does
+// not correspond to an existing file falls through to the embedded set.
 func GetTemplate(templatesDir, id string) (*Template, error) {
+	if id == "" {
+		return nil, ErrTemplateNotFound
+	}
 	if templatesDir != "" {
-		entries, err := os.ReadDir(templatesDir)
-		if err == nil {
-			for _, e := range entries {
-				if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".md") {
-					continue
-				}
-				t, loadErr := loadOne(filepath.Join(templatesDir, e.Name()))
-				if loadErr != nil {
-					continue // skip invalid files while hunting for the id
-				}
-				if t.ID == id {
-					return t, nil
-				}
-			}
+		path := filepath.Join(templatesDir, id+".md")
+		if t, err := loadOne(path); err == nil {
+			return t, nil
 		} else if !os.IsNotExist(err) {
 			return nil, err
 		}
