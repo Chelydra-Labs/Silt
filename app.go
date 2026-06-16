@@ -1240,9 +1240,13 @@ func findLineByBlockID(lines []string, blockID string) int {
 	return -1
 }
 
-// sanitizePathSegment strips path-traversal characters from a single path
-// component: directory separators, NUL, and `..` sequences. The intent is to
-// safely fold untrusted frontmatter strings into file paths.
+// sanitizePathSegment strips path-traversal indicators from a single path
+// component: directory separators, NUL, control chars, and a LEADING `..`
+// (or run of leading `..`s) which is the path-traversal signal. Internal `..`
+// substrings (e.g. `2.0..2.1`, `a..b..c`) are preserved verbatim — they are
+// legitimate filename characters, not traversal (#89). The contract is
+// "single segment": `/` and `\` are stripped so the join can never produce
+// a multi-segment path.
 func sanitizePathSegment(s string) string {
 	cleaned := strings.Map(func(r rune) rune {
 		if r == '/' || r == '\\' || r < 32 {
@@ -1250,8 +1254,8 @@ func sanitizePathSegment(s string) string {
 		}
 		return r
 	}, s)
-	for strings.Contains(cleaned, "..") {
-		cleaned = strings.ReplaceAll(cleaned, "..", "")
+	for strings.HasPrefix(cleaned, "..") {
+		cleaned = strings.TrimPrefix(cleaned, "..")
 	}
 	if cleaned == "." {
 		cleaned = ""
