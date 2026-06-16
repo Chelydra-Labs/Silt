@@ -512,6 +512,30 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, notebook, section, page s
 	return err
 }
 
+// BlockIDsForPage returns the IDs of every block currently indexed for a page,
+// without materializing the full ParsedBlock rows. Used by the eviction paths
+// (DeletePage, watcher Remove/Rename, SaveFileBlocks replacement) to release the
+// per-block mutex entries (#122) for blocks that no longer exist.
+func (dm *DatabaseManager) BlockIDsForPage(notebook, section, page string) ([]string, error) {
+	rows, err := dm.db.Query(
+		"SELECT id FROM blocks WHERE notebook = ? AND section = ? AND page = ?",
+		notebook, section, page,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // IndexFileBlocks updates the index with a set of blocks in a single transaction.
 //
 // fileWarnings is an optional slice of non-fatal diagnostics from the parser

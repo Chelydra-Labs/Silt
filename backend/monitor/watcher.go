@@ -311,11 +311,16 @@ func (dw *DirectoryWatcher) listenLoop() {
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
 				dw.reindexFile(path)
 		} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-			dw.clearIndexForFile(path)
+			clearedIDs := dw.clearIndexForFile(path)
 			// Evict the per-file IO mutex so ioMu doesn't grow linearly with
 			// the cumulative set of distinct paths ever touched (#30). Safe
 			// against an in-flight LockFileWrite via the generation check.
 			dw.coordinator.ReleaseFileMutex(path)
+			// Evict the per-block mutex entries for the blocks that lived in
+			// this file so blockMu doesn't grow with the cumulative history of
+			// every block UUID ever locked (#122). Safe via the generation
+			// check; an in-flight MutateBlock keeps its holder until unlock.
+			dw.coordinator.ReleaseBlockMutexes(clearedIDs)
 		}
 
 		case err, ok := <-dw.watcher.Errors:
@@ -384,19 +389,22 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 	})
 }
 
-func (dw *DirectoryWatcher) clearIndexForFile(path string) {
+func (dw *DirectoryWatcher) clearIndexForFile(path string) []string {
 	notebook, section, page, _ := dw.resolveFileMetadata(path)
 	if notebook == "" {
-		return
+		return nil
 	}
+	var ids []string
 	// Serialize the DB deletion through the coordinator, matching reindexFile
 	// and all other DB-touching paths. Without this, a concurrent file event
 	// can race an in-flight query and produce database-locked errors.
 	dw.coordinator.WithDBWrite(func() {
+		ids, _ = dw.dm.BlockIDsForPage(notebook, section, page)
 		_ = dw.dm.ClearFileBlocks(nil, notebook, section, page)
 		// Drop the files row so a future startup scan doesn't think the
 		// deleted/renamed file is still "unchanged" and skip re-indexing the
 		// new occupant of that path.
 		_ = dw.dm.ForgetFile(path)
 	})
+	return ids
 }

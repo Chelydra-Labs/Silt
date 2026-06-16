@@ -1774,6 +1774,16 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 		}
 	}
 
+	// Fetch the page's current block IDs so that, after the save, we can
+	// release the per-block mutex entries for blocks that were dropped or
+	// replaced (#122). Block IDs are page-scoped, so any ID present before
+	// but absent from the new set no longer exists and will never be mutated
+	// again.
+	var beforeIDs []string
+	a.coordinator.WithDBRead(func() {
+		beforeIDs, _ = a.db.BlockIDsForPage(safeNotebook, safeSection, safePage)
+	})
+
 	var writeErr error
 	a.coordinator.LockBlocksWrite(blockIDs, func() {
 	a.coordinator.LockFileWrite(filePath, func() {
@@ -1824,6 +1834,20 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	if writeErr != nil {
 		return writeErr
 	}
+	// Release the per-block mutex entries for blocks that were present before
+	// but are absent from the saved set — they were deleted/replaced and will
+	// never be mutated again. Bounds blockMu growth (#122).
+	newIDSet := make(map[string]bool, len(blockIDs))
+	for _, id := range blockIDs {
+		newIDSet[id] = true
+	}
+	var removed []string
+	for _, id := range beforeIDs {
+		if id != "" && !newIDSet[id] {
+			removed = append(removed, id)
+		}
+	}
+	a.coordinator.ReleaseBlockMutexes(removed)
 	// Notify live embeds/references that the saved blocks changed.
 	for _, b := range blocks {
 		if b.ID != "" {
@@ -2246,10 +2270,14 @@ func (a *App) DeletePage(notebook, section, page string) error {
 			runErr = err
 			return
 		}
+		var blockIDs []string
 		a.coordinator.WithDBWrite(func() {
+			blockIDs, _ = a.db.BlockIDsForPage(safeNotebook, safeSection, safePage)
 			_ = a.db.ClearFileBlocks(nil, safeNotebook, safeSection, safePage)
 			_ = a.db.ForgetFile(filePath)
 		})
+		// Release the deleted blocks' per-block mutex entries (#122).
+		a.coordinator.ReleaseBlockMutexes(blockIDs)
 	})
 
 	return runErr
