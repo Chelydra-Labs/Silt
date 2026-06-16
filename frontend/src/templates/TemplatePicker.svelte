@@ -86,13 +86,19 @@
   )
 
   // Group the filtered list by category for display, preserving the (Category,
-  // Title) sort the backend already applied.
+  // Title) sort the backend already applied. Plugin templates (#96) are placed
+  // under a synthetic `Plugins / <plugin_id>` category so they appear in their
+  // own subgroup with a token-bound accent header.
   let grouped = $derived.by(() => {
     const groups: { category: string; items: tpl.TemplateSummary[] }[] = []
     let currentCat = ''
     for (const t of filtered) {
-      if (t.category !== currentCat) {
-        currentCat = t.category
+      const cat =
+        t.source === 'plugin' && t.plugin_id
+          ? `Plugins / ${t.plugin_id}`
+          : t.category
+      if (cat !== currentCat) {
+        currentCat = cat
         groups.push({ category: currentCat, items: [] })
       }
       groups[groups.length - 1].items.push(t)
@@ -352,7 +358,11 @@
             </div>
           {/if}
           {#each grouped as group (group.category)}
-            <div class="mb-1 px-2 pt-2 text-xs font-medium uppercase tracking-wide text-text-muted">
+            <div
+              class="mb-1 px-2 pt-2 text-xs font-medium uppercase tracking-wide {group.category.startsWith('Plugins /')
+                ? 'text-accent-secondary-start'
+                : 'text-text-muted'}"
+            >
               {group.category}
             </div>
             {#each group.items as t (t.id)}

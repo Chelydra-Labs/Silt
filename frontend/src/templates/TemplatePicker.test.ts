@@ -259,4 +259,23 @@ describe('TemplatePicker (#55)', () => {
     )
     expect(onInsertBlocks).not.toHaveBeenCalled()
   })
+
+  it('groups plugin templates under Plugins / <plugin_id> (#96)', () => {
+    mocks.templatesState.items.push({
+      id: 'kanban-sprint',
+      title: 'Sprint',
+      description: 'A plugin template',
+      category: 'projects',
+      icon: 'sprint',
+      source: 'plugin',
+      plugin_id: 'silt-kanban',
+      placeholders: []
+    } as any)
+    render(TemplatePicker, {
+      props: { mode: 'insert', onClose: vi.fn(), onInsertBlocks: vi.fn() }
+    })
+    // The plugin group header appears; the plugin template is rendered.
+    expect(screen.getByText('Plugins / silt-kanban')).toBeInTheDocument()
+    expect(screen.getByText('Sprint')).toBeInTheDocument()
+  })
 })

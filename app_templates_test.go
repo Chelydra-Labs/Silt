@@ -429,6 +429,53 @@ func TestCreatePageFromTemplate_SanitizesEdgeCaseNames(t *testing.T) {
 	}
 }
 
+// TestRegisterPluginTemplates_IPC verifies the plugin-template IPC (#96):
+// registering makes the templates appear in ListTemplates with Source =
+// "plugin" and PluginID set; unregistering removes them. Emits
+// templates:changed (asserted via the test's captured emit log — see
+// app_templates_test.go for the helper).
+func TestRegisterPluginTemplates_IPC(t *testing.T) {
+	app := newTestApp(t)
+	tpl := &templates.Template{
+		SchemaVersion: "1.0.0",
+		ID:            "ipc-plugin-tpl",
+		Title:         "IPC Plugin Tpl",
+		Category:      "notes",
+		Body:          "# {{title}}\n",
+	}
+	if err := app.RegisterPluginTemplates("silt-kanban", []*templates.Template{tpl}); err != nil {
+		t.Fatalf("RegisterPluginTemplates: %v", err)
+	}
+	res, err := app.ListTemplates()
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	var found *templates.TemplateSummary
+	for i := range res.Templates {
+		if res.Templates[i].ID == "ipc-plugin-tpl" {
+			found = &res.Templates[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("plugin template not in listing after register")
+	}
+	if found.Source != templates.SourcePlugin {
+		t.Errorf("Source = %q, want %q", found.Source, templates.SourcePlugin)
+	}
+	if found.PluginID != "silt-kanban" {
+		t.Errorf("PluginID = %q, want silt-kanban", found.PluginID)
+	}
+
+	// Unregister removes it from the listing.
+	app.UnregisterPluginTemplates("silt-kanban")
+	res, _ = app.ListTemplates()
+	for _, s := range res.Templates {
+		if s.ID == "ipc-plugin-tpl" {
+			t.Error("template still in listing after unregister")
+		}
+	}
+}
+
 // TestCreatePageFromTemplate_DeepSection_AppearsInNavigation is the regression
 // test for #97 (and the fix in #88). A page created from a template in a
 // deeply-nested section (e.g. `Work/Projects/Active`) lands at the correct

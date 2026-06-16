@@ -944,6 +944,46 @@ func (a *App) DeleteUserTemplate(id string) error {
 	return nil
 }
 
+// RegisterPluginTemplates adds a plugin's templates to the runtime registry
+// (#96). Each template MUST have Source = "plugin" and PluginID = pluginID
+// (the registry rejects mismatches). Emits templates:changed so the picker's
+// listing refreshes immediately. The plugin tier is in-memory only — no
+// disk write, no LockFileWrite, no atomic-rename.
+func (a *App) RegisterPluginTemplates(pluginID string, tpls []*templates.Template) error {
+	a.wg.Add(1)
+	defer a.wg.Done()
+	// Set Source and PluginID uniformly on each template (defensive — the
+	// registry also validates).
+	for _, t := range tpls {
+		if t == nil {
+			continue
+		}
+		t.Source = templates.SourcePlugin
+		t.PluginID = pluginID
+	}
+	if err := templates.RegisterPluginTemplates(pluginID, tpls); err != nil {
+		log.Printf("templates: RegisterPluginTemplates(%q) failed: %v", pluginID, err)
+		return err
+	}
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+	}
+	log.Printf("templates: RegisterPluginTemplates → %d templates for %q", len(tpls), pluginID)
+	return nil
+}
+
+// UnregisterPluginTemplates removes a plugin's templates from the runtime
+// registry. Idempotent. Emits templates:changed.
+func (a *App) UnregisterPluginTemplates(pluginID string) {
+	a.wg.Add(1)
+	defer a.wg.Done()
+	templates.UnregisterPluginTemplates(pluginID)
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+	}
+	log.Printf("templates: UnregisterPluginTemplates → %q", pluginID)
+}
+
 // ReloadTemplates forces a re-scan of the templates directory + cache flush.
 // Used by the template watcher's onChange callback (external edit detected) and
 // available as a manual refresh affordance. Emits templates:changed.
