@@ -344,6 +344,48 @@ func TestCreatePageFromTemplate_IPC_BeforeVault(t *testing.T) {
 	}
 }
 
+// TestCreatePageFromTemplate_EmbedAndRefPreservedInFile is the page-file
+// passthrough test for #93. A template body containing {{embed:uuid}} and
+// ((uuid)) (Smart Graph syntax) is rendered into a page; the resulting
+// .md file on disk must contain the tokens byte-for-byte. The renderer
+// already passes these tokens through (render_test.go's
+// TestRender_SmartGraphEmbedPassthrough + TestRender_BlockReferencePassthrough);
+// this test pins the IPC/file-write layer to preserve that guarantee so
+// the editor's NodeViews (Phase 8) can pick up the tokens unchanged.
+func TestCreatePageFromTemplate_EmbedAndRefPreservedInFile(t *testing.T) {
+	app := newTestApp(t)
+	notebook := "EmbedTest"
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, notebook), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const body = "See {{embed:abc-123-def}} and ((abc-123-def)) plus {{date}}."
+	tpl := templates.Template{
+		SchemaVersion: "1.0.0",
+		ID:            "embed-test-tpl",
+		Title:         "Embed Test",
+		Category:      "notes",
+		Body:          body,
+	}
+	if err := app.SaveUserTemplate(tpl); err != nil {
+		t.Fatalf("SaveUserTemplate: %v", err)
+	}
+	_, err := app.CreatePageFromTemplate(notebook, "", "EmbedPage", "", "embed-test-tpl", nil)
+	if err != nil {
+		t.Fatalf("CreatePageFromTemplate: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(app.vaultPath, notebook, "EmbedPage.md"))
+	if err != nil {
+		t.Fatalf("read page: %v", err)
+	}
+	content := string(raw)
+	if !strings.Contains(content, "{{embed:abc-123-def}}") {
+		t.Errorf("embed token not preserved in page file:\n%s", content)
+	}
+	if !strings.Contains(content, "((abc-123-def))") {
+		t.Errorf("block-reference token not preserved in page file:\n%s", content)
+	}
+}
+
 // TestCreatePageFromTemplate_SanitizesEdgeCaseNames is the regression test for
 // #98 (and the fix in #89). After the sanitizePathSegment rewrite, internal
 // ".." substrings in a user-supplied page name are preserved verbatim — they
