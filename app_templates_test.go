@@ -343,6 +343,49 @@ func TestCreatePageFromTemplate_IPC_BeforeVault(t *testing.T) {
 	}
 }
 
+// TestCreatePageFromTemplate_SanitizesEdgeCaseNames is the regression test for
+// #98 (and the fix in #89). After the sanitizePathSegment rewrite, internal
+// ".." substrings in a user-supplied page name are preserved verbatim — they
+// are legitimate filename characters, not path-traversal indicators. Only a
+// leading ".." (a path-traversal signal) is stripped. Each case below asserts
+// the expected on-disk file name and the corresponding blocks-table row.
+func TestCreatePageFromTemplate_SanitizesEdgeCaseNames(t *testing.T) {
+	cases := []struct {
+		name        string
+		input       string
+		wantFile    string
+		wantIndexed bool
+	}{
+		{"internal_dots_preserved", "2.0..2.1", "2.0..2.1.md", true},
+		{"multi_internal_dots_preserved", "a..b..c", "a..b..c.md", true},
+		{"leading_dots_stripped", "..foo", "foo.md", true},
+		{"exact_dots_rejected", "..", "", false},
+		{"four_dots_then_name", "....foo", "foo.md", true},
+		{"slash_then_dots", "foo/..bar", "foo..bar.md", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			app := newTestApp(t)
+			notebook := "EdgeCases"
+			os.MkdirAll(filepath.Join(app.vaultPath, notebook), 0o755)
+			_, err := app.CreatePageFromTemplate(notebook, "", c.input, "", "notes", map[string]string{"title": "Edge"})
+			if c.wantIndexed {
+				if err != nil {
+					t.Fatalf("CreatePageFromTemplate(%q) failed: %v", c.input, err)
+				}
+				wantPath := filepath.Join(app.vaultPath, notebook, c.wantFile)
+				if _, statErr := os.Stat(wantPath); statErr != nil {
+					t.Errorf("expected file %q on disk, got error: %v", wantPath, statErr)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("CreatePageFromTemplate(%q) should have failed", c.input)
+				}
+			}
+		})
+	}
+}
+
 // TestRenderTemplateBlocks_IPC_UUIDUniqueness is the spec-compat regression
 // guard (plan line 297): inserting the same template twice must produce blocks
 // with ALL-DIFFERENT UUIDs so there is no blocks-table PK collision. Each
