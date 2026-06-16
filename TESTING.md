@@ -491,3 +491,43 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 - **System tray (#23):** Wails v2.12 has an internal `TrayMenu` struct but no public runtime API to register tray menus. The tray icon + minimize-to-tray feature is blocked by this API gap; deferred to Wails v3 adoption.
 - **Sidebar tree-render test:** The Sidebar's `loadNavigation` runs in `onMount`, which does not fire reliably under Svelte 5 + testing-library/jsdom (unlike `$effect`, which Kanban/Agenda/Calendar use). Tree rendering is covered by manual verification; the Sidebar test covers collapse + Change Vault.
 
+
+# Sprint Follow-Ups — Issues #61, #62, #63, #64, #68, #69, #75, #79, #83
+
+## Automated Tests
+
+Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (frontend).
+
+### Go coverage added
+
+| File | Tests | What is covered |
+|---|---|---|
+| `app_nav_test.go` (new) | `TestGetSetSidebarWidth_RoundTrip`, `TestSetSidebarWidth_Clamps`, `TestGetSetNavOrder_RoundTrip`, `TestRenamePage_UpdatesFrontmatterAndFile`, `TestRenamePage_NameCollision`, `TestRenamePage_PathTraversal`, `TestRenameSection_UpdatesAllFiles`, `TestDeletePage_MovesToTrash`, `TestDeleteSection_DeletesAllPages`, `TestLockBlocksWrite_NoDeadlock` | Config ui: block persistence, rename frontmatter + index, delete trash path, per-block lock deadlock-safety (#63, #68, #62, #83, #64) |
+| `backend/db/db.go` (#79) | WAL mode assert in `initSchema` | Belt-and-suspenders: rejects mounts that silently downgrade from WAL |
+| `backend/db/netfs_*.go` (#79) | Platform-specific network filesystem detection | NFS/SMB/CIFS denylist on Linux, macOS, Windows |
+
+### Frontend
+
+`npm run check` reports **0 errors and 0 warnings** (the #75 a11y pass target — all `svelte-check` a11y warnings fixed). `npm test` runs **123 vitest tests** across 20 files.
+
+### Key a11y fixes (#75)
+
+| Component | Fix |
+|---|---|
+| SearchModal, BlockPickerModal | Scrim-as-button sibling + `role="dialog"` + `aria-modal` (SettingsShell pattern) |
+| Sidebar create/rename modal, context menu, delete dialog | Same pattern; `role="menu"` + `tabindex="-1"` on context menu |
+| Sidebar treeitems | `aria-selected` added on section + page items |
+| VirtualScrollContainer title | `role="textbox"` removed from contenteditable `<h1>` |
+| Agenda task row | `onkeydown` (Enter/Space) keyboard activation |
+
+## Manual Verification Matrix (`wails dev`)
+
+1. **Resizable sidebar (#63):** drag divider → width changes live → restart → persists. Double-click → 256. Arrow keys → ±8px. Ctrl+B → collapses → restores last width. Shrink window → auto-collapse.
+2. **Inline title (#83):** New Page → "Untitled" created + title auto-focused → type a name → renames file + sidebar updates.
+3. **Context menu (#62):** right-click a page/section → Rename/Delete. Delete → confirmation dialog → moves to `.system/trash/`.
+4. **macOS titlebar (#61):** on macOS, no duplicate window controls; ~80px left inset for traffic lights. Windows/Linux unchanged.
+5. **Drag-to-reorder (#68):** drag a section up/down → order persists across restart.
+6. **Plugin reactivity (#69):** navigate between pages → Agenda/Calendar/Kanban reflect the new active location without a plugin reload.
+7. **Embed/editor race (#64):** edit an embed → source block updates; type in the editor while embed auto-saves → no clobbering.
+8. **A11y (#75):** tab through every view → logical order, visible focus rings, all actions reachable via keyboard. `npm run check` = 0 warnings.
+

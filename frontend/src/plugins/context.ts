@@ -5,21 +5,33 @@ import {
   PluginUpdateBlockState,
   PluginUpdateTaskMeta
 } from '../../wailsjs/go/main/App.js'
+import { getActiveLocation } from './location.svelte'
 
 /**
- * Build a PluginContext bound to the currently active location. Plugins read
- * the active notebook/section/page from this object and use the query/mutation
- * hooks to talk to the Go backend.
+ * Build a PluginContext whose `activeNotebook/Section/Page` are live reactive
+ * getters backed by the module-scoped $state in location.svelte.ts (#69).
+ *
+ * A plugin that caches `ctx` and reads `ctx.activeNotebook` at query time
+ * always sees the live value. A plugin that destructures `const { activeNotebook }
+ * = ctx` in `init()` gets a stale snapshot — that is an inherent limitation of
+ * destructuring, documented in docs/PLUGIN_DEVELOPMENT.md.
+ *
+ * The `sqliteQuery` / `mutateBlock` / `updateBlockState` / `updateTaskMeta`
+ * closures are stateless Wails bindings — they do not depend on the active
+ * location (SQL queries include the location as explicit parameters).
  */
-export function makePluginContext(
-  activeNotebook: string,
-  activeSection: string,
-  activePage: string
-): PluginContext {
+export function makePluginContext(): PluginContext {
+  const loc = getActiveLocation()
   return {
-    activeNotebook,
-    activeSection,
-    activePage,
+    get activeNotebook() {
+      return loc.notebook
+    },
+    get activeSection() {
+      return loc.section
+    },
+    get activePage() {
+      return loc.page
+    },
     // The Go side returns PluginRawQueryResult{Rows, Truncated}. Surface the
     // structured shape (not just Rows) so plugins can warn on truncation;
     // a missing/empty Rows slice is normalised to [] for the caller's

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import { createEditor, EditorContent } from 'svelte-tiptap'
   import type { Editor } from 'svelte-tiptap'
   import StarterKit from '@tiptap/starter-kit'
@@ -107,8 +107,10 @@
     return { left: c.left, top: c.bottom }
   }
 
-  const initialDoc = blocksToDoc(blocks)
-  const initialKey = `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
+  // Capture the initial blocks under untrack to signal that the one-shot
+  // capture is intentional — the $effect below handles live reactivity (#64).
+  const initialDoc = untrack(() => blocksToDoc(blocks))
+  const initialKey = untrack(() => `${blocks.map((b) => b.id).join(',')}:${blocks.length}`)
   let lastSyncedBlocksKey = $state(initialKey)
   const editorStore = createEditor({
     extensions: [
@@ -150,8 +152,10 @@
     onBlur: () => {
       isFocused = false
       stopHeartbeat()
-      void releaseFocus()
-      flushPendingSave()
+      // Flush the pending save BEFORE releasing the focus lock so an embed's
+      // MutateBlock retry sees the just-saved content rather than overwriting
+      // it (#64). The save is awaited, then the lock is released.
+      void flushPendingSave().then(() => releaseFocus())
       onBlockBlur?.()
     },
     onCreate: ({ editor }) => {
@@ -161,8 +165,7 @@
 
   onDestroy(() => {
     stopHeartbeat()
-    flushPendingSave()
-    void releaseFocus()
+    void flushPendingSave().then(() => releaseFocus())
   })
 
   // --- External content sync ------------------------------------------------
@@ -212,12 +215,13 @@
     onUpdate(updatedBlocks)
   }
 
-  function flushPendingSave(): void {
+  function flushPendingSave(): Promise<void> {
     if (saveTimeout) {
       clearTimeout(saveTimeout)
       saveTimeout = null
-      void doSave()
+      return doSave()
     }
+    return Promise.resolve()
   }
 
   // --- Slash menu -----------------------------------------------------------
