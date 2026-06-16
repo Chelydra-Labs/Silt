@@ -7,7 +7,15 @@ const mocks = vi.hoisted(() => ({
   createNotebook: vi.fn(),
   createSection: vi.fn(),
   createPage: vi.fn(),
-  pickNotebookFolder: vi.fn()
+  pickNotebookFolder: vi.fn(),
+  renamePage: vi.fn(),
+  renameSection: vi.fn(),
+  renameNotebook: vi.fn(),
+  deletePage: vi.fn(),
+  deleteSection: vi.fn(),
+  deleteNotebook: vi.fn(),
+  getNavOrder: vi.fn(),
+  setNavOrder: vi.fn()
 }))
 
 vi.mock('../../../wailsjs/go/main/App.js', () => ({
@@ -15,7 +23,15 @@ vi.mock('../../../wailsjs/go/main/App.js', () => ({
   CreateNotebook: mocks.createNotebook,
   CreateSection: mocks.createSection,
   CreatePage: mocks.createPage,
-  PickNotebookFolder: mocks.pickNotebookFolder
+  PickNotebookFolder: mocks.pickNotebookFolder,
+  RenamePage: mocks.renamePage,
+  RenameSection: mocks.renameSection,
+  RenameNotebook: mocks.renameNotebook,
+  DeletePage: mocks.deletePage,
+  DeleteSection: mocks.deleteSection,
+  DeleteNotebook: mocks.deleteNotebook,
+  GetNavOrder: mocks.getNavOrder,
+  SetNavOrder: mocks.setNavOrder
 }))
 
 import Sidebar from './Sidebar.svelte'
@@ -48,7 +64,16 @@ describe('Sidebar', () => {
     mocks.createSection.mockReset()
     mocks.createPage.mockReset()
     mocks.pickNotebookFolder.mockReset()
+    mocks.renamePage.mockReset()
+    mocks.renameSection.mockReset()
+    mocks.renameNotebook.mockReset()
+    mocks.deletePage.mockReset()
+    mocks.deleteSection.mockReset()
+    mocks.deleteNotebook.mockReset()
+    mocks.getNavOrder.mockReset()
+    mocks.setNavOrder.mockReset()
     mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    mocks.getNavOrder.mockResolvedValue({ notebooks: [], sections: {}, pages: {} })
   })
 
   afterEach(() => {

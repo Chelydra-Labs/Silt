@@ -842,6 +842,28 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	return indexedCount, skipped, nil
 }
 
+// BlockLocation holds the file-level coordinates of a block, used by write
+// paths (UpdateBlockState, MutateBlock, PluginUpdateTaskMeta) to resolve the
+// on-disk file path from a block UUID.
+type BlockLocation struct {
+	Notebook  string
+	Section   string
+	Page      string
+	BlockType string
+}
+
+// GetBlockLocation looks up the (notebook, section, page, type) for a block
+// UUID. This is the typed API replacement for the raw SQLDB().QueryRow calls
+// that were scattered across app.go write paths.
+func (dm *DatabaseManager) GetBlockLocation(blockID string) (BlockLocation, error) {
+	var loc BlockLocation
+	err := dm.db.QueryRow(
+		"SELECT notebook, section, page, type FROM blocks WHERE id = ?",
+		blockID,
+	).Scan(&loc.Notebook, &loc.Section, &loc.Page, &loc.BlockType)
+	return loc, err
+}
+
 // FetchPageBlocks returns a flat ordered list of all blocks for a page.
 // A page is a single file; all blocks share the same (notebook, section,
 // page) and are ordered by line_number. Each block carries its own file_date.

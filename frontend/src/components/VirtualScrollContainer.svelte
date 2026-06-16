@@ -52,8 +52,12 @@
   // the block list so the editor sees the update. The editor's own $effect
   // handles applying the update when the user is not actively editing.
   $effect(() => {
+    // Read props at the top of the effect so it re-subscribes when the user
+    // navigates to a different page (#64). Without this, the EventsOn closure
+    // would filter against stale values after navigation.
+    const nb = notebook, sec = section, pg = page
     const off = EventsOn('block:changed', (ev: { notebook: string; section: string; page: string }) => {
-      if (ev.notebook === notebook && ev.section === section && ev.page === page) {
+      if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
         loadPage()
       }
     })

@@ -456,14 +456,16 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	var notebook, section, page, blockType string
+	var loc db.BlockLocation
 	err := a.coordinator.WithDBReadResult(func() error {
-		row := a.db.SQLDB().QueryRow("SELECT notebook, section, page, type FROM blocks WHERE id = ?", blockID)
-		return row.Scan(&notebook, &section, &page, &blockType)
+		var e error
+		loc, e = a.db.GetBlockLocation(blockID)
+		return e
 	})
 	if err != nil {
 		return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
 	}
+	notebook, section, page, blockType := loc.Notebook, loc.Section, loc.Page, loc.BlockType
 
 	if blockType != string(parser.BlockTask) {
 		return fmt.Errorf("block %s is not a task", blockID)
@@ -1112,14 +1114,16 @@ func (a *App) MutateBlock(blockID, newText string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	var notebook, section, page string
+	var loc db.BlockLocation
 	err := a.coordinator.WithDBReadResult(func() error {
-		row := a.db.SQLDB().QueryRow("SELECT notebook, section, page FROM blocks WHERE id = ?", blockID)
-		return row.Scan(&notebook, &section, &page)
+		var e error
+		loc, e = a.db.GetBlockLocation(blockID)
+		return e
 	})
 	if err != nil {
 		return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
 	}
+	notebook, section, page := loc.Notebook, loc.Section, loc.Page
 
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
@@ -1865,7 +1869,6 @@ func (a *App) reindexFile(filePath, notebook, section, page string) {
 		return
 	}
 	content := string(contentBytes)
-	fm, body := splitFrontmatter(content)
 	blocks, meta, _, _, parseErr := parser.ParseFileContent(
 		content, notebook, section, page,
 		fileOrDefaultDate(filePath), a.spacesPerTab,
@@ -1874,8 +1877,6 @@ func (a *App) reindexFile(filePath, notebook, section, page string) {
 		log.Printf("reindexFile: parse failed for %s: %v", filePath, parseErr)
 		return
 	}
-	_ = fm
-	_ = body
 	var idxErr error
 	a.coordinator.WithDBWrite(func() {
 		idxErr = a.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
@@ -2771,14 +2772,16 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	var notebook, section, page, blockType string
+	var loc db.BlockLocation
 	err := a.coordinator.WithDBReadResult(func() error {
-		row := a.db.SQLDB().QueryRow("SELECT notebook, section, page, type FROM blocks WHERE id = ?", blockID)
-		return row.Scan(&notebook, &section, &page, &blockType)
+		var e error
+		loc, e = a.db.GetBlockLocation(blockID)
+		return e
 	})
 	if err != nil {
 		return false, fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
 	}
+	notebook, section, page, blockType := loc.Notebook, loc.Section, loc.Page, loc.BlockType
 	if blockType != string(parser.BlockTask) {
 		return false, fmt.Errorf("block %s is not a task", blockID)
 	}
