@@ -699,6 +699,51 @@ func TestPluginRawQuery_TruncationFlag(t *testing.T) {
 	}
 }
 
+// TestPluginRawQuery_TruncationCapHit verifies the cap-hit path: when a
+// query exceeds maxPluginQueryRows, Truncated must be true and the result
+// must be capped to exactly maxPluginQueryRows rows. Uses a temporarily
+// lowered cap to avoid seeding 5000+ rows in CI.
+func TestPluginRawQuery_TruncationCapHit(t *testing.T) {
+	app := newTestApp(t)
+	// Seed 10 task blocks in a single file (writeSamplePage overwrites
+	// per-file, so we build one file with multiple blocks).
+	notebook, section, page := "Work", "Journal", "Daily"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	var lines []string
+	lines = append(lines, "# Title <!-- id: 11111111-1111-1111-1111-111111111111 -->")
+	lines = append(lines, "")
+	for i := range 10 {
+		id := fmt.Sprintf("aaaaaaaa-0000-0000-0000-%012d", i)
+		lines = append(lines, fmt.Sprintf("- [ ] task %d <!-- id: %s -->", i, id))
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	writeFile(t, filePath, content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-06-13", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.db.IndexFileBlocks(meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	// Temporarily lower the cap to 3 so we can exercise the truncation
+	// branch without seeding thousands of rows.
+	origCap := maxPluginQueryRows
+	maxPluginQueryRows = 3
+	t.Cleanup(func() { maxPluginQueryRows = origCap })
+
+	res, err := app.PluginRawQuery("SELECT id FROM blocks", nil)
+	if err != nil {
+		t.Fatalf("PluginRawQuery: %v", err)
+	}
+	if !res.Truncated {
+		t.Errorf("expected Truncated=true when result exceeds cap (%d rows, cap %d)", len(res.Rows), maxPluginQueryRows)
+	}
+	if len(res.Rows) != maxPluginQueryRows {
+		t.Errorf("expected exactly %d rows (cap), got %d", maxPluginQueryRows, len(res.Rows))
+	}
+}
+
 func TestPluginUpdateBlockState_WrapsUpdate(t *testing.T) {
 	app := newTestApp(t)
 	taskID := "55555555-5555-5555-5555-555555555555"

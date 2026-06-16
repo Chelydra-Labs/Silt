@@ -194,9 +194,12 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 				fmt.Sscanf(val, "%d", &priority)
 			}
 		case "pin", "pinned":
-			// Boolean: "true"/"yes"/"1"/non-empty → true; "false"/"no"/"0"/"" → false
+			// Boolean: only explicit truthy values ("true"/"yes"/"1")
+			// set pinned=true. Anything else (including typos like
+			// "maybe", "foo", or "2") is false — the renderer normalises
+			// to [pin:: true] so the round-trip is stable regardless.
 			v := strings.ToLower(val)
-			pinned = v == "true" || v == "yes" || v == "1" || (val != "" && v != "false" && v != "no" && v != "0")
+			pinned = v == "true" || v == "yes" || v == "1"
 		case "progress", "prog":
 			if val != "" {
 				fmt.Sscanf(val, "%d", &progress)

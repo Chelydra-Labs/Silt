@@ -179,6 +179,23 @@ func TestParseLine_PinAndProgress(t *testing.T) {
 			t.Errorf("bare word `pin` must not set Pinned=true")
 		}
 	})
+	t.Run("non-truthy [pin::] value does not parse as pinned", func(t *testing.T) {
+		cases := map[string]bool{
+			// truthy
+			"[pin:: true]": true, "[pin:: yes]": true, "[pin:: 1]": true,
+			// falsy
+			"[pin:: false]": false, "[pin:: no]": false, "[pin:: 0]": false, "[pin:: ]": false,
+			// typos / garbage — must NOT silently parse as true
+			"[pin:: maybe]": false, "[pin:: foo]": false, "[pin:: 2]": false,
+		}
+		for token, want := range cases {
+			line := "- [ ] test " + token + " <!-- id: 12345678-1234-1234-1234-123456789012 -->"
+			block, _, _ := ParseLine(line, 1, 4)
+			if block.Pinned != want {
+				t.Errorf("%s: expected Pinned=%v, got %v", token, want, block.Pinned)
+			}
+		}
+	})
 	t.Run("progress > 100 clamps to 100", func(t *testing.T) {
 		line := "- [ ] Overflow [progress:: 999] <!-- id: 55555555-5555-5555-5555-555555555555 -->"
 		block, _, _ := ParseLine(line, 1, 4)

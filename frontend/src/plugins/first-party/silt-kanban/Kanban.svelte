@@ -448,12 +448,18 @@
     draggingId = null
   }
 
+  // Monotonic token so a failed earlier move can't revert over a later
+  // optimistic move. Without this, rapid double-moves where call #1 fails
+  // would restore prevLanes (captured before call #2's optimistic state),
+  // wiping call #2's move as well. Mirrors loadSeq / progressSeq.
+  let moveSeq = 0
   async function commitMove(
     card: KanbanCard,
     fromStatus: TaskStatus,
     toStatus: TaskStatus,
     targetIndex: number
   ) {
+    const my = ++moveSeq
     moveError = ''
     // Snapshot for revert on failure.
     const prevLanes = { ...lanes }
@@ -477,6 +483,9 @@
     try {
       await ctx.updateBlockState(card.id, toStatus)
     } catch (e) {
+      // A newer move started after this one; its optimistic state is
+      // authoritative, so don't revert to the stale snapshot.
+      if (my !== moveSeq) return
       moveError = e instanceof Error ? e.message : String(e)
       lanes = prevLanes
       liveMessage = 'Move failed — reverted.'
