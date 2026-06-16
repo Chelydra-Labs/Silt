@@ -1307,17 +1307,27 @@ func isPathWithinVault(target, vaultRoot string) bool {
 	return strings.HasPrefix(absTarget, prefix)
 }
 
+// navCountKey is the (notebook, section, page) lookup key for the
+// per-page block count map used by ListNavigation. Defined at package
+// scope so the recursive walker can share it.
+type navCountKey struct{ n, s, p string }
+
 // ListNavigation returns the Notebook > Section > Page tree for the sidebar.
 //
-// The directory structure on disk is the single source of truth. Disambiguation
-// is by what a folder directly contains:
-//   - A depth-1 folder under a Notebook that contains .md files is a
-//     section-less PAGE (section = "").
-//   - A depth-1 folder under a Notebook that does NOT contain .md files is a
-//     SECTION (shown even when empty, so a freshly created section appears).
-//   - Pages within a section are the .md-containing folders nested beneath it.
+// The directory structure on disk is the single source of truth. Each
+// directory is classified by what it DIRECTLY contains:
+//   - A `.md` file directly under a folder is a PAGE belonging to that folder's
+//     section (a page belongs to the folder it's in; the folder's own path
+//     is the section path, multi-segment joined with `/`).
+//   - A sub-directory of a folder is a nested SECTION. We recurse into it to
+//     collect its own pages + its own nested sections. Empty sections are
+//     preserved so a freshly-created section appears in the sidebar (#88).
+//   - A `.md` file directly under a Notebook's root belongs to the section-less
+//     group (Name = "").
 //
-// Block counts are merged from the index for per-page badges.
+// Block counts are merged from the index for per-page badges. The returned
+// tree is a true tree: each section may carry `Children []NavigationSection`
+// for arbitrarily-deep nesting.
 func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	if a.vaultPath == "" {
 		return parser.NavigationTree{}, fmt.Errorf("vault not loaded")
@@ -1327,8 +1337,7 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	defer a.wg.Done()
 
 	// 1. Block counts per (notebook, section, page) from the index.
-	type nspKey struct{ n, s, p string }
-	counts := map[nspKey]int{}
+	counts := map[navCountKey]int{}
 	if a.db != nil {
 		a.coordinator.WithDBRead(func() {
 			rows, err := a.db.SQLDB().Query("SELECT notebook, section, page, COUNT(*) FROM blocks GROUP BY notebook, section, page")
@@ -1340,7 +1349,7 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 				var n, s, p string
 				var c int
 				if err := rows.Scan(&n, &s, &p, &c); err == nil {
-					counts[nspKey{n, s, p}] = c
+					counts[navCountKey{n, s, p}] = c
 				}
 			}
 		})
@@ -1355,72 +1364,113 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	for _, nbE := range nbEntries {
 		nbName := nbE.Name()
 		if !nbE.IsDir() || strings.HasPrefix(nbName, ".") {
-			continue // skip .system and hidden dirs
-		}
-		nbPath := filepath.Join(a.vaultPath, nbName)
-
-		// sections: name -> pages (name "" holds section-less pages).
-		secPages := map[string][]parser.NavigationPage{}
-
-		depth1, err := os.ReadDir(nbPath)
-		if err != nil {
 			continue
 		}
-		for _, d1 := range depth1 {
-			name := d1.Name()
-			if strings.HasPrefix(name, ".") {
-				continue
-			}
-			if !d1.IsDir() {
-				if !strings.EqualFold(filepath.Ext(name), ".md") {
-					continue
-				}
-				pageName := strings.TrimSuffix(name, filepath.Ext(name))
-				secPages[""] = append(secPages[""], parser.NavigationPage{
-					Name:  pageName,
-					Count: counts[nspKey{nbName, "", pageName}],
-				})
-				continue
-			}
-			d1Path := filepath.Join(nbPath, name)
-			if _, ok := secPages[name]; !ok {
-				secPages[name] = []parser.NavigationPage{}
-			}
-			subs, err := os.ReadDir(d1Path)
-			if err != nil {
-				continue
-			}
-			for _, d2 := range subs {
-				if d2.IsDir() || strings.HasPrefix(d2.Name(), ".") {
-					continue
-				}
-				if !strings.EqualFold(filepath.Ext(d2.Name()), ".md") {
-					continue
-				}
-				pageName := strings.TrimSuffix(d2.Name(), filepath.Ext(d2.Name()))
-				secPages[name] = append(secPages[name], parser.NavigationPage{
-					Name:  pageName,
-					Count: counts[nspKey{nbName, name, pageName}],
-				})
-			}
-		}
-
-		nn := parser.NavigationNotebook{Name: nbName, Sections: []parser.NavigationSection{}}
-		secNames := make([]string, 0, len(secPages))
-		for s := range secPages {
-			secNames = append(secNames, s)
-		}
-		// Surface the section-less group ("") last under a friendly label.
-		sortStrings(secNames)
-		moveStringToEnd(secNames, "")
-		for _, s := range secNames {
-			pages := secPages[s]
-			sortNavPages(pages)
-			nn.Sections = append(nn.Sections, parser.NavigationSection{Name: s, Pages: pages})
-		}
-		tree.Notebooks = append(tree.Notebooks, nn)
+		nbPath := filepath.Join(a.vaultPath, nbName)
+		sections := a.walkSections(nbPath, nbName, "", counts)
+		tree.Notebooks = append(tree.Notebooks, parser.NavigationNotebook{
+			Name:     nbName,
+			Sections: sections,
+		})
 	}
 	return tree, nil
+}
+
+// walkSections builds the immediate sections under `dirPath` for the given
+// notebook. `parentSectionID` is the multi-segment section id of `dirPath`
+// itself (empty at the notebook root); each immediate sub-directory is a
+// section whose id is `parentSectionID + "/" + name`. Sections with no
+// pages and no children are still emitted (an empty section is a valid
+// section that should appear in the sidebar). The `section-less` group
+// (pages whose .md lives directly under the notebook root) is represented
+// as a section with Name = "".
+func (a *App) walkSections(
+	dirPath, nbName, parentSectionID string,
+	counts map[navCountKey]int,
+) []parser.NavigationSection {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return nil
+	}
+
+	var pages []parser.NavigationPage
+	var subDirs []string
+
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if e.IsDir() {
+			subDirs = append(subDirs, name)
+			continue
+		}
+		if !strings.EqualFold(filepath.Ext(name), ".md") {
+			continue
+		}
+		pageName := strings.TrimSuffix(name, filepath.Ext(name))
+		pages = append(pages, parser.NavigationPage{
+			Name:  pageName,
+			Count: counts[navCountKey{nbName, parentSectionID, pageName}],
+		})
+	}
+	sortNavPages(pages)
+	sortStrings(subDirs)
+
+	var sections []parser.NavigationSection
+
+	// Direct pages in this directory form the section-less group, but ONLY
+	// when we're at the notebook root (parentSectionID == ""). At deeper
+	// levels, the .md files are the pages OF this section, not a separate
+	// "section-less" group.
+	if parentSectionID == "" && len(pages) > 0 {
+		sections = append(sections, parser.NavigationSection{
+			Name:  "",
+			Pages: pages,
+		})
+	}
+
+	for _, sd := range subDirs {
+		var childID string
+		if parentSectionID == "" {
+			childID = sd
+		} else {
+			childID = parentSectionID + "/" + sd
+		}
+		childPath := filepath.Join(dirPath, sd)
+		children := a.walkSections(childPath, nbName, childID, counts)
+		// Collect the child section's own direct pages by re-reading
+		// the directory (cheap; we're already here on disk). The
+		// recursive call also returned the children list; the child's
+		// own pages are the .md files in `childPath` that aren't part
+		// of the section-less group (which is empty at depth >= 1).
+		var childPages []parser.NavigationPage
+		if subEntries, err := os.ReadDir(childPath); err == nil {
+			for _, se := range subEntries {
+				if se.IsDir() || strings.HasPrefix(se.Name(), ".") {
+					continue
+				}
+				if !strings.EqualFold(filepath.Ext(se.Name()), ".md") {
+					continue
+				}
+				pn := strings.TrimSuffix(se.Name(), filepath.Ext(se.Name()))
+				childPages = append(childPages, parser.NavigationPage{
+					Name:  pn,
+					Count: counts[navCountKey{nbName, childID, pn}],
+				})
+			}
+			sortNavPages(childPages)
+		}
+		// Preserve the child even when empty so a freshly-created
+		// section shows up in the sidebar.
+		sections = append(sections, parser.NavigationSection{
+			Name:     sd,
+			Pages:    childPages,
+			Children: children,
+		})
+	}
+
+	return sections
 }
 
 func moveStringToEnd(s []string, v string) {

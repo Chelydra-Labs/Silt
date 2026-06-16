@@ -1,0 +1,169 @@
+<script lang="ts">
+  // Recursive section renderer for the sidebar tree (#88). Renders one
+  // NavigationSection plus its nested Children. Each level tracks its own
+  // expanded state via the parent Sidebar's `expandedSections` set (keyed
+  // by the multi-segment section path, e.g. "Projects/Active").
+  import SidebarSection from './SidebarSection.svelte'
+
+  interface NavPage {
+    name: string
+    count: number
+  }
+  interface NavSection {
+    name: string
+    pages: NavPage[]
+    children?: NavSection[]
+  }
+
+  interface Props {
+    section: NavSection
+    depth: number
+    activeNotebook: string
+    activeSection: string
+    activePage: string
+    expandedSections: Set<string>
+    navOrder: {
+      pages: Record<string, string[]>
+    }
+    onToggleSection: (name: string) => void
+    onSelectPage: (section: string, page: string) => void
+    onSelectSection: (section: string) => void
+    onCreatePageInline: (section: string) => void
+  }
+
+  let {
+    section,
+    depth,
+    activeNotebook,
+    activeSection,
+    activePage,
+    expandedSections,
+    navOrder,
+    onToggleSection,
+    onSelectPage,
+    onSelectSection,
+    onCreatePageInline
+  }: Props = $props()
+
+  let isExpanded = $derived(expandedSections.has(section.name))
+
+  function sortByName<T extends { name: string }>(items: T[], order: string[] | undefined): T[] {
+    if (!order || order.length === 0) return items
+    const orderMap = new Map(order.map((n, i) => [n, i]))
+    return [...items].sort((a, b) => {
+      const ai = orderMap.has(a.name) ? orderMap.get(a.name)! : Infinity
+      const bi = orderMap.has(b.name) ? orderMap.get(b.name)! : Infinity
+      if (ai !== bi) return ai - bi
+      return a.name.localeCompare(b.name)
+    })
+  }
+
+  let sortedPages = $derived(
+    sortByName(section.pages, navOrder.pages[`${activeNotebook}/${section.name}`] ?? [])
+  )
+</script>
+
+<div class="mb-0.5">
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-bg-hover transition-colors"
+    role="treeitem"
+    tabindex="0"
+    aria-level={depth + 1}
+    aria-expanded={isExpanded}
+    aria-selected={activeSection === section.name}
+    onclick={() => onToggleSection(section.name)}
+    onkeydown={(e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        onToggleSection(section.name)
+      }
+    }}
+    oncontextmenu={(e) => {
+      e.preventDefault()
+      onSelectSection(section.name)
+    }}
+  >
+    <span
+      class="material-symbols-outlined text-text-muted text-[16px] transition-transform"
+      class:rotate-90={isExpanded}
+    >
+      chevron_right
+    </span>
+    <span class="material-symbols-outlined text-text-muted text-[17px]">
+      {section.name ? 'folder' : 'drafts'}
+    </span>
+    <span
+      class="font-label-sm-bold text-label-sm-bold uppercase tracking-wider text-text-primary truncate flex-1"
+    >
+      {section.name ? section.name : 'Pages (no section)'}
+    </span>
+    <span
+      class="text-[9px] font-label-sm text-text-muted bg-bg-panel border border-border-muted rounded-full px-1.5 py-0.5"
+    >
+      {section.pages.length}
+    </span>
+    <button
+      onclick={(e) => {
+        e.stopPropagation()
+        onSelectSection(section.name)
+        onCreatePageInline(section.name)
+      }}
+      title="New page in this section"
+      class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
+    >
+      <span class="material-symbols-outlined text-[16px]">add</span>
+    </button>
+  </div>
+
+  {#if isExpanded}
+    <div class="ml-4 border-l border-border-muted pl-1 mt-0.5 mb-1.5">
+      {#if section.pages.length === 0}
+        <div class="text-text-muted text-[11px] font-body-md py-1.5 px-2 italic">
+          No pages. Click + to add one.
+        </div>
+      {:else}
+        {#each sortedPages as pg (pg.name)}
+          {@const isActive = activeSection === section.name && activePage === pg.name}
+          <button
+            onclick={() => onSelectPage(section.name, pg.name)}
+            role="treeitem"
+            aria-level={depth + 2}
+            aria-selected={isActive}
+            class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
+            class:bg-bg-hover={isActive}
+            class:text-accent-primary-start={isActive}
+            class:text-text-muted={!isActive}
+            class:hover:text-text-primary={!isActive}
+          >
+            {#if isActive}
+              <span
+                class="absolute left-0 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
+              ></span>
+            {/if}
+            <span class="material-symbols-outlined text-[15px]">article</span>
+            <span class="truncate flex-1" title={pg.name}>{pg.name}</span>
+          </button>
+        {/each}
+      {/if}
+    </div>
+
+    {#if section.children && section.children.length > 0}
+      {#each section.children as child (child.name)}
+        <SidebarSection
+          section={child}
+          depth={depth + 1}
+          {activeNotebook}
+          {activeSection}
+          {activePage}
+          {expandedSections}
+          {navOrder}
+          {onToggleSection}
+          {onSelectPage}
+          {onSelectSection}
+          {onCreatePageInline}
+        />
+      {/each}
+    {/if}
+  {/if}
+</div>
