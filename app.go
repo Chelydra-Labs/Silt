@@ -480,9 +480,15 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("invalid file metadata for block %s: notebook=%q section=%q page=%q", blockID, notebook, section, page)
 	}
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinVault(filePath, a.vaultPath) {
-		return fmt.Errorf("resolved file path %q escapes vault %q", filePath, a.vaultPath)
+	// Resolve the notebook content dir from the block's source (#100): vault
+	// blocks live under <vault>/<notebook>, linked blocks under their root.
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
+	if err != nil {
+		return fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return fmt.Errorf("resolved file path %q escapes notebook root %q", filePath, notebookDir)
 	}
 
 	var writeErr error
@@ -991,7 +997,7 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 	}
 
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinVault(filePath, a.vaultPath) {
+	if !isPathWithinRoot(filePath, a.vaultPath) {
 		return "", fmt.Errorf("path escapes vault")
 	}
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
@@ -1131,9 +1137,13 @@ func (a *App) MutateBlock(blockID, newText string) error {
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("invalid file metadata for block %s", blockID)
 	}
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinVault(filePath, a.vaultPath) {
-		return fmt.Errorf("resolved file path %q escapes vault %q", filePath, a.vaultPath)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
+	if err != nil {
+		return fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return fmt.Errorf("resolved file path %q escapes notebook root %q", filePath, notebookDir)
 	}
 
 	var writeErr error
@@ -1282,15 +1292,18 @@ func splitFrontmatter(content string) (frontmatter, body string) {
 	return "", content
 }
 
-// isPathWithinVault reports whether target is the same as or a descendant of
-// vaultRoot. Both paths are cleaned and made absolute before comparison so
-// that `..` segments in the joined path are resolved before the check.
-func isPathWithinVault(target, vaultRoot string) bool {
+// isPathWithinRoot reports whether target is the same as or a descendant of
+// root. Generalized from the vault-only check for #100: callers pass the
+// resolved notebook root (vault root, an in-vault notebook dir, or a linked
+// notebook root) so the same traversal guard covers external notebooks.
+// Both paths are cleaned and made absolute before comparison so that `..`
+// segments in the joined path are resolved before the check.
+func isPathWithinRoot(target, root string) bool {
 	absTarget, err := filepath.Abs(target)
 	if err != nil {
 		return false
 	}
-	absRoot, err := filepath.Abs(vaultRoot)
+	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return false
 	}
@@ -1301,6 +1314,35 @@ func isPathWithinVault(target, vaultRoot string) bool {
 	}
 	prefix := absRoot + string(os.PathSeparator)
 	return strings.HasPrefix(absTarget, prefix)
+}
+
+// resolveNotebookDir returns the content directory for a notebook under the
+// given source (#100): the folder whose direct children are the notebook's
+// sections and section-less pages. For an in-vault notebook ('vault') that is
+// <vaultPath>/<notebookName>; for a linked notebook ('linked:<id>') it is the
+// linked root itself (sections/pages live directly under the external root).
+// The caller MUST still guard any path built from this dir with
+// isPathWithinRoot. Returns an error if the vault is not loaded or a linked
+// source references an unregistered id.
+func (a *App) resolveNotebookDir(notebookName, source string) (string, error) {
+	if a.vaultPath == "" {
+		return "", fmt.Errorf("vault not loaded")
+	}
+	if source == "" || source == config.LinkedNotebooksVaultSource {
+		return filepath.Join(a.vaultPath, notebookName), nil
+	}
+	if strings.HasPrefix(source, "linked:") {
+		id := strings.TrimPrefix(source, "linked:")
+		a.configMu.RLock()
+		defer a.configMu.RUnlock()
+		for _, ln := range a.cfg.LinkedNotebooks {
+			if ln.ID == id {
+				return ln.RootPath, nil
+			}
+		}
+		return "", fmt.Errorf("linked notebook %q is not registered", id)
+	}
+	return "", fmt.Errorf("unknown notebook source %q", source)
 }
 
 // ListNavigation returns the Notebook > Section > Page tree for the sidebar.
@@ -1532,7 +1574,7 @@ func (a *App) AcquireFocusLock(notebook, section, page string) error {
 		return fmt.Errorf("invalid path metadata")
 	}
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinVault(filePath, a.vaultPath) {
+	if !isPathWithinRoot(filePath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	a.watcher.LockFocus(filePath)
@@ -1554,7 +1596,7 @@ func (a *App) ReleaseFocusLock(notebook, section, page string) error {
 		return fmt.Errorf("invalid path metadata")
 	}
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinVault(filePath, a.vaultPath) {
+	if !isPathWithinRoot(filePath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	a.watcher.UnlockFocus(filePath)
@@ -1578,7 +1620,7 @@ func (a *App) RefreshFocusLock(notebook, section, page string) error {
 		return fmt.Errorf("invalid path metadata")
 	}
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinVault(filePath, a.vaultPath) {
+	if !isPathWithinRoot(filePath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	a.watcher.RefreshFocus(filePath)
@@ -1593,7 +1635,7 @@ func (a *App) CreateNotebook(name string) error {
 		return fmt.Errorf("notebook name is required")
 	}
 	nbPath := filepath.Join(a.vaultPath, safeName)
-	if !isPathWithinVault(nbPath, a.vaultPath) {
+	if !isPathWithinRoot(nbPath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	if _, err := os.Stat(nbPath); err == nil {
@@ -1614,7 +1656,7 @@ func (a *App) OpenNotebook(folderPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid folder path: %w", err)
 	}
-	if !isPathWithinVault(absPath, a.vaultPath) {
+	if !isPathWithinRoot(absPath, a.vaultPath) {
 		return "", fmt.Errorf("notebooks must live inside the Silt vault")
 	}
 	info, err := os.Stat(absPath)
@@ -1666,7 +1708,7 @@ func (a *App) CreateSection(notebook, section string) error {
 		return fmt.Errorf("notebook and section names are required")
 	}
 	secPath := filepath.Join(a.vaultPath, safeNotebook, safeSection)
-	if !isPathWithinVault(secPath, a.vaultPath) {
+	if !isPathWithinRoot(secPath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	if err := os.MkdirAll(secPath, 0755); err != nil {
@@ -1693,7 +1735,7 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 
 	// New file model: a page IS a file at <vault>/<notebook>/[<section>/]<page>.md
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinVault(filePath, a.vaultPath) {
+	if !isPathWithinRoot(filePath, a.vaultPath) {
 		return "", fmt.Errorf("path escapes vault")
 	}
 
@@ -1757,7 +1799,7 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	}
 
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinVault(filePath, a.vaultPath) {
+	if !isPathWithinRoot(filePath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 
@@ -1866,7 +1908,7 @@ func (a *App) trashBase() string {
 
 // moveToTrash moves a file or directory to .system/trash/<timestamp>/<relPath>,
 // preserving the relative structure so the user can recover it. Returns the
-// trash destination path. The caller MUST guard with isPathWithinVault.
+// trash destination path. The caller MUST guard with isPathWithinRoot.
 func (a *App) moveToTrash(source string) (string, error) {
 	rel, err := filepath.Rel(a.vaultPath, source)
 	if err != nil {
@@ -1972,7 +2014,7 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 
 	oldFile := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeOldPage+".md")
 	newFile := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeNewPage+".md")
-	if !isPathWithinVault(oldFile, a.vaultPath) || !isPathWithinVault(newFile, a.vaultPath) {
+	if !isPathWithinRoot(oldFile, a.vaultPath) || !isPathWithinRoot(newFile, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	if _, err := os.Stat(newFile); err == nil {
@@ -2044,7 +2086,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 
 	oldDir := filepath.Join(a.vaultPath, safeNotebook, safeOldSection)
 	newDir := filepath.Join(a.vaultPath, safeNotebook, safeNewSection)
-	if !isPathWithinVault(oldDir, a.vaultPath) || !isPathWithinVault(newDir, a.vaultPath) {
+	if !isPathWithinRoot(oldDir, a.vaultPath) || !isPathWithinRoot(newDir, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	if _, err := os.Stat(newDir); err == nil {
@@ -2147,7 +2189,7 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 
 	oldDir := filepath.Join(a.vaultPath, safeOldNotebook)
 	newDir := filepath.Join(a.vaultPath, safeNewNotebook)
-	if !isPathWithinVault(oldDir, a.vaultPath) || !isPathWithinVault(newDir, a.vaultPath) {
+	if !isPathWithinRoot(oldDir, a.vaultPath) || !isPathWithinRoot(newDir, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	if _, err := os.Stat(newDir); err == nil {
@@ -2253,7 +2295,7 @@ func (a *App) DeletePage(notebook, section, page string) error {
 	}
 
 	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinVault(filePath, a.vaultPath) {
+	if !isPathWithinRoot(filePath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -2296,7 +2338,7 @@ func (a *App) DeleteSection(notebook, section string) error {
 	}
 
 	secPath := filepath.Join(a.vaultPath, safeNotebook, safeSection)
-	if !isPathWithinVault(secPath, a.vaultPath) {
+	if !isPathWithinRoot(secPath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	if _, err := os.Stat(secPath); os.IsNotExist(err) {
@@ -2345,7 +2387,7 @@ func (a *App) DeleteNotebook(notebook string) error {
 	}
 
 	nbPath := filepath.Join(a.vaultPath, safeNotebook)
-	if !isPathWithinVault(nbPath, a.vaultPath) {
+	if !isPathWithinRoot(nbPath, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	if _, err := os.Stat(nbPath); os.IsNotExist(err) {
@@ -2827,9 +2869,13 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 	if safeNotebook == "" || safePage == "" {
 		return false, fmt.Errorf("invalid file metadata for block %s", blockID)
 	}
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinVault(filePath, a.vaultPath) {
-		return false, fmt.Errorf("resolved file path escapes vault")
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
+	if err != nil {
+		return false, fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return false, fmt.Errorf("resolved file path escapes notebook root")
 	}
 
 	var writeErr error
@@ -3128,7 +3174,7 @@ func (a *App) ReadPluginSource(pluginID string) (string, error) {
 		return "", fmt.Errorf("invalid plugin id")
 	}
 	srcPath := filepath.Join(a.vaultPath, ".system", "plugins", safeID, "index.js")
-	if !isPathWithinVault(srcPath, a.vaultPath) {
+	if !isPathWithinRoot(srcPath, a.vaultPath) {
 		return "", fmt.Errorf("path escapes vault")
 	}
 	bytes, err := os.ReadFile(srcPath)

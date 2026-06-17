@@ -1669,3 +1669,47 @@ func TestUpdatePluginSetting_RequiresIDs(t *testing.T) {
 		t.Error("expected error for empty key, got nil")
 	}
 }
+
+// TestResolveNotebookDir covers the #100 notebook content-root resolver: the
+// vault path is byte-identical to the legacy join (zero regression), a linked
+// source resolves to its registered root, and unknown/missing ids fail loud.
+func TestResolveNotebookDir(t *testing.T) {
+	app := newTestApp(t)
+
+	// Vault source → <vault>/<notebook> (identical to the old filepath.Join).
+	got, err := app.resolveNotebookDir("Work", config.LinkedNotebooksVaultSource)
+	if err != nil {
+		t.Fatalf("vault resolve: %v", err)
+	}
+	want := filepath.Join(app.vaultPath, "Work")
+	if got != want {
+		t.Errorf("vault resolve = %q, want %q", got, want)
+	}
+	// Empty source is treated as vault (back-compat for callers without a source).
+	if got2, _ := app.resolveNotebookDir("Work", ""); got2 != want {
+		t.Errorf("empty-source resolve = %q, want %q", got2, want)
+	}
+
+	// Linked source → registered root path.
+	root := t.TempDir()
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = append(app.cfg.LinkedNotebooks, config.LinkedNotebook{
+		ID: "abc", RootPath: root, DisplayName: "Ext",
+	})
+	app.configMu.Unlock()
+	got3, err := app.resolveNotebookDir("Ext", "linked:abc")
+	if err != nil {
+		t.Fatalf("linked resolve: %v", err)
+	}
+	if got3 != root {
+		t.Errorf("linked resolve = %q, want %q", got3, root)
+	}
+
+	// Unregistered linked id and unknown source prefix fail loud.
+	if _, err := app.resolveNotebookDir("X", "linked:ghost"); err == nil {
+		t.Error("expected error for unregistered linked id, got nil")
+	}
+	if _, err := app.resolveNotebookDir("X", "bogus:1"); err == nil {
+		t.Error("expected error for unknown source prefix, got nil")
+	}
+}
