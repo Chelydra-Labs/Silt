@@ -2274,7 +2274,7 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	}
 	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
 	if !isPathWithinRoot(filePath, notebookDir) {
-		return fmt.Errorf("path escapes vault")
+		return fmt.Errorf("path escapes notebook root")
 	}
 
 	a.wg.Add(1)
