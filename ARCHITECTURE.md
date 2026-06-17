@@ -380,11 +380,15 @@ as the active plugin list), NOT user-global.
 
 Path resolution. `App.resolveNotebookDir(notebook, source)` returns a
 notebook's content directory: `<vault>/<notebook>` for `'vault'`, or the linked
-root itself for `'linked:<id>'` (sections/pages live directly under it). The
-blockID write paths (UpdateBlockState / MutateBlock / PluginUpdateTaskMeta)
-resolve the root from `GetBlockLocation().Source`; FetchPageBlocks /
-SaveFileBlocks take `source` so the editor routes linked pages correctly. The
-traversal guard generalizes to `isPathWithinRoot(target, root)`.
+root itself for `'linked:<id>'` (sections/pages live directly under it). Source
+is resolved **server-side** by `resolveSourceByName(name)` — notebook display
+names are globally unique (link collision rejection), so the name alone maps to
+`'vault'` or `'linked:<id>'`. Every notebook-scoped operation (the blockID write
+paths via `GetBlockLocation().Source`; CreatePage / CreatePageFromTemplate /
+DeletePage / RenamePage / CreateSection / DeleteSection / RenameSection; the
+editor focus-lease) routes through it, so linked notebooks get full page CRUD +
+focus protection with no parallel frontend source-flow. The traversal guard
+generalizes to `isPathWithinRoot(target, root)`.
 
 Multi-root watcher. `DirectoryWatcher` observes the vault root PLUS any number
 of linked roots on one process-wide fsnotify watcher, sharing the coordinator,
@@ -395,12 +399,17 @@ is the first path component (a vault holds many notebooks); for a linked root
 the notebook is the registered display name (the root IS one notebook).
 
 Lifecycle bindings. `LinkNotebook(folderPath)` validates, assigns a stable id,
-rejects collisions and folders already inside the vault, persists the registry,
-watches + indexes the tree. `UnlinkNotebook(id)` stops watching, drops the
-source's index rows (`ClearSourceBlocks`), and leaves the external files
-COMPLETELY UNTOUCHED (safe default). `PickLinkedNotebook()` drives the native
-folder picker. Deleting a linked notebook from the sidebar UNLINKS it (vs.
-trashing a vault notebook).
+rejects collisions, folders already inside the vault, **and ancestors of the
+vault** (which would double-index the vault), persists the registry, watches +
+indexes the tree (forcing `notebook = DisplayName` so an external file's
+frontmatter can't drift it out of the nav). `UnlinkNotebook(id)` stops watching,
+drops the source's index rows (`ClearSourceBlocks`), and leaves the external
+files COMPLETELY UNTOUCHED (safe default). `PickLinkedNotebook()` drives the
+native folder picker. Deleting a linked notebook from the sidebar UNLINKS it
+(vs. trashing a vault notebook). Page/section delete inside a linked notebook
+removes the file IN PLACE (the external folder is the source of truth — Silt
+never copies linked content into the vault trash). `RenameNotebook` refuses a
+linked notebook (rename = unlink + re-link); page/section rename works in place.
 
 Failure modes. An offline mount degrades gracefully: `ListNavigation` marks the
 notebook `Disconnected` (the badge flips to cloud_off) but its last-synced index

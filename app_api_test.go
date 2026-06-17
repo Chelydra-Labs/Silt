@@ -314,7 +314,7 @@ func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
 		updated = append(updated, block)
 	}
 
-	if err := app.SaveFileBlocks("vault", notebook, section, page, updated); err != nil {
+	if err := app.SaveFileBlocks(notebook, section, page, updated); err != nil {
 		t.Fatalf("SaveFileBlocks: %v", err)
 	}
 	writtenBytes, err := os.ReadFile(filePath)
@@ -456,7 +456,7 @@ func TestSaveFileBlocks_DeletesMiddleBlockPreservesNonBlockLines(t *testing.T) {
 		updated = append(updated, block)
 	}
 
-	if err := app.SaveFileBlocks("vault", notebook, section, page, updated); err != nil {
+	if err := app.SaveFileBlocks(notebook, section, page, updated); err != nil {
 		t.Fatalf("SaveFileBlocks: %v", err)
 	}
 	writtenBytes, err := os.ReadFile(filePath)
@@ -499,7 +499,7 @@ func TestSaveFileBlocks_PreservesUnknownUUIDLine(t *testing.T) {
 		t.Fatalf("ParseFileContent: %v", err)
 	}
 
-	if err := app.SaveFileBlocks("vault", notebook, section, page, blocks); err != nil {
+	if err := app.SaveFileBlocks(notebook, section, page, blocks); err != nil {
 		t.Fatalf("SaveFileBlocks: %v", err)
 	}
 	writtenBytes, err := os.ReadFile(filePath)
@@ -1850,5 +1850,83 @@ func TestListNavigation_LinkedDisconnectedWhenRootMissing(t *testing.T) {
 	}
 	if !found.Disconnected {
 		t.Error("expected Disconnected=true when the linked root is missing/offline")
+	}
+}
+
+// TestLinkedNotebook_PageCRUD_RoutesToLinkedRoot verifies the #100 lifecycle
+// fix: page create/rename/delete inside a linked notebook route to the linked
+// root (not the vault), index under the linked source, and linked deletes
+// happen IN PLACE (never trash into the vault).
+func TestLinkedNotebook_PageCRUD_RoutesToLinkedRoot(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+
+	// CreatePage in the linked notebook → file lands in the linked root.
+	if _, err := app.CreatePage(ln.DisplayName, "", "Plan", ""); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	linkedFile := filepath.Join(ext, "Plan.md")
+	if _, err := os.Stat(linkedFile); err != nil {
+		t.Errorf("expected linked page at %s, got %v", linkedFile, err)
+	}
+	// Vault must be untouched by the linked create.
+	if _, err := os.Stat(filepath.Join(app.vaultPath, ln.DisplayName, "Plan.md")); err == nil {
+		t.Error("linked CreatePage leaked a file into the vault")
+	}
+
+	// CreatePage on an empty page produces no blocks, but nothing should be
+	// indexed under the VAULT source for this notebook name (no misroute).
+	var vaultRows int
+	app.coordinator.WithDBRead(func() {
+		_ = app.db.SQLDB().QueryRow(
+			"SELECT COUNT(*) FROM blocks WHERE source = 'vault' AND notebook = ?",
+			ln.DisplayName,
+		).Scan(&vaultRows)
+	})
+	if vaultRows != 0 {
+		t.Errorf("linked CreatePage leaked %d row(s) into the vault index", vaultRows)
+	}
+
+	// Rename the page within the linked root.
+	if err := app.RenamePage(ln.DisplayName, "", "Plan", "Renamed"); err != nil {
+		t.Fatalf("RenamePage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(ext, "Renamed.md")); err != nil {
+		t.Errorf("rename: expected Renamed.md in the linked root: %v", err)
+	}
+	if _, err := os.Stat(linkedFile); err == nil {
+		t.Error("old linked page file should no longer exist after rename")
+	}
+
+	// Delete the page → removed in place from the linked root, NOT trashed
+	// into the vault.
+	if err := app.DeletePage(ln.DisplayName, "", "Renamed"); err != nil {
+		t.Fatalf("DeletePage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(ext, "Renamed.md")); err == nil {
+		t.Error("expected the linked page deleted in place")
+	}
+	trash := filepath.Join(app.vaultPath, ".system", "trash")
+	if entries, _ := os.ReadDir(trash); len(entries) > 0 {
+		t.Errorf("linked delete should not trash into the vault; trash contained: %v", entries)
+	}
+}
+
+// TestRenameNotebook_RefusesLinked confirms RenameNotebook fails loud for a
+// linked notebook (renaming the external source-of-truth folder is out of
+// scope; rename = unlink + re-link).
+func TestRenameNotebook_RefusesLinked(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	if err := app.RenameNotebook(ln.DisplayName, "NewName"); err == nil {
+		t.Error("expected RenameNotebook to refuse a linked notebook, got nil")
 	}
 }

@@ -4,7 +4,6 @@
   import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import TipTapEditor from './TipTapEditor.svelte'
   import type { ParsedBlock } from '../lib/editor'
-  import { getSourceForNotebook } from '../plugins/location.svelte'
 
   interface Props {
     notebook: string
@@ -77,13 +76,7 @@
     const reqSection = section
     const reqPage = page
     try {
-      const source = getSourceForNotebook(reqNotebook)
-      const result = await FetchPageBlocks(
-        source,
-        reqNotebook,
-        reqSection,
-        reqPage
-      )
+      const result = await FetchPageBlocks(reqNotebook, reqSection, reqPage)
       if (notebook !== reqNotebook || page !== reqPage) return
       blocks = result || []
     } catch (e) {

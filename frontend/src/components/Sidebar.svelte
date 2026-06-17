@@ -18,7 +18,6 @@
     GetNavOrder,
     SetNavOrder
   } from '../../wailsjs/go/main/App.js'
-  import { setNotebookSourceMap } from '../plugins/location.svelte'
 
   interface NavPage {
     name: string
@@ -104,6 +103,17 @@
     page?: string
     label: string
   } | null>(null)
+
+  // True when the delete target is a LINKED notebook. Deleting a linked
+  // notebook UNLINKS it (files untouched) — the confirm copy must say so
+  // rather than the vault-trash message (#100).
+  let deleteTargetLinked = $derived(
+    !!deleteTarget &&
+      deleteTarget.level === 'notebook' &&
+      tree.notebooks.find((n) => n.name === deleteTarget!.notebook)?.source !==
+        'vault' &&
+      !!tree.notebooks.find((n) => n.name === deleteTarget!.notebook)?.source
+  )
 
   // Nav order for drag-to-reorder (#68). Explicit ordering from config.yaml;
   // items not in the map fall back to alphabetical.
@@ -303,13 +313,6 @@
       const data = await ListNavigation()
       if (data) {
         tree = data
-        // Refresh the notebook-name → source map so FetchPageBlocks /
-        // SaveFileBlocks resolve the correct root (#100).
-        const map = new Map<string, string>()
-        for (const nb of tree.notebooks) {
-          map.set(nb.name, nb.source || 'vault')
-        }
-        setNotebookSourceMap(map)
         // Pick a sensible active notebook if none selected.
         if (tree.notebooks.length > 0) {
           if (
@@ -445,34 +448,6 @@
       showNotebookDropdown = false
     } finally {
       creating = false
-    }
-  }
-
-  // Unlink a linked notebook: stop watching/indexing it, leaving its files
-  // completely untouched. Vault notebooks are deleted via DeleteNotebook.
-  async function handleUnlinkNotebook(nbName: string) {
-    const nb = tree.notebooks.find((n) => n.name === nbName)
-    if (!nb || !nb.source || nb.source === 'vault') return
-    if (
-      !window.confirm(
-        `Unlink "${nbName}"? It will no longer be indexed, but its files are left untouched.`
-      )
-    ) {
-      return
-    }
-    try {
-      const id = nb.source.startsWith('linked:')
-        ? nb.source.slice('linked:'.length)
-        : ''
-      if (id) await UnlinkNotebook(id)
-      if (activeNotebook === nbName) {
-        activeNotebook = ''
-        activeSection = ''
-        activePage = ''
-      }
-      await loadNavigation()
-    } catch (e) {
-      createError = e instanceof Error ? e.message : String(e)
     }
   }
 
@@ -895,7 +870,7 @@
             {dropTarget}
             onToggleSection={toggleSection}
             onSelectPage={handleSelectPage}
-            onSelectSection={onSelectSection}
+            {onSelectSection}
             onCreatePageInline={handleCreatePageInline}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
@@ -1085,11 +1060,19 @@
     >
       <div class="px-5 py-4 border-b border-border-muted">
         <h2 class="font-headline-md text-headline-md text-text-primary">
-          Delete {deleteTarget.level}?
+          {deleteTargetLinked
+            ? 'Unlink Notebook?'
+            : `Delete ${deleteTarget.level}?`}
         </h2>
         <p class="text-text-muted text-[12px] font-body-md mt-1">
-          This will move the {deleteTarget.label} to
-          <code>.system/trash/</code>. You can recover it from there manually.
+          {#if deleteTargetLinked}
+            Unlinking <strong>{deleteTarget.label}</strong> stops indexing it.
+            Its files are left <strong>completely untouched</strong> — re-link the
+            folder later to index it again.
+          {:else}
+            This will move the {deleteTarget.label} to
+            <code>.system/trash/</code>. You can recover it from there manually.
+          {/if}
         </p>
       </div>
       <div class="flex items-center justify-end gap-2 px-5 py-3">
@@ -1103,7 +1086,7 @@
           onclick={confirmDelete}
           class="px-4 py-2 rounded-lg bg-status-danger/20 border border-status-danger/40 text-status-danger font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
         >
-          Delete
+          {deleteTargetLinked ? 'Unlink' : 'Delete'}
         </button>
       </div>
     </div>

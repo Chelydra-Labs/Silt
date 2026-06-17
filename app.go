@@ -419,19 +419,18 @@ func (a *App) InitializeVault() (bool, error) {
 
 // FetchPageBlocks returns a flat list of all blocks for a page, ordered by
 // line_number. A page is a single file; each block carries its own file_date.
-// source ('vault' | 'linked:<id>') scopes the lookup so a linked notebook
-// sharing a display name with a vault notebook returns its own page (#100).
-func (a *App) FetchPageBlocks(source, notebook, section, page string) ([]parser.ParsedBlock, error) {
+// The notebook's source is resolved server-side from its (globally-unique)
+// name so a linked notebook sharing a display name with a vault notebook
+// returns its own page (#100).
+func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
-	}
-	if source == "" {
-		source = "vault"
 	}
 
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	source := a.resolveSourceByName(sanitizePathSegment(notebook))
 	var res []parser.ParsedBlock
 	var err error
 	a.coordinator.WithDBRead(func() {
@@ -1046,14 +1045,20 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 		safeDate = time.Now().Format("2006-01-02")
 	}
 
+	// Resolve the notebook root from its source (#100).
+	tplSource := a.resolveSourceByName(safeNotebook)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, tplSource)
+	if err != nil {
+		return "", err
+	}
 	var filePath string
 	if safeSection == "" {
-		filePath = filepath.Join(a.vaultPath, safeNotebook, safePage+".md")
+		filePath = filepath.Join(notebookDir, safePage+".md")
 	} else {
-		filePath = filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
+		filePath = filepath.Join(notebookDir, safeSection, safePage+".md")
 	}
-	if !isPathWithinRoot(filePath, a.vaultPath) {
-		return "", fmt.Errorf("path escapes vault")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return "", fmt.Errorf("path escapes notebook root")
 	}
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return "", fmt.Errorf("failed to create parent directory: %w", err)
@@ -1080,7 +1085,7 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 		if perr == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks(tplSource, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
 			})
 			if idxErr != nil {
 				log.Printf("CreatePageFromTemplate: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
@@ -1429,6 +1434,24 @@ func (a *App) resolveNotebookDir(notebookName, source string) (string, error) {
 // counts (#100).
 type nspKey struct{ src, n, s, p string }
 
+// resolveSourceByName returns the blocks.source discriminator for a notebook
+// display name: 'linked:<id>' if the name matches a registered linked
+// notebook, else 'vault'. Notebook display names are globally unique
+// (LinkNotebook rejects collisions), so the name unambiguously resolves the
+// source. This lets the notebook-scoped CRUD/focus-lock operations keep their
+// IPC signatures source-free while still routing to the correct root (#100),
+// avoiding a parallel frontend source-flow.
+func (a *App) resolveSourceByName(notebookName string) string {
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	for _, ln := range a.cfg.LinkedNotebooks {
+		if ln.DisplayName == notebookName {
+			return ln.Source()
+		}
+	}
+	return config.LinkedNotebooksVaultSource
+}
+
 // ListNavigation returns the Notebook > Section > Page tree for the sidebar.
 //
 // The directory structure on disk is the single source of truth. Each
@@ -1707,6 +1730,28 @@ func (a *App) SearchBlocksPaged(query string, offset, limit int) (parser.SearchR
 	return res, err
 }
 
+// focusFilePath resolves the on-disk page file for a focus-lease operation,
+// routing to the correct root via the notebook's source (#100). Shared by
+// Acquire/Release/RefreshFocusLock so the lease key always matches the file
+// the watcher sees — including linked notebooks.
+func (a *App) focusFilePath(notebook, section, page string) (string, error) {
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return "", fmt.Errorf("invalid path metadata")
+	}
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, a.resolveSourceByName(safeNotebook))
+	if err != nil {
+		return "", err
+	}
+	fp := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(fp, notebookDir) {
+		return "", fmt.Errorf("path escapes notebook root")
+	}
+	return fp, nil
+}
+
 // AcquireFocusLock registers a focus lock on a page file to ignore fsnotify updates.
 func (a *App) AcquireFocusLock(notebook, section, page string) error {
 	if a.watcher == nil {
@@ -1714,18 +1759,11 @@ func (a *App) AcquireFocusLock(notebook, section, page string) error {
 	}
 	a.wg.Add(1)
 	defer a.wg.Done()
-
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" {
-		return fmt.Errorf("invalid path metadata")
+	fp, err := a.focusFilePath(notebook, section, page)
+	if err != nil {
+		return err
 	}
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, a.vaultPath) {
-		return fmt.Errorf("path escapes vault")
-	}
-	a.watcher.LockFocus(filePath)
+	a.watcher.LockFocus(fp)
 	return nil
 }
 
@@ -1736,18 +1774,11 @@ func (a *App) ReleaseFocusLock(notebook, section, page string) error {
 	}
 	a.wg.Add(1)
 	defer a.wg.Done()
-
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" {
-		return fmt.Errorf("invalid path metadata")
+	fp, err := a.focusFilePath(notebook, section, page)
+	if err != nil {
+		return err
 	}
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, a.vaultPath) {
-		return fmt.Errorf("path escapes vault")
-	}
-	a.watcher.UnlockFocus(filePath)
+	a.watcher.UnlockFocus(fp)
 	return nil
 }
 
@@ -1760,18 +1791,11 @@ func (a *App) RefreshFocusLock(notebook, section, page string) error {
 	}
 	a.wg.Add(1)
 	defer a.wg.Done()
-
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" {
-		return fmt.Errorf("invalid path metadata")
+	fp, err := a.focusFilePath(notebook, section, page)
+	if err != nil {
+		return err
 	}
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, a.vaultPath) {
-		return fmt.Errorf("path escapes vault")
-	}
-	a.watcher.RefreshFocus(filePath)
+	a.watcher.RefreshFocus(fp)
 	return nil
 }
 
@@ -1880,6 +1904,11 @@ func (a *App) LinkNotebook(folderPath string) (config.LinkedNotebook, error) {
 	// double-index (vault + linked) of the same tree.
 	if isPathWithinRoot(absPath, a.vaultPath) {
 		return config.LinkedNotebook{}, fmt.Errorf("that folder is already inside the vault — open it as a notebook instead of linking")
+	}
+	// Likewise refuse an ANCESTOR of the vault: the watcher would observe the
+	// vault itself as part of the linked root and double-index it (#100).
+	if isPathWithinRoot(a.vaultPath, absPath) {
+		return config.LinkedNotebook{}, fmt.Errorf("cannot link a folder that contains the vault")
 	}
 	displayName := sanitizePathSegment(filepath.Base(absPath))
 	if displayName == "" {
@@ -2059,7 +2088,11 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 		}
 		var idxErr error
 		a.coordinator.WithDBWrite(func() {
-			idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
+			// Force the linked notebook's display name: an external file's
+			// frontmatter may declare a different `notebook:`, which would
+			// make the row miss ListNavigation's DisplayName filter. The
+			// linked root IS this one notebook (#100).
+			idxErr = a.db.IndexFileBlocks(source, ln.DisplayName, section, pageName, blocks, meta.Tags, meta.Warnings...)
 			if idxErr == nil {
 				if st, serr := os.Stat(file); serr == nil {
 					_ = a.db.MarkFileIndexed(nil, file, st.ModTime().UnixNano(), st.Size())
@@ -2083,9 +2116,13 @@ func (a *App) CreateSection(notebook, section string) error {
 	if safeNotebook == "" || safeSection == "" {
 		return fmt.Errorf("notebook and section names are required")
 	}
-	secPath := filepath.Join(a.vaultPath, safeNotebook, safeSection)
-	if !isPathWithinRoot(secPath, a.vaultPath) {
-		return fmt.Errorf("path escapes vault")
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, a.resolveSourceByName(safeNotebook))
+	if err != nil {
+		return err
+	}
+	secPath := filepath.Join(notebookDir, safeSection)
+	if !isPathWithinRoot(secPath, notebookDir) {
+		return fmt.Errorf("path escapes notebook root")
 	}
 	if err := os.MkdirAll(secPath, 0755); err != nil {
 		return fmt.Errorf("failed to create section: %w", err)
@@ -2109,10 +2146,17 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 		safeDate = time.Now().Format("2006-01-02")
 	}
 
-	// New file model: a page IS a file at <vault>/<notebook>/[<section>/]<page>.md
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, a.vaultPath) {
-		return "", fmt.Errorf("path escapes vault")
+	// Resolve the notebook's root from its source (#100): vault →
+	// <vault>/<notebook>, linked → the linked root. Page IS a file at
+	// <root>/[<section>/]<page>.md.
+	source := a.resolveSourceByName(safeNotebook)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return "", err
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return "", fmt.Errorf("path escapes notebook root")
 	}
 
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
@@ -2144,7 +2188,7 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 		if err == nil {
 			var idxErr error
 			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
+				idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
 			})
 			if idxErr != nil {
 				log.Printf("CreatePage: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
@@ -2160,14 +2204,12 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 }
 
 // SaveFileBlocks writes the updated list of blocks back to the page file.
-// With the per-day file model removed, a page is a single file at
-// <vault>/<notebook>/<section>/<page>.md. Each block carries its own file_date.
-func (a *App) SaveFileBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock) error {
+// With the per-day file model removed, a page is a single file. Each block
+// carries its own file_date. The notebook's source is resolved server-side
+// from its (globally-unique) name (#100).
+func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error {
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
-	}
-	if source == "" {
-		source = "vault"
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
@@ -2177,6 +2219,7 @@ func (a *App) SaveFileBlocks(source, notebook, section, page string, blocks []pa
 		return fmt.Errorf("invalid path metadata")
 	}
 
+	source := a.resolveSourceByName(safeNotebook)
 	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
 	if err != nil {
 		return fmt.Errorf("resolve notebook dir: %w", err)
@@ -2327,8 +2370,9 @@ func (a *App) reindexFile(filePath, notebook, section, page string) {
 		return
 	}
 	var idxErr error
+	reidxSource := a.resolveSourceByName(notebook)
 	a.coordinator.WithDBWrite(func() {
-		idxErr = a.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
+		idxErr = a.db.IndexFileBlocks(reidxSource, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
 	})
 	if idxErr != nil {
 		log.Printf("reindexFile: index failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
@@ -2395,10 +2439,15 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 		return nil
 	}
 
-	oldFile := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeOldPage+".md")
-	newFile := filepath.Join(a.vaultPath, safeNotebook, safeSection, safeNewPage+".md")
-	if !isPathWithinRoot(oldFile, a.vaultPath) || !isPathWithinRoot(newFile, a.vaultPath) {
-		return fmt.Errorf("path escapes vault")
+	source := a.resolveSourceByName(safeNotebook)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return err
+	}
+	oldFile := filepath.Join(notebookDir, safeSection, safeOldPage+".md")
+	newFile := filepath.Join(notebookDir, safeSection, safeNewPage+".md")
+	if !isPathWithinRoot(oldFile, notebookDir) || !isPathWithinRoot(newFile, notebookDir) {
+		return fmt.Errorf("path escapes notebook root")
 	}
 	if _, err := os.Stat(newFile); err == nil {
 		return fmt.Errorf("a page named %q already exists", safeNewPage)
@@ -2409,7 +2458,7 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 
 	var runErr error
 	// Lock the notebook root to prevent interleaving with the scanner.
-	nbRoot := filepath.Join(a.vaultPath, safeNotebook)
+	nbRoot := notebookDir
 	a.coordinator.LockFileWrite(nbRoot, func() {
 		// 1. Read the file content before renaming.
 		contentBytes, err := os.ReadFile(oldFile)
@@ -2440,7 +2489,7 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 
 		// 4. Clear old index entries + re-index at new path.
 		a.coordinator.WithDBWrite(func() {
-			_ = a.db.ClearFileBlocks(nil, "vault", safeNotebook, safeSection, safeOldPage)
+			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeSection, safeOldPage)
 		})
 		a.coordinator.WithDBWrite(func() {
 			_ = a.db.ForgetFile(oldFile)
@@ -2467,10 +2516,15 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 		return nil
 	}
 
-	oldDir := filepath.Join(a.vaultPath, safeNotebook, safeOldSection)
-	newDir := filepath.Join(a.vaultPath, safeNotebook, safeNewSection)
-	if !isPathWithinRoot(oldDir, a.vaultPath) || !isPathWithinRoot(newDir, a.vaultPath) {
-		return fmt.Errorf("path escapes vault")
+	source := a.resolveSourceByName(safeNotebook)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return err
+	}
+	oldDir := filepath.Join(notebookDir, safeOldSection)
+	newDir := filepath.Join(notebookDir, safeNewSection)
+	if !isPathWithinRoot(oldDir, notebookDir) || !isPathWithinRoot(newDir, notebookDir) {
+		return fmt.Errorf("path escapes notebook root")
 	}
 	if _, err := os.Stat(newDir); err == nil {
 		return fmt.Errorf("a section named %q already exists", safeNewSection)
@@ -2480,7 +2534,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 	defer a.wg.Done()
 
 	var runErr error
-	nbRoot := filepath.Join(a.vaultPath, safeNotebook)
+	nbRoot := notebookDir
 	a.coordinator.LockFileWrite(nbRoot, func() {
 		// 1. Read all .md files from the old section BEFORE renaming.
 		entries, err := os.ReadDir(oldDir)
@@ -2539,7 +2593,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 			pageFiles = append(pageFiles, fc.name)
 		}
 		a.coordinator.WithDBWrite(func() {
-			_ = a.db.ClearFileBlocks(nil, "vault", safeNotebook, safeOldSection, "")
+			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeOldSection, "")
 		})
 		for _, pageFile := range pageFiles {
 			oldPath := filepath.Join(oldDir, pageFile)
@@ -2568,6 +2622,14 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 	}
 	if safeOldNotebook == safeNewNotebook {
 		return nil
+	}
+
+	// A linked notebook's name is its external folder basename + registry
+	// identity; renaming it is unlink + re-link, not a folder rename on the
+	// external source of truth. Refuse here so the vault-only folder rename
+	// below never misroutes (#100).
+	if src := a.resolveSourceByName(safeOldNotebook); strings.HasPrefix(src, "linked:") {
+		return fmt.Errorf("linked notebooks cannot be renamed in place — unlink and re-link the folder under the new name")
 	}
 
 	oldDir := filepath.Join(a.vaultPath, safeOldNotebook)
@@ -2677,9 +2739,14 @@ func (a *App) DeletePage(notebook, section, page string) error {
 		return fmt.Errorf("notebook and page names are required")
 	}
 
-	filePath := filepath.Join(a.vaultPath, safeNotebook, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, a.vaultPath) {
-		return fmt.Errorf("path escapes vault")
+	source := a.resolveSourceByName(safeNotebook)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return err
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return fmt.Errorf("path escapes notebook root")
 	}
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return fmt.Errorf("page %q not found", safePage)
@@ -2688,17 +2755,27 @@ func (a *App) DeletePage(notebook, section, page string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	linked := strings.HasPrefix(source, "linked:")
 	var runErr error
 	a.coordinator.LockFileWrite(filePath, func() {
 		a.tracker.RegisterWrite(filePath)
-		if _, err := a.moveToTrash(filePath); err != nil {
-			runErr = err
-			return
+		if linked {
+			// External folder is the source of truth — delete in place. Silt
+			// never copies linked content into the vault trash (#100).
+			if err := os.Remove(filePath); err != nil {
+				runErr = err
+				return
+			}
+		} else {
+			if _, err := a.moveToTrash(filePath); err != nil {
+				runErr = err
+				return
+			}
 		}
 		var blockIDs []string
 		a.coordinator.WithDBWrite(func() {
-			blockIDs, _ = a.db.BlockIDsForPage("vault", safeNotebook, safeSection, safePage)
-			_ = a.db.ClearFileBlocks(nil, "vault", safeNotebook, safeSection, safePage)
+			blockIDs, _ = a.db.BlockIDsForPage(source, safeNotebook, safeSection, safePage)
+			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeSection, safePage)
 			_ = a.db.ForgetFile(filePath)
 		})
 		// Release the deleted blocks' per-block mutex entries (#122).
@@ -2720,9 +2797,14 @@ func (a *App) DeleteSection(notebook, section string) error {
 		return fmt.Errorf("notebook and section names are required")
 	}
 
-	secPath := filepath.Join(a.vaultPath, safeNotebook, safeSection)
-	if !isPathWithinRoot(secPath, a.vaultPath) {
-		return fmt.Errorf("path escapes vault")
+	source := a.resolveSourceByName(safeNotebook)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return err
+	}
+	secPath := filepath.Join(notebookDir, safeSection)
+	if !isPathWithinRoot(secPath, notebookDir) {
+		return fmt.Errorf("path escapes notebook root")
 	}
 	if _, err := os.Stat(secPath); os.IsNotExist(err) {
 		return fmt.Errorf("section %q not found", safeSection)
@@ -2731,9 +2813,10 @@ func (a *App) DeleteSection(notebook, section string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	linked := strings.HasPrefix(source, "linked:")
 	var runErr error
 	a.coordinator.LockFileWrite(secPath, func() {
-		// Collect page files before trashing for index cleanup.
+		// Collect page files before deletion for index cleanup.
 		entries, _ := os.ReadDir(secPath)
 		var pageNames []string
 		for _, entry := range entries {
@@ -2743,14 +2826,22 @@ func (a *App) DeleteSection(notebook, section string) error {
 		}
 
 		a.tracker.RegisterWrite(secPath)
-		if _, err := a.moveToTrash(secPath); err != nil {
-			runErr = err
-			return
+		if linked {
+			// External folder is the source of truth — remove in place (#100).
+			if err := os.RemoveAll(secPath); err != nil {
+				runErr = err
+				return
+			}
+		} else {
+			if _, err := a.moveToTrash(secPath); err != nil {
+				runErr = err
+				return
+			}
 		}
 
 		a.coordinator.WithDBWrite(func() {
 			for _, pg := range pageNames {
-				_ = a.db.ClearFileBlocks(nil, "vault", safeNotebook, safeSection, pg)
+				_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeSection, pg)
 			}
 		})
 	})
@@ -3207,9 +3298,10 @@ func (a *App) PluginUpdateBlockState(blockID, status string) (bool, error) {
 // re-indexed so SQLite reflects the new state.
 //
 // Sentinels allow partial updates:
-//   pin:      -2 = clear (remove the [pin::] token), -1 = no change,
-//             0 = explicitly unpin ([pin:: false]), 1 = pin ([pin:: true])
-//   progress: -1 = no change, 0-100 = set value (0 clears the token)
+//
+//	pin:      -2 = clear (remove the [pin::] token), -1 = no change,
+//	          0 = explicitly unpin ([pin:: false]), 1 = pin ([pin:: true])
+//	progress: -1 = no change, 0-100 = set value (0 clears the token)
 //
 // The tri-state pin sentinel preserves a typed [pin:: false] across UI
 // toggles: the renderer emits exactly one pin token from the *bool, so

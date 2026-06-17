@@ -24,7 +24,6 @@
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings } from '../settings/store.svelte'
   import { measureFrameBudget } from '../lib/perf/frame-budget'
-  import { getActiveLocation } from '../plugins/location.svelte'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
 
@@ -216,8 +215,7 @@
       docToBlocks(editorInstance.getJSON())
     )
     try {
-      const source = getActiveLocation().source
-      await SaveFileBlocks(source, notebook, section, page, updatedBlocks)
+      await SaveFileBlocks(notebook, section, page, updatedBlocks)
       lastSaveError = null
       unsavedChanges = false
     } catch (e) {
@@ -415,10 +413,14 @@
       aria-live={lastSaveError ? 'assertive' : 'polite'}
     >
       {#if lastSaveError}
-        <span class="material-symbols-outlined text-[14px]" aria-hidden="true">error</span>
+        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+          >error</span
+        >
         <span>Save failed — edits not persisted</span>
       {:else}
-        <span class="material-symbols-outlined text-[14px]" aria-hidden="true">schedule</span>
+        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+          >schedule</span
+        >
         <span>Unsaved changes</span>
       {/if}
     </div>
@@ -481,7 +483,11 @@
     backdrop-filter: blur(4px);
   }
   .unsaved-indicator.error {
-    border-color: color-mix(in srgb, var(--status-danger, #e5484d) 60%, transparent);
+    border-color: color-mix(
+      in srgb,
+      var(--status-danger, #e5484d) 60%,
+      transparent
+    );
     color: var(--status-danger, #e5484d);
   }
 
