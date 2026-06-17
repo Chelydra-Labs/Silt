@@ -25,6 +25,7 @@
   import { settings } from '../settings/store.svelte'
   import { measureFrameBudget } from '../lib/perf/frame-budget'
   import { getActiveLocation } from '../plugins/location.svelte'
+  import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
 
   interface Props {
@@ -144,6 +145,7 @@
     onUpdate: () => {
       if (suppressUpdate) return
       detectSlashCommand()
+      unsavedChanges = true
       triggerAutoSave()
     },
     onFocus: () => {
@@ -205,17 +207,28 @@
     }, delay)
   }
 
+  let unsavedChanges = $state(false)
+  let lastSaveError: string | null = $state(null)
+
   async function doSave(): Promise<void> {
     if (!editorInstance || editorInstance.isDestroyed) return
     const updatedBlocks = measureFrameBudget('tiptap-transaction', () =>
       docToBlocks(editorInstance.getJSON())
     )
     try {
-      // Source ('vault' | 'linked:<id>') resolves the notebook's root (#100).
       const source = getActiveLocation().source
       await SaveFileBlocks(source, notebook, section, page, updatedBlocks)
+      lastSaveError = null
+      unsavedChanges = false
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
       console.error('TipTapEditor: SaveFileBlocks failed:', e)
+      lastSaveError = msg
+      pushNotification({
+        kind: 'error',
+        message: `Save failed: ${msg}`,
+        action: { label: 'Retry', run: () => doSave() }
+      })
     }
     onUpdate(updatedBlocks)
   }
@@ -395,6 +408,21 @@
   {#if editorStore}
     <EditorContent editor={$editorStore} />
   {/if}
+  {#if unsavedChanges || lastSaveError}
+    <div
+      class="unsaved-indicator {lastSaveError ? 'error' : ''}"
+      role={lastSaveError ? 'alert' : 'status'}
+      aria-live={lastSaveError ? 'assertive' : 'polite'}
+    >
+      {#if lastSaveError}
+        <span class="material-symbols-outlined text-[14px]" aria-hidden="true">error</span>
+        <span>Save failed — edits not persisted</span>
+      {:else}
+        <span class="material-symbols-outlined text-[14px]" aria-hidden="true">schedule</span>
+        <span>Unsaved changes</span>
+      {/if}
+    </div>
+  {/if}
   {#if showSlashMenu}
     <CommandPalette
       onSelect={handleSlashSelect}
@@ -434,6 +462,27 @@
 <style>
   .tiptap-editor-host {
     width: 100%;
+  }
+
+  .unsaved-indicator {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin: 0 0 0.5rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    border: 1px solid var(--border-muted, #3a3f4b);
+    background: color-mix(in srgb, var(--bg-surface, #1a1d24) 90%, transparent);
+    color: var(--text-muted, #8b95a3);
+    font-size: 11px;
+    backdrop-filter: blur(4px);
+  }
+  .unsaved-indicator.error {
+    border-color: color-mix(in srgb, var(--status-danger, #e5484d) 60%, transparent);
+    color: var(--status-danger, #e5484d);
   }
 
   /* The ProseMirror editable surface. Global styles (typography vars, guide
