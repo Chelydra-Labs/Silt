@@ -162,6 +162,7 @@ func (a *App) teardownVaultServices() {
 	}
 	a.coordinator = nil
 	a.vaultPath = ""
+	templates.ResetPluginRegistry()
 }
 
 // CloseVault tears down the active vault's services in the reverse order of

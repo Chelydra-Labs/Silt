@@ -391,7 +391,7 @@ func touchFile(t *testing.T, path string) {
 // --- Plugin template registry (#96) --------------------------------------
 
 func TestRegisterPluginTemplates_HappyPath(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	tpl := &Template{
 		SchemaVersion: "1.0.0",
 		ID:            "plugin-sprint",
@@ -417,21 +417,21 @@ func TestRegisterPluginTemplates_HappyPath(t *testing.T) {
 }
 
 func TestRegisterPluginTemplates_RejectsEmptyPluginID(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	if err := RegisterPluginTemplates("", []*Template{{ID: "x"}}); err == nil {
 		t.Fatal("expected error for empty plugin id")
 	}
 }
 
 func TestRegisterPluginTemplates_RejectsNilSlice(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	if err := RegisterPluginTemplates("p", nil); err == nil {
 		t.Fatal("expected error for nil slice")
 	}
 }
 
 func TestRegisterPluginTemplates_RejectsMismatchedSource(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	err := RegisterPluginTemplates("p", []*Template{{
 		SchemaVersion: "1.0.0", ID: "x", Title: "X", Category: "notes", Body: "b",
 		Source: SourceBuiltin,
@@ -442,7 +442,7 @@ func TestRegisterPluginTemplates_RejectsMismatchedSource(t *testing.T) {
 }
 
 func TestRegisterPluginTemplates_RejectsMismatchedPluginID(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	err := RegisterPluginTemplates("plugin-a", []*Template{{
 		SchemaVersion: "1.0.0", ID: "x", Title: "X", Category: "notes", Body: "b",
 		Source: SourcePlugin, PluginID: "plugin-b",
@@ -453,13 +453,13 @@ func TestRegisterPluginTemplates_RejectsMismatchedPluginID(t *testing.T) {
 }
 
 func TestUnregisterPluginTemplates_Idempotent(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	UnregisterPluginTemplates("never-registered")
 	UnregisterPluginTemplates("never-registered")
 }
 
 func TestGetPluginTemplate_ResolvesURI(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	_ = RegisterPluginTemplates("silt-kanban", []*Template{{
 		SchemaVersion: "1.0.0", ID: "sprint", Title: "Sprint",
 		Category: "projects", Body: "# {{title}}",
@@ -475,14 +475,14 @@ func TestGetPluginTemplate_ResolvesURI(t *testing.T) {
 }
 
 func TestGetPluginTemplate_NotFound(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	if _, err := GetPluginTemplate("plugin://missing/missing"); err == nil {
 		t.Fatal("expected error for unregistered plugin")
 	}
 }
 
 func TestGetPluginTemplate_InvalidURI(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	if _, err := GetPluginTemplate("not-a-uri"); err == nil {
 		t.Fatal("expected error for invalid URI")
 	}
@@ -495,7 +495,7 @@ func TestGetPluginTemplate_InvalidURI(t *testing.T) {
 }
 
 func TestListTemplates_IncludesPluginTemplates(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	dir := t.TempDir()
 	_ = RegisterPluginTemplates("silt-kanban", []*Template{{
 		SchemaVersion: "1.0.0", ID: "plugin-template", Title: "Plugin Tpl",
@@ -521,7 +521,7 @@ func TestListTemplates_IncludesPluginTemplates(t *testing.T) {
 }
 
 func TestGetTemplate_PluginURI(t *testing.T) {
-	ResetPluginRegistryForTests()
+	ResetPluginRegistry()
 	_ = RegisterPluginTemplates("silt-kanban", []*Template{{
 		SchemaVersion: "1.0.0", ID: "x", Title: "X",
 		Category: "notes", Body: "b",

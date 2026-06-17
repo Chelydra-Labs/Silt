@@ -165,9 +165,10 @@ func parsePluginTemplateURI(uri string) (pluginID, templateID string, err error)
 	return pluginID, templateID, nil
 }
 
-// ResetPluginRegistryForTests removes every registered plugin template.
-// Exported for vitest-style reset hooks; not used in app code.
-func ResetPluginRegistryForTests() {
+// ResetPluginRegistry removes every registered plugin template. Called by
+// App.teardownVaultServices on vault close/switch so stale plugin templates
+// from the previous vault don't leak into the next (#128).
+func ResetPluginRegistry() {
 	pluginRegistryMu.Lock()
 	pluginRegistry = map[string]map[string]*Template{}
 	pluginRegistryMu.Unlock()
