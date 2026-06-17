@@ -50,6 +50,18 @@ const MAX_NOTIFICATIONS = 5
 
 export function pushNotification(opts: PushOptions): number {
   const kind: NotificationKind = opts.kind ?? 'info'
+  const message = opts.message
+
+  // Dedup: if an active notification with the same kind + message exists,
+  // don't stack a duplicate. This prevents repeated save-failure toasts from
+  // piling up during continuous typing against a persistent error (#86).
+  const existing = notificationsState.items.find(
+    (n) => n.kind === kind && n.message === message
+  )
+  if (existing) {
+    return existing.id
+  }
+
   const id = nextId++
   const n: Notification = {
     id,

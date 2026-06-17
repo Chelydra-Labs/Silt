@@ -4,6 +4,7 @@ import SidebarSection from './SidebarSection.svelte'
 
 type NavSectionShape = {
   name: string
+  path?: string
   pages: { name: string; count: number }[]
   children?: NavSectionShape[]
 }
@@ -15,7 +16,7 @@ function makeProps(overrides: {
   expandedSections?: Set<string>
 } = {}) {
   return {
-    section: overrides.section ?? { name: 'Journal', pages: [{ name: 'Daily', count: 5 }] },
+    section: overrides.section ?? { name: 'Journal', path: 'Journal', pages: [{ name: 'Daily', count: 5 }] },
     depth: overrides.depth ?? 0,
     activeNotebook: 'Work',
     activeSection: overrides.activeSection ?? '',
@@ -75,14 +76,17 @@ describe('SidebarSection (#88 deep-nesting)', () => {
   it('renders nested children recursively (#88)', () => {
     const deepSection: NavSectionShape = {
       name: 'Projects',
+      path: 'Projects',
       pages: [],
       children: [
         {
           name: 'Active',
+          path: 'Projects/Active',
           pages: [{ name: 'SiteLaunch', count: 3 }],
           children: [
             {
               name: 'Sub',
+              path: 'Projects/Active/Sub',
               pages: [{ name: 'DeepPage', count: 1 }],
               children: []
             }
@@ -92,7 +96,7 @@ describe('SidebarSection (#88 deep-nesting)', () => {
     }
     const props = makeProps({
       section: deepSection,
-      expandedSections: new Set(['Projects', 'Active', 'Sub'])
+      expandedSections: new Set(['Projects', 'Projects/Active', 'Projects/Active/Sub'])
     })
     render(SidebarSection, { props })
     expect(screen.getByText('Projects')).toBeInTheDocument()
@@ -104,7 +108,7 @@ describe('SidebarSection (#88 deep-nesting)', () => {
   it('toggles expansion on click', async () => {
     const onToggle = vi.fn()
     const props = makeProps({
-      section: { name: 'Journal', pages: [{ name: 'Daily', count: 5 }] }
+      section: { name: 'Journal', path: 'Journal', pages: [{ name: 'Daily', count: 5 }] }
     })
     props.onToggleSection = onToggle
     render(SidebarSection, { props })
@@ -116,7 +120,7 @@ describe('SidebarSection (#88 deep-nesting)', () => {
   it('toggles expansion on Enter/Space key', async () => {
     const onToggle = vi.fn()
     const props = makeProps({
-      section: { name: 'Journal', pages: [] }
+      section: { name: 'Journal', path: 'Journal', pages: [] }
     })
     props.onToggleSection = onToggle
     render(SidebarSection, { props })
@@ -151,7 +155,7 @@ describe('SidebarSection (#88 deep-nesting)', () => {
   it('emits selectPage when a page is clicked', async () => {
     const onSelectPage = vi.fn()
     const props = makeProps({
-      section: { name: 'Journal', pages: [{ name: 'Daily', count: 5 }] },
+      section: { name: 'Journal', path: 'Journal', pages: [{ name: 'Daily', count: 5 }] },
       expandedSections: new Set(['Journal'])
     })
     props.onSelectPage = onSelectPage

@@ -16,6 +16,7 @@
   }
   interface NavSection {
     name: string
+    path?: string
     pages: NavPage[]
     children?: NavSection[]
   }
@@ -70,7 +71,8 @@
     onContextMenu
   }: Props = $props()
 
-  let isExpanded = $derived(expandedSections.has(section.name))
+  let sectionKey = $derived(section.path || section.name)
+  let isExpanded = $derived(expandedSections.has(sectionKey))
 
   function sortByName<T extends { name: string }>(items: T[], order: string[] | undefined): T[] {
     if (!order || order.length === 0) return items
@@ -84,7 +86,7 @@
   }
 
   let sortedPages = $derived(
-    sortByName(section.pages, navOrder.pages[`${activeNotebook}/${section.name}`] ?? [])
+    sortByName(section.pages, navOrder.pages[`${activeNotebook}/${sectionKey}`] ?? [])
   )
 
   function recursivePageCount(sec: NavSection): number {
@@ -112,19 +114,19 @@
     ondragleave={onDragLeave}
     ondrop={(e) => onDrop(e, 'section', section.name, activeNotebook)}
     ondragend={onDragEnd}
-    onclick={() => onToggleSection(section.name)}
+    onclick={() => onToggleSection(sectionKey)}
     onkeydown={(e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
-        onToggleSection(section.name)
+        onToggleSection(sectionKey)
       }
     }}
-    oncontextmenu={(e) => onContextMenu(e, 'section', activeNotebook, section.name)}
+    oncontextmenu={(e) => onContextMenu(e, 'section', activeNotebook, sectionKey)}
     role="treeitem"
     tabindex="0"
     aria-level={depth + 1}
     aria-expanded={isExpanded}
-    aria-selected={activeSection === section.name}
+    aria-selected={activeSection === sectionKey}
   >
     <span
       class="material-symbols-outlined text-text-muted text-[16px] transition-transform"
@@ -148,8 +150,8 @@
     <button
       onclick={(e) => {
         e.stopPropagation()
-        onSelectSection(section.name)
-        onCreatePageInline(section.name)
+        onSelectSection(sectionKey)
+        onCreatePageInline(sectionKey)
       }}
       title="New page in this section"
       class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
@@ -166,10 +168,10 @@
         </div>
       {:else}
         {#each sortedPages as pg (pg.name)}
-          {@const isActive = activeSection === section.name && activePage === pg.name}
+          {@const isActive = activeSection === sectionKey && activePage === pg.name}
           <button
-            onclick={() => onSelectPage(section.name, pg.name)}
-            oncontextmenu={(e) => onContextMenu(e, 'page', activeNotebook, section.name, pg.name)}
+            onclick={() => onSelectPage(sectionKey, pg.name)}
+            oncontextmenu={(e) => onContextMenu(e, 'page', activeNotebook, sectionKey, pg.name)}
             draggable="true"
             ondragstart={(e) => onDragStart(e, 'page', pg.name, section.name)}
             ondragover={(e) => onDragOver(e, 'page', pg.name)}

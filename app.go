@@ -1515,6 +1515,7 @@ func (a *App) walkSections(
 		// section shows up in the sidebar.
 		sections = append(sections, parser.NavigationSection{
 			Name:     sd,
+			Path:     childID,
 			Pages:    childPages,
 			Children: childSections,
 		})

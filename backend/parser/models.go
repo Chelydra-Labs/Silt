@@ -74,6 +74,7 @@ type NavigationPage struct {
 
 type NavigationSection struct {
 	Name     string              `json:"name"`
+	Path     string              `json:"path,omitempty"`
 	Pages    []NavigationPage    `json:"pages"`
 	Children []NavigationSection `json:"children,omitempty"`
 }
