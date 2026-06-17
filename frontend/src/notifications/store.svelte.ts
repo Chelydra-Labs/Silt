@@ -47,6 +47,8 @@ export interface PushOptions {
   autoDismissMs?: number
 }
 
+const MAX_NOTIFICATIONS = 5
+
 export function pushNotification(opts: PushOptions): number {
   const kind: NotificationKind = opts.kind ?? 'info'
   const id = nextId++
@@ -59,6 +61,10 @@ export function pushNotification(opts: PushOptions): number {
     createdAt: Date.now()
   }
   notificationsState.items.push(n)
+  while (notificationsState.items.length > MAX_NOTIFICATIONS) {
+    const oldest = notificationsState.items[0]
+    dismissNotification(oldest.id)
+  }
   if (n.autoDismissMs > 0) {
     const timer = setTimeout(() => dismissNotification(id), n.autoDismissMs)
     dismissTimers.set(id, timer)

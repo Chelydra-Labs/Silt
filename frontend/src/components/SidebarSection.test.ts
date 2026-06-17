@@ -22,10 +22,17 @@ function makeProps(overrides: {
     activePage: '',
     expandedSections: overrides.expandedSections ?? new Set<string>(),
     navOrder: { pages: {} as Record<string, string[]> },
+    dropTarget: null,
     onToggleSection: vi.fn(),
     onSelectPage: vi.fn(),
     onSelectSection: vi.fn(),
-    onCreatePageInline: vi.fn()
+    onCreatePageInline: vi.fn(),
+    onDragStart: vi.fn(),
+    onDragOver: vi.fn(),
+    onDragLeave: vi.fn(),
+    onDrop: vi.fn(),
+    onDragEnd: vi.fn(),
+    onContextMenu: vi.fn()
   }
 }
 

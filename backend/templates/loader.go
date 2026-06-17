@@ -58,6 +58,9 @@ func RegisterPluginTemplates(pluginID string, tpls []*Template) error {
 	if tpls == nil {
 		return fmt.Errorf("plugin template slice is nil")
 	}
+	if len(tpls) > 100 {
+		return fmt.Errorf("plugin %q registered %d templates, max is 100", pluginID, len(tpls))
+	}
 	store := make(map[string]*Template, len(tpls))
 	for i, t := range tpls {
 		if t == nil {
@@ -131,7 +134,8 @@ func GetPluginTemplate(uri string) (*Template, error) {
 			ErrTemplateNotFound, pluginID, tplID,
 		)
 	}
-	return t, nil
+	cp := *t
+	return &cp, nil
 }
 
 // parsePluginTemplateURI parses `plugin://<plugin-id>/<template-id>` into
@@ -154,6 +158,9 @@ func parsePluginTemplateURI(uri string) (pluginID, templateID string, err error)
 	}
 	if templateID == "" {
 		return "", "", fmt.Errorf("plugin template uri has empty template id: %q", uri)
+	}
+	if strings.Contains(templateID, "/") {
+		return "", "", fmt.Errorf("plugin template id must not contain '/': %q", uri)
 	}
 	return pluginID, templateID, nil
 }
@@ -349,9 +356,17 @@ func ListTemplates(templatesDir string) (*ListTemplatesResult, error) {
 	// Append plugin-provided templates (#96) AFTER on-disk + embedded so
 	// they don't shadow any user-defined or first-class template with the
 	// same id (the picker shows them under a "Plugins / <plugin-id>" group
-	// header derived from the PluginID field).
+	// header derived from the PluginID field). Dedup by id: a plugin
+	// template whose id already appeared in the on-disk or embedded set is
+	// skipped (on-disk > embedded > plugin).
 	pluginSummaries := ListPluginTemplates()
-	res.Templates = append(res.Templates, pluginSummaries...)
+	for _, ps := range pluginSummaries {
+		if seenIDs[ps.ID] {
+			continue
+		}
+		seenIDs[ps.ID] = true
+		res.Templates = append(res.Templates, ps)
+	}
 	return res, nil
 }
 

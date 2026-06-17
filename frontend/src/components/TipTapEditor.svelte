@@ -15,6 +15,7 @@
     UniqueBlockIds,
     SiltBlockKeymaps,
     TaskMetaSuggest,
+    EditorHostContext,
     applyMetaSuggestion,
     filterMetaKeys,
     blocksToDoc,
@@ -126,6 +127,12 @@
         horizontalRule: false,
         trailingNode: false
       }),
+      EditorHostContext.configure({
+        notebook: untrack(() => notebook),
+        section: untrack(() => section),
+        page: untrack(() => page),
+        file_date: untrack(() => (blocks.length > 0 ? (blocks[0].file_date ?? '') : ''))
+      }),
       ...SiltBlockExtensionsWithNodeViews,
       UniqueBlockIds,
       TaskMetaSuggest.configure({
@@ -212,10 +219,10 @@
     const updatedBlocks = measureFrameBudget('tiptap-transaction', () =>
       docToBlocks(editorInstance.getJSON())
     )
-    unsavedChanges = true
     try {
       await SaveFileBlocks(notebook, section, page, updatedBlocks)
       lastSaveError = null
+      unsavedChanges = false
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.error('TipTapEditor: SaveFileBlocks failed:', e)
@@ -226,7 +233,6 @@
         action: { label: 'Retry', run: () => doSave() }
       })
     }
-    unsavedChanges = false
     onUpdate(updatedBlocks)
   }
 

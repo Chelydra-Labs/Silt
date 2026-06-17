@@ -734,10 +734,17 @@
             {activePage}
             {expandedSections}
             {navOrder}
+            {dropTarget}
             onToggleSection={toggleSection}
             onSelectPage={handleSelectPage}
             onSelectSection={onSelectSection}
             onCreatePageInline={handleCreatePageInline}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            onContextMenu={openContextMenu}
           />
         {/each}
       {/if}
