@@ -184,10 +184,19 @@ func (dm *DatabaseManager) initSchema() error {
 	}
 
 	// Blocks Table
+	//
+	// `source` discriminates the notebook root a block belongs to: 'vault' for
+	// the classic in-vault notebook, or 'linked:<id>' for an external/linked
+	// notebook (#100). It disambiguates same-named notebooks across roots (two
+	// "Work" notebooks — one in the vault, one on a synced mount — must not
+	// collide on (notebook, section, page)). The index idx_blocks_src_file
+	// carries source as its leading column. Markdown is still the source of
+	// truth; this column is reproducible from the file tree + the link registry.
 	createBlocksTable := `
 	CREATE TABLE IF NOT EXISTS blocks (
 		id TEXT PRIMARY KEY,
 		parent_id TEXT,
+		source TEXT NOT NULL DEFAULT 'vault',
 		notebook TEXT NOT NULL,
 		section TEXT NOT NULL,
 		page TEXT NOT NULL,
@@ -201,6 +210,20 @@ func (dm *DatabaseManager) initSchema() error {
 	);`
 	if _, err := dm.db.Exec(createBlocksTable); err != nil {
 		return fmt.Errorf("failed to create blocks table: %w", err)
+	}
+
+	// Migration: add the `source` discriminator to pre-existing blocks tables
+	// (a vault created before #100). Idempotent via the try-ignore pattern used
+	// for the tasks columns above; existing rows inherit the 'vault' default.
+	for _, col := range []struct{ name, defn string }{
+		{"source", "TEXT NOT NULL DEFAULT 'vault'"},
+	} {
+		alter := fmt.Sprintf("ALTER TABLE blocks ADD COLUMN %s %s", col.name, col.defn)
+		if _, err := dm.db.Exec(alter); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("failed to migrate blocks table (add %s): %w", col.name, err)
+			}
+		}
 	}
 
 	// Tasks Metadata Table
@@ -278,7 +301,12 @@ func (dm *DatabaseManager) initSchema() error {
 
 	// Create covered indexes
 	indexes := []string{
-		"CREATE INDEX IF NOT EXISTS idx_blocks_file ON blocks(notebook, section, page, file_date);",
+		// #100: replace the pre-source idx_blocks_file (keyed on notebook..)
+		// with a source-aware index. DROP IF EXISTS is a one-time cleanup of a
+		// pre-migration vault; CREATE IF NOT EXISTS is a no-op afterwards, so
+		// this does not rebuild on every launch.
+		"DROP INDEX IF EXISTS idx_blocks_file;",
+		"CREATE INDEX IF NOT EXISTS idx_blocks_src_file ON blocks(source, notebook, section, page, file_date);",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_tags_lookup ON tags(level_0, level_1, level_2);",
 		// Functional indexes for case-insensitive search (SearchBlocks).
@@ -848,11 +876,11 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if len(parts) > 2 {
 					level2 = parts[2]
 				}
-			_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
-			if err != nil {
-				log.Printf("db.IndexScanResults: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
-				continue
-			}
+				_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
+				if err != nil {
+					log.Printf("db.IndexScanResults: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
+					continue
+				}
 			}
 		}
 
@@ -868,23 +896,28 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 
 // BlockLocation holds the file-level coordinates of a block, used by write
 // paths (UpdateBlockState, MutateBlock, PluginUpdateTaskMeta) to resolve the
-// on-disk file path from a block UUID.
+// on-disk file path from a block UUID. Source ('vault' | 'linked:<id>') tells
+// the path-resolution layer which root the file lives under (#100).
 type BlockLocation struct {
+	Source    string
 	Notebook  string
 	Section   string
 	Page      string
 	BlockType string
 }
 
-// GetBlockLocation looks up the (notebook, section, page, type) for a block
-// UUID. This is the typed API replacement for the raw SQLDB().QueryRow calls
-// that were scattered across app.go write paths.
+// GetBlockLocation looks up the (source, notebook, section, page, type) for a
+// block UUID. This is the typed API replacement for the raw SQLDB().QueryRow
+// calls that were scattered across app.go write paths.
 func (dm *DatabaseManager) GetBlockLocation(blockID string) (BlockLocation, error) {
 	var loc BlockLocation
 	err := dm.db.QueryRow(
-		"SELECT notebook, section, page, type FROM blocks WHERE id = ?",
+		"SELECT COALESCE(source, 'vault'), notebook, section, page, type FROM blocks WHERE id = ?",
 		blockID,
-	).Scan(&loc.Notebook, &loc.Section, &loc.Page, &loc.BlockType)
+	).Scan(&loc.Source, &loc.Notebook, &loc.Section, &loc.Page, &loc.BlockType)
+	if loc.Source == "" {
+		loc.Source = "vault"
+	}
 	return loc, err
 }
 
@@ -1409,4 +1442,3 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int) (p
 		HasMore: end < total,
 	}, nil
 }
-

@@ -151,6 +151,48 @@ func TestIndexFileBlocks_PinnedProjection(t *testing.T) {
 	}
 }
 
+// TestBlocksSource_DefaultsVault verifies the #100 `source` discriminator
+// column defaults to 'vault' for the classic in-vault indexing path (no
+// signature change required — the column default handles it) and that
+// GetBlockLocation surfaces the source for the path-resolution layer. A
+// linked-notebook source ('linked:<id>') is exercised in the #100 link phase.
+func TestBlocksSource_DefaultsVault(t *testing.T) {
+	dm := newTestDB(t)
+	id := "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	blocks := []parser.ParsedBlock{sampleTaskBlock(id, 1)}
+	if err := dm.IndexFileBlocks("Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	var source string
+	if err := dm.db.QueryRow("SELECT source FROM blocks WHERE id = ?", id).Scan(&source); err != nil {
+		t.Fatalf("select source: %v", err)
+	}
+	if source != "vault" {
+		t.Errorf("expected source='vault' for in-vault block, got %q", source)
+	}
+
+	loc, err := dm.GetBlockLocation(id)
+	if err != nil {
+		t.Fatalf("GetBlockLocation: %v", err)
+	}
+	if loc.Source != "vault" {
+		t.Errorf("BlockLocation.Source = %q, want 'vault'", loc.Source)
+	}
+
+	// The source-aware covering index exists (pre-source idx_blocks_file was
+	// dropped on migration).
+	var n int
+	if err := dm.db.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_blocks_src_file'",
+	).Scan(&n); err != nil {
+		t.Fatalf("check index: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected idx_blocks_src_file to exist, got count=%d", n)
+	}
+}
+
 func TestIndexFileBlocks_ReplacesExistingRows(t *testing.T) {
 	dm := newTestDB(t)
 
