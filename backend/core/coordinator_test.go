@@ -513,3 +513,40 @@ func TestLockBlocksWrite_NoDeadlockWithMidAcquireRelease(t *testing.T) {
 	}
 	close(stop)
 }
+
+// TestReleaseBlockMutex_ReleasedEntryNotLive locks in the invariant the
+// map-lookup staleness check relies on: once ReleaseBlockMutex evicts a block's
+// entry, the previous *blockMutexEntry pointer is no longer the value held in
+// blockMu. The old generation-based check read the gen BEFORE acquiring the
+// mutex, so a concurrently-released entry could hand a caller the already-bumped
+// gen and let it proceed on an orphaned entry (a TOCTOU mutual-exclusion bug);
+// the map-lookup check instead verifies identity after locking, so it MUST be
+// able to distinguish a released entry from the live one.
+func TestReleaseBlockMutex_ReleasedEntryNotLive(t *testing.T) {
+	ec := newTestCoordinator(t)
+	id := "block-stale"
+
+	ec.LockBlockWrite(id, func() {})
+	stale := ec.getBlockEntry(id)
+
+	// Evict the live entry (concurrent ReleaseBlockMutex), then prime a fresh
+	// one so the map value differs from `stale`.
+	ec.ReleaseBlockMutex(id)
+	ec.LockBlockWrite(id, func() {})
+
+	current, ok := ec.blockMu.Load(id)
+	if !ok {
+		t.Fatal("expected a live blockMu entry after re-locking")
+	}
+	if current == stale {
+		t.Fatal("released entry is still the live map value; map-lookup check could not detect staleness")
+	}
+	// A caller that locked the stale mutex must detect non-liveness via the
+	// post-lock map lookup and retry, never proceed on the orphaned entry.
+	stale.mu.Lock()
+	live, liveOK := ec.blockMu.Load(id)
+	stale.mu.Unlock()
+	if liveOK && live == stale {
+		t.Fatal("map-lookup staleness check failed to reject a released entry")
+	}
+}

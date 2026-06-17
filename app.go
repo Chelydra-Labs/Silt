@@ -1896,16 +1896,19 @@ func (a *App) LinkNotebook(folderPath string) (config.LinkedNotebook, error) {
 	}
 
 	// Persist the registry atomically under configMu (self-write suppressed so
-	// the watcher doesn't bounce it back as an external edit).
+	// the watcher doesn't bounce it back as an external edit). configMu is held
+	// across config.Save: cfg would otherwise share the LinkedNotebooks backing
+	// array with a.cfg, so a concurrent Link/Unlink mutating the slice during
+	// the YAML marshal would be a data race. Mirrors UpdatePluginSetting (#120).
 	a.configMu.Lock()
 	a.cfg.LinkedNotebooks = append(a.cfg.LinkedNotebooks, ln)
-	cfg := a.cfg
-	a.configMu.Unlock()
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
 	}
-	if err := config.Save(a.vaultPath, cfg); err != nil {
-		return config.LinkedNotebook{}, fmt.Errorf("failed to persist link registry: %w", err)
+	saveErr := config.Save(a.vaultPath, a.cfg)
+	a.configMu.Unlock()
+	if saveErr != nil {
+		return config.LinkedNotebook{}, fmt.Errorf("failed to persist link registry: %w", saveErr)
 	}
 
 	// Watch the root so external edits re-index, then index the tree. Errors
@@ -1927,9 +1930,13 @@ func (a *App) UnlinkNotebook(id string) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
+	// Mutate the registry AND persist under configMu so a concurrent
+	// Link/Unlink or config.Save can't race the LinkedNotebooks slice. A fresh
+	// `kept` slice is allocated (not a.cfg.LinkedNotebooks[:0]) so we never
+	// overwrite the backing array a concurrent reader may be marshalling.
 	a.configMu.Lock()
 	removed := false
-	kept := a.cfg.LinkedNotebooks[:0]
+	var kept []config.LinkedNotebook
 	var rootPath string
 	for _, ln := range a.cfg.LinkedNotebooks {
 		if ln.ID == id {
@@ -1939,9 +1946,18 @@ func (a *App) UnlinkNotebook(id string) error {
 		}
 		kept = append(kept, ln)
 	}
-	a.cfg.LinkedNotebooks = kept
-	cfg := a.cfg
+	var saveErr error
+	if removed {
+		a.cfg.LinkedNotebooks = kept
+		if a.configWatcher != nil {
+			a.configWatcher.RegisterSelfWrite()
+		}
+		saveErr = config.Save(a.vaultPath, a.cfg)
+	}
 	a.configMu.Unlock()
+	if saveErr != nil {
+		return fmt.Errorf("failed to persist link registry: %w", saveErr)
+	}
 	if !removed {
 		return nil // idempotent: unknown id is a no-op
 	}
@@ -1955,11 +1971,7 @@ func (a *App) UnlinkNotebook(id string) error {
 	a.coordinator.WithDBWrite(func() {
 		_ = a.db.ClearSourceBlocks("linked:" + id)
 	})
-
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, cfg)
+	return nil
 }
 
 // PickLinkedNotebook opens the native folder picker and links the chosen

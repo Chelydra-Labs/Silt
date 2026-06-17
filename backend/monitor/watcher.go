@@ -385,7 +385,15 @@ func (dw *DirectoryWatcher) governingRoot(path string) (string, watchRoot, bool)
 	found := false
 	sep := string(os.PathSeparator)
 	for _, r := range dw.roots {
-		if cleaned == r || strings.HasPrefix(cleaned, r+sep) {
+		// Only append a separator when r doesn't already end with one: a drive
+		// root (e.g. "C:\" on Windows, "/" on Unix) is separator-terminated
+		// after filepath.Clean, so blindly appending yields "C:\\" / "//" and
+		// fails to match descendants like "C:\file.md".
+		prefix := r
+		if !strings.HasSuffix(prefix, sep) {
+			prefix += sep
+		}
+		if cleaned == r || strings.HasPrefix(cleaned, prefix) {
 			if !found || len(r) > len(best) {
 				best = r
 				bestInfo = dw.rootInfo[r]

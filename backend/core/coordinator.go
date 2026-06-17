@@ -18,12 +18,15 @@ type fileMutexEntry struct {
 	gen int64 // bumped on release so waiters detect staleness
 }
 
-// blockMutexEntry is the per-block analog of fileMutexEntry (#122). The
-// generation counter lets ReleaseBlockMutex evict a deleted block's entry
-// without invalidating an in-flight MutateBlock/SaveFileBlocks holder.
+// blockMutexEntry is the per-block analog of fileMutexEntry (#122). Unlike the
+// file entry, staleness is detected by re-checking the live blockMu map after
+// locking (see LockBlockWrite) rather than with a generation counter: the
+// generation approach has a TOCTOU window because the gen is read BEFORE the
+// mutex is acquired, so a concurrently-released entry can hand a caller the
+// already-bumped gen and let it proceed on an orphaned entry. The map-lookup
+// check closes that window without per-entry state.
 type blockMutexEntry struct {
-	mu  *sync.Mutex
-	gen int64 // bumped on release so waiters detect staleness
+	mu *sync.Mutex
 }
 
 type ExecutionCoordinator struct {
@@ -97,12 +100,13 @@ func (ec *ExecutionCoordinator) ReleaseFileMutex(path string) {
 	ec.ioMu.Delete(path)
 }
 
-// getBlockEntry returns the current blockMutexEntry for blockID (creating it on
-// first use) and the generation to check against after locking.
-func (ec *ExecutionCoordinator) getBlockEntry(blockID string) (*blockMutexEntry, int64) {
+// getBlockEntry returns the current blockMutexEntry for blockID, creating it on
+// first use. Callers MUST re-check that this entry is still the live blockMu
+// entry AFTER acquiring entry.mu (see LockBlockWrite): a concurrent
+// ReleaseBlockMutex can delete (and force a future LoadOrStore to replace) it.
+func (ec *ExecutionCoordinator) getBlockEntry(blockID string) *blockMutexEntry {
 	iface, _ := ec.blockMu.LoadOrStore(blockID, &blockMutexEntry{mu: &sync.Mutex{}})
-	e := iface.(*blockMutexEntry)
-	return e, atomic.LoadInt64(&e.gen)
+	return iface.(*blockMutexEntry)
 }
 
 // LockBlockWrite runs task while holding the per-block write-intent lock for
@@ -110,28 +114,32 @@ func (ec *ExecutionCoordinator) getBlockEntry(blockID string) (*blockMutexEntry,
 // SaveFileBlocks (full-page) so the last writer never silently clobbers the
 // other when both target the same block. The block lock is acquired OUTSIDE
 // the per-file lock so they compose without deadlock. It tolerates concurrent
-// ReleaseBlockMutex via the same generation-check retry as LockFileWrite.
+// ReleaseBlockMutex: after acquiring entry.mu it re-checks that entry is still
+// the live blockMu value; if ReleaseBlockMutex deleted (and a later caller
+// replaced) it while we waited, we drop the orphaned lock and retry against the
+// fresh entry. A caller that already passed the check owns the mutex until it
+// unlocks — release never invalidates an in-flight holder.
 func (ec *ExecutionCoordinator) LockBlockWrite(blockID string, task func()) {
-	entry, gen := ec.getBlockEntry(blockID)
 	for {
+		entry := ec.getBlockEntry(blockID)
 		entry.mu.Lock()
-		if atomic.LoadInt64(&entry.gen) == gen {
+		if current, ok := ec.blockMu.Load(blockID); ok && current == entry {
 			defer entry.mu.Unlock()
 			task()
 			return
 		}
 		entry.mu.Unlock()
-		entry, gen = ec.getBlockEntry(blockID)
 	}
 }
 
 // LockBlocksWrite acquires per-block locks for ALL given blockIDs (sorted +
 // deduped to prevent deadlock) before running task. Used by SaveFileBlocks so
 // a concurrent MutateBlock for any block in the page waits until the full-page
-// save completes. Tolerates concurrent ReleaseBlockMutex: if any entry is
-// released (generation bumped + deleted) while a caller is waiting, the caller
-// releases everything acquired so far and retries against fresh entries. No
-// in-flight holder is ever invalidated.
+// save completes. Tolerates concurrent ReleaseBlockMutex: after acquiring each
+// entry.mu it re-checks that the entry is still the live blockMu value; if any
+// entry was released (and replaced) while we waited, we release everything
+// acquired so far and retry against fresh entries. No in-flight holder is ever
+// invalidated.
 func (ec *ExecutionCoordinator) LockBlocksWrite(blockIDs []string, task func()) {
 	sorted := make([]string, 0, len(blockIDs))
 	seen := make(map[string]bool, len(blockIDs))
@@ -148,9 +156,9 @@ func (ec *ExecutionCoordinator) LockBlocksWrite(blockIDs []string, task func()) 
 		acquired := make([]*blockMutexEntry, 0, len(sorted))
 		stale := false
 		for _, id := range sorted {
-			entry, gen := ec.getBlockEntry(id)
+			entry := ec.getBlockEntry(id)
 			entry.mu.Lock()
-			if atomic.LoadInt64(&entry.gen) != gen {
+			if current, ok := ec.blockMu.Load(id); !ok || current != entry {
 				// This entry was released while we waited. Drop it and the
 				// partial set, then retry the whole acquisition.
 				entry.mu.Unlock()
@@ -165,8 +173,8 @@ func (ec *ExecutionCoordinator) LockBlocksWrite(blockIDs []string, task func()) 
 			}
 			continue
 		}
-		// All current-generation locks held. Run the critical section and
-		// release in reverse acquisition order (incl. on panic).
+		// All live-entry locks held. Run the critical section and release in
+		// reverse acquisition order (incl. on panic).
 		func() {
 			defer unlockBlockEntries(acquired)
 			task()
@@ -183,17 +191,12 @@ func unlockBlockEntries(entries []*blockMutexEntry) {
 
 // ReleaseBlockMutex evicts the per-block mutex for blockID, bounding blockMu
 // growth (#122). Safe to call concurrently with LockBlockWrite/LockBlocksWrite:
-// it bumps the entry's generation (so any waiter holding a pointer to this
-// entry retries against the fresh one) and then deletes the map entry. A caller
-// that already holds the lock keeps it until its own Unlock — this never
-// invalidates a holder. Idempotent: a no-op if there is no entry for blockID.
+// it simply deletes the map entry, so any waiter that later re-checks the map
+// (after acquiring the orphaned mutex) sees the entry is gone or replaced and
+// retries against the fresh one. A caller that already holds the lock keeps it
+// until its own Unlock — this never invalidates a holder. Idempotent: a no-op
+// if there is no entry for blockID.
 func (ec *ExecutionCoordinator) ReleaseBlockMutex(blockID string) {
-	iface, ok := ec.blockMu.Load(blockID)
-	if !ok {
-		return
-	}
-	entry := iface.(*blockMutexEntry)
-	atomic.AddInt64(&entry.gen, 1)
 	ec.blockMu.Delete(blockID)
 }
 
