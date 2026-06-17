@@ -2,6 +2,7 @@
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
   import type { PluginContext, PluginManifest, TaskStatus } from '../../sdk'
+  import { plusDaysISO } from '../../sdk'
   import { settings, saveConfig } from '../../../settings/store.svelte'
   import { measureFrameBudget } from '../../../lib/perf/frame-budget'
   import FilterBar, { type KanbanFilters } from './FilterBar.svelte'
@@ -185,18 +186,25 @@
       where.push(`t.priority IN (${f.priorities.map(() => '?').join(', ')})`)
       params.push(...f.priorities)
     }
-    // Due-date filter clauses. NOTE: date('now') is UTC, not local time.
-    // Users near timezone boundaries may see off-by-one results for the
-    // "today" / "overdue" / "this week" quick-picks near midnight UTC.
-    // Tracked as #118 — fix requires threading the local timezone into
-    // the plugin SQL layer.
+    // Due-date quick-pick clauses. Compare against the LOCAL day (ctx.today)
+    // via bound params, NOT SQLite's date('now') which is UTC and produced
+    // off-by-one results near local midnight (#118). due_date is stored as
+    // YYYY-MM-DD text, so lexicographic comparison against the param matches
+    // the old date('now') semantics exactly — only the date source changed.
     if (f.dueDate) {
-      if (f.dueDate === 'overdue') where.push("t.due_date < date('now')")
-      else if (f.dueDate === 'today') where.push("t.due_date = date('now')")
-      else if (f.dueDate === 'week')
-        where.push("t.due_date BETWEEN date('now') AND date('now', '+7 days')")
-      else if (f.dueDate === 'none')
+      const today = ctx.today
+      if (f.dueDate === 'overdue') {
+        where.push('t.due_date < ?')
+        params.push(today)
+      } else if (f.dueDate === 'today') {
+        where.push('t.due_date = ?')
+        params.push(today)
+      } else if (f.dueDate === 'week') {
+        where.push('t.due_date BETWEEN ? AND ?')
+        params.push(today, plusDaysISO(today, 7))
+      } else if (f.dueDate === 'none') {
         where.push("(t.due_date IS NULL OR t.due_date = '')")
+      }
     }
     if (f.tags.length) {
       where.push(

@@ -88,6 +88,8 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     activeNotebook: 'Work',
     activeSection: 'Journal',
     activePage: 'Daily',
+    // Fixed local-day anchor so date-filter assertions are deterministic.
+    today: '2026-06-16',
     sqliteQuery: mocks.sqliteQuery,
     updateBlockState: mocks.updateBlockState,
     mutateBlock: vi.fn(),
@@ -539,6 +541,53 @@ describe('Kanban plugin (#19)', () => {
     expect(sql).toContain('t.priority IN (?')
     const params = mocks.sqliteQuery.mock.calls.at(-1)![1] as unknown[]
     expect(params).toContain(1)
+  })
+
+  it('due-date "today" filter binds the LOCAL day, not UTC date("now") (#118)', async () => {
+    // makeCtx pins today = '2026-06-16'. The fix replaced date('now') with a
+    // bound param drawn from ctx.today so comparisons match the local day.
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    mocks.sqliteQuery.mockClear()
+
+    const dueChip = screen.getByRole('button', { name: /Due date/ })
+    await fireEvent.click(dueChip)
+    await flush()
+
+    const todayBtn = screen.getByRole('button', { name: 'Today' })
+    await fireEvent.click(todayBtn)
+    await flush()
+
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    const sql = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
+    expect(sql).not.toContain("date('now')")
+    expect(sql).toContain('t.due_date = ?')
+    const params = mocks.sqliteQuery.mock.calls.at(-1)![1] as unknown[]
+    expect(params).toContain('2026-06-16')
+  })
+
+  it('due-date "this week" filter uses a BETWEEN with local today + 7 (#118)', async () => {
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    mocks.sqliteQuery.mockClear()
+
+    const dueChip = screen.getByRole('button', { name: /Due date/ })
+    await fireEvent.click(dueChip)
+    await flush()
+
+    const weekBtn = screen.getByRole('button', { name: 'This Week' })
+    await fireEvent.click(weekBtn)
+    await flush()
+
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    const sql = mocks.sqliteQuery.mock.calls.at(-1)![0] as string
+    expect(sql).not.toContain("date('now')")
+    expect(sql).toContain('t.due_date BETWEEN ? AND ?')
+    const params = mocks.sqliteQuery.mock.calls.at(-1)![1] as unknown[]
+    expect(params).toContain('2026-06-16')
+    expect(params).toContain('2026-06-23')
   })
 
   it('clicking "+ Add column" prompts for a name and persists via saveConfig', async () => {

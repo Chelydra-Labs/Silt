@@ -1,4 +1,5 @@
 import type { PluginContext, SqliteQueryResult, TaskStatus } from './sdk'
+import { localToday } from './sdk'
 import {
   PluginRawQuery,
   PluginMutateBlock,
@@ -31,6 +32,13 @@ export function makePluginContext(): PluginContext {
     },
     get activePage() {
       return loc.page
+    },
+    // Local-day anchor (#118): the webview's local timezone is the OS
+    // timezone, identical to the Go backend's time.Local, so this is
+    // resolved in-process (no IPC). Plugins compare against it instead of
+    // SQLite's UTC date('now') to avoid off-by-one near local midnight.
+    get today() {
+      return localToday()
     },
     // The Go side returns PluginRawQueryResult{Rows, Truncated}. Surface the
     // structured shape (not just Rows) so plugins can warn on truncation;
