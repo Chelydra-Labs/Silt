@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"silt/backend/config"
@@ -1532,4 +1533,139 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 			t.Errorf("missing block should error, got ok=%v err=%v", ok, err)
 		}
 	})
+}
+
+// TestUpdatePluginSetting_PreservesOtherFields confirms the atomic per-plugin
+// setter (#120) writes ONLY the targeted plugins.plugin_settings[id][key] and
+// leaves every other config field intact — the property the read-mutate-
+// saveConfig dance could violate when an external edit landed mid-call.
+func TestUpdatePluginSetting_PreservesOtherFields(t *testing.T) {
+	app := newTestApp(t)
+
+	// Seed an in-memory + on-disk config with unrelated fields that must
+	// survive a targeted plugin-setting update.
+	app.configMu.Lock()
+	cfg := app.cfg
+	cfg.Editor.FontFamily = "MyFont"
+	cfg.Plugins.PluginSettings = map[string]any{
+		"silt-agenda": map[string]any{"interval": 30},
+		"silt-kanban": map[string]any{"columns": []string{"Old"}},
+	}
+	app.cfg = cfg
+	app.configMu.Unlock()
+	if err := config.Save(app.vaultPath, cfg); err != nil {
+		t.Fatalf("seed config.Save: %v", err)
+	}
+
+	if err := app.UpdatePluginSetting("silt-kanban", "columns", []string{"TODO", "DOING"}); err != nil {
+		t.Fatalf("UpdatePluginSetting: %v", err)
+	}
+
+	// In-memory: targeted key updated to the new value. The value retains its
+	// concrete Go type here ([]string); it only generalises to []any after a
+	// YAML round-trip (checked below on the reload).
+	app.configMu.RLock()
+	kanban, _ := app.cfg.Plugins.PluginSettings["silt-kanban"].(map[string]any)
+	app.configMu.RUnlock()
+	if kanban == nil {
+		t.Fatal("in-memory silt-kanban settings missing")
+	}
+	colsStr, _ := kanban["columns"].([]string)
+	if len(colsStr) != 2 || colsStr[0] != "TODO" || colsStr[1] != "DOING" {
+		t.Errorf("in-memory columns = %v, want [TODO DOING]", kanban["columns"])
+	}
+
+	// On-disk reload: unrelated fields preserved verbatim.
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload config.Load: %v", err)
+	}
+	if loaded.Editor.FontFamily != "MyFont" {
+		t.Errorf("Editor.FontFamily not preserved: got %q", loaded.Editor.FontFamily)
+	}
+	agenda, _ := loaded.Plugins.PluginSettings["silt-agenda"].(map[string]any)
+	if fmt.Sprint(agenda["interval"]) != "30" {
+		t.Errorf("silt-agenda.interval not preserved: got %v", agenda["interval"])
+	}
+	kanban2, _ := loaded.Plugins.PluginSettings["silt-kanban"].(map[string]any)
+	cols2, _ := kanban2["columns"].([]any)
+	if len(cols2) != 2 || fmt.Sprint(cols2[0]) != "TODO" {
+		t.Errorf("on-disk columns = %v, want [TODO DOING]", kanban2["columns"])
+	}
+}
+
+// TestUpdatePluginSetting_ConcurrentWithExternalReload runs targeted updates
+// concurrently with a watcher-style wholesale config replacement (applyConfig),
+// confirming the configMu serialization keeps both paths race-clean and the
+// on-disk config never corrupts (#120). Run under -race.
+func TestUpdatePluginSetting_ConcurrentWithExternalReload(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.UpdatePluginSetting("silt-kanban", "columns", []string{"TODO"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	snapshot := func() config.SystemConfig {
+		app.configMu.RLock()
+		defer app.configMu.RUnlock()
+		return app.cfg
+	}
+
+	stop := make(chan struct{})
+	var extWg sync.WaitGroup
+	extWg.Add(1)
+	go func() {
+		defer extWg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				// Watcher-driven external reload: config replaced wholesale
+				// under configMu (applyConfig locks). a.ctx is nil in tests,
+				// so no event emission / nil-ctx panic.
+				app.applyConfig(snapshot())
+			}
+		}
+	}()
+
+	const n = 60
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			key := "filters"
+			if i%2 == 0 {
+				key = "columns"
+			}
+			if err := app.UpdatePluginSetting("silt-kanban", key, map[string]any{"i": i}); err != nil {
+				t.Errorf("UpdatePluginSetting: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(stop)
+	extWg.Wait()
+
+	// After the storm the on-disk config must still parse (no corruption) and
+	// the targeted plugin's settings map must be intact.
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("final config.Load: %v", err)
+	}
+	if _, ok := loaded.Plugins.PluginSettings["silt-kanban"].(map[string]any); !ok {
+		t.Errorf("silt-kanban settings lost after concurrent updates: %#v", loaded.Plugins.PluginSettings)
+	}
+}
+
+// TestUpdatePluginSetting_RequiresIDs rejects empty pluginID / key (fail-loud
+// guard against a no-op targeted write that silently writes nothing).
+func TestUpdatePluginSetting_RequiresIDs(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.UpdatePluginSetting("", "columns", []string{"TODO"}); err == nil {
+		t.Error("expected error for empty pluginID, got nil")
+	}
+	if err := app.UpdatePluginSetting("silt-kanban", "", []string{"TODO"}); err == nil {
+		t.Error("expected error for empty key, got nil")
+	}
 }

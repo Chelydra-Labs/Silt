@@ -4,7 +4,7 @@
   import { untrack } from 'svelte'
   import type { PluginContext, PluginManifest, TaskStatus } from '../../sdk'
   import { plusDaysISO } from '../../sdk'
-  import { settings, saveConfig } from '../../../settings/store.svelte'
+  import { settings, updatePluginSetting } from '../../../settings/store.svelte'
   import { measureFrameBudget } from '../../../lib/perf/frame-budget'
   import FilterBar, { type KanbanFilters } from './FilterBar.svelte'
   import CardDetailPanel, { type KanbanCard } from './CardDetailPanel.svelte'
@@ -105,7 +105,7 @@
   // Columns come from config.yaml (plugins.plugin_settings.silt-kanban.columns),
   // falling back to the canonical TODO/DOING/DONE triple. Now mutable: the
   // user can add / rename / remove / reorder lanes, and changes persist back
-  // to config via saveConfig. Custom (non-status) lanes render as empty —
+  // to config via updatePluginSetting (atomic). Custom (non-status) lanes render as empty —
   // cards are bucketed by status, so only TODO/DOING/DONE lanes fill.
   function initialColumns(): string[] {
     const cfgCols = settings.config?.plugins?.plugin_settings?.['silt-kanban']
@@ -316,7 +316,7 @@
 
   // --- Filter persistence (debounced) ---
   // Apply immediately to the board, but defer the config write so rapid
-  // checkbox toggles don't hammer saveConfig. 500ms of quiet commits.
+  // checkbox toggles don't hammer the plugin-setting write. 500ms of quiet commits.
   let saveFiltersTimer: ReturnType<typeof setTimeout> | null = null
   function handleFiltersChange(f: KanbanFilters) {
     filters = f
@@ -326,20 +326,12 @@
     }, 500)
   }
   async function persistFilters(f: KanbanFilters) {
-    const cfg = settings.config
-    if (!cfg) return
-    if (!cfg.plugins) {
-      cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
-    }
-    const ps = cfg.plugins.plugin_settings ?? {}
-    ps['silt-kanban'] = { ...(ps['silt-kanban'] ?? {}), filters: f }
-    cfg.plugins.plugin_settings = ps
+    if (!settings.config) return
     configError = ''
-    try {
-      await saveConfig(cfg)
-    } catch (e) {
-      configError = e instanceof Error ? e.message : String(e)
-    }
+    // Atomic Go-side read-modify-write of just this plugin's setting: cannot
+    // clobber a concurrent external config.yaml edit (#120).
+    const ok = await updatePluginSetting('silt-kanban', 'filters', f)
+    if (!ok) configError = settings.error || 'Failed to save filters'
   }
 
   // --- Column management ---
@@ -385,20 +377,11 @@
     await persistColumns()
   }
   async function persistColumns() {
-    const cfg = settings.config
-    if (!cfg) return
-    if (!cfg.plugins) {
-      cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
-    }
-    const ps = cfg.plugins.plugin_settings ?? {}
-    ps['silt-kanban'] = { ...(ps['silt-kanban'] ?? {}), columns: [...columns] }
-    cfg.plugins.plugin_settings = ps
+    if (!settings.config) return
     configError = ''
-    try {
-      await saveConfig(cfg)
-    } catch (e) {
-      configError = e instanceof Error ? e.message : String(e)
-    }
+    // Atomic Go-side read-modify-write of just this plugin's setting (#120).
+    const ok = await updatePluginSetting('silt-kanban', 'columns', [...columns])
+    if (!ok) configError = settings.error || 'Failed to save columns'
   }
 
   // Column drag-reorder: a dedicated handle on each header sets the source

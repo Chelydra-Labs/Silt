@@ -3037,6 +3037,45 @@ func (a *App) applyConfigLocked(cfg config.SystemConfig) {
 	}
 }
 
+// UpdatePluginSetting atomically updates a single per-plugin setting key and
+// persists it — the targeted read-modify-write that replaces the frontend
+// read-mutate-saveConfig dance which could race an external config.yaml edit
+// (e.g. VS Code) landing between the read and the Go-side atomic write (#120).
+// Only plugins.plugin_settings[pluginID][key] is touched; every other config
+// field is preserved verbatim, so a concurrent external edit to an unrelated
+// section is not clobbered.
+//
+// Atomicity: configMu is held across the in-memory mutation AND the disk save,
+// so concurrent internal callers (and the watcher's applyConfig) cannot
+// interleave a snapshot-and-save and lose an update. The external-edit race is
+// handled by RegisterSelfWrite (suppresses the watcher's reaction to our own
+// write) + this lock. Like SaveSystemConfig it does NOT emit config:changed
+// (the frontend store updates optimistically; external edits still flow through
+// the watcher -> applyConfig with emit).
+func (a *App) UpdatePluginSetting(pluginID string, key string, value any) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	if pluginID == "" || key == "" {
+		return fmt.Errorf("pluginID and key are required")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.cfg.Plugins.PluginSettings == nil {
+		a.cfg.Plugins.PluginSettings = map[string]any{}
+	}
+	entry, _ := a.cfg.Plugins.PluginSettings[pluginID].(map[string]any)
+	if entry == nil {
+		entry = map[string]any{}
+	}
+	entry[key] = value
+	a.cfg.Plugins.PluginSettings[pluginID] = entry
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	return config.Save(a.vaultPath, a.cfg)
+}
+
 // ListPlugins enumerates plugin folders under .system/plugins/, surfacing
 // manifest name/version and the disabled sentinel for the manager UI.
 func (a *App) ListPlugins() ([]parser.PluginInfo, error) {

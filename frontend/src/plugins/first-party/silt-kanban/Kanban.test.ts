@@ -67,17 +67,20 @@ const mocks = vi.hoisted(() => ({
           }
         }
       }
-    }
+    },
+    error: ''
   },
   sqliteQuery: vi.fn(),
   updateBlockState: vi.fn(),
   updateTaskMeta: vi.fn(),
-  saveConfig: vi.fn().mockResolvedValue(true)
+  saveConfig: vi.fn().mockResolvedValue(true),
+  updatePluginSetting: vi.fn().mockResolvedValue(true)
 }))
 
 vi.mock('../../../settings/store.svelte', () => ({
   settings: mocks.settings,
-  saveConfig: mocks.saveConfig
+  saveConfig: mocks.saveConfig,
+  updatePluginSetting: mocks.updatePluginSetting
 }))
 
 import Kanban from './Kanban.svelte'
@@ -591,12 +594,12 @@ describe('Kanban plugin (#19)', () => {
     expect(params).toContain('2026-06-23')
   })
 
-  it('clicking "+ Add column" prompts for a name and persists via saveConfig', async () => {
+  it('clicking "+ Add column" prompts for a name and persists via updatePluginSetting (#120)', async () => {
     const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('Backlog')
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    mocks.saveConfig.mockClear()
+    mocks.updatePluginSetting.mockClear()
 
     const addBtn = screen.getByRole('button', { name: /add column/i })
     await fireEvent.click(addBtn)
@@ -605,8 +608,15 @@ describe('Kanban plugin (#19)', () => {
     expect(promptSpy).toHaveBeenCalled()
     // The new column renders as a lane group.
     expect(screen.getByRole('group', { name: 'Backlog' })).toBeInTheDocument()
-    // The column list was persisted to config.
-    expect(mocks.saveConfig).toHaveBeenCalledTimes(1)
+    // #120: the column list is persisted via the atomic per-plugin setter,
+    // NOT the read-mutate-saveConfig dance that could clobber an external edit.
+    expect(mocks.updatePluginSetting).toHaveBeenCalledTimes(1)
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'silt-kanban',
+      'columns',
+      expect.arrayContaining(['Backlog'])
+    )
+    expect(mocks.saveConfig).not.toHaveBeenCalled()
     promptSpy.mockRestore()
   })
 
@@ -615,7 +625,7 @@ describe('Kanban plugin (#19)', () => {
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    mocks.saveConfig.mockClear()
+    mocks.updatePluginSetting.mockClear()
 
     // Three columns exist initially (TODO / DOING / DONE). Open the
     // actions menu on the first lane (To Do) and remove it.
@@ -637,7 +647,7 @@ describe('Kanban plugin (#19)', () => {
     expect(
       screen.getByRole('group', { name: 'In Progress' })
     ).toBeInTheDocument()
-    expect(mocks.saveConfig).toHaveBeenCalledTimes(1)
+    expect(mocks.updatePluginSetting).toHaveBeenCalledTimes(1)
     confirmSpy.mockRestore()
   })
 
