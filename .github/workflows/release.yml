@@ -128,27 +128,47 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev build-essential pkg-config
 
-      - name: Install NSIS (with retry + verification)
+      - name: Install NSIS (with retry + PATH sync)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Chocolatey updates the Machine/User PATH (registry) but NOT the
+          # running process, so Get-Command makensis would silently miss a
+          # successful install. Sync $env:PATH from the registry before probing.
+          function Sync-Path {
+            $env:PATH = `
+              [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + `
+              [System.Environment]::GetEnvironmentVariable('PATH', 'User')
+          }
+          Sync-Path
+
           if (Get-Command makensis -ErrorAction SilentlyContinue) {
-            Write-Host "makensis already installed"
-            return
-          }
-          $maxRetries = 3
-          for ($i = 1; $i -le $maxRetries; $i++) {
-            Write-Host "Installing NSIS via Chocolatey (attempt $i of $maxRetries)..."
-            choco install nsis -y --no-progress
-            if ($LASTEXITCODE -eq 0 -and (Get-Command makensis -ErrorAction SilentlyContinue)) {
-              Write-Host "NSIS installed successfully."
-              return
+            Write-Host "makensis already on PATH."
+          } else {
+            $maxRetries = 3
+            for ($i = 1; $i -le $maxRetries; $i++) {
+              Write-Host "Installing NSIS via Chocolatey (attempt $i of $maxRetries)..."
+              & choco install nsis -y --no-progress
+              $code = $LASTEXITCODE
+              Sync-Path
+              if ($code -eq 0 -and (Get-Command makensis -ErrorAction SilentlyContinue)) {
+                Write-Host "NSIS installed successfully."
+                break
+              }
+              Write-Host "Attempt $i failed (choco exit: $code). Retrying in 15s..."
+              Start-Sleep -Seconds 15
+              if ($i -eq $maxRetries) {
+                Write-Error "Failed to install NSIS after $maxRetries attempts (Chocolatey API may be down)."
+                exit 1
+              }
             }
-            Write-Host "Attempt $i failed (choco exit: $LASTEXITCODE). Retrying in 15s..."
-            Start-Sleep -Seconds 15
           }
-          Write-Error "Failed to install NSIS after $maxRetries attempts (Chocolatey API may be down)."
-          exit 1
+
+          # The build runs under bash in a later step; export makensis's dir
+          # via GITHUB_PATH so it is on PATH there too.
+          $nsisBin = Split-Path (Get-Command makensis).Source -Parent
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisBin
+          Write-Host "Added $nsisBin to GITHUB_PATH."
 
       - name: Build distribution (--no-bump, version pinned by tag)
         shell: bash
