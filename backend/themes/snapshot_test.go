@@ -158,10 +158,16 @@ var expectedFlattenKeys = []string{
 
 // TestFirstClassThemes_FlattenShape pins the structural contract for every
 // non-default first-class theme: both modes flatten to exactly the canonical
-// key set (no missing/extra tokens), the typography block is present, and the
-// specifically WCAG-tuned tokens hold their known-good values. The default has
-// a full value-level golden snapshot above; the new themes get shape + tuned-
-// token guards (the contrast harness covers WCAG drift on the rest).
+// color-token key set (no missing/extra color tokens), the typography block is
+// present, and the specifically WCAG-tuned tokens hold their known-good
+// values. The default has a full value-level golden snapshot above; the new
+// themes get shape + tuned-token guards (the contrast harness covers WCAG drift
+// on the rest).
+//
+// The optional decorative texture overlay (--silt-texture-image/opacity/blend,
+// used by Linen's woven-paper surface) is an opt-in superset on top of the
+// canonical token set: it is allowed here but never required, so a theme
+// without a texture block still passes.
 func TestFirstClassThemes_FlattenShape(t *testing.T) {
 	all, err := EmbeddedThemes()
 	if err != nil {
@@ -173,7 +179,13 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 	// less specifically).
 	tuned := map[string]map[string]string{
 		"silt-terra-noir": {"dark|--text-muted": "#a89478"},
-		"silt-linen":      {"dark|--text-muted": "#afb3bb"},
+		"silt-linen":      {"dark|--text-muted": "#b9b0a1"},
+	}
+	// Opt-in decorative texture overlay keys (superset; allowed, not required).
+	textureKeys := map[string]bool{
+		"--silt-texture-image":   true,
+		"--silt-texture-opacity": true,
+		"--silt-texture-blend":   true,
 	}
 	for _, th := range all {
 		if th.ID == DefaultThemeID {
@@ -184,19 +196,17 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 		}
 		for _, mode := range []string{"dark", "light"} {
 			flat := th.Flatten(mode)
-			if len(flat) != len(expectedFlattenKeys) {
-				got := make([]string, 0, len(flat))
-				for k := range flat {
-					got = append(got, k)
-				}
-				sort.Strings(got)
-				t.Errorf("%s [%s]: flatten produced %d keys, want %d: %v",
-					th.ID, mode, len(flat), len(expectedFlattenKeys), got)
-				continue
-			}
+			// Every canonical color token must be present.
 			for _, k := range expectedFlattenKeys {
 				if _, ok := flat[k]; !ok {
 					t.Errorf("%s [%s]: missing token %s", th.ID, mode, k)
+				}
+			}
+			// Any extra key must be the opt-in texture overlay, not a stray token.
+			for k := range flat {
+				if !inSlice(expectedFlattenKeys, k) && !textureKeys[k] {
+					t.Errorf("%s [%s]: unexpected token %s (only --silt-texture-* overlays are allowed)",
+						th.ID, mode, k)
 				}
 			}
 			// Tuned-token pin.
@@ -214,4 +224,13 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 			}
 		}
 	}
+}
+
+func inSlice(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
