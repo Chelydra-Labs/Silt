@@ -7,7 +7,7 @@ Silt is a simple, super-fast, and lightweight note-taking app designed to captur
 
 [![Engine Architecture](https://img.shields.io/badge/Architecture-Go%20%2B%20Wails%20%2B%20Svelte%205-blueviolet)](ARCHITECTURE.md)
 [![Storage Schema](https://img.shields.io/badge/Storage-Plaintext%20Markdown%20%2B%20SQLite%20Cache-blue)](SPECS.md)
-[![License](https://img.shields.io/badge/License-MIT-green)](#)
+[![License](https://img.shields.io/badge/License-MIT-green)](./LICENSE)
 
 **Silt** bridges the gap between structured namespace notebooks and chronological block-based daily streams. It treats human-readable plaintext files as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into fully interactive **Agenda**, **Calendar**, and **Kanban** board interfaces.
 

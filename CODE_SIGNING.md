@@ -48,7 +48,7 @@ Every signed release is built from a tagged commit on `main` by the [`Release` w
 
 ### Prerequisites
 
-1. **LICENSE file at repo root.** SignPath Foundation requires an OSI-approved OSS license (MIT or Apache-2.0 fit this project). `README.md` already advertises MIT in a badge — make it real before applying.
+1. **LICENSE file at repo root.** SignPath Foundation requires an OSI-approved OSS license. ✅ Silt ships under MIT — see [`LICENSE`](LICENSE).
 2. **MFA on every maintainer's GitHub account.** SignPath Foundation requires this.
 3. **Project already released and documented** — Silt v0.1.x releases and this README satisfy this.
 
