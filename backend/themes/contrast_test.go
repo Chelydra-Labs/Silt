@@ -346,11 +346,11 @@ func TestTextPrimaryDistinctFromDefault_AllFirstClassThemes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmbeddedThemes: %v", err)
 	}
+	defaults, ok := findByID(all, DefaultThemeID)
+	if !ok {
+		t.Fatalf("default theme %q not in EmbeddedThemes", DefaultThemeID)
+	}
 	for _, mode := range []string{"dark", "light"} {
-		defaults, ok := findByID(all, DefaultThemeID)
-		if !ok {
-			t.Fatalf("default theme %q not in EmbeddedThemes", DefaultThemeID)
-		}
 		anchor := defaults.Flatten(mode)["--text-primary"]
 		for _, th := range all {
 			if th.ID == DefaultThemeID {
