@@ -149,18 +149,28 @@
       return // mount: synchronous init already set columns/filters
     }
     let cancelled = false
-    ctx.getPluginSettings().then((s) => {
-      if (cancelled) return
-      const cfgCols = s.columns as string[] | undefined
-      columns = cfgCols && cfgCols.length ? [...cfgCols] : [...ALL_STATUSES]
-      const f = s.filters as Partial<KanbanFilters> | undefined
-      filters = {
-        owners: f?.owners ?? [],
-        priorities: f?.priorities ?? [],
-        dueDate: f?.dueDate ?? '',
-        tags: f?.tags ?? []
-      }
-    })
+    ctx
+      .getPluginSettings()
+      .then((s) => {
+        if (cancelled) return
+        const cfgCols = s.columns as string[] | undefined
+        columns = cfgCols && cfgCols.length ? [...cfgCols] : [...ALL_STATUSES]
+        const f = s.filters as Partial<KanbanFilters> | undefined
+        filters = {
+          owners: f?.owners ?? [],
+          priorities: f?.priorities ?? [],
+          dueDate: f?.dueDate ?? '',
+          tags: f?.tags ?? []
+        }
+      })
+      .catch((err) => {
+        // Fail loud: an unparseable co-located config rejects the IPC promise
+        // (GetPluginSettingsForNotebook returns a real error, not a silent
+        // default). Surface it via errorMsg so the user sees their broken file
+        // instead of a half-loaded board with no signal.
+        if (cancelled) return
+        errorMsg = err instanceof Error ? err.message : String(err)
+      })
     return () => {
       cancelled = true
     }

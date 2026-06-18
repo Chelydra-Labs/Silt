@@ -1461,9 +1461,21 @@ type nspKey struct{ src, n, s, p string }
 // source. This lets the notebook-scoped CRUD/focus-lock operations keep their
 // IPC signatures source-free while still routing to the correct root (#100),
 // avoiding a parallel frontend source-flow.
+// resolveSourceByName maps a notebook display name to its index source
+// ("vault" or "linked:<id>"). It acquires configMu in read mode for the
+// standalone callers below.
 func (a *App) resolveSourceByName(notebookName string) string {
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
+	return a.resolveSourceByNameLocked(notebookName)
+}
+
+// resolveSourceByNameLocked is the lock-free inner form. The caller MUST hold
+// configMu (read or write). Needed so GetPluginSettingsForNotebook — which
+// holds configMu in WRITE mode (linkedConfigLocked mutates the cache map) —
+// can resolve the source without self-deadlocking on a re-entrant RLock
+// (sync.RWMutex blocks RLock while a writer holds the lock).
+func (a *App) resolveSourceByNameLocked(notebookName string) string {
 	for _, ln := range a.cfg.LinkedNotebooks {
 		if ln.DisplayName == notebookName {
 			return ln.Source()
@@ -2123,8 +2135,9 @@ func (a *App) linkByRecordLocked(ln config.LinkedNotebook) (config.LinkedNoteboo
 // (<linkedRoot>/.system/config.yaml, #133), mtime-cached. If the on-disk
 // mtime is unchanged since the last load, the cached parsed config is
 // returned; otherwise the file is re-read and the cache is updated. The
-// caller MUST hold configMu (read or write); the cache map is owned by this
-// lock. A missing co-located file yields config.Defaults() with no error
+// caller MUST hold configMu in WRITE mode: this function mutates the
+// linkedConfigs map on a cache miss / invalidation, and Go maps cannot be
+// written under an RLock. A missing co-located file yields config.Defaults() with no error
 // (the normal case — the vault-scoped config.yaml is the baseline). An
 // unparseable file yields a real error so the user can fix it; the cache is
 // not populated with garbage on error.
@@ -2288,20 +2301,36 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 	// Post-commit files-table pass: record mtime+size for each successfully
 	// indexed file so a warm restart skips re-parsing it. A file is
 	// considered indexed iff IndexScanResults counted it (Err == nil &&
-	// Notebook != ""). Mirrors the vault startup scan's MarkFileIndexed loop.
-	for _, res := range results {
-		if res.Err != nil || res.Notebook == "" {
-			continue
+	// Notebook != ""). Mirrors the vault startup scan's MarkFileIndexed loop,
+	// but batched: a single transaction inside WithDBWrite, so N files cost
+	// one commit (not N auto-committed statements) and the coordinator keeps
+	// serializing writes against concurrent IPC. Unbatched, this defeated
+	// #134's purpose on large linked mounts (WAL-checkpoint thrash) and raced
+	// other writers.
+	a.coordinator.WithDBWrite(func() {
+		tx, err := a.db.SQLDB().Begin()
+		if err != nil {
+			log.Printf("LinkNotebook(%s): begin files-tx failed: %v", ln.DisplayName, err)
+			return
 		}
-		if res.MTime.IsZero() {
-			// No stat → can't record a skip key; leave it to be re-parsed
-			// next time rather than risk a false "unchanged".
-			continue
+		defer tx.Rollback()
+		for _, res := range results {
+			if res.Err != nil || res.Notebook == "" {
+				continue
+			}
+			if res.MTime.IsZero() {
+				// No stat → can't record a skip key; leave it to be re-parsed
+				// next time rather than risk a false "unchanged".
+				continue
+			}
+			if err := a.db.MarkFileIndexed(tx, res.Path, res.MTime.UnixNano(), res.Size); err != nil {
+				log.Printf("LinkNotebook(%s): MarkFileIndexed(%s): %v", ln.DisplayName, res.Path, err)
+			}
 		}
-		if err := a.db.MarkFileIndexed(nil, res.Path, res.MTime.UnixNano(), res.Size); err != nil {
-			log.Printf("LinkNotebook(%s): MarkFileIndexed(%s): %v", ln.DisplayName, res.Path, err)
+		if err := tx.Commit(); err != nil {
+			log.Printf("LinkNotebook(%s): files-tx commit failed: %v", ln.DisplayName, err)
 		}
-	}
+	})
 	return indexedCount, nil
 }
 
@@ -3823,8 +3852,12 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 	if pluginID == "" {
 		return nil, fmt.Errorf("pluginID is required")
 	}
-	a.configMu.RLock()
-	defer a.configMu.RUnlock()
+	// Write lock: linkedConfigLocked may populate/invalidate the linkedConfigs
+	// cache map on a cache miss, and Go maps cannot be written under an RLock
+	// even by a single goroutine if another RLock holder could be reading
+	// concurrently — that is a fatal "concurrent map writes" panic.
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
 
 	// Vault baseline: the plugin's entry in the vault-scoped config.yaml.
 	vaultEntry, _ := a.cfg.Plugins.PluginSettings[pluginID].(map[string]any)
@@ -3834,7 +3867,9 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 
 	source := config.LinkedNotebooksVaultSource
 	if notebookName != "" {
-		source = a.resolveSourceByName(notebookName)
+		// Lock-free variant: we already hold configMu in write mode above,
+		// and resolveSourceByName would self-deadlock re-acquiring RLock.
+		source = a.resolveSourceByNameLocked(notebookName)
 	}
 	if source == config.LinkedNotebooksVaultSource {
 		// Vault notebook (or no active notebook): vault settings verbatim.

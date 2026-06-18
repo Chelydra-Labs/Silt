@@ -1002,6 +1002,48 @@ describe('Kanban plugin (#19)', () => {
       expect(getPluginSettings).toHaveBeenCalledTimes(1)
     })
 
+    it('surfaces a getPluginSettings rejection as the board error banner', async () => {
+      // The Go binding rejects when a co-located linked config is unparseable
+      // (GetPluginSettingsForNotebook returns a real error, by design). The
+      // re-resolution effect must catch that rejection — otherwise it becomes
+      // an unhandled promise rejection and the board sits silently half-loaded
+      // with no signal that the user's config file is broken. Route the error
+      // into errorMsg so the existing error banner surfaces it.
+      const getPluginSettings = vi
+        .fn()
+        .mockRejectedValue(
+          new Error('linked config for Ext: yaml: line 1: bad')
+        )
+
+      setNav({ notebook: 'Work', section: '', page: '' })
+      render(Kanban, {
+        ctx: reactiveCtx(mocks.sqliteQuery, { getPluginSettings }),
+        manifest: MANIFEST
+      })
+      await flush()
+
+      // Vault notebook loads normally; the re-resolution effect has not run
+      // (mount skips it) so the rejection has not happened yet.
+      expect(screen.getByRole('group', { name: 'To Do' })).toBeInTheDocument()
+      expect(getPluginSettings).not.toHaveBeenCalled()
+
+      // Switch to the linked notebook with the broken co-located config.
+      setNav({ notebook: 'Ext', section: '', page: '' })
+      await flush()
+
+      // The rejection is caught and routed into the error banner (the board
+      // view is replaced by the error message, matching the fail-loud contract
+      // #133 adopts for unparseable configs).
+      const banner = await screen.findByText(
+        /linked config for Ext: yaml: line 1: bad/
+      )
+      expect(banner).toBeInTheDocument()
+      // The board lanes are NOT rendered while the error banner is shown.
+      expect(
+        screen.queryByRole('group', { name: 'To Do' })
+      ).not.toBeInTheDocument()
+    })
+
     it('writes still persist to the vault config via updatePluginSetting', async () => {
       // The co-located config is READ-ONLY; user mutations persist to vault.
       const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
