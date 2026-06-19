@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,6 +163,33 @@ func TestImportVaultTree_RejectsNonEmptyDestination(t *testing.T) {
 	_, err := ImportVaultTree(archive, dest, nil)
 	if err == nil {
 		t.Fatal("expected non-empty-destination rejection, got nil")
+	}
+}
+
+// TestImportVaultTree_RejectsNetworkDestination asserts ImportVaultTree wires
+// the shared validateEmptyDestination network-FS guard (the predicate itself is
+// covered by mover_test.go; this proves the import path routes through it). A
+// real network mount cannot be reproduced in CI, so swap the detector.
+func TestImportVaultTree_RejectsNetworkDestination(t *testing.T) {
+	root := t.TempDir()
+	scaffoldArchiveTree(t, root)
+	archive := filepath.Join(t.TempDir(), "out.silt-vault")
+	if _, err := ExportVaultTree(root, archive, "V", "test", nil); err != nil {
+		t.Fatalf("ExportVaultTree: %v", err)
+	}
+	dest := filepath.Join(t.TempDir(), "on-network")
+	orig := networkFSCheck
+	networkFSCheck = func(path string) error {
+		return errors.New("network filesystem detected: simulated NFS mount")
+	}
+	t.Cleanup(func() { networkFSCheck = orig })
+
+	_, err := ImportVaultTree(archive, dest, nil)
+	if err == nil || !strings.Contains(err.Error(), "network filesystem") {
+		t.Fatalf("expected network-FS rejection, got %v", err)
+	}
+	if _, statErr := os.Stat(dest); statErr == nil {
+		t.Error("destDir must not be created on a network-FS rejection")
 	}
 }
 

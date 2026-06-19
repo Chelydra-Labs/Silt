@@ -359,6 +359,9 @@
               style="width: {pct}%"
             ></div>
           </div>
+          <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
+            This can't be cancelled mid-write — please wait for it to finish.
+          </p>
         {:else if busy}
           <div
             class="flex items-center gap-2 text-accent-primary-start text-[12px] font-body-md"
@@ -368,6 +371,9 @@
             >
             <span>{mode === 'export' ? 'Preparing archive…' : 'Verifying archive…'}</span>
           </div>
+          <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
+            This can't be cancelled mid-write — please wait for it to finish.
+          </p>
         {/if}
       </div>
       {#if error}
