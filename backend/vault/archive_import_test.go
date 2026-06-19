@@ -173,7 +173,8 @@ func TestImportVaultTree_RejectsNonEmptyDestination(t *testing.T) {
 func TestImportVaultTree_AcceptsDoubleDotFilename(t *testing.T) {
 	root := t.TempDir()
 	// A notebook page whose name contains ".." as a substring but is not a
-	// parent-traversal segment.
+	// parent-traversal segment, plus a .system/ so the archive is a complete
+	// vault (the .system/ pre-check requires it).
 	mustWrite := func(rel, body string) {
 		full := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
@@ -185,6 +186,7 @@ func TestImportVaultTree_AcceptsDoubleDotFilename(t *testing.T) {
 	}
 	mustWrite("Releases/2.0..2.1.md", "# migration notes\n")
 	mustWrite("Notes/foo...bar.md", "# spaced\n")
+	mustWrite(".system/config.yaml", "notebooks:\n  path: \"./\"\n")
 
 	archive := filepath.Join(t.TempDir(), "dd.silt-vault")
 	if _, err := ExportVaultTree(root, archive, "V", "test", nil); err != nil {
@@ -198,6 +200,34 @@ func TestImportVaultTree_AcceptsDoubleDotFilename(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dest, filepath.FromSlash(rel))); err != nil {
 			t.Errorf("expected %s to extract, got %v", rel, err)
 		}
+	}
+}
+
+// TestImportVaultTree_RejectsArchiveWithoutSystem proves the .system/ presence
+// pre-check rejects an incomplete/partial archive BEFORE extraction (so the
+// caller's SwitchVault never strands an orphan extracted folder). Export any
+// non-vault folder (notebook file but no .system/) → valid archive, no .system.
+func TestImportVaultTree_RejectsArchiveWithoutSystem(t *testing.T) {
+	nonVault := t.TempDir()
+	pagePath := filepath.Join(nonVault, "Work", "Inbox.md")
+	if err := os.MkdirAll(filepath.Dir(pagePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pagePath, []byte("# not a vault\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "partial.silt-vault")
+	if _, err := ExportVaultTree(nonVault, archive, "V", "test", nil); err != nil {
+		t.Fatalf("ExportVaultTree: %v", err)
+	}
+	dest := filepath.Join(t.TempDir(), "dest")
+
+	_, err := ImportVaultTree(archive, dest, nil)
+	if err == nil || !strings.Contains(err.Error(), "no .system/") {
+		t.Fatalf("expected no-.system rejection, got %v", err)
+	}
+	if _, statErr := os.Stat(dest); statErr == nil {
+		t.Error("destDir must not be created when the archive lacks .system/")
 	}
 }
 

@@ -96,21 +96,21 @@ type ArchiveManifest struct {
 	FileCount int `json:"file_count"`
 	// TotalBytes is the sum of the uncompressed sizes of every archived file.
 	TotalBytes int64 `json:"total_bytes"`
-// ArchiveSHA256 is the whole-archive integrity root: the lowercase-hex SHA-256
-// over the canonical serialization of every entry record (path + size + per-
-// entry digest), computed AFTER all entries are collected and carried in the
-// manifest (written last). It binds the entire archive's identity + content in
-// a single self-contained digest the manifest cannot hold over its own raw
-// bytes (a manifest cannot hash itself).
-//
-// Go's archive/zip.Writer buffers all output and only writes to the underlying
-// file on Close(), so a raw-byte-region hash is not computable live; the root
-// digest is the standard self-contained alternative (Merkle-root style) and is
-// compression-independent. Import validates in two layers: (1) recompute the
-// root over the manifest's declared entries and assert equality (detects
-// manifest tampering) BEFORE extracting, then (2) verify each entry's actual
-// content hash during extraction (detects content corruption). Any changed
-// path/size/content changes the root or the per-entry hash.
+	// ArchiveSHA256 is the whole-archive integrity root: the lowercase-hex SHA-256
+	// over the canonical serialization of every entry record (path + size + per-
+	// entry digest), computed AFTER all entries are collected and carried in the
+	// manifest (written last). It binds the entire archive's identity + content in
+	// a single self-contained digest the manifest cannot hold over its own raw
+	// bytes (a manifest cannot hash itself).
+	//
+	// Go's archive/zip.Writer buffers all output and only writes to the underlying
+	// file on Close(), so a raw-byte-region hash is not computable live; the root
+	// digest is the standard self-contained alternative (Merkle-root style) and is
+	// compression-independent. Import validates in two layers: (1) recompute the
+	// root over the manifest's declared entries and assert equality (detects
+	// manifest tampering) BEFORE extracting, then (2) verify each entry's actual
+	// content hash during extraction (detects content corruption). Any changed
+	// path/size/content changes the root or the per-entry hash.
 	ArchiveSHA256 string `json:"archive_sha256"`
 	// Entries carries the per-entry integrity records (slash-form relpath,
 	// uncompressed size, lowercase-hex SHA-256). Import verifies each entry
@@ -132,18 +132,18 @@ type ArchiveEntry struct {
 
 // ExportResult describes a completed archive write.
 type ExportResult struct {
-	FilesArchived  int   `json:"files_archived"`
-	BytesArchived  int64 `json:"bytes_archived"`
-	PageFileCount  int   `json:"page_file_count"`
-	SkippedIndex   bool  `json:"skipped_index"`
-	SkippedSymlinks int  `json:"skipped_symlinks"`
+	FilesArchived   int   `json:"files_archived"`
+	BytesArchived   int64 `json:"bytes_archived"`
+	PageFileCount   int   `json:"page_file_count"`
+	SkippedIndex    bool  `json:"skipped_index"`
+	SkippedSymlinks int   `json:"skipped_symlinks"`
 }
 
 // ImportResult describes a completed archive extraction.
 type ImportResult struct {
-	FilesExtracted int      `json:"files_extracted"`
-	BytesExtracted int64    `json:"bytes_extracted"`
-	PageFileCount  int      `json:"page_file_count"`
+	FilesExtracted int             `json:"files_extracted"`
+	BytesExtracted int64           `json:"bytes_extracted"`
+	PageFileCount  int             `json:"page_file_count"`
 	Manifest       ArchiveManifest `json:"manifest"`
 }
 
@@ -206,13 +206,6 @@ func computeFileTree(root string) (files []walkedFile, skippedIndex bool, skippe
 		return nil, false, 0, walkErr
 	}
 	return files, skippedIndex, skippedSymlinks, nil
-}
-
-// hashFile is an alias for sha256OfFile (in mover.go) kept under a
-// manifest-local name for readability at call sites. Returns lowercase-hex
-// SHA-256.
-func hashFile(path string) (string, error) {
-	return sha256OfFile(path)
 }
 
 // manifestBytes marshals m to canonical JSON (sorted keys via json.Marshal,
@@ -586,6 +579,24 @@ func ImportVaultTree(archivePath, destDir string, onProgress ProgressFn) (Import
 			return ImportResult{}, fmt.Errorf("%w: manifest entry %q is missing from the archive", ErrArchiveRejected, e.Path)
 		}
 	}
+	// A restorable vault must carry its .system/ (config/themes/templates/
+	// plugins). Reject an archive whose manifest has no .system/ entry BEFORE
+	// extracting: otherwise the temp tree extracts cleanly but SwitchVault
+	// (which the caller invokes) refuses it for lacking a .system folder,
+	// leaving an orphan extracted folder and a cryptic "could not be opened"
+	// error. ExportVaultTree always emits .system/ for a real vault, so a
+	// missing .system/ signals a partial/foreign archive.
+	hasSystem := false
+	for _, e := range manifest.Entries {
+		if strings.HasPrefix(e.Path, ".system/") {
+			hasSystem = true
+			break
+		}
+	}
+	if !hasSystem {
+		zr.Close()
+		return ImportResult{}, fmt.Errorf("%w: archive is not a complete vault (no .system/ contents)", ErrArchiveRejected)
+	}
 
 	// --- Pass 2: extract + verify each entry into a sibling temp dir. ---
 	// os.MkdirTemp next to destDir keeps the final rename on the same volume
@@ -699,13 +710,16 @@ func extractAndVerify(f *zip.File, target string, want ArchiveEntry) error {
 	defer rc.Close()
 	// Bound the decompressed stream to the declared size + a 1 KB margin. A
 	// forged-header zip-bomb claiming 1 KB but decompressing to 10 GB is cut
-	// off here; the per-entry cap is a separate backstop. Checked BEFORE
-	// opening the target file so an over-limit entry neither leaks a file
-	// descriptor nor leaves an empty target file on disk.
-	limit := want.Size + 1024
-	if limit > maxArchiveEntrySize+1024 {
+	// off here. Size is bounded DIRECTLY (not via want.Size+1024) so a
+	// manifest-declared Size within 1024 of int64 max cannot overflow the
+	// addition and bypass the cap; the subsequent n != want.Size check would
+	// still reject such an entry, but this guard makes the bound explicit.
+	// Checked BEFORE opening the target file so an over-limit entry neither
+	// leaks a file descriptor nor leaves an empty target file on disk.
+	if want.Size < 0 || want.Size > maxArchiveEntrySize {
 		return fmt.Errorf("entry %q exceeds the %d-byte per-entry limit", want.Path, maxArchiveEntrySize)
 	}
+	limit := want.Size + 1024 // safe: want.Size ≤ maxArchiveEntrySize (256 MiB)
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return err
 	}
