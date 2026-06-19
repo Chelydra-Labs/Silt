@@ -405,8 +405,9 @@
         />
         <h1 class="onboarding-title font-headline-lg">Silt</h1>
         <p class="onboarding-description font-body-md">
-          A local-first hybrid journal and task manager. Plain-text Markdown on
-          your drive, real-time index in memory.
+          A fast, local-first notes app to capture ideas and get work done. Your
+          notes live on your drive as plain Markdown — structured, searchable,
+          and always yours.
         </p>
         <button
           class="onboarding-btn font-label-sm-bold"
