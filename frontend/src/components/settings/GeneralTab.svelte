@@ -10,6 +10,62 @@
   import { displayFamilyName } from '../../theme/fonts'
   import { themeState } from '../../theme/store.svelte'
   import FontSelect from './FontSelect.svelte'
+  import VaultActionModal from './VaultActionModal.svelte'
+
+  // Vault relocation menu (#141). A kebab next to the vault path offers
+  // "Move vault…" and "Copy vault…"; each opens the shared modal.
+  let vaultMenuOpen = $state(false)
+  let vaultAction = $state<'move' | 'copy' | null>(null)
+  let menuItemRefs: HTMLButtonElement[] = $state([])
+  let menuWrapper = $state<HTMLDivElement | null>(null)
+
+  function toggleMenu() {
+    vaultMenuOpen = !vaultMenuOpen
+  }
+
+  function openAction(action: 'move' | 'copy') {
+    vaultAction = action
+    vaultMenuOpen = false
+  }
+
+  // Outside-click closes the menu: any window click that did not originate
+  // inside the menu wrapper collapses it. Using a containment check (rather
+  // than a click handler on the wrapper div with stopPropagation) keeps the
+  // markup free of a11y warnings about interactive handlers on a non-interactive
+  // element.
+  function handleWindowClick(e: MouseEvent) {
+    if (vaultMenuOpen && menuWrapper && !menuWrapper.contains(e.target as Node)) {
+      vaultMenuOpen = false
+    }
+  }
+
+  function handleMenuTriggerKeydown(e: KeyboardEvent) {
+    if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      vaultMenuOpen = true
+      queueMicrotask(() => menuItemRefs[0]?.focus())
+    }
+  }
+
+  function handleMenuItemKeydown(e: KeyboardEvent, index: number) {
+    const items = menuItemRefs
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      items[(index + 1) % items.length]?.focus()
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      items[(index - 1 + items.length) % items.length]?.focus()
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      items[0]?.focus()
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      items[items.length - 1]?.focus()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      vaultMenuOpen = false
+    }
+  }
 
   // Local editable draft. Initialized from the store config; the user edits
   // here and commits with Save (so an external hot-reload doesn't fight a
@@ -113,6 +169,8 @@
   }
 </script>
 
+<svelte:window onclick={handleWindowClick} />
+
 {#if !draft}
   <div class="p-8 text-text-muted font-body-md">No configuration loaded.</div>
 {:else}
@@ -137,7 +195,7 @@
         </button>
       </div>
     {/if}
-    <!-- Vault path -->
+    <!-- Vault path + relocate menu (#141) -->
     <section>
       <h3
         class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
@@ -152,12 +210,57 @@
         >
         <span
           class="text-text-primary text-[13px] font-body-md truncate flex-1"
+          title={draft.notebooks.path || ''}
         >
           {draft.notebooks.path || '—'}
         </span>
+        <div class="relative" bind:this={menuWrapper}>
+          <button
+            type="button"
+            onclick={toggleMenu}
+            onkeydown={handleMenuTriggerKeydown}
+            aria-haspopup="menu"
+            aria-expanded={vaultMenuOpen}
+            aria-label="Vault actions"
+            title="Vault actions"
+            class="flex-shrink-0 p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover border-none bg-transparent cursor-pointer transition-colors"
+          >
+            <span class="material-symbols-outlined text-[20px]">more_vert</span>
+          </button>
+          {#if vaultMenuOpen}
+            <div
+              role="menu"
+              aria-label="Vault actions"
+              class="absolute right-0 top-full mt-1 z-10 w-44 bg-bg-panel border border-border-zinc rounded-lg shadow-xl py-1"
+            >
+              <button
+                type="button"
+                bind:this={menuItemRefs[0]}
+                role="menuitem"
+                onclick={() => openAction('move')}
+                onkeydown={(e) => handleMenuItemKeydown(e, 0)}
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-bg-hover border-none bg-transparent cursor-pointer"
+              >
+                <span class="material-symbols-outlined text-[18px] text-text-muted">drive_file_move</span>
+                Move vault…
+              </button>
+              <button
+                type="button"
+                bind:this={menuItemRefs[1]}
+                role="menuitem"
+                onclick={() => openAction('copy')}
+                onkeydown={(e) => handleMenuItemKeydown(e, 1)}
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-bg-hover border-none bg-transparent cursor-pointer"
+              >
+                <span class="material-symbols-outlined text-[18px] text-text-muted">content_copy</span>
+                Copy vault…
+              </button>
+            </div>
+          {/if}
+        </div>
       </div>
       <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
-        Vault path is set during onboarding. Switch workspaces from the sidebar.
+        Move or duplicate this workspace from the actions menu.
       </p>
     </section>
 
@@ -351,4 +454,12 @@
       </button>
     </div>
   </div>
+{/if}
+
+{#if vaultAction && draft}
+  <VaultActionModal
+    mode={vaultAction}
+    currentPath={draft.notebooks.path || ''}
+    onClose={() => (vaultAction = null)}
+  />
 {/if}

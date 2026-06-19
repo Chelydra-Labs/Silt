@@ -213,6 +213,21 @@
     const offPluginsChanged = EventsOn('plugins:changed', () =>
       handlePluginsChanged()
     )
+    // `vault:moved` fires after a successful vault Move/Copy-Switch (#141).
+    // The backend has already reinitialized services at the new path; reset
+    // navigation, close settings, and reload the (vault-scoped) config store
+    // so the UI reflects the new workspace.
+    const offVaultMoved = EventsOn('vault:moved', () => {
+      activeNotebook = ''
+      activeSection = ''
+      activePage = ''
+      activeView = 'notes'
+      showSettings = false
+      loadConfig().catch((e) =>
+        console.error('Post-move config reload failed:', e)
+      )
+      window.dispatchEvent(new CustomEvent('refresh-navigation'))
+    })
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
@@ -222,6 +237,7 @@
       window.removeEventListener('open-settings', handleOpenSettings)
       window.removeEventListener('open-template-picker', handleOpenTemplatePicker)
       offPluginsChanged()
+      offVaultMoved()
       offConfigChangedReload()
       disposeEditorTokens()
       disposeThemes()

@@ -562,6 +562,56 @@ func (a *App) rollbackMove(originalPath string, prior *vault.AppSettings) error 
 	return a.initializeVaultServices(originalPath)
 }
 
+// SwitchVault points Silt at an existing vault folder (e.g. one created by
+// CopyVault) without a picker or scaffolding: teardown the active vault,
+// persist settings.json to the new path, and reinit services there. The path
+// must already contain a .system folder (CopyVault/MoveVault both produce
+// valid vaults). Emits vault:moved so the frontend resets navigation.
+func (a *App) SwitchVault(path string) error {
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	if path == "" {
+		return fmt.Errorf("empty vault path")
+	}
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("resolve vault path: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(abs, ".system")); err != nil {
+		return fmt.Errorf("not a Silt vault (no .system folder): %s", path)
+	}
+
+	activePath := a.vaultPath // capture before teardown nils it
+	prior, _ := vault.LoadSettings()
+	a.teardownVaultServices()
+
+	settings := prior
+	if settings == nil {
+		settings = &vault.AppSettings{}
+	}
+	settings.VaultPath = abs
+	if err := vault.SaveSettings(settings); err != nil {
+		if prior != nil {
+			_ = a.rollbackMove(activePath, prior)
+		}
+		return fmt.Errorf("switch vault: save settings: %w", err)
+	}
+	if err := a.initializeVaultServices(abs); err != nil {
+		if prior != nil {
+			_ = a.rollbackMove(activePath, prior)
+		}
+		return fmt.Errorf("switch vault: init services: %w", err)
+	}
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vault:moved", map[string]string{
+			"from": "",
+			"to":   abs,
+		})
+	}
+	return nil
+}
+
 // FetchPageBlocks returns a flat list of all blocks for a page, ordered by
 // line_number. A page is a single file; each block carries its own file_date.
 // The notebook's source is resolved server-side from its (globally-unique)
