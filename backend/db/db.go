@@ -24,6 +24,15 @@ import (
 // instead (#79).
 var ErrNetworkFilesystem = errors.New("network filesystem detected")
 
+// IsNetworkFS reports whether path lives on a network filesystem that cannot
+// support SQLite WAL (NFS/SMB/CIFS/…). Returns nil for local filesystems and
+// on platforms without a detector. Exported so the vault mover (#141) can
+// reject a network destination with the same clear message the index-opener
+// surfaces, without re-implementing the per-platform detection.
+func IsNetworkFS(path string) error {
+	return detectNetworkFilesystem(path)
+}
+
 // ErrWALRejected is returned when the database is on-disk but SQLite did not
 // accept WAL mode (the PRAGMA returned a different journal mode). This is a
 // belt-and-suspenders check: some mounts silently downgrade away from WAL
