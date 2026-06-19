@@ -2051,6 +2051,57 @@ func TestLinkedConfigFor_CacheAndInvalidation(t *testing.T) {
 	}
 }
 
+// TestLinkedConfigFor_InPlaceMtimeChangeReReads covers the cache re-read
+// path for an existing file whose content changes (mtime advances): the
+// first load caches version A; an in-place edit (new content + newer mtime)
+// must trigger a re-load on the next call so the stale version is not
+// served. The existing CacheAndInvalidation test covers zero→non-zero
+// (missing→present); this test covers non-zero-A→non-zero-B (present→updated).
+func TestLinkedConfigFor_InPlaceMtimeChangeReReads(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln := config.LinkedNotebook{ID: "cfg2", RootPath: ext, DisplayName: "Ext2"}
+
+	// 1. Write version A.
+	cfgPath := config.LinkedConfigPath(ext)
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("plugins:\n  plugin_settings:\n    silt-kanban:\n      version: a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	future1 := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(cfgPath, future1, future1); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := app.linkedConfigFor(ln)
+	if err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+	if v, _ := cfg.Plugins.PluginSettings["silt-kanban"].(map[string]any); v["version"] != "a" {
+		t.Fatalf("expected version=a, got %v", cfg.Plugins.PluginSettings["silt-kanban"])
+	}
+
+	// 2. Overwrite with version B + advance mtime.
+	if err := os.WriteFile(cfgPath, []byte("plugins:\n  plugin_settings:\n    silt-kanban:\n      version: b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	future2 := future1.Add(2 * time.Second)
+	if err := os.Chtimes(cfgPath, future2, future2); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Next call must re-read and serve version B, not the cached A.
+	cfg2, err := app.linkedConfigFor(ln)
+	if err != nil {
+		t.Fatalf("second load: %v", err)
+	}
+	if v, _ := cfg2.Plugins.PluginSettings["silt-kanban"].(map[string]any); v["version"] != "b" {
+		t.Errorf("expected version=b after mtime change, got %v", cfg2.Plugins.PluginSettings["silt-kanban"])
+	}
+}
+
 // TestGetPluginSettingsForNotebook_VaultReturnsVaultSettings covers the
 // baseline path of #133's per-active-notebook settings resolver: a vault
 // notebook (or no active notebook) returns the vault-scoped config.yaml entry
@@ -2232,6 +2283,78 @@ func TestGetPluginSettingsForNotebook_ConcurrentCallersNoPanic(t *testing.T) {
 			}
 		}(i)
 	}
+	close(start)
+	wg.Wait()
+}
+
+// TestGetPluginSettingsForNotebook_ConcurrentWithUpdatePluginSetting
+// exercises the vault-path data race that the raw-map-return would trigger:
+// concurrent GetPluginSettingsForNotebook (read + JSON serialization) +
+// UpdatePluginSetting (in-place map write) on the SAME plugin entry. Before
+// the clone fix, the returned map was the same underlying reference that
+// UpdatePluginSetting mutated, producing a fatal "concurrent map read and
+// map write" panic. Run under -race.
+func TestGetPluginSettingsForNotebook_ConcurrentWithUpdatePluginSetting(t *testing.T) {
+	app := newTestApp(t)
+	// Seed the vault config with a known plugin entry.
+	app.configMu.Lock()
+	app.cfg.Plugins.PluginSettings["silt-kanban"] = map[string]any{
+		"columns": []any{"TODO", "DOING", "DONE"},
+	}
+	app.configMu.Unlock()
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	start := make(chan struct{})
+
+	// Reader goroutine: calls GetPluginSettingsForNotebook in a tight loop.
+	// The returned map is iterated (simulating Wails JSON serialization)
+	// which reads every key — if the map is mutated concurrently, Go
+	// panics.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				}
+			s, err := app.GetPluginSettingsForNotebook("silt-kanban", "Work")
+			if err != nil {
+				t.Errorf("Get: %v", err)
+				return
+			}
+			// Iterate the returned map to simulate JSON serialization.
+			for k, v := range s {
+				_ = k
+				_ = v
+			}
+		}
+	}()
+
+	// Writer goroutine: calls UpdatePluginSetting in a tight loop,
+	// mutating the same entry's map in-place.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 200; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := app.UpdatePluginSetting("silt-kanban", "counter", i); err != nil {
+				// In test mode (no vaultPath file), config.Save may fail;
+				// the in-place mutation is what matters, not the persistence.
+				_ = err
+			}
+		}
+		close(stop)
+	}()
+
 	close(start)
 	wg.Wait()
 }

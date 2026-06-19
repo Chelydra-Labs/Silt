@@ -328,8 +328,10 @@ func TestMergePluginSettings_LinkedOverridesVaultPerKey(t *testing.T) {
 		t.Errorf("filters.owners: expected vault preserved, got %v", filters["owners"])
 	}
 	// linked sub-key replaces vault's (array replacement, same as top-level).
-	if pri, ok := filters["priorities"].([]any); !ok || len(pri) != 1 || pri[0] != int64(3) && pri[0] != 3 {
-		t.Errorf("filters.priorities: expected linked to replace vault, got %v", filters["priorities"])
+	// reflect.DeepEqual verifies both value AND type (yaml.v3 decodes
+	// integer literals as `int`, not int64 — but the type must match exactly).
+	if !reflect.DeepEqual(filters["priorities"], []any{3}) {
+		t.Errorf("filters.priorities: expected linked to replace vault with [3], got %v", filters["priorities"])
 	}
 	// linked-only sub-key added.
 	if tags, ok := filters["tags"].([]any); !ok || len(tags) != 1 || tags[0] != "work" {

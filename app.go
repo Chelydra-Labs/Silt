@@ -2158,37 +2158,52 @@ func (a *App) linkByRecordLocked(ln config.LinkedNotebook) (config.LinkedNoteboo
 // linked notebooks and is functionally equivalent: the mtime check on every
 // call guarantees freshness, and a cache miss is a single stat + read.
 func (a *App) linkedConfigFor(ln config.LinkedNotebook) (config.SystemConfig, error) {
+	source := ln.Source()
+	path := config.LinkedConfigPath(ln.RootPath)
+
+	// Stat OUTSIDE the lock — the mtime is the cache key, and stat is fast
+	// even on a network mount (no file content read). Holding linkedConfigsMu
+	// during stat would serialize concurrent cache-miss resolutions for
+	// different linked notebooks (#133 review).
+	st, statErr := os.Stat(path)
+	var mtime time.Time
+	fileExists := false
+	if statErr == nil {
+		mtime = st.ModTime()
+		fileExists = true
+	} else if !os.IsNotExist(statErr) {
+		return config.Defaults(), fmt.Errorf("stat linked config: %w", statErr)
+	}
+
+	// Cache check under lock (no I/O — quick map lookup).
 	a.linkedConfigsMu.Lock()
-	defer a.linkedConfigsMu.Unlock()
 	if a.linkedConfigs == nil {
 		a.linkedConfigs = make(map[string]linkedConfigEntry)
 	}
-	source := ln.Source()
-	path := config.LinkedConfigPath(ln.RootPath)
-	st, statErr := os.Stat(path)
-	if statErr != nil {
-		if !os.IsNotExist(statErr) {
-			return config.Defaults(), fmt.Errorf("stat linked config: %w", statErr)
-		}
-		// Missing file:Defaults, no error. Cache an empty entry so repeated
-		// reads don't re-stat, but remember mtime is "absent" (zero) so a
-		// future file appearance (mtime > zero) triggers a re-load.
-		if cached, ok := a.linkedConfigs[source]; ok && cached.mtime.IsZero() {
+	if cached, ok := a.linkedConfigs[source]; ok {
+		// Hit conditions: file still missing (zero mtime cached) or
+		// mtime unchanged.
+		if (!fileExists && cached.mtime.IsZero()) || (fileExists && cached.mtime.Equal(mtime)) {
+			a.linkedConfigsMu.Unlock()
 			return cached.cfg, nil
 		}
-		cfg := config.Defaults()
-		a.linkedConfigs[source] = linkedConfigEntry{cfg: cfg}
-		return cfg, nil
 	}
-	mtime := st.ModTime()
-	if cached, ok := a.linkedConfigs[source]; ok && cached.mtime.Equal(mtime) {
-		return cached.cfg, nil
-	}
+	a.linkedConfigsMu.Unlock()
+
+	// Cache miss: load OUTSIDE the lock (disk read + YAML parse). Two
+	// concurrent goroutines may both miss and both load — that is fine;
+	// last writer wins and the data converges (identical or next-access
+	// refresh). The lock is only held for the map mutation.
 	cfg, err := config.LoadLinked(ln.RootPath)
 	if err != nil {
 		return config.Defaults(), err
 	}
+
+	// Update cache under lock.
+	a.linkedConfigsMu.Lock()
 	a.linkedConfigs[source] = linkedConfigEntry{cfg: cfg, mtime: mtime}
+	a.linkedConfigsMu.Unlock()
+
 	return cfg, nil
 }
 
@@ -3877,11 +3892,18 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 	// avoids holding configMu during disk I/O on a cache miss and avoids
 	// the concurrent-map-write panic that would arise if linkedConfigFor
 	// wrote to linkedConfigs under an RLock.
+	//
+	// CRITICAL: vaultEntry is cloned (via MergePluginSettings) INSIDE the
+	// RLock, not after release. UpdatePluginSetting mutates this map
+	// in-place (entry[key]=value) under configMu.Lock(); cloning after
+	// RUnlock would expose the clone iteration to a concurrent write.
 	a.configMu.RLock()
 	vaultEntry, _ := a.cfg.Plugins.PluginSettings[pluginID].(map[string]any)
 	if vaultEntry == nil {
 		vaultEntry = map[string]any{}
 	}
+	// Deep-clone under the lock so the returned map is a safe snapshot.
+	vaultClone := config.MergePluginSettings(vaultEntry, nil)
 	source := config.LinkedNotebooksVaultSource
 	var ln config.LinkedNotebook
 	if notebookName != "" {
@@ -3898,15 +3920,15 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 	a.configMu.RUnlock()
 
 	if source == config.LinkedNotebooksVaultSource {
-		// Vault notebook (or no active notebook): vault settings verbatim.
-		return vaultEntry, nil
+		// Vault notebook (or no active notebook): return the cloned snapshot.
+		return vaultClone, nil
 	}
 
 	// Linked notebook: if the registry didn't find the source (stale),
-	// degrade gracefully to vault settings.
+	// degrade gracefully to vault settings (already cloned).
 	if ln.ID == "" {
 		log.Printf("GetPluginSettingsForNotebook(%s,%s): source %q not in registry; returning vault settings", pluginID, notebookName, source)
-		return vaultEntry, nil
+		return vaultClone, nil
 	}
 	linkedCfg, err := a.linkedConfigFor(ln)
 	if err != nil {
@@ -3920,7 +3942,7 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 	if linkedEntry == nil {
 		linkedEntry = map[string]any{}
 	}
-	return config.MergePluginSettings(vaultEntry, linkedEntry), nil
+	return config.MergePluginSettings(vaultClone, linkedEntry), nil
 }
 
 // ListPlugins enumerates plugin folders under .system/plugins/, surfacing
