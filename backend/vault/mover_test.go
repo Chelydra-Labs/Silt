@@ -173,6 +173,31 @@ func TestValidateDestination_RejectsExistingVaultDest(t *testing.T) {
 	}
 }
 
+func TestValidateDestination_RejectsNetworkFilesystem(t *testing.T) {
+	// A real network mount cannot be reproduced in CI, so swap the detector
+	// for a stub that simulates one. validateDestination must surface the
+	// rejection (the same clear "move to a local folder" message the index
+	// opener uses) rather than proceeding to a WAL-incompatible copy.
+	orig := networkFSCheck
+	networkFSCheck = func(path string) error {
+		return errors.New("network filesystem detected: simulated NFS mount")
+	}
+	t.Cleanup(func() { networkFSCheck = orig })
+
+	src := t.TempDir()
+	dest := filepath.Join(t.TempDir(), "on-network")
+	err := validateDestination(src, dest)
+	if err == nil {
+		t.Fatal("expected a network-filesystem rejection, got nil")
+	}
+	if !errors.Is(err, ErrDestinationRejected) {
+		t.Errorf("expected ErrDestinationRejected, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "network filesystem") {
+		t.Errorf("expected the network-FS reason in the message, got %v", err)
+	}
+}
+
 func TestValidateDestination_AcceptsEmptyDest(t *testing.T) {
 	src := t.TempDir()
 	dest := filepath.Join(t.TempDir(), "new-vault") // does not exist yet

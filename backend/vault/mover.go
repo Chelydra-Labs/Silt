@@ -22,6 +22,12 @@ import (
 // legacy -journal auxiliary files.
 const indexArtifactPrefix = ".system/index.sqlite"
 
+// networkFSCheck is the network-filesystem detector used by validateDestination.
+// Package-level so tests can swap it to simulate a network mount (which a CI
+// temp dir cannot reproduce) without changing the validateDestination
+// signature. Defaults to db.IsNetworkFS.
+var networkFSCheck = db.IsNetworkFS
+
 // ErrDestinationRejected is returned by validateDestination when the chosen
 // destination cannot be used. The wrapped message is user-actionable.
 var ErrDestinationRejected = errors.New("vault destination rejected")
@@ -75,7 +81,7 @@ func validateDestination(src, dest string) error {
 
 	// Network-FS guard reuses the index-opener's per-platform detector so the
 	// user sees the same clear "move to a local folder" message (#79, #141).
-	if err := db.IsNetworkFS(destAbs); err != nil {
+	if err := networkFSCheck(destAbs); err != nil {
 		return fmt.Errorf("%w: %v", ErrDestinationRejected, err)
 	}
 
