@@ -722,6 +722,59 @@ func (a *App) SwitchVault(path string) error {
 	return nil
 }
 
+// PickVaultExportPath opens the native save-file dialog filtered to
+// *.silt-vault and returns the chosen path ("" on cancel). The frontend feeds
+// the returned path to ExportVault. defaultFilename is offered as the initial
+// name (e.g. "<vault-name>.silt-vault"); pass "" to let the OS pick a default.
+// Mirrors PickExportPath (theme export) — the same SaveFileDialog surface.
+func (a *App) PickVaultExportPath(defaultFilename string) (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("application context not ready")
+	}
+	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Export Silt vault",
+		DefaultFilename: defaultFilename,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Silt Vault (*.silt-vault)", Pattern: "*.silt-vault"},
+		},
+	})
+}
+
+// ExportVault streams the active vault into a portable .silt-vault archive at
+// destPath. The archive carries every file under the vault root EXCEPT the
+// reproducible SQLite index (.system/index.sqlite* — rebuilt from markdown on
+// import, identical to CopyVaultTree/MoveVault). Per-entry + content-region
+// SHA-256 digests are written into manifest.json (last) so import can detect
+// corruption/tampering before extracting.
+//
+// The active vault is never touched (read-only): no settings change, no
+// service teardown, no event other than vault:archive:progress. Streaming +
+// determinate progress: the up-front stat pass gives a file count, and an
+// event is emitted per file so the UI renders a progress bar for large vaults.
+// Runs without holding vaultMu across the (long) write — the path is snapshotted
+// under the read lock, exactly like CopyVault.
+func (a *App) ExportVault(destPath string) (vault.ExportResult, error) {
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	a.vaultMu.RLock()
+	src := a.vaultPath
+	a.vaultMu.RUnlock()
+	if src == "" {
+		return vault.ExportResult{}, fmt.Errorf("no vault is currently open")
+	}
+	vaultName := filepath.Base(filepath.Clean(src))
+	return vault.ExportVaultTree(src, destPath, vaultName, appVersion, func(phase string, current, total int) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "vault:archive:progress", map[string]any{
+				"phase":   phase,
+				"current": current,
+				"total":   total,
+			})
+		}
+	})
+}
+
 // FetchPageBlocks returns a flat list of all blocks for a page, ordered by
 // line_number. A page is a single file; each block carries its own file_date.
 // The notebook's source is resolved server-side from its (globally-unique)
