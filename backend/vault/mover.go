@@ -60,6 +60,12 @@ type MoveVaultResult struct {
 //	dest must not already look like a Silt vault (.system/ present) and must
 //	otherwise be empty or non-existent (no silent merge with other content).
 func validateDestination(src, dest string) error {
+	// Reject empty inputs up front: absClean("") resolves to the working
+	// directory, which could otherwise lead to copying the vault into / wiping
+	// the CWD if a caller passed an unset path.
+	if src == "" || dest == "" {
+		return fmt.Errorf("%w: source and destination paths must not be empty", ErrDestinationRejected)
+	}
 	srcAbs, err := absClean(src)
 	if err != nil {
 		return fmt.Errorf("%w: cannot resolve source: %v", ErrDestinationRejected, err)
@@ -211,6 +217,13 @@ func verifyCopy(srcAbs, destAbs string) error {
 // is a guard against accidental deletion if the caller passes a stale/wrong
 // path. The caller is expected to have already confirmed with the user.
 func RemoveOldVault(oldPath string) error {
+	// Reject an empty path immediately: absClean("") resolves to the current
+	// working directory, which — if it happened to contain a .system folder —
+	// would be catastrophic (RemoveAll on the CWD). Defense in depth even
+	// though the only caller (MoveVault) guards src != "" today.
+	if oldPath == "" {
+		return fmt.Errorf("empty vault path")
+	}
 	abs, err := absClean(oldPath)
 	if err != nil {
 		return fmt.Errorf("resolve old vault path: %w", err)

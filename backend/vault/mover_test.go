@@ -206,6 +206,18 @@ func TestValidateDestination_AcceptsEmptyDest(t *testing.T) {
 	}
 }
 
+func TestValidateDestination_RejectsEmptyInputs(t *testing.T) {
+	// Empty src or dest must be rejected outright: absClean("") resolves to
+	// the working directory, so an unchecked empty path could otherwise point
+	// a copy/move at the CWD.
+	if err := validateDestination("", "/some/dest"); err == nil {
+		t.Fatal("expected error for empty src, got nil")
+	}
+	if err := validateDestination("/some/src", ""); err == nil {
+		t.Fatal("expected error for empty dest, got nil")
+	}
+}
+
 func TestCopyVaultTree_HappyPath(t *testing.T) {
 	src := t.TempDir()
 	expected := writeVaultFixture(t, src)
@@ -439,5 +451,13 @@ func TestRemoveOldVault_RefusesNonVaultPath(t *testing.T) {
 	// And the folder is untouched.
 	if _, err := os.Stat(filepath.Join(plain, "notes.md")); err != nil {
 		t.Errorf("non-vault folder should be untouched, got %v", err)
+	}
+}
+
+func TestRemoveOldVault_RefusesEmptyPath(t *testing.T) {
+	// An empty path must never reach RemoveAll: absClean("") resolves to the
+	// working directory, which could be catastrophic if it held a .system.
+	if err := RemoveOldVault(""); err == nil {
+		t.Fatal("expected refusal for an empty path, got nil")
 	}
 }

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"silt/backend/config"
@@ -243,5 +245,88 @@ func TestCopyVault_RejectsWhenNoVaultOpen(t *testing.T) {
 	app := &App{spacesPerTab: 4}
 	if _, err := app.CopyVault("/tmp/whatever"); err == nil {
 		t.Fatal("expected error when no vault is open, got nil")
+	}
+}
+
+// TestVaultConcurrency_NoPanicDuringCutover validates the #141 review fix:
+// concurrent reader IPC handlers (FetchPageBlocks) must NEVER nil-deref
+// a.db while a lifecycle transition tears down and rebuilds the services.
+// Before the vaultMu RWMutex guard, an in-flight reader could pass its
+// `a.db == nil` check and then dereference a nil pointer when MoveVault /
+// SwitchVault / CloseVault niled the field out from under it. With the
+// guard, the lifecycle cutover holds the exclusive Lock and readers hold
+// RLock for the whole call, so the pointer they checked stays valid.
+//
+// (The Go race detector would be the ideal validator here, but this host's
+// kernel VMA layout is unsupported by ThreadSanitizer; this test instead
+// proves the nil-deref panic the reviewer described cannot occur.)
+func TestVaultConcurrency_NoPanicDuringCutover(t *testing.T) {
+	app, src := newMoveTestApp(t)
+
+	const readers = 4
+	const cycles = 4
+	var readerWG, lifecycleWG sync.WaitGroup
+	stop := make(chan struct{})
+	panicCh := make(chan any, readers+1)
+
+	reportPanic := func() {
+		if r := recover(); r != nil {
+			select {
+			case panicCh <- r:
+			default:
+			}
+		}
+	}
+
+	// Readers: hammer FetchPageBlocks. Errors are expected when the db is
+	// mid-cutover (it returns "vault database not loaded"); the contract
+	// under test is that this never panics with a nil dereference.
+	for i := 0; i < readers; i++ {
+		readerWG.Add(1)
+		go func() {
+			defer readerWG.Done()
+			defer reportPanic()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_, _ = app.FetchPageBlocks("Work", "", "Inbox")
+			}
+		}()
+	}
+
+	// Lifecycle goroutine: cycle teardown/reinit under the write lock, the
+	// exact pattern MoveVault/SwitchVault use for their cutover.
+	lifecycleWG.Add(1)
+	go func() {
+		defer lifecycleWG.Done()
+		defer reportPanic()
+		for j := 0; j < cycles; j++ {
+			app.vaultMu.Lock()
+			if app.db != nil {
+				app.teardownVaultServices()
+			}
+			if err := app.initializeVaultServices(src); err != nil {
+				select {
+				case panicCh <- fmt.Sprintf("reinit failed: %v", err):
+				default:
+				}
+				app.vaultMu.Unlock()
+				return
+			}
+			app.vaultMu.Unlock()
+		}
+	}()
+
+	lifecycleWG.Wait()
+	close(stop)
+	readerWG.Wait()
+
+	select {
+	case p := <-panicCh:
+		t.Fatalf("concurrent access panicked (nil-deref race not fixed): %v", p)
+	default:
 	}
 }

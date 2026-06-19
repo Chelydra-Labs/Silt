@@ -190,6 +190,22 @@ describe('GeneralTab vault relocate menu (#141)', () => {
     ).toBeInTheDocument()
   })
 
+  it('Escape on a menu item collapses the menu', async () => {
+    render(GeneralTab)
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Vault actions' })
+    )
+    await tick()
+    const moveItem = screen.getByRole('menuitem', { name: /Move vault/ })
+    moveItem.focus()
+    await fireEvent.keyDown(moveItem, { key: 'Escape' })
+    await tick()
+    expect(
+      screen.queryByRole('menuitem', { name: /Move vault/ })
+    ).toBeNull()
+  })
+
   it('clicking outside the menu collapses it', async () => {
     render(GeneralTab)
     await tick()

@@ -18,6 +18,7 @@
   let vaultAction = $state<'move' | 'copy' | null>(null)
   let menuItemRefs: HTMLButtonElement[] = $state([])
   let menuWrapper = $state<HTMLDivElement | null>(null)
+  let triggerBtn = $state<HTMLButtonElement | null>(null)
 
   function toggleMenu() {
     vaultMenuOpen = !vaultMenuOpen
@@ -64,6 +65,8 @@
     } else if (e.key === 'Escape') {
       e.preventDefault()
       vaultMenuOpen = false
+      // WAI-ARIA Menu pattern: Esc returns focus to the trigger button.
+      triggerBtn?.focus()
     }
   }
 
@@ -217,6 +220,7 @@
         <div class="relative" bind:this={menuWrapper}>
           <button
             type="button"
+            bind:this={triggerBtn}
             onclick={toggleMenu}
             onkeydown={handleMenuTriggerKeydown}
             aria-haspopup="menu"

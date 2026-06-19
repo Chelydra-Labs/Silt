@@ -62,12 +62,17 @@
       const els = focusableElements()
       if (els.length === 0) return
       const active = document.activeElement as HTMLElement | null
-      if (e.shiftKey && active === els[0]) {
+      const first = els[0]
+      const last = els[els.length - 1]
+      // Wrap at the boundaries AND when focus is outside the dialog's
+      // focusable set (e.g. it landed on the dialog container itself or was
+      // momentarily lost) — otherwise Tab/Shift+Tab would escape the trap.
+      if (e.shiftKey && (active === first || !dialogEl.contains(active))) {
         e.preventDefault()
-        els[els.length - 1].focus()
-      } else if (!e.shiftKey && active === els[els.length - 1]) {
+        last.focus()
+      } else if (!e.shiftKey && (active === last || !dialogEl.contains(active))) {
         e.preventDefault()
-        els[0].focus()
+        first.focus()
       }
     }
   }
