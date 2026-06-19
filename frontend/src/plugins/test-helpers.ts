@@ -42,6 +42,9 @@ export const v2CtxStubs: Pick<
   | 'registerSlashCommand'
   | 'getSetting'
   | 'registerSurface'
+  | 'addAttachment'
+  | 'openAttachment'
+  | 'deleteAttachment'
 > = {
   queryByTag: () => Promise.resolve(emptyResult),
   queryByDateRange: () => Promise.resolve(emptyResult),
@@ -72,5 +75,8 @@ export const v2CtxStubs: Pick<
   fetch: () => Promise.resolve({ status: 0, headers: {}, body: '', ok: false }),
   registerSlashCommand: () => () => {},
   getSetting: () => Promise.resolve(undefined),
-  registerSurface: () => () => {}
+  registerSurface: () => () => {},
+  addAttachment: () => Promise.resolve(''),
+  openAttachment: () => Promise.resolve(true),
+  deleteAttachment: () => Promise.resolve(true)
 }

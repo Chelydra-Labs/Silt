@@ -2114,6 +2114,11 @@ func (a *App) walkSections(
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+		// Skip the attachments/ directory in the sidebar navigator (#101) —
+		// it holds binary assets, not pages/sections.
+		if e.IsDir() && strings.EqualFold(name, "attachments") {
+			continue
+		}
 		if e.IsDir() {
 			subDirs = append(subDirs, name)
 			continue

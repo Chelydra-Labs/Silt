@@ -848,3 +848,106 @@ func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
 func newUUID() string {
 	return uuid.NewString()
 }
+
+// =========================================================================
+// Attachments plugin bindings (#101)
+// =========================================================================
+
+// AddAttachment copies a source file into a notebook's attachments/ directory
+// and returns the relative link path. The copy is atomic (temp+rename), and
+// filename collisions are resolved with a counter suffix so two notes
+// attaching the same-named file produce two distinct copies (#101). The
+// notebook root is resolved via #100 (in-vault or linked/external), so the
+// attachment travels with the notebook. NOT capability-gated: this is a
+// first-party plugin binding (silt-attachments is trusted).
+func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
+	if a.vaultPath == "" {
+		return "", fmt.Errorf("vault not loaded")
+	}
+	if srcPath == "" {
+		return "", fmt.Errorf("srcPath is required")
+	}
+	sn := sanitizePathSegment(notebook)
+	if sn == "" {
+		return "", fmt.Errorf("notebook is required")
+	}
+	source := a.resolveSourceByName(sn)
+	notebookDir, err := a.resolveNotebookDir(sn, source)
+	if err != nil {
+		return "", fmt.Errorf("resolve notebook dir: %w", err)
+	}
+	attachmentsDir := filepath.Join(notebookDir, "attachments")
+
+	// Read the source file.
+	srcBytes, err := os.ReadFile(srcPath)
+	if err != nil {
+		return "", fmt.Errorf("read source file: %w", err)
+	}
+	base := sanitizePathSegment(filepath.Base(srcPath))
+	if base == "" {
+		base = "attachment"
+	}
+	// Collision-safe destination: attachments/<name> or <name>-<n>.<ext>.
+	destName := base
+	if _, statErr := os.Stat(filepath.Join(attachmentsDir, destName)); statErr == nil {
+		ext := filepath.Ext(base)
+		stem := strings.TrimSuffix(base, ext)
+		for i := 1; ; i++ {
+			candidate := fmt.Sprintf("%s-%d%s", stem, i, ext)
+			if _, statErr := os.Stat(filepath.Join(attachmentsDir, candidate)); statErr != nil {
+				destName = candidate
+				break
+			}
+		}
+	}
+
+	if err := os.MkdirAll(attachmentsDir, 0o755); err != nil {
+		return "", fmt.Errorf("create attachments dir: %w", err)
+	}
+	dest := filepath.Join(attachmentsDir, destName)
+	if !isPathWithinRoot(dest, notebookDir) {
+		return "", fmt.Errorf("resolved attachment path escapes notebook root")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+	var writeErr error
+	a.coordinator.LockFileWrite(dest, func() {
+		a.tracker.RegisterWrite(dest)
+		writeErr = parser.WriteFileAtomic(dest, srcBytes)
+	})
+	if writeErr != nil {
+		return "", writeErr
+	}
+	return "attachments/" + destName, nil
+}
+
+// OpenAttachment opens an attachment in the OS native handler (#101). The
+// relative path is resolved against the notebook's actual root (#100) and
+// traversal-guarded.
+func (a *App) OpenAttachment(notebook, relPath string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	abs, err := a.resolvePluginNotebookPath(notebook, relPath)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(abs); err != nil {
+		return fmt.Errorf("attachment not found: %w", err)
+	}
+	return openNative(abs)
+}
+
+// DeleteAttachment removes an attachment file (unlink-only; the default
+// per #101 — orphan GC is a separate manual action).
+func (a *App) DeleteAttachment(notebook, relPath string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	abs, err := a.resolvePluginNotebookPath(notebook, relPath)
+	if err != nil {
+		return err
+	}
+	return os.Remove(abs)
+}

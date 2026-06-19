@@ -2,6 +2,7 @@ import type { RegisteredPlugin } from './sdk'
 import Agenda from './first-party/silt-agenda/Agenda.svelte'
 import Calendar from './first-party/silt-calendar/Calendar.svelte'
 import Kanban from './first-party/silt-kanban/Kanban.svelte'
+import AttachmentsPlugin from './first-party/silt-attachments'
 
 // First-party plugin registry: bundled Svelte components that ship with the
 // app. Third-party plugins live in .system/plugins/ and are loaded by the
@@ -44,6 +45,16 @@ registerPlugin({
     icon: 'view_kanban'
   },
   component: Kanban,
+  source: 'first-party'
+})
+// silt-attachments (#101): attaches files to notes via /attach. The plugin
+// module exports its component + onVaultOpen hook (which registers the slash
+// command). Unlike Agenda/Calendar/Kanban, this plugin uses the v2 SDK
+// lifecycle hooks + slash-command registry.
+registerPlugin({
+  manifest: AttachmentsPlugin.manifest,
+  component: AttachmentsPlugin.component,
+  onVaultOpen: AttachmentsPlugin.onVaultOpen,
   source: 'first-party'
 })
 

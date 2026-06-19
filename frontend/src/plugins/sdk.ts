@@ -282,6 +282,20 @@ export interface PluginContext {
     icon?: string
     html: string
   }) => () => void
+
+  // --- Attachments (#101) -------------------------------------------------
+
+  /**
+   * Copy a source file (absolute path) into the notebook's attachments/
+   * directory and return the relative link path. Collision-safe (counter
+   * suffix on duplicate names). Resolves against the notebook's actual root
+   * (#100, in-vault or linked). #101.
+   */
+  addAttachment: (srcPath: string, notebook?: string) => Promise<string>
+  /** Open an attachment in the OS native handler. #101. */
+  openAttachment: (notebook: string, relPath: string) => Promise<boolean>
+  /** Delete an attachment file (unlink-only; orphan GC is separate). #101. */
+  deleteAttachment: (notebook: string, relPath: string) => Promise<boolean>
 }
 
 // --- v2 SDK typed event bus (#106) ---------------------------------------

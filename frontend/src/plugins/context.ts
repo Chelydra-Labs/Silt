@@ -27,7 +27,10 @@ import {
   PluginClipboardReadText,
   PluginClipboardWriteText,
   PluginNotify,
-  PluginFetch
+  PluginFetch,
+  AddAttachment,
+  OpenAttachment,
+  DeleteAttachment
 } from '../../wailsjs/go/main/App.js'
 import { getActiveLocation } from './location.svelte'
 import { subscribe } from './events'
@@ -284,7 +287,15 @@ export function makePluginContext(pluginID: string): PluginContext {
         html: surface.html
       })
       return () => unregisterSurface(id)
-    }
+    },
+
+    // --- Attachments (#101) ------------------------------------------------
+    addAttachment: (srcPath, notebook) =>
+      AddAttachment(srcPath, notebook ?? loc.notebook),
+    openAttachment: (nb, relPath) =>
+      OpenAttachment(nb, relPath).then(() => true),
+    deleteAttachment: (nb, relPath) =>
+      DeleteAttachment(nb, relPath).then(() => true)
   }
 }
 
