@@ -20,7 +20,8 @@ function makeCtx(): PluginContext {
     updateBlockState: mocks.updateBlockState,
     mutateBlock: vi.fn(),
     updateTaskMeta: vi.fn(),
-    getPluginSettings: vi.fn(() => Promise.resolve({}))
+    getPluginSettings: vi.fn(() => Promise.resolve({})),
+    on: () => () => {}
   }
 }
 

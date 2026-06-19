@@ -51,11 +51,17 @@ type ParsingConfig struct {
 }
 
 // PluginsConfig mirrors the `plugins:` block of config.yaml. PluginSettings is
-// an opaque per-plugin map (the plugin manager surfaces it read-only).
+// an opaque per-plugin map (the plugin manager surfaces it read-only). Grants
+// is the v2 SDK capability grant table (#113): pluginID → capability →
+// qualifier ("granted" | "notebook" | "vault"). It is the single source of
+// truth for per-vault capability permission — vault state, not user-global,
+// aligning with #100's trust-scoping principle. A missing entry means "not
+// granted" (privileged bindings return a structured CapabilityDeniedError).
 type PluginsConfig struct {
-	Active         []string       `yaml:"active" json:"active"`
-	Disabled       []string       `yaml:"disabled" json:"disabled"`
-	PluginSettings map[string]any `yaml:"plugin_settings" json:"plugin_settings"`
+	Active         []string                  `yaml:"active" json:"active"`
+	Disabled       []string                  `yaml:"disabled" json:"disabled"`
+	PluginSettings map[string]any            `yaml:"plugin_settings" json:"plugin_settings"`
+	Grants         map[string]map[string]string `yaml:"grants,omitempty" json:"grants,omitempty"`
 }
 
 // LinkedNotebook is an external notebook root registered into the vault but
@@ -177,6 +183,7 @@ func Defaults() SystemConfig {
 					"columns":     []any{"TODO", "DOING", "DONE"},
 				},
 			},
+			Grants: map[string]map[string]string{},
 		},
 		UI: UIConfig{
 			SidebarWidth: 256,
@@ -361,6 +368,9 @@ func normalize(cfg SystemConfig) SystemConfig {
 	}
 	if cfg.Plugins.PluginSettings == nil {
 		cfg.Plugins.PluginSettings = map[string]any{}
+	}
+	if cfg.Plugins.Grants == nil {
+		cfg.Plugins.Grants = map[string]map[string]string{}
 	}
 	if cfg.Hotkeys == nil {
 		cfg.Hotkeys = map[string]string{}

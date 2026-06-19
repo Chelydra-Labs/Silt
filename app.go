@@ -151,6 +151,12 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	// Emit vault:closing so the frontend plugin loader runs every plugin's
+	// onVaultClose/onShutdown hook (#106) before IPC tears down. Best-effort:
+	// a nil ctx (headless test) skips the emit.
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vault:closing", struct{}{})
+	}
 	// Wait for any in-flight Wails-bound calls (UpdateBlockState,
 	// QueryTasks, FetchSectionTimeline) to complete before tearing
 	// down the DB, tracker, and watcher. Without this a fast window
@@ -232,6 +238,13 @@ func (a *App) CloseVault() error {
 	defer a.vaultMu.Unlock()
 	if a.vaultPath == "" && a.db == nil {
 		return nil // nothing to close
+	}
+	// Emit vault:closing BEFORE teardown so the frontend plugin loader can run
+	// every plugin's onVaultClose hook (#106) while IPC is still live. The
+	// event is best-effort: if no frontend is mounted (e.g. headless test), the
+	// emit is a no-op (a.ctx == nil guard).
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vault:closing", struct{}{})
 	}
 	a.teardownVaultServices()
 	return nil
@@ -4463,6 +4476,7 @@ func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
 				info.Author = m.Author
 				info.Description = m.Description
 				info.Icon = m.Icon
+				info.Capabilities = m.Capabilities
 			}
 		}
 		if _, err := os.Stat(filepath.Join(dir, "index.js")); err == nil {
@@ -4551,7 +4565,9 @@ func (a *App) InstallPlugin(archivePath string) (parser.PluginManifest, error) {
 	return manifestToParser(manifest), nil
 }
 
-// UninstallPlugin removes a plugin folder and emits plugins:changed.
+// UninstallPlugin removes a plugin folder and emits plugins:changed. It also
+// revokes every capability grant for the plugin so a later reinstall re-prompts
+// rather than inheriting the prior trust decision (#113).
 func (a *App) UninstallPlugin(pluginID string) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -4561,8 +4577,31 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	if err := plugins.Uninstall(a.vaultPath, pluginID); err != nil {
 		return err
 	}
+	// Best-effort grant cleanup; a failure here must not mask the successful
+	// uninstall (the folder is already gone). The grants block is harmless if
+	// it lingers, but cleaning it keeps the manager UI honest.
+	_ = a.revokeAllGrantsLocked(pluginID)
 	a.emitPluginsChanged()
 	return nil
+}
+
+// revokeAllGrantsLocked removes every capability grant for pluginID without
+// emitting plugins:changed (the caller decides whether to emit). Used by
+// UninstallPlugin and the vault teardown path.
+func (a *App) revokeAllGrantsLocked(pluginID string) error {
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.cfg.Plugins.Grants == nil {
+		return nil
+	}
+	if _, ok := a.cfg.Plugins.Grants[pluginID]; !ok {
+		return nil
+	}
+	delete(a.cfg.Plugins.Grants, pluginID)
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	return config.Save(a.vaultPath, a.cfg)
 }
 
 // EnablePlugin / DisablePlugin toggle a per-plugin ".disabled" sentinel
@@ -4592,6 +4631,184 @@ func (a *App) emitPluginsChanged() {
 		return
 	}
 	runtime.EventsEmit(a.ctx, "plugins:changed", struct{}{})
+}
+
+// --- v2 SDK capability & permission model (#113) -------------------------
+
+// firstPartyPluginIDs is the set of bundled plugin ids. First-party plugins
+// ship compiled with the app and are trusted by definition, so the capability
+// gate grants them every capability implicitly — they never need a user grant.
+// Third-party (disk) plugins route through requireGrant. Kept in sync with the
+// frontend registry (frontend/src/plugins/registry.ts); Phase 5 appends
+// "silt-attachments".
+var firstPartyPluginIDs = map[string]bool{
+	"silt-agenda":   true,
+	"silt-calendar": true,
+	"silt-kanban":   true,
+}
+
+// isFirstPartyPlugin reports whether pluginID is a bundled (trusted) plugin.
+func isFirstPartyPlugin(pluginID string) bool {
+	return firstPartyPluginIDs[pluginID]
+}
+
+// requireGrant is the single server-side enforcement point for every privileged
+// v2 SDK binding (#113). It returns nil if the plugin may use the capability,
+// or a structured *plugins.CapabilityDeniedError (never a panic) the frontend
+// SDK surfaces as an actionable message + re-prompt. First-party plugins are
+// always granted. Third-party plugins must have an entry for (pluginID, cap)
+// in the vault-scoped grants table (config.yaml plugins.grants).
+//
+// Callers that need the qualifier (e.g. to enforce notebook vs vault scope on
+// file writes) read it via grantedQualifier after a successful requireGrant.
+func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
+	if pluginID == "" {
+		return &plugins.CapabilityDeniedError{Capability: string(cap), Requested: "granted"}
+	}
+	if isFirstPartyPlugin(pluginID) {
+		return nil
+	}
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	if _, ok := a.cfg.Plugins.Grants[pluginID]; ok {
+		if qual, ok := a.cfg.Plugins.Grants[pluginID][string(cap)]; ok && qual != "" {
+			return nil
+		}
+	}
+	return &plugins.CapabilityDeniedError{
+		Plugin:     pluginID,
+		Capability: string(cap),
+		Requested:  plugins.QualGranted,
+	}
+}
+
+// grantedQualifier returns the scope qualifier for a granted capability, or
+// ("", false) if not granted. First-party plugins report QualGranted. Used by
+// bindings that narrow scope (file-write notebook vs vault).
+func (a *App) grantedQualifier(pluginID string, cap plugins.Capability) (string, bool) {
+	if isFirstPartyPlugin(pluginID) {
+		return plugins.QualGranted, true
+	}
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	if caps, ok := a.cfg.Plugins.Grants[pluginID]; ok {
+		if qual, ok := caps[string(cap)]; ok && qual != "" {
+			return qual, true
+		}
+	}
+	return "", false
+}
+
+// RequestCapability grants a capability to a plugin and persists it atomically
+// to config.yaml (#113). qualifier is normalized to a known value ("" or
+// "true" → "granted"). The capability must be a recognized one (unknown caps
+// are rejected). Emits plugins:changed so the manager UI refreshes.
+func (a *App) RequestCapability(pluginID, capability, qualifier string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	if pluginID == "" {
+		return fmt.Errorf("pluginID is required")
+	}
+	if !plugins.KnownCapabilities[plugins.Capability(capability)] {
+		return fmt.Errorf("unknown capability %q (recognized: %s)", capability, plugins.ListCapabilities())
+	}
+	qual := plugins.QualGranted
+	if qualifier != "" && qualifier != "true" {
+		if !pluginsValidQualifier(qualifier) {
+			return fmt.Errorf("invalid qualifier %q", qualifier)
+		}
+		qual = qualifier
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.cfg.Plugins.Grants == nil {
+		a.cfg.Plugins.Grants = map[string]map[string]string{}
+	}
+	caps, ok := a.cfg.Plugins.Grants[pluginID]
+	if !ok || caps == nil {
+		caps = map[string]string{}
+	}
+	caps[capability] = qual
+	a.cfg.Plugins.Grants[pluginID] = caps
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+		return err
+	}
+	a.emitPluginsChanged()
+	return nil
+}
+
+// RevokeCapability revokes a capability grant. capability == "" revokes every
+// grant for the plugin (used on uninstall). Emits plugins:changed.
+func (a *App) RevokeCapability(pluginID, capability string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	if pluginID == "" {
+		return fmt.Errorf("pluginID is required")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.cfg.Plugins.Grants == nil {
+		return nil // nothing to revoke
+	}
+	caps, ok := a.cfg.Plugins.Grants[pluginID]
+	if !ok {
+		return nil
+	}
+	if capability == "" {
+		delete(a.cfg.Plugins.Grants, pluginID)
+	} else {
+		delete(caps, capability)
+		if len(caps) == 0 {
+			delete(a.cfg.Plugins.Grants, pluginID)
+		}
+	}
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+		return err
+	}
+	a.emitPluginsChanged()
+	return nil
+}
+
+// GetGrantedCapabilities returns the full per-plugin capability grant table
+// (pluginID → capability → qualifier) so the manager UI can show
+// requested-vs-granted. First-party plugins are NOT included (they are
+// implicitly granted). Returns an empty (non-nil) map pre-vault.
+func (a *App) GetGrantedCapabilities() (map[string]map[string]string, error) {
+	if a.vaultPath == "" {
+		return map[string]map[string]string{}, nil
+	}
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	out := make(map[string]map[string]string, len(a.cfg.Plugins.Grants))
+	for pid, caps := range a.cfg.Plugins.Grants {
+		if isFirstPartyPlugin(pid) {
+			continue
+		}
+		clone := make(map[string]string, len(caps))
+		for k, v := range caps {
+			clone[k] = v
+		}
+		out[pid] = clone
+	}
+	return out, nil
+}
+
+// pluginsValidQualifier is a tiny adapter so app.go does not need to reach into
+// the plugins package's unexported validQualifiers map.
+func pluginsValidQualifier(q string) bool {
+	switch q {
+	case plugins.QualGranted, plugins.QualNotebook, plugins.QualVault:
+		return true
+	}
+	return false
 }
 
 // enforceMinVersion rejects a plugin whose minSiltVersion exceeds the current
@@ -4632,5 +4849,6 @@ func manifestToParser(m plugins.Manifest) parser.PluginManifest {
 		Icon:           m.Icon,
 		Main:           m.Main,
 		MinSiltVersion: m.MinSiltVersion,
+		Capabilities:   m.Capabilities,
 	}
 }

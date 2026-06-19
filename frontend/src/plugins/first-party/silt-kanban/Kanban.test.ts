@@ -111,6 +111,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     mutateBlock: vi.fn(),
     updateTaskMeta: vi.fn(),
     getPluginSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
+    on: () => () => {},
     ...overrides
   }
 }

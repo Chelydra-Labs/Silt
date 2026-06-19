@@ -8,6 +8,7 @@ import {
   GetPluginSettingsForNotebook
 } from '../../wailsjs/go/main/App.js'
 import { getActiveLocation } from './location.svelte'
+import { subscribe } from './events'
 
 /**
  * Build a PluginContext whose `activeNotebook/Section/Page` are live reactive
@@ -86,6 +87,9 @@ export function makePluginContext(pluginID: string): PluginContext {
     getPluginSettings: () =>
       GetPluginSettingsForNotebook(pluginID, loc.notebook).then(
         (settings) => settings ?? {}
-      )
+      ),
+    // v2 typed event bus (#106). Delegates to the module-scoped bus so
+    // subscriptions are auto-cleaned on disable/uninstall/vault-close.
+    on: (event, cb) => subscribe(pluginID, event, cb)
   }
 }

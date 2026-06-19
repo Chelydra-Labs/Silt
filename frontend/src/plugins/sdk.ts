@@ -109,7 +109,81 @@ export interface PluginContext {
    * refreshes for active UIs.
    */
   getPluginSettings: () => Promise<Record<string, any>>
+  /**
+   * Subscribe to a typed host event (#106). Returns an unsubscribe function;
+   * the host also auto-cleans every subscription on plugin disable/uninstall/
+   * vault close, so a plugin cannot leak listeners across reloads. The
+   * recommended debounce pattern for high-frequency events (esp. block:changed)
+   * is the plugin's responsibility.
+   *
+   * Initial event set:
+   *   - 'block:changed'            → BlockChangedEvent
+   *   - 'config:changed'           → SystemConfig (full config snapshot)
+   *   - 'active-notebook:changed'  → ActiveNotebookChangedEvent
+   *   - 'selection:changed'        → SelectionChangedEvent
+   */
+  on: <E extends PluginEventName>(
+    event: E,
+    cb: (payload: PluginEventPayload<E>) => void
+  ) => () => void
 }
+
+// --- v2 SDK typed event bus (#106) ---------------------------------------
+
+/** Names of the host events a plugin may subscribe to via ctx.on. */
+export type PluginEventName =
+  | 'block:changed'
+  | 'config:changed'
+  | 'active-notebook:changed'
+  | 'selection:changed'
+
+/** Payload of the 'block:changed' event — mirrors Go parser.BlockChangedEvent. */
+export interface BlockChangedEvent {
+  id: string
+  notebook: string
+  section: string
+  page: string
+  file_date: string
+}
+
+/** Payload of the 'active-notebook:changed' event (#106). Emitted when the
+ *  navigator focus moves between notebook/section/page. */
+export interface ActiveNotebookChangedEvent {
+  notebook: string
+  section: string
+  page: string
+}
+
+/** Payload of the 'selection:changed' event from the TipTap editor (#106/#110). */
+export interface SelectionChangedEvent {
+  notebook: string
+  section: string
+  page: string
+  /** Block id at the selection anchor, when inside a known block. */
+  blockId?: string
+}
+
+/** Maps an event name to its typed payload (single source of truth). */
+export type PluginEventPayload<E extends PluginEventName> = {
+  'block:changed': BlockChangedEvent
+  'config:changed': Record<string, unknown>
+  'active-notebook:changed': ActiveNotebookChangedEvent
+  'selection:changed': SelectionChangedEvent
+}[E]
+
+/** A capability id from the v2 SDK capability taxonomy (#113). */
+export type Capability =
+  | 'read-files'
+  | 'write-files'
+  | 'network'
+  | 'os-open'
+  | 'os-clipboard'
+  | 'os-notify'
+  | 'ui-surface'
+  | 'editor-schema'
+
+/** A capability scope qualifier (#113). 'granted' is the default whole-scope. */
+export type CapabilityQualifier = 'granted' | 'notebook' | 'vault'
 
 export interface PluginManifest {
   id: string
@@ -119,12 +193,26 @@ export interface PluginManifest {
   description?: string
   icon?: string
   minSiltVersion?: string
+  /**
+   * The v2 SDK capability declaration (#113): capability id → true | scope
+   * qualifier. Surfaced to the user at install; granted on first use.
+   * Absent for plugins that use only the read-only SDK.
+   */
+  capabilities?: Record<string, true | CapabilityQualifier>
 }
 
 export interface SiltPlugin {
   manifest: PluginManifest
   /** Called once when the plugin is loaded; receives the host context. */
   init?: (ctx: PluginContext) => void
+  /** Called after init once a vault is open and the context is fully usable (#106). */
+  onVaultOpen?: (ctx: PluginContext) => void
+  /** Called before the active vault tears down (workspace switch / app close) so
+   *  the plugin can release watchers/timers. #106. */
+  onVaultClose?: () => void
+  /** Called during app shutdown, after onVaultClose. Best-effort: IPC may be
+   *  tearing down. #106. */
+  onShutdown?: () => void
 }
 
 // A renderable, registered plugin. First-party plugins supply a compiled
@@ -136,6 +224,10 @@ export interface RegisteredPlugin {
   component: any
   /** Optional init hook invoked with the live PluginContext. */
   init?: (ctx: PluginContext) => void
+  /** v2 lifecycle hooks (#106) — invoked by the host loader. */
+  onVaultOpen?: (ctx: PluginContext) => void
+  onVaultClose?: () => void
+  onShutdown?: () => void
   /** Origin: bundled with the app vs loaded from .system/plugins/. */
   source: 'first-party' | 'disk'
 }

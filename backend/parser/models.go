@@ -145,29 +145,36 @@ type PluginRegistry struct {
 
 // PluginInfo describes a discovered plugin folder under .system/plugins/.
 type PluginInfo struct {
-	ID          string `json:"id"`
-	HasManifest bool   `json:"has_manifest"`
-	HasIndex    bool   `json:"has_index"`
-	Disabled    bool   `json:"disabled"`
-	Name        string `json:"name,omitempty"`
-	Version     string `json:"version,omitempty"`
-	Author      string `json:"author,omitempty"`
-	Description string `json:"description,omitempty"`
-	Icon        string `json:"icon,omitempty"`
+	ID          string         `json:"id"`
+	HasManifest bool           `json:"has_manifest"`
+	HasIndex    bool           `json:"has_index"`
+	Disabled    bool           `json:"disabled"`
+	Name        string         `json:"name,omitempty"`
+	Version     string         `json:"version,omitempty"`
+	Author      string         `json:"author,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Icon        string         `json:"icon,omitempty"`
+	// Capabilities is the v2 SDK capability declaration (#113) read from the
+	// installed plugin.json (capability id → true | scope string). The plugin
+	// manager surfaces requested-vs-granted in Settings → Plugins. Absent for
+	// plugins that use only the read-only SDK.
+	Capabilities map[string]any `json:"capabilities,omitempty"`
 }
 
 // PluginManifest is the plugin.json schema carried inside a .silt-plugin
 // archive (mirrors backend/plugins.Manifest, re-declared here so it crosses
 // the Wails IPC boundary without an import cycle).
 type PluginManifest struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Version        string `json:"version"`
-	Author         string `json:"author,omitempty"`
-	Description    string `json:"description,omitempty"`
-	Icon           string `json:"icon,omitempty"`
-	Main           string `json:"main,omitempty"`
-	MinSiltVersion string `json:"minSiltVersion,omitempty"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Version        string         `json:"version"`
+	Author         string         `json:"author,omitempty"`
+	Description    string         `json:"description,omitempty"`
+	Icon           string         `json:"icon,omitempty"`
+	Main           string         `json:"main,omitempty"`
+	MinSiltVersion string         `json:"minSiltVersion,omitempty"`
+	// Capabilities mirrors the v2 SDK capability declaration (#113).
+	Capabilities map[string]any `json:"capabilities,omitempty"`
 }
 
 // PluginValidationResult bundles a validated plugin manifest with the
