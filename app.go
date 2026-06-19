@@ -91,6 +91,25 @@ type App struct {
 	// or schema even if a prefix check or comment-stripping is bypassed.
 	pluginRODBMu sync.Mutex
 	pluginRODB   *sql.DB
+
+	// vaultMu guards the lifecycle of the vault-scoped service pointers (db,
+	// coordinator, watcher, tracker, vaultPath) against concurrent IPC access.
+	// Wails dispatches each bound method on its own goroutine, so without this
+	// a lifecycle transition (CloseVault / InitializeVault / MoveVault /
+	// SwitchVault) could nil out a.db while an in-flight reader
+	// (FetchPageBlocks, UpdateBlockState, …) is between its nil check and its
+	// use of the pointer — a nil-deref panic (#141 review).
+	//   - Lifecycle cutover sections acquire the exclusive Lock().
+	//   - Reader IPC handlers acquire RLock() (defer RUnlock()) for the whole
+	//     call so the pointer they checked stays valid for its duration.
+	//   - Internal lowercase helpers assume the caller already holds the lock
+	//     and never acquire it themselves (RLock is not reentrant; nesting it
+	//     on the same goroutine would deadlock under writer contention).
+	//   - Pure-delegation wrappers (PickNotebookFolder, PickLinkedNotebook,
+	//     PluginMutateBlock, PluginUpdateBlockState) take no lock — their
+	//     callee does — so the same goroutine never holds RLock twice.
+	// Lock ordering: vaultMu is always acquired BEFORE configMu.
+	vaultMu sync.RWMutex
 }
 
 // linkedConfigEntry is one slot in App.linkedConfigs. mtime is the on-disk
@@ -137,12 +156,19 @@ func (a *App) shutdown(ctx context.Context) {
 	// down the DB, tracker, and watcher. Without this a fast window
 	// close could race an in-progress file write.
 	a.wg.Wait()
+	// Take the write lock for the terminal teardown so any reader that
+	// slipped in between wg.Wait() returning and this point can't
+	// dereference a service mid-close. (No new handlers arrive after the
+	// Wails context is cancelled, but the lock makes the guarantee
+	// structural rather than relying on dispatch ordering.)
+	a.vaultMu.Lock()
 	// Share the exact teardown path with CloseVault so both nil every
 	// service field. Nilling here matters: if a "change vault" IPC lands
 	// during OS-driven close (race), CloseVault's nothing-to-close guard
 	// sees the nil'd fields and becomes a no-op instead of double-closing
 	// already-closed handles.
 	a.teardownVaultServices()
+	a.vaultMu.Unlock()
 }
 
 // teardownVaultServices closes and nils every vault-scoped service in the
@@ -198,6 +224,12 @@ func (a *App) CloseVault() error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	// Hold the write lock across the teardown so concurrent readers can't
+	// dereference a service pointer mid-close. The fast nil-check is also
+	// taken under the lock so the "nothing to close" decision can't race a
+	// concurrent Initialize.
+	a.vaultMu.Lock()
+	defer a.vaultMu.Unlock()
 	if a.vaultPath == "" && a.db == nil {
 		return nil // nothing to close
 	}
@@ -403,6 +435,8 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 
 // IsVaultInitialized returns whether a workspace vault has been configured and loaded.
 func (a *App) IsVaultInitialized() bool {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	return a.vaultPath != "" && a.db != nil
 }
 
@@ -429,6 +463,11 @@ func (a *App) InitializeVault() (bool, error) {
 		return false, fmt.Errorf("failed to scaffold vault: %w", err)
 	}
 
+	// Persist settings + boot services under the write lock so a concurrent
+	// reader/CloseVault sees the transition atomically (no window where
+	// settings.json points at the new path but a.db is still the old one).
+	a.vaultMu.Lock()
+	defer a.vaultMu.Unlock()
 	settings := &vault.AppSettings{
 		VaultPath: selectedPath,
 	}
@@ -443,12 +482,254 @@ func (a *App) InitializeVault() (bool, error) {
 	return true, nil
 }
 
+// PickVaultDestination opens a native folder picker for a vault move/copy
+// destination and returns the chosen path ("" on cancel). Shared by Move and
+// Copy so the frontend can show its own confirmation modal between the pick
+// and the commit, mirroring the delete flows (#141).
+func (a *App) PickVaultDestination() (string, error) {
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select Destination for Silt Vault",
+	})
+}
+
+// CopyVault duplicates the active vault tree at destPath, EXCLUDING the
+// reproducible SQLite index (rebuilt from markdown when the copy is first
+// opened). The active vault is untouched: no settings change, no service
+// teardown, no event. The copy is a separate workspace the user can switch
+// to later. CopyVaultTree validates the destination and verifies every byte
+// (size + SHA-256); on failure it cleans up the partial destination.
+func (a *App) CopyVault(destPath string) (vault.CopyResult, error) {
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	// Snapshot the active vault path under the read lock so the copy reads a
+	// stable source even if a lifecycle transition is racing. The copy itself
+	// (CopyVaultTree) is long and never touches the service pointers, so it
+	// runs without holding the lock.
+	a.vaultMu.RLock()
+	src := a.vaultPath
+	a.vaultMu.RUnlock()
+	if src == "" {
+		return vault.CopyResult{}, fmt.Errorf("no vault is currently open")
+	}
+	return vault.CopyVaultTree(src, destPath)
+}
+
+// MoveVault relocates the active vault to destPath: copy + verify, then a
+// cutover (teardown services → patch dest config.yaml path → persist
+// settings.json → reinit at the new path) that reuses the existing
+// close/open paths, with a verbatim rollback to the original path if reinit
+// fails. The dest config.yaml's notebooks.path is updated to dest so the
+// Settings → General "Workspace" row shows the new location. Emits vault:moved
+// ({from, to}) so the frontend resets navigation and reloads its stores. If
+// removeOld is true the original folder is deleted AFTER a successful
+// cutover (non-fatal on failure: RemoveOldErr carries the message).
+func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult, error) {
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	// Snapshot the active vault path under the read lock so the (long) copy
+	// reads a stable source even if a lifecycle transition is racing.
+	a.vaultMu.RLock()
+	src := a.vaultPath
+	a.vaultMu.RUnlock()
+	if src == "" {
+		return vault.MoveVaultResult{}, fmt.Errorf("no vault is currently open")
+	}
+
+	// 1. Copy + verify. On failure the primitive cleans up dest itself; the
+	//    active vault and settings are untouched. No lock held — this is the
+	//    slow phase and it never touches the service pointers.
+	copyRes, err := vault.CopyVaultTree(src, destPath)
+	if err != nil {
+		return vault.MoveVaultResult{}, fmt.Errorf("move vault: %w", err)
+	}
+	dest := destPath
+	// Snapshot the instant the copy+verify completed. Used before removeOld
+	// to detect an external edit (e.g. VS Code) that landed in the source
+	// during the cutover — deleting the source then would silently lose it.
+	copyDoneAt := time.Now()
+
+	// 2. Update the dest config.yaml notebooks.path so the Settings → General
+	//    workspace row reflects the new location (matches ScaffoldVault's
+	//    forward-slash convention). Best-effort: a failure here is logged but
+	//    does not abort — the vault is fully usable with a stale display path.
+	if cfg, cfgErr := config.Load(dest); cfgErr == nil {
+		cfg.Notebooks.Path = filepath.ToSlash(dest)
+		if err := config.Save(dest, cfg); err != nil {
+			log.Printf("MoveVault: could not update dest config.yaml notebooks.path: %v", err)
+		}
+	}
+
+	// 3. Cutover under the exclusive write lock: no reader can dereference a
+	//    service pointer while the db / watcher are being torn down and
+	//    rebuilt. The prior-settings snapshot is read UNDER this lock (not
+	//    before it) so a concurrent settings.json writer (ApplyTheme) can't
+	//    commit a change that the cutover then overwrites with a stale
+	//    snapshot. Re-check a.vaultPath hasn't moved (defensive; the UI
+	//    serializes lifecycle calls). rollbackMove also runs under this lock
+	//    (it does not acquire it itself — RWMutex is not reentrant).
+	cutoverErr := func() error {
+		a.vaultMu.Lock()
+		defer a.vaultMu.Unlock()
+		if a.vaultPath != src {
+			return fmt.Errorf("vault changed during move (concurrent lifecycle transition)")
+		}
+		prior, err := vault.LoadSettings()
+		if err != nil {
+			return fmt.Errorf("move vault: snapshot settings: %w", err)
+		}
+		a.teardownVaultServices()
+		newSettings := *prior
+		newSettings.VaultPath = dest
+		if err := vault.SaveSettings(&newSettings); err != nil {
+			_ = a.rollbackMove(src, prior)
+			return fmt.Errorf("move vault: save settings: %w", err)
+		}
+		if err := a.initializeVaultServices(dest); err != nil {
+			if recoverErr := a.rollbackMove(src, prior); recoverErr != nil {
+				return fmt.Errorf("move vault: init services at %s failed (%v); rollback to %s also failed (%v)", dest, err, src, recoverErr)
+			}
+			return fmt.Errorf("move vault: init services at %s failed — rolled back to %s (%v)", dest, src, err)
+		}
+		return nil
+	}()
+	if cutoverErr != nil {
+		return vault.MoveVaultResult{}, cutoverErr
+	}
+
+	result := vault.MoveVaultResult{
+		CopyResult: copyRes,
+		From:       src,
+		To:         dest,
+	}
+
+	// 4. Optional old-vault removal (non-fatal: the cutover already
+	//    succeeded). First guard against an external edit to the source that
+	//    landed after the copy snapshot — if so, keep the old folder in place
+	//    rather than delete the user's unsaved-to-the-new-vault change. A
+	//    permission/lock failure on the delete itself is also carried on
+	//    RemoveOldErr + logged so it is never fully silent.
+	if removeOld {
+		if modified, mErr := vault.SourceModifiedAfter(src, copyDoneAt); mErr != nil {
+			result.RemoveOldErr = fmt.Sprintf("could not verify source unchanged: %v", mErr)
+			log.Printf("MoveVault: skip removeOld — source check failed for %s: %v", src, mErr)
+		} else if modified {
+			result.RemoveOldErr = "original vault was modified during the move; left in place"
+			log.Printf("MoveVault: skip removeOld — %s modified after copy snapshot", src)
+		} else if err := vault.RemoveOldVault(src); err != nil {
+			result.RemoveOldErr = err.Error()
+			log.Printf("MoveVault: failed to remove old vault at %s: %v", src, err)
+		}
+	}
+
+	// 5. Notify the frontend to reset navigation + reload stores. If the
+	//    optional old-vault removal didn't happen (source modified during
+	//    cutover, or a delete permission/lock error), carry a warning so the
+	//    user is told the original folder is still on disk — the move itself
+	//    succeeded, so this is non-blocking (surfaced as a toast, not an error
+	//    return).
+	if a.ctx != nil {
+		payload := map[string]string{
+			"from": src,
+			"to":   dest,
+		}
+		if result.RemoveOldErr != "" {
+			payload["warning"] = "Vault moved, but the original folder could not be removed: " + result.RemoveOldErr
+		}
+		runtime.EventsEmit(a.ctx, "vault:moved", payload)
+	}
+	return result, nil
+}
+
+// rollbackMove restores the active vault to originalPath after a failed
+// cutover: persists the prior settings (verbatim, preserving theme/mode) and
+// reinitializes services at the original path. The leftover verified copy is
+// intentionally left in place — deleting it during error handling would risk
+// data loss. Caller MUST hold vaultMu (it does not acquire it; RWMutex is not
+// reentrant). Returns the reinit error, if any.
+func (a *App) rollbackMove(originalPath string, prior *vault.AppSettings) error {
+	// Never (re)initialize services against an empty path: absClean("") would
+	// resolve to the working directory and pollute it with a .system/index.
+	if originalPath == "" {
+		return nil
+	}
+	_ = vault.SaveSettings(prior)
+	return a.initializeVaultServices(originalPath)
+}
+
+// SwitchVault points Silt at an existing vault folder (e.g. one created by
+// CopyVault) without a picker or scaffolding: teardown the active vault,
+// persist settings.json to the new path, and reinit services there. The path
+// must already contain a .system folder (CopyVault/MoveVault both produce
+// valid vaults). Emits vault:moved so the frontend resets navigation.
+func (a *App) SwitchVault(path string) error {
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	if path == "" {
+		return fmt.Errorf("empty vault path")
+	}
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("resolve vault path: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(abs, ".system")); err != nil {
+		return fmt.Errorf("not a Silt vault (no .system folder): %s", path)
+	}
+
+	// Cutover under the exclusive write lock so concurrent readers can't race
+	// the teardown/reinit. The prior-settings snapshot is read UNDER this lock
+	// (not before it) so a concurrent settings.json writer (ApplyTheme) can't
+	// commit a change that the cutover overwrites with a stale snapshot.
+	// activePath is captured under the lock (before teardown nils it) for
+	// rollback. rollbackMove runs under this same lock.
+	switchErr := func() error {
+		a.vaultMu.Lock()
+		defer a.vaultMu.Unlock()
+		activePath := a.vaultPath
+		prior, _ := vault.LoadSettings()
+		a.teardownVaultServices()
+
+		settings := prior
+		if settings == nil {
+			settings = &vault.AppSettings{}
+		}
+		settings.VaultPath = abs
+		if err := vault.SaveSettings(settings); err != nil {
+			if prior != nil {
+				_ = a.rollbackMove(activePath, prior)
+			}
+			return fmt.Errorf("switch vault: save settings: %w", err)
+		}
+		if err := a.initializeVaultServices(abs); err != nil {
+			if prior != nil {
+				_ = a.rollbackMove(activePath, prior)
+			}
+			return fmt.Errorf("switch vault: init services: %w", err)
+		}
+		return nil
+	}()
+	if switchErr != nil {
+		return switchErr
+	}
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vault:moved", map[string]string{
+			"from": "",
+			"to":   abs,
+		})
+	}
+	return nil
+}
+
 // FetchPageBlocks returns a flat list of all blocks for a page, ordered by
 // line_number. A page is a single file; each block carries its own file_date.
 // The notebook's source is resolved server-side from its (globally-unique)
 // name so a linked notebook sharing a display name with a vault notebook
 // returns its own page (#100).
 func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
 	}
@@ -473,6 +754,8 @@ func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBl
 // target line inside the file write lock by scanning for the UUID comment. The
 // UUID is the source of truth for the target line, not the cached line number.
 func (a *App) UpdateBlockState(blockID string, newState string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	// Guard against a meaningless no-op that the frontend might interpret
 	// as an error. The only valid task status values are TODO, DOING, DONE.
 	switch newState {
@@ -603,6 +886,8 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 
 // QueryTasks retrieves indexed items matching the active filters.
 func (a *App) QueryTasks(filter parser.TaskQueryFilter) ([]parser.TaskResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
 	}
@@ -685,6 +970,8 @@ func (a *App) themesDir() string {
 // and any per-file load errors. Works before a vault is open (returns just
 // the embedded default).
 func (a *App) ListThemes() (*themes.ListThemesResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	return themes.ListThemes(a.themesDir())
 }
 
@@ -693,6 +980,8 @@ func (a *App) ListThemes() (*themes.ListThemesResult, error) {
 // token maps for injection. Always succeeds with the default theme on a
 // fresh/empty vault so the app can render on first paint.
 func (a *App) GetActiveTheme() (ActiveThemeResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	settings, err := vault.LoadSettings()
 	if err != nil {
 		// Settings exist but are unreadable — surface it rather than
@@ -716,6 +1005,8 @@ func (a *App) GetActiveTheme() (ActiveThemeResult, error) {
 // followed by ResolveActive (reads the directory a second time to find the
 // same theme), so every switch did two directory scans + 2N parses.
 func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if !vault.ValidThemeMode(mode) {
 		return ActiveThemeResult{}, fmt.Errorf("invalid mode %q (valid: dark, light, system)", mode)
 	}
@@ -814,6 +1105,8 @@ func (a *App) PickThemeFile() (string, error) {
 // background-color resolution that runs after the import will pick up
 // the new file instead of a stale parse.
 func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return nil, fmt.Errorf("vault not loaded")
 	}
@@ -857,6 +1150,8 @@ func (a *App) PickExportPath(defaultFilename string) (string, error) {
 // The active id is read from AppSettings; the embedded default ships
 // even when the on-disk copy is missing.
 func (a *App) ExportActiveTheme(dstPath string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
@@ -881,6 +1176,8 @@ func (a *App) templatesDir() string {
 // load errors. Works before a vault is open (returns just the embedded set,
 // mirroring ListThemes).
 func (a *App) ListTemplates() (*templates.ListTemplatesResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
 	defer a.wg.Done()
 	return templates.ListTemplates(a.templatesDir())
@@ -891,6 +1188,8 @@ func (a *App) ListTemplates() (*templates.ListTemplatesResult, error) {
 // live preview + drive the placeholder form. Returns a user-facing error when
 // the id is on neither tier.
 func (a *App) GetTemplate(id string) (templates.Template, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
 	defer a.wg.Done()
 	if id == "" {
@@ -910,6 +1209,8 @@ func (a *App) GetTemplate(id string) (templates.Template, error) {
 // logged, not returned — Wails exposes only the first non-error return value,
 // and the picker preview intentionally ignores forward-compat warnings.
 func (a *App) RenderTemplate(id string, vars map[string]string) (string, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
 	defer a.wg.Done()
 	if id == "" {
@@ -932,6 +1233,8 @@ func (a *App) RenderTemplate(id string, vars map[string]string) (string, error) 
 // events do not trigger a redundant reload. Emits templates:changed so the
 // picker re-lists immediately. Mirrors App.ImportTheme.
 func (a *App) SaveUserTemplate(t templates.Template) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
 	defer a.wg.Done()
 	if a.vaultPath == "" {
@@ -959,6 +1262,8 @@ func (a *App) SaveUserTemplate(t templates.Template) error {
 // Builtin ids are rejected (read-only). Emits templates:changed. Idempotent
 // (deleting an already-deleted template is a no-op success).
 func (a *App) DeleteUserTemplate(id string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
 	defer a.wg.Done()
 	if a.vaultPath == "" {
@@ -1045,6 +1350,8 @@ func (a *App) ReloadTemplates() error {
 // and index the resulting blocks via ParseFileContent so task/embed/tag
 // pipelines pick them up immediately. Returns the resolved date string.
 func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateID string, vars map[string]string) (string, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" || a.db == nil {
 		return "", fmt.Errorf("vault not loaded")
 	}
@@ -1132,6 +1439,8 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 // returned blocks via blocksToDoc() → editor.commands.insertContent; the
 // UniqueBlockIds extension also guards against any residual collision.
 func (a *App) RenderTemplateBlocks(id string, vars map[string]string) ([]parser.ParsedBlock, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
 	defer a.wg.Done()
 	if id == "" {
@@ -1160,6 +1469,8 @@ func (a *App) RenderTemplateBlocks(id string, vars map[string]string) ([]parser.
 // and location for hover previews and scroll-to-source navigation. Missing
 // UUIDs return Exists=false (no error) so the UI can render a broken-link chip.
 func (a *App) ResolveBlockReference(blockID string) (parser.BlockReference, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	ref := parser.BlockReference{ID: blockID}
 	if a.db == nil {
 		return ref, fmt.Errorf("vault database not loaded")
@@ -1196,6 +1507,8 @@ func (a *App) ResolveBlockReference(blockID string) (parser.BlockReference, erro
 // trailing <!-- id --> comment. It re-indexes the file and emits block:changed
 // so live embeds/references stay in sync.
 func (a *App) MutateBlock(blockID, newText string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -1507,6 +1820,8 @@ func (a *App) resolveSourceByNameLocked(notebookName string) string {
 // tree is a true tree: each section may carry `Children []NavigationSection`
 // for arbitrarily-deep nesting.
 func (a *App) ListNavigation() (parser.NavigationTree, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return parser.NavigationTree{}, fmt.Errorf("vault not loaded")
 	}
@@ -1703,6 +2018,8 @@ func sortNavPages(p []parser.NavigationPage) {
 
 // QueryTagHierarchy returns the hierarchical tag tree for the Tags Explorer.
 func (a *App) QueryTagHierarchy() ([]parser.TagNode, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
 	}
@@ -1716,6 +2033,8 @@ func (a *App) QueryTagHierarchy() ([]parser.TagNode, error) {
 
 // QueryBlocksByTag returns blocks tagged at or beneath tagPath (prefix match).
 func (a *App) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
 	}
@@ -1732,6 +2051,8 @@ func (a *App) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
 // compatibility with the original binding; the Svelte search modal that needs
 // pagination/snippets calls SearchBlocksPaged instead.
 func (a *App) SearchBlocks(query string) ([]parser.TaskResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return nil, fmt.Errorf("vault database not loaded")
 	}
@@ -1752,6 +2073,8 @@ func (a *App) SearchBlocks(query string) ([]parser.TaskResult, error) {
 // envelope with highlighted snippets, the total match count, and a HasMore
 // flag. offset/limit control the page (defaults applied by the caller).
 func (a *App) SearchBlocksPaged(query string, offset, limit int) (parser.SearchResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return parser.SearchResult{}, fmt.Errorf("vault database not loaded")
 	}
@@ -1792,6 +2115,8 @@ func (a *App) focusFilePath(notebook, section, page string) (string, error) {
 
 // AcquireFocusLock registers a focus lock on a page file to ignore fsnotify updates.
 func (a *App) AcquireFocusLock(notebook, section, page string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.watcher == nil {
 		return fmt.Errorf("watcher not running")
 	}
@@ -1807,6 +2132,8 @@ func (a *App) AcquireFocusLock(notebook, section, page string) error {
 
 // ReleaseFocusLock removes a focus lock from a page file.
 func (a *App) ReleaseFocusLock(notebook, section, page string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.watcher == nil {
 		return fmt.Errorf("watcher not running")
 	}
@@ -1824,6 +2151,8 @@ func (a *App) ReleaseFocusLock(notebook, section, page string) error {
 // Svelte editor's heartbeat while it stays focused (#38); a no-op if the
 // lease already expired (the editor must re-acquire).
 func (a *App) RefreshFocusLock(notebook, section, page string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.watcher == nil {
 		return fmt.Errorf("watcher not running")
 	}
@@ -1840,6 +2169,8 @@ func (a *App) RefreshFocusLock(notebook, section, page string) error {
 // CreateNotebook creates a top-level notebook folder under the vault root.
 // Silt starts blank; the user creates or opens notebooks from the sidebar.
 func (a *App) CreateNotebook(name string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	safeName := sanitizePathSegment(name)
 	if safeName == "" {
 		return fmt.Errorf("notebook name is required")
@@ -1865,6 +2196,8 @@ func (a *App) CreateNotebook(name string) error {
 // external notebooks are rejected explicitly rather than silently linked.
 // Returns the notebook name (the folder's base name).
 func (a *App) OpenNotebook(folderPath string) (string, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	absPath, err := filepath.Abs(folderPath)
 	if err != nil {
 		return "", fmt.Errorf("invalid folder path: %w", err)
@@ -1930,6 +2263,8 @@ func (a *App) PickNotebookFolder() (string, error) {
 // links), persists the registry, watches the root, and indexes its tree. The
 // external files (and any co-located <root>/.system/) are never modified.
 func (a *App) LinkNotebook(folderPath string) (config.LinkedNotebook, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return config.LinkedNotebook{}, fmt.Errorf("vault not loaded")
 	}
@@ -2009,6 +2344,8 @@ func (a *App) LinkNotebook(folderPath string) (config.LinkedNotebook, error) {
 // it, and drops its local index rows. The external files are left completely
 // untouched (safe default). Idempotent.
 func (a *App) UnlinkNotebook(id string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
@@ -2370,6 +2707,8 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 // CreateSection creates a section folder inside a notebook. A section groups
 // pages; it has no content of its own.
 func (a *App) CreateSection(notebook, section string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
 	if safeNotebook == "" || safeSection == "" {
@@ -2394,6 +2733,8 @@ func (a *App) CreateSection(notebook, section string) error {
 // used. Section may be empty, in which case the page lives directly under the
 // notebook. This is the streaming unit shown in the timeline editor.
 func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection := sanitizePathSegment(section)
 	safePage := sanitizePathSegment(page)
@@ -2467,6 +2808,8 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 // carries its own file_date. The notebook's source is resolved server-side
 // from its (globally-unique) name (#100).
 func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -2684,6 +3027,8 @@ func updateFrontmatterField(content, key, newVal string) string {
 // moves the file, and re-indexes. Block UUIDs are preserved so references
 // and embeds keep resolving (#62, #83).
 func (a *App) RenamePage(notebook, section, oldName, newName string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -2762,6 +3107,8 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 // RenameSection renames a section folder and updates the section: frontmatter
 // in every .md file it contains. All affected blocks are re-indexed (#62).
 func (a *App) RenameSection(notebook, oldName, newName string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -2871,6 +3218,8 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 // RenameNotebook renames a notebook folder and updates the notebook: frontmatter
 // in every .md file it contains. All affected blocks are re-indexed (#62).
 func (a *App) RenameNotebook(oldName, newName string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -2991,6 +3340,8 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 // DeletePage moves a single page file to .system/trash/ and clears its index
 // entries. The file is recoverable from the trash folder (#62).
 func (a *App) DeletePage(notebook, section, page string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -3050,6 +3401,8 @@ func (a *App) DeletePage(notebook, section, page string) error {
 // DeleteSection moves a section folder (all pages) to .system/trash/ and clears
 // their index entries (#62).
 func (a *App) DeleteSection(notebook, section string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -3114,6 +3467,8 @@ func (a *App) DeleteSection(notebook, section string) error {
 // DeleteNotebook moves a notebook folder (all sections + pages) to
 // .system/trash/ and clears their index entries (#62).
 func (a *App) DeleteNotebook(notebook string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -3197,6 +3552,8 @@ func (a *App) GetSidebarWidth() int {
 // [200, 480]. Uses RegisterSelfWrite to suppress the config watcher's
 // self-write loop.
 func (a *App) SetSidebarWidth(px int) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if px < 200 {
 		px = 200
 	}
@@ -3223,6 +3580,8 @@ func (a *App) GetNavOrder() (config.NavOrder, error) {
 
 // SetNavOrder persists a new navigation ordering to config.yaml.
 func (a *App) SetNavOrder(order config.NavOrder) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	a.configMu.Lock()
 	a.cfg.UI.NavOrder = order
 	cfg := a.cfg
@@ -3482,6 +3841,8 @@ type PluginRawQueryResult struct {
 // bypassed. Results are returned as PluginRawQueryResult: the row slice plus
 // a Truncated flag the SDK can surface when the result hit maxPluginQueryRows.
 func (a *App) PluginRawQuery(sqlText string, params []any) (PluginRawQueryResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return PluginRawQueryResult{}, fmt.Errorf("vault database not loaded")
 	}
@@ -3569,6 +3930,8 @@ func (a *App) PluginUpdateBlockState(blockID, status string) (bool, error) {
 // toggles: the renderer emits exactly one pin token from the *bool, so
 // pin → unpin → pin can never produce two competing tokens (#123).
 func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if pin < -2 || pin > 1 {
 		return false, fmt.Errorf("invalid pin value %d (valid: -2=clear, -1=no change, 0=unpin, 1=pin)", pin)
 	}
@@ -3711,6 +4074,8 @@ func (a *App) PluginUpdateTaskMeta(blockID string, pin int, progress int) (bool,
 // the in-memory config (the single source of truth maintained by the config
 // package + hot-reload watcher), so callers never re-read the file.
 func (a *App) GetPluginRegistry() (parser.PluginRegistry, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	registry := parser.PluginRegistry{Active: []string{}, Disabled: []string{}}
 	if a.vaultPath == "" {
 		return registry, fmt.Errorf("vault not loaded")
@@ -3737,6 +4102,8 @@ func (a *App) GetPluginRegistry() (parser.PluginRegistry, error) {
 // replaced wholesale under the write lock, so they are safe to read/marshal
 // after the lock is released.
 func (a *App) GetSystemConfig() (config.SystemConfig, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return config.Defaults(), fmt.Errorf("vault not loaded")
 	}
@@ -3766,6 +4133,8 @@ func (a *App) GetConfigLoadError() string {
 // The self-write is registered first so the hot-reload watcher ignores the
 // fsnotify event from our own atomic write.
 func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
@@ -3836,6 +4205,8 @@ func (a *App) applyConfigLocked(cfg config.SystemConfig) {
 // (the frontend store updates optimistically; external edits still flow through
 // the watcher -> applyConfig with emit).
 func (a *App) UpdatePluginSetting(pluginID string, key string, value any) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
@@ -3879,6 +4250,8 @@ func (a *App) UpdatePluginSetting(pluginID string, key string, value any) error 
 // source via resolveSourceByName. An empty notebookName is treated as the
 // vault scope (no active notebook).
 func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[string]any, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return nil, fmt.Errorf("vault not loaded")
 	}
@@ -3948,6 +4321,8 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 // ListPlugins enumerates plugin folders under .system/plugins/, surfacing
 // manifest name/version and the disabled sentinel for the manager UI.
 func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return nil, fmt.Errorf("vault not loaded")
 	}
@@ -3992,6 +4367,8 @@ func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
 // ReadPluginSource returns the ESM source of a plugin's index.js for the
 // dynamic loader.
 func (a *App) ReadPluginSource(pluginID string) (string, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	safeID := sanitizePathSegment(pluginID)
 	if safeID == "" {
 		return "", fmt.Errorf("invalid plugin id")
@@ -4047,6 +4424,8 @@ func (a *App) PickPluginArchive() (string, error) {
 // InstallPlugin installs a .silt-plugin archive into .system/plugins/<id>/,
 // emits plugins:changed so the loader re-runs, and returns the manifest.
 func (a *App) InstallPlugin(archivePath string) (parser.PluginManifest, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return parser.PluginManifest{}, fmt.Errorf("vault not loaded")
 	}
@@ -4065,6 +4444,8 @@ func (a *App) InstallPlugin(archivePath string) (parser.PluginManifest, error) {
 
 // UninstallPlugin removes a plugin folder and emits plugins:changed.
 func (a *App) UninstallPlugin(pluginID string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
@@ -4078,6 +4459,8 @@ func (a *App) UninstallPlugin(pluginID string) error {
 // EnablePlugin / DisablePlugin toggle a per-plugin ".disabled" sentinel
 // (the loader skips disabled plugins), then emit plugins:changed.
 func (a *App) EnablePlugin(pluginID string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if err := plugins.SetDisabled(a.vaultPath, pluginID, false); err != nil {
 		return err
 	}
@@ -4086,6 +4469,8 @@ func (a *App) EnablePlugin(pluginID string) error {
 }
 
 func (a *App) DisablePlugin(pluginID string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if err := plugins.SetDisabled(a.vaultPath, pluginID, true); err != nil {
 		return err
 	}

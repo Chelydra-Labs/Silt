@@ -59,6 +59,17 @@ vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
   EventsOff: vi.fn(),
   EventsEmit: vi.fn()
 }))
+
+// VaultActionModal (rendered as a child when a relocate action is chosen)
+// imports the wailsjs binding module, so it must be mocked here too.
+const appMocks = vi.hoisted(() => ({
+  PickVaultDestination: vi.fn(),
+  MoveVault: vi.fn(),
+  CopyVault: vi.fn(),
+  SwitchVault: vi.fn()
+}))
+vi.mock('../../../wailsjs/go/main/App.js', () => appMocks)
+
 vi.mock('../../settings/store.svelte', () => ({
   settings: mocks.settings,
   saveConfig: mocks.saveConfig,
@@ -126,5 +137,90 @@ describe('GeneralTab font picker (#82)', () => {
     expect(combo.textContent).toContain('Theme default')
     // The edit marked the form dirty (Save path).
     expect(mocks.settings.dirty).toBe(true)
+  })
+})
+
+describe('GeneralTab vault relocate menu (#141)', () => {
+  beforeEach(() => {
+    mocks.settings.dirty = false
+    appMocks.PickVaultDestination.mockClear()
+    appMocks.MoveVault.mockClear()
+    appMocks.CopyVault.mockClear()
+    appMocks.SwitchVault.mockClear()
+  })
+  afterEach(() => cleanup())
+
+  it('renders the vault actions kebab button', async () => {
+    render(GeneralTab)
+    await tick()
+    expect(
+      screen.getByRole('button', { name: 'Vault actions' })
+    ).toBeInTheDocument()
+  })
+
+  it('opening the menu reveals Move and Copy actions', async () => {
+    render(GeneralTab)
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Vault actions' })
+    )
+    await tick()
+    expect(
+      screen.getByRole('menuitem', { name: /Move vault/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Copy vault/ })
+    ).toBeInTheDocument()
+  })
+
+  it('selecting Move opens the VaultActionModal in move mode', async () => {
+    render(GeneralTab)
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Vault actions' })
+    )
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /Move vault/ })
+    )
+    await tick()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Move vault' })
+    ).toBeInTheDocument()
+  })
+
+  it('Escape on a menu item collapses the menu', async () => {
+    render(GeneralTab)
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Vault actions' })
+    )
+    await tick()
+    const moveItem = screen.getByRole('menuitem', { name: /Move vault/ })
+    moveItem.focus()
+    await fireEvent.keyDown(moveItem, { key: 'Escape' })
+    await tick()
+    expect(
+      screen.queryByRole('menuitem', { name: /Move vault/ })
+    ).toBeNull()
+  })
+
+  it('clicking outside the menu collapses it', async () => {
+    render(GeneralTab)
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Vault actions' })
+    )
+    await tick()
+    expect(
+      screen.getByRole('menuitem', { name: /Move vault/ })
+    ).toBeInTheDocument()
+    // A window click outside the menu wrapper closes it.
+    await fireEvent.click(document.body)
+    await tick()
+    expect(
+      screen.queryByRole('menuitem', { name: /Move vault/ })
+    ).toBeNull()
   })
 })
