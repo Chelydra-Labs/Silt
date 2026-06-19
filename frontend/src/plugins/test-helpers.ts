@@ -40,6 +40,8 @@ export const v2CtxStubs: Pick<
   | 'notify'
   | 'fetch'
   | 'registerSlashCommand'
+  | 'getSetting'
+  | 'registerSurface'
 > = {
   queryByTag: () => Promise.resolve(emptyResult),
   queryByDateRange: () => Promise.resolve(emptyResult),
@@ -68,5 +70,7 @@ export const v2CtxStubs: Pick<
   clipboardWrite: () => Promise.resolve(true),
   notify: () => Promise.resolve(true),
   fetch: () => Promise.resolve({ status: 0, headers: {}, body: '', ok: false }),
-  registerSlashCommand: () => () => {}
+  registerSlashCommand: () => () => {},
+  getSetting: () => Promise.resolve(undefined),
+  registerSurface: () => () => {}
 }

@@ -168,3 +168,41 @@ func (e *CapabilityDeniedError) Error() string {
 	}
 	return fmt.Sprintf("plugin %q needs %q scope for %q but is granted %q", e.Plugin, e.Requested, e.Capability, e.Granted)
 }
+
+// validSettingTypes is the set of recognized settings-schema field types (#103).
+var validSettingTypes = map[string]bool{
+	"string": true,
+	"number": true,
+	"bool":   true,
+	"select": true,
+	"color":  true,
+	"keymap": true,
+	"list":   true,
+}
+
+// validateSettingsSchema checks that each entry in a manifest's declarative
+// settings schema has the required fields (key, label, type) and a recognized
+// type. Malformed entries are rejected at install so the generated settings
+// form never renders a broken field.
+func validateSettingsSchema(settings []map[string]any) error {
+	keys := make(map[string]bool, len(settings))
+	for i, field := range settings {
+		key, _ := field["key"].(string)
+		if key == "" {
+			return fmt.Errorf("settings[%d]: missing or empty key", i)
+		}
+		if keys[key] {
+			return fmt.Errorf("settings[%d]: duplicate key %q", i, key)
+		}
+		keys[key] = true
+		label, _ := field["label"].(string)
+		if label == "" {
+			return fmt.Errorf("settings[%d]: missing or empty label for key %q", i, key)
+		}
+		ftype, _ := field["type"].(string)
+		if !validSettingTypes[ftype] {
+			return fmt.Errorf("settings[%d]: key %q has invalid type %q (recognized: string, number, bool, select, color, keymap, list)", i, key, ftype)
+		}
+	}
+	return nil
+}

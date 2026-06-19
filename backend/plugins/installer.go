@@ -32,6 +32,11 @@ type Manifest struct {
 	// so a grant decision is informed. Absent for plugins that use only the
 	// read-only SDK (sqliteQuery + the existing mutators).
 	Capabilities map[string]any `json:"capabilities,omitempty"`
+	// Settings is the declarative settings schema (#103): each entry declares
+	// a typed field (key, label, type, default) the host renders generically in
+	// Settings → Plugins. Carried through opaquely (the frontend is the typed
+	// consumer); the installer only validates structural shape.
+	Settings []map[string]any `json:"settings,omitempty"`
 }
 
 var idRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -115,6 +120,13 @@ func Validate(archivePath string) (Manifest, []string, error) {
 		return Manifest{}, warnings, fmt.Errorf("invalid capabilities: %w", cerr)
 	} else {
 		manifest.Capabilities = normalizedToAny(norm)
+	}
+
+	// Validate the declarative settings schema (#103): each entry must have a
+	// key, label, and a recognized type. Reject malformed schemas at install so
+	// the generated settings form never renders a broken field.
+	if serr := validateSettingsSchema(manifest.Settings); serr != nil {
+		return Manifest{}, warnings, fmt.Errorf("invalid settings schema: %w", serr)
 	}
 
 	// Second pass: zip-slip / absolute-path guard + main-file presence +

@@ -35,6 +35,18 @@ import {
   registerSlashCommand,
   unregisterSlashCommand
 } from '../lib/editor/slash-registry'
+import { loadedPlugins } from './store.svelte'
+import { registerSurface, unregisterSurface } from './surfaces'
+
+// getPluginSchemaDefault reads a plugin's declarative settings schema from the
+// live registry and returns the default for key, or undefined (#103).
+function getPluginSchemaDefault(pluginID: string, key: string): unknown {
+  const reg = loadedPlugins.plugins.get(pluginID)
+  const schema = reg?.manifest?.settings
+  if (!schema) return undefined
+  const field = schema.find((f) => f.key === key)
+  return field?.default
+}
 
 /**
  * Build a PluginContext whose `activeNotebook/Section/Page` are live reactive
@@ -114,6 +126,17 @@ export function makePluginContext(pluginID: string): PluginContext {
       GetPluginSettingsForNotebook(pluginID, loc.notebook).then(
         (settings) => settings ?? {}
       ),
+    // Resolve a single setting with schema-default fallback (#103). The schema
+    // is read from the live plugin registry (manifest); the value from the
+    // merged per-notebook settings.
+    getSetting: (key) =>
+      GetPluginSettingsForNotebook(pluginID, loc.notebook).then((settings) => {
+        const merged = settings ?? {}
+        if (key in merged) return merged[key]
+        // Fall back to the schema default if the plugin declared one.
+        const schema = getPluginSchemaDefault(pluginID, key)
+        return schema
+      }),
     // v2 typed event bus (#106). Delegates to the module-scoped bus so
     // subscriptions are auto-cleaned on disable/uninstall/vault-close.
     on: (event, cb) => subscribe(pluginID, event, cb),
@@ -244,6 +267,23 @@ export function makePluginContext(pluginID: string): PluginContext {
         onSelect: cmd.onSelect
       })
       return () => unregisterSlashCommand(namespacedId)
+    },
+
+    // --- Rendered UI surfaces (#117) — capability-gated --------------------
+    registerSurface: (surface) => {
+      // The capability check is advisory here (the surface only renders if the
+      // host mounts it); the Go side re-checks on any privileged call the
+      // surface makes through the bridge.
+      const id = `${pluginID}:${surface.id}`
+      registerSurface({
+        id,
+        pluginID,
+        kind: surface.kind,
+        label: surface.label,
+        icon: surface.icon,
+        html: surface.html
+      })
+      return () => unregisterSurface(id)
     }
   }
 }

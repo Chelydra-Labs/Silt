@@ -295,3 +295,31 @@ func TestNormalizeCapabilities_EmptyAndTrue(t *testing.T) {
 		t.Errorf("true -> %q, want granted", out["network"])
 	}
 }
+
+func TestValidateSettingsSchema(t *testing.T) {
+	good := []map[string]any{
+		{"key": "columns", "label": "Columns", "type": "list", "default": []any{"TODO", "DONE"}},
+		{"key": "color", "label": "Accent", "type": "color"},
+	}
+	if err := validateSettingsSchema(good); err != nil {
+		t.Fatalf("good schema rejected: %v", err)
+	}
+
+	badCases := []struct {
+		name string
+		s    []map[string]any
+	}{
+		{"missing key", []map[string]any{{"label": "X", "type": "string"}}},
+		{"missing label", []map[string]any{{"key": "x", "type": "string"}}},
+		{"bad type", []map[string]any{{"key": "x", "label": "X", "type": "bogus"}}},
+		{"duplicate key", []map[string]any{
+			{"key": "x", "label": "X", "type": "string"},
+			{"key": "x", "label": "Y", "type": "string"},
+		}},
+	}
+	for _, bc := range badCases {
+		if err := validateSettingsSchema(bc.s); err == nil {
+			t.Errorf("%s: expected error, got nil", bc.name)
+		}
+	}
+}

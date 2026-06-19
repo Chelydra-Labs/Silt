@@ -17,6 +17,8 @@
   import { firstPartyPlugins } from '../../plugins/registry'
   import { loadedPlugins } from '../../plugins/store.svelte'
   import { settings, saveConfig } from '../../settings/store.svelte'
+  import SettingsForm from './SettingsForm.svelte'
+  import type { SettingSchema } from '../../plugins/sdk'
 
   interface Props {
     activeNotebook: string
@@ -40,6 +42,8 @@
     requestedCapabilities?: Record<string, true | string>
     /** Capabilities currently granted to this plugin (cap id → qualifier). */
     grantedCapabilities?: Record<string, string>
+    /** Declarative settings schema (#103), read from the manifest. */
+    settingsSchema?: SettingSchema[]
   }
 
   /** Human label for a capability id. */
@@ -107,7 +111,8 @@
                 Object.keys(m.capabilities).map((c) => [c, 'granted'])
               )
             : undefined,
-          loadError: errs.find((e) => e.id === m.id)?.message
+          loadError: errs.find((e) => e.id === m.id)?.message,
+          settingsSchema: m.settings as SettingSchema[] | undefined
         })
       }
       // On-disk plugins (skip any shadowed by a first-party id).
@@ -125,7 +130,8 @@
           hasIndex: !!p.has_index,
           requestedCapabilities: p.capabilities,
           grantedCapabilities: grants[p.id],
-          loadError: errs.find((e) => e.id === p.id)?.message
+          loadError: errs.find((e) => e.id === p.id)?.message,
+          settingsSchema: p.settings as SettingSchema[] | undefined
         })
       }
       merged.sort((a, b) => a.name.localeCompare(b.name))
@@ -530,7 +536,20 @@
                 </dd>
               </dl>
 
-              {#if pluginSettings(card.id)}
+              {#if card.settingsSchema && card.settingsSchema.length > 0}
+                <div>
+                  <div
+                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                  >
+                    Plugin settings
+                  </div>
+                  <SettingsForm
+                    pluginID={card.id}
+                    schema={card.settingsSchema}
+                    values={pluginSettings(card.id) ?? {}}
+                  />
+                </div>
+              {:else if pluginSettings(card.id)}
                 <div>
                   <div
                     class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"

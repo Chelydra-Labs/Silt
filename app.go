@@ -4476,8 +4476,9 @@ func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
 				info.Author = m.Author
 				info.Description = m.Description
 				info.Icon = m.Icon
-				info.Capabilities = m.Capabilities
-			}
+			info.Capabilities = m.Capabilities
+			info.Settings = m.Settings
+		}
 		}
 		if _, err := os.Stat(filepath.Join(dir, "index.js")); err == nil {
 			info.HasIndex = true
@@ -4850,5 +4851,6 @@ func manifestToParser(m plugins.Manifest) parser.PluginManifest {
 		Main:           m.Main,
 		MinSiltVersion: m.MinSiltVersion,
 		Capabilities:   m.Capabilities,
+		Settings:       m.Settings,
 	}
 }

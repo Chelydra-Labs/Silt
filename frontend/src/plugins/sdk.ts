@@ -110,6 +110,13 @@ export interface PluginContext {
    */
   getPluginSettings: () => Promise<Record<string, any>>
   /**
+   * Resolve a SINGLE setting key with schema-default fallback (#103). Reads
+   * the merged per-active-notebook settings and falls back to the schema's
+   * default when the key is absent. Returns undefined if neither a stored
+   * value nor a default exists.
+   */
+  getSetting: (key: string) => Promise<any | undefined>
+  /**
    * Subscribe to a typed host event (#106). Returns an unsubscribe function;
    * the host also auto-cleans every subscription on plugin disable/uninstall/
    * vault close, so a plugin cannot leak listeners across reloads. The
@@ -258,6 +265,23 @@ export interface PluginContext {
     icon?: string
     onSelect: (editor: unknown, pos: number) => void
   }) => () => void
+
+  // --- Rendered UI surfaces (#117) — capability-gated ---------------------
+
+  /**
+   * Register a rendered UI surface (#117). The surface HTML runs in a sandboxed
+   * iframe (srcdoc, allow-scripts but not allow-same-origin); a postMessage
+   * bridge proxies this PluginContext into the iframe. Theme tokens are
+   * injected so the surface matches the active theme. Gated by ui-surface.
+   * Returns an unregister function.
+   */
+  registerSurface: (surface: {
+    id: string
+    kind: 'sidebar-panel' | 'modal' | 'status-bar-item'
+    label: string
+    icon?: string
+    html: string
+  }) => () => void
 }
 
 // --- v2 SDK typed event bus (#106) ---------------------------------------
@@ -331,6 +355,36 @@ export interface PluginManifest {
    * Absent for plugins that use only the read-only SDK.
    */
   capabilities?: Record<string, true | CapabilityQualifier>
+  /**
+   * Declarative settings schema (#103). Settings → Plugins renders the form
+   * generically from this; no plugin hand-rolls its settings panel. Each field
+   * declares a type, a default, and optional validation. Resolution precedence
+   * is user-global → vault → notebook (notebook-attached overrides via #100's
+   * co-located config). Plugins read the merged value via ctx.getSetting(key).
+   */
+  settings?: SettingSchema[]
+}
+
+/** A single declarative settings field (#103). */
+export interface SettingSchema {
+  /** The settings key (stored under plugin_settings.<pluginID>.<key>). */
+  key: string
+  /** Human-readable label shown in the generated form. */
+  label: string
+  /** Field type — drives the generated input control. */
+  type: 'string' | 'number' | 'bool' | 'select' | 'color' | 'keymap' | 'list'
+  /** Default value when no setting is stored. */
+  default?: unknown
+  /** For 'select': the selectable options. */
+  options?: string[]
+  /** Optional help text under the field. */
+  help?: string
+  /** For 'string': min/max length validation. */
+  minLength?: number
+  maxLength?: number
+  /** For 'number': min/max range validation. */
+  min?: number
+  max?: number
 }
 
 export interface SiltPlugin {
