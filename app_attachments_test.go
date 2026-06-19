@@ -115,6 +115,11 @@ func TestAddAttachment_ConcurrentNoClobber(t *testing.T) {
 // OpenAttachment opens the file in the OS native handler (tested by verifying
 // the path resolves; the actual OS open is a side-effect we can't assert in CI).
 func TestOpenAttachment_ResolvesPath(t *testing.T) {
+	// Stub openNative to prevent spawning native handlers/popups in tests.
+	origOpenNative := openNative
+	openNative = func(path string) error { return nil }
+	t.Cleanup(func() { openNative = origOpenNative })
+
 	app := newTestApp(t)
 	src := filepath.Join(t.TempDir(), "x.txt")
 	os.WriteFile(src, []byte("x"), 0o644)

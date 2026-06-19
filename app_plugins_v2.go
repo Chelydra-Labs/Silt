@@ -635,7 +635,7 @@ func isSafeUrl(rawURL string) bool {
 }
 
 // openNative opens a path in the OS default handler, cross-platform.
-func openNative(path string) error {
+var openNative = func(path string) error {
 	switch goruntime.GOOS {
 	case "darwin":
 		return exec.Command("open", path).Start()
