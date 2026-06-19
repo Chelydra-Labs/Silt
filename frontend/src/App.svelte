@@ -405,8 +405,8 @@
         />
         <h1 class="onboarding-title font-headline-lg">Silt</h1>
         <p class="onboarding-description font-body-md">
-          A fast, local-first notes app to capture ideas and get work done. Your
-          notes are structured, searchable, and always yours.
+          Capture ideas and get work done. A fast, organized workspace for your
+          notes, tasks, and projects — always yours.
         </p>
         <button
           class="onboarding-btn font-label-sm-bold"

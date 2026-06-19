@@ -24,8 +24,8 @@
   </div>
 
   <p class="text-text-primary text-[13px] font-body-md mb-6">
-    A fast, local-first notes app to capture ideas and get work done. Your notes
-    are structured, searchable, and always yours.
+    Capture ideas and get work done. A fast, organized workspace for your notes,
+    tasks, and projects — always yours.
   </p>
 
   <section>
