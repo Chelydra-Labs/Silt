@@ -118,3 +118,29 @@ func TestArchiveManifest_JSONRoundTrip(t *testing.T) {
 		t.Errorf("pageFileCount = %d, want 1", pageFileCount(out.Entries))
 	}
 }
+
+func TestHasParentSegment(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"..", true},
+		{"../evil.txt", true},
+		{"foo/../bar", true},
+		{"a/b/../../escape", true},
+		{"a/../..", true},
+		// Legitimate filenames containing a ".." substring must NOT match. The
+		// earlier strings.Contains(name, "..") guard false-positive'd these.
+		{"2.0..2.1.md", false},
+		{"foo...bar", false},
+		{"Work/Inbox.md", false},
+		{".system/config.yaml", false},
+		{"Work/sub..dir/page.md", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := hasParentSegment(c.path); got != c.want {
+			t.Errorf("hasParentSegment(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}

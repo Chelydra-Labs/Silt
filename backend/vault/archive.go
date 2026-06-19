@@ -56,6 +56,13 @@ const maxArchiveUncompressedSize = 2 * 1024 * 1024 * 1024 // 2 GB
 // (mirrors plugins.copyZipEntry).
 const maxArchiveEntrySize = 256 * 1024 * 1024 // 256 MB
 
+// maxManifestSize bounds the uncompressed byte length of manifest.json on
+// import. A hostile archive could declare a multi-gigabyte manifest to OOM the
+// decoder (which builds the Entries slice in memory) before the total-archive
+// size cap runs. 16 MiB is far beyond any plausible manifest (millions of
+// entries) while bounding memory firmly.
+const maxManifestSize = 16 * 1024 * 1024 // 16 MiB
+
 // ErrArchiveRejected is returned by the import validator when an archive
 // cannot be safely imported. The wrapped message is user-actionable.
 var ErrArchiveRejected = errors.New("vault archive rejected")
@@ -253,6 +260,33 @@ func isPageFile(relSlash string) bool {
 	return first != ".system"
 }
 
+// hasParentSegment reports whether any path segment of relSlash (slash-form,
+// archive-root-relative) is exactly ".." — i.e. a parent traversal. This is the
+// precise zip-slip predicate, replacing an earlier strings.Contains(name, "..")
+// check that false-positive'd on legitimate filenames containing a double-dot
+// substring (e.g. "2.0..2.1.md", "foo...bar"). A real escape is also caught by
+// the final containment check (isWithinMover) on the joined path.
+func hasParentSegment(relSlash string) bool {
+	for {
+		// Walk the segments without allocating a slice.
+		i := strings.IndexByte(relSlash, '/')
+		var seg string
+		if i >= 0 {
+			seg = relSlash[:i]
+			relSlash = relSlash[i+1:]
+		} else {
+			seg = relSlash
+			relSlash = ""
+		}
+		if seg == ".." {
+			return true
+		}
+		if i < 0 {
+			return false
+		}
+	}
+}
+
 // nowRFC3339UTC returns the current time as an RFC3339 UTC string, for the
 // manifest CreatedAt. UTC so the timestamp is stable regardless of the host
 // timezone.
@@ -292,9 +326,16 @@ func rootDigest(entries []ArchiveEntry) string {
 		h.Write([]byte(e.Path))
 		binary.BigEndian.PutUint64(buf[:], uint64(e.Size))
 		h.Write(buf[:])
-		if sum, err := hex.DecodeString(e.SHA256); err == nil {
-			h.Write(sum)
+		// Deterministic over the entry's declared digest. On invalid hex (a
+		// tampered/corrupt manifest field) write the raw string so the digest
+		// still captures the entry faithfully — never silently skip, which
+		// would make the digest computation ambiguous. An invalid-hex digest
+		// is independently rejected by the per-entry checksum check on extract.
+		sum, decErr := hex.DecodeString(e.SHA256)
+		if decErr != nil {
+			sum = []byte(e.SHA256)
 		}
+		h.Write(sum)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -515,18 +556,23 @@ func ImportVaultTree(archivePath, destDir string, onProgress ProgressFn) (Import
 			zr.Close()
 			return ImportResult{}, fmt.Errorf("%w: archive entry %q is absolute; refusing", ErrArchiveRejected, name)
 		}
-		if strings.Contains(name, "..") {
+		if hasParentSegment(name) {
 			zr.Close()
 			return ImportResult{}, fmt.Errorf("%w: archive entry %q escapes the archive root (zip-slip); refusing", ErrArchiveRejected, name)
 		}
-		totalUncompressed += f.UncompressedSize64
+		// Overflow-safe accumulation: a hostile archive can declare individual
+		// entries with UncompressedSize64 near uint64 max, and a naive post-hoc
+		// sum would wrap to a small value and bypass the cap. Check each entry
+		// against the cap AND against the remaining headroom before adding it.
+		sz := f.UncompressedSize64
+		if sz > maxArchiveUncompressedSize || totalUncompressed > maxArchiveUncompressedSize-sz {
+			zr.Close()
+			return ImportResult{}, fmt.Errorf("%w: archive uncompressed size exceeds the %d-byte limit", ErrArchiveRejected, maxArchiveUncompressedSize)
+		}
+		totalUncompressed += sz
 		if f.Name != ArchiveManifestPath {
 			entryByName[f.Name] = f
 		}
-	}
-	if totalUncompressed > maxArchiveUncompressedSize {
-		zr.Close()
-		return ImportResult{}, fmt.Errorf("%w: archive uncompressed size %d bytes exceeds the %d-byte limit", ErrArchiveRejected, totalUncompressed, maxArchiveUncompressedSize)
 	}
 	// Every manifest entry must be present in the archive; an extra/missing
 	// entry signals tampering or a truncated archive.
@@ -585,7 +631,17 @@ func ImportVaultTree(archivePath, destDir string, onProgress ProgressFn) (Import
 		}
 	}
 
-	// Atomic cutover: rename the verified temp tree into the (empty) destDir.
+	// Atomic cutover: rename the verified temp tree into destDir. On Windows,
+	// os.Rename fails when the destination already exists — even an empty
+	// directory (MoveFileEx's replace flag does not apply to directories) —
+	// and the user-supplied destination folder is expected to exist.
+	// validateEmptyDestination guaranteed destAbs is empty, so removing it
+	// immediately before the rename is safe and makes the cutover work
+	// cross-platform. A tiny TOCTOU window is acceptable for local-first
+	// single-user software.
+	if err := os.Remove(destAbs); err != nil && !os.IsNotExist(err) {
+		return ImportResult{}, fmt.Errorf("remove empty destination before rename: %w", err)
+	}
 	if err := os.Rename(tmp, destAbs); err != nil {
 		return ImportResult{}, fmt.Errorf("finalize import (rename into destination): %w", err)
 	}
@@ -603,12 +659,23 @@ func readArchiveManifest(zr *zip.Reader) (ArchiveManifest, error) {
 		if filepath.ToSlash(f.Name) != ArchiveManifestPath {
 			continue
 		}
+		// Bound the manifest size before reading: a hostile archive could
+		// declare a multi-gigabyte manifest to OOM the JSON decoder (which
+		// builds the Entries slice in memory) before the total-archive size
+		// cap runs.
+		if f.UncompressedSize64 > maxManifestSize {
+			return ArchiveManifest{}, fmt.Errorf("%w: manifest.json is too large (%d bytes)", ErrArchiveRejected, f.UncompressedSize64)
+		}
 		rc, err := f.Open()
 		if err != nil {
 			return ArchiveManifest{}, fmt.Errorf("%w: failed to read manifest: %v", ErrArchiveRejected, err)
 		}
+		// Defense in depth against a forged-header zip-bomb that declares a
+		// small UncompressedSize64 yet decompresses past it: LimitReader cuts
+		// the stream at maxManifestSize+1 so Decode fails cleanly instead of
+		// OOM-ing.
 		var m ArchiveManifest
-		decErr := json.NewDecoder(rc).Decode(&m)
+		decErr := json.NewDecoder(io.LimitReader(rc, maxManifestSize+1)).Decode(&m)
 		rc.Close()
 		if decErr != nil {
 			return ArchiveManifest{}, fmt.Errorf("%w: invalid manifest.json: %v", ErrArchiveRejected, decErr)
@@ -630,19 +697,21 @@ func extractAndVerify(f *zip.File, target string, want ArchiveEntry) error {
 		return err
 	}
 	defer rc.Close()
+	// Bound the decompressed stream to the declared size + a 1 KB margin. A
+	// forged-header zip-bomb claiming 1 KB but decompressing to 10 GB is cut
+	// off here; the per-entry cap is a separate backstop. Checked BEFORE
+	// opening the target file so an over-limit entry neither leaks a file
+	// descriptor nor leaves an empty target file on disk.
+	limit := want.Size + 1024
+	if limit > maxArchiveEntrySize+1024 {
+		return fmt.Errorf("entry %q exceeds the %d-byte per-entry limit", want.Path, maxArchiveEntrySize)
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return err
 	}
 	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
-	}
-	// Bound the decompressed stream to the declared size + a 1 KB margin. A
-	// forged-header zip-bomb claiming 1 KB but decompressing to 10 GB is cut
-	// off here; the per-entry cap is a separate backstop.
-	limit := want.Size + 1024
-	if limit > maxArchiveEntrySize+1024 {
-		return fmt.Errorf("entry %q exceeds the %d-byte per-entry limit", want.Path, maxArchiveEntrySize)
 	}
 	h := sha256.New()
 	n, err := io.Copy(out, io.LimitReader(io.TeeReader(rc, h), limit))

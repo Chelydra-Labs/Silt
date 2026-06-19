@@ -166,6 +166,41 @@ func TestImportVaultTree_RejectsNonEmptyDestination(t *testing.T) {
 	}
 }
 
+// TestImportVaultTree_AcceptsDoubleDotFilename proves the precise zip-slip
+// predicate does not reject legitimate filenames containing a ".." substring
+// (the earlier strings.Contains guard false-positive'd on e.g. "2.0..2.1.md").
+// A real parent-traversal is still rejected (TestImportVaultTree_RejectsZipSlip).
+func TestImportVaultTree_AcceptsDoubleDotFilename(t *testing.T) {
+	root := t.TempDir()
+	// A notebook page whose name contains ".." as a substring but is not a
+	// parent-traversal segment.
+	mustWrite := func(rel, body string) {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	mustWrite("Releases/2.0..2.1.md", "# migration notes\n")
+	mustWrite("Notes/foo...bar.md", "# spaced\n")
+
+	archive := filepath.Join(t.TempDir(), "dd.silt-vault")
+	if _, err := ExportVaultTree(root, archive, "V", "test", nil); err != nil {
+		t.Fatalf("ExportVaultTree: %v", err)
+	}
+	dest := filepath.Join(t.TempDir(), "imported")
+	if _, err := ImportVaultTree(archive, dest, nil); err != nil {
+		t.Fatalf("ImportVaultTree rejected a legitimate double-dot filename: %v", err)
+	}
+	for _, rel := range []string{"Releases/2.0..2.1.md", "Notes/foo...bar.md"} {
+		if _, err := os.Stat(filepath.Join(dest, filepath.FromSlash(rel))); err != nil {
+			t.Errorf("expected %s to extract, got %v", rel, err)
+		}
+	}
+}
+
 // TestImportVaultTree_RejectsNetworkDestination asserts ImportVaultTree wires
 // the shared validateEmptyDestination network-FS guard (the predicate itself is
 // covered by mover_test.go; this proves the import path routes through it). A

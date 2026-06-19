@@ -110,7 +110,11 @@
   async function chooseExportDest() {
     error = ''
     try {
-      const defaultName = (currentPath.split(/[\\/]/).pop() || 'vault') + '.silt-vault'
+      // filter(Boolean): a trailing slash on currentPath (e.g.
+      // "/home/user/MyVault/") would otherwise make .pop() return "" and fall
+      // back to "vault" instead of "MyVault".
+      const segments = currentPath.split(/[\\/]/).filter(Boolean)
+      const defaultName = (segments.pop() || 'vault') + '.silt-vault'
       const picked = await PickVaultExportPath(defaultName)
       if (picked) exportDest = picked
     } catch (e) {
