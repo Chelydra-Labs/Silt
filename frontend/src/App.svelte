@@ -405,8 +405,8 @@
         />
         <h1 class="onboarding-title font-headline-lg">Silt</h1>
         <p class="onboarding-description font-body-md">
-          Capture ideas. Connect them. Get work done. A fast, organized
-          workspace that's always yours.
+          Capture ideas. Connect them. Get work done. A fast, private workspace
+          for your notes and tasks.
         </p>
         <button
           class="onboarding-btn font-label-sm-bold"
