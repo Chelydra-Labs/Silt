@@ -443,6 +443,125 @@ func (a *App) InitializeVault() (bool, error) {
 	return true, nil
 }
 
+// PickVaultDestination opens a native folder picker for a vault move/copy
+// destination and returns the chosen path ("" on cancel). Shared by Move and
+// Copy so the frontend can show its own confirmation modal between the pick
+// and the commit, mirroring the delete flows (#141).
+func (a *App) PickVaultDestination() (string, error) {
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select Destination for Silt Vault",
+	})
+}
+
+// CopyVault duplicates the active vault tree at destPath, EXCLUDING the
+// reproducible SQLite index (rebuilt from markdown when the copy is first
+// opened). The active vault is untouched: no settings change, no service
+// teardown, no event. The copy is a separate workspace the user can switch
+// to later. CopyVaultTree validates the destination and verifies every byte
+// (size + SHA-256); on failure it cleans up the partial destination.
+func (a *App) CopyVault(destPath string) (vault.CopyResult, error) {
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	if a.vaultPath == "" {
+		return vault.CopyResult{}, fmt.Errorf("no vault is currently open")
+	}
+	return vault.CopyVaultTree(a.vaultPath, destPath)
+}
+
+// MoveVault relocates the active vault to destPath: copy + verify, then a
+// cutover (teardown services → patch dest config.yaml path → persist
+// settings.json → reinit at the new path) that reuses the existing
+// close/open paths, with a verbatim rollback to the original path if reinit
+// fails. The dest config.yaml's notebooks.path is updated to dest so the
+// Settings → General "Workspace" row shows the new location. Emits vault:moved
+// ({from, to}) so the frontend resets navigation and reloads its stores. If
+// removeOld is true the original folder is deleted AFTER a successful
+// cutover (non-fatal on failure: RemoveOldErr carries the message).
+func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult, error) {
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	src := a.vaultPath
+	if src == "" {
+		return vault.MoveVaultResult{}, fmt.Errorf("no vault is currently open")
+	}
+
+	// 1. Copy + verify. On failure the primitive cleans up dest itself; the
+	//    active vault and settings are untouched.
+	copyRes, err := vault.CopyVaultTree(src, destPath)
+	if err != nil {
+		return vault.MoveVaultResult{}, fmt.Errorf("move vault: %w", err)
+	}
+	dest := destPath
+
+	// 2. Snapshot the current settings BEFORE any cutover write, so a rollback
+	//    can restore them verbatim (preserving theme/mode).
+	prior, err := vault.LoadSettings()
+	if err != nil {
+		return vault.MoveVaultResult{}, fmt.Errorf("move vault: load settings to snapshot: %w", err)
+	}
+
+	// 3. Update the dest config.yaml notebooks.path so the Settings → General
+	//    workspace row reflects the new location (matches ScaffoldVault's
+	//    forward-slash convention). Best-effort: a failure here is logged but
+	//    does not abort — the vault is fully usable with a stale display path.
+	if cfg, cfgErr := config.Load(dest); cfgErr == nil {
+		cfg.Notebooks.Path = filepath.ToSlash(dest)
+		if err := config.Save(dest, cfg); err != nil {
+			log.Printf("MoveVault: could not update dest config.yaml notebooks.path: %v", err)
+		}
+	}
+
+	// 4. Cutover: tear down → persist new path → reinit at new path.
+	a.teardownVaultServices()
+
+	newSettings := *prior
+	newSettings.VaultPath = dest
+	if err := vault.SaveSettings(&newSettings); err != nil {
+		_ = a.rollbackMove(src, prior)
+		return vault.MoveVaultResult{}, fmt.Errorf("move vault: save settings: %w", err)
+	}
+	if err := a.initializeVaultServices(dest); err != nil {
+		if recoverErr := a.rollbackMove(src, prior); recoverErr != nil {
+			return vault.MoveVaultResult{}, fmt.Errorf("move vault: init services at %s failed (%v); rollback to %s also failed (%v)", dest, err, src, recoverErr)
+		}
+		return vault.MoveVaultResult{}, fmt.Errorf("move vault: init services at %s failed — rolled back to %s (%v)", dest, src, err)
+	}
+
+	result := vault.MoveVaultResult{
+		CopyResult: copyRes,
+		From:       src,
+		To:         dest,
+	}
+
+	// 5. Optional old-vault removal (non-fatal: the cutover already succeeded).
+	if removeOld {
+		if err := vault.RemoveOldVault(src); err != nil {
+			result.RemoveOldErr = err.Error()
+		}
+	}
+
+	// 6. Notify the frontend to reset navigation + reload stores.
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vault:moved", map[string]string{
+			"from": src,
+			"to":   dest,
+		})
+	}
+	return result, nil
+}
+
+// rollbackMove restores the active vault to originalPath after a failed
+// cutover: persists the prior settings (verbatim, preserving theme/mode) and
+// reinitializes services at the original path. The leftover verified copy is
+// intentionally left in place — deleting it during error handling would risk
+// data loss. Returns the reinit error, if any.
+func (a *App) rollbackMove(originalPath string, prior *vault.AppSettings) error {
+	_ = vault.SaveSettings(prior)
+	return a.initializeVaultServices(originalPath)
+}
+
 // FetchPageBlocks returns a flat list of all blocks for a page, ordered by
 // line_number. A page is a single file; each block carries its own file_date.
 // The notebook's source is resolved server-side from its (globally-unique)
