@@ -77,13 +77,13 @@
     if (iframeEl && ev.source !== iframeEl.contentWindow) return
 
     const method = ctxProxy[msg.method]
-    if (!method) {
+    if (typeof method !== 'function') {
       iframeEl?.contentWindow?.postMessage(
         {
           __siltSurface: 'response',
           seq: msg.seq,
           ok: false,
-          error: `Unknown method: ${msg.method}`
+          error: `Unknown or non-callable method: ${msg.method}`
         },
         '*'
       )

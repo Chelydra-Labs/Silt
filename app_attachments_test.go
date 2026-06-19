@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"silt/backend/parser"
@@ -53,6 +55,60 @@ func TestAddAttachment_CollisionSafe(t *testing.T) {
 	}
 	if rel2 != "attachments/doc-1.txt" {
 		t.Errorf("second = %q, want attachments/doc-1.txt", rel2)
+	}
+}
+
+// AddAttachment is race-free under concurrency: many goroutines attaching
+// same-named files must each get a distinct destination, with no clobbering.
+// Guards against the TOCTOU regression where collision resolution used an
+// unlocked os.Stat check (O_CREATE|O_EXCL now reserves names atomically).
+func TestAddAttachment_ConcurrentNoClobber(t *testing.T) {
+	app := newTestApp(t)
+	const n = 32
+	type result struct {
+		rel string
+		err error
+	}
+	results := make([]result, n)
+	srcs := make([]string, n)
+	for i := range srcs {
+		srcs[i] = filepath.Join(t.TempDir(), "shared.png")
+		os.WriteFile(srcs[i], []byte(fmt.Sprintf("content-%d", i)), 0o644)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rel, err := app.AddAttachment(srcs[i], "Work")
+			results[i] = result{rel, err}
+		}(i)
+	}
+	wg.Wait()
+
+	// Every call must succeed and return a distinct path.
+	seen := make(map[string]bool, n)
+	for i, r := range results {
+		if r.err != nil {
+			t.Fatalf("goroutine %d: %v", i, r.err)
+		}
+		if seen[r.rel] {
+			t.Fatalf("duplicate destination %q — collision resolution not race-free", r.rel)
+		}
+		seen[r.rel] = true
+	}
+	// Every destination file must hold its own original content (no overwrite).
+	for i, r := range results {
+		abs := filepath.Join(app.vaultPath, "Work", r.rel)
+		got, err := os.ReadFile(abs)
+		if err != nil {
+			t.Fatalf("read %s: %v", r.rel, err)
+		}
+		want := fmt.Sprintf("content-%d", i)
+		if string(got) != want {
+			t.Errorf("%s = %q, want %q (concurrent attach clobbered content)", r.rel, got, want)
+		}
 	}
 }
 

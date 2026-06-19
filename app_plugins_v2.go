@@ -648,20 +648,37 @@ func openNative(path string) error {
 
 // notifyDesktop shows a desktop notification, cross-platform. Best-effort: a
 // spawn error is returned but callers may ignore it for non-critical UX.
+//
+// title and body originate from plugin-controlled strings, so they must never
+// be interpolated into a shell/script string — otherwise a granted (but
+// untrusted) plugin can escape the notifier and execute arbitrary code, which
+// is a privilege escalation beyond any capability it was granted. They are
+// therefore passed as data: as osascript argv on macOS, and via environment
+// variables on Windows (PowerShell never re-parses $env: values as code).
 func notifyDesktop(title, body string) error {
 	switch goruntime.GOOS {
 	case "darwin":
-		script := fmt.Sprintf(`display notification %q with title %q`, body, title)
-		return exec.Command("osascript", "-e", script).Start()
+		return exec.Command("osascript",
+			"-e", "on run argv",
+			"-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+			"-e", "end run",
+			title, body,
+		).Start()
 	case "windows":
-		// PowerShell toast — universally available on Win10+.
-		ps := fmt.Sprintf(
-			`[reflection.assembly]::loadwithpartialname('System.Windows.Forms') > $null; `+
-				`$t = New-Object System.Windows.Forms.NotifyIcon; `+
-				`$t.Icon = [System.Drawing.SystemIcons]::Information; `+
-				`$t.BalloonTipTitle = '%s'; $t.BalloonTipText = '%s'; `+
-				`$t.Visible = $true; $t.ShowBalloonTip(5000);`, title, body)
-		return exec.Command("powershell", "-Command", ps).Start()
+		// PowerShell toast — universally available on Win10+. Title/body are
+		// passed via environment variables, never as interpolated source.
+		cmd := exec.Command("powershell", "-NoProfile", "-Command",
+			"[reflection.assembly]::loadwithpartialname('System.Windows.Forms') > $null; "+
+				"$t = New-Object System.Windows.Forms.NotifyIcon; "+
+				"$t.Icon = [System.Drawing.SystemIcons]::Information; "+
+				"$t.BalloonTipTitle = $env:SILT_NOTIFY_TITLE; "+
+				"$t.BalloonTipText = $env:SILT_NOTIFY_BODY; "+
+				"$t.Visible = $true; $t.ShowBalloonTip(5000);")
+		cmd.Env = append(os.Environ(),
+			"SILT_NOTIFY_TITLE="+title,
+			"SILT_NOTIFY_BODY="+body,
+		)
+		return cmd.Start()
 	default: // linux
 		return exec.Command("notify-send", title, body).Start()
 	}
@@ -887,25 +904,33 @@ func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
 	if base == "" {
 		base = "attachment"
 	}
-	// Collision-safe destination: attachments/<name> or <name>-<n>.<ext>.
-	destName := base
-	if _, statErr := os.Stat(filepath.Join(attachmentsDir, destName)); statErr == nil {
-		ext := filepath.Ext(base)
-		stem := strings.TrimSuffix(base, ext)
-		for i := 1; ; i++ {
-			candidate := fmt.Sprintf("%s-%d%s", stem, i, ext)
-			if _, statErr := os.Stat(filepath.Join(attachmentsDir, candidate)); statErr != nil {
-				destName = candidate
-				break
-			}
-		}
-	}
 
 	if err := os.MkdirAll(attachmentsDir, 0o755); err != nil {
 		return "", fmt.Errorf("create attachments dir: %w", err)
 	}
+
+	// Collision-safe destination reservation: atomically claim a unique name
+	// with O_CREATE|O_EXCL so two concurrent attaches of same-named files can
+	// never resolve to the same path and clobber each other (the previous
+	// Stat-then-write loop had a TOCTOU window). The placeholder is filled by
+	// the atomic write below; the OS guarantees only one caller wins a name.
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	destName := base
 	dest := filepath.Join(attachmentsDir, destName)
+	f, openErr := os.OpenFile(dest, os.O_CREATE|os.O_EXCL, 0o644)
+	for i := 1; openErr != nil; i++ {
+		if !os.IsExist(openErr) {
+			return "", fmt.Errorf("reserve attachment file: %w", openErr)
+		}
+		destName = fmt.Sprintf("%s-%d%s", stem, i, ext)
+		dest = filepath.Join(attachmentsDir, destName)
+		f, openErr = os.OpenFile(dest, os.O_CREATE|os.O_EXCL, 0o644)
+	}
+	f.Close()
+
 	if !isPathWithinRoot(dest, notebookDir) {
+		os.Remove(dest)
 		return "", fmt.Errorf("resolved attachment path escapes notebook root")
 	}
 
@@ -917,6 +942,7 @@ func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
 		writeErr = parser.WriteFileAtomic(dest, srcBytes)
 	})
 	if writeErr != nil {
+		os.Remove(dest)
 		return "", writeErr
 	}
 	return "attachments/" + destName, nil

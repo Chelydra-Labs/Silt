@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -293,6 +294,23 @@ func TestNormalizeCapabilities_EmptyAndTrue(t *testing.T) {
 	}
 	if out["network"] != QualGranted {
 		t.Errorf("true -> %q, want granted", out["network"])
+	}
+}
+
+// An invalid qualifier reports the scopes meaningful for *that capability*
+// (write-files honors granted|notebook|vault), not a misleading "granted" from
+// treating the qualifier string itself as the capability.
+func TestNormalizeCapabilities_InvalidQualifierMessage(t *testing.T) {
+	_, err := NormalizeCapabilities(map[string]any{"write-files": "global"})
+	if err == nil {
+		t.Fatal("expected error for invalid qualifier")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "write-files") || !strings.Contains(msg, "granted|notebook|vault") {
+		t.Errorf("error %q must name the capability and its valid scopes", msg)
+	}
+	if strings.Contains(msg, `(expected granted)`) {
+		t.Errorf("error %q still uses the misleading default-scope message", msg)
 	}
 }
 

@@ -39,7 +39,9 @@
     error = ''
     try {
       for (const field of schema) {
-        if (draft[field.key] !== values[field.key]) {
+        if (
+          JSON.stringify(draft[field.key]) !== JSON.stringify(values[field.key])
+        ) {
           await UpdatePluginSetting(pluginID, field.key, draft[field.key])
         }
       }

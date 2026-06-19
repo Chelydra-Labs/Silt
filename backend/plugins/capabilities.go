@@ -104,7 +104,7 @@ func NormalizeCapabilities(raw map[string]any) (map[string]string, error) {
 		if !KnownCapabilities[cap] {
 			return nil, fmt.Errorf("unknown capability %q (recognized: %s)", k, ListCapabilities())
 		}
-		qual, err := normalizeQualifier(v)
+		qual, err := normalizeQualifier(cap, v)
 		if err != nil {
 			return nil, fmt.Errorf("capability %q: %w", k, err)
 		}
@@ -114,8 +114,10 @@ func NormalizeCapabilities(raw map[string]any) (map[string]string, error) {
 }
 
 // normalizeQualifier interprets a single capability value. `true` (or null)
-// means "granted at default scope"; a string must be a recognized qualifier.
-func normalizeQualifier(v any) (string, error) {
+// means "granted at default scope"; a string must be a recognized qualifier. c
+// is the capability the value is bound to, so an invalid qualifier can report
+// the scopes that are actually meaningful for that capability.
+func normalizeQualifier(c Capability, v any) (string, error) {
 	switch x := v.(type) {
 	case bool:
 		if x {
@@ -130,10 +132,8 @@ func normalizeQualifier(v any) (string, error) {
 			return QualGranted, nil
 		}
 		if !validQualifiers[s] {
-			return "", fmt.Errorf("invalid scope %q (expected %s)", s, qualifierScopeFor(Capability(s)))
+			return "", fmt.Errorf("invalid scope %q (expected %s)", s, qualifierScopeFor(c))
 		}
-		// The string itself isn't the capability here; we only validate it is a
-		// known qualifier. The caller already bound it to a capability key.
 		return s, nil
 	default:
 		return "", fmt.Errorf("capability value must be true or a scope string (got %T)", v)
