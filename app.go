@@ -2050,7 +2050,41 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	sort.Slice(tree.Notebooks, func(i, j int) bool {
 		return tree.Notebooks[i].Name < tree.Notebooks[j].Name
 	})
-	return tree, nil
+	return normalizeNavTree(tree), nil
+}
+
+// normalizeNavTree guarantees no nil slices cross the Wails IPC boundary. A Go
+// nil slice serializes to JSON `null`, but the generated TS constructor passes
+// `null` through unchanged — the frontend's `.length` reads then crash with
+// "Cannot read properties of null", which tears down the reactive update and
+// leaves the sidebar blank even though the data is correct (#140). Every
+// Sections / Pages / Children slice is normalized to a non-nil empty array.
+func normalizeNavTree(tree parser.NavigationTree) parser.NavigationTree {
+	if tree.Notebooks == nil {
+		tree.Notebooks = []parser.NavigationNotebook{}
+	}
+	for i := range tree.Notebooks {
+		if tree.Notebooks[i].Sections == nil {
+			tree.Notebooks[i].Sections = []parser.NavigationSection{}
+		}
+		for j := range tree.Notebooks[i].Sections {
+			tree.Notebooks[i].Sections[j] = normalizeNavSection(tree.Notebooks[i].Sections[j])
+		}
+	}
+	return tree
+}
+
+func normalizeNavSection(s parser.NavigationSection) parser.NavigationSection {
+	if s.Pages == nil {
+		s.Pages = []parser.NavigationPage{}
+	}
+	if s.Children == nil {
+		s.Children = []parser.NavigationSection{}
+	}
+	for i := range s.Children {
+		s.Children[i] = normalizeNavSection(s.Children[i])
+	}
+	return s
 }
 
 // walkSections reads `dirPath` once and returns:
@@ -2096,7 +2130,7 @@ func (a *App) walkSections(
 	sortNavPages(pages)
 	sortStrings(subDirs)
 
-	var sections []parser.NavigationSection
+	sections := []parser.NavigationSection{}
 
 	for _, sd := range subDirs {
 		var childID string
