@@ -25,8 +25,7 @@
 
   <p class="text-text-primary text-[13px] font-body-md mb-6">
     A fast, local-first notes app to capture ideas and get work done. Your notes
-    live on your drive as plain Markdown — structured, searchable, and always
-    yours.
+    are structured, searchable, and always yours.
   </p>
 
   <section>
