@@ -98,6 +98,15 @@ type App struct {
 	// mutex; eviction happens on uninstall.
 	rateLimiter *pluginRateLimiter
 
+	// pluginSessions maps session tokens → pluginIDs for binding-identity
+	// verification (#151). The loader calls RegisterPluginSession at load
+	// time; privileged bindings validate the token before proceeding so a
+	// plugin cannot impersonate another by passing a different pluginID. This
+	// is a stepping stone — the full fix requires per-plugin isolated webviews
+	// (#152), which is deferred. Guarded by pluginSessionsMu.
+	pluginSessionsMu sync.RWMutex
+	pluginSessions   map[string]string // token → pluginID
+
 	// vaultMu guards the lifecycle of the vault-scoped service pointers (db,
 	// coordinator, watcher, tracker, vaultPath) against concurrent IPC access.
 	// Wails dispatches each bound method on its own goroutine, so without this
@@ -128,8 +137,9 @@ type linkedConfigEntry struct {
 
 func NewApp() *App {
 	return &App{
-		spacesPerTab: 4,
-		rateLimiter:  newPluginRateLimiter(),
+		spacesPerTab:   4,
+		rateLimiter:    newPluginRateLimiter(),
+		pluginSessions: make(map[string]string),
 	}
 }
 

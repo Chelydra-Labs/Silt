@@ -1,4 +1,9 @@
-import { ReadPluginSource, ListPlugins } from '../../wailsjs/go/main/App.js'
+import {
+  ReadPluginSource,
+  ListPlugins,
+  RegisterPluginSession,
+  UnregisterPluginSession
+} from '../../wailsjs/go/main/App.js'
 import { EventsOn } from '../../wailsjs/runtime/runtime.js'
 import { getFirstParty, firstPartyPlugins } from './registry'
 import { makePluginContext } from './context'
@@ -16,6 +21,12 @@ import DiskPluginNotice from './DiskPluginNotice.svelte'
 // Whether the lifecycle wiring (vault:closing subscription) has been installed.
 // Lives at module scope so repeated loadPlugins calls do not double-subscribe.
 let lifecycleWired = false
+
+// Per-plugin session tokens (#151). The loader registers a session when a
+// plugin loads and unregisters on teardown. The token is passed to
+// makePluginContext so the SDK closures can include it in every privileged
+// binding call for binding-identity verification.
+const sessionTokens = new Map<string, string>()
 
 /**
  * Discover and initialize all active plugins:
@@ -100,9 +111,15 @@ export async function loadPlugins(
       }
       const def: SiltPlugin | undefined = mod?.default ?? mod
       const manifest = def?.manifest ?? { id, name: id, version: '0.0.0' }
+      // Register a session token for binding-identity verification (#151).
+      let token = sessionTokens.get(id)
+      if (!token) {
+        token = await RegisterPluginSession(id)
+        sessionTokens.set(id, token)
+      }
       // Per-plugin context so getPluginSettings knows which plugin is
       // resolving its settings (#133). The location getters stay reactive.
-      const ctx = makePluginContext(id)
+      const ctx = makePluginContext(id, token)
       def?.init?.(ctx)
       def?.onVaultOpen?.(ctx)
       const reg: RegisteredPlugin = {
@@ -130,7 +147,19 @@ export async function loadPlugins(
   for (const fp of firstPartyPlugins()) {
     if (disabledIds.has(fp.manifest.id)) continue
     if (!plugins.has(fp.manifest.id)) {
-      const ctx = makePluginContext(fp.manifest.id)
+      // Register a session token for first-party plugins too (#151).
+      let fpToken = sessionTokens.get(fp.manifest.id)
+      if (!fpToken) {
+        try {
+          fpToken = await RegisterPluginSession(fp.manifest.id)
+          sessionTokens.set(fp.manifest.id, fpToken)
+        } catch {
+          // Best-effort: if session registration fails (e.g. vault not
+          // loaded yet), continue with no token — the SDK passes '' which
+          // the Go side rejects for session-gated bindings.
+        }
+      }
+      const ctx = makePluginContext(fp.manifest.id, fpToken)
       fp.init?.(ctx)
       fp.onVaultOpen?.(ctx)
       plugins.set(fp.manifest.id, fp)
@@ -192,6 +221,11 @@ function wireLifecycleOnce() {
     // The plugins map is stale after teardown; clear the reactive store.
     loadedPlugins.plugins = new Map()
     loadedPlugins.errors = []
+    // Clear all session tokens so the next vault starts fresh (#151).
+    for (const [, token] of sessionTokens) {
+      UnregisterPluginSession(token).catch(() => {})
+    }
+    sessionTokens.clear()
   })
 
   window.addEventListener('beforeunload', () => {
@@ -223,6 +257,12 @@ export function teardownPlugin(pluginID: string): void {
   unregisterPluginSlashCommands(pluginID)
   unregisterPluginSurfaces(pluginID)
   unregisterPluginDecorations(pluginID)
+  // Unregister the session token (#151).
+  const token = sessionTokens.get(pluginID)
+  if (token) {
+    UnregisterPluginSession(token).catch(() => {})
+    sessionTokens.delete(pluginID)
+  }
   try {
     reg.onShutdown?.()
   } catch {

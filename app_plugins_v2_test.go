@@ -21,6 +21,17 @@ import (
 	"silt/backend/plugins"
 )
 
+// registerTestSession registers a session for pluginID and returns the token.
+// Tests that call session-gated bindings (#151) need this before the call.
+func registerTestSession(t *testing.T, app *App, pluginID string) string {
+	t.Helper()
+	token, err := app.RegisterPluginSession(pluginID)
+	if err != nil {
+		t.Fatalf("RegisterPluginSession(%q): %v", pluginID, err)
+	}
+	return token
+}
+
 // writeAndIndexFile writes content to a page file AND indexes it, so block-
 // location lookups (GetBlockLocation) and FetchPageBlocks work in the test.
 // Mirrors the setup pattern in app_api_test.go's block-mutation tests.
@@ -48,8 +59,9 @@ func TestPluginCreateBlock_InsertsAndPersists(t *testing.T) {
 	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] existing task <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+	token := registerTestSession(t, app, "silt-kanban")
 
-	id, err := app.PluginCreateBlock("silt-kanban", "", notebook, section, page, "TASK", "new plugin task")
+	id, err := app.PluginCreateBlock("silt-kanban", token, "", notebook, section, page, "TASK", "new plugin task")
 	if err != nil {
 		t.Fatalf("PluginCreateBlock: %v", err)
 	}
@@ -81,8 +93,9 @@ func TestPluginDeleteBlock_RemovesBlock(t *testing.T) {
 	target := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] keep <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n- [ ] delete me <!-- id: " + target + " -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+	token := registerTestSession(t, app, "silt-kanban")
 
-	if err := app.PluginDeleteBlock("silt-kanban", target); err != nil {
+	if err := app.PluginDeleteBlock("silt-kanban", token, target); err != nil {
 		t.Fatalf("PluginDeleteBlock: %v", err)
 	}
 	blocks, _ := app.FetchPageBlocks(notebook, section, page)
@@ -102,10 +115,11 @@ func TestPluginMoveBlock_ReordersInPage(t *testing.T) {
 	mover := "22222222-2222-2222-2222-222222222222"
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] first <!-- id: " + first + " -->\n- [ ] second <!-- id: " + mover + " -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+	token := registerTestSession(t, app, "silt-kanban")
 
 	// Move the second block after the first — no-op position, but verifies the
 	// path does not error and preserves both blocks.
-	if err := app.PluginMoveBlock("silt-kanban", mover, first, "", "", ""); err != nil {
+	if err := app.PluginMoveBlock("silt-kanban", token, mover, first, "", "", ""); err != nil {
 		t.Fatalf("PluginMoveBlock: %v", err)
 	}
 	blocks, _ := app.FetchPageBlocks(notebook, section, page)
@@ -136,8 +150,9 @@ func TestPluginMoveBlock_CrossPageInsertsInTarget(t *testing.T) {
 		"- [ ] existing <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
 	writeAndIndexFile(t, app, dstPath, dstContent, notebook, section, dstPage)
 
+	token := registerTestSession(t, app, "silt-kanban")
 	// Move blockA from Source to Dest (no afterID → append).
-	if err := app.PluginMoveBlock("silt-kanban", blockA, "", notebook, section, dstPage); err != nil {
+	if err := app.PluginMoveBlock("silt-kanban", token, blockA, "", notebook, section, dstPage); err != nil {
 		t.Fatalf("PluginMoveBlock cross-page: %v", err)
 	}
 
@@ -177,7 +192,8 @@ func TestPluginMoveBlock_CrossPageInsertsInTarget(t *testing.T) {
 // PluginCreateBlock rejects an invalid block type.
 func TestPluginCreateBlock_RejectsInvalidType(t *testing.T) {
 	app := newTestApp(t)
-	_, err := app.PluginCreateBlock("silt-kanban", "", "Work", "", "Daily", "BOGUS", "text")
+	token := registerTestSession(t, app, "silt-kanban")
+	_, err := app.PluginCreateBlock("silt-kanban", token, "", "Work", "", "Daily", "BOGUS", "text")
 	if err == nil {
 		t.Fatal("expected error for invalid block type")
 	}
@@ -190,12 +206,13 @@ func TestPluginCreateBlock_RejectsInvalidType(t *testing.T) {
 // PluginCreateBlock is denied for a third-party plugin without content-mutate.
 func TestPluginCreateBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
 	notebook, section, page := "Work", "Journal", "Daily"
 	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] existing <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
 
-	_, err := app.PluginCreateBlock("third-party", "", notebook, section, page, "TASK", "text")
+	_, err := app.PluginCreateBlock("third-party", token, "", notebook, section, page, "TASK", "text")
 	if err == nil {
 		t.Fatal("expected capability denial without content-mutate grant")
 	}
@@ -204,6 +221,7 @@ func TestPluginCreateBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
 // PluginCreateBlock succeeds for a third-party plugin WITH content-mutate.
 func TestPluginCreateBlock_SucceedsWithContentMutateGrant(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
 	notebook, section, page := "Work", "Journal", "Daily"
 	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] existing <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
@@ -212,7 +230,7 @@ func TestPluginCreateBlock_SucceedsWithContentMutateGrant(t *testing.T) {
 	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	id, err := app.PluginCreateBlock("third-party", "", notebook, section, page, "TASK", "granted task")
+	id, err := app.PluginCreateBlock("third-party", token, "", notebook, section, page, "TASK", "granted task")
 	if err != nil {
 		t.Fatalf("PluginCreateBlock with grant: %v", err)
 	}
@@ -224,7 +242,8 @@ func TestPluginCreateBlock_SucceedsWithContentMutateGrant(t *testing.T) {
 // PluginDeleteBlock is denied without content-mutate.
 func TestPluginDeleteBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
 	app := newTestApp(t)
-	if err := app.PluginDeleteBlock("third-party", "some-uuid"); err == nil {
+	token := registerTestSession(t, app, "third-party")
+	if err := app.PluginDeleteBlock("third-party", token, "some-uuid"); err == nil {
 		t.Fatal("expected capability denial without content-mutate grant")
 	}
 }
@@ -232,7 +251,8 @@ func TestPluginDeleteBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
 // PluginMoveBlock is denied without content-mutate.
 func TestPluginMoveBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
 	app := newTestApp(t)
-	if err := app.PluginMoveBlock("third-party", "some-uuid", "", "", "", ""); err == nil {
+	token := registerTestSession(t, app, "third-party")
+	if err := app.PluginMoveBlock("third-party", token, "some-uuid", "", "", "", ""); err == nil {
 		t.Fatal("expected capability denial without content-mutate grant")
 	}
 }
@@ -240,8 +260,9 @@ func TestPluginMoveBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
 // PluginApplyBlocks is denied without content-mutate.
 func TestPluginApplyBlocks_DeniedWithoutContentMutateGrant(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
 	ops := []PluginCreateBlockOp{{Kind: "delete", BlockID: "some-uuid"}}
-	if err := app.PluginApplyBlocks("third-party", ops); err == nil {
+	if err := app.PluginApplyBlocks("third-party", token, ops); err == nil {
 		t.Fatal("expected capability denial without content-mutate grant")
 	}
 }
@@ -277,7 +298,8 @@ func TestPluginRegisterSurface_SucceedsWithUISurfaceGrant(t *testing.T) {
 // PluginWriteFile is denied without a write-files grant.
 func TestPluginWriteFile_DeniedWithoutGrant(t *testing.T) {
 	app := newTestApp(t)
-	err := app.PluginWriteFile("third-party", "Work", "attachments/foo.txt", []byte("x"))
+	token := registerTestSession(t, app, "third-party")
+	err := app.PluginWriteFile("third-party", token, "Work", "attachments/foo.txt", []byte("x"))
 	if err == nil {
 		t.Fatal("expected capability denial without grant")
 	}
@@ -287,10 +309,11 @@ func TestPluginWriteFile_DeniedWithoutGrant(t *testing.T) {
 // attachments/.
 func TestPluginWriteFile_GrantThenWrite(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
 	if err := app.RequestCapability("third-party", string(plugins.CapWriteFiles), ""); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	if err := app.PluginWriteFile("third-party", "Work", "attachments/note.txt", []byte("hello")); err != nil {
+	if err := app.PluginWriteFile("third-party", token, "Work", "attachments/note.txt", []byte("hello")); err != nil {
 		t.Fatalf("PluginWriteFile: %v", err)
 	}
 	abs := filepath.Join(app.vaultPath, "Work", "attachments", "note.txt")
@@ -307,8 +330,9 @@ func TestPluginWriteFile_GrantThenWrite(t *testing.T) {
 // scratch).
 func TestPluginWriteFile_RejectsOutsideAllowlist(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
 	_ = app.RequestCapability("third-party", string(plugins.CapWriteFiles), "")
-	err := app.PluginWriteFile("third-party", "Work", "evil.txt", []byte("x"))
+	err := app.PluginWriteFile("third-party", token, "Work", "evil.txt", []byte("x"))
 	if err == nil {
 		t.Fatal("expected rejection for path outside the allowlist")
 	}
@@ -317,8 +341,9 @@ func TestPluginWriteFile_RejectsOutsideAllowlist(t *testing.T) {
 // PluginWriteFile rejects a traversal path that escapes the notebook root.
 func TestPluginWriteFile_RejectsTraversal(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
 	_ = app.RequestCapability("third-party", string(plugins.CapWriteFiles), "")
-	err := app.PluginWriteFile("third-party", "Work", "../../../etc/evil", []byte("x"))
+	err := app.PluginWriteFile("third-party", token, "Work", "../../../etc/evil", []byte("x"))
 	if err == nil {
 		t.Fatal("expected traversal rejection")
 	}
@@ -327,10 +352,11 @@ func TestPluginWriteFile_RejectsTraversal(t *testing.T) {
 // PluginReadFile + PluginListDir round-trip a file written by PluginWriteFile.
 func TestPluginReadFile_AndListDir(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
 	_ = app.RequestCapability("p", string(plugins.CapReadFiles), "")
-	_ = app.PluginWriteFile("p", "Work", "attachments/a.txt", []byte("A"))
-	_ = app.PluginWriteFile("p", "Work", "attachments/b.txt", []byte("B"))
+	_ = app.PluginWriteFile("p", token, "Work", "attachments/a.txt", []byte("A"))
+	_ = app.PluginWriteFile("p", token, "Work", "attachments/b.txt", []byte("B"))
 
 	res, err := app.PluginReadFile("p", "Work", "attachments/a.txt")
 	if err != nil {
@@ -417,7 +443,8 @@ func TestPluginWritePathAllowed(t *testing.T) {
 // PluginFetch is denied without a network grant.
 func TestPluginFetch_DeniedWithoutGrant(t *testing.T) {
 	app := newTestApp(t)
-	_, err := app.PluginFetch("third-party", PluginFetchInput{URL: "https://example.com"})
+	token := registerTestSession(t, app, "third-party")
+	_, err := app.PluginFetch("third-party", token, PluginFetchInput{URL: "https://example.com"})
 	if err == nil {
 		t.Fatal("expected capability denial without network grant")
 	}
@@ -426,12 +453,13 @@ func TestPluginFetch_DeniedWithoutGrant(t *testing.T) {
 // PluginFetch rejects a non-http(s) URL even with a grant.
 func TestPluginFetch_RejectsUnsafeUrl(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
-	_, err := app.PluginFetch("p", PluginFetchInput{URL: "file:///etc/passwd"})
+	_, err := app.PluginFetch("p", token, PluginFetchInput{URL: "file:///etc/passwd"})
 	if err == nil {
 		t.Fatal("expected rejection of file:// scheme")
 	}
-	_, err = app.PluginFetch("p", PluginFetchInput{URL: "javascript:alert(1)"})
+	_, err = app.PluginFetch("p", token, PluginFetchInput{URL: "javascript:alert(1)"})
 	if err == nil {
 		t.Fatal("expected rejection of javascript: scheme")
 	}
@@ -621,16 +649,17 @@ func TestPluginWriteFile_RejectsBeyondScratchCap(t *testing.T) {
 	t.Cleanup(func() { maxPluginScratchBytes = orig })
 
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
 
 	// First write fits the cap.
 	first := make([]byte, 900*1024)
-	if err := app.PluginWriteFile("p", "Work", ".system/plugins/p/data/big.bin", first); err != nil {
+	if err := app.PluginWriteFile("p", token, "Work", ".system/plugins/p/data/big.bin", first); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
 	// A second 200 KB write pushes cumulative past 1 MB.
 	second := make([]byte, 200*1024)
-	err := app.PluginWriteFile("p", "Work", ".system/plugins/p/data/tail.bin", second)
+	err := app.PluginWriteFile("p", token, "Work", ".system/plugins/p/data/tail.bin", second)
 	if err == nil {
 		t.Fatal("expected rejection beyond the scratch cap")
 	}
@@ -639,8 +668,9 @@ func TestPluginWriteFile_RejectsBeyondScratchCap(t *testing.T) {
 	}
 
 	// A different plugin is not affected by p's exhaustion.
+	otherToken := registerTestSession(t, app, "other")
 	_ = app.RequestCapability("other", string(plugins.CapWriteFiles), "")
-	if err := app.PluginWriteFile("other", "Work", ".system/plugins/other/data/x.bin", []byte("hi")); err != nil {
+	if err := app.PluginWriteFile("other", otherToken, "Work", ".system/plugins/other/data/x.bin", []byte("hi")); err != nil {
 		t.Errorf("other plugin's write should not be affected by p's exhaustion: %v", err)
 	}
 }
@@ -651,12 +681,13 @@ func TestPluginWriteFile_RejectsBeyondScratchCap(t *testing.T) {
 // write (a successful delete therefore frees budget immediately).
 func TestPluginWriteFile_ScratchCapAccumulatesByActualDiskUsage(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
 	// Three 1 MB files — well under the production 500 MB cap.
 	chunk := make([]byte, 1*1024*1024)
 	for i := 0; i < 3; i++ {
 		name := filepath.Join(".system/plugins/p/data", "chunk-"+string(rune('a'+i))+".bin")
-		if err := app.PluginWriteFile("p", "Work", name, chunk); err != nil {
+		if err := app.PluginWriteFile("p", token, "Work", name, chunk); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -709,6 +740,7 @@ func TestPluginWriteFile_LinkedScratchCapRejected(t *testing.T) {
 	t.Cleanup(func() { maxPluginScratchBytes = orig })
 
 	app := newTestApp(t)
+	pToken := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
 
 	// Create a linked notebook root.
@@ -721,7 +753,7 @@ func TestPluginWriteFile_LinkedScratchCapRejected(t *testing.T) {
 
 	// Write 900 KB to the vault scratch (fits under 1 MB).
 	first := make([]byte, 900*1024)
-	if err := app.PluginWriteFile("p", "Work", ".system/plugins/p/data/vault.bin", first); err != nil {
+	if err := app.PluginWriteFile("p", pToken, "Work", ".system/plugins/p/data/vault.bin", first); err != nil {
 		t.Fatalf("vault scratch write: %v", err)
 	}
 
@@ -740,7 +772,7 @@ func TestPluginWriteFile_LinkedScratchCapRejected(t *testing.T) {
 	// We write directly through PluginWriteFile with a linked-notebook path.
 	// resolvePluginNotebookDir resolves through the linked root, so this
 	// writes to the linked scratch dir.
-	err := app.PluginWriteFile("p", "CapLinked", ".system/plugins/p/data/overflow.bin", make([]byte, 100*1024))
+	err := app.PluginWriteFile("p", pToken, "CapLinked", ".system/plugins/p/data/overflow.bin", make([]byte, 100*1024))
 	if err == nil {
 		t.Fatal("expected rejection: cumulative scratch across vault + linked exceeds the cap")
 	}
@@ -813,6 +845,7 @@ func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var err1, err2 error
+	moveToken := registerTestSession(t, app, "silt-kanban")
 	const rounds = 20
 	for i := 0; i < rounds; i++ {
 		// Reset source and destination pages each round.
@@ -823,11 +856,11 @@ func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			err1 = app.PluginMoveBlock("silt-kanban", blockA, "", notebook, section, dstPage1)
+			err1 = app.PluginMoveBlock("silt-kanban", moveToken, blockA, "", notebook, section, dstPage1)
 		}()
 		go func() {
 			defer wg.Done()
-			err2 = app.PluginMoveBlock("silt-kanban", blockB, "", notebook, section, dstPage2)
+			err2 = app.PluginMoveBlock("silt-kanban", moveToken, blockB, "", notebook, section, dstPage2)
 		}()
 		wg.Wait()
 
@@ -925,6 +958,7 @@ func TestPluginListNavigation_GrantThenList(t *testing.T) {
 // Proxy-*, Sec-*, Cookie, Authorization).
 func TestPluginFetch_RejectsForbiddenHeaders(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
 
 	dangerous := []string{
@@ -933,7 +967,7 @@ func TestPluginFetch_RejectsForbiddenHeaders(t *testing.T) {
 		"Sec-Fetch-Mode", "X-Forwarded-For",
 	}
 	for _, h := range dangerous {
-		_, err := app.PluginFetch("p", PluginFetchInput{
+		_, err := app.PluginFetch("p", token, PluginFetchInput{
 			URL:     "https://example.com",
 			Headers: map[string]string{h: "evil"},
 		})
@@ -979,9 +1013,10 @@ func TestIsPathWithinRoot_RejectsSymlinkEscape(t *testing.T) {
 // PluginFetch rejects non-standard HTTP methods (CONNECT, TRACE, etc.).
 func TestPluginFetch_RejectsForbiddenMethod(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
 	for _, m := range []string{"CONNECT", "TRACE", "OPTIONS", "BOGUS"} {
-		_, err := app.PluginFetch("p", PluginFetchInput{URL: "https://example.com", Method: m})
+		_, err := app.PluginFetch("p", token, PluginFetchInput{URL: "https://example.com", Method: m})
 		if err == nil {
 			t.Fatalf("expected rejection of HTTP method %q", m)
 		}
@@ -991,11 +1026,12 @@ func TestPluginFetch_RejectsForbiddenMethod(t *testing.T) {
 // PluginFetch accepts standard HTTP methods.
 func TestPluginFetch_AcceptsStandardMethods(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
 	for _, m := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", ""} {
 		// We don't care about the fetch result (the server may be unreachable);
 		// we just verify the method validation doesn't reject these.
-		_, err := app.PluginFetch("p", PluginFetchInput{URL: "https://example.com", Method: m})
+		_, err := app.PluginFetch("p", token, PluginFetchInput{URL: "https://example.com", Method: m})
 		// Network errors are fine — we're only checking that the METHOD was
 		// not rejected. A method-rejection returns a formatting error, not a
 		// network error. Distinguish by checking for the allowlist message.
@@ -1008,9 +1044,10 @@ func TestPluginFetch_AcceptsStandardMethods(t *testing.T) {
 // PluginFetch rejects an oversized request body.
 func TestPluginFetch_RejectsOversizedRequestBody(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
 	bigBody := strings.Repeat("x", int(maxPluginFetchRequestBytes)+1)
-	_, err := app.PluginFetch("p", PluginFetchInput{
+	_, err := app.PluginFetch("p", token, PluginFetchInput{
 		URL:    "https://example.com",
 		Method: "POST",
 		Body:   bigBody,
@@ -1276,4 +1313,78 @@ func buildPluginArchive(t *testing.T, id, manifestJSONStr string) string {
 		t.Fatalf("zip close: %v", err)
 	}
 	return archivePath
+}
+
+// =========================================================================
+// Plugin session tokens — binding identity (#151)
+// =========================================================================
+
+func TestRegisterPluginSession_RoundTrip(t *testing.T) {
+	app := newTestApp(t)
+	token, err := app.RegisterPluginSession("my-plugin")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	if token == "" {
+		t.Fatal("token should not be empty")
+	}
+	// validatePluginSession accepts the correct pair.
+	if err := app.validatePluginSession("my-plugin", token); err != nil {
+		t.Errorf("validatePluginSession correct pair: %v", err)
+	}
+	// Wrong pluginID rejected.
+	if err := app.validatePluginSession("other-plugin", token); err == nil {
+		t.Fatal("expected rejection for wrong pluginID")
+	}
+	// Wrong token rejected.
+	if err := app.validatePluginSession("my-plugin", "wrong-token"); err == nil {
+		t.Fatal("expected rejection for wrong token")
+	}
+}
+
+func TestUnregisterPluginSession_Invalidates(t *testing.T) {
+	app := newTestApp(t)
+	token, _ := app.RegisterPluginSession("temp")
+	if err := app.UnregisterPluginSession(token); err != nil {
+		t.Fatalf("UnregisterPluginSession: %v", err)
+	}
+	// The token is no longer valid.
+	if err := app.validatePluginSession("temp", token); err == nil {
+		t.Fatal("expected rejection after unregister")
+	}
+}
+
+func TestRegisterPluginSession_ConcurrentNoPanic(t *testing.T) {
+	app := newTestApp(t)
+	const n = 50
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			_, _ = app.RegisterPluginSession("concurrent")
+		}()
+	}
+	wg.Wait()
+}
+
+// PluginFetch with a wrong token is rejected at the session boundary (#151).
+func TestPluginFetch_RejectsWrongSessionToken(t *testing.T) {
+	app := newTestApp(t)
+	otherToken, _ := app.RegisterPluginSession("plugin-a")
+	_ = app.RequestCapability("plugin-b", string(plugins.CapNetwork), "")
+	// plugin-b calling with plugin-a's token → rejected.
+	_, err := app.PluginFetch("plugin-b", otherToken, PluginFetchInput{URL: "https://example.com"})
+	if err == nil {
+		t.Fatal("expected rejection: plugin-b using plugin-a's token")
+	}
+}
+
+// PluginCreateBlock without a session token is rejected (#151).
+func TestPluginCreateBlock_RejectsMissingSessionToken(t *testing.T) {
+	app := newTestApp(t)
+	_, err := app.PluginCreateBlock("silt-kanban", "", "", "Work", "", "Daily", "TASK", "text")
+	if err == nil {
+		t.Fatal("expected rejection: missing session token")
+	}
 }

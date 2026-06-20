@@ -29,6 +29,8 @@ import {
   PluginNotify,
   PluginFetch,
   PluginRegisterSurface,
+  RegisterPluginSession,
+  UnregisterPluginSession,
   AddAttachment,
   OpenAttachment,
   DeleteAttachment,
@@ -76,7 +78,10 @@ function getPluginSchemaDefault(pluginID: string, key: string): unknown {
  * not need to pass its own id when resolving its per-active-notebook settings
  * (#133); the loader passes the manifest id at context construction.
  */
-export function makePluginContext(pluginID: string): PluginContext {
+export function makePluginContext(
+  pluginID: string,
+  sessionToken?: string
+): PluginContext {
   const loc = getActiveLocation()
   return {
     get activeNotebook() {
@@ -191,6 +196,7 @@ export function makePluginContext(pluginID: string): PluginContext {
     createBlock: (opts) =>
       PluginCreateBlock(
         pluginID,
+        sessionToken ?? '',
         opts.after ?? '',
         opts.notebook ?? '',
         opts.section ?? '',
@@ -198,10 +204,12 @@ export function makePluginContext(pluginID: string): PluginContext {
         opts.type,
         opts.text
       ),
-    deleteBlock: (uuid) => PluginDeleteBlock(pluginID, uuid).then(() => true),
+    deleteBlock: (uuid) =>
+      PluginDeleteBlock(pluginID, sessionToken ?? '', uuid).then(() => true),
     moveBlock: (uuid, opts) =>
       PluginMoveBlock(
         pluginID,
+        sessionToken ?? '',
         uuid,
         opts.after ?? '',
         opts.notebook ?? '',
@@ -230,12 +238,15 @@ export function makePluginContext(pluginID: string): PluginContext {
     writeFile: (notebook, relPath, data) =>
       PluginWriteFile(
         pluginID,
+        sessionToken ?? '',
         notebook,
         relPath,
         data as unknown as never
       ).then(() => true),
     deleteFile: (notebook, relPath) =>
-      PluginDeleteFile(pluginID, notebook, relPath).then(() => true),
+      PluginDeleteFile(pluginID, sessionToken ?? '', notebook, relPath).then(
+        () => true
+      ),
     listDir: (notebook, relPath) =>
       PluginListDir(pluginID, notebook, relPath).then((r) => r ?? []),
     notebookRoot: (notebook) => PluginResolveNotebookRoot(pluginID, notebook),
@@ -261,7 +272,7 @@ export function makePluginContext(pluginID: string): PluginContext {
 
     // --- Network / fetch (#115) — capability-gated --------------------------
     fetch: (url, opts) =>
-      PluginFetch(pluginID, {
+      PluginFetch(pluginID, sessionToken ?? '', {
         url,
         method: opts?.method ?? '',
         headers: opts?.headers ?? {},

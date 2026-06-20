@@ -55,8 +55,11 @@ type PluginCreateBlockOp struct {
 // TASK, NOTE, or HEADER. The new block's UUID is the pre-minted NewID carried
 // in the op so the caller gets back the exact id that lands on disk.
 // Returns the new block's UUID.
-// Gated by content-mutate (#156).
-func (a *App) PluginCreateBlock(pluginID, afterID, notebook, section, page, blockType, text string) (string, error) {
+// Gated by content-mutate (#156). Session-token verified (#151).
+func (a *App) PluginCreateBlock(pluginID, sessionToken, afterID, notebook, section, page, blockType, text string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return "", err
 	}
@@ -89,8 +92,11 @@ func (a *App) PluginCreateBlock(pluginID, afterID, notebook, section, page, bloc
 }
 
 // PluginDeleteBlock removes a block by UUID from its source file and re-indexes.
-// Gated by content-mutate (#156).
-func (a *App) PluginDeleteBlock(pluginID, blockID string) error {
+// Gated by content-mutate (#156). Session-token verified (#151).
+func (a *App) PluginDeleteBlock(pluginID, sessionToken, blockID string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return err
 	}
@@ -106,8 +112,11 @@ func (a *App) PluginDeleteBlock(pluginID, blockID string) error {
 // PluginMoveBlock moves a block within its page (after afterID) or to another
 // page (notebook/section/page). When afterID is empty the block goes to the end
 // of the target page.
-// Gated by content-mutate (#156).
-func (a *App) PluginMoveBlock(pluginID, blockID, afterID, notebook, section, page string) error {
+// Gated by content-mutate (#156). Session-token verified (#151).
+func (a *App) PluginMoveBlock(pluginID, sessionToken, blockID, afterID, notebook, section, page string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return err
 	}
@@ -130,8 +139,11 @@ func (a *App) PluginMoveBlock(pluginID, blockID, afterID, notebook, section, pag
 // PluginApplyBlocks applies a batch of create/delete/move ops, coalescing per-
 // page writes into a single SaveFileBlocks + re-index pass so a bulk op does
 // not thrash the WAL with one rewrite per block (#104).
-// Gated by content-mutate (#156).
-func (a *App) PluginApplyBlocks(pluginID string, ops []PluginCreateBlockOp) error {
+// Gated by content-mutate (#156). Session-token verified (#151).
+func (a *App) PluginApplyBlocks(pluginID, sessionToken string, ops []PluginCreateBlockOp) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return err
 	}
@@ -540,7 +552,10 @@ var maxPluginScratchBytes int64 = 500 * 1024 * 1024 // 500 MB
 // Scratch-dir writes (relPath under .system/plugins/<id>/data/) are bounded
 // by maxPluginScratchBytes; the cumulative size is recomputed on each write
 // so a successful delete immediately frees budget for a follow-up write.
-func (a *App) PluginWriteFile(pluginID, notebook, relPath string, data []byte) error {
+func (a *App) PluginWriteFile(pluginID, sessionToken, notebook, relPath string, data []byte) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapWriteFiles); err != nil {
 		return err
 	}
@@ -692,7 +707,10 @@ func dirSizeUnder(root string) (int64, error) {
 
 // PluginDeleteFile removes a file within a notebook (traversal-guarded). Gated
 // by write-files.
-func (a *App) PluginDeleteFile(pluginID, notebook, relPath string) error {
+func (a *App) PluginDeleteFile(pluginID, sessionToken, notebook, relPath string) error {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapWriteFiles); err != nil {
 		return err
 	}
@@ -1329,7 +1347,11 @@ type NetworkAuditEntry struct {
 // with timeout / size / redirect caps. Gated by the network capability.
 // The host + status are appended to the in-memory audit log (never the body).
 // Per-plugin rate-limited (#153): a network-granted plugin's RPS is capped.
-func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchResult, error) {
+// Session-token verified (#151): a plugin cannot impersonate another.
+func (a *App) PluginFetch(pluginID, sessionToken string, input PluginFetchInput) (PluginFetchResult, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return PluginFetchResult{}, err
+	}
 	if err := a.requireGrant(pluginID, plugins.CapNetwork); err != nil {
 		return PluginFetchResult{}, err
 	}
@@ -1874,4 +1896,62 @@ func (a *App) PluginReadPluginAsset(pluginID, relPath string) (string, error) {
 		return "", fmt.Errorf("read plugin asset: %w", err)
 	}
 	return string(data), nil
+}
+
+// =========================================================================
+// Plugin session tokens — binding identity (#151)
+// =========================================================================
+
+// RegisterPluginSession mints a session token for pluginID and stores it so
+// privileged bindings can verify the caller's identity (#151). Called by the
+// frontend loader at plugin load time. Returns the token the SDK captures in
+// its closures.
+func (a *App) RegisterPluginSession(pluginID string) (string, error) {
+	if !plugins.IsValidID(pluginID) {
+		return "", fmt.Errorf("invalid plugin id %q", pluginID)
+	}
+	token := newUUID()
+	a.pluginSessionsMu.Lock()
+	defer a.pluginSessionsMu.Unlock()
+	if a.pluginSessions == nil {
+		a.pluginSessions = make(map[string]string)
+	}
+	a.pluginSessions[token] = pluginID
+	return token, nil
+}
+
+// UnregisterPluginSession invalidates a session token. Called by the loader
+// on disable/uninstall/vault-close so a stale token cannot be reused.
+func (a *App) UnregisterPluginSession(token string) error {
+	a.pluginSessionsMu.Lock()
+	defer a.pluginSessionsMu.Unlock()
+	if a.pluginSessions != nil {
+		delete(a.pluginSessions, token)
+	}
+	return nil
+}
+
+// validatePluginSession verifies that token maps to pluginID. Returns nil if
+// valid; an error otherwise. This is the boundary check that prevents a plugin
+// from impersonating another by calling a privileged binding with a different
+// pluginID (#151). A plugin that bypasses the SDK and calls App.PluginFetch
+// directly doesn't have the target plugin's token, so it's rejected here.
+//
+// First-party plugins (whose SDK closures also capture tokens) are unaffected.
+// The residual gap — a main-webview plugin reading another plugin's token from
+// closure scope — is documented in docs/PLUGIN_DEVELOPMENT.md §7 (#152).
+func (a *App) validatePluginSession(pluginID, token string) error {
+	if token == "" {
+		return fmt.Errorf("missing session token for plugin %q", pluginID)
+	}
+	a.pluginSessionsMu.RLock()
+	registeredID, ok := a.pluginSessions[token]
+	a.pluginSessionsMu.RUnlock()
+	if !ok {
+		return fmt.Errorf("invalid session token for plugin %q", pluginID)
+	}
+	if registeredID != pluginID {
+		return fmt.Errorf("session token mismatch: token belongs to %q, not %q", registeredID, pluginID)
+	}
+	return nil
 }
