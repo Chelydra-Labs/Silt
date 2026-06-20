@@ -5,13 +5,16 @@
     InitializeVault,
     CloseVault,
     GetSidebarWidth,
-    SetSidebarWidth
+    SetSidebarWidth,
+    GetOpenTabs,
+    SetOpenTabs
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import VirtualScrollContainer from './components/VirtualScrollContainer.svelte'
+  import TabStrip from './components/TabStrip.svelte'
   import SearchModal from './components/SearchModal.svelte'
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
@@ -35,11 +38,32 @@
   import ToastContainer from './components/ToastContainer.svelte'
   import { pushNotification } from './notifications/store.svelte'
   import logo from './assets/logo.svg'
+  import {
+    openPage as openPageState,
+    closeTab as closeTabState,
+    promotePreview as promotePreviewState,
+    cycleTab as cycleTabState,
+    type TabEntry,
+    type PageRef,
+    type OpenPageMode
+  } from './lib/tabs'
 
   let isInitialized = $state(false)
   let loading = $state(true)
 
-  // Navigation state (3-level: notebook > section > page)
+  // Tab state (#142). The tab list + active id are the source of truth for
+  // the multi-page editor surface. The legacy active-notebook/section/page
+  // triple (still read by Sidebar, plugins, breadcrumbs) is kept in sync
+  // from the active tab by the tabSync effect below. The Sidebar's
+  // onSelectPage callback funnels through openPage(); onSelectNotebook/
+  // onSelectSection set the triple directly (sidebar context without a tab
+  // change).
+  let openTabs = $state<TabEntry[]>([])
+  let activeTabId = $state<string>('')
+
+  // Navigation state (3-level: notebook > section > page). Kept in sync with
+  // the active tab; also set directly by onSelectNotebook/onSelectSection
+  // (sidebar browsing context without opening a page).
   let activeNotebook = $state('')
   let activeSection = $state('')
   let activePage = $state('')
@@ -57,6 +81,147 @@
   $effect(() => {
     setActiveLocation(activeNotebook, activeSection, activePage)
   })
+
+  // --- Tab management (#142) -----------------------------------------------
+
+  // The single entry point for opening a page. All "open a page" callers
+  // (sidebar click, search jump, navigate-to-block, refs) funnel through
+  // here so the preview/pin logic lives in one place. Wraps the pure state
+  // machine from tabs.ts and applies the result to the $state runes.
+  function openPage(
+    ref: PageRef,
+    mode: OpenPageMode,
+    blockTarget?: { fileDate?: string; blockId?: string }
+  ): void {
+    const enablePreviewTabs = settings.config?.ui?.enable_preview_tabs !== false
+    const maxOpenTabs = settings.config?.ui?.max_open_tabs ?? 8
+    const result = openPageState(
+      { tabs: openTabs, activeId: activeTabId },
+      ref,
+      mode,
+      { enablePreviewTabs, maxOpenTabs, blockTarget }
+    )
+    openTabs = result.tabs
+    activeTabId = result.activeId
+    syncActiveFromTab()
+    schedulePersistTabs()
+  }
+
+  // Sync activeNotebook/Section/Page from the active tab so every downstream
+  // consumer (Sidebar, plugins, breadcrumbs) keeps working unchanged.
+  function syncActiveFromTab(): void {
+    const tab = openTabs.find((t) => t.id === activeTabId)
+    if (tab) {
+      activeNotebook = tab.notebook
+      activeSection = tab.section
+      activePage = tab.page
+    }
+  }
+
+  function handleSelectTab(id: string): void {
+    activeTabId = id
+    // Bump MRU ordering.
+    const now = Date.now()
+    openTabs = openTabs.map((t) =>
+      t.id === id ? { ...t, lastActivatedAt: now } : t
+    )
+    syncActiveFromTab()
+    schedulePersistTabs()
+  }
+
+  function handleCloseTab(id: string): void {
+    const result = closeTabState({ tabs: openTabs, activeId: activeTabId }, id)
+    openTabs = result.tabs
+    activeTabId = result.activeId
+    syncActiveFromTab()
+    schedulePersistTabs()
+  }
+
+  function handlePromoteTab(id: string): void {
+    openTabs = promotePreviewState(
+      { tabs: openTabs, activeId: activeTabId },
+      id
+    ).tabs
+    schedulePersistTabs()
+  }
+
+  function handleCycleTab(dir: 1 | -1): void {
+    const result = cycleTabState({ tabs: openTabs, activeId: activeTabId }, dir)
+    activeTabId = result.activeId
+    syncActiveFromTab()
+  }
+
+  // --- Tab persistence (debounced 250ms, pinned-only) ----------------------
+
+  let persistTabsTimer: ReturnType<typeof setTimeout> | null = null
+
+  function schedulePersistTabs(): void {
+    if (persistTabsTimer) clearTimeout(persistTabsTimer)
+    persistTabsTimer = setTimeout(() => {
+      persistTabsTimer = null
+      void persistTabs()
+    }, 250)
+  }
+
+  async function persistTabs(): Promise<void> {
+    // Only persist PINNED tabs + active (preview tabs are ephemeral — VS Code
+    // parity). If the active tab is a preview, don't persist it as active.
+    const pinned = openTabs.filter((t) => !t.preview)
+    const activeTab = openTabs.find((t) => t.id === activeTabId)
+    const activePersist = activeTab && !activeTab.preview ? activeTab : null
+    try {
+      await SetOpenTabs(
+        pinned.map((t) => ({
+          notebook: t.notebook,
+          section: t.section,
+          page: t.page
+        })),
+        activePersist
+          ? {
+              notebook: activePersist.notebook,
+              section: activePersist.section,
+              page: activePersist.page
+            }
+          : null
+      )
+    } catch (e) {
+      console.error('SetOpenTabs failed:', e)
+    }
+  }
+
+  // Load persisted tabs on vault open / reopen. Hydrates openTabs from the
+  // pinned set + active stored in config.yaml.
+  async function loadPersistedTabs(): Promise<void> {
+    try {
+      const result = await GetOpenTabs()
+      if (result?.open_tabs && result.open_tabs.length > 0) {
+        const now = Date.now()
+        openTabs = result.open_tabs.map((t, i) => ({
+          id: `restored-${i}-${t.notebook}-${t.page}`,
+          notebook: t.notebook,
+          section: t.section,
+          page: t.page,
+          preview: false, // persisted tabs are always pinned
+          lastActivatedAt: now - i // stable ordering for MRU
+        }))
+        // Restore active tab if it's in the set.
+        if (result.active_tab) {
+          const active = openTabs.find(
+            (t) =>
+              t.notebook === result.active_tab!.notebook &&
+              t.section === result.active_tab!.section &&
+              t.page === result.active_tab!.page
+          )
+          if (active) {
+            activeTabId = active.id
+            syncActiveFromTab()
+          }
+        }
+      }
+    } catch (e) {
+      console.error('GetOpenTabs failed:', e)
+    }
+  }
   let showSearch = $state(false)
   let showSettings = $state(false)
   let settingsTab = $state('general')
@@ -100,6 +265,8 @@
         sidebarWidth = px
       })
       .catch(() => {})
+    // Restore the persisted open-tab set from config.yaml (#142).
+    void loadPersistedTabs()
     // Subscribe to config hot-reload (config:changed from Go) so the settings
     // store refreshes on external edits to .system/config.yaml.
     initConfigHotReload()
@@ -228,6 +395,8 @@
         activeNotebook = ''
         activeSection = ''
         activePage = ''
+        openTabs = []
+        activeTabId = ''
         activeView = 'notes'
         showSettings = false
         loadConfig().catch((e) =>
@@ -269,6 +438,8 @@
         loadConfig().catch((e) =>
           console.error('Post-init config load failed:', e)
         )
+        // Restore the persisted tab set from config.yaml (#142).
+        void loadPersistedTabs()
         window.dispatchEvent(new CustomEvent('refresh-navigation'))
       }
     } catch (e) {
@@ -288,6 +459,9 @@
       activeSection = ''
       activePage = ''
       activeView = 'notes'
+      // Clear the tab strip (#142).
+      openTabs = []
+      activeTabId = ''
     } catch (e) {
       console.error('Failed to close vault:', e)
     }
@@ -300,9 +474,13 @@
     date: string,
     blockId: string
   ) {
-    activeNotebook = notebook
-    activeSection = section
-    activePage = page
+    // Route through openPage (VS Code preview-tab semantics, #142).
+    // If the target is already the active page, openPage('preview') →
+    // activate-only (no tab change, just scroll-to-block).
+    openPage({ notebook, section, page }, 'preview', {
+      fileDate: date,
+      blockId
+    })
     activeView = 'notes'
     searchTargetDate = date
     searchTargetBlockId = blockId
@@ -357,11 +535,14 @@
   }
 
   // Whether the notes view has a complete (notebook/section/page) target.
+  // With tabs (#142), also requires an active tab so closing the last tab
+  // returns to the blank view.
   let notesReady = $derived(
     activeView === 'notes' &&
       !!activeNotebook &&
-      !!activeSection &&
-      !!activePage
+      !!activePage &&
+      !!activeTabId &&
+      openTabs.length > 0
   )
 
   function openSettings(tab?: string) {
@@ -462,9 +643,12 @@
         onSelectNotebook={(nb) => (activeNotebook = nb)}
         onSelectSection={(sec) => (activeSection = sec)}
         onSelectPage={(nb, sec, pg) => {
-          activeNotebook = nb
-          activeSection = sec
-          activePage = pg
+          // Single-click opens in preview mode (VS Code parity, #142).
+          openPage({ notebook: nb, section: sec, page: pg }, 'preview')
+        }}
+        onPinPage={(nb, sec, pg) => {
+          // Double-click / middle-click opens a pinned tab (#142).
+          openPage({ notebook: nb, section: sec, page: pg }, 'pin')
         }}
         onSelectView={(v) => (activeView = v)}
         onCloseVault={handleChangeVault}
@@ -479,24 +663,57 @@
       {/if}
 
       <!-- Content viewport -->
-      <div
-        class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-void"
-      >
+      <div class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-void">
         {#if activeView === 'notes'}
+          <!-- Tab strip (#142): above the editor, inside the content area -->
+          <TabStrip
+            tabs={openTabs}
+            {activeTabId}
+            onSelectTab={handleSelectTab}
+            onCloseTab={handleCloseTab}
+            onPromoteTab={handlePromoteTab}
+            onCycleTab={handleCycleTab}
+          />
           {#if notesReady}
-            <VirtualScrollContainer
-              notebook={activeNotebook}
-              section={activeSection}
-              page={activePage}
-              targetBlockId={searchTargetBlockId}
-              targetKey={searchTargetKey}
-              {activeFocusedBlockAncestors}
-              onBlockFocus={handleBlockFocus}
-              onBlockBlur={handleBlockBlur}
-              onPageRenamed={(newName) => {
-                activePage = newName
-              }}
-            />
+            <div
+              id="silt-tabpanel"
+              role="tabpanel"
+              aria-labelledby="silt-tab-{activeTabId}"
+              class="flex-1 min-h-0 flex flex-col overflow-hidden"
+            >
+              {#each openTabs as tab (tab.id)}
+                <div
+                  class="flex-1 min-h-0 flex flex-col overflow-hidden"
+                  style:display={tab.id === activeTabId ? 'flex' : 'none'}
+                >
+                  <VirtualScrollContainer
+                    notebook={tab.notebook}
+                    section={tab.section}
+                    page={tab.page}
+                    targetBlockId={tab.id === activeTabId
+                      ? searchTargetBlockId
+                      : ''}
+                    targetKey={tab.id === activeTabId ? searchTargetKey : ''}
+                    activeFocusedBlockAncestors={tab.id === activeTabId
+                      ? activeFocusedBlockAncestors
+                      : []}
+                    onBlockFocus={tab.id === activeTabId
+                      ? handleBlockFocus
+                      : undefined}
+                    onBlockBlur={tab.id === activeTabId
+                      ? handleBlockBlur
+                      : undefined}
+                    onPageRenamed={(newName) => {
+                      // Update the tab's page name AND the active triple.
+                      openTabs = openTabs.map((t) =>
+                        t.id === tab.id ? { ...t, page: newName } : t
+                      )
+                      if (tab.id === activeTabId) activePage = newName
+                    }}
+                  />
+                </div>
+              {/each}
+            </div>
           {:else}
             <div
               class="flex-1 flex flex-col items-center justify-center text-center px-8 select-none"
