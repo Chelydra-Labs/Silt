@@ -353,7 +353,7 @@ func ParseAndValidate(raw []byte) (*Theme, error) {
 		t.Modes.Dark.Status.Success = "#22c55e"
 	}
 	if strings.TrimSpace(t.Modes.Light.Status.Success) == "" {
-		t.Modes.Light.Status.Success = "#22c55e"
+		t.Modes.Light.Status.Success = "#16a34a"
 	}
 
 	if err := Validate(&t); err != nil {

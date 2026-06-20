@@ -688,8 +688,8 @@ func TestParseAndValidate_BackfillsMissingSuccess(t *testing.T) {
 	if th.Modes.Dark.Status.Success != "#22c55e" {
 		t.Errorf("expected dark success backfill #22c55e, got %q", th.Modes.Dark.Status.Success)
 	}
-	if th.Modes.Light.Status.Success != "#22c55e" {
-		t.Errorf("expected light success backfill #22c55e, got %q", th.Modes.Light.Status.Success)
+	if th.Modes.Light.Status.Success != "#16a34a" {
+		t.Errorf("expected light success backfill #16a34a, got %q", th.Modes.Light.Status.Success)
 	}
 }
 
