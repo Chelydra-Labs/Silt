@@ -507,6 +507,16 @@ UI Frame Budget: To keep typing smooth, Svelte must complete inline shorthand pr
 
 Memory Footprint: The application must maintain an idle memory footprint of less than 65MB RAM, ensuring Silt remains a lightweight utility running in your system tray.
 
+7.3 Installation & Distribution Requirements
+
+The Windows NSIS installer MUST satisfy the following:
+
+- **No-admin installation:** The user must be able to install Silt without administrator access. The installer presents a choice between "Install for all users" (per-machine, requires elevation) and "Install for just me" (per-user, no elevation), defaulting to per-user. The per-user install directory is `%LOCALAPPDATA%\Programs\ChrisUFO\Silt`.
+- **Upgrade support:** Installing a newer version over an existing installation MUST upgrade in place. The installer detects a prior install (via the registry uninstall key), silently runs the old uninstaller, then installs the new version to the same scope (per-user or per-machine) and directory.
+- **Registry correctness:** Uninstall registry entries (Add/Remove Programs) are written to HKCU for per-user installs and HKLM for per-machine installs, so both scopes appear correctly in Windows Settings regardless of elevation.
+- **User data preservation:** The vault (notebooks, config.yaml, plugins, themes, templates) lives in user-chosen directories, NOT in the install directory. Upgrading or uninstalling never touches user data.
+- **Portable alternative:** A portable .zip (no installer, no registry entries) is also produced for users who prefer a zero-install experience.
+
 8. Local-First Plugin Architecture
 
 To support core system extension while retaining a lightweight base engine, Silt abstracts all dynamic dashboards—including the Agenda, Calendar, and Kanban viewports—into explicit plugins. The host application acts strictly as a raw block editor, tree compiler, and IPC router.

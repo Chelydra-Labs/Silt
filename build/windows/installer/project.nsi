@@ -1,43 +1,27 @@
 Unicode true
 
 ####
-## Please note: Template replacements don't work in this file. They are provided with default defines like
-## mentioned underneath.
-## If the keyword is not defined, "wails_tools.nsh" will populate them with the values from ProjectInfo.
-## If they are defined here, "wails_tools.nsh" will not touch them. This allows to use this project.nsi manually
-## from outside of Wails for debugging and development of the installer.
+## Custom Silt NSIS installer template (#install-scope).
+## Overrides Wails' default per-machine-only template with a MultiUser
+## installer that lets the user CHOOSE: "Install for all users" (needs admin)
+## or "Install for just me" (no admin), defaulting to per-user.
 ##
-## For development first make a wails nsis build to populate the "wails_tools.nsh":
-## > wails build --target windows/amd64 --nsis
-## Then you can call makensis on this file with specifying the path to your binary:
-## For a AMD64 only installer:
-## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app.exe
-## For a ARM64 only installer:
-## > makensis -DARG_WAILS_ARM64_BINARY=..\..\bin\app.exe
-## For a installer with both architectures:
-## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app-amd64.exe -DARG_WAILS_ARM64_BINARY=..\..\bin\app-arm64.exe
+## This file is automatically used by `wails build --nsis` because it lives at
+## build/windows/installer/project.nsi, which takes precedence over the Wails
+## embedded template.
 ####
-## The following information is taken from the ProjectInfo file, but they can be overwritten here.
-####
-## !define INFO_PROJECTNAME    "MyProject" # Default "{{.Name}}"
-## !define INFO_COMPANYNAME    "MyCompany" # Default "{{.Info.CompanyName}}"
-## !define INFO_PRODUCTNAME    "MyProduct" # Default "{{.Info.ProductName}}"
-## !define INFO_PRODUCTVERSION "1.0.0"     # Default "{{.Info.ProductVersion}}"
-## !define INFO_COPYRIGHT      "Copyright" # Default "{{.Info.Copyright}}"
-###
-## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
-## !define UNINST_KEY_NAME     "UninstKeyInRegistry"  # Default "${INFO_COMPANYNAME}${INFO_PRODUCTNAME}"
-####
-## !define REQUEST_EXECUTION_LEVEL "admin"            # Default "admin"  see also https://nsis.sourceforge.io/Docs/Chapter4.html
-####
-## Include the wails tools
-####
+
+## Override the execution level BEFORE the tools include so wails_tools.nsh
+## does not force "admin". "Highest" lets NSIS request elevation only when the
+## user picks "all users"; per-user installs run without elevation.
+!define REQUEST_EXECUTION_LEVEL "Highest"
+
+## Include the wails tools (fills in INFO_*, PRODUCT_EXECUTABLE, macros, etc.)
 !include "wails_tools.nsh"
 
-# The version information for this two must consist of 4 parts
+# Version info
 VIProductVersion "${INFO_PRODUCTVERSION}.0"
 VIFileVersion    "${INFO_PRODUCTVERSION}.0"
-
 VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
 VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"
 VIAddVersionKey "ProductVersion"  "${INFO_PRODUCTVERSION}"
@@ -45,44 +29,84 @@ VIAddVersionKey "FileVersion"     "${INFO_PRODUCTVERSION}"
 VIAddVersionKey "LegalCopyright"  "${INFO_COPYRIGHT}"
 VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
 
-# Enable HiDPI support. https://nsis.sourceforge.io/Reference/ManifestDPIAware
 ManifestDPIAware true
 
 !include "MUI.nsh"
 
+##
+## MultiUser configuration — the install-scope choice dialog.
+## Defaults to CurrentUser (per-user, no admin). The user can switch to
+## AllUsers (per-machine, admin) via the radio buttons on the install-mode
+## page. See https://nsis.sourceforge.io/Docs/MultiUser/Readme.html
+##
+!define MULTIUSER_EXECUTIONLEVEL Highest
+!define MULTIUSER_MUI
+!define MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER
+!define MULTIUSER_INSTALLMODE_INSTDIR "${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
+!define MULTIUSER_INSTALLMODE_COMMANDLINE
+!define MULTIUSER_INSTALLMODE_INSTDIR_REGISTRY_KEY   "Software\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
+!define MULTIUSER_INSTALLMODE_UNINSTALL_REGISTRY_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINST_KEY_NAME}"
+!define MULTIUSER_INSTALLMODE_INSTDIR_REGISTRY_VALUENAME "InstallDir"
+!include "MultiUser.nsh"
+
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
-# !define MUI_WELCOMEFINISHPAGE_BITMAP "resources\leftimage.bmp" #Include this to add a bitmap on the left side of the Welcome Page. Must be a size of 164x314
-!define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
-!define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
+!define MUI_FINISHPAGE_NOAUTOCLOSE
+!define MUI_ABORTWARNING
 
-!insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
-# !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
-!insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
-!insertmacro MUI_PAGE_INSTFILES # Installing page.
-!insertmacro MUI_PAGE_FINISH # Finished installation page.
+## Pages: Welcome → Install Mode (the choice) → Directory → Install → Finish
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MULTIUSER_PAGE_INSTALLMODE
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
 
-!insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
+!insertmacro MUI_UNPAGE_INSTFILES
 
-!insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
-
-## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
-#!uninstfinalize 'signtool --file "%1"'
-#!finalize 'signtool --file "%1"'
+!insertmacro MUI_LANGUAGE "English"
 
 Name "${INFO_PRODUCTNAME}"
-OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
-InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
-ShowInstDetails show # This will always show the installation details.
+OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe"
+## InstallDir is set dynamically by MultiUser.nsh based on the chosen scope:
+##   CurrentUser → $LOCALAPPDATA\Programs\<Company>\<Product>
+##   AllUsers    → $PROGRAMFILES64\<Company>\<Product>
+ShowInstDetails show
 
 Function .onInit
-   !insertmacro wails.checkArchitecture
+    ## Initialise MultiUser — this reads the registry for a prior install
+    ## scope and sets $InstDir + $MultiUser.InstallMode accordingly.
+    !insertmacro MULTIUSER_INIT
+
+    ## Architecture guard (from wails_tools.nsh).
+    !insertmacro wails.checkArchitecture
 FunctionEnd
 
 Section
-    !insertmacro wails.setShellContext
+    ## Set the shell context (start-menu / desktop shortcuts) to match the
+    ## chosen install scope. The default wails.setShellContext macro checks
+    ## REQUEST_EXECUTION_LEVEL, but with MultiUser the scope is runtime-chosen,
+    ## so we drive it from $MultiUser.InstallMode instead.
+    ${If} $MultiUser.InstallMode == "AllUsers"
+        SetShellVarContext all
+    ${Else}
+        SetShellVarContext current
+    ${EndIf}
 
     !insertmacro wails.webview2runtime
+
+    ## If a prior version is installed at this $INSTDIR, silently run its
+    ## uninstaller first for a clean upgrade (no leftover stale files). The
+    ## MultiUser plugin has already detected the prior scope, so we read the
+    ## uninstall string from the matching hive.
+    SetRegView 64
+    ${If} $MultiUser.InstallMode == "AllUsers"
+        ReadRegStr $0 HKLM "${UNINST_KEY}" "UninstallString"
+    ${Else}
+        ReadRegStr $0 HKCU "${UNINST_KEY}" "UninstallString"
+    ${EndIf}
+    ${If} $0 != ""
+        ExecWait '"$0" /S _?=$INSTDIR'
+    ${EndIf}
 
     SetOutPath $INSTDIR
 
@@ -94,14 +118,43 @@ Section
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
-    !insertmacro wails.writeUninstaller
+    ## Write uninstaller + registry entries. The Wails macro hardcodes HKLM,
+    ## which fails for per-user installs. We write to the correct hive based
+    ## on the chosen scope so upgrades + Add/Remove Programs work either way.
+    WriteUninstaller "$INSTDIR\uninstall.exe"
+    SetRegView 64
+    ${If} $MultiUser.InstallMode == "AllUsers"
+        WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "${INFO_COMPANYNAME}"
+        WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${INFO_PRODUCTNAME}"
+        WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${INFO_PRODUCTVERSION}"
+        WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+        WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+        WriteRegStr HKLM "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
+    ${Else}
+        WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${INFO_COMPANYNAME}"
+        WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${INFO_PRODUCTNAME}"
+        WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${INFO_PRODUCTVERSION}"
+        WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+        WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+        WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
+    ${EndIf}
+    ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+    IntFmt $0 "0x%08X" $0
+    ${If} $MultiUser.InstallMode == "AllUsers"
+        WriteRegDWORD HKLM "${UNINST_KEY}" "EstimatedSize" "$0"
+    ${Else}
+        WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
+    ${EndIf}
 SectionEnd
 
 Section "uninstall"
-    !insertmacro wails.setShellContext
+    ${If} $MultiUser.InstallMode == "AllUsers"
+        SetShellVarContext all
+    ${Else}
+        SetShellVarContext current
+    ${EndIf}
 
-    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
-
+    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"
     RMDir /r $INSTDIR
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
@@ -110,5 +163,17 @@ Section "uninstall"
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
 
-    !insertmacro wails.deleteUninstaller
+    ## Delete uninstaller + registry from the correct hive (NOT wails.deleteUninstaller
+    ## which hardcodes HKLM).
+    Delete "$INSTDIR\uninstall.exe"
+    SetRegView 64
+    ${If} $MultiUser.InstallMode == "AllUsers"
+        DeleteRegKey HKLM "${UNINST_KEY}"
+    ${Else}
+        DeleteRegKey HKCU "${UNINST_KEY}"
+    ${EndIf}
 SectionEnd
+
+Function un.onInit
+    !insertmacro MULTIUSER_UNINIT
+FunctionEnd
