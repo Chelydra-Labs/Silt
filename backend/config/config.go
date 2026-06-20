@@ -94,6 +94,15 @@ type UIConfig struct {
 	ActiveTab         *TabRef  `yaml:"active_tab,omitempty" json:"active_tab,omitempty"`
 	EnablePreviewTabs *bool    `yaml:"enable_preview_tabs,omitempty" json:"enable_preview_tabs,omitempty"`
 	MaxOpenTabs       int      `yaml:"max_open_tabs,omitempty" json:"max_open_tabs,omitempty"`
+	// ShowFormatToolbar controls the persistent format toolbar visibility
+	// (#168). Default true; users who want outliner-minimal density can hide
+	// it from Settings. The bubble, slash commands, hotkeys, and hover menu
+	// remain functional when hidden.
+	ShowFormatToolbar *bool `yaml:"show_format_toolbar,omitempty" json:"show_format_toolbar,omitempty"`
+	// DismissedTips tracks one-time UI tips the user has dismissed (per-vault).
+	// Used by the formatting first-run tip (#168). Same persistence tier as
+	// sidebar_width.
+	DismissedTips []string `yaml:"dismissed_tips,omitempty" json:"dismissed_tips,omitempty"`
 }
 
 // TabRef is a persisted reference to an open tab's page (#142). It is the
@@ -196,6 +205,20 @@ func Defaults() SystemConfig {
 			"next_tab":  "Ctrl+Tab",
 			"prev_tab":  "Ctrl+Shift+Tab",
 			"close_tab": "Ctrl+W",
+			// Inline formatting hotkeys (#168). Standard Word/Notion bindings
+			// so muscle memory transfers. Each is overridable per-vault via
+			// the deep-merge. The editor's ProseMirror keymaps consume these
+			// inside the contenteditable; the global handler skips them when
+			// the editor is focused (Ctrl+B resolution).
+			"format_bold":       "Ctrl+B",
+			"format_italic":     "Ctrl+I",
+			"format_underline":  "Ctrl+U",
+			"format_strike":     "Ctrl+Shift+X",
+			"format_code":       "Ctrl+E",
+			"format_link":       "Ctrl+K",
+			"format_highlight":  "Ctrl+Shift+H",
+			"format_subscript":  "Ctrl+,",
+			"format_superscript": "Ctrl+.",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},
@@ -225,6 +248,11 @@ func Defaults() SystemConfig {
 			// then oldest pinned. 0 (legacy config without the key) is
 			// normalized to 8 in normalize().
 			MaxOpenTabs: 8,
+			// ShowFormatToolbar defaults to true (#168). Stored as *bool so
+			// "unset" is distinguishable from "explicitly false"; the frontend
+			// treats nil as true.
+			ShowFormatToolbar: boolPtr(true),
+			DismissedTips:     []string{},
 		},
 	}
 }
@@ -437,6 +465,14 @@ func normalize(cfg SystemConfig) SystemConfig {
 	// true.
 	if cfg.UI.EnablePreviewTabs == nil {
 		cfg.UI.EnablePreviewTabs = boolPtr(true)
+	}
+	// ShowFormatToolbar: nil → true (#168). Same *bool semantics as
+	// EnablePreviewTabs.
+	if cfg.UI.ShowFormatToolbar == nil {
+		cfg.UI.ShowFormatToolbar = boolPtr(true)
+	}
+	if cfg.UI.DismissedTips == nil {
+		cfg.UI.DismissedTips = []string{}
 	}
 	return cfg
 }

@@ -12,6 +12,7 @@
   } from '../../wailsjs/go/main/App.js'
   import {
     SiltBlockExtensionsWithNodeViews,
+    SiltInlineMarkExtensions,
     UniqueBlockIds,
     SiltBlockKeymaps,
     TaskMetaSuggest,
@@ -128,9 +129,14 @@
         blockquote: false,
         codeBlock: false,
         horizontalRule: false,
-        trailingNode: false
+        trailingNode: false,
+        // Configure the Link mark bundled with StarterKit v3: don't intercept
+        // clicks (so the user can edit linked text), and auto-link pasted/typed
+        // URLs so bare URLs become links without manual effort (#168).
+        link: { openOnClick: false, autolink: true }
       }),
       ...SiltBlockExtensionsWithNodeViews,
+      ...SiltInlineMarkExtensions,
       UniqueBlockIds,
       TaskMetaSuggest.configure({
         onChange: onMetaChange,

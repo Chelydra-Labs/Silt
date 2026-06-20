@@ -6,7 +6,8 @@ export {
   TaskBlock,
   NoteBlock,
   HeaderBlock,
-  SiltBlockExtensions
+  SiltBlockExtensions,
+  SiltInlineMarkExtensions
 } from './schema'
 export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'

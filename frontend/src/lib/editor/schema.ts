@@ -21,6 +21,24 @@
 //   The editor-created default is '- ' (matching renderBlock's default).
 
 import { Node, mergeAttributes } from '@tiptap/core'
+import Highlight from '@tiptap/extension-highlight'
+import Subscript from '@tiptap/extension-subscript'
+import Superscript from '@tiptap/extension-superscript'
+
+// ---- Inline mark extensions ----------------------------------------------
+// TipTap 3.x StarterKit includes Bold, Italic, Strike, Code, Link, and
+// Underline marks by default. These three (Highlight, Subscript, Superscript)
+// are NOT in StarterKit and must be added explicitly. They are composed into
+// the editor's extension array alongside StarterKit.
+//
+// On-disk serialization:
+//   highlight   → ==text==   (Obsidian syntax)
+//   subscript   → <sub>text</sub>
+//   superscript → <sup>text</sup>
+// All three round-trip through clean_text (the Go parser preserves HTML/tags
+// and ==...== verbatim — clean_text is opaque to Go). The converter
+// (converters.ts) handles parse/serialize for all 9 marks symmetrically.
+export const SiltInlineMarkExtensions = [Highlight, Subscript, Superscript]
 
 // ---- TaskBlock -----------------------------------------------------------
 // Renders on-disk as:

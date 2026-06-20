@@ -572,3 +572,77 @@ func TestNormalize_EnablePreviewTabsNilBecomesTrue(t *testing.T) {
 		t.Errorf("normalize should preserve explicit false, got %v", cfg.UI.EnablePreviewTabs)
 	}
 }
+
+// TestDefaults_FormattingConfig confirms the #168 formatting config fields and
+// hotkeys have correct defaults.
+func TestDefaults_FormattingConfig(t *testing.T) {
+	d := Defaults()
+	if d.UI.ShowFormatToolbar == nil || *d.UI.ShowFormatToolbar != true {
+		t.Errorf("defaults show_format_toolbar should be *true, got %v", d.UI.ShowFormatToolbar)
+	}
+	if d.UI.DismissedTips == nil {
+		t.Errorf("defaults dismissed_tips should be non-nil empty slice")
+	}
+	if len(d.UI.DismissedTips) != 0 {
+		t.Errorf("defaults dismissed_tips should be empty, got %v", d.UI.DismissedTips)
+	}
+	for _, key := range []string{
+		"format_bold", "format_italic", "format_underline", "format_strike",
+		"format_code", "format_link", "format_highlight",
+		"format_subscript", "format_superscript",
+	} {
+		if _, ok := d.Hotkeys[key]; !ok {
+			t.Errorf("defaults hotkeys missing %q", key)
+		}
+	}
+	if d.Hotkeys["format_bold"] != "Ctrl+B" {
+		t.Errorf("format_bold default: got %q", d.Hotkeys["format_bold"])
+	}
+	if d.Hotkeys["format_italic"] != "Ctrl+I" {
+		t.Errorf("format_italic default: got %q", d.Hotkeys["format_italic"])
+	}
+	if d.Hotkeys["format_subscript"] != "Ctrl+," {
+		t.Errorf("format_subscript default: got %q", d.Hotkeys["format_subscript"])
+	}
+}
+
+// TestFormattingConfig_RoundTrip confirms ShowFormatToolbar + DismissedTips
+// survive Save → Load with byte-for-byte fidelity.
+func TestFormattingConfig_RoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	original := Defaults()
+	toolbarOff := false
+	original.UI.ShowFormatToolbar = &toolbarOff
+	original.UI.DismissedTips = []string{"formatting_tip_v1", "other_tip"}
+
+	if err := Save(tmp, original); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.UI.ShowFormatToolbar == nil || *loaded.UI.ShowFormatToolbar != false {
+		t.Errorf("show_format_toolbar=false round-trip: got %v", loaded.UI.ShowFormatToolbar)
+	}
+	if !reflect.DeepEqual(loaded.UI.DismissedTips, original.UI.DismissedTips) {
+		t.Errorf("dismissed_tips round-trip:\n got  %+v\n want %+v", loaded.UI.DismissedTips, original.UI.DismissedTips)
+	}
+}
+
+// TestNormalize_ShowFormatToolbarNilBecomesTrue confirms the *bool field is
+// normalized to *true when nil (so the frontend reads a stable default).
+func TestNormalize_ShowFormatToolbarNilBecomesTrue(t *testing.T) {
+	cfg := normalize(SystemConfig{})
+	if cfg.UI.ShowFormatToolbar == nil || *cfg.UI.ShowFormatToolbar != true {
+		t.Errorf("normalize nil → *true, got %v", cfg.UI.ShowFormatToolbar)
+	}
+	f := false
+	cfg = normalize(SystemConfig{UI: UIConfig{ShowFormatToolbar: &f}})
+	if cfg.UI.ShowFormatToolbar == nil || *cfg.UI.ShowFormatToolbar != false {
+		t.Errorf("normalize should preserve explicit false, got %v", cfg.UI.ShowFormatToolbar)
+	}
+	if cfg.UI.DismissedTips == nil {
+		t.Errorf("normalize should ensure non-nil dismissed_tips")
+	}
+}

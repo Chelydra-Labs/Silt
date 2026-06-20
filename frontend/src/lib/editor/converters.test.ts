@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
-import { SiltBlockExtensions, UniqueBlockIds } from './index'
+import { SiltBlockExtensions, SiltInlineMarkExtensions, UniqueBlockIds } from './index'
 import { EmbedNode, BlockReferenceNode } from './schema'
 import {
   blocksToDoc,
@@ -61,6 +61,7 @@ function makeEditor() {
         trailingNode: false
       }),
       ...SiltBlockExtensions,
+      ...SiltInlineMarkExtensions,
       EmbedNode,
       BlockReferenceNode,
       UniqueBlockIds
@@ -487,5 +488,162 @@ describe('uniqueIdPlugin', () => {
     const reparsed = parseEmbedBlockMarker(back[0].clean_text)
     expect(reparsed).not.toBeNull()
     expect(reparsed!.notebook).toBe('Work')
+  })
+})
+
+describe('inline mark round-trips (#168)', () => {
+  // Helper: verify a clean_text string round-trips through the converter
+  // (blocksToDoc → docToBlocks) byte-for-byte.
+  function expectRoundTrip(cleanText: string): void {
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const back = docToBlocks(blocksToDoc([block]))
+    expect(back[0].clean_text, `round-trip of "${cleanText}"`).toBe(cleanText)
+  }
+
+  describe('individual marks', () => {
+    it('round-trips bold (**...**)', () => {
+      expectRoundTrip('this is **bold** text')
+    })
+    it('round-trips bold (__...__ normalizes to **)', () => {
+      // The parser accepts __ but the serializer emits ** (canonical form).
+      const block = mkBlock('NOTE', { clean_text: 'this is __bold__ text' })
+      const back = docToBlocks(blocksToDoc([block]))
+      expect(back[0].clean_text).toBe('this is **bold** text')
+    })
+    it('round-trips italic (*...*)', () => {
+      expectRoundTrip('this is *italic* text')
+    })
+    it('normalizes italic (_..._ → *...*)', () => {
+      // The parser accepts _ but the serializer emits * (canonical form).
+      const block = mkBlock('NOTE', { clean_text: 'this is _italic_ text' })
+      const back = docToBlocks(blocksToDoc([block]))
+      expect(back[0].clean_text).toBe('this is *italic* text')
+    })
+    it('round-trips strikethrough (~~...~~)', () => {
+      expectRoundTrip('this is ~~struck~~ text')
+    })
+    it('round-trips inline code (`...`)', () => {
+      expectRoundTrip('this is `code` text')
+    })
+    it('round-trips highlight (==...==)', () => {
+      expectRoundTrip('this is ==highlighted== text')
+    })
+    it('round-trips underline (<u>...</u>)', () => {
+      expectRoundTrip('this is <u>underlined</u> text')
+    })
+    it('round-trips subscript (<sub>...</sub>)', () => {
+      expectRoundTrip('this is H<sub>2</sub>O text')
+    })
+    it('round-trips superscript (<sup>...</sup>)', () => {
+      expectRoundTrip('this is E=mc<sup>2</sup> text')
+    })
+    it('round-trips a link ([text](url))', () => {
+      expectRoundTrip('see [the docs](https://example.com) for more')
+    })
+  })
+
+  describe('nested marks', () => {
+    it('round-trips bold+italic (***...***)', () => {
+      expectRoundTrip('this is ***both*** together')
+    })
+    it('round-trips bold with italic inside', () => {
+      expectRoundTrip('**bold and *italic* together**')
+    })
+    it('round-trips a link with bold inside', () => {
+      expectRoundTrip('click [**bold link**](https://x.com) now')
+    })
+    it('round-trips underline with italic inside', () => {
+      expectRoundTrip('<u>under *italic* line</u>')
+    })
+    it('round-trips highlight with bold inside', () => {
+      expectRoundTrip('==**bold hl**==')
+    })
+  })
+
+  describe('edge cases', () => {
+    it('leaves unclosed ** as literal text', () => {
+      expectRoundTrip('**not closed')
+    })
+    it('leaves unclosed * as literal text', () => {
+      expectRoundTrip('*also not closed')
+    })
+    it('leaves unclosed ~~ as literal text', () => {
+      expectRoundTrip('~~strike')
+    })
+    it('code shields content from further parsing', () => {
+      // The **stars** inside the code span are literal, not bold.
+      expectRoundTrip('run `const x = **stars**` here')
+    })
+    it('intraword underscores are NOT italic', () => {
+      // my_var_name should NOT be parsed as italic "var"
+      expectRoundTrip('my_var_name stays plain')
+    })
+    it('multiple marks on one line', () => {
+      expectRoundTrip('**bold** and *italic* and `code` mixed')
+    })
+    it('adjacent marks of different types', () => {
+      expectRoundTrip('**bold***italic*')
+    })
+    it('plain text with no marks is unchanged', () => {
+      expectRoundTrip('just a plain note with nothing special')
+    })
+    it('literal asterisks in code', () => {
+      expectRoundTrip('multiply `a * b` for result')
+    })
+  })
+
+  describe('Smart Graph + marks interaction', () => {
+    const UUID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    it('marks alongside a block reference', () => {
+      expectRoundTrip(`**bold** before ((${UUID})) after`)
+    })
+    it('marks alongside an embed', () => {
+      expectRoundTrip(`before *italic* and {{embed:${UUID}}} end`)
+    })
+    it('marks around a block reference', () => {
+      expectRoundTrip(`**bold ((${UUID})) ref**`)
+    })
+  })
+
+  describe('editor-backed round-trip (setContent → getJSON)', () => {
+    // These verify the TipTap editor accepts and preserves the marks.
+    function expectEditorRoundTrip(cleanText: string): void {
+      const editor = makeEditor()
+      const block = mkBlock('NOTE', { clean_text: cleanText })
+      editor.commands.setContent(blocksToDoc([block]))
+      const back = docToBlocks(editor.getJSON() as DocJSON)
+      expect(back[0].clean_text, `editor round-trip of "${cleanText}"`).toBe(
+        cleanText
+      )
+      editor.destroy()
+    }
+
+    it('bold survives the editor', () => {
+      expectEditorRoundTrip('**bold** text')
+    })
+    it('italic survives the editor', () => {
+      expectEditorRoundTrip('*italic* text')
+    })
+    it('code survives the editor', () => {
+      expectEditorRoundTrip('`code` text')
+    })
+    it('highlight survives the editor', () => {
+      expectEditorRoundTrip('==highlight== text')
+    })
+    it('underline survives the editor', () => {
+      expectEditorRoundTrip('<u>underline</u> text')
+    })
+    it('subscript survives the editor', () => {
+      expectEditorRoundTrip('H<sub>2</sub>O')
+    })
+    it('superscript survives the editor', () => {
+      expectEditorRoundTrip('E=mc<sup>2</sup>')
+    })
+    it('link survives the editor', () => {
+      expectEditorRoundTrip('[click](https://x.com)')
+    })
+    it('nested bold+italic survives the editor', () => {
+      expectEditorRoundTrip('***both*** here')
+    })
   })
 })
