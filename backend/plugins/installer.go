@@ -46,6 +46,14 @@ type Manifest struct {
 
 var idRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+// IsValidID reports whether pluginID is a syntactically valid plugin
+// identifier (lowercase alphanumeric + hyphens). Used at every IPC entry
+// point that accepts a caller-supplied pluginID so path-traversal payloads
+// like "../../etc/passwd" are rejected before reaching filepath.Join.
+func IsValidID(pluginID string) bool {
+	return idRegex.MatchString(pluginID)
+}
+
 // maxArchiveUncompressedSize bounds the total extracted size of a .silt-plugin
 // archive so a hostile or accidental huge file can't exhaust the user's disk.
 const maxArchiveUncompressedSize = 100 * 1024 * 1024 // 100 MB

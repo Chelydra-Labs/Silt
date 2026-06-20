@@ -111,10 +111,7 @@
     'notify',
     'fetch',
     'registerSlashCommand',
-    'registerSurface',
-    'addAttachment',
-    'openAttachment',
-    'deleteAttachment'
+    'registerSurface'
   ])
 
   function handleRequest(ev: MessageEvent) {
@@ -124,7 +121,9 @@
     // (without allow-same-origin) makes the iframe report 'null' as its
     // origin. Check both the source window and the origin for defense-in-
     // depth: a future refactor to a real src URL would widen the origin.
-    if (iframeEl && ev.source !== iframeEl.contentWindow) return
+    // Fail-closed: if the iframe ref is unset (mount/teardown window) or
+    // the source doesn't match, reject the message.
+    if (!iframeEl || ev.source !== iframeEl.contentWindow) return
     if (ev.origin !== 'null' && ev.origin !== window.location.origin) return
 
     if (

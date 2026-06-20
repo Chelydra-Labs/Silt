@@ -4366,6 +4366,31 @@ func (a *App) applyConfigLocked(cfg config.SystemConfig) {
 	if cfg.Editor.TabIndentSpaces > 0 {
 		a.spacesPerTab = cfg.Editor.TabIndentSpaces
 	}
+	a.seedFirstPartyGrants()
+}
+
+// seedFirstPartyGrants populates the in-memory grants table with every
+// capability for each first-party plugin ID, so bundled plugins are implicitly
+// trusted WITHOUT a special-case bypass in requireGrant. This closes the
+// spoofing vector where a third-party plugin passes 'silt-attachments' as
+// pluginID to bypass all capability checks (#113 security hardening).
+//
+// The grants are merged into the in-memory config on every applyConfigLocked
+// call. If they happen to persist to config.yaml via a later Save, that is
+// harmless — they are just grant entries. If a user removes them, they are
+// re-seeded on the next config load.
+func (a *App) seedFirstPartyGrants() {
+	if a.cfg.Plugins.Grants == nil {
+		a.cfg.Plugins.Grants = map[string]map[string]string{}
+	}
+	for id := range firstPartyPluginIDs {
+		if a.cfg.Plugins.Grants[id] == nil {
+			a.cfg.Plugins.Grants[id] = map[string]string{}
+		}
+		for cap := range plugins.KnownCapabilities {
+			a.cfg.Plugins.Grants[id][string(cap)] = plugins.QualGranted
+		}
+	}
 }
 
 // UpdatePluginSetting atomically updates a single per-plugin setting key and
@@ -4727,18 +4752,19 @@ func isFirstPartyPlugin(pluginID string) bool {
 // requireGrant is the single server-side enforcement point for every privileged
 // v2 SDK binding (#113). It returns nil if the plugin may use the capability,
 // or a structured *plugins.CapabilityDeniedError (never a panic) the frontend
-// SDK surfaces as an actionable message + re-prompt. First-party plugins are
-// always granted. Third-party plugins must have an entry for (pluginID, cap)
-// in the vault-scoped grants table (config.yaml plugins.grants).
+// SDK surfaces as an actionable message + re-prompt.
+//
+// pluginID is validated against IsValidID to reject path-traversal payloads
+// before they reach filepath.Join in scratch-dir / audit-log paths. First-party
+// plugins receive their grants via seedFirstPartyGrants at config-load time,
+// so there is NO special-case bypass here — a third-party plugin cannot
+// spoof a first-party ID to bypass capability checks.
 //
 // Callers that need the qualifier (e.g. to enforce notebook vs vault scope on
 // file writes) read it via grantedQualifier after a successful requireGrant.
 func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
-	if pluginID == "" {
+	if !plugins.IsValidID(pluginID) {
 		return &plugins.CapabilityDeniedError{Capability: string(cap), Requested: "granted"}
-	}
-	if isFirstPartyPlugin(pluginID) {
-		return nil
 	}
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
@@ -4755,12 +4781,9 @@ func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 }
 
 // grantedQualifier returns the scope qualifier for a granted capability, or
-// ("", false) if not granted. First-party plugins report QualGranted. Used by
-// bindings that narrow scope (file-write notebook vs vault).
+// ("", false) if not granted. Used by bindings that narrow scope (file-write
+// notebook vs vault).
 func (a *App) grantedQualifier(pluginID string, cap plugins.Capability) (string, bool) {
-	if isFirstPartyPlugin(pluginID) {
-		return plugins.QualGranted, true
-	}
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
 	if caps, ok := a.cfg.Plugins.Grants[pluginID]; ok {
@@ -4779,8 +4802,8 @@ func (a *App) RequestCapability(pluginID, capability, qualifier string) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
-	if pluginID == "" {
-		return fmt.Errorf("pluginID is required")
+	if !plugins.IsValidID(pluginID) {
+		return fmt.Errorf("invalid plugin id %q (must match ^[a-z0-9-]+$)", pluginID)
 	}
 	if !plugins.KnownCapabilities[plugins.Capability(capability)] {
 		return fmt.Errorf("unknown capability %q (recognized: %s)", capability, plugins.ListCapabilities())
@@ -4819,8 +4842,8 @@ func (a *App) RevokeCapability(pluginID, capability string) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
-	if pluginID == "" {
-		return fmt.Errorf("pluginID is required")
+	if !plugins.IsValidID(pluginID) {
+		return fmt.Errorf("invalid plugin id %q (must match ^[a-z0-9-]+$)", pluginID)
 	}
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
@@ -4908,15 +4931,15 @@ func enforceMinVersion(minSiltVersion string) error {
 //     plugins cannot match a trust list, which is the correct
 //     defense-in-depth default).
 //
-// The function is fail-open for any I/O error reading settings: a vault
-// whose settings cannot be read is treated as if the trust list is empty
-// (a transient settings read error must not brick plugin installs). The
-// error is logged at warn level so the user can investigate.
+// The function distinguishes "settings file does not exist" (fail-open: no
+// trust list configured) from "settings file exists but unreadable/corrupt"
+// (fail-closed: a hostile plugin that can interfere with settings reads must
+// not disable the trust gate). The error is logged at warn level.
 func enforcePublisherTrust(author string) error {
 	settings, err := vault.LoadSettings()
 	if err != nil {
-		log.Printf("enforcePublisherTrust: settings read failed — temporarily allowing all authors: %v", err)
-		return nil
+		log.Printf("enforcePublisherTrust: settings file exists but is unreadable — failing closed to protect the trust gate: %v", err)
+		return fmt.Errorf("trusted-publishers list is configured but settings could not be read (corrupt settings.json?): %w", err)
 	}
 	trusted := settings.TrustedPublishers
 	if len(trusted) == 0 {

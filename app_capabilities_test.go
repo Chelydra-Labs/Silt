@@ -42,6 +42,50 @@ func TestRequireGrant_FirstPartyAlwaysGranted(t *testing.T) {
 	}
 }
 
+// requireGrant rejects path-traversal pluginIDs before they reach filepath.Join
+// in scratch-dir / audit-log paths (#113 security hardening).
+func TestRequireGrant_RejectsPathTraversalPluginID(t *testing.T) {
+	app := newTestApp(t)
+	for _, pid := range []string{
+		"../../etc/passwd",
+		"..\\..\\Windows\\System32",
+		"...",
+		"plugin/id",
+		"plugin\x00null",
+		"",
+	} {
+		err := app.requireGrant(pid, plugins.CapNetwork)
+		if err == nil {
+			t.Errorf("requireGrant(%q) should be rejected as invalid pluginID", pid)
+		}
+	}
+}
+
+// A first-party ID works because seedFirstPartyGrants populated the grants
+// table at config-load time — NOT because of a special-case bypass. A
+// non-first-party ID with no grant entry is denied.
+func TestPluginFetch_FirstPartyIDDeniedWithoutSeededGrant(t *testing.T) {
+	app := newTestApp(t)
+	// "silt-agenda" works because seedFirstPartyGrants ran in newTestApp.
+	_ = app.RequestCapability("third-party", string(plugins.CapNetwork), "")
+
+	// A random non-first-party, non-granted ID is denied.
+	if err := app.requireGrant("not-a-real-plugin", plugins.CapNetwork); err == nil {
+		t.Fatal("ungranted third-party should be denied")
+	}
+}
+
+// RequestCapability rejects path-traversal pluginIDs (#113 security).
+func TestRequestCapability_RejectsInvalidPluginID(t *testing.T) {
+	app := newTestApp(t)
+	for _, pid := range []string{"../../x", "..\\..\\y", "", "a/b", "a b"} {
+		err := app.RequestCapability(pid, string(plugins.CapNetwork), "")
+		if err == nil {
+			t.Errorf("RequestCapability(%q) should be rejected", pid)
+		}
+	}
+}
+
 // RequestCapability + requireGrant round-trips and persists to config.yaml so
 // the grant survives a reload (re-Load).
 func TestRequestCapability_RoundTripsAndPersists(t *testing.T) {
