@@ -3864,12 +3864,16 @@ func (a *App) GetOpenTabs() (OpenTabsResult, error) {
 
 // SetOpenTabs persists the open-tab set + active tab to config.yaml. The
 // frontend filters to pinned tabs before calling (preview tabs are
-// ephemeral). Uses the same atomic write + self-write suppression pattern as
-// SetSidebarWidth / SetNavOrder.
+// ephemeral). Snapshots vaultPath under vaultMu.RLock, then releases it
+// before acquiring configMu and writing — matching the GetOpenTabs pattern
+// so the disk-write (config.Save) does not hold vaultMu and block readers
+// like ListNavigation (#142 review: redundant lock broadening).
 func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) error {
 	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
+
+	if vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
 	if openTabs == nil {
@@ -3885,7 +3889,7 @@ func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) er
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
 	}
-	return config.Save(a.vaultPath, cfg)
+	return config.Save(vaultPath, cfg)
 }
 
 // navPageSet flattens the NavigationTree into a set of

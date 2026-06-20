@@ -156,7 +156,13 @@
   }
 
   function handleCycleTab(dir: 1 | -1): void {
-    const result = cycleTabState({ tabs: openTabs, activeId: activeTabId }, dir)
+    // Cycle within the displayed (per-notebook) tabs only — Ctrl+Tab must
+    // not jump to a hidden tab in another notebook (#142 review: cycling
+    // across openTabs violated per-notebook scoping).
+    const result = cycleTabState(
+      { tabs: displayedTabs, activeId: activeTabId },
+      dir
+    )
     activeTabId = result.activeId
     syncActiveFromTab()
   }
@@ -236,9 +242,16 @@
           )
           if (active) {
             activeTabId = active.id
-            syncActiveFromTab()
           }
         }
+        // Fallback: if no active tab was persisted (or the persisted active
+        // was pruned by the Go-side stale-tab check), activate the first
+        // restored tab so the user sees a tab on launch instead of a blank
+        // state. (#142 review: nil active_tab left displayedTabs empty.)
+        if (!activeTabId && openTabs.length > 0) {
+          activeTabId = openTabs[0].id
+        }
+        syncActiveFromTab()
         // Update the hot-reload baseline so this load doesn't immediately
         // trigger a re-hydrate cycle.
         prevOpenTabsKey = tabSetKey(
@@ -385,7 +398,12 @@
         }
         if (matchHotkey(e, hotkeys.close_tab)) {
           e.preventDefault()
-          if (activeTabId) handleCloseTab(activeTabId)
+          // Guard: only close if the active tab is visible in the current
+          // notebook's displayed set (#142 review: closing a hidden tab
+          // from another notebook would be surprising to the user).
+          if (activeTabId && displayedTabs.some((t) => t.id === activeTabId)) {
+            handleCloseTab(activeTabId)
+          }
         }
       }
     }
