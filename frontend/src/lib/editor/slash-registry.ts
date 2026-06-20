@@ -145,3 +145,9 @@ registerSlashCommand({ id: 'subscript', label: 'Subscript', description: 'Lower 
 registerSlashCommand({ id: 'superscript', label: 'Superscript', description: 'Raise the selection above the line', icon: 'superscript', shortcut: 'Ctrl+.' })
 registerSlashCommand({ id: 'link', label: 'Link', description: 'Add a hyperlink to the selection', icon: 'link', shortcut: 'Ctrl+K' })
 registerSlashCommand({ id: 'clear-formatting', label: 'Clear formatting', description: 'Remove all formatting from the selection', icon: 'format_clear', shortcut: 'Ctrl+\\' })
+
+// --- Heading / block-type commands (#169) ---------------------------------
+registerSlashCommand({ id: 'h2', label: 'Heading 2', description: 'Convert the block to an H2', icon: 'format_size', shortcut: 'Ctrl+Alt+2' })
+registerSlashCommand({ id: 'h3', label: 'Heading 3', description: 'Convert the block to an H3', icon: 'format_size', shortcut: 'Ctrl+Alt+3' })
+registerSlashCommand({ id: 'note', label: 'Plain note', description: 'Convert the block to a plain note (strip header / task)', icon: 'notes', shortcut: 'Ctrl+Alt+0' })
+registerSlashCommand({ id: 'task', label: 'Task', description: 'Convert the block to a task', icon: 'check_box', shortcut: 'Ctrl+Alt+4' })

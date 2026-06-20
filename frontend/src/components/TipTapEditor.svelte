@@ -442,6 +442,14 @@
       changeBlockType('taskBlock', { status: 'TODO' })
     } else if (commandId === 'h1') {
       changeBlockType('headerBlock', { depth: 1 })
+    } else if (commandId === 'h2') {
+      changeBlockType('headerBlock', { depth: 2 })
+    } else if (commandId === 'h3') {
+      changeBlockType('headerBlock', { depth: 3 })
+    } else if (commandId === 'note') {
+      changeBlockType('noteBlock', {})
+    } else if (commandId === 'task') {
+      changeBlockType('taskBlock', { status: 'TODO' })
     } else if (commandId === 'today') {
       const d = new Date()
       const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`

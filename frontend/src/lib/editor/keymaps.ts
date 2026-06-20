@@ -17,6 +17,45 @@ import { TextSelection } from '@tiptap/pm/state'
 
 const BLOCK_TYPES = ['taskBlock', 'noteBlock', 'headerBlock']
 
+// Convert the current block to a new type (#169). Provides the correct attrs
+// for each type (discarding type-specific attrs that don't apply). Mirrors
+// TipTapEditor.svelte's changeBlockType logic — both use setNode to swap the
+// block type while preserving inline content + id + depth + file_date.
+function convertToBlock(
+  editor: Editor,
+  type: 'headerBlock' | 'noteBlock' | 'taskBlock',
+  headerDepth?: number
+): boolean {
+  const { selection } = editor.state
+  const pos = selection.$from
+  for (let d = pos.depth; d >= 1; d--) {
+    const node = pos.node(d)
+    if (BLOCK_TYPES.includes(node.type.name)) {
+      const baseAttrs = {
+        id: node.attrs.id,
+        depth: type === 'headerBlock' ? (headerDepth ?? 1) : (node.attrs.depth ?? 0),
+        file_date: node.attrs.file_date || ''
+      }
+      if (type === 'noteBlock') {
+        editor.commands.setNode(type, { ...baseAttrs, bullet: '- ' })
+      } else if (type === 'taskBlock') {
+        editor.commands.setNode(type, {
+          ...baseAttrs,
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: '',
+          priority: 3
+        })
+      } else {
+        editor.commands.setNode(type, baseAttrs)
+      }
+      return true
+    }
+  }
+  return false
+}
+
 function currentBlockInfo(editor: Editor) {
   const { selection } = editor.state
   const pos = selection.$from
@@ -240,7 +279,15 @@ export const SiltBlockKeymaps = Extension.create({
           }
         }
         return true
-      }
+      },
+
+      // Heading level shortcuts (#169). Mod-Alt-1/2/3 → H1/H2/H3,
+      // Mod-Alt-0 → Note (strip heading/task), Mod-Alt-4 → Task.
+      'Mod-Alt-1': () => convertToBlock(this.editor, 'headerBlock', 1),
+      'Mod-Alt-2': () => convertToBlock(this.editor, 'headerBlock', 2),
+      'Mod-Alt-3': () => convertToBlock(this.editor, 'headerBlock', 3),
+      'Mod-Alt-0': () => convertToBlock(this.editor, 'noteBlock'),
+      'Mod-Alt-4': () => convertToBlock(this.editor, 'taskBlock')
     }
   }
 })

@@ -595,6 +595,12 @@ func TestDefaults_FormattingConfig(t *testing.T) {
 			t.Errorf("defaults hotkeys missing %q", key)
 		}
 	}
+	// Heading level hotkeys (#169).
+	for _, key := range []string{"set_h1", "set_h2", "set_h3", "set_note", "set_task"} {
+		if _, ok := d.Hotkeys[key]; !ok {
+			t.Errorf("defaults hotkeys missing %q", key)
+		}
+	}
 	if d.Hotkeys["format_bold"] != "Ctrl+B" {
 		t.Errorf("format_bold default: got %q", d.Hotkeys["format_bold"])
 	}

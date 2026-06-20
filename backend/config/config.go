@@ -236,6 +236,12 @@ func Defaults() SystemConfig {
 			"format_highlight":  "Ctrl+Shift+H",
 			"format_subscript":  "Ctrl+,",
 			"format_superscript": "Ctrl+.",
+			// Heading level hotkeys (#169). Standard Word/Google Docs bindings.
+			"set_h1":   "Ctrl+Alt+1",
+			"set_h2":   "Ctrl+Alt+2",
+			"set_h3":   "Ctrl+Alt+3",
+			"set_note": "Ctrl+Alt+0",
+			"set_task": "Ctrl+Alt+4",
 		},
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},
