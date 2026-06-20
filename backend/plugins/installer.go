@@ -6,6 +6,8 @@ package plugins
 
 import (
 	"archive/zip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -46,6 +48,10 @@ type Manifest struct {
 	// If absent, the host default (1 rps, burst 10) applies. If present, rps
 	// must be > 0 and <= the hard cap (10); burst must be > 0 and <= 100.
 	Ratelimit *RatelimitConfig `json:"ratelimit,omitempty"`
+	// ContentSHA256 is the sha256 of the installed index.js, computed at
+	// install time so the loader can verify runtime integrity (#161). Written
+	// into the on-disk plugin.json by Install; absent from the original archive.
+	ContentSHA256 string `json:"contentSha256,omitempty"`
 }
 
 // RatelimitConfig is the manifest-declared per-plugin fetch rate limit (#153).
@@ -240,6 +246,26 @@ func Install(vaultPath, archivePath string) (Manifest, error) {
 		if err := copyZipEntry(f, target); err != nil {
 			return Manifest{}, err
 		}
+	}
+
+	// Compute sha256 of the extracted index.js and write it into the on-disk
+	// plugin.json so the loader can verify integrity at load time (#161).
+	indexPath := filepath.Join(tmp, "index.js")
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("failed to read extracted index.js for hashing: %w", err)
+	}
+	hash := sha256.Sum256(indexData)
+	manifest.ContentSHA256 = hex.EncodeToString(hash[:])
+	// Write the updated manifest (with contentSha256) back to the extracted
+	// plugin.json so it persists on disk after the rename.
+	manifestOnDisk := filepath.Join(tmp, "plugin.json")
+	manifestJSONBytes, err := json.Marshal(manifest)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("failed to serialize manifest with sha256: %w", err)
+	}
+	if err := os.WriteFile(manifestOnDisk, manifestJSONBytes, 0o644); err != nil {
+		return Manifest{}, fmt.Errorf("failed to write manifest with sha256: %w", err)
 	}
 
 	if err := os.Rename(tmp, dest); err != nil {

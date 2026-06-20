@@ -4570,8 +4570,9 @@ func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
 				info.Icon = m.Icon
 				info.Capabilities = m.Capabilities
 				info.Settings = m.Settings
-				info.Homepage = m.Homepage
-				info.UpdateURL = m.UpdateURL
+			info.Homepage = m.Homepage
+			info.UpdateURL = m.UpdateURL
+			info.ContentSHA256 = m.ContentSHA256
 			}
 		}
 		if _, err := os.Stat(filepath.Join(dir, "index.js")); err == nil {

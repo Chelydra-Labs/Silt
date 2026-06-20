@@ -3,6 +3,8 @@ package plugins
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -334,10 +336,122 @@ func TestValidateSettingsSchema(t *testing.T) {
 			{"key": "x", "label": "X", "type": "string"},
 			{"key": "x", "label": "Y", "type": "string"},
 		}},
+		// #155: default vs declared type mismatches
+		{"string default is number", []map[string]any{{"key": "x", "label": "X", "type": "string", "default": float64(42)}}},
+		{"number default is string", []map[string]any{{"key": "x", "label": "X", "type": "number", "default": "not-a-num"}}},
+		{"bool default is string", []map[string]any{{"key": "x", "label": "X", "type": "bool", "default": "true"}}},
+		{"select default not in options", []map[string]any{{"key": "x", "label": "X", "type": "select", "options": []any{"A", "B"}, "default": "C"}}},
+		{"select default without options", []map[string]any{{"key": "x", "label": "X", "type": "select", "default": "A"}}},
+		{"color default is named color", []map[string]any{{"key": "x", "label": "X", "type": "color", "default": "red"}}},
+		{"color default is hsl", []map[string]any{{"key": "x", "label": "X", "type": "color", "default": "hsl(0, 100%, 50%)"}}},
+		{"keymap default is number", []map[string]any{{"key": "x", "label": "X", "type": "keymap", "default": float64(42)}}},
+		{"list default is string", []map[string]any{{"key": "x", "label": "X", "type": "list", "default": "not-array"}}},
 	}
 	for _, bc := range badCases {
 		if err := validateSettingsSchema(bc.s); err == nil {
 			t.Errorf("%s: expected error, got nil", bc.name)
 		}
 	}
+
+	// Good defaults that SHOULD pass.
+	goodDefaults := []map[string]any{
+		{"key": "name", "label": "Name", "type": "string", "default": "hello"},
+		{"key": "count", "label": "Count", "type": "number", "default": float64(5)},
+		{"key": "enabled", "label": "Enabled", "type": "bool", "default": true},
+		{"key": "mode", "label": "Mode", "type": "select", "options": []any{"A", "B"}, "default": "A"},
+		{"key": "accent", "label": "Accent", "type": "color", "default": "#ff0000"},
+		{"key": "hotkey", "label": "Hotkey", "type": "keymap", "default": "Ctrl+K"},
+		{"key": "tags", "label": "Tags", "type": "list", "default": []any{"a", "b"}},
+	}
+	if err := validateSettingsSchema(goodDefaults); err != nil {
+		t.Fatalf("good defaults rejected: %v", err)
+	}
+}
+
+// =========================================================================
+// Runtime integrity verification (#161)
+// =========================================================================
+
+func TestInstall_ComputesContentSHA256(t *testing.T) {
+	vault := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(vault, ".system", "plugins"), 0o755)
+	archive := filepath.Join(t.TempDir(), "sha.silt-plugin")
+	indexJS := `export default { manifest: { id: "sha", name: "SHA" } };`
+	writeZip(t, archive, map[string]string{
+		"plugin.json": manifestJSON("sha", "SHA", "1.0.0"),
+		"index.js":    indexJS,
+	})
+
+	m, err := Install(vault, archive)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	// The manifest should carry a non-empty contentSha256.
+	if m.ContentSHA256 == "" {
+		t.Fatal("Install should compute and set ContentSHA256")
+	}
+
+	// Read the on-disk plugin.json and verify it contains contentSha256.
+	onDiskManifest, err := os.ReadFile(filepath.Join(vault, ".system", "plugins", "sha", "plugin.json"))
+	if err != nil {
+		t.Fatalf("read on-disk manifest: %v", err)
+	}
+	var check struct {
+		ContentSha256 string `json:"contentSha256"`
+	}
+	if err := json.Unmarshal(onDiskManifest, &check); err != nil {
+		t.Fatalf("parse on-disk manifest: %v", err)
+	}
+	if check.ContentSha256 == "" {
+		t.Fatal("on-disk plugin.json should carry contentSha256")
+	}
+
+	// The hash should match the actual index.js content.
+	hash := sha256hex([]byte(indexJS))
+	if check.ContentSha256 != hash {
+		t.Errorf("contentSha256 = %q, want %q", check.ContentSha256, hash)
+	}
+
+	// Tampering with index.js changes the hash (the stored hash no longer matches).
+	tamperedPath := filepath.Join(vault, ".system", "plugins", "sha", "index.js")
+	if err := os.WriteFile(tamperedPath, []byte("TAMPERED"), 0o644); err != nil {
+		t.Fatalf("tamper: %v", err)
+	}
+	tamperedHash := sha256hex([]byte("TAMPERED"))
+	if tamperedHash == check.ContentSha256 {
+		t.Error("tampered content should produce a different hash")
+	}
+}
+
+func TestListPlugins_CarriesContentSHA256(t *testing.T) {
+	vault := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(vault, ".system", "plugins"), 0o755)
+	archive := filepath.Join(t.TempDir(), "list-sha.silt-plugin")
+	writeZip(t, archive, map[string]string{
+		"plugin.json": manifestJSON("list-sha", "List SHA", "1.0.0"),
+		"index.js":    `export default {};`,
+	})
+	if _, err := Install(vault, archive); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	// Read the on-disk manifest and verify it has contentSha256.
+	data, err := os.ReadFile(filepath.Join(vault, ".system", "plugins", "list-sha", "plugin.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if m.ContentSHA256 == "" {
+		t.Fatal("ListPlugins should surface contentSha256 from the on-disk manifest")
+	}
+}
+
+// sha256hex computes the hex-encoded sha256 of data (test helper for #161).
+func sha256hex(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
 }

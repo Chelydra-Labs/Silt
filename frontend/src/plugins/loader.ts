@@ -49,8 +49,15 @@ export async function loadPlugins(
   const plugins = new Map<string, RegisteredPlugin>()
   const errors: { id: string; message: string }[] = []
 
-  // Discover on-disk plugins by folder.
-  let installed: { id: string; disabled: boolean; has_index: boolean }[] = []
+  // Discover on-disk plugins by folder. The installed list carries the
+  // on-disk manifest's contentSha256 (#161) so the loader can verify runtime
+  // integrity before importing the JS.
+  let installed: {
+    id: string
+    disabled: boolean
+    has_index: boolean
+    contentSha256?: string
+  }[] = []
   try {
     installed = (await ListPlugins()) ?? []
   } catch {
@@ -67,6 +74,22 @@ export async function loadPlugins(
         continue
       }
       const src = await ReadPluginSource(id)
+
+      // Runtime integrity verification (#161): compute sha256 of the source
+      // and compare against the on-disk manifest's contentSha256 (set at
+      // install time). A mismatch means the file was tampered with post-
+      // install → refuse to load.
+      if (p.contentSha256) {
+        const computed = await sha256Hex(src)
+        if (computed !== p.contentSha256) {
+          errors.push({
+            id,
+            message: `integrity check failed (expected ${p.contentSha256.slice(0, 12)}…, got ${computed.slice(0, 12)}…)`
+          })
+          continue
+        }
+      }
+
       const blob = new Blob([src], { type: 'text/javascript' })
       const url = URL.createObjectURL(blob)
       let mod: any
@@ -206,4 +229,17 @@ export function teardownPlugin(pluginID: string): void {
     // best-effort
   }
   loadedPlugins.plugins.delete(pluginID)
+}
+
+/**
+ * Compute the hex-encoded sha256 of a string (#161 runtime integrity check).
+ * Uses the Web Crypto API (crypto.subtle.digest), available in the Wails
+ * webview and in jsdom test environments.
+ */
+async function sha256Hex(text: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(text)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
 }
