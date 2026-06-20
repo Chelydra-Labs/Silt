@@ -422,10 +422,14 @@ func normalize(cfg SystemConfig) SystemConfig {
 		cfg.UI.OpenTabs = []TabRef{}
 	}
 	// MaxOpenTabs: 0 (legacy config without the key) → 8 (the default).
-	// Negative or absurdly-small values also fall back; absurdly-large
-	// values are honored (the user asked).
+	// Negative or absurdly-small values also fall back. An upper bound of
+	// 32 prevents a user from mounting hundreds of TipTap editors
+	// simultaneously and exhausting memory (#142 hardening).
 	if cfg.UI.MaxOpenTabs < 1 {
 		cfg.UI.MaxOpenTabs = 8
+	}
+	if cfg.UI.MaxOpenTabs > 32 {
+		cfg.UI.MaxOpenTabs = 32
 	}
 	// EnablePreviewTabs: nil → true (VS Code parity). The field is a *bool
 	// so "unset" stays distinguishable from "explicitly false" through the

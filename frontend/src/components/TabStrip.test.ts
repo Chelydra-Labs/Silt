@@ -28,8 +28,7 @@ function defaultProps(
     activeTabId: overrides.activeTabId ?? '',
     onSelectTab: vi.fn(),
     onCloseTab: vi.fn(),
-    onPromoteTab: vi.fn(),
-    onCycleTab: vi.fn()
+    onPromoteTab: vi.fn()
   }
 }
 

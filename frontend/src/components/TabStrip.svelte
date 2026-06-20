@@ -1,11 +1,6 @@
-<script lang="ts" module>
-  // Per-tab close button title; kept as a module-level constant so the test
-  // suite can import it for assertion.
-  export const TAB_CLOSE_LABEL = 'Close tab'
-</script>
-
 <script lang="ts">
   import type { TabEntry } from '../lib/tabs'
+  import { fade, fly } from 'svelte/transition'
 
   interface Props {
     tabs: TabEntry[]
@@ -13,17 +8,10 @@
     onSelectTab: (id: string) => void
     onCloseTab: (id: string) => void
     onPromoteTab: (id: string) => void
-    onCycleTab: (dir: 1 | -1) => void
   }
 
-  let {
-    tabs,
-    activeTabId,
-    onSelectTab,
-    onCloseTab,
-    onPromoteTab,
-    onCycleTab
-  }: Props = $props()
+  let { tabs, activeTabId, onSelectTab, onCloseTab, onPromoteTab }: Props =
+    $props()
 
   // Roving tabindex: the active tab (or the first tab if none active) is the
   // only tab in the tab sequence. Arrow keys move focus between tabs without
@@ -103,8 +91,8 @@
   }
 
   function handleDblClick(tab: TabEntry): void {
-    // Double-click a preview tab header promotes it.
-    onPromoteTab(tab.id)
+    // Double-click promotes a PREVIEW tab only; pinned tabs are no-ops.
+    if (tab.preview) onPromoteTab(tab.id)
   }
 </script>
 
@@ -119,6 +107,8 @@
   >
     {#each tabs as tab, i (tab.id)}
       <button
+        in:fly={{ duration: 150, x: -8 }}
+        out:fade={{ duration: 100 }}
         bind:this={tabRefs[i]}
         role="tab"
         id="silt-tab-{tab.id}"
@@ -135,51 +125,26 @@
         ondblclick={() => handleDblClick(tab)}
       >
         <span class="tab-label" class:italic={tab.preview}>{tab.page}</span>
-        {#if !tab.preview}
-          <!-- Pinned tabs always show the close × -->
-          <span
-            role="button"
-            tabindex="-1"
-            aria-label={TAB_CLOSE_LABEL}
-            title={TAB_CLOSE_LABEL}
-            class="tab-close"
-            onclick={(e) => {
-              e.stopPropagation()
-              onCloseTab(tab.id)
-            }}
-            onkeydown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                e.stopPropagation()
-                onCloseTab(tab.id)
-              }
-            }}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <!-- Close is keyboard-accessible via the parent tab's Delete and
+             Ctrl+W handlers; this span is a mouse-only convenience and
+             MUST NOT have role="button" (that would nest interactive
+             elements inside the <button role="tab"> — HTML spec violation). -->
+        <span
+          aria-label="Close tab"
+          title="Close tab"
+          class="tab-close"
+          class:preview-close={tab.preview}
+          onclick={(e) => {
+            e.stopPropagation()
+            onCloseTab(tab.id)
+          }}
+        >
+          <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+            >close</span
           >
-            <span class="material-symbols-outlined text-[14px]">close</span>
-          </span>
-        {:else}
-          <!-- Preview tabs show the close × on hover only -->
-          <span
-            role="button"
-            tabindex="-1"
-            aria-label={TAB_CLOSE_LABEL}
-            title={TAB_CLOSE_LABEL}
-            class="tab-close preview-close"
-            onclick={(e) => {
-              e.stopPropagation()
-              onCloseTab(tab.id)
-            }}
-            onkeydown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                e.stopPropagation()
-                onCloseTab(tab.id)
-              }
-            }}
-          >
-            <span class="material-symbols-outlined text-[14px]">close</span>
-          </span>
-        {/if}
+        </span>
       </button>
     {/each}
   </div>

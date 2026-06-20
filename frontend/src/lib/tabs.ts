@@ -149,11 +149,23 @@ export function openPage(
     return activateTab(state, pinned.id, blockTarget)
   }
 
-  // Rule 2: a PREVIEW tab for this same page exists → activate it.
+  // Rule 2: a PREVIEW tab for this same page exists → activate it, OR
+  // promote it if the caller asked for a pin. This handles the
+  // double-click-in-sidebar flow: the first click opens a preview (Rule 4),
+  // the dblclick fires openPage('pin'), and this rule promotes the just-
+  // opened preview to pinned (VS Code parity).
   const previewSamePage = state.tabs.find(
     (t) => t.preview && tabMatches(t, ref)
   )
   if (previewSamePage) {
+    if (mode === 'pin') {
+      // Promote the preview in place: flip preview:false, then activate.
+      const promoted = promotePreview(
+        { tabs: state.tabs, activeId: state.activeId },
+        previewSamePage.id
+      )
+      return activateTab(promoted, previewSamePage.id, blockTarget)
+    }
     return activateTab(state, previewSamePage.id, blockTarget)
   }
 

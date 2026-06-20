@@ -577,6 +577,15 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 func (a *App) GetAppVersion() string
 
 
+// Open-tab persistence (#142). GetOpenTabs returns the persisted pinned-tab
+// set + active tab, pruned against ListNavigation (stale tabs for deleted
+// pages are silently dropped). SetOpenTabs atomically persists the pinned set
+// + active via configMu + RegisterSelfWrite + config.Save. Only pinned tabs
+// are persisted (preview tabs are ephemeral — VS Code parity).
+func (a *App) GetOpenTabs() (OpenTabsResult, error)
+func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) error
+
+
 4.4 Theme Engine IPC & Pipeline
 
 The theme engine is a four-stage pipeline (DESIGN.md §7 / SPECS.md §6.4): canonical schema -> settings persistence -> loader -> runtime injection. It lives in backend/themes and frontend/src/theme and reuses the existing App-binding -> JSON RPC -> Svelte store IPC topology; it does NOT touch SQLite or the file write lock (the only disk write is AppSettings, via the atomic settings.json writer).

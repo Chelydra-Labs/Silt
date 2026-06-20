@@ -35,6 +35,10 @@
   let loading = $state(false)
   let loadError = $state('')
   let containerEl = $state<HTMLDivElement | null>(null)
+  // hasFirstEdit is intentionally NOT reset: each VirtualScrollContainer
+  // instance is bound to one tab for its lifetime (the display:none
+  // architecture mounts a fresh component per tab). The one-shot semantics
+  // ensure edit-to-pin promotion fires exactly once per tab mount.
   let hasFirstEdit = false
   let handledTargetKey = $state('')
 

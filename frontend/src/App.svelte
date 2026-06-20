@@ -43,6 +43,7 @@
     closeTab as closeTabState,
     promotePreview as promotePreviewState,
     cycleTab as cycleTabState,
+    generateTabId,
     type TabEntry,
     type PageRef,
     type OpenPageMode
@@ -60,6 +61,15 @@
   // change).
   let openTabs = $state<TabEntry[]>([])
   let activeTabId = $state<string>('')
+
+  // Per-notebook tab scoping: the tab strip and editor surface only show
+  // tabs for the active notebook. The full openTabs array (all notebooks)
+  // persists to config.yaml so switching notebooks preserves each
+  // notebook's tab set. (#142 — user request: tabs should not carry over
+  // when switching notebooks.)
+  let displayedTabs = $derived(
+    openTabs.filter((t) => t.notebook === activeNotebook)
+  )
 
   // Navigation state (3-level: notebook > section > page). Kept in sync with
   // the active tab; also set directly by onSelectNotebook/onSelectSection
@@ -154,6 +164,10 @@
   // --- Tab persistence (debounced 250ms, pinned-only) ----------------------
 
   let persistTabsTimer: ReturnType<typeof setTimeout> | null = null
+  // Snapshot of the persisted open_tabs list for config:changed change
+  // detection. Declared at component scope so loadPersistedTabs can update
+  // it alongside the in-memory hydration (prevents a re-hydrate cycle).
+  let prevOpenTabsKey = ''
 
   function schedulePersistTabs(): void {
     if (persistTabsTimer) clearTimeout(persistTabsTimer)
@@ -189,15 +203,23 @@
     }
   }
 
+  // Monotonic request sequence for loadPersistedTabs. Only the most-recent
+  // call's result is applied, so overlapping calls (onMount + handleSelectFolder
+  // firing in quick succession) don't race — the later call wins (#142 hardening).
+  let loadTabsSeq = 0
+
   // Load persisted tabs on vault open / reopen. Hydrates openTabs from the
   // pinned set + active stored in config.yaml.
   async function loadPersistedTabs(): Promise<void> {
+    const seq = ++loadTabsSeq
     try {
       const result = await GetOpenTabs()
+      // Stale guard: a newer loadPersistedTabs call superseded this one.
+      if (seq !== loadTabsSeq) return
       if (result?.open_tabs && result.open_tabs.length > 0) {
         const now = Date.now()
         openTabs = result.open_tabs.map((t, i) => ({
-          id: `restored-${i}-${t.notebook}-${t.page}`,
+          id: generateTabId(),
           notebook: t.notebook,
           section: t.section,
           page: t.page,
@@ -217,6 +239,15 @@
             syncActiveFromTab()
           }
         }
+        // Update the hot-reload baseline so this load doesn't immediately
+        // trigger a re-hydrate cycle.
+        prevOpenTabsKey = tabSetKey(
+          result.open_tabs.map((t) => ({
+            notebook: t.notebook,
+            section: t.section,
+            page: t.page
+          }))
+        )
       }
     } catch (e) {
       console.error('GetOpenTabs failed:', e)
@@ -288,6 +319,8 @@
     // seen value so unrelated config changes (theme, hotkeys, etc.) do
     // not pay the ESM-import + plugin init cost.
     let prevDisabled: string[] = settings.config?.plugins?.disabled ?? []
+    // Initialize the tab hot-reload baseline from the settings store.
+    prevOpenTabsKey = tabSetKey(settings.config?.ui?.open_tabs)
     const offConfigChangedReload = EventsOn(
       'config:changed',
       (cfg: SystemConfig) => {
@@ -297,6 +330,13 @@
           loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
             console.error('Plugin reload after config change failed:', e)
           )
+        }
+        // Re-hydrate tabs if the external ui.open_tabs block changed
+        // (user hand-edited config.yaml or another process wrote it).
+        const nextTabsKey = tabSetKey(cfg?.ui?.open_tabs)
+        if (nextTabsKey !== prevOpenTabsKey) {
+          prevOpenTabsKey = nextTabsKey
+          void loadPersistedTabs()
         }
       }
     )
@@ -334,7 +374,7 @@
       // Tab-strip hotkeys (#142). Ctrl+Tab / Ctrl+Shift+Tab cycle MRU;
       // Ctrl+W closes the active tab. All three are remappable / disable-
       // able (empty string) from Settings → General. No-op when 0 tabs.
-      if (openTabs.length > 0) {
+      if (displayedTabs.length > 0) {
         if (matchHotkey(e, hotkeys.next_tab)) {
           e.preventDefault()
           handleCycleTab(1)
@@ -442,6 +482,13 @@
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()
+      // Flush any pending tab-state persistence so the user's last tab
+      // change survives a component unmount / app close (#142 hardening).
+      if (persistTabsTimer) {
+        clearTimeout(persistTabsTimer)
+        persistTabsTimer = null
+        void persistTabs()
+      }
     }
   })
 
@@ -553,13 +600,13 @@
 
   // Whether the notes view has a complete (notebook/section/page) target.
   // With tabs (#142), also requires an active tab so closing the last tab
-  // returns to the blank view.
+  // returns to the blank view. displayedTabs ensures per-notebook scoping.
   let notesReady = $derived(
     activeView === 'notes' &&
       !!activeNotebook &&
       !!activePage &&
       !!activeTabId &&
-      openTabs.length > 0
+      displayedTabs.length > 0
   )
 
   function openSettings(tab?: string) {
@@ -588,6 +635,21 @@
     if (a.length !== b.length) return false
     const setA = new Set(a)
     return b.every((x) => setA.has(x))
+  }
+
+  // Stable serialization of the persisted open_tabs list for change detection.
+  // The config:changed handler compares the previous and next keys to decide
+  // whether to re-hydrate the tab strip on an external config.yaml edit.
+  function tabSetKey(
+    tabs: { notebook?: string; section?: string; page?: string }[] | undefined
+  ): string {
+    if (!tabs || tabs.length === 0) return ''
+    return tabs
+      .map(
+        (t) => `${t.notebook ?? ''}\x00${t.section ?? ''}\x00${t.page ?? ''}`
+      )
+      .sort()
+      .join('|')
   }
 </script>
 
@@ -657,7 +719,20 @@
         bind:collapsed={sidebarCollapsed}
         {sidebarWidth}
         {sidebarDragging}
-        onSelectNotebook={(nb) => (activeNotebook = nb)}
+        onSelectNotebook={(nb) => {
+          activeNotebook = nb
+          // Per-notebook tab scoping: activate the MRU tab for the new
+          // notebook (or clear if none exist for it).
+          const notebookTabs = openTabs
+            .filter((t) => t.notebook === nb)
+            .sort((a, b) => b.lastActivatedAt - a.lastActivatedAt)
+          if (notebookTabs.length > 0) {
+            activeTabId = notebookTabs[0].id
+          } else {
+            activeTabId = ''
+          }
+          syncActiveFromTab()
+        }}
         onSelectSection={(sec) => (activeSection = sec)}
         onSelectPage={(nb, sec, pg) => {
           // Single-click opens in preview mode (VS Code parity, #142).
@@ -684,12 +759,11 @@
         {#if activeView === 'notes'}
           <!-- Tab strip (#142): above the editor, inside the content area -->
           <TabStrip
-            tabs={openTabs}
+            tabs={displayedTabs}
             {activeTabId}
             onSelectTab={handleSelectTab}
             onCloseTab={handleCloseTab}
             onPromoteTab={handlePromoteTab}
-            onCycleTab={handleCycleTab}
           />
           {#if notesReady}
             <div
@@ -698,7 +772,7 @@
               aria-labelledby="silt-tab-{activeTabId}"
               class="flex-1 min-h-0 flex flex-col overflow-hidden"
             >
-              {#each openTabs as tab (tab.id)}
+              {#each displayedTabs as tab (tab.id)}
                 <div
                   class="flex-1 min-h-0 flex flex-col overflow-hidden"
                   style:display={tab.id === activeTabId ? 'flex' : 'none'}
@@ -745,18 +819,25 @@
               <h2
                 class="font-headline-md text-headline-md text-text-primary mb-2"
               >
-                {#if !activeNotebook}
+                {#if openTabs.length > 0 && !activeTabId}
+                  No active tab — click a tab above to switch
+                {:else if !activeNotebook}
                   Create or open a notebook to begin
-                {:else if !activeSection}
-                  Select or create a section
+                {:else if openTabs.length === 0}
+                  No pages open
                 {:else}
                   Select or create a page
                 {/if}
               </h2>
               <p class="text-text-muted font-body-md max-w-md">
-                Silt organizes notes as Notebook › Section › Page. Use the
-                sidebar navigator to create your first notebook, then add a
-                section and a page to start writing.
+                {#if openTabs.length === 0}
+                  Click a page in the sidebar to open it in a tab. Single-click
+                  opens a preview; double-click opens a pinned tab.
+                {:else}
+                  Silt organizes notes as Notebook › Section › Page. Use the
+                  sidebar navigator to create your first notebook, then add a
+                  section and a page to start writing.
+                {/if}
               </p>
             </div>
           {/if}

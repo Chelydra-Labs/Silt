@@ -544,6 +544,9 @@ func TestNormalize_MaxOpenTabsClamp(t *testing.T) {
 		{1, 1},        // minimum valid
 		{8, 8},        // the default itself
 		{20, 20},      // user-configured large value honored
+		{32, 32},      // upper bound
+		{33, 32},      // clamped to upper bound
+		{1000, 32},    // absurdly large → clamped (#142 hardening)
 	}
 	for _, c := range cases {
 		cfg := normalize(SystemConfig{UI: UIConfig{MaxOpenTabs: c.in}})

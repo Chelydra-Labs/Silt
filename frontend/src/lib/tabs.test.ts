@@ -68,8 +68,8 @@ describe('openPage — VS Code preview/pin state machine', () => {
     })
   })
 
-  describe('Rule 2: preview tab for same page → activate it', () => {
-    it('activates the existing preview tab for the same page', () => {
+  describe('Rule 2: preview tab for same page', () => {
+    it('activates the existing preview tab for the same page (mode=preview)', () => {
       const preview = mkTab(PAGE_A, { preview: true, lastActivatedAt: 100 })
       const st = state([preview], preview.id)
       const result = openPage(st, PAGE_A, 'preview')
@@ -77,6 +77,18 @@ describe('openPage — VS Code preview/pin state machine', () => {
       expect(result.tabs).toHaveLength(1)
       // Page content unchanged (it's the same page)
       expect(result.tabs[0].page).toBe('Site')
+      // Still a preview (not promoted)
+      expect(result.tabs[0].preview).toBe(true)
+    })
+
+    it('PROMOTES the preview to pinned when mode=pin (dblclick flow)', () => {
+      // Simulates: single-click opens preview, dblclick fires openPage('pin').
+      const preview = mkTab(PAGE_A, { preview: true, lastActivatedAt: 100 })
+      const st = state([preview], preview.id)
+      const result = openPage(st, PAGE_A, 'pin')
+      expect(result.activeId).toBe(preview.id)
+      expect(result.tabs).toHaveLength(1) // no new tab — promoted in place
+      expect(result.tabs[0].preview).toBe(false) // promoted to pinned
     })
   })
 
