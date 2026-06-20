@@ -183,8 +183,8 @@ func TestValidate_MissingLightMode(t *testing.T) {
 			t.Errorf("unexpected non-light error: %+v", e)
 		}
 	}
-	if lightErrs != len(requiredTokens) {
-		t.Errorf("expected all %d required light tokens flagged, got %d", len(requiredTokens), lightErrs)
+	if lightErrs != len(requiredTokens)-1 {
+		t.Errorf("expected all %d required light tokens flagged (status.success backfilled), got %d", len(requiredTokens)-1, lightErrs)
 	}
 }
 
@@ -668,5 +668,42 @@ func TestIsValidFontFamily(t *testing.T) {
 		if isValidFontFamily(v) {
 			t.Errorf("expected %q to be rejected", v)
 		}
+	}
+}
+
+// TestParseAndValidate_BackfillsMissingSuccess: a legacy theme (exported
+// before the status.success schema change) must still load. ParseAndValidate
+// backfills a default so the theme doesn't fail validation and silently
+// revert to the embedded default on next launch.
+func TestParseAndValidate_BackfillsMissingSuccess(t *testing.T) {
+	// Strip success from both mode status blocks. Each appears as:
+	//   ,"success":"<color>"   (second key, has leading comma)
+	legacy := strings.ReplaceAll(minimalValidJSON, `,"success":"#22c55e"`, "")
+	legacy = strings.ReplaceAll(legacy, `,"success":"#16a34a"`, "")
+
+	th, err := ParseAndValidate([]byte(legacy))
+	if err != nil {
+		t.Fatalf("legacy theme without success should still load: %v", err)
+	}
+	if th.Modes.Dark.Status.Success != "#22c55e" {
+		t.Errorf("expected dark success backfill #22c55e, got %q", th.Modes.Dark.Status.Success)
+	}
+	if th.Modes.Light.Status.Success != "#22c55e" {
+		t.Errorf("expected light success backfill #22c55e, got %q", th.Modes.Light.Status.Success)
+	}
+}
+
+// TestParseAndValidate_PreservesExplicitSuccess: when a theme explicitly
+// defines status.success, the backfill must not overwrite it.
+func TestParseAndValidate_PreservesExplicitSuccess(t *testing.T) {
+	th, err := ParseAndValidate([]byte(minimalValidJSON))
+	if err != nil {
+		t.Fatalf("valid theme should load: %v", err)
+	}
+	if th.Modes.Dark.Status.Success != "#22c55e" {
+		t.Errorf("explicit dark success preserved: want #22c55e, got %q", th.Modes.Dark.Status.Success)
+	}
+	if th.Modes.Light.Status.Success != "#16a34a" {
+		t.Errorf("explicit light success preserved: want #16a34a, got %q", th.Modes.Light.Status.Success)
 	}
 }

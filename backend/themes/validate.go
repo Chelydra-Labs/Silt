@@ -345,6 +345,17 @@ func ParseAndValidate(raw []byte) (*Theme, error) {
 	if err := json.Unmarshal(raw, &t); err != nil {
 		return nil, fmt.Errorf("theme JSON is not parseable: %w", err)
 	}
+
+	// Legacy themes predate status.success; backfill a default so they
+	// keep loading instead of being dropped/reverted. warn/danger remain
+	// strictly required.
+	if strings.TrimSpace(t.Modes.Dark.Status.Success) == "" {
+		t.Modes.Dark.Status.Success = "#22c55e"
+	}
+	if strings.TrimSpace(t.Modes.Light.Status.Success) == "" {
+		t.Modes.Light.Status.Success = "#22c55e"
+	}
+
 	if err := Validate(&t); err != nil {
 		return nil, err
 	}
