@@ -107,7 +107,7 @@
         {:else if field.type === 'select'}
           <select
             id="setting-{pluginID}-{field.key}"
-            class="bg-bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md"
+            class="bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md"
             bind:value={draft[field.key]}
           >
             {#each field.options ?? [] as opt}
@@ -125,7 +125,7 @@
           <input
             type="text"
             id="setting-{pluginID}-{field.key}"
-            class="bg-bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
+            class="bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
             placeholder={fieldLabel(field.type)}
             value={Array.isArray(draft[field.key])
               ? draft[field.key].join(', ')
@@ -141,7 +141,7 @@
           <input
             type="text"
             id="setting-{pluginID}-{field.key}"
-            class="bg-bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full font-mono"
+            class="bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full font-mono"
             placeholder="e.g. Ctrl+Shift+A"
             bind:value={draft[field.key]}
             onkeydown={(e) => {
@@ -163,7 +163,7 @@
           <input
             type="number"
             id="setting-{pluginID}-{field.key}"
-            class="bg-bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
+            class="bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
             placeholder={fieldLabel(field.type)}
             min={field.min}
             max={field.max}
@@ -173,7 +173,7 @@
           <input
             type="text"
             id="setting-{pluginID}-{field.key}"
-            class="bg-bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
+            class="bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
             placeholder={fieldLabel(field.type)}
             minlength={field.minLength}
             maxlength={field.maxLength}

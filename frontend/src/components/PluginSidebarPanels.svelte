@@ -27,7 +27,7 @@
     {#each surfaces as surface (surface.id)}
       <details class="group">
         <summary
-          class="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-bg-hover rounded transition-colors select-none list-none"
+          class="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-hover rounded transition-colors select-none list-none"
         >
           <span
             class="material-symbols-outlined text-accent-primary-start/70 text-[16px]"

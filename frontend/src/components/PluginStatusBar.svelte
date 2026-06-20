@@ -24,7 +24,7 @@
           // Status-bar items are informational; clicking could open a surface-
           // specific action. For now, just visual.
         }}
-        class="flex items-center gap-1 px-1.5 py-0.5 rounded text-text-muted hover:text-accent-primary-start hover:bg-bg-hover transition-colors text-[10px] font-label-sm border border-transparent hover:border-border-muted cursor-default"
+        class="flex items-center gap-1 px-1.5 py-0.5 rounded text-text-muted hover:text-accent-primary-start hover:bg-hover transition-colors text-[10px] font-label-sm border border-transparent hover:border-border-muted cursor-default"
         title={surface.label}
         aria-label={surface.label}
       >

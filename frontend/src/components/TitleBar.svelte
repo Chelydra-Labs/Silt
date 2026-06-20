@@ -97,7 +97,7 @@
         <button
           onclick={() => selectView(v.id)}
           class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-label-sm text-label-sm transition-all border-none cursor-pointer focus:outline-none whitespace-nowrap"
-          class:bg-bg-hover={activeView === v.id}
+          class:bg-hover={activeView === v.id}
           class:text-accent-primary-start={activeView === v.id}
           class:text-text-muted={activeView !== v.id}
           aria-pressed={activeView === v.id}
@@ -113,7 +113,7 @@
   <div class="flex items-center gap-2 flex-shrink-0 h-full pr-2">
     <button
       onclick={onSearchClick}
-      class="bg-bg-surface border border-border-muted rounded-lg pl-3 pr-8 py-1.5 items-center gap-2 cursor-pointer text-text-muted hover:border-accent-primary-start transition-all duration-200 hidden sm:flex w-72"
+      class="bg-surface border border-border-muted rounded-lg pl-3 pr-8 py-1.5 items-center gap-2 cursor-pointer text-text-muted hover:border-accent-primary-start transition-all duration-200 hidden sm:flex w-72"
     >
       <span class="material-symbols-outlined text-[18px]">search</span>
       <span class="text-[12px] font-label-sm whitespace-nowrap"
@@ -128,7 +128,7 @@
       onclick={() => onOpenSettings('plugins')}
       aria-label="Plugin manager"
       title="Plugin manager"
-      class="h-9 w-9 flex items-center justify-center text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none rounded-md hover:bg-bg-hover"
+      class="h-9 w-9 flex items-center justify-center text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none rounded-md hover:bg-hover"
     >
       <span class="material-symbols-outlined text-[20px]">extension</span>
     </button>
@@ -136,7 +136,7 @@
       onclick={() => onOpenSettings('general')}
       aria-label="Settings"
       title="Settings"
-      class="h-9 w-9 flex items-center justify-center text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none rounded-md hover:bg-bg-hover"
+      class="h-9 w-9 flex items-center justify-center text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none rounded-md hover:bg-hover"
     >
       <span class="material-symbols-outlined text-[20px]">settings</span>
     </button>
@@ -150,7 +150,7 @@
           onclick={() => WindowMinimise()}
           aria-label="Minimize"
           title="Minimize"
-          class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
         >
           <span class="material-symbols-outlined text-[18px]">remove</span>
         </button>
@@ -158,7 +158,7 @@
           onclick={handleToggleMax}
           aria-label={maximised ? 'Restore' : 'Maximize'}
           title={maximised ? 'Restore' : 'Maximize'}
-          class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
         >
           <span class="material-symbols-outlined text-[18px]"
             >{maximised ? 'fullscreen_exit' : 'crop_square'}</span

@@ -216,7 +216,7 @@
     if (s.kind === 'success') {
       return 'bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start'
     }
-    return 'bg-bg-panel border border-border-muted text-text-muted'
+    return 'bg-panel border border-border-muted text-text-muted'
   }
 </script>
 
@@ -234,7 +234,7 @@
     <div
       role="radiogroup"
       aria-label="Color mode"
-      class="inline-flex bg-bg-surface border border-border-muted rounded-lg p-1 gap-1"
+      class="inline-flex bg-surface border border-border-muted rounded-lg p-1 gap-1"
     >
       {#each modes as m (m.id)}
         {@const active = themeState.mode === m.id}
@@ -244,7 +244,7 @@
           aria-checked={active}
           onclick={() => setMode(m.id)}
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-label-sm text-label-sm motion-reduce:transition-none transition-colors border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-          class:bg-bg-hover={active}
+          class:bg-hover={active}
           class:text-accent-primary-start={active}
           class:text-text-muted={!active}
           class:hover:text-text-primary={!active}
@@ -270,7 +270,7 @@
         Theme typography
       </h3>
       <div
-        class="flex flex-wrap items-start gap-x-4 gap-y-1.5 bg-bg-surface border border-border-muted rounded-lg px-3 py-2.5"
+        class="flex flex-wrap items-start gap-x-4 gap-y-1.5 bg-surface border border-border-muted rounded-lg px-3 py-2.5"
       >
         <span class="text-text-muted text-[11px] font-label-sm">
           This theme sets its own fonts:
@@ -353,7 +353,7 @@
             onblur={onRowLeave}
             onkeydown={(e) => onRowKey(e, i)}
             class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border motion-reduce:transition-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 cursor-pointer"
-            class:bg-bg-surface={!active}
+            class:bg-surface={!active}
             class:border-border-muted={!active}
             class:hover:border-border-active={!active}
             class:border-l-4={active}
@@ -431,7 +431,7 @@
         type="button"
         onclick={handleExport}
         disabled={!themeState.id}
-        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-bg-surface border border-border-muted text-text-primary font-label-sm-bold hover:border-accent-primary-start motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
+        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border-muted text-text-primary font-label-sm-bold hover:border-accent-primary-start motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         <span class="material-symbols-outlined text-[18px]">download</span>
         Export active

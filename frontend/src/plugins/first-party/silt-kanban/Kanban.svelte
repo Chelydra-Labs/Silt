@@ -647,7 +647,7 @@
     if (p <= 1) return 'text-error border-error/20 bg-error/10'
     if (p === 2)
       return 'text-accent-primary-start border-accent-primary-start/20 bg-accent-primary-glow'
-    return 'text-text-muted border-border-muted bg-bg-surface'
+    return 'text-text-muted border-border-muted bg-surface'
   }
   // Standard statuses get friendly labels; custom lanes show their raw name.
   function laneLabel(s: string): string {
@@ -673,7 +673,7 @@
          role="radiogroup" is a composite widget that handles arrow-key
          navigation for its radio children per WAI-ARIA APG. -->
     <div
-      class="flex items-center gap-0.5 bg-bg-surface border border-border-muted rounded-lg p-0.5 ml-2"
+      class="flex items-center gap-0.5 bg-surface border border-border-muted rounded-lg p-0.5 ml-2"
       role="radiogroup"
       aria-label="Board scope"
       tabindex="-1"
@@ -689,7 +689,7 @@
           disabled={isScopeDisabled(s)}
           title={isScopeDisabled(s) ? `Select a ${String(s)} first` : undefined}
           class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          class:bg-bg-hover={scope === s}
+          class:bg-hover={scope === s}
           class:text-accent-primary-start={scope === s}
           class:text-text-muted={scope !== s}
         >
@@ -701,7 +701,7 @@
     <button
       type="button"
       onclick={addColumn}
-      class="flex items-center gap-1 px-2.5 py-1 rounded border border-border-muted bg-bg-surface text-[12px] font-label-sm text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
+      class="flex items-center gap-1 px-2.5 py-1 rounded border border-border-muted bg-surface text-[12px] font-label-sm text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
       aria-label="Add column"
     >
       <span class="material-symbols-outlined text-[16px]">add</span>
@@ -778,7 +778,7 @@
         {#each columns as col, colIdx (col)}
           {@const laneCards = lanes[col] ?? []}
           <section
-            class="flex flex-col min-w-[280px] flex-1 max-w-[400px] rounded-lg border border-border-muted bg-bg-surface/50 {colDragIndex ===
+            class="flex flex-col min-w-[280px] flex-1 max-w-[400px] rounded-lg border border-border-muted bg-surface/50 {colDragIndex ===
             colIdx
               ? 'opacity-50'
               : ''}"
@@ -822,7 +822,7 @@
                       else if (e.key === 'Escape') cancelRename()
                     }}
                     onblur={commitRename}
-                    class="bg-bg-surface border border-accent-primary-start/40 rounded px-1.5 py-0.5 text-[11px] font-label-sm-bold uppercase tracking-widest text-text-primary outline-none w-28"
+                    class="bg-surface border border-accent-primary-start/40 rounded px-1.5 py-0.5 text-[11px] font-label-sm-bold uppercase tracking-widest text-text-primary outline-none w-28"
                     aria-label="Rename column"
                   />
                 {:else}
@@ -835,7 +835,7 @@
                   </h2>
                 {/if}
                 <span
-                  class="bg-bg-hover text-text-muted text-[10px] px-1.5 py-0.5 rounded-sm font-label-sm"
+                  class="bg-hover text-text-muted text-[10px] px-1.5 py-0.5 rounded-sm font-label-sm"
                   >{laneCards.length}</span
                 >
               </div>
@@ -854,13 +854,13 @@
                 </button>
                 {#if menuCol === col}
                   <div
-                    class="absolute right-0 top-full mt-1 z-50 min-w-[140px] bg-bg-panel border border-border-muted rounded-lg shadow-xl py-1"
+                    class="absolute right-0 top-full mt-1 z-50 min-w-[140px] bg-panel border border-border-muted rounded-lg shadow-xl py-1"
                     role="menu"
                   >
                     <button
                       type="button"
                       onclick={() => startRename(col)}
-                      class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-[12px] font-label-sm text-text-primary"
+                      class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-text-primary"
                       role="menuitem"
                     >
                       <span class="material-symbols-outlined text-[14px]"
@@ -871,7 +871,7 @@
                     <button
                       type="button"
                       onclick={() => removeColumn(col)}
-                      class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-[12px] font-label-sm text-error"
+                      class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-error"
                       role="menuitem"
                     >
                       <span class="material-symbols-outlined text-[14px]"
@@ -896,7 +896,7 @@
                   aria-label={`${card.clean_content}, ${laneLabel(col)}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}. Arrow keys change status.`}
                   draggable="true"
                   animate:flip={{ duration: 200, easing: cubicOut }}
-                  class="group relative bg-bg-panel border border-border-muted rounded-lg p-3 cursor-grab transition-all duration-200 hover:bg-bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {card.status ===
+                  class="group relative bg-panel border border-border-muted rounded-lg p-3 cursor-grab transition-all duration-200 hover:bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {card.status ===
                   'DOING'
                     ? 'border-l-2 border-l-accent-secondary-start'
                     : ''} {draggingId === card.id ? 'opacity-40 rotate-2' : ''}"
@@ -939,7 +939,7 @@
                   </p>
                   {#if card.progress > 0}
                     <div
-                      class="h-0.5 bg-bg-surface rounded overflow-hidden mb-2"
+                      class="h-0.5 bg-surface rounded overflow-hidden mb-2"
                     >
                       <div
                         class="h-full bg-accent-secondary-start transition-all"

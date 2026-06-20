@@ -25,7 +25,7 @@
     to pick a file — it is copied into the notebook and embedded as a block.
   </p>
   <div
-    class="p-4 rounded-lg border border-border-muted bg-bg-surface/50 space-y-2"
+    class="p-4 rounded-lg border border-border-muted bg-surface/50 space-y-2"
   >
     <div
       class="flex items-center gap-2 text-text-primary text-[12px] font-body-md"

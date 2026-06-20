@@ -65,7 +65,7 @@
         >{node.name}</span
       >
       <span
-        class="text-[9px] font-label-sm text-text-muted bg-bg-panel border border-border-muted rounded-full px-1.5 py-0.5 ml-auto"
+        class="text-[9px] font-label-sm text-text-muted bg-panel border border-border-muted rounded-full px-1.5 py-0.5 ml-auto"
       >
         {node.count}
       </span>

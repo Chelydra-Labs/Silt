@@ -29,8 +29,8 @@
   --color-panel: #161619;
   --color-surface: #121215;
   /*
-   * Aliases so the bg-bg-* utility classes resolve (#142). Components use
-   * `bg-bg-panel`, `bg-bg-surface`, etc. throughout; in Tailwind v4 these need
+   * Aliases so the bg-* utility classes resolve (#142). Components use
+   * `bg-panel`, `bg-surface`, etc. throughout; in Tailwind v4 these need
    * --color-bg-* theme variables to generate real CSS. Each alias references
    * the runtime --bg-* custom property (set by :root below + overwritten by the
    * theme injector), so a theme change flows through automatically.

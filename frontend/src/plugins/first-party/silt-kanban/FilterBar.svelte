@@ -110,7 +110,7 @@
       onclick={() => toggleChip('owner')}
       aria-expanded={openChip === 'owner'}
       aria-haspopup="true"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border-muted bg-bg-surface text-[12px] font-label-sm text-text-muted hover:bg-bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border-muted bg-surface text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
         'owner' || filters.owners.length
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
@@ -124,7 +124,7 @@
     {#if openChip === 'owner'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
-        class="absolute z-50 mt-1 min-w-[180px] bg-bg-panel border border-border-muted rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
+        class="absolute z-50 mt-1 min-w-[180px] bg-panel border border-border-muted rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
         role="listbox"
         aria-label="Filter by owner"
       >
@@ -135,13 +135,13 @@
         {:else}
           {#each owners as o (o)}
             <label
-              class="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
+              class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
             >
               <input
                 type="checkbox"
                 checked={filters.owners.includes(o)}
                 onchange={() => toggleOwner(o)}
-                class="accent-accent-primary-start"
+                class="accent-primary-start"
               />
               <span class="truncate">{o}</span>
             </label>
@@ -158,7 +158,7 @@
       onclick={() => toggleChip('priority')}
       aria-expanded={openChip === 'priority'}
       aria-haspopup="true"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border-muted bg-bg-surface text-[12px] font-label-sm text-text-muted hover:bg-bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border-muted bg-surface text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
         'priority' || filters.priorities.length
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
@@ -174,19 +174,19 @@
     {#if openChip === 'priority'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
-        class="absolute z-50 mt-1 min-w-[160px] bg-bg-panel border border-border-muted rounded-lg shadow-xl py-1"
+        class="absolute z-50 mt-1 min-w-[160px] bg-panel border border-border-muted rounded-lg shadow-xl py-1"
         role="listbox"
         aria-label="Filter by priority"
       >
         {#each PRIORITIES as p (p.value)}
           <label
-            class="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
+            class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
           >
             <input
               type="checkbox"
               checked={filters.priorities.includes(p.value)}
               onchange={() => togglePriority(p.value)}
-              class="accent-accent-primary-start"
+              class="accent-primary-start"
             />
             <span>{p.label}</span>
           </label>
@@ -202,7 +202,7 @@
       onclick={() => toggleChip('dueDate')}
       aria-expanded={openChip === 'dueDate'}
       aria-haspopup="listbox"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border-muted bg-bg-surface text-[12px] font-label-sm text-text-muted hover:bg-bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border-muted bg-surface text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
         'dueDate' || filters.dueDate
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
@@ -214,7 +214,7 @@
     {#if openChip === 'dueDate'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
-        class="absolute z-50 mt-1 min-w-[160px] bg-bg-panel border border-border-muted rounded-lg shadow-xl py-1"
+        class="absolute z-50 mt-1 min-w-[160px] bg-panel border border-border-muted rounded-lg shadow-xl py-1"
         role="listbox"
         aria-label="Filter by due date"
       >
@@ -222,7 +222,7 @@
           <button
             type="button"
             onclick={() => setDueDate(opt.value)}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover text-[12px] font-label-sm {filters.dueDate ===
+            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm {filters.dueDate ===
             opt.value
               ? 'text-accent-primary-start'
               : 'text-text-primary'}"
@@ -246,7 +246,7 @@
       onclick={() => toggleChip('tags')}
       aria-expanded={openChip === 'tags'}
       aria-haspopup="true"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border-muted bg-bg-surface text-[12px] font-label-sm text-text-muted hover:bg-bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-border-muted bg-surface text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
         'tags' || filters.tags.length
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
@@ -258,7 +258,7 @@
     {#if openChip === 'tags'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
-        class="absolute z-50 mt-1 min-w-[200px] bg-bg-panel border border-border-muted rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
+        class="absolute z-50 mt-1 min-w-[200px] bg-panel border border-border-muted rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
         role="listbox"
         aria-label="Filter by tag"
       >
@@ -269,13 +269,13 @@
         {:else}
           {#each tags as t (t)}
             <label
-              class="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
+              class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
             >
               <input
                 type="checkbox"
                 checked={filters.tags.includes(t)}
                 onchange={() => toggleTag(t)}
-                class="accent-accent-primary-start"
+                class="accent-primary-start"
               />
               <span class="truncate">{t}</span>
             </label>
