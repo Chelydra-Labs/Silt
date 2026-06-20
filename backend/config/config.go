@@ -41,6 +41,12 @@ type EditorConfig struct {
 	TabIndentSpaces         int     `yaml:"tab_indent_spaces" json:"tab_indent_spaces"`
 	AutoSaveDelayMs         int     `yaml:"auto_save_delay_ms" json:"auto_save_delay_ms"`
 	FocusHighlightAncestors bool    `yaml:"focus_highlight_ancestors" json:"focus_highlight_ancestors"`
+	// ShowWordCount controls the subtle word/char count in the editor status
+	// area (#168 Phase 3). Default false — opt-in so we add no chrome by default.
+	ShowWordCount *bool `yaml:"show_word_count,omitempty" json:"show_word_count,omitempty"`
+	// FocusMode dims all paragraphs except the active one for distraction-free
+	// writing (#168 Phase 3). Default false.
+	FocusMode *bool `yaml:"focus_mode,omitempty" json:"focus_mode,omitempty"`
 }
 
 // ParsingConfig holds the task-parse rules consumed by the AST parser.
@@ -103,6 +109,15 @@ type UIConfig struct {
 	// Used by the formatting first-run tip (#168). Same persistence tier as
 	// sidebar_width.
 	DismissedTips []string `yaml:"dismissed_tips,omitempty" json:"dismissed_tips,omitempty"`
+	// Formatting holds inline-formatting-related UI toggles (#168 Phase 3, #170).
+	Formatting FormattingConfig `yaml:"formatting,omitempty" json:"formatting,omitempty"`
+}
+
+// FormattingConfig holds per-vault toggles for inline formatting features.
+type FormattingConfig struct {
+	// TypographyEnabled controls smart input replacements (-- → —, (c) → ©,
+	// straight → curly quotes). Default true; markdown purists can disable (#168).
+	TypographyEnabled *bool `yaml:"typography_enabled,omitempty" json:"typography_enabled,omitempty"`
 }
 
 // TabRef is a persisted reference to an open tab's page (#142). It is the
@@ -184,6 +199,8 @@ func Defaults() SystemConfig {
 			TabIndentSpaces:         4,
 			AutoSaveDelayMs:         500,
 			FocusHighlightAncestors: true,
+			ShowWordCount: boolPtr(false),
+			FocusMode:     boolPtr(false),
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
@@ -253,6 +270,9 @@ func Defaults() SystemConfig {
 			// treats nil as true.
 			ShowFormatToolbar: boolPtr(true),
 			DismissedTips:     []string{},
+			Formatting: FormattingConfig{
+				TypographyEnabled: boolPtr(true),
+			},
 		},
 	}
 }
@@ -473,6 +493,18 @@ func normalize(cfg SystemConfig) SystemConfig {
 	}
 	if cfg.UI.DismissedTips == nil {
 		cfg.UI.DismissedTips = []string{}
+	}
+	// TypographyEnabled: nil → true (#168 Phase 3).
+	if cfg.UI.Formatting.TypographyEnabled == nil {
+		cfg.UI.Formatting.TypographyEnabled = boolPtr(true)
+	}
+	// ShowWordCount: nil → false (#168 Phase 3). Opt-in.
+	if cfg.Editor.ShowWordCount == nil {
+		cfg.Editor.ShowWordCount = boolPtr(false)
+	}
+	// FocusMode: nil → false (#168 Phase 3).
+	if cfg.Editor.FocusMode == nil {
+		cfg.Editor.FocusMode = boolPtr(false)
 	}
 	return cfg
 }

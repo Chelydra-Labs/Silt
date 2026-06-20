@@ -646,3 +646,45 @@ func TestNormalize_ShowFormatToolbarNilBecomesTrue(t *testing.T) {
 		t.Errorf("normalize should ensure non-nil dismissed_tips")
 	}
 }
+
+// TestDefaults_EditorEnhancements confirms the Phase 3 editor enhancement
+// config fields have correct defaults.
+func TestDefaults_EditorEnhancements(t *testing.T) {
+	d := Defaults()
+	if d.UI.Formatting.TypographyEnabled == nil || *d.UI.Formatting.TypographyEnabled != true {
+		t.Errorf("defaults typography_enabled should be *true, got %v", d.UI.Formatting.TypographyEnabled)
+	}
+	if d.Editor.ShowWordCount == nil || *d.Editor.ShowWordCount != false {
+		t.Errorf("defaults show_word_count should be *false, got %v", d.Editor.ShowWordCount)
+	}
+	if d.Editor.FocusMode == nil || *d.Editor.FocusMode != false {
+		t.Errorf("defaults focus_mode should be *false, got %v", d.Editor.FocusMode)
+	}
+}
+
+// TestNormalize_EditorEnhancements confirms *bool normalization for the
+// Phase 3 fields.
+func TestNormalize_EditorEnhancements(t *testing.T) {
+	// nil → defaults
+	cfg := normalize(SystemConfig{})
+	if cfg.UI.Formatting.TypographyEnabled == nil || *cfg.UI.Formatting.TypographyEnabled != true {
+		t.Errorf("normalize typography nil → *true, got %v", cfg.UI.Formatting.TypographyEnabled)
+	}
+	if cfg.Editor.ShowWordCount == nil || *cfg.Editor.ShowWordCount != false {
+		t.Errorf("normalize show_word_count nil → *false, got %v", cfg.Editor.ShowWordCount)
+	}
+	if cfg.Editor.FocusMode == nil || *cfg.Editor.FocusMode != false {
+		t.Errorf("normalize focus_mode nil → *false, got %v", cfg.Editor.FocusMode)
+	}
+	// Explicit values survive
+	tv := true
+	cfg = normalize(SystemConfig{UI: UIConfig{Formatting: FormattingConfig{TypographyEnabled: &tv}}})
+	if cfg.UI.Formatting.TypographyEnabled == nil || *cfg.UI.Formatting.TypographyEnabled != true {
+		t.Errorf("normalize should preserve explicit typography true, got %v", cfg.UI.Formatting.TypographyEnabled)
+	}
+	fv := false
+	cfg = normalize(SystemConfig{UI: UIConfig{Formatting: FormattingConfig{TypographyEnabled: &fv}}})
+	if cfg.UI.Formatting.TypographyEnabled == nil || *cfg.UI.Formatting.TypographyEnabled != false {
+		t.Errorf("normalize should preserve explicit typography false, got %v", cfg.UI.Formatting.TypographyEnabled)
+	}
+}

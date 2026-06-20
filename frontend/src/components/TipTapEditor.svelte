@@ -4,6 +4,8 @@
   import type { Editor } from 'svelte-tiptap'
   import StarterKit from '@tiptap/starter-kit'
   import Placeholder from '@tiptap/extension-placeholder'
+  import { CharacterCount, Focus } from '@tiptap/extensions'
+  import Typography from '@tiptap/extension-typography'
   import {
     SaveFileBlocks,
     AcquireFocusLock,
@@ -94,6 +96,20 @@
     (settings.config?.ui as unknown as Record<string, unknown> | undefined)?.show_format_toolbar !== false
   )
 
+  // show_word_count config (default false; opt-in, Phase 3).
+  let showWordCount = $derived(
+    (settings.config?.editor as unknown as Record<string, unknown> | undefined)?.show_word_count === true
+  )
+
+  // focus_mode config (default false; Phase 3). When true, CSS dims non-active
+  // paragraphs for distraction-free writing.
+  let focusModeEnabled = $derived(
+    (settings.config?.editor as unknown as Record<string, unknown> | undefined)?.focus_mode === true
+  )
+
+  // Word count (updated on every editor transaction via CharacterCount storage).
+  let wordCount = $state(0)
+
   // First-run tip: dismissed when 'formatting_tip_v1' is in dismissed_tips.
   let formatTipDismissed = $derived(
     ((settings.config?.ui as unknown as Record<string, unknown> | undefined)?.dismissed_tips as string[] | undefined)?.includes('formatting_tip_v1') ?? false
@@ -167,41 +183,58 @@
     () => `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
   )
   let lastSyncedBlocksKey = $state(initialKey)
+
+  // Read config-driven extension toggles at editor creation time (#168 Phase 3).
+  // These take effect on the next page load; toggling in Settings does not
+  // hot-swap extensions mid-session (acceptable for v1).
+  const typographyEnabled = untrack(
+    () =>
+      (settings.config?.ui as unknown as Record<string, unknown> | undefined)
+        ?.formatting !== false
+  )
+
+  const editorExtensions = [
+    StarterKit.configure({
+      paragraph: false,
+      heading: false,
+      bulletList: false,
+      orderedList: false,
+      listItem: false,
+      blockquote: false,
+      codeBlock: false,
+      horizontalRule: false,
+      trailingNode: false,
+      link: { openOnClick: false, autolink: true }
+    }),
+    ...SiltBlockExtensionsWithNodeViews,
+    ...SiltInlineMarkExtensions,
+    UniqueBlockIds,
+    TaskMetaSuggest.configure({
+      onChange: onMetaChange,
+      onNavigate: onMetaNavigate,
+      onSelectActive: onMetaSelectActive
+    }),
+    SiltBlockKeymaps,
+    Placeholder.configure({
+      placeholder: 'Type / for commands, or start writing…'
+    }),
+    // Editor UX enhancements (#168 Phase 3):
+    CharacterCount, // word/char count (always loaded; visibility is CSS-gated)
+    Focus, // focus mode (always loaded; dimming is CSS-gated by .focus-mode)
+    ...(typographyEnabled ? [Typography] : []) // smart input replacements
+  ]
+
   const editorStore = createEditor({
-    extensions: [
-      StarterKit.configure({
-        paragraph: false,
-        heading: false,
-        bulletList: false,
-        orderedList: false,
-        listItem: false,
-        blockquote: false,
-        codeBlock: false,
-        horizontalRule: false,
-        trailingNode: false,
-        // Configure the Link mark bundled with StarterKit v3: don't intercept
-        // clicks (so the user can edit linked text), and auto-link pasted/typed
-        // URLs so bare URLs become links without manual effort (#168).
-        link: { openOnClick: false, autolink: true }
-      }),
-      ...SiltBlockExtensionsWithNodeViews,
-      ...SiltInlineMarkExtensions,
-      UniqueBlockIds,
-      TaskMetaSuggest.configure({
-        onChange: onMetaChange,
-        onNavigate: onMetaNavigate,
-        onSelectActive: onMetaSelectActive
-      }),
-      SiltBlockKeymaps,
-      Placeholder.configure({
-        placeholder: 'Type / for commands, or start writing…'
-      })
-    ],
+    extensions: editorExtensions,
     content: initialDoc,
     onUpdate: () => {
       if (suppressUpdate) return
       detectSlashCommand()
       unsavedChanges = true
+      // Update word count from CharacterCount storage (#168 Phase 3).
+      const storage = editorInstance?.storage as unknown as Record<string, unknown> | undefined
+      const cc = storage?.characterCount as { words?: () => number } | undefined
+      if (cc?.words) wordCount = cc.words()
       triggerAutoSave()
     },
     onSelectionUpdate: ({ editor }) => {
@@ -526,7 +559,7 @@
   }
 </script>
 
-<div class="tiptap-editor-host" class:focused={isFocused}>
+<div class="tiptap-editor-host" class:focused={isFocused} class:focus-mode={focusModeEnabled}>
   {#if showFormatToolbar}
     <FormatToolbar editor={editorInstance} {activeMarks} />
   {/if}
@@ -557,6 +590,11 @@
         >
         <span>Unsaved changes</span>
       {/if}
+    </div>
+  {/if}
+  {#if showWordCount && wordCount > 0}
+    <div class="word-count" role="status" aria-live="off">
+      {wordCount} {wordCount === 1 ? 'word' : 'words'}
     </div>
   {/if}
   {#if showSlashMenu}
@@ -635,6 +673,30 @@
   .tiptap-editor-host :global(.ProseMirror) {
     min-height: 22px;
     outline: none;
+  }
+
+  /* Focus mode (#168 Phase 3): dim all top-level blocks except the one with
+     cursor focus. The Focus extension adds .has-focus to the active block. */
+  .focus-mode :global(.ProseMirror > div:not(.has-focus)) {
+    opacity: 0.3;
+    transition: opacity 0.2s;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .focus-mode :global(.ProseMirror > div:not(.has-focus)) {
+      transition: none;
+    }
+  }
+
+  .word-count {
+    position: sticky;
+    bottom: 0;
+    float: right;
+    margin: 0.25rem 0;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--color-surface, #1a1d24) 90%, transparent);
+    color: var(--color-text-muted, #8b95a3);
+    font-size: 11px;
   }
 
   .meta-suggest {
