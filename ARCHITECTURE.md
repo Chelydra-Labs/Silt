@@ -817,12 +817,48 @@ Per-plugin load failures are collected and surfaced (PluginView shows a load-err
 7.2 v2 SDK Capability & Permission Model (#113)
 
 Every privileged v2 SDK binding (file I/O, network, OS integration, editor
-schema, rendered UI) is gated server-side by `App.requireGrant(pluginID,
-capability)`. Grants are per-vault, stored in `config.yaml` under
-`plugins.grants` (pluginID → capability → qualifier). First-use prompts the
-user (contextual, low-fatigue); Settings → Plugins shows requested vs.
-granted with revoke. First-party plugins are implicitly granted. `exec` is
-deferred until the trust/signing model matures.
+schema, rendered UI, content mutation) is gated server-side by
+`App.requireGrant(pluginID, capability)`. Grants are per-vault, stored in
+`config.yaml` under `plugins.grants` (pluginID → capability → qualifier).
+First-use prompts the user (contextual, low-fatigue); Settings → Plugins shows
+requested vs. granted with revoke. First-party plugins are implicitly granted.
+`exec` is deferred until the trust/signing model matures.
+
+Capabilities: `read-files`, `write-files`, `network`, `os-open`,
+`os-clipboard`, `os-notify`, `ui-surface`, `editor-schema`,
+`content-mutate` (#156 — gates block CRUD).
+
+**Binding identity (#151).** High-risk bindings (fetch, file write/delete,
+block CRUD) also validate a session token: the loader calls
+`RegisterPluginSession(pluginID)` at load time and the SDK closures capture the
+token. The Go side verifies `token ↔ pluginID` before `requireGrant` so a
+plugin cannot impersonate another by calling a raw binding with a different
+pluginID. This is a stepping stone; the full fix requires per-plugin isolated
+webviews (#152, deferred).
+
+**Registry-internal gates (#158).** The three frontend registries
+(slash-registry, surfaces, decorations) check `isGranted(pluginID, cap)` from a
+Go-provided grant cache — NOT from the plugin's self-declared manifest. A
+plugin importing `registerSlashCommand` directly still hits the gate.
+
+**Iframe CSP (#149).** Plugin UI surfaces (iframe srcdoc) carry a restrictive
+CSP: `connect-src 'none'` blocks direct fetch/XHR/WebSocket from inside the
+iframe. All network traffic routes through the postMessage bridge → `ctx.fetch`
+(SSRF-defended + audit-logged).
+
+**Rate limiting (#153).** `PluginFetch` is throttled by a per-plugin token-
+bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
+Buckets are evicted on uninstall.
+
+**Network audit log (#157).** `auditNetwork` appends to both the in-memory log
+(capped 500 entries) and the on-disk per-plugin `network.log`. On vault open,
+`seedNetworkAuditFromDisk` reads the on-disk logs to seed the in-memory log so
+entries survive restarts. No SQLite table (audit data is not reproducible from
+markdown; ARCHITECTURE §0 rule 4).
+
+**Runtime integrity (#161).** `Install` computes `sha256(index.js)` and writes
+it into `plugin.json` as `contentSha256`. The frontend loader verifies the hash
+via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
 
 7.3 v2 SDK Extended APIs
 
