@@ -69,6 +69,54 @@
     `<html><head><style>${themeCss()}</style></head><body>${surface.html}${bridgeScript}</body></html>`
   )
 
+  // Explicit allowlist of proxiable PluginContext method names. Anything not
+  // in this set is rejected, so a future non-gated host-internal function can
+  // never be invoked by a plugin surface (#117 hardening).
+  const allowedMethods = new Set([
+    'sqliteQuery',
+    'mutateBlock',
+    'updateBlockState',
+    'updateTaskMeta',
+    'getPluginSettings',
+    'getSetting',
+    'on',
+    'queryByTag',
+    'queryByDateRange',
+    'fullTextSearch',
+    'getBacklinks',
+    'getEmbeds',
+    'createBlock',
+    'deleteBlock',
+    'moveBlock',
+    'createPage',
+    'createSection',
+    'createNotebook',
+    'deletePage',
+    'renamePage',
+    'readFile',
+    'writeFile',
+    'deleteFile',
+    'listDir',
+    'notebookRoot',
+    'scratchDir',
+    'vaultScratchDir',
+    'resolveAsset',
+    'getNavigationTree',
+    'openInNativeHandler',
+    'openUrl',
+    'pickOpenFile',
+    'pickSaveFile',
+    'clipboardRead',
+    'clipboardWrite',
+    'notify',
+    'fetch',
+    'registerSlashCommand',
+    'registerSurface',
+    'addAttachment',
+    'openAttachment',
+    'deleteAttachment'
+  ])
+
   function handleRequest(ev: MessageEvent) {
     const msg = ev.data
     if (!msg || msg.__siltSurface !== 'request') return
@@ -76,19 +124,22 @@
     // sandbox attribute already prevents same-origin access).
     if (iframeEl && ev.source !== iframeEl.contentWindow) return
 
-    const method = ctxProxy[msg.method]
-    if (typeof method !== 'function') {
+    if (
+      !allowedMethods.has(msg.method) ||
+      typeof ctxProxy[msg.method] !== 'function'
+    ) {
       iframeEl?.contentWindow?.postMessage(
         {
           __siltSurface: 'response',
           seq: msg.seq,
           ok: false,
-          error: `Unknown or non-callable method: ${msg.method}`
+          error: `Blocked or unknown method: ${msg.method}`
         },
         '*'
       )
       return
     }
+    const method = ctxProxy[msg.method]
     Promise.resolve()
       .then(() => method(...(msg.args ?? [])))
       .then((result) => {

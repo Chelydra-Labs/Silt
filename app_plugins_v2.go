@@ -8,9 +8,12 @@ package main
 // the core editor (SPECS §8.3: "core feature decoupling").
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +25,7 @@ import (
 
 	"silt/backend/parser"
 	"silt/backend/plugins"
+	"silt/backend/vault"
 
 	"github.com/google/uuid"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -219,8 +223,18 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 		pagesByKey[key] = append(pagesByKey[key], r)
 	}
 
-	// 3. Apply per page.
-	for _, pageOps := range pagesByKey {
+	// Sort the page keys for deterministic cross-page ordering (#104 hardening).
+	// Without this, Go map iteration randomizes the order, and locOf (which
+	// reads a mutating DB) returns inconsistent results across runs.
+	pageKeys := make([]string, 0, len(pagesByKey))
+	for k := range pagesByKey {
+		pageKeys = append(pageKeys, k)
+	}
+	sort.Strings(pageKeys)
+
+	// 3. Apply per page (deterministic order).
+	for _, pk := range pageKeys {
+		pageOps := pagesByKey[pk]
 		first := pageOps[0]
 		blocks, err := a.FetchPageBlocks(first.notebook, first.section, first.page)
 		if err != nil {
@@ -252,14 +266,20 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
 		// For cross-page moves, remove the block from its source page too.
+		// Errors are NOT swallowed — a failed source-removal would leave the
+		// block duplicated, so we surface it (#104 hardening).
 		for _, r := range pageOps {
 			if r.op.Kind == "move" {
-				origSrc, origNb, origSec, origPg, _ := locOf(r.op.BlockID)
-				if origPg != "" && !(origNb == r.notebook && origSec == r.section && origPg == r.page) {
-					srcBlocks, _ := a.FetchPageBlocks(origNb, origSec, origPg)
+				_, origNb, origSec, origPg, ok := locOf(r.op.BlockID)
+				if ok && origPg != "" && !(origNb == r.notebook && origSec == r.section && origPg == r.page) {
+					srcBlocks, srcErr := a.FetchPageBlocks(origNb, origSec, origPg)
+					if srcErr != nil {
+						return fmt.Errorf("cross-page move: fetch source %s/%s/%s: %w", origNb, origSec, origPg, srcErr)
+					}
 					srcFiltered := removeByID(srcBlocks, r.op.BlockID)
-					_ = a.SaveFileBlocks(origNb, origSec, origPg, srcFiltered)
-					_ = origSrc // source resolved by SaveFileBlocks via name
+					if saveErr := a.SaveFileBlocks(origNb, origSec, origPg, srcFiltered); saveErr != nil {
+						return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", origNb, origSec, origPg, saveErr)
+					}
 				}
 			}
 		}
@@ -480,6 +500,33 @@ func (a *App) PluginScratchDir(pluginID, notebook string) (string, error) {
 	return dir, nil
 }
 
+// PluginVaultScratchDir returns (and lazily creates) a plugin's vault-scoped
+// scratch directory: `<vault>/.system/plugins/<pluginID>/data/` (stays in the
+// vault, for caches that should NOT travel with a notebook). Gated by
+// write-files (#108).
+func (a *App) PluginVaultScratchDir(pluginID string) (string, error) {
+	if err := a.requireGrant(pluginID, plugins.CapWriteFiles); err != nil {
+		return "", err
+	}
+	if a.vaultPath == "" {
+		return "", fmt.Errorf("vault not loaded")
+	}
+	dir := filepath.Join(a.vaultPath, ".system", "plugins", pluginID, "data")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create vault scratch dir: %w", err)
+	}
+	return dir, nil
+}
+
+// PluginResolveAsset resolves a relative attachment path against a notebook's
+// root and returns the absolute path (#108 path helper). Gated by read-files.
+func (a *App) PluginResolveAsset(pluginID, notebook, relPath string) (string, error) {
+	if err := a.requireGrant(pluginID, plugins.CapReadFiles); err != nil {
+		return "", err
+	}
+	return a.resolvePluginNotebookPath(notebook, relPath)
+}
+
 // resolvePluginNotebookPath resolves a relative path against a notebook's
 // actual root (in-vault or linked per #100) and enforces traversal containment.
 func (a *App) resolvePluginNotebookPath(notebook, relPath string) (string, error) {
@@ -620,6 +667,7 @@ func (a *App) PluginNotify(pluginID, title, body string) error {
 }
 
 // isSafeUrl reports whether url uses an allowed scheme (http/https/mailto).
+// Used by PluginOpenUrl (browser-open path).
 func isSafeUrl(rawURL string) bool {
 	u := strings.TrimSpace(rawURL)
 	if u == "" {
@@ -628,6 +676,77 @@ func isSafeUrl(rawURL string) bool {
 	lower := strings.ToLower(u)
 	for _, scheme := range []string{"https://", "http://", "mailto:"} {
 		if strings.HasPrefix(lower, scheme) {
+			return true
+		}
+	}
+	return false
+}
+
+// isSafeFetchUrl is the stricter check for PluginFetch: only http/https (no
+// mailto), and the resolved host must NOT be a loopback, link-local, or
+// private IP address (SSRF defense, #115).
+func isSafeFetchUrl(rawURL string) bool {
+	u := strings.TrimSpace(rawURL)
+	lower := strings.ToLower(u)
+	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
+		return false
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	return blockInternalHost(parsed.Host) == nil
+}
+
+// blockInternalHost returns an error if host resolves to (or is literally) a
+// loopback, link-local, private, or multicast address — the standard SSRF
+// defense so a granted plugin cannot reach internal services or cloud metadata.
+func blockInternalHost(host string) error {
+	// Strip port.
+	hostname := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostname = h
+	}
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return fmt.Errorf("empty host")
+	}
+	// Resolve and check every returned IP.
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		// If we can't resolve, err on the side of caution for literal IPs.
+		ips = []net.IP{net.ParseIP(hostname)}
+		if ips[0] == nil {
+			return fmt.Errorf("cannot resolve host %q", hostname)
+		}
+	}
+	for _, ip := range ips {
+		if ip == nil {
+			continue
+		}
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+			ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("host %s resolves to a blocked address %s", hostname, ip)
+		}
+		if isPrivateIP(ip) {
+			return fmt.Errorf("host %s resolves to a private address %s", hostname, ip)
+		}
+	}
+	return nil
+}
+
+// isPrivateIP reports whether ip is in an RFC-1918 private range (10/8,
+// 172.16/12, 192.168/16). net.IP.IsPrivate covers this on Go 1.17+, but
+// cloud metadata (169.254.169.254) is link-local and caught by the
+// IsLinkLocalUnicast check above.
+func isPrivateIP(ip net.IP) bool {
+	if ip.IsPrivate() {
+		return true
+	}
+	// Explicitly catch 169.254.x.x (cloud metadata endpoints) even if Go's
+	// IsPrivate doesn't (it's link-local, caught above, but belt + suspenders).
+	if v4 := ip.To4(); v4 != nil {
+		if v4[0] == 169 && v4[1] == 254 {
 			return true
 		}
 	}
@@ -743,7 +862,7 @@ func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchR
 	if input.URL == "" {
 		return PluginFetchResult{}, fmt.Errorf("url is required")
 	}
-	if !isSafeUrl(input.URL) {
+	if !isSafeFetchUrl(input.URL) {
 		return PluginFetchResult{}, fmt.Errorf("url scheme is not allowed (only http/https)")
 	}
 	method := strings.ToUpper(strings.TrimSpace(input.Method))
@@ -763,6 +882,13 @@ func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchR
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxPluginFetchRedirects {
 				return fmt.Errorf("too many redirects (max %d)", maxPluginFetchRedirects)
+			}
+			// Re-validate every redirect destination for scheme + SSRF (#115).
+			if !isSafeFetchUrl(req.URL.String()) {
+				return fmt.Errorf("redirect to blocked URL: %s", req.URL.String())
+			}
+			if err := blockInternalHost(req.URL.Host); err != nil {
+				return fmt.Errorf("redirect to internal host: %w", err)
 			}
 			return nil
 		},
@@ -845,19 +971,33 @@ func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
 		}
 		host = rest
 	}
-	networkAuditMu.Lock()
-	networkAudit = append(networkAudit, NetworkAuditEntry{
+	entry := NetworkAuditEntry{
 		Plugin: pluginID,
 		Host:   host,
 		Status: status,
 		Method: method,
 		At:     time.Now().Format(time.RFC3339),
-	})
-	// Bound the log to the last 500 entries so it does not grow unbounded.
+	}
+	networkAuditMu.Lock()
+	networkAudit = append(networkAudit, entry)
+	// Bound the in-memory log to the last 500 entries so it does not grow
+	// unbounded.
 	if len(networkAudit) > 500 {
 		networkAudit = networkAudit[len(networkAudit)-500:]
 	}
 	networkAuditMu.Unlock()
+	// Best-effort persist to a vault-scoped log file so the audit trail survives
+	// a restart (#115). The log is per-plugin so a user can inspect it.
+	if a.vaultPath != "" {
+		logPath := filepath.Join(a.vaultPath, ".system", "plugins", pluginID, "network.log")
+		line := fmt.Sprintf("%s %s %s %d %s\n", entry.At, entry.Method, entry.Host, entry.Status, pluginID)
+		_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
+		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err == nil {
+			_, _ = f.WriteString(line)
+			_ = f.Close()
+		}
+	}
 }
 
 // newUUID mints a UUIDv4 string. Wraps the existing uuid import so the v2
@@ -877,12 +1017,46 @@ func newUUID() string {
 // notebook root is resolved via #100 (in-vault or linked/external), so the
 // attachment travels with the notebook. NOT capability-gated: this is a
 // first-party plugin binding (silt-attachments is trusted).
+// maxAttachmentBytes bounds a single attachment copy so a plugin or user can't
+// exhaust disk by attaching a huge file (#101 hardening).
+const maxAttachmentBytes = 100 * 1024 * 1024 // 100 MB
+
+// blockedAttachmentExtensions are file types that are blocked from attachment
+// copy-in to prevent the attachment folder from becoming an executable
+// drop zone (#101 hardening).
+var blockedAttachmentExtensions = map[string]bool{
+	".exe": true, ".bat": true, ".cmd": true, ".com": true, ".scr": true,
+	".sh": true, ".msi": true, ".dll": true, ".app": true,
+}
+
 func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
 	if a.vaultPath == "" {
 		return "", fmt.Errorf("vault not loaded")
 	}
 	if srcPath == "" {
 		return "", fmt.Errorf("srcPath is required")
+	}
+	// Validate the source path: it must exist, be a regular file, and be under
+	// the user's control (inside the vault or picked from the OS dialog). We
+	// reject obvious system paths and enforce a size limit before reading.
+	absSrc, err := filepath.Abs(filepath.Clean(srcPath))
+	if err != nil {
+		return "", fmt.Errorf("invalid source path: %w", err)
+	}
+	srcInfo, err := os.Stat(absSrc)
+	if err != nil {
+		return "", fmt.Errorf("source file not found: %w", err)
+	}
+	if !srcInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("source is not a regular file")
+	}
+	if srcInfo.Size() > maxAttachmentBytes {
+		return "", fmt.Errorf("attachment is %d bytes, exceeds the %d-byte limit", srcInfo.Size(), maxAttachmentBytes)
+	}
+	// Filetype blocklist.
+	ext := strings.ToLower(filepath.Ext(absSrc))
+	if blockedAttachmentExtensions[ext] {
+		return "", fmt.Errorf("file type %q is blocked from attachments", ext)
 	}
 	sn := sanitizePathSegment(notebook)
 	if sn == "" {
@@ -895,12 +1069,12 @@ func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
 	}
 	attachmentsDir := filepath.Join(notebookDir, "attachments")
 
-	// Read the source file.
-	srcBytes, err := os.ReadFile(srcPath)
+	// Read the source file (bounded by the size check above).
+	srcBytes, err := os.ReadFile(absSrc)
 	if err != nil {
 		return "", fmt.Errorf("read source file: %w", err)
 	}
-	base := sanitizePathSegment(filepath.Base(srcPath))
+	base := sanitizePathSegment(filepath.Base(absSrc))
 	if base == "" {
 		base = "attachment"
 	}
@@ -914,8 +1088,8 @@ func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
 	// never resolve to the same path and clobber each other (the previous
 	// Stat-then-write loop had a TOCTOU window). The placeholder is filled by
 	// the atomic write below; the OS guarantees only one caller wins a name.
-	ext := filepath.Ext(base)
-	stem := strings.TrimSuffix(base, ext)
+	destExt := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, destExt)
 	destName := base
 	dest := filepath.Join(attachmentsDir, destName)
 	f, openErr := os.OpenFile(dest, os.O_CREATE|os.O_EXCL, 0o644)
@@ -923,7 +1097,7 @@ func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
 		if !os.IsExist(openErr) {
 			return "", fmt.Errorf("reserve attachment file: %w", openErr)
 		}
-		destName = fmt.Sprintf("%s-%d%s", stem, i, ext)
+		destName = fmt.Sprintf("%s-%d%s", stem, i, destExt)
 		dest = filepath.Join(attachmentsDir, destName)
 		f, openErr = os.OpenFile(dest, os.O_CREATE|os.O_EXCL, 0o644)
 	}
@@ -976,4 +1150,95 @@ func (a *App) DeleteAttachment(notebook, relPath string) error {
 		return err
 	}
 	return os.Remove(abs)
+}
+
+// =========================================================================
+// Distribution v2 (#111) — update checks + trusted publishers + downgrade
+// =========================================================================
+
+// CheckPluginUpdate fetches a plugin's manifest from its declared updateUrl
+// (if present) and returns whether a newer version is available (#111).
+func (a *App) CheckPluginUpdate(pluginID, currentVersion, updateUrl string) (PluginUpdateInfo, error) {
+	info := PluginUpdateInfo{PluginID: pluginID, CurrentVersion: currentVersion}
+	if updateUrl == "" {
+		return info, nil
+	}
+	if !isSafeFetchUrl(updateUrl) {
+		return info, fmt.Errorf("update URL is not a safe http(s) URL")
+	}
+	resp, err := http.Get(updateUrl)
+	if err != nil {
+		return info, fmt.Errorf("update check failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return info, fmt.Errorf("read update manifest: %w", err)
+	}
+	var manifest struct {
+		Version string `json:"version"`
+		URL     string `json:"url"`
+	}
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		return info, fmt.Errorf("parse update manifest: %w", err)
+	}
+	info.LatestVersion = manifest.Version
+	info.DownloadURL = manifest.URL
+	info.UpdateAvailable = versionLessThan(currentVersion, manifest.Version)
+	return info, nil
+}
+
+// PluginUpdateInfo is the result of an update check.
+type PluginUpdateInfo struct {
+	PluginID        string `json:"pluginId"`
+	CurrentVersion  string `json:"currentVersion"`
+	LatestVersion   string `json:"latestVersion"`
+	UpdateAvailable bool   `json:"updateAvailable"`
+	DownloadURL     string `json:"downloadUrl"`
+}
+
+// GetTrustedPublishers returns the user-global trusted-publishers list (#111).
+func (a *App) GetTrustedPublishers() ([]string, error) {
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		return []string{}, nil
+	}
+	if settings.TrustedPublishers == nil {
+		return []string{}, nil
+	}
+	return settings.TrustedPublishers, nil
+}
+
+// AddTrustedPublisher adds a publisher to the trusted list (#111).
+func (a *App) AddTrustedPublisher(publisher string) error {
+	if publisher == "" {
+		return fmt.Errorf("publisher is required")
+	}
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		return err
+	}
+	for _, p := range settings.TrustedPublishers {
+		if p == publisher {
+			return nil
+		}
+	}
+	settings.TrustedPublishers = append(settings.TrustedPublishers, publisher)
+	return vault.SaveSettings(settings)
+}
+
+// RemoveTrustedPublisher removes a publisher from the trusted list (#111).
+func (a *App) RemoveTrustedPublisher(publisher string) error {
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		return err
+	}
+	out := make([]string, 0, len(settings.TrustedPublishers))
+	for _, p := range settings.TrustedPublishers {
+		if p != publisher {
+			out = append(out, p)
+		}
+	}
+	settings.TrustedPublishers = out
+	return vault.SaveSettings(settings)
 }

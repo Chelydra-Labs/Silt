@@ -31,6 +31,11 @@ type AppSettings struct {
 	// An empty or unrecognized value normalizes to "dark", which matches the
 	// shipped dark-first behavior.
 	ThemeMode string `json:"theme_mode"`
+
+	// TrustedPublishers is the user-global list of plugin publishers whose
+	// signed plugins install without a warning (#111 distribution v2). Empty
+	// means all unsigned plugins install with a warning prompt.
+	TrustedPublishers []string `json:"trusted_publishers,omitempty"`
 }
 
 // ValidThemeMode reports whether mode is a recognized ThemeMode value.

@@ -30,7 +30,12 @@ import {
   PluginFetch,
   AddAttachment,
   OpenAttachment,
-  DeleteAttachment
+  DeleteAttachment,
+  PluginResolveAsset,
+  PluginVaultScratchDir,
+  ListNavigation,
+  GetNetworkAudit,
+  ClearNetworkAudit
 } from '../../wailsjs/go/main/App.js'
 import { getActiveLocation } from './location.svelte'
 import { subscribe } from './events'
@@ -229,7 +234,11 @@ export function makePluginContext(pluginID: string): PluginContext {
       PluginListDir(pluginID, notebook, relPath).then((r) => r ?? []),
     notebookRoot: (notebook) => PluginResolveNotebookRoot(pluginID, notebook),
     scratchDir: (notebook) => PluginScratchDir(pluginID, notebook),
-
+    vaultScratchDir: () => PluginVaultScratchDir(pluginID),
+    resolveAsset: (notebook, relPath) =>
+      PluginResolveAsset(pluginID, notebook, relPath),
+    getNavigationTree: () =>
+      ListNavigation().then((tree) => tree ?? { notebooks: [] }),
     // --- OS integration (#114) — capability-gated ---------------------------
     openInNativeHandler: (notebook, relPath) =>
       PluginOpenInNativeHandler(pluginID, notebook, relPath).then(() => true),

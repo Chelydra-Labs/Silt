@@ -85,7 +85,11 @@
           >
         {/if}
       </div>
-      {#if cmd.pluginID}
+      {#if cmd.shortcut}
+        <span class="text-[10px] text-text-muted select-none"
+          >{cmd.shortcut}</span
+        >
+      {:else if cmd.pluginID}
         <span class="text-[9px] text-text-muted select-none uppercase"
           >{cmd.pluginID}</span
         >

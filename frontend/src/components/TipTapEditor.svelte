@@ -27,6 +27,7 @@
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
   import { getSlashCommands } from '../lib/editor/slash-registry'
+  import { dispatch as dispatchPluginEvent } from '../plugins/events'
 
   interface Props {
     notebook: string
@@ -147,6 +148,26 @@
       detectSlashCommand()
       unsavedChanges = true
       triggerAutoSave()
+    },
+    onSelectionUpdate: ({ editor }) => {
+      // Emit selection:changed on the plugin event bus (#106/#110).
+      const { selection } = editor.state
+      const selFrom = selection.$from
+      // Attempt to read the block id at the selection anchor.
+      let blockId: string | undefined
+      try {
+        const parentAttrs = selFrom.parent.attrs
+        if (parentAttrs && parentAttrs.id) blockId = parentAttrs.id
+      } catch {
+        /* not in a block node */
+      }
+      // Emit selection:changed on the plugin event bus (#106/#110).
+      dispatchPluginEvent('selection:changed', {
+        notebook,
+        section,
+        page,
+        blockId
+      })
     },
     onFocus: () => {
       isFocused = true

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
   import SidebarSection from './SidebarSection.svelte'
+  import PluginSidebarPanels from './PluginSidebarPanels.svelte'
   import {
     ListNavigation,
     CreateNotebook,
@@ -994,6 +995,9 @@
       <span class="material-symbols-outlined text-[18px]">left_panel_close</span
       >
     </button>
+
+    <!-- Plugin sidebar panels (#117) -->
+    <PluginSidebarPanels />
   </div>
 </aside>
 

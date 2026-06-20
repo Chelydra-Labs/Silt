@@ -45,6 +45,9 @@ export const v2CtxStubs: Pick<
   | 'addAttachment'
   | 'openAttachment'
   | 'deleteAttachment'
+  | 'vaultScratchDir'
+  | 'resolveAsset'
+  | 'getNavigationTree'
 > = {
   queryByTag: () => Promise.resolve(emptyResult),
   queryByDateRange: () => Promise.resolve(emptyResult),
@@ -78,5 +81,8 @@ export const v2CtxStubs: Pick<
   registerSurface: () => () => {},
   addAttachment: () => Promise.resolve(''),
   openAttachment: () => Promise.resolve(true),
-  deleteAttachment: () => Promise.resolve(true)
+  deleteAttachment: () => Promise.resolve(true),
+  vaultScratchDir: () => Promise.resolve(''),
+  resolveAsset: () => Promise.resolve(''),
+  getNavigationTree: () => Promise.resolve({ notebooks: [] })
 }

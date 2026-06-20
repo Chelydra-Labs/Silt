@@ -11,13 +11,15 @@
     PickPluginArchive,
     RequestCapability,
     RevokeCapability,
-    GetGrantedCapabilities
+    GetGrantedCapabilities,
+    GetNetworkAudit
   } from '../../../wailsjs/go/main/App.js'
   import { loadPlugins, teardownPlugin } from '../../plugins/loader'
   import { firstPartyPlugins } from '../../plugins/registry'
   import { loadedPlugins } from '../../plugins/store.svelte'
   import { settings, saveConfig } from '../../settings/store.svelte'
   import SettingsForm from './SettingsForm.svelte'
+  import NetworkAuditViewer from './NetworkAuditViewer.svelte'
   import type { SettingSchema } from '../../plugins/sdk'
 
   interface Props {
@@ -399,7 +401,8 @@
     <div class="text-text-muted py-4 animate-pulse font-body-md">Loading…</div>
   {:else if cards.length === 0}
     <div class="text-text-muted py-4 font-body-md text-[13px]">
-      No plugins installed. First-party plugins (Agenda, Calendar) are bundled.
+      No plugins installed. First-party plugins (Agenda, Calendar, Kanban,
+      Attachments) are bundled.
     </div>
   {:else}
     <div class="space-y-2">
@@ -628,6 +631,17 @@
                     >arrow_forward</span
                   >
                 </button>
+              {/if}
+
+              {#if card.grantedCapabilities?.network}
+                <div>
+                  <div
+                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                  >
+                    Network activity
+                  </div>
+                  <NetworkAuditViewer pluginID={card.id} />
+                </div>
               {/if}
             </div>
           {/if}

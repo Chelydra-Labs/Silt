@@ -214,6 +214,12 @@ func (dw *DirectoryWatcher) AddRecursive(path string) error {
 			if strings.HasPrefix(name, ".") && name != "." {
 				return filepath.SkipDir
 			}
+			// Skip the attachments/ directory (#101): it holds binary assets,
+			// not markdown pages. Watching it wastes fds and could index stray
+			// .md files dropped there by the user.
+			if strings.EqualFold(name, "attachments") {
+				return filepath.SkipDir
+			}
 			if err := dw.watcher.Add(p); err != nil {
 				dw.failedMu.Lock()
 				dw.failedPaths = append(dw.failedPaths, fmt.Sprintf("%s: %v", p, err))

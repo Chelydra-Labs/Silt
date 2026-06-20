@@ -18,6 +18,8 @@ export interface SlashCommand {
   label: string
   description?: string
   icon?: string
+  /** Optional keyboard shortcut hint shown right-aligned (built-ins only). */
+  shortcut?: string
   /** The plugin id that registered this command, or undefined for built-ins. */
   pluginID?: string
   /**
@@ -83,29 +85,34 @@ registerSlashCommand({
   id: 'todo',
   label: 'Task',
   description: 'Create task checkbox',
-  icon: 'check_box'
+  icon: 'check_box',
+  shortcut: '[]'
 })
 registerSlashCommand({
   id: 'h1',
   label: 'Heading 1',
   description: 'Large section header',
-  icon: 'format_size'
+  icon: 'format_size',
+  shortcut: '#'
 })
 registerSlashCommand({
   id: 'today',
   label: 'Today',
   description: "Insert today's date",
-  icon: 'calendar_today'
+  icon: 'calendar_today',
+  shortcut: 'D'
 })
 registerSlashCommand({
   id: 'embed',
   label: 'Embed Block',
   description: 'Insert a block embed',
-  icon: 'link'
+  icon: 'link',
+  shortcut: 'E'
 })
 registerSlashCommand({
   id: 'template',
   label: 'Template',
   description: 'Insert a page template at cursor',
-  icon: 'content_copy'
+  icon: 'content_copy',
+  shortcut: 'T'
 })

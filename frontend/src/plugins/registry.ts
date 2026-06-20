@@ -42,7 +42,16 @@ registerPlugin({
     version: '1.0.0',
     author: 'Silt',
     description: 'Drag-and-drop task board (TODO / DOING / DONE).',
-    icon: 'view_kanban'
+    icon: 'view_kanban',
+    settings: [
+      {
+        key: 'default_col',
+        label: 'Default Column',
+        type: 'select',
+        options: ['TODO', 'DOING', 'DONE'],
+        default: 'TODO'
+      }
+    ]
   },
   component: Kanban,
   source: 'first-party'

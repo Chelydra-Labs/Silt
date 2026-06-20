@@ -4,7 +4,7 @@
   // UpdatePluginSetting (vault-scoped atomic write). Replaces the bespoke
   // read-only pre/JSON dump that each first-party plugin hand-rolled.
   import type { SettingSchema } from '../../plugins/sdk'
-  import { UpdatePluginSetting } from '../../../wailsjs/go/main/App.js'
+  import { updatePluginSetting } from '../../settings/store.svelte'
 
   interface Props {
     pluginID: string
@@ -42,7 +42,7 @@
         if (
           JSON.stringify(draft[field.key]) !== JSON.stringify(values[field.key])
         ) {
-          await UpdatePluginSetting(pluginID, field.key, draft[field.key])
+          await updatePluginSetting(pluginID, field.key, draft[field.key])
         }
       }
     } catch (e) {
@@ -54,6 +54,7 @@
 
   function revert() {
     draft = { ...values }
+    error = ''
   }
 
   function fieldLabel(t: string): string {
@@ -136,12 +137,46 @@
                 .filter(Boolean)
             }}
           />
-        {:else}
+        {:else if field.type === 'keymap'}
           <input
-            type={field.type === 'number' ? 'number' : 'text'}
+            type="text"
+            id="setting-{pluginID}-{field.key}"
+            class="bg-bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full font-mono"
+            placeholder="e.g. Ctrl+Shift+A"
+            bind:value={draft[field.key]}
+            onkeydown={(e) => {
+              // Capture the key combination and display it.
+              e.preventDefault()
+              const parts: string[] = []
+              if (e.ctrlKey) parts.push('Ctrl')
+              if (e.shiftKey) parts.push('Shift')
+              if (e.altKey) parts.push('Alt')
+              if (e.metaKey) parts.push('Meta')
+              const key = e.key
+              if (key && !['Control', 'Shift', 'Alt', 'Meta'].includes(key)) {
+                parts.push(key.length === 1 ? key.toUpperCase() : key)
+              }
+              if (parts.length > 0) draft[field.key] = parts.join('+')
+            }}
+          />
+        {:else if field.type === 'number'}
+          <input
+            type="number"
             id="setting-{pluginID}-{field.key}"
             class="bg-bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
             placeholder={fieldLabel(field.type)}
+            min={field.min}
+            max={field.max}
+            bind:value={draft[field.key]}
+          />
+        {:else}
+          <input
+            type="text"
+            id="setting-{pluginID}-{field.key}"
+            class="bg-bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
+            placeholder={fieldLabel(field.type)}
+            minlength={field.minLength}
+            maxlength={field.maxLength}
             bind:value={draft[field.key]}
           />
         {/if}

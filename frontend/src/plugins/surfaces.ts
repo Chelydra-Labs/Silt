@@ -9,7 +9,12 @@
 // (sidebar panel, modal, status-bar item). This module tracks active surfaces
 // and their cleanup.
 
-export type SurfaceKind = 'sidebar-panel' | 'modal' | 'status-bar-item'
+export type SurfaceKind =
+  | 'sidebar-panel'
+  | 'modal'
+  | 'status-bar-item'
+  | 'command-palette-entry'
+  | 'settings-panel'
 
 export interface PluginSurface {
   /** Unique surface id (<pluginID>:<surfaceId>). */

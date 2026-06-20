@@ -208,6 +208,17 @@ export interface PluginContext {
   notebookRoot: (notebook: string) => Promise<string>
   /** Get (and lazily create) this plugin's per-notebook scratch dir. Gated by write-files. */
   scratchDir: (notebook: string) => Promise<string>
+  /** Get (and lazily create) this plugin's vault-scoped scratch dir (caches). Gated by write-files. */
+  vaultScratchDir: () => Promise<string>
+  /** Resolve a relative asset path against a notebook root. Gated by read-files. */
+  resolveAsset: (notebook: string, relPath: string) => Promise<string>
+  /** Get the navigation tree (notebook > section > page). Read-only. */
+  getNavigationTree: () => Promise<{
+    notebooks: Array<{
+      name: string
+      sections: Array<{ name: string; pages: Array<{ name: string }> }>
+    }>
+  }>
 
   // --- OS integration (#114) — capability-gated ---------------------------
 
@@ -277,7 +288,12 @@ export interface PluginContext {
    */
   registerSurface: (surface: {
     id: string
-    kind: 'sidebar-panel' | 'modal' | 'status-bar-item'
+    kind:
+      | 'sidebar-panel'
+      | 'modal'
+      | 'status-bar-item'
+      | 'command-palette-entry'
+      | 'settings-panel'
     label: string
     icon?: string
     html: string
@@ -306,6 +322,7 @@ export type PluginEventName =
   | 'config:changed'
   | 'active-notebook:changed'
   | 'selection:changed'
+  | 'editor:save'
 
 /** Payload of the 'block:changed' event — mirrors Go parser.BlockChangedEvent. */
 export interface BlockChangedEvent {
@@ -339,6 +356,7 @@ export type PluginEventPayload<E extends PluginEventName> = {
   'config:changed': Record<string, unknown>
   'active-notebook:changed': ActiveNotebookChangedEvent
   'selection:changed': SelectionChangedEvent
+  'editor:save': ActiveNotebookChangedEvent
 }[E]
 
 /** A capability id from the v2 SDK capability taxonomy (#113). */
