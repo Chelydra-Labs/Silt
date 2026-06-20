@@ -217,6 +217,29 @@ export const SiltBlockKeymaps = Extension.create({
           return true
         }
         return false
+      },
+
+      // Strikethrough — the Strike extension uses Mod-Shift-s, but the
+      // standard Word/Notion binding is Mod-Shift-x. Register both (#168).
+      'Mod-Shift-x': () => {
+        this.editor.chain().focus().toggleStrike().run()
+        return true
+      },
+
+      // Link — no built-in shortcut. Toggle: if selection is linked, remove;
+      // otherwise prompt for a URL and apply (#168).
+      'Mod-k': () => {
+        const { selection } = this.editor.state
+        if (selection.empty) return false
+        if (this.editor.isActive('link')) {
+          this.editor.chain().focus().unsetLink().run()
+        } else {
+          const url = window.prompt('Enter URL:')
+          if (url) {
+            this.editor.chain().focus().toggleLink({ href: url }).run()
+          }
+        }
+        return true
       }
     }
   }

@@ -131,3 +131,17 @@ registerSlashCommand({
   icon: 'content_copy',
   shortcut: 'T'
 })
+
+// --- Inline formatting commands (#168) ------------------------------------
+// Metadata-only built-ins; the editor dispatches them by id via
+// handleSlashSelect. Each toggles its mark on the current selection.
+registerSlashCommand({ id: 'bold', label: 'Bold', description: 'Make the selection bold', icon: 'format_bold', shortcut: 'Ctrl+B' })
+registerSlashCommand({ id: 'italic', label: 'Italic', description: 'Make the selection italic', icon: 'format_italic', shortcut: 'Ctrl+I' })
+registerSlashCommand({ id: 'underline', label: 'Underline', description: 'Underline the selection', icon: 'format_underlined', shortcut: 'Ctrl+U' })
+registerSlashCommand({ id: 'strike', label: 'Strikethrough', description: 'Cross out the selection', icon: 'format_strikethrough', shortcut: 'Ctrl+Shift+X' })
+registerSlashCommand({ id: 'code', label: 'Inline code', description: 'Format as inline code', icon: 'code', shortcut: 'Ctrl+E' })
+registerSlashCommand({ id: 'highlight', label: 'Highlight', description: 'Highlight the selection', icon: 'highlight', shortcut: 'Ctrl+Shift+H' })
+registerSlashCommand({ id: 'subscript', label: 'Subscript', description: 'Lower the selection below the line', icon: 'subscript', shortcut: 'Ctrl+,' })
+registerSlashCommand({ id: 'superscript', label: 'Superscript', description: 'Raise the selection above the line', icon: 'superscript', shortcut: 'Ctrl+.' })
+registerSlashCommand({ id: 'link', label: 'Link', description: 'Add a hyperlink to the selection', icon: 'link', shortcut: 'Ctrl+K' })
+registerSlashCommand({ id: 'clear-formatting', label: 'Clear formatting', description: 'Remove all formatting from the selection', icon: 'format_clear', shortcut: 'Ctrl+\\' })

@@ -23,12 +23,30 @@
   } from '../lib/editor'
   import type { ParsedBlock, MetaKey, SuggestContext } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
-  import { settings } from '../settings/store.svelte'
+  import { settings, saveConfig } from '../settings/store.svelte'
   import { measureFrameBudget } from '../lib/perf/frame-budget'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
+  import FormatToolbar from './editor/FormatToolbar.svelte'
+  import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
+  import SelectionBubble from './editor/SelectionBubble.svelte'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
+
+  // Map of slash command ids to their mark type (#168). 'clear' is special
+  // (strips all marks); 'link' opens a URL prompt.
+  const FORMAT_COMMANDS: Record<string, string> = {
+    bold: 'bold',
+    italic: 'italic',
+    underline: 'underline',
+    strike: 'strike',
+    code: 'code',
+    highlight: 'highlight',
+    subscript: 'subscript',
+    superscript: 'superscript',
+    link: 'link',
+    'clear-formatting': 'clear'
+  }
 
   interface Props {
     notebook: string
@@ -52,7 +70,7 @@
     onUpdate
   }: Props = $props()
 
-  let editorInstance: Editor | null = null
+  let editorInstance = $state<Editor | null>(null)
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null
   let hasFocusLock = false
@@ -60,6 +78,37 @@
   let suppressUpdate = false
   let showSlashMenu = $state(false)
   let showTemplatePicker = $state(false)
+
+  // Active inline marks in the current selection (#168). Updated on every
+  // selection change so the FormatToolbar buttons reflect aria-pressed state.
+  const ALL_MARKS = ['bold', 'italic', 'underline', 'strike', 'code', 'highlight', 'subscript', 'superscript', 'link']
+  let activeMarks = $state<Set<string>>(new Set())
+
+  // Selection bubble state (#168): tracks whether the selection is non-
+  // collapsed and the screen coords for positioning the floating bubble.
+  let selectionEmpty = $state(true)
+  let selectionCoords = $state<{ left: number; top: number; bottom: number } | null>(null)
+
+  // show_format_toolbar config (default true; *bool on Go side, nil = true).
+  let showFormatToolbar = $derived(
+    (settings.config?.ui as unknown as Record<string, unknown> | undefined)?.show_format_toolbar !== false
+  )
+
+  // First-run tip: dismissed when 'formatting_tip_v1' is in dismissed_tips.
+  let formatTipDismissed = $derived(
+    ((settings.config?.ui as unknown as Record<string, unknown> | undefined)?.dismissed_tips as string[] | undefined)?.includes('formatting_tip_v1') ?? false
+  )
+
+  function dismissFormatTip(): void {
+    const cfg = settings.config
+    if (!cfg) return
+    const ui = cfg.ui as unknown as Record<string, unknown>
+    const tips = (ui.dismissed_tips as string[] | undefined) ?? []
+    if (!tips.includes('formatting_tip_v1')) {
+      ui.dismissed_tips = [...tips, 'formatting_tip_v1']
+      void saveConfig(cfg)
+    }
+  }
 
   // --- Task metadata suggest (%-autocomplete) ------------------------------
   // `metaPopup` is null when the popup is closed. While open it carries the
@@ -156,8 +205,31 @@
       triggerAutoSave()
     },
     onSelectionUpdate: ({ editor }) => {
-      // Emit selection:changed on the plugin event bus (#106/#110).
+      // Track active marks for the FormatToolbar's aria-pressed state (#168).
+      const marks = new Set<string>()
+      for (const m of ALL_MARKS) {
+        if (editor.isActive(m)) marks.add(m)
+      }
+      activeMarks = marks
+      // Track selection state for the SelectionBubble (#168).
       const { selection } = editor.state
+      selectionEmpty = selection.empty
+      if (!selection.empty && !editor.isDestroyed) {
+        try {
+          const start = editor.view.coordsAtPos(selection.from)
+          const end = editor.view.coordsAtPos(selection.to)
+          selectionCoords = {
+            left: (start.left + end.left) / 2,
+            top: Math.min(start.top, end.top),
+            bottom: Math.max(start.bottom, end.bottom)
+          }
+        } catch {
+          selectionCoords = null
+        }
+      } else {
+        selectionCoords = null
+      }
+      // Emit selection:changed on the plugin event bus (#106/#110).
       const selFrom = selection.$from
       // Attempt to read the block id at the selection anchor.
       let blockId: string | undefined
@@ -349,6 +421,19 @@
       // blocks are inserted at the cursor position (ARCHITECTURE §5.1 — the
       // UniqueBlockIds extension mints fresh UUIDs for the inserted nodes).
       showTemplatePicker = true
+    } else if (FORMAT_COMMANDS[commandId]) {
+      // Inline formatting slash commands (#168). Each toggles its mark.
+      const mark = FORMAT_COMMANDS[commandId]
+      if (mark === 'link') {
+        if (!editorInstance.state.selection.empty) {
+          const url = window.prompt('Enter URL:')
+          if (url) editorInstance.chain().focus().toggleLink({ href: url }).run()
+        }
+      } else if (mark === 'clear') {
+        editorInstance.chain().focus().unsetAllMarks().run()
+      } else {
+        editorInstance.chain().focus().toggleMark(mark).run()
+      }
     } else {
       // v2 SDK plugin-registered slash command (#110): look up the command in
       // the registry and invoke its onSelect handler with the live editor +
@@ -442,6 +527,16 @@
 </script>
 
 <div class="tiptap-editor-host" class:focused={isFocused}>
+  {#if showFormatToolbar}
+    <FormatToolbar editor={editorInstance} {activeMarks} />
+  {/if}
+  <FormattingFirstRunTip dismissed={formatTipDismissed} onDismiss={dismissFormatTip} />
+  <SelectionBubble
+    editor={editorInstance}
+    {activeMarks}
+    {selectionEmpty}
+    {selectionCoords}
+  />
   {#if editorStore}
     <EditorContent editor={$editorStore} />
   {/if}

@@ -353,6 +353,21 @@
       // own keydown handler; cycle_view_layout is global (it changes the
       // main view, not anything inside the contenteditable).
       const hotkeys = settings.config?.hotkeys ?? {}
+
+      // If the editor (ProseMirror contenteditable) is focused, skip global
+      // bindings that collide with editor format shortcuts (#168). The main
+      // conflict is Ctrl+B (toggle_sidebar vs format_bold). ProseMirror
+      // handles format_* shortcuts inside the contenteditable; the global
+      // handler must not also fire.
+      const target = e.target as HTMLElement | null
+      if (target?.closest('.ProseMirror')) {
+        for (const [action, binding] of Object.entries(hotkeys)) {
+          if (action.startsWith('format_') && matchHotkey(e, binding)) {
+            return // Let ProseMirror handle the format shortcut
+          }
+        }
+      }
+
       if (matchHotkey(e, hotkeys.open_search)) {
         e.preventDefault()
         showSearch = !showSearch
