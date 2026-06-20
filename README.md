@@ -2,6 +2,8 @@
 
 > Capture the flow. Map the connections. Let your thoughts settle.
 
+*A [Chelydra Labs](https://chelydra.dev) project.*
+
 Silt is a simple, super-fast, and lightweight note-taking app designed to capture your stream-of-consciousness thoughts and map them to one another. Like silt carried by water, your daily notes are fleeting deposits that slowly settle, accumulate, and connect—ultimately building a fertile, structured foundation of knowledge.
 
 
