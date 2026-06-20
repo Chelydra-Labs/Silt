@@ -45,6 +45,11 @@ const (
 	// CapEditorSchema — contribute slash commands, custom embed-block views,
 	// and decorations to the TipTap editor.
 	CapEditorSchema Capability = "editor-schema"
+	// CapContentMutate — create / delete / move blocks across the vault via the
+	// plugin content CRUD API. Mirrors the implicit right the core editor has
+	// always had, but gates it for plugins so a zero-capability third-party
+	// plugin cannot mutate content (#156).
+	CapContentMutate Capability = "content-mutate"
 )
 
 // KnownCapabilities is the set of capabilities recognized by this version of
@@ -53,14 +58,15 @@ const (
 // enlarge its rights via typos or future names). "exec" is intentionally
 // absent — deferred until signing/trust lands (#111).
 var KnownCapabilities = map[Capability]bool{
-	CapReadFiles:    true,
-	CapWriteFiles:   true,
-	CapNetwork:      true,
-	CapOSOpen:       true,
-	CapOSClipboard:  true,
-	CapOSNotify:     true,
-	CapUISurface:    true,
-	CapEditorSchema: true,
+	CapReadFiles:     true,
+	CapWriteFiles:    true,
+	CapNetwork:       true,
+	CapOSOpen:        true,
+	CapOSClipboard:   true,
+	CapOSNotify:      true,
+	CapUISurface:     true,
+	CapEditorSchema:  true,
+	CapContentMutate: true,
 }
 
 // Qualifier refines a capability grant's scope. The default/whole-scope

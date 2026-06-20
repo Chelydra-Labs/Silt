@@ -46,7 +46,7 @@ func TestPluginCreateBlock_InsertsAndPersists(t *testing.T) {
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] existing task <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
 
-	id, err := app.PluginCreateBlock("", notebook, section, page, "TASK", "new plugin task")
+	id, err := app.PluginCreateBlock("silt-kanban", "", notebook, section, page, "TASK", "new plugin task")
 	if err != nil {
 		t.Fatalf("PluginCreateBlock: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestPluginDeleteBlock_RemovesBlock(t *testing.T) {
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] keep <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n- [ ] delete me <!-- id: " + target + " -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
 
-	if err := app.PluginDeleteBlock(target); err != nil {
+	if err := app.PluginDeleteBlock("silt-kanban", target); err != nil {
 		t.Fatalf("PluginDeleteBlock: %v", err)
 	}
 	blocks, _ := app.FetchPageBlocks(notebook, section, page)
@@ -102,7 +102,7 @@ func TestPluginMoveBlock_ReordersInPage(t *testing.T) {
 
 	// Move the second block after the first — no-op position, but verifies the
 	// path does not error and preserves both blocks.
-	if err := app.PluginMoveBlock(mover, first, "", "", ""); err != nil {
+	if err := app.PluginMoveBlock("silt-kanban", mover, first, "", "", ""); err != nil {
 		t.Fatalf("PluginMoveBlock: %v", err)
 	}
 	blocks, _ := app.FetchPageBlocks(notebook, section, page)
@@ -134,7 +134,7 @@ func TestPluginMoveBlock_CrossPageInsertsInTarget(t *testing.T) {
 	writeAndIndexFile(t, app, dstPath, dstContent, notebook, section, dstPage)
 
 	// Move blockA from Source to Dest (no afterID → append).
-	if err := app.PluginMoveBlock(blockA, "", notebook, section, dstPage); err != nil {
+	if err := app.PluginMoveBlock("silt-kanban", blockA, "", notebook, section, dstPage); err != nil {
 		t.Fatalf("PluginMoveBlock cross-page: %v", err)
 	}
 
@@ -174,9 +174,96 @@ func TestPluginMoveBlock_CrossPageInsertsInTarget(t *testing.T) {
 // PluginCreateBlock rejects an invalid block type.
 func TestPluginCreateBlock_RejectsInvalidType(t *testing.T) {
 	app := newTestApp(t)
-	_, err := app.PluginCreateBlock("", "Work", "", "Daily", "BOGUS", "text")
+	_, err := app.PluginCreateBlock("silt-kanban", "", "Work", "", "Daily", "BOGUS", "text")
 	if err == nil {
 		t.Fatal("expected error for invalid block type")
+	}
+}
+
+// =========================================================================
+// Content-mutate capability gate (#156)
+// =========================================================================
+
+// PluginCreateBlock is denied for a third-party plugin without content-mutate.
+func TestPluginCreateBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "Work", "Journal", "Daily"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] existing <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
+	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+
+	_, err := app.PluginCreateBlock("third-party", "", notebook, section, page, "TASK", "text")
+	if err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+}
+
+// PluginCreateBlock succeeds for a third-party plugin WITH content-mutate.
+func TestPluginCreateBlock_SucceedsWithContentMutateGrant(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "Work", "Journal", "Daily"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] existing <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
+	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+
+	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	id, err := app.PluginCreateBlock("third-party", "", notebook, section, page, "TASK", "granted task")
+	if err != nil {
+		t.Fatalf("PluginCreateBlock with grant: %v", err)
+	}
+	if !looksLikeUUID(id) {
+		t.Fatalf("returned id %q is not a UUID", id)
+	}
+}
+
+// PluginDeleteBlock is denied without content-mutate.
+func TestPluginDeleteBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.PluginDeleteBlock("third-party", "some-uuid"); err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+}
+
+// PluginMoveBlock is denied without content-mutate.
+func TestPluginMoveBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.PluginMoveBlock("third-party", "some-uuid", "", "", "", ""); err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+}
+
+// PluginApplyBlocks is denied without content-mutate.
+func TestPluginApplyBlocks_DeniedWithoutContentMutateGrant(t *testing.T) {
+	app := newTestApp(t)
+	ops := []PluginCreateBlockOp{{Kind: "delete", BlockID: "some-uuid"}}
+	if err := app.PluginApplyBlocks("third-party", ops); err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+}
+
+// =========================================================================
+// Surface registration capability gate (#154)
+// =========================================================================
+
+// PluginRegisterSurface is denied without ui-surface.
+func TestPluginRegisterSurface_DeniedWithoutUISurfaceGrant(t *testing.T) {
+	app := newTestApp(t)
+	err := app.PluginRegisterSurface("third-party", "panel1", "sidebar-panel", "My Panel")
+	if err == nil {
+		t.Fatal("expected capability denial without ui-surface grant")
+	}
+}
+
+// PluginRegisterSurface succeeds with ui-surface.
+func TestPluginRegisterSurface_SucceedsWithUISurfaceGrant(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.RequestCapability("third-party", string(plugins.CapUISurface), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if err := app.PluginRegisterSurface("third-party", "panel1", "sidebar-panel", "My Panel"); err != nil {
+		t.Fatalf("PluginRegisterSurface with grant: %v", err)
 	}
 }
 
@@ -653,11 +740,11 @@ func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			err1 = app.PluginMoveBlock(blockA, "", notebook, section, dstPage1)
+			err1 = app.PluginMoveBlock("silt-kanban", blockA, "", notebook, section, dstPage1)
 		}()
 		go func() {
 			defer wg.Done()
-			err2 = app.PluginMoveBlock(blockB, "", notebook, section, dstPage2)
+			err2 = app.PluginMoveBlock("silt-kanban", blockB, "", notebook, section, dstPage2)
 		}()
 		wg.Wait()
 

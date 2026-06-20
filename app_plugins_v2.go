@@ -54,7 +54,11 @@ type PluginCreateBlockOp struct {
 // TASK, NOTE, or HEADER. The new block's UUID is the pre-minted NewID carried
 // in the op so the caller gets back the exact id that lands on disk.
 // Returns the new block's UUID.
-func (a *App) PluginCreateBlock(afterID, notebook, section, page, blockType, text string) (string, error) {
+// Gated by content-mutate (#156).
+func (a *App) PluginCreateBlock(pluginID, afterID, notebook, section, page, blockType, text string) (string, error) {
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return "", err
+	}
 	if a.db == nil {
 		return "", fmt.Errorf("vault database not loaded")
 	}
@@ -84,7 +88,11 @@ func (a *App) PluginCreateBlock(afterID, notebook, section, page, blockType, tex
 }
 
 // PluginDeleteBlock removes a block by UUID from its source file and re-indexes.
-func (a *App) PluginDeleteBlock(blockID string) error {
+// Gated by content-mutate (#156).
+func (a *App) PluginDeleteBlock(pluginID, blockID string) error {
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return err
+	}
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -97,7 +105,11 @@ func (a *App) PluginDeleteBlock(blockID string) error {
 // PluginMoveBlock moves a block within its page (after afterID) or to another
 // page (notebook/section/page). When afterID is empty the block goes to the end
 // of the target page.
-func (a *App) PluginMoveBlock(blockID, afterID, notebook, section, page string) error {
+// Gated by content-mutate (#156).
+func (a *App) PluginMoveBlock(pluginID, blockID, afterID, notebook, section, page string) error {
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return err
+	}
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -117,7 +129,11 @@ func (a *App) PluginMoveBlock(blockID, afterID, notebook, section, page string) 
 // PluginApplyBlocks applies a batch of create/delete/move ops, coalescing per-
 // page writes into a single SaveFileBlocks + re-index pass so a bulk op does
 // not thrash the WAL with one rewrite per block (#104).
-func (a *App) PluginApplyBlocks(ops []PluginCreateBlockOp) error {
+// Gated by content-mutate (#156).
+func (a *App) PluginApplyBlocks(pluginID string, ops []PluginCreateBlockOp) error {
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return err
+	}
 	if a.db == nil {
 		return fmt.Errorf("vault database not loaded")
 	}
@@ -410,6 +426,15 @@ func moveWithin(blocks []parser.ParsedBlock, id, afterID string) []parser.Parsed
 // declared notebook scope). Returns the resolved date string.
 func (a *App) PluginCreatePage(notebook, section, page, dateStr string) (string, error) {
 	return a.CreatePage(notebook, section, page, dateStr)
+}
+
+// PluginRegisterSurface is the Go-side capability gate for plugin UI surface
+// registration (#154). A plugin without the ui-surface grant gets a
+// CapabilityDeniedError here, before the frontend registry adds the surface.
+// The frontend registerSurface SDK method calls this first; only on success
+// does it add the surface to the frontend surfaces map.
+func (a *App) PluginRegisterSurface(pluginID, surfaceID, kind, label string) error {
+	return a.requireGrant(pluginID, plugins.CapUISurface)
 }
 
 // PluginCreateSection wraps the core CreateSection for the SDK.

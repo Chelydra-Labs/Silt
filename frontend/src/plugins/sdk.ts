@@ -145,7 +145,7 @@ export interface PluginContext {
 
   /**
    * Block CRUD (#104). These reuse the same atomic-write + re-index path as
-   * the core editor (no capability grant — consistent with mutateBlock).
+   * the core editor. Gated by the content-mutate capability (#156).
    * createBlock returns the new block's UUID.
    */
   createBlock: (opts: {
@@ -385,6 +385,7 @@ export type Capability =
   | 'os-notify'
   | 'ui-surface'
   | 'editor-schema'
+  | 'content-mutate'
 
 /** A capability scope qualifier (#113). 'granted' is the default whole-scope. */
 export type CapabilityQualifier = 'granted' | 'notebook' | 'vault'

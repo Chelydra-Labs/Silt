@@ -28,6 +28,7 @@ import {
   PluginClipboardWriteText,
   PluginNotify,
   PluginFetch,
+  PluginRegisterSurface,
   AddAttachment,
   OpenAttachment,
   DeleteAttachment,
@@ -193,9 +194,11 @@ export function makePluginContext(pluginID: string): PluginContext {
         ['%{{embed:' + id + '}}%']
       ),
 
-    // --- Block CRUD (#104) — same atomic-write path as mutateBlock ----------
+    // --- Block CRUD (#104) — gated by content-mutate (#156) -----------------
+    // Same atomic-write path as mutateBlock.
     createBlock: (opts) =>
       PluginCreateBlock(
+        pluginID,
         opts.after ?? '',
         opts.notebook ?? '',
         opts.section ?? '',
@@ -203,9 +206,10 @@ export function makePluginContext(pluginID: string): PluginContext {
         opts.type,
         opts.text
       ),
-    deleteBlock: (uuid) => PluginDeleteBlock(uuid).then(() => true),
+    deleteBlock: (uuid) => PluginDeleteBlock(pluginID, uuid).then(() => true),
     moveBlock: (uuid, opts) =>
       PluginMoveBlock(
+        pluginID,
         uuid,
         opts.after ?? '',
         opts.notebook ?? '',
@@ -314,21 +318,36 @@ export function makePluginContext(pluginID: string): PluginContext {
       return registerDecorationProvider(id, pluginID, provider as any)
     },
 
-    // --- Rendered UI surfaces (#117) — capability-gated --------------------
+    // --- Rendered UI surfaces (#117) — capability-gated (#154 Go-side gate) -
     registerSurface: (surface) => {
-      // The capability check is advisory here (the surface only renders if the
-      // host mounts it); the Go side re-checks on any privileged call the
-      // surface makes through the bridge.
+      // The Go-side gate is the enforcement point (#154). The frontend
+      // registry adds the surface only after Go approves. The capability
+      // check is ALSO mirrored inside surfaces.ts (Phase 2 / #158) for
+      // defense in depth.
       const id = `${pluginID}:${surface.id}`
-      registerSurface({
-        id,
-        pluginID,
-        kind: surface.kind,
-        label: surface.label,
-        icon: surface.icon,
-        html: surface.html
-      })
-      return () => unregisterSurface(id)
+      let cleanup: (() => void) | null = null
+      PluginRegisterSurface(pluginID, surface.id, surface.kind, surface.label)
+        .then(() => {
+          cleanup = registerSurface({
+            id,
+            pluginID,
+            kind: surface.kind,
+            label: surface.label,
+            icon: surface.icon,
+            html: surface.html
+          })
+        })
+        .catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[silt] plugin ${pluginID} surface "${surface.id}" registration denied:`,
+            err
+          )
+        })
+      return () => {
+        cleanup?.()
+        unregisterSurface(id)
+      }
     },
 
     // --- Attachments (#101) ------------------------------------------------
