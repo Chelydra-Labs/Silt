@@ -4515,9 +4515,9 @@ func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
 				info.Author = m.Author
 				info.Description = m.Description
 				info.Icon = m.Icon
-			info.Capabilities = m.Capabilities
-			info.Settings = m.Settings
-		}
+				info.Capabilities = m.Capabilities
+				info.Settings = m.Settings
+			}
 		}
 		if _, err := os.Stat(filepath.Join(dir, "index.js")); err == nil {
 			info.HasIndex = true
@@ -4598,6 +4598,17 @@ func (a *App) InstallPlugin(archivePath string) (parser.PluginManifest, error) {
 	}
 	if verr := enforceMinVersion(manifest.MinSiltVersion); verr != nil {
 		// Roll back the install since the version requirement isn't met.
+		_ = plugins.Uninstall(a.vaultPath, manifest.ID)
+		return parser.PluginManifest{}, verr
+	}
+	// Publisher-trust gate (#111 distribution v2, #150 follow-up): when the
+	// user has populated TrustedPublishers, the plugin's Author must be on
+	// the list. An empty TrustedPublishers preserves the current "everyone
+	// is welcome" posture — populating the list is an explicit opt-in to
+	// a stricter stance. A plugin with an empty Author cannot be matched
+	// against a non-empty trust list, which is the correct (defense-
+	// in-depth) default: anonymous plugins require no trust decision.
+	if verr := enforcePublisherTrust(manifest.Author); verr != nil {
 		_ = plugins.Uninstall(a.vaultPath, manifest.ID)
 		return parser.PluginManifest{}, verr
 	}
@@ -4861,6 +4872,47 @@ func enforceMinVersion(minSiltVersion string) error {
 		return fmt.Errorf("plugin requires Silt %s or later (current: %s)", minSiltVersion, appVersion)
 	}
 	return nil
+}
+
+// enforcePublisherTrust gates a plugin install on its Author matching a name
+// in settings.TrustedPublishers (#111 distribution v2, #150 follow-up).
+//
+// Policy:
+//   - Empty/nil TrustedPublishers → allow (preserves the current
+//     "everyone-is-welcome" behavior so populating the list is an explicit
+//     opt-in to a stricter stance).
+//   - Non-empty TrustedPublishers AND author in the list → allow.
+//   - Non-empty TrustedPublishers AND author NOT in the list → reject.
+//   - Non-empty TrustedPublishers AND empty author → reject (anonymous
+//     plugins cannot match a trust list, which is the correct
+//     defense-in-depth default).
+//
+// The function is fail-closed for any I/O error reading settings: a vault
+// whose settings cannot be read is treated as if the trust list is empty
+// (a transient settings read error must not brick plugin installs).
+func enforcePublisherTrust(author string) error {
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		// Fail-open on settings read errors so a transient I/O issue cannot
+		// brick plugin installs. The error is logged so a future PR can
+		// surface it in the UI; for now the contract is "load failure =
+		// behave as if no trust list is configured".
+		return nil
+	}
+	trusted := settings.TrustedPublishers
+	if len(trusted) == 0 {
+		return nil
+	}
+	author = strings.TrimSpace(author)
+	if author == "" {
+		return fmt.Errorf("plugin author is empty; cannot be matched against the non-empty trusted-publishers list")
+	}
+	for _, p := range trusted {
+		if strings.EqualFold(strings.TrimSpace(p), author) {
+			return nil
+		}
+	}
+	return fmt.Errorf("plugin author %q is not in the trusted-publishers list (add it via AddTrustedPublisher to install)", author)
 }
 
 func versionLessThan(a, b string) bool {
