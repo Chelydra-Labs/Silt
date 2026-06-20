@@ -591,8 +591,11 @@ func isPluginScratchRelPath(pluginID, relPath string) bool {
 }
 
 // pluginScratchSizeBytes sums the on-disk byte count across every scratch
-// directory the plugin owns (per-notebook + vault). Walks the relevant trees
-// directly so a stale cumulative counter cannot drift out of sync with disk.
+// directory the plugin owns (per-notebook + vault + linked notebooks). Walks
+// the relevant trees directly so a stale cumulative counter cannot drift out
+// of sync with disk. Linked notebook roots are enumerated via cfg.LinkedNotebooks
+// (#159) so a plugin cannot bypass the cap by writing into a linked notebook's
+// scratch dir.
 func pluginScratchSizeBytes(a *App, pluginID string) (int64, error) {
 	var total int64
 	// Vault scratch dir lives directly under the vault root.
@@ -623,6 +626,21 @@ func pluginScratchSizeBytes(a *App, pluginID string) (int64, error) {
 			total += n
 		}
 	}
+	// Linked notebook scratch dirs: each linked root is a notebook whose
+	// scratch dir lives at <linkedRoot>/.system/plugins/<pluginID>/data/.
+	// Without this, a plugin can bypass the cap by writing into a linked
+	// notebook's scratch dir (#159).
+	a.configMu.RLock()
+	for _, ln := range a.cfg.LinkedNotebooks {
+		linkedDir := filepath.Join(ln.RootPath, ".system", "plugins", pluginID, "data")
+		n, err := dirSizeUnder(linkedDir)
+		if err != nil {
+			a.configMu.RUnlock()
+			return 0, err
+		}
+		total += n
+	}
+	a.configMu.RUnlock()
 	return total, nil
 }
 

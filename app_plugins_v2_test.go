@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"silt/backend/config"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 )
@@ -665,6 +666,86 @@ func TestPluginWriteFile_ScratchCapAccumulatesByActualDiskUsage(t *testing.T) {
 	}
 	if used < 3*1024*1024 {
 		t.Errorf("scratch usage = %d, want >= 3 MB", used)
+	}
+}
+
+// pluginScratchSizeBytes counts linked notebook roots so a write-files plugin
+// cannot bypass the cap by writing into a linked notebook's scratch dir (#159).
+func TestPluginScratchSizeBytes_CountsLinkedNotebooks(t *testing.T) {
+	app := newTestApp(t)
+
+	// Create a linked notebook root OUTSIDE the vault.
+	linkedRoot := t.TempDir()
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = append(app.cfg.LinkedNotebooks, config.LinkedNotebook{
+		ID: "test-linked", RootPath: linkedRoot, DisplayName: "Linked",
+	})
+	app.configMu.Unlock()
+
+	// Write a file into the linked notebook's plugin scratch dir.
+	linkedScratch := filepath.Join(linkedRoot, ".system", "plugins", "p", "data")
+	if err := os.MkdirAll(linkedScratch, 0o755); err != nil {
+		t.Fatalf("mkdir linked scratch: %v", err)
+	}
+	data := make([]byte, 512*1024) // 512 KB
+	if err := os.WriteFile(filepath.Join(linkedScratch, "linked.bin"), data, 0o644); err != nil {
+		t.Fatalf("write linked scratch: %v", err)
+	}
+
+	// The linked scratch bytes must be counted.
+	used, err := pluginScratchSizeBytes(app, "p")
+	if err != nil {
+		t.Fatalf("pluginScratchSizeBytes: %v", err)
+	}
+	if used < 512*1024 {
+		t.Errorf("scratch usage = %d, want >= 512 KB (linked notebook counted)", used)
+	}
+}
+
+// Writing past the cap INTO a linked notebook root is rejected (#159).
+func TestPluginWriteFile_LinkedScratchCapRejected(t *testing.T) {
+	orig := maxPluginScratchBytes
+	maxPluginScratchBytes = 1 * 1024 * 1024 // 1 MB
+	t.Cleanup(func() { maxPluginScratchBytes = orig })
+
+	app := newTestApp(t)
+	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
+
+	// Create a linked notebook root.
+	linkedRoot := t.TempDir()
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = append(app.cfg.LinkedNotebooks, config.LinkedNotebook{
+		ID: "cap-linked", RootPath: linkedRoot, DisplayName: "CapLinked",
+	})
+	app.configMu.Unlock()
+
+	// Write 900 KB to the vault scratch (fits under 1 MB).
+	first := make([]byte, 900*1024)
+	if err := app.PluginWriteFile("p", "Work", ".system/plugins/p/data/vault.bin", first); err != nil {
+		t.Fatalf("vault scratch write: %v", err)
+	}
+
+	// Pre-populate the linked notebook scratch with 200 KB (simulating a
+	// prior write that went through the linked notebook path).
+	linkedScratch := filepath.Join(linkedRoot, ".system", "plugins", "p", "data")
+	if err := os.MkdirAll(linkedScratch, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(linkedScratch, "preexisting.bin"), make([]byte, 200*1024), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Now a write to the linked notebook scratch should be rejected because
+	// cumulative (900 KB vault + 200 KB linked + new write) exceeds 1 MB.
+	// We write directly through PluginWriteFile with a linked-notebook path.
+	// resolvePluginNotebookDir resolves through the linked root, so this
+	// writes to the linked scratch dir.
+	err := app.PluginWriteFile("p", "CapLinked", ".system/plugins/p/data/overflow.bin", make([]byte, 100*1024))
+	if err == nil {
+		t.Fatal("expected rejection: cumulative scratch across vault + linked exceeds the cap")
+	}
+	if !strings.Contains(err.Error(), "scratch usage") {
+		t.Errorf("error should mention scratch usage: %v", err)
 	}
 }
 
