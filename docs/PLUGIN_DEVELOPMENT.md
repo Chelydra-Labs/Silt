@@ -384,6 +384,20 @@ const res = await ctx.fetch('https://api.example.com/data', {
 CORS-free (Go-side proxy), with timeout/size/redirect caps. Host + status are
 audit-logged in Settings → Plugins (never the body).
 
+**Rate limiting (#153).** Each plugin's fetch calls are throttled by a
+per-plugin token-bucket rate limiter (default: 1 request/sec, burst of 10).
+To request a higher limit, declare it in the manifest:
+
+```json
+{
+  "ratelimit": { "rps": 5, "burst": 20 }
+}
+```
+
+`rps` must be > 0 and <= 10; `burst` must be > 0 and <= 100. Values outside
+this range are rejected at install time. The response body cap is 2 MB per
+request.
+
 ### 8.7 Editor extension points (#110)
 
 Register slash commands:

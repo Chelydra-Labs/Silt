@@ -9,6 +9,7 @@ import {
   PluginCreateBlock,
   PluginDeleteBlock,
   PluginMoveBlock,
+  PluginApplyBlocks,
   PluginCreatePage,
   PluginCreateSection,
   PluginCreateNotebook,
@@ -215,6 +216,23 @@ export function makePluginContext(
         opts.notebook ?? '',
         opts.section ?? '',
         opts.page ?? ''
+      ).then(() => true),
+
+    // --- Batch block ops (#104) — gated by content-mutate (#156) ------------
+    applyBlocks: (ops) =>
+      PluginApplyBlocks(
+        pluginID,
+        sessionToken ?? '',
+        ops.map((op) => ({
+          kind: op.kind,
+          afterId: op.after ?? '',
+          type: op.type ?? '',
+          text: op.text ?? '',
+          blockId: op.blockId ?? '',
+          notebook: op.notebook ?? '',
+          section: op.section ?? '',
+          page: op.page ?? ''
+        }))
       ).then(() => true),
 
     // --- Page / section / notebook CRUD (#104) ------------------------------

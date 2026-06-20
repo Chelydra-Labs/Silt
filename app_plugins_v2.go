@@ -403,6 +403,12 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 // The file is rewritten with the remaining blocks (filtered from the DB
 // snapshot). The DB gets a single-row delete for the moved block only.
 func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, page, blockID string) error {
+	// NOTE: the file write and DB delete are not atomic together — the file is
+	// rewritten first, then the DB row is deleted. If the process crashes
+	// between, the file won't have the block but the DB will still list it.
+	// This is acceptable: the DB is a re-derivable cache (§0 rule 4), so the
+	// next index rebuild (or the next SaveFileBlocks for this page) reconciles
+	// the file↔DB state automatically.
 	// Read current blocks from the DB (fresh snapshot).
 	srcBlocks, err := a.FetchPageBlocks(notebook, section, page)
 	if err != nil {
@@ -1457,7 +1463,8 @@ func (a *App) PluginFetch(pluginID, sessionToken string, input PluginFetchInput)
 		return PluginFetchResult{}, err
 	}
 	if a.rateLimiter != nil && !a.rateLimiter.allow(a.vaultPath, pluginID) {
-		return PluginFetchResult{}, fmt.Errorf("plugin %q fetch rate limit exceeded", pluginID)
+		rps, burst := resolvePluginRatelimit(a.vaultPath, pluginID)
+		return PluginFetchResult{}, fmt.Errorf("plugin %q fetch rate limit exceeded (max %.1f rps, burst %d); retry after a short delay", pluginID, rps, burst)
 	}
 	if input.URL == "" {
 		return PluginFetchResult{}, fmt.Errorf("url is required")

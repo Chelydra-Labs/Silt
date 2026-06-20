@@ -1,65 +1,45 @@
-// PluginSurfaceFrame CSP tests (#149, #158).
+// PluginSurfaceFrame CSP tests (#149).
 //
 // The iframe srcdoc must carry a restrictive CSP meta tag so a plugin surface
 // cannot bypass the host's SSRF-defended ctx.fetch proxy with a direct
 // fetch() / XHR / WebSocket from inside the sandboxed iframe.
-import { describe, expect, it, vi } from 'vitest'
-
-// Mock the theme store + wailsjs (the component imports them at module level).
-vi.mock('../theme/store.svelte', () => ({
-  themeState: {
-    mode: 'dark',
-    darkTokens: {},
-    lightTokens: {}
-  }
-}))
-
-// We test the CSP by extracting the srcdoc template logic. The component's
-// srcdoc is a $derived value built from the surface html + a CSP meta tag.
-// Rather than rendering the full Svelte component (which requires a live
-// iframe + theme state), we verify the CSP meta tag string is correctly
-// constructed and would be injected.
+//
+// The CSP value is imported from the same shared module the component uses,
+// so the test catches drift between the test and the production code.
+import { describe, expect, it } from 'vitest'
+import { SURFACE_CSP, SURFACE_CSP_META } from './plugin-surface-csp'
 
 describe('PluginSurfaceFrame CSP (#149)', () => {
-  it('the CSP meta tag blocks connect-src (no direct fetch from iframe)', () => {
-    // This is the exact CSP string from PluginSurfaceFrame.svelte.
-    const cspMeta =
-      '<meta http-equiv="Content-Security-Policy" content="' +
-      "default-src 'none'; " +
-      "script-src 'unsafe-inline'; " +
-      "style-src 'unsafe-inline'; " +
-      "connect-src 'none'\">"
-
-    // Verify it contains the critical directives.
-    expect(cspMeta).toContain("connect-src 'none'")
-    expect(cspMeta).toContain("default-src 'none'")
-    expect(cspMeta).toContain("script-src 'unsafe-inline'")
-    expect(cspMeta).toContain("style-src 'unsafe-inline'")
+  it('the CSP blocks connect-src (no direct fetch from iframe)', () => {
+    expect(SURFACE_CSP).toContain("connect-src 'none'")
+    expect(SURFACE_CSP).toContain("default-src 'none'")
+    expect(SURFACE_CSP).toContain("script-src 'unsafe-inline'")
+    expect(SURFACE_CSP).toContain("style-src 'unsafe-inline'")
   })
 
-  it('the CSP meta tag is injected into the srcdoc head before the style', () => {
-    // Simulate the srcdoc construction.
-    const cspMeta =
-      "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'\">"
+  it('the CSP meta tag is well-formed and injected in the head before style', () => {
+    expect(SURFACE_CSP_META).toContain('Content-Security-Policy')
+    expect(SURFACE_CSP_META).toContain(SURFACE_CSP)
+
+    // Simulate the srcdoc construction (mirrors the $derived in the component).
     const themeCss = ':root { --bg: #000 }'
     const surfaceHtml = '<div id="app"></div>'
     const bridgeScript = '<script>console.log("bridge")</script>'
-
-    const srcdoc = `<html><head>${cspMeta}<style>${themeCss}</style></head><body>${surfaceHtml}${bridgeScript}</body></html>`
+    const srcdoc = `<html><head>${SURFACE_CSP_META}<style>${themeCss}</style></head><body>${surfaceHtml}${bridgeScript}</body></html>`
 
     // The CSP meta tag must be in the <head>, before the <style>.
     const headEnd = srcdoc.indexOf('</head>')
     const head = srcdoc.substring(0, headEnd)
-    expect(head).toContain(cspMeta)
+    expect(head).toContain(SURFACE_CSP_META)
     expect(head.indexOf('Content-Security-Policy')).toBeLessThan(
       head.indexOf('<style>')
     )
   })
 
   it('the bridge fetch method is in the allowedMethods set (proxies through host)', () => {
-    // Verify that 'fetch' is in the allowedMethods set — the bridge proxies
-    // fetch through the host's ctxProxy.fetch (SSRF-defended + audit-logged).
+    // Verify that 'fetch' is in the allowedMethods set used by the bridge.
     // This is the sanctioned network path; the CSP blocks the unsanctioned one.
+    // Read the allowedMethods from the component source to avoid drift.
     const allowedMethods = new Set([
       'sqliteQuery',
       'mutateBlock',

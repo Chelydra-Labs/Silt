@@ -587,6 +587,21 @@ structural operations, not content mutations. The capability model gates
 I/O-bound operations (files, network, OS, clipboard) and now content block CRUD,
 that have cross-process or cross-host impact.
 
+**Plugin network fetch is rate-limited (#153).** Each network-granted plugin's
+`PluginFetch` calls are throttled by a per-plugin token-bucket rate limiter
+(default 1 rps, burst 10). A plugin can request a higher limit via the optional
+manifest field:
+
+```json
+{
+  "ratelimit": { "rps": 5, "burst": 20 }
+}
+```
+
+Values are validated at install (`rps` must be > 0 and <= 10; `burst` must be
+> 0 and <= 100). Out-of-range values are rejected. The host clamps hand-edited
+manifests at runtime (defense in depth).
+
 To enforce architectural parity, the user interface contains no custom code for the default Calendar, Kanban, or Agenda dashboards. They use the exact same SDK constraints as any third-party developer plugin:
 
 Kanban Plugin: Uses the sqliteQuery context hook to pull records scoped to the active navigation level (vault / notebook / section / page). The user selects the scope via a segmented control in the board header. The WHERE clause is built per scope:
