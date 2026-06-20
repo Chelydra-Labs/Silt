@@ -43,6 +43,8 @@ async function handleAttach(
   const isImage = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(relPath)
   // Insert an embedBlock node via the editor's insertContent. The node carries
   // the attachment attrs; the embedBlock marker round-trips through the parser.
+  // `notebook` is captured at insert time so the click-to-open path can resolve
+  // the relPath even after the user navigates away from the source page.
   const embedBlockNode = {
     type: 'embedBlock',
     attrs: {
@@ -50,7 +52,8 @@ async function handleAttach(
       src: relPath,
       caption: fileName,
       openable: true,
-      pluginID: 'silt-attachments'
+      pluginID: 'silt-attachments',
+      notebook
     }
   }
   if (editor && !editor.isDestroyed) {

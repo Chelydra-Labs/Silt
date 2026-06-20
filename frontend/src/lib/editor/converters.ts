@@ -121,18 +121,23 @@ export function embedBlockMarker(attrs: {
   caption?: string
   openable?: boolean
   pluginID?: string
+  // notebook is the host notebook the block lives in. The marker carries it so
+  // OpenAttachment + the embedBlock NodeView can resolve the relative src path
+  // when the user clicks the card, even if the user has navigated to a
+  // different page in the meantime (the block is the only place that knows
+  // where the attachment was copied to).
+  notebook?: string
 }): string {
   return `<!-- silt-embed: ${JSON.stringify(attrs)} -->`
 }
 
-export function parseEmbedBlockMarker(
-  text: string
-): {
+export function parseEmbedBlockMarker(text: string): {
   embedType: string
   src: string
   caption?: string
   openable?: boolean
   pluginID?: string
+  notebook?: string
 } | null {
   const m = text.match(SOLE_EMBED_BLOCK_RE)
   if (!m) return null
@@ -277,14 +282,17 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
 
     // Generic plugin embedBlock (#110): serialize to a NOTE carrying the
     // `<!-- silt-embed: {json} -->` marker as its clean_text. The Go renderer
-    // emits it verbatim, so the on-disk file round-trips.
+    // emits it verbatim, so the on-disk file round-trips. `notebook` is
+    // persisted so the embedBlock NodeView can resolve the relPath to the
+    // correct attachments/ folder when the user clicks to open the file.
     if (node.type === 'embedBlock') {
       const marker = embedBlockMarker({
         embedType: attrs.embedType || '',
         src: attrs.src || '',
         caption: attrs.caption || undefined,
         openable: attrs.openable || undefined,
-        pluginID: attrs.pluginID || undefined
+        pluginID: attrs.pluginID || undefined,
+        notebook: attrs.notebook || undefined
       })
       blocks.push({
         id,

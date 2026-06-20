@@ -463,4 +463,29 @@ describe('uniqueIdPlugin', () => {
     expect(reparsed!.openable).toBe(true)
     editor.destroy()
   })
+
+  it('round-trips a generic embedBlock node with notebook attr (#101 review)', () => {
+    // The marker must carry the originating notebook so the embedBlock NodeView
+    // can resolve the relative src path when the user clicks to open the
+    // attachment, even if they have navigated to a different page/notebook.
+    const marker = embedBlockMarker({
+      embedType: 'attachment',
+      src: 'attachments/report.pdf',
+      caption: 'Q3 Report',
+      openable: true,
+      pluginID: 'silt-attachments',
+      notebook: 'Work'
+    })
+    const block = mkBlock('NOTE', { clean_text: marker })
+    const doc = blocksToDoc([block])
+    expect((doc.content![0].attrs as any).notebook).toBe('Work')
+
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe(marker)
+
+    const reparsed = parseEmbedBlockMarker(back[0].clean_text)
+    expect(reparsed).not.toBeNull()
+    expect(reparsed!.notebook).toBe('Work')
+  })
 })

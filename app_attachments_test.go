@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -131,6 +132,50 @@ func TestOpenAttachment_ResolvesPath(t *testing.T) {
 	if err != nil && !os.IsNotExist(err) {
 		// An OS-open failure (no handler) is acceptable; a path error is not.
 		t.Logf("OpenAttachment returned %v (may be no handler on CI)", err)
+	}
+}
+
+// OpenAttachment rejects an empty notebook (#101 review): the embedBlock
+// NodeView MUST pass the originating notebook, and the Go side is the
+// authoritative gatekeeper so a malformed frontend can't open an arbitrary
+// attachment. The marker now carries the notebook at insert time, and the
+// NodeView falls back to the live active location — but the Go contract
+// remains "notebook is required".
+func TestOpenAttachment_RejectsEmptyNotebook(t *testing.T) {
+	origOpenNative := openNative
+	openNative = func(path string) error { return nil }
+	t.Cleanup(func() { openNative = origOpenNative })
+
+	app := newTestApp(t)
+	src := filepath.Join(t.TempDir(), "x.txt")
+	os.WriteFile(src, []byte("x"), 0o644)
+	rel, _ := app.AddAttachment(src, "Work")
+
+	err := app.OpenAttachment("", rel)
+	if err == nil {
+		t.Fatal("OpenAttachment with empty notebook should be rejected")
+	}
+	if !strings.Contains(err.Error(), "notebook is required") {
+		t.Errorf("error = %v, want to mention 'notebook is required'", err)
+	}
+}
+
+// OpenAttachment rejects a relPath that escapes the notebook root via "..".
+// The path is resolved through resolvePluginNotebookPath, so it should be
+// safe; this test pins the contract so a future refactor cannot regress
+// the embedBlock click-to-open path (#101 review gap).
+func TestOpenAttachment_RejectsTraversal(t *testing.T) {
+	origOpenNative := openNative
+	openNative = func(path string) error { return nil }
+	t.Cleanup(func() { openNative = origOpenNative })
+
+	app := newTestApp(t)
+	err := app.OpenAttachment("Work", "../../../etc/passwd")
+	if err == nil {
+		t.Fatal("OpenAttachment with traversal relPath should be rejected")
+	}
+	if !strings.Contains(err.Error(), "escapes the notebook root") {
+		t.Errorf("error = %v, want to mention 'escapes the notebook root'", err)
 	}
 }
 

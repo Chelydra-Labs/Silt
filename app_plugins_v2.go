@@ -8,6 +8,7 @@ package main
 // the core editor (SPECS §8.3: "core feature decoupling").
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -405,11 +406,29 @@ func (a *App) PluginReadFile(pluginID, notebook, relPath string) (pluginFileResu
 	return pluginFileResult{Path: relPath, Bytes: data}, nil
 }
 
+// maxPluginScratchBytes caps a single plugin's cumulative scratch-dir usage
+// (per-notebook + vault combined, computed on demand by dirSizeUnder). Without
+// this, a granted write-files plugin could fill the disk by writing many small
+// files to its scratch dir — the per-file 100 MB attachment cap does not
+// constrain cumulative scratch growth (#101 review). 500 MB is generous for
+// real-world caches and small enough to surface runaway plugins via the
+// existing writeFile error.
+//
+// Declared as a var so tests can override the cap for the duration of a
+// single test (the alternative — allocating 500 MB in a test — is slow and
+// brittle on CI). Production callers see the 500 MB default; tests set a
+// smaller cap and restore the original on cleanup.
+var maxPluginScratchBytes int64 = 500 * 1024 * 1024 // 500 MB
+
 // PluginWriteFile writes a file within a notebook atomically (temp+fsync+rename
 // via parser.WriteFileAtomic, under the per-file mutex + WriteTracker). Gated
 // by write-files; the qualifier (notebook | vault) is enforced at the grant
 // level — a notebook-scoped grant only allows writes inside the resolved
 // notebook root.
+//
+// Scratch-dir writes (relPath under .system/plugins/<id>/data/) are bounded
+// by maxPluginScratchBytes; the cumulative size is recomputed on each write
+// so a successful delete immediately frees budget for a follow-up write.
 func (a *App) PluginWriteFile(pluginID, notebook, relPath string, data []byte) error {
 	if err := a.requireGrant(pluginID, plugins.CapWriteFiles); err != nil {
 		return err
@@ -420,6 +439,19 @@ func (a *App) PluginWriteFile(pluginID, notebook, relPath string, data []byte) e
 	}
 	if !pluginWritePathAllowed(pluginID, relPath) {
 		return fmt.Errorf("write path %q is outside the allowed directories (attachments/ or this plugin's scratch dir)", relPath)
+	}
+	// Enforce the scratch-dir cumulative cap before any disk I/O. attachments/
+	// writes are bounded by maxAttachmentBytes (100 MB per file, enforced in
+	// the coordinator) and the 100 MB attachment cap, so this check is only
+	// meaningful for the .system/plugins/<id>/ scratch tree.
+	if isPluginScratchRelPath(pluginID, relPath) {
+		used, sizeErr := pluginScratchSizeBytes(a, pluginID)
+		if sizeErr != nil {
+			return fmt.Errorf("check scratch usage: %w", sizeErr)
+		}
+		if used+int64(len(data)) > maxPluginScratchBytes {
+			return fmt.Errorf("scratch usage would exceed the %d-byte per-plugin cap (currently %d bytes, +%d bytes)", maxPluginScratchBytes, used, len(data))
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return fmt.Errorf("create dir: %w", err)
@@ -432,6 +464,98 @@ func (a *App) PluginWriteFile(pluginID, notebook, relPath string, data []byte) e
 		writeErr = parser.WriteFileAtomic(abs, data)
 	})
 	return writeErr
+}
+
+// isPluginScratchRelPath reports whether relPath (already relative to the
+// notebook root) falls inside the calling plugin's own scratch dir. Mirrors
+// pluginWritePathAllowed so the cap only applies to writes a plugin can
+// actually own (#101 review).
+func isPluginScratchRelPath(pluginID, relPath string) bool {
+	cleaned := filepath.ToSlash(filepath.Clean(relPath))
+	ownScratch := ".system/plugins/" + pluginID + "/data/"
+	return strings.HasPrefix(cleaned+"/", ownScratch)
+}
+
+// pluginScratchSizeBytes sums the on-disk byte count across every scratch
+// directory the plugin owns (per-notebook + vault). Walks the relevant trees
+// directly so a stale cumulative counter cannot drift out of sync with disk.
+func pluginScratchSizeBytes(a *App, pluginID string) (int64, error) {
+	var total int64
+	// Vault scratch dir lives directly under the vault root.
+	if a.vaultPath != "" {
+		vaultDir := filepath.Join(a.vaultPath, ".system", "plugins", pluginID, "data")
+		n, err := dirSizeUnder(vaultDir)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	// Per-notebook scratch dirs live under each notebook's root. Walk the
+	// vault to discover every notebook and sum the plugin's data dir in each.
+	if a.vaultPath != "" {
+		entries, err := os.ReadDir(a.vaultPath)
+		if err != nil && !os.IsNotExist(err) {
+			return 0, err
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			nbDir := filepath.Join(a.vaultPath, e.Name(), ".system", "plugins", pluginID, "data")
+			n, err := dirSizeUnder(nbDir)
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		}
+	}
+	return total, nil
+}
+
+// dirSizeUnder recursively sums the byte size of every regular file under
+// root. Symlinks are NOT followed (consistent with the install / unpack
+// posture that rejects symlink-escape attempts).
+func dirSizeUnder(root string) (int64, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if !info.IsDir() {
+		if info.Mode().IsRegular() {
+			return info.Size(), nil
+		}
+		return 0, nil
+	}
+	var total int64
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		// Skip symlinks (any flavour) to avoid double-counting and to stay
+		// consistent with the install-time symlink rejection.
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		fi, ferr := d.Info()
+		if ferr != nil {
+			return ferr
+		}
+		total += fi.Size()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
 }
 
 // PluginDeleteFile removes a file within a notebook (traversal-guarded). Gated
@@ -765,6 +889,85 @@ var openNative = func(path string) error {
 	}
 }
 
+// newSafeFetchClient returns an *http.Client with the SSRF-defended transport
+// used by every privileged plugin HTTP call (#115 + #101 review). It:
+//
+//  1. Caps the per-request lifetime with timeout.
+//  2. Re-validates every redirect destination against isSafeFetchUrl +
+//     blockInternalHost so a 302 to an internal host is rejected even if the
+//     initial URL was approved.
+//  3. Pins the resolved IP at dial time via a custom DialContext. A name
+//     that resolves to 1.2.3.4 at validation and 169.254.169.254 at connect
+//     (DNS rebinding) is rejected because the dialer re-runs blockInternalHost
+//     against the IPs it actually plans to connect to.
+//
+// Tests can override the DialContext to swap the resolver (see
+// app_plugins_v2_test.go) and exercise the rebinding defense deterministically.
+func newSafeFetchClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, splitErr := net.SplitHostPort(addr)
+			if splitErr != nil {
+				return nil, splitErr
+			}
+			ips, lookupErr := net.DefaultResolver.LookupIP(ctx, "ip", host)
+			if lookupErr != nil || len(ips) == 0 {
+				// Fall through to the system dialer with the literal address;
+				// net.Dialer will surface the lookup error in its own error
+				// chain, so the call still fails closed.
+				return dialer.DialContext(ctx, network, addr)
+			}
+			// Re-validate every resolved IP at dial time so a DNS rebind
+			// between isSafeFetchUrl and the actual connect is rejected.
+			for _, ip := range ips {
+				if isInternalIP(ip) {
+					return nil, fmt.Errorf("blocked: dial to %s resolves to a blocked address %s", host, ip)
+				}
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+		},
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxPluginFetchRedirects {
+				return fmt.Errorf("too many redirects (max %d)", maxPluginFetchRedirects)
+			}
+			// Re-validate every redirect destination for scheme + SSRF (#115).
+			if !isSafeFetchUrl(req.URL.String()) {
+				return fmt.Errorf("redirect to blocked URL: %s", req.URL.String())
+			}
+			if err := blockInternalHost(req.URL.Host); err != nil {
+				return fmt.Errorf("redirect to internal host: %w", err)
+			}
+			return nil
+		},
+	}
+}
+
+// isInternalIP is the dial-time analogue of blockInternalHost: it rejects
+// loopback, link-local, multicast, unspecified, and private IPs. Sharing
+// the predicate with blockInternalHost keeps the dial and the URL check in
+// lock-step so the rebinding defense and the URL-level check can never
+// drift (#115 hardening).
+func isInternalIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return true
+	}
+	return isPrivateIP(ip)
+}
+
 // notifyDesktop shows a desktop notification, cross-platform. Best-effort: a
 // spawn error is returned but callers may ignore it for non-critical UX.
 //
@@ -845,11 +1048,11 @@ var (
 
 // NetworkAuditEntry is one row of the plugin network audit log.
 type NetworkAuditEntry struct {
-	Plugin   string `json:"plugin"`
-	Host     string `json:"host"`
-	Status   int    `json:"status"`
-	Method   string `json:"method"`
-	At       string `json:"at"` // RFC3339
+	Plugin string `json:"plugin"`
+	Host   string `json:"host"`
+	Status int    `json:"status"`
+	Method string `json:"method"`
+	At     string `json:"at"` // RFC3339
 }
 
 // PluginFetch performs an HTTP request through the Go backend (CORS-free),
@@ -877,22 +1080,7 @@ func (a *App) PluginFetch(pluginID string, input PluginFetchInput) (PluginFetchR
 		}
 	}
 
-	client := &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxPluginFetchRedirects {
-				return fmt.Errorf("too many redirects (max %d)", maxPluginFetchRedirects)
-			}
-			// Re-validate every redirect destination for scheme + SSRF (#115).
-			if !isSafeFetchUrl(req.URL.String()) {
-				return fmt.Errorf("redirect to blocked URL: %s", req.URL.String())
-			}
-			if err := blockInternalHost(req.URL.Host); err != nil {
-				return fmt.Errorf("redirect to internal host: %w", err)
-			}
-			return nil
-		},
-	}
+	client := newSafeFetchClient(timeout)
 
 	var reqBody io.Reader
 	if input.Body != "" {
@@ -1158,6 +1346,11 @@ func (a *App) DeleteAttachment(notebook, relPath string) error {
 
 // CheckPluginUpdate fetches a plugin's manifest from its declared updateUrl
 // (if present) and returns whether a newer version is available (#111).
+//
+// The fetch goes through newSafeFetchClient so the update channel enjoys the
+// same SSRF + timeout + redirect + DNS-rebinding defenses as PluginFetch
+// (#101 review). Without this, a malicious update manifest could 302 to
+// 169.254.169.254 or hold the goroutine open with no timeout.
 func (a *App) CheckPluginUpdate(pluginID, currentVersion, updateUrl string) (PluginUpdateInfo, error) {
 	info := PluginUpdateInfo{PluginID: pluginID, CurrentVersion: currentVersion}
 	if updateUrl == "" {
@@ -1166,7 +1359,12 @@ func (a *App) CheckPluginUpdate(pluginID, currentVersion, updateUrl string) (Plu
 	if !isSafeFetchUrl(updateUrl) {
 		return info, fmt.Errorf("update URL is not a safe http(s) URL")
 	}
-	resp, err := http.Get(updateUrl)
+	client := newSafeFetchClient(defaultPluginFetchTimeout)
+	req, err := http.NewRequest("GET", updateUrl, nil)
+	if err != nil {
+		return info, fmt.Errorf("build update request: %w", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return info, fmt.Errorf("update check failed: %w", err)
 	}

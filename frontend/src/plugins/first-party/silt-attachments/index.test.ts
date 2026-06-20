@@ -90,7 +90,10 @@ describe('silt-attachments plugin (#101)', () => {
           embedType: 'attachment',
           src: 'attachments/report.pdf',
           openable: true,
-          pluginID: 'silt-attachments'
+          pluginID: 'silt-attachments',
+          // The originating notebook is captured at insert time so the click-
+          // to-open path can resolve the relPath after the user navigates.
+          notebook: 'Work'
         })
       })
     )

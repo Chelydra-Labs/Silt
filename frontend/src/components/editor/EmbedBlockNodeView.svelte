@@ -6,6 +6,7 @@
   import { NodeViewWrapper } from 'svelte-tiptap'
   import type { NodeViewProps } from '@tiptap/core'
   import { OpenAttachment } from '../../../wailsjs/go/main/App.js'
+  import { getActiveLocation } from '../../plugins/location.svelte'
 
   let { node, deleteNode, selected }: NodeViewProps = $props()
   const attrs = $derived(node.attrs as Record<string, any>)
@@ -14,19 +15,25 @@
       ? 'border-accent-primary-start/60 bg-accent-primary-glow'
       : 'border-border-muted bg-bg-surface/60'
   )
-  const tabIndex = $derived(attrs.openable ? 0 : undefined)
+  // Read the live active location so the click-to-open path always has a
+  // notebook to pass to OpenAttachment, even if the user has navigated away
+  // from the page that owns the embed block. The marker also carries the
+  // originating notebook (#101 review) as a defence-in-depth fallback.
+  const loc = getActiveLocation()
+  const resolvedNotebook = $derived((attrs.notebook as string) || loc.notebook)
+  const isOpenable = $derived(!!attrs.openable && !!attrs.src)
 
   async function open() {
-    if (!attrs.openable || !attrs.src) return
+    if (!isOpenable) return
     try {
-      await OpenAttachment('', attrs.src)
+      await OpenAttachment(resolvedNotebook, attrs.src)
     } catch (e) {
       console.error('[embed-block] open failed:', e)
     }
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (attrs.openable && (e.key === 'Enter' || e.key === ' ')) {
+    if (isOpenable && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault()
       open()
     }
@@ -34,61 +41,128 @@
 </script>
 
 <NodeViewWrapper>
-  <div
-    class="embed-block-default my-2 p-3 rounded-lg border transition-colors flex items-center gap-3 {cardClass}"
-    role={attrs.openable ? 'button' : 'img'}
-    tabindex={tabIndex}
-    aria-label={attrs.caption || `${attrs.embedType}: ${attrs.src}`}
-    data-embed-type={attrs.embedType}
-    data-openable={attrs.openable ? 'true' : 'false'}
-    onclick={attrs.openable ? open : undefined}
-    onkeydown={attrs.openable ? handleKeydown : undefined}
-  >
-    <span
-      class="material-symbols-outlined text-accent-primary-start/70 text-[28px]"
+  <!--
+    Card is always a <div> with an explicit role: role="button" when openable
+    (so it has a nonnegative tabindex and the click-to-open handler), or
+    role="img" when read-only (so a11y_no_noninteractive_tabindex is satisfied
+    and AT treats it as a non-interactive figure). The inner delete is a real
+    <button> so the native semantics compose without nesting interactive
+    elements. Svelte's a11y rule a11y_no_noninteractive_tabindex cannot
+    statically verify a dynamic role; we therefore render two separate
+    branches (one per role) so the linter can verify each path.
+  -->
+  {#if isOpenable}
+    <div
+      class="embed-block-default my-2 p-3 rounded-lg border transition-colors flex items-center gap-3 {cardClass}"
+      role="button"
+      tabindex="0"
+      aria-label={attrs.caption || `${attrs.embedType}: ${attrs.src}`}
+      data-embed-type={attrs.embedType}
+      data-openable="true"
+      onclick={open}
+      onkeydown={handleKeydown}
     >
-      {attrs.embedType === 'image'
-        ? 'image'
-        : attrs.embedType === 'attachment'
-          ? 'attach_file'
-          : 'extension'}
-    </span>
-    <div class="flex-1 min-w-0">
-      <div class="text-text-primary text-[13px] font-body-md truncate">
-        {attrs.caption || attrs.src || attrs.embedType}
-      </div>
-      {#if attrs.src}
-        <div class="text-text-muted text-[10px] font-label-sm truncate">
-          {attrs.src}
-        </div>
-      {/if}
-    </div>
-    {#if attrs.pluginID}
       <span
-        class="text-[9px] text-text-muted uppercase tracking-wider border border-border-muted rounded px-1.5 py-0.5"
+        class="material-symbols-outlined text-accent-primary-start/70 text-[28px]"
       >
-        {attrs.pluginID}
+        {attrs.embedType === 'image'
+          ? 'image'
+          : attrs.embedType === 'attachment'
+            ? 'attach_file'
+            : 'extension'}
       </span>
-    {/if}
-    <button
-      type="button"
-      onclick={(e) => {
-        e.stopPropagation()
-        deleteNode()
-      }}
-      title="Remove block"
-      aria-label="Remove block"
-      class="text-text-muted hover:text-status-danger border-none bg-transparent cursor-pointer p-1 rounded transition-colors"
+      <div class="flex-1 min-w-0">
+        <div class="text-text-primary text-[13px] font-body-md truncate">
+          {attrs.caption || attrs.src || attrs.embedType}
+        </div>
+        {#if attrs.src}
+          <div class="text-text-muted text-[10px] font-label-sm truncate">
+            {attrs.src}
+          </div>
+        {/if}
+      </div>
+      {#if attrs.pluginID}
+        <span
+          class="text-[9px] text-text-muted uppercase tracking-wider border border-border-muted rounded px-1.5 py-0.5"
+        >
+          {attrs.pluginID}
+        </span>
+      {/if}
+      <button
+        type="button"
+        onclick={(e) => {
+          e.stopPropagation()
+          deleteNode()
+        }}
+        title="Remove block"
+        aria-label="Remove block"
+        class="text-text-muted hover:text-status-danger border-none bg-transparent cursor-pointer p-1 rounded transition-colors"
+      >
+        <span class="material-symbols-outlined text-[18px]">delete</span>
+      </button>
+      <span
+        class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing"
+        title="Drag to reorder"
+        aria-label="Drag handle"
+        data-drag-handle
+      >
+        drag_indicator
+      </span>
+    </div>
+  {:else}
+    <div
+      class="embed-block-default my-2 p-3 rounded-lg border transition-colors flex items-center gap-3 {cardClass}"
+      role="img"
+      aria-label={attrs.caption || `${attrs.embedType}: ${attrs.src}`}
+      data-embed-type={attrs.embedType}
+      data-openable="false"
     >
-      <span class="material-symbols-outlined text-[18px]">delete</span>
-    </button>
-    <span
-      class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing"
-      title="Drag to reorder"
-      aria-label="Drag handle"
-      data-drag-handle
-    >
-      drag_indicator
-    </span>
-  </div>
+      <span
+        class="material-symbols-outlined text-accent-primary-start/70 text-[28px]"
+      >
+        {attrs.embedType === 'image'
+          ? 'image'
+          : attrs.embedType === 'attachment'
+            ? 'attach_file'
+            : 'extension'}
+      </span>
+      <div class="flex-1 min-w-0">
+        <div class="text-text-primary text-[13px] font-body-md truncate">
+          {attrs.caption || attrs.src || attrs.embedType}
+        </div>
+        {#if attrs.src}
+          <div class="text-text-muted text-[10px] font-label-sm truncate">
+            {attrs.src}
+          </div>
+        {/if}
+      </div>
+      {#if attrs.pluginID}
+        <span
+          class="text-[9px] text-text-muted uppercase tracking-wider border border-border-muted rounded px-1.5 py-0.5"
+        >
+          {attrs.pluginID}
+        </span>
+      {/if}
+      <button
+        type="button"
+        onclick={(e) => {
+          e.stopPropagation()
+          deleteNode()
+        }}
+        title="Remove block"
+        aria-label="Remove block"
+        class="text-text-muted hover:text-status-danger border-none bg-transparent cursor-pointer p-1 rounded transition-colors"
+      >
+        <span class="material-symbols-outlined text-[18px]">delete</span>
+      </button>
+      <span
+        class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing"
+        title="Drag to reorder"
+        aria-label="Drag handle"
+        data-drag-handle
+      >
+        drag_indicator
+      </span>
+    </div>
+  {/if}
 </NodeViewWrapper>
