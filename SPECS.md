@@ -612,6 +612,16 @@ index.js      native ESM exporting { manifest, init(ctx) }
 - The in-app **Plugin Manager** (titlebar extension icon) drives validate → preview → install, plus per-plugin enable/disable and uninstall.
 - First-party plugins (Agenda, Calendar) are always available (bundled) regardless of `.system/plugins/` contents.
 
+8.5 Attachments Plugin Convention (#101)
+
+The `silt-attachments` plugin lets users attach arbitrary files to notes.
+
+- **File placement:** Files are copied into `<notebook>/attachments/` (visible placement, per the #100 data-scoping principle). The `attachments/` directory is excluded from the scanner (`WalkMarkdown`), the sidebar navigator (`ListNavigation`), and the fsnotify watcher, so it never appears as an empty section and binary files are never indexed.
+- **Markdown convention:** Images use standard `![alt](attachments/foo.png)` syntax (rendered as `embedBlock` type `image`). Non-image files use the generic `embedBlock` node serialized via an HTML-comment marker `<!-- silt-embed: {"embedType":"attachment","src":"attachments/foo.pdf",...} -->`. The marker is preserved verbatim by the Go parser as the NOTE block's `clean_text` (the parser does not need to recognize the marker — the frontend converter detects it on load and emits it on save, so the round-trip is byte-identical). This is a deliberate design choice: parser-level recognition would require a new `ParsedBlock` field + renderer + indexer changes for no functional benefit over the converter-level approach.
+- **Open in native handler:** Activating an attachment embed block opens the file in the OS default handler (Preview / Adobe / `xdg-open` / etc.), not in-app. The path is resolved against the notebook's actual root (#100, in-vault or linked).
+- **Kanban travel:** An attachment embedBlock inserted as a CHILD of a task block (indented under it) automatically travels with its parent when the task is reordered. This is inherent to the block hierarchy — no explicit association model is needed.
+- **Copy-in semantics:** The source file is copied (not linked/moved) into `attachments/`. Filename collisions are resolved with a counter suffix (`report-1.pdf`, `report-2.pdf`). A 100 MB size limit and an executable filetype blocklist (`.exe`, `.bat`, `.sh`, etc.) prevent the attachment folder from becoming an unbounded executable drop zone.
+
 9. System Configuration Engine
 
 Global settings are managed locally in a human-readable file located at Notebooks/.system/config.yaml. The schema defines global application defaults, plugin configurations, hotkeys, and parsing logic.

@@ -212,6 +212,8 @@ export interface PluginContext {
   vaultScratchDir: () => Promise<string>
   /** Resolve a relative asset path against a notebook root. Gated by read-files. */
   resolveAsset: (notebook: string, relPath: string) => Promise<string>
+  /** Read a file from the plugin's own install directory (bundled assets). */
+  readPluginAsset: (relPath: string) => Promise<string>
   /** Get the navigation tree (notebook > section > page). Read-only. */
   getNavigationTree: () => Promise<{
     notebooks: Array<{

@@ -37,6 +37,11 @@ type Manifest struct {
 	// Settings → Plugins. Carried through opaquely (the frontend is the typed
 	// consumer); the installer only validates structural shape.
 	Settings []map[string]any `json:"settings,omitempty"`
+	// Homepage is an optional URL for the plugin's homepage / docs (#111).
+	Homepage string `json:"homepage,omitempty"`
+	// UpdateURL is an optional URL that returns a JSON manifest with the latest
+	// version + download URL, for update checks (#111).
+	UpdateURL string `json:"updateUrl,omitempty"`
 }
 
 var idRegex = regexp.MustCompile(`^[a-z0-9-]+$`)

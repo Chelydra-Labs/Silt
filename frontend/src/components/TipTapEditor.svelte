@@ -240,6 +240,8 @@
       await SaveFileBlocks(notebook, section, page, updatedBlocks)
       lastSaveError = null
       unsavedChanges = false
+      // Emit editor:save on the plugin event bus (#110).
+      dispatchPluginEvent('editor:save', { notebook, section, page })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.error('TipTapEditor: SaveFileBlocks failed:', e)

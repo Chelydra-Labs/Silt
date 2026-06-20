@@ -163,6 +163,9 @@ type PluginInfo struct {
 	// installed plugin.json. The plugin manager renders the settings form from
 	// it generically.
 	Settings []map[string]any `json:"settings,omitempty"`
+	// Homepage / UpdateURL are optional distribution-v2 fields (#111).
+	Homepage  string `json:"homepage,omitempty"`
+	UpdateURL string `json:"updateUrl,omitempty"`
 }
 
 // PluginManifest is the plugin.json schema carried inside a .silt-plugin
@@ -181,6 +184,10 @@ type PluginManifest struct {
 	Capabilities map[string]any `json:"capabilities,omitempty"`
 	// Settings mirrors the declarative settings schema (#103).
 	Settings []map[string]any `json:"settings,omitempty"`
+	// Homepage is an optional URL for the plugin's homepage (#111).
+	Homepage string `json:"homepage,omitempty"`
+	// UpdateURL is an optional URL for update checks (#111).
+	UpdateURL string `json:"updateUrl,omitempty"`
 }
 
 // PluginValidationResult bundles a validated plugin manifest with the

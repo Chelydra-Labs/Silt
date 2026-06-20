@@ -33,6 +33,7 @@ import {
   DeleteAttachment,
   PluginResolveAsset,
   PluginVaultScratchDir,
+  PluginReadPluginAsset,
   ListNavigation,
   GetNetworkAudit,
   ClearNetworkAudit
@@ -55,6 +56,14 @@ function getPluginSchemaDefault(pluginID: string, key: string): unknown {
   if (!schema) return undefined
   const field = schema.find((f) => f.key === key)
   return field?.default
+}
+
+// hasCapability checks whether a plugin DECLARED a capability in its manifest.
+// Used for client-side gating of editor-schema (slash commands, decorations).
+// The manifest was validated at install time, so this is a trusted check.
+function hasCapability(pluginID: string, cap: string): boolean {
+  const reg = loadedPlugins.plugins.get(pluginID)
+  return !!reg?.manifest?.capabilities?.[cap]
 }
 
 /**
@@ -238,6 +247,7 @@ export function makePluginContext(pluginID: string): PluginContext {
     vaultScratchDir: () => PluginVaultScratchDir(pluginID),
     resolveAsset: (notebook, relPath) =>
       PluginResolveAsset(pluginID, notebook, relPath),
+    readPluginAsset: (relPath) => PluginReadPluginAsset(pluginID, relPath),
     getNavigationTree: () =>
       ListNavigation().then((tree) => tree ?? { notebooks: [] }),
     // --- OS integration (#114) — capability-gated ---------------------------
@@ -269,7 +279,17 @@ export function makePluginContext(pluginID: string): PluginContext {
       })),
 
     // --- Editor extension points (#110) — plugin slash commands -------------
+    // editor-schema capability check: only plugins that DECLARED editor-schema
+    // in their manifest can register slash commands / decorations. The manifest
+    // was validated at install time (installer.go), so this is a trusted
+    // client-side gate.
     registerSlashCommand: (cmd) => {
+      if (!hasCapability(pluginID, 'editor-schema')) {
+        console.warn(
+          `[silt] plugin ${pluginID} cannot register slash commands without the editor-schema capability`
+        )
+        return () => {}
+      }
       const namespacedId = `${pluginID}:${cmd.id}`
       registerSlashCommand({
         id: namespacedId,
@@ -283,8 +303,15 @@ export function makePluginContext(pluginID: string): PluginContext {
     },
 
     // --- Editor decorations (#110) — read-only overlays --------------------
-    provideDecorations: (id, provider) =>
-      registerDecorationProvider(id, pluginID, provider as any),
+    provideDecorations: (id, provider) => {
+      if (!hasCapability(pluginID, 'editor-schema')) {
+        console.warn(
+          `[silt] plugin ${pluginID} cannot provide decorations without the editor-schema capability`
+        )
+        return () => {}
+      }
+      return registerDecorationProvider(id, pluginID, provider as any)
+    },
 
     // --- Rendered UI surfaces (#117) — capability-gated --------------------
     registerSurface: (surface) => {

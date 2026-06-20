@@ -1440,3 +1440,31 @@ func (a *App) RemoveTrustedPublisher(publisher string) error {
 	settings.TrustedPublishers = out
 	return vault.SaveSettings(settings)
 }
+
+// PluginReadPluginAsset reads a file from the plugin's OWN install directory
+// (`.system/plugins/<pluginID>/<relPath>`), enabling plugin-bundled assets
+// like icons, templates, or static HTML for surfaces (#108/#117). The path is
+// traversal-guarded (no `..` escapes) and sanitized. NOT capability-gated
+// (reading your own bundle is safe).
+func (a *App) PluginReadPluginAsset(pluginID, relPath string) (string, error) {
+	if a.vaultPath == "" {
+		return "", fmt.Errorf("vault not loaded")
+	}
+	safeID := sanitizePathSegment(pluginID)
+	if safeID == "" {
+		return "", fmt.Errorf("invalid plugin id")
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(relPath))
+	if strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("relative path escapes the plugin directory")
+	}
+	assetPath := filepath.Join(a.vaultPath, ".system", "plugins", safeID, cleaned)
+	if !isPathWithinRoot(assetPath, filepath.Join(a.vaultPath, ".system", "plugins", safeID)) {
+		return "", fmt.Errorf("path escapes plugin directory")
+	}
+	data, err := os.ReadFile(assetPath)
+	if err != nil {
+		return "", fmt.Errorf("read plugin asset: %w", err)
+	}
+	return string(data), nil
+}

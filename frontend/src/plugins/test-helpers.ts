@@ -48,6 +48,7 @@ export const v2CtxStubs: Pick<
   | 'deleteAttachment'
   | 'vaultScratchDir'
   | 'resolveAsset'
+  | 'readPluginAsset'
   | 'getNavigationTree'
 > = {
   queryByTag: () => Promise.resolve(emptyResult),
@@ -86,5 +87,6 @@ export const v2CtxStubs: Pick<
   deleteAttachment: () => Promise.resolve(true),
   vaultScratchDir: () => Promise.resolve(''),
   resolveAsset: () => Promise.resolve(''),
+  readPluginAsset: () => Promise.resolve(''),
   getNavigationTree: () => Promise.resolve({ notebooks: [] })
 }

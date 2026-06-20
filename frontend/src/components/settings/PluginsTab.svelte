@@ -12,7 +12,8 @@
     RequestCapability,
     RevokeCapability,
     GetGrantedCapabilities,
-    GetNetworkAudit
+    GetNetworkAudit,
+    CheckPluginUpdate
   } from '../../../wailsjs/go/main/App.js'
   import { loadPlugins, teardownPlugin } from '../../plugins/loader'
   import { firstPartyPlugins } from '../../plugins/registry'
@@ -46,6 +47,10 @@
     grantedCapabilities?: Record<string, string>
     /** Declarative settings schema (#103), read from the manifest. */
     settingsSchema?: SettingSchema[]
+    /** Optional update URL for distribution-v2 update checks (#111). */
+    updateUrl?: string
+    /** True when a newer version is available (#111). */
+    updateAvailable?: boolean
   }
 
   /** Human label for a capability id. */
@@ -133,7 +138,8 @@
           requestedCapabilities: p.capabilities,
           grantedCapabilities: grants[p.id],
           loadError: errs.find((e) => e.id === p.id)?.message,
-          settingsSchema: p.settings as SettingSchema[] | undefined
+          settingsSchema: p.settings as SettingSchema[] | undefined,
+          updateUrl: p.update_url || undefined
         })
       }
       merged.sort((a, b) => a.name.localeCompare(b.name))
@@ -144,6 +150,26 @@
     } finally {
       loading = false
     }
+  }
+
+  async function checkForUpdates() {
+    actionError = ''
+    for (const card of cards) {
+      if (!card.updateUrl || card.source !== 'disk') continue
+      try {
+        const info = await CheckPluginUpdate(
+          card.id,
+          card.version,
+          card.updateUrl
+        )
+        if (info?.updateAvailable) {
+          card.updateAvailable = true
+        }
+      } catch {
+        // best-effort — network errors are non-fatal for update checks
+      }
+    }
+    cards = [...cards]
   }
 
   /** Whether a capability is currently granted on a card. */
@@ -304,6 +330,12 @@
       <span class="material-symbols-outlined text-[18px]">file_download</span>
       Install from .silt-plugin…
     </button>
+    <button
+      onclick={checkForUpdates}
+      class="ml-2 text-text-muted hover:text-accent-primary-start text-[11px] font-label-sm-bold bg-transparent border border-border-muted rounded px-2 py-1 cursor-pointer transition-colors"
+    >
+      Check for updates
+    </button>
 
     {#if previewError}
       <p class="text-error text-[12px] font-body-md mt-3">
@@ -423,6 +455,13 @@
                   >{card.name}</span
                 >
                 <span class="text-[10px] text-text-muted">v{card.version}</span>
+                {#if card.updateAvailable}
+                  <span
+                    class="text-[9px] text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
+                  >
+                    Update available
+                  </span>
+                {/if}
                 {#if card.author}
                   <span class="text-[10px] text-text-muted truncate"
                     >· {card.author}</span
