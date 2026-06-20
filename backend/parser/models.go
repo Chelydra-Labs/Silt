@@ -166,6 +166,9 @@ type PluginInfo struct {
 	// Homepage / UpdateURL are optional distribution-v2 fields (#111).
 	Homepage  string `json:"homepage,omitempty"`
 	UpdateURL string `json:"updateUrl,omitempty"`
+	// ContentSHA256 is the sha256 of the installed index.js (#161), used by
+	// the frontend loader to verify runtime integrity before Blob import.
+	ContentSHA256 string `json:"contentSha256,omitempty"`
 }
 
 // PluginManifest is the plugin.json schema carried inside a .silt-plugin
@@ -188,6 +191,8 @@ type PluginManifest struct {
 	Homepage string `json:"homepage,omitempty"`
 	// UpdateURL is an optional URL for update checks (#111).
 	UpdateURL string `json:"updateUrl,omitempty"`
+	// ContentSHA256 is the sha256 of index.js, set at install time (#161).
+	ContentSHA256 string `json:"contentSha256,omitempty"`
 }
 
 // PluginValidationResult bundles a validated plugin manifest with the

@@ -93,6 +93,20 @@ type App struct {
 	pluginRODBMu sync.Mutex
 	pluginRODB   *sql.DB
 
+	// rateLimiter caps per-plugin PluginFetch RPS so a network-granted plugin
+	// cannot hammer external services (#153). Guarded by its own internal
+	// mutex; eviction happens on uninstall.
+	rateLimiter *pluginRateLimiter
+
+	// pluginSessions maps session tokens → pluginIDs for binding-identity
+	// verification (#151). The loader calls RegisterPluginSession at load
+	// time; privileged bindings validate the token before proceeding so a
+	// plugin cannot impersonate another by passing a different pluginID. This
+	// is a stepping stone — the full fix requires per-plugin isolated webviews
+	// (#152), which is deferred. Guarded by pluginSessionsMu.
+	pluginSessionsMu sync.RWMutex
+	pluginSessions   map[string]string // token → pluginID
+
 	// vaultMu guards the lifecycle of the vault-scoped service pointers (db,
 	// coordinator, watcher, tracker, vaultPath) against concurrent IPC access.
 	// Wails dispatches each bound method on its own goroutine, so without this
@@ -123,7 +137,9 @@ type linkedConfigEntry struct {
 
 func NewApp() *App {
 	return &App{
-		spacesPerTab: 4,
+		spacesPerTab:   4,
+		rateLimiter:    newPluginRateLimiter(),
+		pluginSessions: make(map[string]string),
 	}
 }
 
@@ -437,6 +453,10 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			a.templateWatcher = tw
 		}
 	}
+
+	// Seed the in-memory network audit log from the on-disk per-plugin
+	// network.log files so entries survive a restart (#157).
+	seedNetworkAuditFromDisk(vaultPath)
 
 	// Report any paths the watcher could not subscribe to (fsnotify
 	// limits, permissions, etc.) so the UI can inform the user.
@@ -4560,8 +4580,9 @@ func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
 				info.Icon = m.Icon
 				info.Capabilities = m.Capabilities
 				info.Settings = m.Settings
-				info.Homepage = m.Homepage
-				info.UpdateURL = m.UpdateURL
+			info.Homepage = m.Homepage
+			info.UpdateURL = m.UpdateURL
+			info.ContentSHA256 = m.ContentSHA256
 			}
 		}
 		if _, err := os.Stat(filepath.Join(dir, "index.js")); err == nil {
@@ -4672,6 +4693,10 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	}
 	if err := plugins.Uninstall(a.vaultPath, pluginID); err != nil {
 		return err
+	}
+	// Evict the rate-limiter bucket so uninstalled plugins don't leak entries (#153).
+	if a.rateLimiter != nil {
+		a.rateLimiter.evict(pluginID)
 	}
 	// Best-effort grant cleanup; a failure here must not mask the successful
 	// uninstall (the folder is already gone). The grants block is harmless if

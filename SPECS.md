@@ -577,7 +577,30 @@ The active `notebook/section/page` from the navigator is bound into the context 
 
 8.3 Core Feature Decoupling
 
-**Content mutation is intentionally ungated.** PluginCreateBlock, PluginDeleteBlock, PluginMoveBlock, PluginCreatePage, PluginDeletePage, PluginRenamePage, PluginCreateSection, and PluginCreateNotebook do NOT call requireGrant. This is a deliberate trust-model decision: any loaded plugin can mutate content (create/delete/move blocks, pages, sections, notebooks), mirroring the core `mutateBlock` / `updateBlockState` pattern. The capability model gates I/O-bound operations (files, network, OS, clipboard) that have cross-process or cross-host impact; in-vault content mutation is treated as an implicit right of all loaded plugins, consistent with the editor's own mutation path. See GitHub issue #156 for the tracking discussion on whether a `content-mutate` capability should be added in a future release.
+**Content mutation is gated by `content-mutate` (#156).** PluginCreateBlock,
+PluginDeleteBlock, PluginMoveBlock, and PluginApplyBlocks call
+`requireGrant(pluginID, content-mutate)` before proceeding. First-party plugins
+inherit the grant implicitly; third-party plugins must declare it in their
+manifest (`"capabilities": {"content-mutate": true}`). Page/section/notebook
+CRUD (PluginCreatePage, PluginCreateSection, etc.) remains ungated — those are
+structural operations, not content mutations. The capability model gates
+I/O-bound operations (files, network, OS, clipboard) and now content block CRUD,
+that have cross-process or cross-host impact.
+
+**Plugin network fetch is rate-limited (#153).** Each network-granted plugin's
+`PluginFetch` calls are throttled by a per-plugin token-bucket rate limiter
+(default 1 rps, burst 10). A plugin can request a higher limit via the optional
+manifest field:
+
+```json
+{
+  "ratelimit": { "rps": 5, "burst": 20 }
+}
+```
+
+Values are validated at install (`rps` must be > 0 and <= 10; `burst` must be
+> 0 and <= 100). Out-of-range values are rejected. The host clamps hand-edited
+manifests at runtime (defense in depth).
 
 To enforce architectural parity, the user interface contains no custom code for the default Calendar, Kanban, or Agenda dashboards. They use the exact same SDK constraints as any third-party developer plugin:
 

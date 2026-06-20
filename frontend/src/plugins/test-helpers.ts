@@ -20,6 +20,7 @@ export const v2CtxStubs: Pick<
   | 'createBlock'
   | 'deleteBlock'
   | 'moveBlock'
+  | 'applyBlocks'
   | 'createPage'
   | 'createSection'
   | 'createNotebook'
@@ -59,6 +60,7 @@ export const v2CtxStubs: Pick<
   createBlock: () => Promise.resolve(''),
   deleteBlock: () => Promise.resolve(true),
   moveBlock: () => Promise.resolve(true),
+  applyBlocks: () => Promise.resolve(true),
   createPage: () => Promise.resolve(''),
   createSection: () => Promise.resolve(true),
   createNotebook: () => Promise.resolve(true),

@@ -217,6 +217,47 @@ These components receive `{ ctx, manifest }` as props — the same `PluginContex
 - `.silt-plugin` archives are validated against zip-slip, absolute paths, and `..` traversal before extraction, and the install path is checked to stay within `.system/plugins/`.
 - Plugins run in the same webview as the app (no sandbox). Install only plugins you trust, as with any browser-extension-style model.
 
+### 7.1 Trust boundary and binding identity (#151, #152)
+
+**The SDK (`PluginContext`) is the contract.** Plugin authors MUST use the SDK
+methods provided through `ctx.*`. Importing `wailsjs/go/main/App.js` directly
+and calling the raw Wails bindings is a **violation of the trust model** and
+will break when per-plugin isolated webviews land (#152 long-term).
+
+**Session tokens (#151).** When a plugin loads, the host calls
+`RegisterPluginSession(pluginID)` to mint a session token. Every privileged SDK
+closure captures this token and passes it to the Go binding alongside the
+`pluginID`. The Go side validates `token ↔ pluginID` before checking grants, so
+a plugin cannot impersonate another by passing a different `pluginID` to a raw
+binding — it doesn't have the target plugin's token.
+
+This is a **stepping stone**, not a full isolation boundary. Because plugin JS
+runs in the main webview, a determined attacker could read another plugin's
+token from closure scope. The full fix requires per-plugin isolated webviews
+(#152 long-term), which is tracked as a separate future issue.
+
+**Runtime integrity (#161).** The installer computes `sha256(index.js)` and
+writes it into `plugin.json` as `contentSha256`. On every load, the frontend
+verifies the hash before importing the module. A tampered `index.js` (modified
+post-install by another process, a sync conflict, or malware) is refused with a
+clear error.
+
+### 7.2 Content-mutate capability (#156)
+
+Block CRUD operations (`createBlock`, `deleteBlock`, `moveBlock`,
+`applyBlocks`) are gated by the `content-mutate` capability. A plugin that
+mutates blocks must declare it in the manifest:
+
+```json
+{
+  "capabilities": { "content-mutate": true }
+}
+```
+
+First-party plugins inherit this capability implicitly. Third-party plugins
+that previously mutated blocks without declaring it will need to update their
+manifest.
+
 ---
 
 ## 8. v2 SDK — Capabilities, Lifecycle, and Extended APIs
@@ -342,6 +383,20 @@ const res = await ctx.fetch('https://api.example.com/data', {
 
 CORS-free (Go-side proxy), with timeout/size/redirect caps. Host + status are
 audit-logged in Settings → Plugins (never the body).
+
+**Rate limiting (#153).** Each plugin's fetch calls are throttled by a
+per-plugin token-bucket rate limiter (default: 1 request/sec, burst of 10).
+To request a higher limit, declare it in the manifest:
+
+```json
+{
+  "ratelimit": { "rps": 5, "burst": 20 }
+}
+```
+
+`rps` must be > 0 and <= 10; `burst` must be > 0 and <= 100. Values outside
+this range are rejected at install time. The response body cap is 2 MB per
+request.
 
 ### 8.7 Editor extension points (#110)
 

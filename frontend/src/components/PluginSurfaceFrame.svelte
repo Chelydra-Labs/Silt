@@ -10,6 +10,7 @@
   import { themeState } from '../theme/store.svelte'
   import { onMount, onDestroy } from 'svelte'
   import type { PluginSurface } from '../plugins/surfaces'
+  import { SURFACE_CSP_META } from './plugin-surface-csp'
 
   interface Props {
     surface: PluginSurface
@@ -65,8 +66,12 @@
     return `:root { ${decls} } body { margin: 0; font-family: var(--font-body, system-ui, sans-serif); color: var(--text-primary, #e4e4e7); background: var(--bg-panel, #161619); }`
   }
 
+  // CSP meta tag from the shared constant (plugin-surface-csp.ts). See the
+  // constant for the full directive rationale (#149).
+  const cspMeta = SURFACE_CSP_META
+
   const srcdoc = $derived(
-    `<html><head><style>${themeCss()}</style></head><body>${surface.html}${bridgeScript}</body></html>`
+    `<html><head>${cspMeta}<style>${themeCss()}</style></head><body>${surface.html}${bridgeScript}</body></html>`
   )
 
   // Explicit allowlist of proxiable PluginContext method names. Anything not
@@ -88,6 +93,7 @@
     'createBlock',
     'deleteBlock',
     'moveBlock',
+    'applyBlocks',
     'createPage',
     'createSection',
     'createNotebook',

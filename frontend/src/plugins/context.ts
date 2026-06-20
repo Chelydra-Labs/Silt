@@ -9,6 +9,7 @@ import {
   PluginCreateBlock,
   PluginDeleteBlock,
   PluginMoveBlock,
+  PluginApplyBlocks,
   PluginCreatePage,
   PluginCreateSection,
   PluginCreateNotebook,
@@ -28,6 +29,9 @@ import {
   PluginClipboardWriteText,
   PluginNotify,
   PluginFetch,
+  PluginRegisterSurface,
+  RegisterPluginSession,
+  UnregisterPluginSession,
   AddAttachment,
   OpenAttachment,
   DeleteAttachment,
@@ -58,14 +62,6 @@ function getPluginSchemaDefault(pluginID: string, key: string): unknown {
   return field?.default
 }
 
-// hasCapability checks whether a plugin DECLARED a capability in its manifest.
-// Used for client-side gating of editor-schema (slash commands, decorations).
-// The manifest was validated at install time, so this is a trusted check.
-function hasCapability(pluginID: string, cap: string): boolean {
-  const reg = loadedPlugins.plugins.get(pluginID)
-  return !!reg?.manifest?.capabilities?.[cap]
-}
-
 /**
  * Build a PluginContext whose `activeNotebook/Section/Page` are live reactive
  * getters backed by the module-scoped $state in location.svelte.ts (#69).
@@ -83,7 +79,10 @@ function hasCapability(pluginID: string, cap: string): boolean {
  * not need to pass its own id when resolving its per-active-notebook settings
  * (#133); the loader passes the manifest id at context construction.
  */
-export function makePluginContext(pluginID: string): PluginContext {
+export function makePluginContext(
+  pluginID: string,
+  sessionToken?: string
+): PluginContext {
   const loc = getActiveLocation()
   return {
     get activeNotebook() {
@@ -193,9 +192,12 @@ export function makePluginContext(pluginID: string): PluginContext {
         ['%{{embed:' + id + '}}%']
       ),
 
-    // --- Block CRUD (#104) — same atomic-write path as mutateBlock ----------
+    // --- Block CRUD (#104) — gated by content-mutate (#156) -----------------
+    // Same atomic-write path as mutateBlock.
     createBlock: (opts) =>
       PluginCreateBlock(
+        pluginID,
+        sessionToken ?? '',
         opts.after ?? '',
         opts.notebook ?? '',
         opts.section ?? '',
@@ -203,14 +205,34 @@ export function makePluginContext(pluginID: string): PluginContext {
         opts.type,
         opts.text
       ),
-    deleteBlock: (uuid) => PluginDeleteBlock(uuid).then(() => true),
+    deleteBlock: (uuid) =>
+      PluginDeleteBlock(pluginID, sessionToken ?? '', uuid).then(() => true),
     moveBlock: (uuid, opts) =>
       PluginMoveBlock(
+        pluginID,
+        sessionToken ?? '',
         uuid,
         opts.after ?? '',
         opts.notebook ?? '',
         opts.section ?? '',
         opts.page ?? ''
+      ).then(() => true),
+
+    // --- Batch block ops (#104) — gated by content-mutate (#156) ------------
+    applyBlocks: (ops) =>
+      PluginApplyBlocks(
+        pluginID,
+        sessionToken ?? '',
+        ops.map((op) => ({
+          kind: op.kind,
+          afterId: op.after ?? '',
+          type: op.type ?? '',
+          text: op.text ?? '',
+          blockId: op.blockId ?? '',
+          notebook: op.notebook ?? '',
+          section: op.section ?? '',
+          page: op.page ?? ''
+        }))
       ).then(() => true),
 
     // --- Page / section / notebook CRUD (#104) ------------------------------
@@ -234,12 +256,15 @@ export function makePluginContext(pluginID: string): PluginContext {
     writeFile: (notebook, relPath, data) =>
       PluginWriteFile(
         pluginID,
+        sessionToken ?? '',
         notebook,
         relPath,
         data as unknown as never
       ).then(() => true),
     deleteFile: (notebook, relPath) =>
-      PluginDeleteFile(pluginID, notebook, relPath).then(() => true),
+      PluginDeleteFile(pluginID, sessionToken ?? '', notebook, relPath).then(
+        () => true
+      ),
     listDir: (notebook, relPath) =>
       PluginListDir(pluginID, notebook, relPath).then((r) => r ?? []),
     notebookRoot: (notebook) => PluginResolveNotebookRoot(pluginID, notebook),
@@ -265,7 +290,7 @@ export function makePluginContext(pluginID: string): PluginContext {
 
     // --- Network / fetch (#115) — capability-gated --------------------------
     fetch: (url, opts) =>
-      PluginFetch(pluginID, {
+      PluginFetch(pluginID, sessionToken ?? '', {
         url,
         method: opts?.method ?? '',
         headers: opts?.headers ?? {},
@@ -280,17 +305,10 @@ export function makePluginContext(pluginID: string): PluginContext {
       })),
 
     // --- Editor extension points (#110) — plugin slash commands -------------
-    // editor-schema capability check: only plugins that DECLARED editor-schema
-    // in their manifest can register slash commands / decorations. The manifest
-    // was validated at install time (installer.go), so this is a trusted
-    // client-side gate.
+    // The capability gate lives INSIDE the registry now (#158): the registry
+    // checks isGranted(pluginID, 'editor-schema') from the trusted Go grant
+    // cache. The SDK closure just delegates.
     registerSlashCommand: (cmd) => {
-      if (!hasCapability(pluginID, 'editor-schema')) {
-        console.warn(
-          `[silt] plugin ${pluginID} cannot register slash commands without the editor-schema capability`
-        )
-        return () => {}
-      }
       const namespacedId = `${pluginID}:${cmd.id}`
       registerSlashCommand({
         id: namespacedId,
@@ -304,31 +322,41 @@ export function makePluginContext(pluginID: string): PluginContext {
     },
 
     // --- Editor decorations (#110) — read-only overlays --------------------
+    // Capability gate lives INSIDE the registry (#158).
     provideDecorations: (id, provider) => {
-      if (!hasCapability(pluginID, 'editor-schema')) {
-        console.warn(
-          `[silt] plugin ${pluginID} cannot provide decorations without the editor-schema capability`
-        )
-        return () => {}
-      }
       return registerDecorationProvider(id, pluginID, provider as any)
     },
 
-    // --- Rendered UI surfaces (#117) — capability-gated --------------------
+    // --- Rendered UI surfaces (#117) — capability-gated (#154 Go-side gate) -
     registerSurface: (surface) => {
-      // The capability check is advisory here (the surface only renders if the
-      // host mounts it); the Go side re-checks on any privileged call the
-      // surface makes through the bridge.
+      // The Go-side gate is the enforcement point (#154). The frontend
+      // registry adds the surface only after Go approves. The capability
+      // check is ALSO mirrored inside surfaces.ts (Phase 2 / #158) for
+      // defense in depth.
       const id = `${pluginID}:${surface.id}`
-      registerSurface({
-        id,
-        pluginID,
-        kind: surface.kind,
-        label: surface.label,
-        icon: surface.icon,
-        html: surface.html
-      })
-      return () => unregisterSurface(id)
+      let cleanup: (() => void) | null = null
+      PluginRegisterSurface(pluginID, surface.id, surface.kind, surface.label)
+        .then(() => {
+          cleanup = registerSurface({
+            id,
+            pluginID,
+            kind: surface.kind,
+            label: surface.label,
+            icon: surface.icon,
+            html: surface.html
+          })
+        })
+        .catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[silt] plugin ${pluginID} surface "${surface.id}" registration denied:`,
+            err
+          )
+        })
+      return () => {
+        cleanup?.()
+        unregisterSurface(id)
+      }
     },
 
     // --- Attachments (#101) ------------------------------------------------

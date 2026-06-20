@@ -6,6 +6,8 @@ package plugins
 
 import (
 	"archive/zip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,6 +44,20 @@ type Manifest struct {
 	// UpdateURL is an optional URL that returns a JSON manifest with the latest
 	// version + download URL, for update checks (#111).
 	UpdateURL string `json:"updateUrl,omitempty"`
+	// Ratelimit is an optional per-plugin fetch rate-limit override (#153).
+	// If absent, the host default (1 rps, burst 10) applies. If present, rps
+	// must be > 0 and <= the hard cap (10); burst must be > 0 and <= 100.
+	Ratelimit *RatelimitConfig `json:"ratelimit,omitempty"`
+	// ContentSHA256 is the sha256 of the installed index.js, computed at
+	// install time so the loader can verify runtime integrity (#161). Written
+	// into the on-disk plugin.json by Install; absent from the original archive.
+	ContentSHA256 string `json:"contentSha256,omitempty"`
+}
+
+// RatelimitConfig is the manifest-declared per-plugin fetch rate limit (#153).
+type RatelimitConfig struct {
+	RPS   float64 `json:"rps"`
+	Burst int     `json:"burst"`
 }
 
 var idRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -142,6 +158,17 @@ func Validate(archivePath string) (Manifest, []string, error) {
 		return Manifest{}, warnings, fmt.Errorf("invalid settings schema: %w", serr)
 	}
 
+	// Validate the optional per-plugin fetch rate-limit override (#153).
+	// rps must be > 0 and <= the hard cap; burst must be > 0 and <= 100.
+	if manifest.Ratelimit != nil {
+		if manifest.Ratelimit.RPS <= 0 || manifest.Ratelimit.RPS > 10 {
+			return Manifest{}, warnings, fmt.Errorf("ratelimit.rps must be between 0 (exclusive) and 10 (inclusive), got %g", manifest.Ratelimit.RPS)
+		}
+		if manifest.Ratelimit.Burst <= 0 || manifest.Ratelimit.Burst > 100 {
+			return Manifest{}, warnings, fmt.Errorf("ratelimit.burst must be between 1 and 100, got %d", manifest.Ratelimit.Burst)
+		}
+	}
+
 	// Second pass: zip-slip / absolute-path guard + main-file presence +
 	// uncompressed-size cap.
 	var totalUncompressed uint64
@@ -219,6 +246,36 @@ func Install(vaultPath, archivePath string) (Manifest, error) {
 		if err := copyZipEntry(f, target); err != nil {
 			return Manifest{}, err
 		}
+	}
+
+	// Compute sha256 of the extracted index.js and write it into the on-disk
+	// plugin.json so the loader can verify integrity at load time (#161).
+	indexPath := filepath.Join(tmp, "index.js")
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("failed to read extracted index.js for hashing: %w", err)
+	}
+	hash := sha256.Sum256(indexData)
+	manifest.ContentSHA256 = hex.EncodeToString(hash[:])
+	// Inject contentSha256 into the on-disk plugin.json via a generic map so
+	// custom/unknown fields the author included (repository, bugs, keywords,
+	// ...) are preserved instead of being dropped by a struct round-trip.
+	manifestOnDisk := filepath.Join(tmp, "plugin.json")
+	manifestData, err := os.ReadFile(manifestOnDisk)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("failed to read plugin.json for sha256 injection: %w", err)
+	}
+	var rawManifest map[string]any
+	if err := json.Unmarshal(manifestData, &rawManifest); err != nil {
+		return Manifest{}, fmt.Errorf("failed to parse plugin.json for sha256 injection: %w", err)
+	}
+	rawManifest["contentSha256"] = manifest.ContentSHA256
+	manifestJSONBytes, err := json.Marshal(rawManifest)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("failed to serialize manifest with sha256: %w", err)
+	}
+	if err := os.WriteFile(manifestOnDisk, manifestJSONBytes, 0o644); err != nil {
+		return Manifest{}, fmt.Errorf("failed to write manifest with sha256: %w", err)
 	}
 
 	if err := os.Rename(tmp, dest); err != nil {

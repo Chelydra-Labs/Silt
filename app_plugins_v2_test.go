@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,9 +16,21 @@ import (
 	"testing"
 	"time"
 
+	"silt/backend/config"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 )
+
+// registerTestSession registers a session for pluginID and returns the token.
+// Tests that call session-gated bindings (#151) need this before the call.
+func registerTestSession(t *testing.T, app *App, pluginID string) string {
+	t.Helper()
+	token, err := app.RegisterPluginSession(pluginID)
+	if err != nil {
+		t.Fatalf("RegisterPluginSession(%q): %v", pluginID, err)
+	}
+	return token
+}
 
 // writeAndIndexFile writes content to a page file AND indexes it, so block-
 // location lookups (GetBlockLocation) and FetchPageBlocks work in the test.
@@ -45,8 +59,9 @@ func TestPluginCreateBlock_InsertsAndPersists(t *testing.T) {
 	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] existing task <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+	token := registerTestSession(t, app, "silt-kanban")
 
-	id, err := app.PluginCreateBlock("", notebook, section, page, "TASK", "new plugin task")
+	id, err := app.PluginCreateBlock("silt-kanban", token, "", notebook, section, page, "TASK", "new plugin task")
 	if err != nil {
 		t.Fatalf("PluginCreateBlock: %v", err)
 	}
@@ -78,8 +93,9 @@ func TestPluginDeleteBlock_RemovesBlock(t *testing.T) {
 	target := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] keep <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n- [ ] delete me <!-- id: " + target + " -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+	token := registerTestSession(t, app, "silt-kanban")
 
-	if err := app.PluginDeleteBlock(target); err != nil {
+	if err := app.PluginDeleteBlock("silt-kanban", token, target); err != nil {
 		t.Fatalf("PluginDeleteBlock: %v", err)
 	}
 	blocks, _ := app.FetchPageBlocks(notebook, section, page)
@@ -99,10 +115,11 @@ func TestPluginMoveBlock_ReordersInPage(t *testing.T) {
 	mover := "22222222-2222-2222-2222-222222222222"
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] first <!-- id: " + first + " -->\n- [ ] second <!-- id: " + mover + " -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+	token := registerTestSession(t, app, "silt-kanban")
 
 	// Move the second block after the first — no-op position, but verifies the
 	// path does not error and preserves both blocks.
-	if err := app.PluginMoveBlock(mover, first, "", "", ""); err != nil {
+	if err := app.PluginMoveBlock("silt-kanban", token, mover, first, "", "", ""); err != nil {
 		t.Fatalf("PluginMoveBlock: %v", err)
 	}
 	blocks, _ := app.FetchPageBlocks(notebook, section, page)
@@ -133,8 +150,9 @@ func TestPluginMoveBlock_CrossPageInsertsInTarget(t *testing.T) {
 		"- [ ] existing <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
 	writeAndIndexFile(t, app, dstPath, dstContent, notebook, section, dstPage)
 
+	token := registerTestSession(t, app, "silt-kanban")
 	// Move blockA from Source to Dest (no afterID → append).
-	if err := app.PluginMoveBlock(blockA, "", notebook, section, dstPage); err != nil {
+	if err := app.PluginMoveBlock("silt-kanban", token, blockA, "", notebook, section, dstPage); err != nil {
 		t.Fatalf("PluginMoveBlock cross-page: %v", err)
 	}
 
@@ -174,9 +192,102 @@ func TestPluginMoveBlock_CrossPageInsertsInTarget(t *testing.T) {
 // PluginCreateBlock rejects an invalid block type.
 func TestPluginCreateBlock_RejectsInvalidType(t *testing.T) {
 	app := newTestApp(t)
-	_, err := app.PluginCreateBlock("", "Work", "", "Daily", "BOGUS", "text")
+	token := registerTestSession(t, app, "silt-kanban")
+	_, err := app.PluginCreateBlock("silt-kanban", token, "", "Work", "", "Daily", "BOGUS", "text")
 	if err == nil {
 		t.Fatal("expected error for invalid block type")
+	}
+}
+
+// =========================================================================
+// Content-mutate capability gate (#156)
+// =========================================================================
+
+// PluginCreateBlock is denied for a third-party plugin without content-mutate.
+func TestPluginCreateBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
+	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
+	notebook, section, page := "Work", "Journal", "Daily"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] existing <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
+	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+
+	_, err := app.PluginCreateBlock("third-party", token, "", notebook, section, page, "TASK", "text")
+	if err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+}
+
+// PluginCreateBlock succeeds for a third-party plugin WITH content-mutate.
+func TestPluginCreateBlock_SucceedsWithContentMutateGrant(t *testing.T) {
+	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
+	notebook, section, page := "Work", "Journal", "Daily"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] existing <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
+	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
+
+	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	id, err := app.PluginCreateBlock("third-party", token, "", notebook, section, page, "TASK", "granted task")
+	if err != nil {
+		t.Fatalf("PluginCreateBlock with grant: %v", err)
+	}
+	if !looksLikeUUID(id) {
+		t.Fatalf("returned id %q is not a UUID", id)
+	}
+}
+
+// PluginDeleteBlock is denied without content-mutate.
+func TestPluginDeleteBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
+	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
+	if err := app.PluginDeleteBlock("third-party", token, "some-uuid"); err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+}
+
+// PluginMoveBlock is denied without content-mutate.
+func TestPluginMoveBlock_DeniedWithoutContentMutateGrant(t *testing.T) {
+	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
+	if err := app.PluginMoveBlock("third-party", token, "some-uuid", "", "", "", ""); err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+}
+
+// PluginApplyBlocks is denied without content-mutate.
+func TestPluginApplyBlocks_DeniedWithoutContentMutateGrant(t *testing.T) {
+	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
+	ops := []PluginCreateBlockOp{{Kind: "delete", BlockID: "some-uuid"}}
+	if err := app.PluginApplyBlocks("third-party", token, ops); err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+}
+
+// =========================================================================
+// Surface registration capability gate (#154)
+// =========================================================================
+
+// PluginRegisterSurface is denied without ui-surface.
+func TestPluginRegisterSurface_DeniedWithoutUISurfaceGrant(t *testing.T) {
+	app := newTestApp(t)
+	err := app.PluginRegisterSurface("third-party", "panel1", "sidebar-panel", "My Panel")
+	if err == nil {
+		t.Fatal("expected capability denial without ui-surface grant")
+	}
+}
+
+// PluginRegisterSurface succeeds with ui-surface.
+func TestPluginRegisterSurface_SucceedsWithUISurfaceGrant(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.RequestCapability("third-party", string(plugins.CapUISurface), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if err := app.PluginRegisterSurface("third-party", "panel1", "sidebar-panel", "My Panel"); err != nil {
+		t.Fatalf("PluginRegisterSurface with grant: %v", err)
 	}
 }
 
@@ -187,7 +298,8 @@ func TestPluginCreateBlock_RejectsInvalidType(t *testing.T) {
 // PluginWriteFile is denied without a write-files grant.
 func TestPluginWriteFile_DeniedWithoutGrant(t *testing.T) {
 	app := newTestApp(t)
-	err := app.PluginWriteFile("third-party", "Work", "attachments/foo.txt", []byte("x"))
+	token := registerTestSession(t, app, "third-party")
+	err := app.PluginWriteFile("third-party", token, "Work", "attachments/foo.txt", []byte("x"))
 	if err == nil {
 		t.Fatal("expected capability denial without grant")
 	}
@@ -197,10 +309,11 @@ func TestPluginWriteFile_DeniedWithoutGrant(t *testing.T) {
 // attachments/.
 func TestPluginWriteFile_GrantThenWrite(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
 	if err := app.RequestCapability("third-party", string(plugins.CapWriteFiles), ""); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	if err := app.PluginWriteFile("third-party", "Work", "attachments/note.txt", []byte("hello")); err != nil {
+	if err := app.PluginWriteFile("third-party", token, "Work", "attachments/note.txt", []byte("hello")); err != nil {
 		t.Fatalf("PluginWriteFile: %v", err)
 	}
 	abs := filepath.Join(app.vaultPath, "Work", "attachments", "note.txt")
@@ -217,8 +330,9 @@ func TestPluginWriteFile_GrantThenWrite(t *testing.T) {
 // scratch).
 func TestPluginWriteFile_RejectsOutsideAllowlist(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
 	_ = app.RequestCapability("third-party", string(plugins.CapWriteFiles), "")
-	err := app.PluginWriteFile("third-party", "Work", "evil.txt", []byte("x"))
+	err := app.PluginWriteFile("third-party", token, "Work", "evil.txt", []byte("x"))
 	if err == nil {
 		t.Fatal("expected rejection for path outside the allowlist")
 	}
@@ -227,8 +341,9 @@ func TestPluginWriteFile_RejectsOutsideAllowlist(t *testing.T) {
 // PluginWriteFile rejects a traversal path that escapes the notebook root.
 func TestPluginWriteFile_RejectsTraversal(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "third-party")
 	_ = app.RequestCapability("third-party", string(plugins.CapWriteFiles), "")
-	err := app.PluginWriteFile("third-party", "Work", "../../../etc/evil", []byte("x"))
+	err := app.PluginWriteFile("third-party", token, "Work", "../../../etc/evil", []byte("x"))
 	if err == nil {
 		t.Fatal("expected traversal rejection")
 	}
@@ -237,10 +352,11 @@ func TestPluginWriteFile_RejectsTraversal(t *testing.T) {
 // PluginReadFile + PluginListDir round-trip a file written by PluginWriteFile.
 func TestPluginReadFile_AndListDir(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
 	_ = app.RequestCapability("p", string(plugins.CapReadFiles), "")
-	_ = app.PluginWriteFile("p", "Work", "attachments/a.txt", []byte("A"))
-	_ = app.PluginWriteFile("p", "Work", "attachments/b.txt", []byte("B"))
+	_ = app.PluginWriteFile("p", token, "Work", "attachments/a.txt", []byte("A"))
+	_ = app.PluginWriteFile("p", token, "Work", "attachments/b.txt", []byte("B"))
 
 	res, err := app.PluginReadFile("p", "Work", "attachments/a.txt")
 	if err != nil {
@@ -327,7 +443,8 @@ func TestPluginWritePathAllowed(t *testing.T) {
 // PluginFetch is denied without a network grant.
 func TestPluginFetch_DeniedWithoutGrant(t *testing.T) {
 	app := newTestApp(t)
-	_, err := app.PluginFetch("third-party", PluginFetchInput{URL: "https://example.com"})
+	token := registerTestSession(t, app, "third-party")
+	_, err := app.PluginFetch("third-party", token, PluginFetchInput{URL: "https://example.com"})
 	if err == nil {
 		t.Fatal("expected capability denial without network grant")
 	}
@@ -336,12 +453,13 @@ func TestPluginFetch_DeniedWithoutGrant(t *testing.T) {
 // PluginFetch rejects a non-http(s) URL even with a grant.
 func TestPluginFetch_RejectsUnsafeUrl(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
-	_, err := app.PluginFetch("p", PluginFetchInput{URL: "file:///etc/passwd"})
+	_, err := app.PluginFetch("p", token, PluginFetchInput{URL: "file:///etc/passwd"})
 	if err == nil {
 		t.Fatal("expected rejection of file:// scheme")
 	}
-	_, err = app.PluginFetch("p", PluginFetchInput{URL: "javascript:alert(1)"})
+	_, err = app.PluginFetch("p", token, PluginFetchInput{URL: "javascript:alert(1)"})
 	if err == nil {
 		t.Fatal("expected rejection of javascript: scheme")
 	}
@@ -531,16 +649,17 @@ func TestPluginWriteFile_RejectsBeyondScratchCap(t *testing.T) {
 	t.Cleanup(func() { maxPluginScratchBytes = orig })
 
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
 
 	// First write fits the cap.
 	first := make([]byte, 900*1024)
-	if err := app.PluginWriteFile("p", "Work", ".system/plugins/p/data/big.bin", first); err != nil {
+	if err := app.PluginWriteFile("p", token, "Work", ".system/plugins/p/data/big.bin", first); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
 	// A second 200 KB write pushes cumulative past 1 MB.
 	second := make([]byte, 200*1024)
-	err := app.PluginWriteFile("p", "Work", ".system/plugins/p/data/tail.bin", second)
+	err := app.PluginWriteFile("p", token, "Work", ".system/plugins/p/data/tail.bin", second)
 	if err == nil {
 		t.Fatal("expected rejection beyond the scratch cap")
 	}
@@ -549,8 +668,9 @@ func TestPluginWriteFile_RejectsBeyondScratchCap(t *testing.T) {
 	}
 
 	// A different plugin is not affected by p's exhaustion.
+	otherToken := registerTestSession(t, app, "other")
 	_ = app.RequestCapability("other", string(plugins.CapWriteFiles), "")
-	if err := app.PluginWriteFile("other", "Work", ".system/plugins/other/data/x.bin", []byte("hi")); err != nil {
+	if err := app.PluginWriteFile("other", otherToken, "Work", ".system/plugins/other/data/x.bin", []byte("hi")); err != nil {
 		t.Errorf("other plugin's write should not be affected by p's exhaustion: %v", err)
 	}
 }
@@ -561,12 +681,13 @@ func TestPluginWriteFile_RejectsBeyondScratchCap(t *testing.T) {
 // write (a successful delete therefore frees budget immediately).
 func TestPluginWriteFile_ScratchCapAccumulatesByActualDiskUsage(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
 	// Three 1 MB files — well under the production 500 MB cap.
 	chunk := make([]byte, 1*1024*1024)
 	for i := 0; i < 3; i++ {
 		name := filepath.Join(".system/plugins/p/data", "chunk-"+string(rune('a'+i))+".bin")
-		if err := app.PluginWriteFile("p", "Work", name, chunk); err != nil {
+		if err := app.PluginWriteFile("p", token, "Work", name, chunk); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
@@ -576,6 +697,87 @@ func TestPluginWriteFile_ScratchCapAccumulatesByActualDiskUsage(t *testing.T) {
 	}
 	if used < 3*1024*1024 {
 		t.Errorf("scratch usage = %d, want >= 3 MB", used)
+	}
+}
+
+// pluginScratchSizeBytes counts linked notebook roots so a write-files plugin
+// cannot bypass the cap by writing into a linked notebook's scratch dir (#159).
+func TestPluginScratchSizeBytes_CountsLinkedNotebooks(t *testing.T) {
+	app := newTestApp(t)
+
+	// Create a linked notebook root OUTSIDE the vault.
+	linkedRoot := t.TempDir()
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = append(app.cfg.LinkedNotebooks, config.LinkedNotebook{
+		ID: "test-linked", RootPath: linkedRoot, DisplayName: "Linked",
+	})
+	app.configMu.Unlock()
+
+	// Write a file into the linked notebook's plugin scratch dir.
+	linkedScratch := filepath.Join(linkedRoot, ".system", "plugins", "p", "data")
+	if err := os.MkdirAll(linkedScratch, 0o755); err != nil {
+		t.Fatalf("mkdir linked scratch: %v", err)
+	}
+	data := make([]byte, 512*1024) // 512 KB
+	if err := os.WriteFile(filepath.Join(linkedScratch, "linked.bin"), data, 0o644); err != nil {
+		t.Fatalf("write linked scratch: %v", err)
+	}
+
+	// The linked scratch bytes must be counted.
+	used, err := pluginScratchSizeBytes(app, "p")
+	if err != nil {
+		t.Fatalf("pluginScratchSizeBytes: %v", err)
+	}
+	if used < 512*1024 {
+		t.Errorf("scratch usage = %d, want >= 512 KB (linked notebook counted)", used)
+	}
+}
+
+// Writing past the cap INTO a linked notebook root is rejected (#159).
+func TestPluginWriteFile_LinkedScratchCapRejected(t *testing.T) {
+	orig := maxPluginScratchBytes
+	maxPluginScratchBytes = 1 * 1024 * 1024 // 1 MB
+	t.Cleanup(func() { maxPluginScratchBytes = orig })
+
+	app := newTestApp(t)
+	pToken := registerTestSession(t, app, "p")
+	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
+
+	// Create a linked notebook root.
+	linkedRoot := t.TempDir()
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = append(app.cfg.LinkedNotebooks, config.LinkedNotebook{
+		ID: "cap-linked", RootPath: linkedRoot, DisplayName: "CapLinked",
+	})
+	app.configMu.Unlock()
+
+	// Write 900 KB to the vault scratch (fits under 1 MB).
+	first := make([]byte, 900*1024)
+	if err := app.PluginWriteFile("p", pToken, "Work", ".system/plugins/p/data/vault.bin", first); err != nil {
+		t.Fatalf("vault scratch write: %v", err)
+	}
+
+	// Pre-populate the linked notebook scratch with 200 KB (simulating a
+	// prior write that went through the linked notebook path).
+	linkedScratch := filepath.Join(linkedRoot, ".system", "plugins", "p", "data")
+	if err := os.MkdirAll(linkedScratch, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(linkedScratch, "preexisting.bin"), make([]byte, 200*1024), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Now a write to the linked notebook scratch should be rejected because
+	// cumulative (900 KB vault + 200 KB linked + new write) exceeds 1 MB.
+	// We write directly through PluginWriteFile with a linked-notebook path.
+	// resolvePluginNotebookDir resolves through the linked root, so this
+	// writes to the linked scratch dir.
+	err := app.PluginWriteFile("p", pToken, "CapLinked", ".system/plugins/p/data/overflow.bin", make([]byte, 100*1024))
+	if err == nil {
+		t.Fatal("expected rejection: cumulative scratch across vault + linked exceeds the cap")
+	}
+	if !strings.Contains(err.Error(), "scratch usage") {
+		t.Errorf("error should mention scratch usage: %v", err)
 	}
 }
 
@@ -643,6 +845,7 @@ func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var err1, err2 error
+	moveToken := registerTestSession(t, app, "silt-kanban")
 	const rounds = 20
 	for i := 0; i < rounds; i++ {
 		// Reset source and destination pages each round.
@@ -653,11 +856,11 @@ func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			err1 = app.PluginMoveBlock(blockA, "", notebook, section, dstPage1)
+			err1 = app.PluginMoveBlock("silt-kanban", moveToken, blockA, "", notebook, section, dstPage1)
 		}()
 		go func() {
 			defer wg.Done()
-			err2 = app.PluginMoveBlock(blockB, "", notebook, section, dstPage2)
+			err2 = app.PluginMoveBlock("silt-kanban", moveToken, blockB, "", notebook, section, dstPage2)
 		}()
 		wg.Wait()
 
@@ -755,6 +958,7 @@ func TestPluginListNavigation_GrantThenList(t *testing.T) {
 // Proxy-*, Sec-*, Cookie, Authorization).
 func TestPluginFetch_RejectsForbiddenHeaders(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
 
 	dangerous := []string{
@@ -763,7 +967,7 @@ func TestPluginFetch_RejectsForbiddenHeaders(t *testing.T) {
 		"Sec-Fetch-Mode", "X-Forwarded-For",
 	}
 	for _, h := range dangerous {
-		_, err := app.PluginFetch("p", PluginFetchInput{
+		_, err := app.PluginFetch("p", token, PluginFetchInput{
 			URL:     "https://example.com",
 			Headers: map[string]string{h: "evil"},
 		})
@@ -809,9 +1013,10 @@ func TestIsPathWithinRoot_RejectsSymlinkEscape(t *testing.T) {
 // PluginFetch rejects non-standard HTTP methods (CONNECT, TRACE, etc.).
 func TestPluginFetch_RejectsForbiddenMethod(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
 	for _, m := range []string{"CONNECT", "TRACE", "OPTIONS", "BOGUS"} {
-		_, err := app.PluginFetch("p", PluginFetchInput{URL: "https://example.com", Method: m})
+		_, err := app.PluginFetch("p", token, PluginFetchInput{URL: "https://example.com", Method: m})
 		if err == nil {
 			t.Fatalf("expected rejection of HTTP method %q", m)
 		}
@@ -821,11 +1026,12 @@ func TestPluginFetch_RejectsForbiddenMethod(t *testing.T) {
 // PluginFetch accepts standard HTTP methods.
 func TestPluginFetch_AcceptsStandardMethods(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
 	for _, m := range []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", ""} {
 		// We don't care about the fetch result (the server may be unreachable);
 		// we just verify the method validation doesn't reject these.
-		_, err := app.PluginFetch("p", PluginFetchInput{URL: "https://example.com", Method: m})
+		_, err := app.PluginFetch("p", token, PluginFetchInput{URL: "https://example.com", Method: m})
 		// Network errors are fine — we're only checking that the METHOD was
 		// not rejected. A method-rejection returns a formatting error, not a
 		// network error. Distinguish by checking for the allowlist message.
@@ -838,14 +1044,506 @@ func TestPluginFetch_AcceptsStandardMethods(t *testing.T) {
 // PluginFetch rejects an oversized request body.
 func TestPluginFetch_RejectsOversizedRequestBody(t *testing.T) {
 	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
 	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
 	bigBody := strings.Repeat("x", int(maxPluginFetchRequestBytes)+1)
-	_, err := app.PluginFetch("p", PluginFetchInput{
+	_, err := app.PluginFetch("p", token, PluginFetchInput{
 		URL:    "https://example.com",
 		Method: "POST",
 		Body:   bigBody,
 	})
 	if err == nil {
 		t.Fatal("expected rejection of oversized request body")
+	}
+}
+
+// =========================================================================
+// Per-plugin rate limiter (#153)
+// =========================================================================
+
+func TestTokenBucket_AllowsBurstThenThrottles(t *testing.T) {
+	tb := &tokenBucket{tokens: 3, last: time.Now(), rps: 1, burst: 3}
+	// 3 tokens available → 3 immediate allows.
+	for i := 0; i < 3; i++ {
+		if !tb.allow(time.Now()) {
+			t.Fatalf("expected allow on burst call %d", i)
+		}
+	}
+	// 4th call should be denied (bucket empty, no time elapsed).
+	if tb.allow(time.Now()) {
+		t.Fatal("expected deny after burst exhausted")
+	}
+	// After 1 second, 1 token refills.
+	if !tb.allow(time.Now().Add(time.Second)) {
+		t.Fatal("expected allow after 1s refill")
+	}
+}
+
+func TestPluginRateLimiter_EvictOnUninstall(t *testing.T) {
+	app := newTestApp(t)
+	// Simulate a fetch that creates a bucket.
+	app.rateLimiter.allow("", "evict-me")
+	// Evict.
+	app.rateLimiter.evict("evict-me")
+	// After eviction, a new bucket starts fresh (full burst).
+	app.rateLimiter.mu.Lock()
+	_, exists := app.rateLimiter.buckets["evict-me"]
+	app.rateLimiter.mu.Unlock()
+	if exists {
+		t.Fatal("bucket should not exist after eviction")
+	}
+}
+
+func TestPluginRateLimiter_ConcurrentNoPanic(t *testing.T) {
+	app := newTestApp(t)
+	const n = 100
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			app.rateLimiter.allow("", "concurrent-plugin")
+		}()
+	}
+	wg.Wait()
+	// Should not panic under -race.
+}
+
+// writeInstalledManifest writes a plugin.json (and parent dirs) at
+// <vault>/.system/plugins/<id>/plugin.json so rate-limit resolution can read
+// it the way allow() does at runtime.
+func writeInstalledManifest(t *testing.T, vaultPath, id, manifestJSONStr string) {
+	t.Helper()
+	dir := filepath.Join(vaultPath, ".system", "plugins", id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifestJSONStr), 0o644); err != nil {
+		t.Fatalf("write plugin.json: %v", err)
+	}
+}
+
+func TestPluginRateLimiter_HonorsManifestOverride(t *testing.T) {
+	app := newTestApp(t)
+	// A plugin that declares a 5 rps / burst 2 override.
+	writeInstalledManifest(t, app.vaultPath, "capped",
+		`{"id":"capped","name":"Capped","version":"1.0.0","ratelimit":{"rps":5,"burst":2}}`)
+	app.rateLimiter.allow(app.vaultPath, "capped")
+
+	app.rateLimiter.mu.Lock()
+	b, ok := app.rateLimiter.buckets["capped"]
+	app.rateLimiter.mu.Unlock()
+	if !ok {
+		t.Fatal("expected a bucket to be created for capped")
+	}
+	if b.rps != 5 {
+		t.Errorf("bucket rps = %g, want 5 (manifest override)", b.rps)
+	}
+	if b.burst != 2 {
+		t.Errorf("bucket burst = %d, want 2 (manifest override)", b.burst)
+	}
+}
+
+func TestPluginRateLimiter_DefaultsWhenNoManifest(t *testing.T) {
+	app := newTestApp(t)
+	// No plugin.json on disk at all -> host defaults apply.
+	app.rateLimiter.allow(app.vaultPath, "no-manifest")
+
+	app.rateLimiter.mu.Lock()
+	b, ok := app.rateLimiter.buckets["no-manifest"]
+	app.rateLimiter.mu.Unlock()
+	if !ok {
+		t.Fatal("expected a bucket to be created for no-manifest")
+	}
+	if b.rps != defaultPluginFetchRPS {
+		t.Errorf("bucket rps = %g, want default %g", b.rps, defaultPluginFetchRPS)
+	}
+	if b.burst != defaultPluginFetchBurst {
+		t.Errorf("bucket burst = %d, want default %d", b.burst, defaultPluginFetchBurst)
+	}
+}
+
+func TestResolvePluginRatelimit_ClampsOutOfRange(t *testing.T) {
+	app := newTestApp(t)
+	// An over-cap override (hand-edited / drifted) must fall back to defaults
+	// rather than granting an outsized quota (defense in depth).
+	writeInstalledManifest(t, app.vaultPath, "drifted",
+		`{"id":"drifted","name":"Drifted","version":"1.0.0","ratelimit":{"rps":999,"burst":9999}}`)
+	rps, burst := resolvePluginRatelimit(app.vaultPath, "drifted")
+	if rps != defaultPluginFetchRPS {
+		t.Errorf("out-of-range rps should clamp to default %g, got %g", defaultPluginFetchRPS, rps)
+	}
+	if burst != defaultPluginFetchBurst {
+		t.Errorf("out-of-range burst should clamp to default %d, got %d", defaultPluginFetchBurst, burst)
+	}
+}
+
+// =========================================================================
+// Redirect header hygiene (#160)
+// =========================================================================
+
+func TestStripHeadersForRedirect_RemovesCustomAuth(t *testing.T) {
+	req := &http.Request{
+		Header: http.Header{
+			"Accept":        {"text/html"},
+			"X-Api-Key":     {"secret-key"},
+			"Authorization": {"Bearer token"},
+			"User-Agent":    {"Silt/1.0"},
+		},
+	}
+	stripHeadersForRedirect(req)
+	if req.Header.Get("Accept") != "text/html" {
+		t.Error("Accept should survive the redirect allowlist")
+	}
+	if req.Header.Get("User-Agent") != "Silt/1.0" {
+		t.Error("User-Agent should survive the redirect allowlist")
+	}
+	if req.Header.Get("X-Api-Key") != "" {
+		t.Error("X-Api-Key should be stripped on redirect")
+	}
+	if req.Header.Get("Authorization") != "" {
+		t.Error("Authorization should be stripped on redirect")
+	}
+}
+
+// newRedirectRequest builds a minimal *http.Request for CheckRedirect tests.
+func newRedirectRequest(rawurl string, headers http.Header) *http.Request {
+	req := &http.Request{
+		Method: "GET",
+		Header: headers,
+	}
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		panic(err)
+	}
+	req.URL = u
+	return req
+}
+
+// TestCheckRedirect_StripsCustomAuthOnlyCrossHost verifies the #160 policy:
+// custom auth headers survive a same-host redirect (so a legit same-origin API
+// redirect that depends on X-Api-Key is not broken) but are stripped the moment
+// the redirect crosses to a different host (the actual leak risk). Hosts are
+// public TEST-NET IP literals so isSafeFetchUrl resolves them locally without
+// network access and does not flag them as internal.
+func TestCheckRedirect_StripsCustomAuthOnlyCrossHost(t *testing.T) {
+	client := newSafeFetchClient(defaultPluginFetchTimeout)
+
+	authHeaders := func() http.Header {
+		return http.Header{
+			"Accept":    {"application/json"},
+			"X-Api-Key": {"secret-key"},
+		}
+	}
+
+	// Same-host redirect: X-Api-Key must survive.
+	via := []*http.Request{newRedirectRequest("https://203.0.113.1/v1/widgets", authHeaders())}
+	sameHost := newRedirectRequest("https://203.0.113.1/v2/widgets", authHeaders())
+	if err := client.CheckRedirect(sameHost, via); err != nil {
+		t.Fatalf("same-host CheckRedirect: %v", err)
+	}
+	if sameHost.Header.Get("X-Api-Key") != "secret-key" {
+		t.Error("X-Api-Key should survive a same-host redirect")
+	}
+
+	// Cross-host redirect: X-Api-Key must be stripped, Accept kept.
+	crossHost := newRedirectRequest("https://198.51.100.5/capture", authHeaders())
+	if err := client.CheckRedirect(crossHost, via); err != nil {
+		t.Fatalf("cross-host CheckRedirect: %v", err)
+	}
+	if crossHost.Header.Get("X-Api-Key") != "" {
+		t.Error("X-Api-Key must be stripped on a cross-host redirect")
+	}
+	if crossHost.Header.Get("Accept") != "application/json" {
+		t.Error("Accept should survive the cross-host allowlist")
+	}
+}
+
+// =========================================================================
+// Persistent network audit log (#157)
+// =========================================================================
+
+func TestSeedNetworkAuditFromDisk_PopulatesFromLogFile(t *testing.T) {
+	app := newTestApp(t)
+	// Write a network.log file for a fake plugin.
+	logDir := filepath.Join(app.vaultPath, ".system", "plugins", "test-plugin")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	logPath := filepath.Join(logDir, "network.log")
+	logContent := "2026-06-20T10:00:00Z GET example.com/api 200 test-plugin\n" +
+		"2026-06-20T10:01:00Z POST example.com/data 201 test-plugin\n"
+	if err := os.WriteFile(logPath, []byte(logContent), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	// Clear in-memory, then seed.
+	networkAuditMu.Lock()
+	networkAudit = nil
+	networkAuditMu.Unlock()
+	seedNetworkAuditFromDisk(app.vaultPath)
+
+	entries, _ := app.GetNetworkAudit()
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 seeded entries, got %d", len(entries))
+	}
+	if entries[0].Host != "example.com/api" {
+		t.Errorf("entry[0] host = %q", entries[0].Host)
+	}
+	if entries[0].Status != 200 {
+		t.Errorf("entry[0] status = %d", entries[0].Status)
+	}
+}
+
+func TestClearNetworkAudit_TruncatesOnDiskFiles(t *testing.T) {
+	app := newTestApp(t)
+	logDir := filepath.Join(app.vaultPath, ".system", "plugins", "clear-test")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	logPath := filepath.Join(logDir, "network.log")
+	if err := os.WriteFile(logPath, []byte("2026-06-20T10:00:00Z GET example.com 200 clear-test\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := app.ClearNetworkAudit(); err != nil {
+		t.Fatalf("ClearNetworkAudit: %v", err)
+	}
+	data, _ := os.ReadFile(logPath)
+	if len(data) != 0 {
+		t.Errorf("on-disk log should be empty after ClearNetworkAudit, got %q", string(data))
+	}
+	entries, _ := app.GetNetworkAudit()
+	if len(entries) != 0 {
+		t.Errorf("in-memory log should be empty after ClearNetworkAudit, got %d entries", len(entries))
+	}
+}
+
+func TestSeedNetworkAuditFromDisk_RestartPreservesEntries(t *testing.T) {
+	app := newTestApp(t)
+	_ = app.RequestCapability("p", string(plugins.CapNetwork), "")
+	// Simulate a fetch that writes to the audit log (both in-memory + disk).
+	// We call auditNetwork directly to avoid a real HTTP request.
+	app.auditNetwork("p", "GET", "https://api.example.com/health", 200)
+
+	// Verify it was written to disk.
+	logPath := filepath.Join(app.vaultPath, ".system", "plugins", "p", "network.log")
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("on-disk log not written: %v", err)
+	}
+
+	// Simulate a restart: clear in-memory, then seed from disk.
+	networkAuditMu.Lock()
+	networkAudit = nil
+	networkAuditMu.Unlock()
+	seedNetworkAuditFromDisk(app.vaultPath)
+
+	entries, _ := app.GetNetworkAudit()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 seeded entry after restart, got %d", len(entries))
+	}
+	if entries[0].Plugin != "p" {
+		t.Errorf("entry plugin = %q, want p", entries[0].Plugin)
+	}
+	if entries[0].Status != 200 {
+		t.Errorf("entry status = %d, want 200", entries[0].Status)
+	}
+}
+
+func TestParseNetworkLogLine_ToleratesSpacesInHost(t *testing.T) {
+	// The audited Host field includes the URL path, which may contain spaces.
+	// Right-to-left parsing must keep status (2nd-from-last) + pluginID (last)
+	// aligned and rejoin the host/path segment.
+	entry, ok := parseNetworkLogLine("2026-06-20T10:00:00Z GET example.com/with path 200 my-plugin")
+	if !ok {
+		t.Fatal("expected line with a spaced host to parse")
+	}
+	if entry.At != "2026-06-20T10:00:00Z" {
+		t.Errorf("At = %q", entry.At)
+	}
+	if entry.Method != "GET" {
+		t.Errorf("Method = %q", entry.Method)
+	}
+	if entry.Host != "example.com/with path" {
+		t.Errorf("Host = %q, want %q", entry.Host, "example.com/with path")
+	}
+	if entry.Status != 200 {
+		t.Errorf("Status = %d, want 200", entry.Status)
+	}
+	if entry.Plugin != "my-plugin" {
+		t.Errorf("Plugin = %q", entry.Plugin)
+	}
+}
+
+func TestParseNetworkLogLine_RejectsMalformed(t *testing.T) {
+	for _, line := range []string{
+		"",                       // empty
+		"only three fields",      // too few
+		"a b c d e",             // non-numeric status
+	} {
+		if _, ok := parseNetworkLogLine(line); ok {
+			t.Errorf("expected parse failure for %q", line)
+		}
+	}
+}
+
+// =========================================================================
+// Manifest ratelimit validation (#153)
+// =========================================================================
+
+func TestValidate_RejectsInvalidRatelimit(t *testing.T) {
+	tests := []struct {
+		name   string
+		rl     *plugins.RatelimitConfig
+		errMsg string
+	}{
+		{"negative rps", &plugins.RatelimitConfig{RPS: -1, Burst: 10}, "rps"},
+		{"zero rps", &plugins.RatelimitConfig{RPS: 0, Burst: 10}, "rps"},
+		{"over-cap rps", &plugins.RatelimitConfig{RPS: 11, Burst: 10}, "rps"},
+		{"zero burst", &plugins.RatelimitConfig{RPS: 1, Burst: 0}, "burst"},
+		{"negative burst", &plugins.RatelimitConfig{RPS: 1, Burst: -1}, "burst"},
+		{"over-cap burst", &plugins.RatelimitConfig{RPS: 1, Burst: 101}, "burst"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Build a valid archive with the bad ratelimit.
+			archive := buildPluginArchive(t, "ratelimit-test", manifestJSON(t, "ratelimit-test", tc.rl))
+			_, _, err := plugins.Validate(archive)
+			if err == nil {
+				t.Fatal("expected validation error for invalid ratelimit")
+			}
+			if !strings.Contains(err.Error(), tc.errMsg) {
+				t.Errorf("error should mention %q: %v", tc.errMsg, err)
+			}
+		})
+	}
+}
+
+func TestValidate_AcceptsValidRatelimit(t *testing.T) {
+	rl := &plugins.RatelimitConfig{RPS: 5, Burst: 20}
+	archive := buildPluginArchive(t, "ratelimit-ok", manifestJSON(t, "ratelimit-ok", rl))
+	_, _, err := plugins.Validate(archive)
+	if err != nil {
+		t.Fatalf("valid ratelimit should pass: %v", err)
+	}
+}
+
+// manifestJSON builds a minimal valid plugin.json with an optional ratelimit.
+func manifestJSON(t *testing.T, id string, rl *plugins.RatelimitConfig) string {
+	t.Helper()
+	base := fmt.Sprintf(`{"id":"%s","name":"%s","version":"1.0.0"`, id, id)
+	if rl != nil {
+		base += fmt.Sprintf(`,"ratelimit":{"rps":%g,"burst":%d}`, rl.RPS, rl.Burst)
+	}
+	return base + "}"
+}
+
+// buildPluginArchive creates a valid .silt-plugin ZIP at a temp path and
+// returns the path. The manifest is the JSON string; index.js is a minimal
+// stub.
+func buildPluginArchive(t *testing.T, id, manifestJSONStr string) string {
+	t.Helper()
+	tmp := t.TempDir()
+	archivePath := filepath.Join(tmp, id+".silt-plugin")
+	manifestPath := filepath.Join(tmp, "plugin.json")
+	if err := os.WriteFile(manifestPath, []byte(manifestJSONStr), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	indexPath := filepath.Join(tmp, "index.js")
+	if err := os.WriteFile(indexPath, []byte("export default {};"), 0o644); err != nil {
+		t.Fatalf("write index.js: %v", err)
+	}
+	// Build the ZIP.
+	r, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	defer r.Close()
+	zw := zip.NewWriter(r)
+	for _, name := range []string{"plugin.json", "index.js"} {
+		data, _ := os.ReadFile(filepath.Join(tmp, name))
+		f, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("zip create %s: %v", name, err)
+		}
+		if _, err := f.Write(data); err != nil {
+			t.Fatalf("zip write %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	return archivePath
+}
+
+// =========================================================================
+// Plugin session tokens — binding identity (#151)
+// =========================================================================
+
+func TestRegisterPluginSession_RoundTrip(t *testing.T) {
+	app := newTestApp(t)
+	token, err := app.RegisterPluginSession("my-plugin")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	if token == "" {
+		t.Fatal("token should not be empty")
+	}
+	// validatePluginSession accepts the correct pair.
+	if err := app.validatePluginSession("my-plugin", token); err != nil {
+		t.Errorf("validatePluginSession correct pair: %v", err)
+	}
+	// Wrong pluginID rejected.
+	if err := app.validatePluginSession("other-plugin", token); err == nil {
+		t.Fatal("expected rejection for wrong pluginID")
+	}
+	// Wrong token rejected.
+	if err := app.validatePluginSession("my-plugin", "wrong-token"); err == nil {
+		t.Fatal("expected rejection for wrong token")
+	}
+}
+
+func TestUnregisterPluginSession_Invalidates(t *testing.T) {
+	app := newTestApp(t)
+	token, _ := app.RegisterPluginSession("temp")
+	if err := app.UnregisterPluginSession(token); err != nil {
+		t.Fatalf("UnregisterPluginSession: %v", err)
+	}
+	// The token is no longer valid.
+	if err := app.validatePluginSession("temp", token); err == nil {
+		t.Fatal("expected rejection after unregister")
+	}
+}
+
+func TestRegisterPluginSession_ConcurrentNoPanic(t *testing.T) {
+	app := newTestApp(t)
+	const n = 50
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			_, _ = app.RegisterPluginSession("concurrent")
+		}()
+	}
+	wg.Wait()
+}
+
+// PluginFetch with a wrong token is rejected at the session boundary (#151).
+func TestPluginFetch_RejectsWrongSessionToken(t *testing.T) {
+	app := newTestApp(t)
+	otherToken, _ := app.RegisterPluginSession("plugin-a")
+	_ = app.RequestCapability("plugin-b", string(plugins.CapNetwork), "")
+	// plugin-b calling with plugin-a's token → rejected.
+	_, err := app.PluginFetch("plugin-b", otherToken, PluginFetchInput{URL: "https://example.com"})
+	if err == nil {
+		t.Fatal("expected rejection: plugin-b using plugin-a's token")
+	}
+}
+
+// PluginCreateBlock without a session token is rejected (#151).
+func TestPluginCreateBlock_RejectsMissingSessionToken(t *testing.T) {
+	app := newTestApp(t)
+	_, err := app.PluginCreateBlock("silt-kanban", "", "", "Work", "", "Daily", "TASK", "text")
+	if err == nil {
+		t.Fatal("expected rejection: missing session token")
 	}
 }

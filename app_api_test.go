@@ -37,11 +37,13 @@ func newTestApp(t *testing.T) *App {
 	app := &App{
 		// ctx intentionally nil: tests have no Wails lifecycle context, so
 		// block:changed / config:changed event emission is skipped.
-		db:           dm,
-		coordinator:  coord,
-		tracker:      tracker,
-		vaultPath:    vaultPath,
-		spacesPerTab: 4,
+		db:             dm,
+		coordinator:    coord,
+		tracker:        tracker,
+		vaultPath:      vaultPath,
+		spacesPerTab:   4,
+		rateLimiter:    newPluginRateLimiter(),
+		pluginSessions: make(map[string]string),
 	}
 	// Load the scaffolded config.yaml so config-backed bindings
 	// (GetPluginRegistry, GetSystemConfig) behave as in production.

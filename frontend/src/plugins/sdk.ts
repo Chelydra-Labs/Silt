@@ -1,6 +1,19 @@
 // Silt Plugin SDK — the contract every plugin (first- or third-party) uses.
 // Mirrors SPECS.md §8.2.
 
+// Best-effort warning when a plugin imports the raw Wails binding surface
+// instead of using the SDK (#152). This is a documentation-level signal — a
+// determined plugin can bypass it. The proper fix requires per-plugin isolated
+// webviews. Printed once at module load so it appears in the dev console when
+// a plugin imports wailsjs/go/main/App.js.
+// eslint-disable-next-line no-console
+if (typeof window !== 'undefined' && (window as any).go?.main?.App) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[silt] Direct access to window.go.main.App is deprecated. Plugins must use the PluginContext SDK (ctx.*). Raw binding access will break when per-plugin webviews land (#152).'
+  )
+}
+
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE'
 
 /**
@@ -145,7 +158,7 @@ export interface PluginContext {
 
   /**
    * Block CRUD (#104). These reuse the same atomic-write + re-index path as
-   * the core editor (no capability grant — consistent with mutateBlock).
+   * the core editor. Gated by the content-mutate capability (#156).
    * createBlock returns the new block's UUID.
    */
   createBlock: (opts: {
@@ -160,6 +173,23 @@ export interface PluginContext {
   moveBlock: (
     uuid: string,
     opts: { after?: string; notebook?: string; section?: string; page?: string }
+  ) => Promise<boolean>
+  /**
+   * Apply a batch of create/delete/move ops in a single coalesced write pass.
+   * Gated by content-mutate (#156). Each op mirrors createBlock/deleteBlock/
+   * moveBlock. Returns true on success.
+   */
+  applyBlocks: (
+    ops: Array<{
+      kind: 'create' | 'delete' | 'move'
+      type?: 'TASK' | 'NOTE' | 'HEADER'
+      text?: string
+      blockId?: string
+      after?: string
+      notebook?: string
+      section?: string
+      page?: string
+    }>
   ) => Promise<boolean>
 
   /** Page / section / notebook CRUD (sandboxed wrappers over App methods). */
@@ -385,6 +415,7 @@ export type Capability =
   | 'os-notify'
   | 'ui-surface'
   | 'editor-schema'
+  | 'content-mutate'
 
 /** A capability scope qualifier (#113). 'granted' is the default whole-scope. */
 export type CapabilityQualifier = 'granted' | 'notebook' | 'vault'

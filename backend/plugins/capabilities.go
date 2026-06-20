@@ -45,6 +45,11 @@ const (
 	// CapEditorSchema — contribute slash commands, custom embed-block views,
 	// and decorations to the TipTap editor.
 	CapEditorSchema Capability = "editor-schema"
+	// CapContentMutate — create / delete / move blocks across the vault via the
+	// plugin content CRUD API. Mirrors the implicit right the core editor has
+	// always had, but gates it for plugins so a zero-capability third-party
+	// plugin cannot mutate content (#156).
+	CapContentMutate Capability = "content-mutate"
 )
 
 // KnownCapabilities is the set of capabilities recognized by this version of
@@ -53,14 +58,15 @@ const (
 // enlarge its rights via typos or future names). "exec" is intentionally
 // absent — deferred until signing/trust lands (#111).
 var KnownCapabilities = map[Capability]bool{
-	CapReadFiles:    true,
-	CapWriteFiles:   true,
-	CapNetwork:      true,
-	CapOSOpen:       true,
-	CapOSClipboard:  true,
-	CapOSNotify:     true,
-	CapUISurface:    true,
-	CapEditorSchema: true,
+	CapReadFiles:     true,
+	CapWriteFiles:    true,
+	CapNetwork:       true,
+	CapOSOpen:        true,
+	CapOSClipboard:   true,
+	CapOSNotify:      true,
+	CapUISurface:     true,
+	CapEditorSchema:  true,
+	CapContentMutate: true,
 }
 
 // Qualifier refines a capability grant's scope. The default/whole-scope
@@ -181,9 +187,11 @@ var validSettingTypes = map[string]bool{
 }
 
 // validateSettingsSchema checks that each entry in a manifest's declarative
-// settings schema has the required fields (key, label, type) and a recognized
-// type. Malformed entries are rejected at install so the generated settings
-// form never renders a broken field.
+// settings schema has the required fields (key, label, type), a recognized
+// type, AND — when a default value is present — that the default matches the
+// declared type (#155). Malformed entries are rejected at install so the
+// generated settings form never renders a broken field or silently ships a
+// default that is not a valid value.
 func validateSettingsSchema(settings []map[string]any) error {
 	keys := make(map[string]bool, len(settings))
 	for i, field := range settings {
@@ -203,6 +211,97 @@ func validateSettingsSchema(settings []map[string]any) error {
 		if !validSettingTypes[ftype] {
 			return fmt.Errorf("settings[%d]: key %q has invalid type %q (recognized: string, number, bool, select, color, keymap, list)", i, key, ftype)
 		}
+		// Type-check the default value if present (#155).
+		if defaultVal, hasDefault := field["default"]; hasDefault && defaultVal != nil {
+			if err := validateSettingDefault(ftype, defaultVal, field, key); err != nil {
+				return fmt.Errorf("settings[%d]: %w", i, err)
+			}
+		}
 	}
 	return nil
+}
+
+// validateSettingDefault type-checks a single default value against the
+// declared field type (#155). Returns a descriptive error naming the field +
+// expected type.
+func validateSettingDefault(ftype string, defaultVal any, field map[string]any, key string) error {
+	switch ftype {
+	case "string", "keymap":
+		if _, ok := defaultVal.(string); !ok {
+			return fmt.Errorf("key %q: default for type %q must be a string, got %T", key, ftype, defaultVal)
+		}
+	case "number":
+		if _, ok := defaultVal.(float64); !ok {
+			// JSON numbers come through as float64 in Go's encoding/json.
+			// An int assertion covers hand-built maps in tests.
+			if _, ok := defaultVal.(int); ok {
+				return nil
+			}
+			return fmt.Errorf("key %q: default for type \"number\" must be a number, got %T", key, defaultVal)
+		}
+	case "bool":
+		if _, ok := defaultVal.(bool); !ok {
+			return fmt.Errorf("key %q: default for type \"bool\" must be a boolean, got %T", key, defaultVal)
+		}
+	case "select":
+		str, ok := defaultVal.(string)
+		if !ok {
+			return fmt.Errorf("key %q: default for type \"select\" must be a string, got %T", key, defaultVal)
+		}
+		// Verify the default is in the options array.
+		optionsRaw, _ := field["options"].([]any)
+		if len(optionsRaw) == 0 {
+			return fmt.Errorf("key %q: type \"select\" requires a non-empty \"options\" array when a default is set", key)
+		}
+		found := false
+		for _, opt := range optionsRaw {
+			if optStr, ok := opt.(string); ok && optStr == str {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("key %q: default %q is not in the options array", key, str)
+		}
+	case "color":
+		str, ok := defaultVal.(string)
+		if !ok {
+			return fmt.Errorf("key %q: default for type \"color\" must be a string, got %T", key, defaultVal)
+		}
+		if !isValidSettingColor(str) {
+			return fmt.Errorf("key %q: default %q is not a valid color (expected #hex or rgb()/rgba())", key, str)
+		}
+	case "list":
+		if _, ok := defaultVal.([]any); !ok {
+			return fmt.Errorf("key %q: default for type \"list\" must be an array, got %T", key, defaultVal)
+		}
+	}
+	return nil
+}
+
+// isValidSettingColor checks whether a string is a valid CSS color for the
+// settings form color type. Accepts #hex (3–8 digits) and rgb()/rgba(). Named
+// colors, hsl(), url(), and expressions are rejected — the same sandbox-by-
+// validation approach used by the theme validator.
+func isValidSettingColor(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	if s[0] == '#' {
+		hex := s[1:]
+		for _, c := range hex {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+		return len(hex) == 3 || len(hex) == 4 || len(hex) == 6 || len(hex) == 8
+	}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "rgb(") && strings.HasSuffix(s, ")") {
+		return true
+	}
+	if strings.HasPrefix(lower, "rgba(") && strings.HasSuffix(s, ")") {
+		return true
+	}
+	return false
 }
