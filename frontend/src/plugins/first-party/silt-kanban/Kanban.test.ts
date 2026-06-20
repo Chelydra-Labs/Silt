@@ -91,6 +91,7 @@ vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
 
 import Kanban from './Kanban.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
+import { v2CtxStubs } from '../../test-helpers'
 import { reactiveCtx, setNav, resetNav } from './reactiveCtx.svelte'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
@@ -111,6 +112,8 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     mutateBlock: vi.fn(),
     updateTaskMeta: vi.fn(),
     getPluginSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
+    on: () => () => {},
+    ...v2CtxStubs,
     ...overrides
   }
 }

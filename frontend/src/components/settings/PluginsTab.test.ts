@@ -31,6 +31,8 @@ const mocks = vi.hoisted(() => ({
   // Mutable config (no `plugins` key) to exercise the guard.
   configNoPlugins: {} as any,
   saveConfig: vi.fn(),
+  getGrantedCapabilities: vi.fn().mockResolvedValue({}),
+  teardownPlugin: vi.fn(),
   setConfig: (next: any) => {
     mocks.configNoPlugins = next
   }
@@ -43,11 +45,15 @@ vi.mock('../../../wailsjs/go/main/App.js', () => ({
   UninstallPlugin: vi.fn(),
   EnablePlugin: vi.fn(),
   DisablePlugin: vi.fn(),
-  PickPluginArchive: vi.fn()
+  PickPluginArchive: vi.fn(),
+  RequestCapability: vi.fn(),
+  RevokeCapability: vi.fn(),
+  GetGrantedCapabilities: mocks.getGrantedCapabilities
 }))
 
 vi.mock('../../plugins/loader', () => ({
-  loadPlugins: mocks.loadPlugins
+  loadPlugins: mocks.loadPlugins,
+  teardownPlugin: mocks.teardownPlugin
 }))
 
 vi.mock('../../plugins/registry', () => ({
@@ -79,9 +85,11 @@ describe('PluginsTab first-party disable guard', () => {
     mocks.listPlugins.mockReset()
     mocks.loadPlugins.mockReset()
     mocks.saveConfig.mockReset()
+    mocks.getGrantedCapabilities.mockReset()
     mocks.listPlugins.mockResolvedValue([])
     mocks.loadPlugins.mockResolvedValue(undefined)
     mocks.saveConfig.mockResolvedValue(true)
+    mocks.getGrantedCapabilities.mockResolvedValue({})
     mocks.configNoPlugins = {} // no `plugins` key
   })
 

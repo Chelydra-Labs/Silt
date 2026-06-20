@@ -18,17 +18,41 @@ import (
 
 // Manifest is the plugin.json schema inside a .silt-plugin archive.
 type Manifest struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Version       string `json:"version"`
-	Author        string `json:"author,omitempty"`
-	Description   string `json:"description,omitempty"`
-	Icon          string `json:"icon,omitempty"`
-	Main          string `json:"main,omitempty"` // defaults to "index.js"
-	MinSiltVersion string `json:"minSiltVersion,omitempty"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Version        string         `json:"version"`
+	Author         string         `json:"author,omitempty"`
+	Description    string         `json:"description,omitempty"`
+	Icon           string         `json:"icon,omitempty"`
+	Main           string         `json:"main,omitempty"` // defaults to "index.js"
+	MinSiltVersion string         `json:"minSiltVersion,omitempty"`
+	// Capabilities is the v2 SDK capability declaration (#113): a map of
+	// capability id → true | "notebook" | "vault". Normalized at validation
+	// time (unknown capabilities rejected) and surfaced to the user at install
+	// so a grant decision is informed. Absent for plugins that use only the
+	// read-only SDK (sqliteQuery + the existing mutators).
+	Capabilities map[string]any `json:"capabilities,omitempty"`
+	// Settings is the declarative settings schema (#103): each entry declares
+	// a typed field (key, label, type, default) the host renders generically in
+	// Settings → Plugins. Carried through opaquely (the frontend is the typed
+	// consumer); the installer only validates structural shape.
+	Settings []map[string]any `json:"settings,omitempty"`
+	// Homepage is an optional URL for the plugin's homepage / docs (#111).
+	Homepage string `json:"homepage,omitempty"`
+	// UpdateURL is an optional URL that returns a JSON manifest with the latest
+	// version + download URL, for update checks (#111).
+	UpdateURL string `json:"updateUrl,omitempty"`
 }
 
 var idRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// IsValidID reports whether pluginID is a syntactically valid plugin
+// identifier (lowercase alphanumeric + hyphens). Used at every IPC entry
+// point that accepts a caller-supplied pluginID so path-traversal payloads
+// like "../../etc/passwd" are rejected before reaching filepath.Join.
+func IsValidID(pluginID string) bool {
+	return idRegex.MatchString(pluginID)
+}
 
 // maxArchiveUncompressedSize bounds the total extracted size of a .silt-plugin
 // archive so a hostile or accidental huge file can't exhaust the user's disk.
@@ -97,6 +121,25 @@ func Validate(archivePath string) (Manifest, []string, error) {
 	// load-time failure.
 	if manifest.Main != "" && filepath.ToSlash(manifest.Main) != "index.js" {
 		return Manifest{}, warnings, fmt.Errorf("manifest main must be \"index.js\" (got %q)", manifest.Main)
+	}
+
+	// Normalize the v2 capability declaration (#113): reject unknown
+	// capabilities and malformed qualifiers at install so the host never
+	// silently grants a right it does not understand, and so the capability
+	// summary shown to the user is accurate. The normalized map is stashed
+	// back onto the manifest for downstream consumers (ListPlugins surfaces
+	// it; the grant UI reads it).
+	if norm, cerr := NormalizeCapabilities(manifest.Capabilities); cerr != nil {
+		return Manifest{}, warnings, fmt.Errorf("invalid capabilities: %w", cerr)
+	} else {
+		manifest.Capabilities = normalizedToAny(norm)
+	}
+
+	// Validate the declarative settings schema (#103): each entry must have a
+	// key, label, and a recognized type. Reject malformed schemas at install so
+	// the generated settings form never renders a broken field.
+	if serr := validateSettingsSchema(manifest.Settings); serr != nil {
+		return Manifest{}, warnings, fmt.Errorf("invalid settings schema: %w", serr)
 	}
 
 	// Second pass: zip-slip / absolute-path guard + main-file presence +
@@ -253,6 +296,22 @@ func copyZipEntry(f *zip.File, target string) error {
 	}
 	_, err = io.Copy(out, io.LimitReader(rc, limit))
 	return err
+}
+
+// normalizedToAny converts a normalized capability→qualifier map back into the
+// manifest's `map[string]any` shape so the field round-trips through JSON
+// unchanged after validation. A "granted" qualifier is emitted as `true` (the
+// idiomatic manifest form); scope qualifiers are emitted as their string.
+func normalizedToAny(norm map[string]string) map[string]any {
+	out := make(map[string]any, len(norm))
+	for k, q := range norm {
+		if q == QualGranted {
+			out[k] = true
+		} else {
+			out[k] = q
+		}
+	}
+	return out
 }
 
 // isWithin reports whether target is contained within base. It cleans both

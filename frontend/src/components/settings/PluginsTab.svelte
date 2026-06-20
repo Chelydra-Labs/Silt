@@ -8,12 +8,20 @@
     UninstallPlugin,
     EnablePlugin,
     DisablePlugin,
-    PickPluginArchive
+    PickPluginArchive,
+    RequestCapability,
+    RevokeCapability,
+    GetGrantedCapabilities,
+    GetNetworkAudit,
+    CheckPluginUpdate
   } from '../../../wailsjs/go/main/App.js'
-  import { loadPlugins } from '../../plugins/loader'
+  import { loadPlugins, teardownPlugin } from '../../plugins/loader'
   import { firstPartyPlugins } from '../../plugins/registry'
   import { loadedPlugins } from '../../plugins/store.svelte'
   import { settings, saveConfig } from '../../settings/store.svelte'
+  import SettingsForm from './SettingsForm.svelte'
+  import NetworkAuditViewer from './NetworkAuditViewer.svelte'
+  import type { SettingSchema } from '../../plugins/sdk'
 
   interface Props {
     activeNotebook: string
@@ -33,11 +41,39 @@
     disabled: boolean // disk plugins only
     hasIndex: boolean
     loadError?: string
+    /** Capabilities requested by the manifest (#113): cap id → qualifier (true | "notebook" | "vault"). */
+    requestedCapabilities?: Record<string, true | string>
+    /** Capabilities currently granted to this plugin (cap id → qualifier). */
+    grantedCapabilities?: Record<string, string>
+    /** Declarative settings schema (#103), read from the manifest. */
+    settingsSchema?: SettingSchema[]
+    /** Optional update URL for distribution-v2 update checks (#111). */
+    updateUrl?: string
+    /** True when a newer version is available (#111). */
+    updateAvailable?: boolean
+  }
+
+  /** Human label for a capability id. */
+  const capabilityLabels: Record<string, string> = {
+    'read-files': 'Read notebook files',
+    'write-files': 'Write notebook files',
+    network: 'Network access',
+    'os-open': 'Open files / URLs',
+    'os-clipboard': 'Clipboard',
+    'os-notify': 'Notifications',
+    'ui-surface': 'Render UI surfaces',
+    'editor-schema': 'Extend the editor'
+  }
+
+  function qualifierLabel(q: true | string): string {
+    if (q === true || q === 'granted' || q === '') return ''
+    return ` (${q})`
   }
 
   let cards = $state<Card[]>([])
   let loading = $state(true)
   let expanded = $state<string | null>(null)
+  let grantBusy = $state<string>('') // "<pluginId>:<cap>" while a grant/revoke is in flight
 
   // Install flow state.
   let installing = $state(false)
@@ -54,6 +90,9 @@
       const fps = firstPartyPlugins()
       const fpIds = new Set(fps.map((p) => p.manifest.id))
       const errs = loadedPlugins.errors
+      // v2 capability grants (#113): pluginID → cap → qualifier. First-party
+      // plugins are not surfaced here (they are implicitly granted).
+      const grants = (await GetGrantedCapabilities()) ?? {}
 
       const merged: Card[] = []
 
@@ -73,7 +112,14 @@
           source: 'first-party',
           disabled: fpDisabled.has(m.id),
           hasIndex: true,
-          loadError: errs.find((e) => e.id === m.id)?.message
+          requestedCapabilities: m.capabilities,
+          grantedCapabilities: m.capabilities
+            ? Object.fromEntries(
+                Object.keys(m.capabilities).map((c) => [c, 'granted'])
+              )
+            : undefined,
+          loadError: errs.find((e) => e.id === m.id)?.message,
+          settingsSchema: m.settings as SettingSchema[] | undefined
         })
       }
       // On-disk plugins (skip any shadowed by a first-party id).
@@ -89,7 +135,11 @@
           source: 'disk',
           disabled: !!p.disabled,
           hasIndex: !!p.has_index,
-          loadError: errs.find((e) => e.id === p.id)?.message
+          requestedCapabilities: p.capabilities,
+          grantedCapabilities: grants[p.id],
+          loadError: errs.find((e) => e.id === p.id)?.message,
+          settingsSchema: p.settings as SettingSchema[] | undefined,
+          updateUrl: p.update_url || undefined
         })
       }
       merged.sort((a, b) => a.name.localeCompare(b.name))
@@ -99,6 +149,59 @@
       cards = []
     } finally {
       loading = false
+    }
+  }
+
+  async function checkForUpdates() {
+    actionError = ''
+    for (const card of cards) {
+      if (!card.updateUrl || card.source !== 'disk') continue
+      try {
+        const info = await CheckPluginUpdate(
+          card.id,
+          card.version,
+          card.updateUrl
+        )
+        if (info?.updateAvailable) {
+          card.updateAvailable = true
+        }
+      } catch {
+        // best-effort — network errors are non-fatal for update checks
+      }
+    }
+    cards = [...cards]
+  }
+
+  /** Whether a capability is currently granted on a card. */
+  function isGranted(card: Card, cap: string): boolean {
+    return !!card.grantedCapabilities?.[cap]
+  }
+
+  async function grant(card: Card, cap: string) {
+    grantBusy = `${card.id}:${cap}`
+    actionError = ''
+    try {
+      const qual = card.requestedCapabilities?.[cap]
+      const qualStr = typeof qual === 'string' ? qual : ''
+      await RequestCapability(card.id, cap, qualStr)
+      await refresh()
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e)
+    } finally {
+      grantBusy = ''
+    }
+  }
+
+  async function revoke(card: Card, cap: string) {
+    grantBusy = `${card.id}:${cap}`
+    actionError = ''
+    try {
+      await RevokeCapability(card.id, cap)
+      await refresh()
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e)
+    } finally {
+      grantBusy = ''
     }
   }
 
@@ -159,6 +262,9 @@
           disabled.delete(card.id)
         } else {
           disabled.add(card.id)
+          // Tearing down before reload drops the plugin's event-bus
+          // subscriptions + lifecycle hooks (#106) so they don't linger.
+          teardownPlugin(card.id)
         }
         cfg.plugins.disabled = [...disabled]
         await saveConfig(cfg)
@@ -169,6 +275,7 @@
           await EnablePlugin(card.id)
         } else {
           await DisablePlugin(card.id)
+          teardownPlugin(card.id)
         }
         await reloadAll()
       }
@@ -187,6 +294,9 @@
       return
     }
     try {
+      // Tear down the plugin's host surface (lifecycle hooks + event-bus
+      // subscriptions) BEFORE removing the folder + reloading (#106).
+      teardownPlugin(card.id)
       await UninstallPlugin(card.id)
       if (expanded === card.id) expanded = null
       await reloadAll()
@@ -219,6 +329,12 @@
     >
       <span class="material-symbols-outlined text-[18px]">file_download</span>
       Install from .silt-plugin…
+    </button>
+    <button
+      onclick={checkForUpdates}
+      class="ml-2 text-text-muted hover:text-accent-primary-start text-[11px] font-label-sm-bold bg-transparent border border-border-muted rounded px-2 py-1 cursor-pointer transition-colors"
+    >
+      Check for updates
     </button>
 
     {#if previewError}
@@ -259,6 +375,33 @@
             {/each}
           </ul>
         {/if}
+        {#if preview.manifest.capabilities && Object.keys(preview.manifest.capabilities).length > 0}
+          <div class="mb-2">
+            <div
+              class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mb-1"
+            >
+              Requests capabilities
+            </div>
+            <ul class="space-y-0.5">
+              {#each Object.keys(preview.manifest.capabilities) as cap}
+                <li
+                  class="text-[11px] text-text-primary font-body-md flex items-center gap-1.5"
+                >
+                  <span
+                    class="material-symbols-outlined text-[13px] text-accent-primary-start/70"
+                    >key</span
+                  >
+                  {capabilityLabels[cap] ?? cap}{qualifierLabel(
+                    preview.manifest.capabilities[cap]
+                  )}
+                </li>
+              {/each}
+            </ul>
+            <p class="text-text-muted text-[10px] mt-1 italic">
+              You can grant or revoke each capability after install.
+            </p>
+          </div>
+        {/if}
         <button
           onclick={confirmInstall}
           disabled={installing}
@@ -290,7 +433,8 @@
     <div class="text-text-muted py-4 animate-pulse font-body-md">Loading…</div>
   {:else if cards.length === 0}
     <div class="text-text-muted py-4 font-body-md text-[13px]">
-      No plugins installed. First-party plugins (Agenda, Calendar) are bundled.
+      No plugins installed. First-party plugins (Agenda, Calendar, Kanban,
+      Attachments) are bundled.
     </div>
   {:else}
     <div class="space-y-2">
@@ -311,6 +455,13 @@
                   >{card.name}</span
                 >
                 <span class="text-[10px] text-text-muted">v{card.version}</span>
+                {#if card.updateAvailable}
+                  <span
+                    class="text-[9px] text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
+                  >
+                    Update available
+                  </span>
+                {/if}
                 {#if card.author}
                   <span class="text-[10px] text-text-muted truncate"
                     >· {card.author}</span
@@ -427,7 +578,20 @@
                 </dd>
               </dl>
 
-              {#if pluginSettings(card.id)}
+              {#if card.settingsSchema && card.settingsSchema.length > 0}
+                <div>
+                  <div
+                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                  >
+                    Plugin settings
+                  </div>
+                  <SettingsForm
+                    pluginID={card.id}
+                    schema={card.settingsSchema}
+                    values={pluginSettings(card.id) ?? {}}
+                  />
+                </div>
+              {:else if pluginSettings(card.id)}
                 <div>
                   <div
                     class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
@@ -443,6 +607,59 @@
                 </div>
               {/if}
 
+              {#if card.requestedCapabilities && Object.keys(card.requestedCapabilities).length > 0}
+                <div>
+                  <div
+                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                    id="caps-{card.id}"
+                  >
+                    Capabilities
+                  </div>
+                  <ul
+                    class="text-[11px] font-body-md space-y-1"
+                    aria-labelledby="caps-{card.id}"
+                  >
+                    {#each Object.keys(card.requestedCapabilities) as cap}
+                      <li class="flex items-center gap-2">
+                        <span
+                          class="material-symbols-outlined text-[14px] text-text-muted"
+                        >
+                          {isGranted(card, cap) ? 'lock_open' : 'lock'}
+                        </span>
+                        <span class="flex-1 text-text-primary">
+                          {capabilityLabels[cap] ?? cap}{qualifierLabel(
+                            card.requestedCapabilities[cap]
+                          )}
+                        </span>
+                        {#if card.source === 'first-party'}
+                          <span class="text-[10px] text-text-muted italic"
+                            >trusted</span
+                          >
+                        {:else if isGranted(card, cap)}
+                          <button
+                            onclick={() => revoke(card, cap)}
+                            disabled={grantBusy === `${card.id}:${cap}`}
+                            class="text-text-muted hover:text-error text-[10px] font-label-sm-bold bg-transparent border border-border-muted rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
+                            aria-label="Revoke {capabilityLabels[cap] ?? cap}"
+                          >
+                            Revoke
+                          </button>
+                        {:else}
+                          <button
+                            onclick={() => grant(card, cap)}
+                            disabled={grantBusy === `${card.id}:${cap}`}
+                            class="text-accent-primary-start hover:brightness-110 text-[10px] font-label-sm-bold bg-transparent border border-accent-primary-start/40 rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
+                            aria-label="Grant {capabilityLabels[cap] ?? cap}"
+                          >
+                            Grant
+                          </button>
+                        {/if}
+                      </li>
+                    {/each}
+                  </ul>
+                </div>
+              {/if}
+
               {#if card.source === 'first-party'}
                 <button
                   onclick={() => openPluginView(card.id)}
@@ -453,6 +670,17 @@
                     >arrow_forward</span
                   >
                 </button>
+              {/if}
+
+              {#if card.grantedCapabilities?.network}
+                <div>
+                  <div
+                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                  >
+                    Network activity
+                  </div>
+                  <NetworkAuditViewer pluginID={card.id} />
+                </div>
               {/if}
             </div>
           {/if}

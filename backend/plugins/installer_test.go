@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -209,5 +210,134 @@ func TestValidate_AcceptsEmptyMain(t *testing.T) {
 	})
 	if _, _, err := Validate(archive); err != nil {
 		t.Errorf("expected Validate to accept an empty main (defaults to index.js): %v", err)
+	}
+}
+
+// manifestWithCaps builds a plugin.json with a capabilities declaration.
+func manifestWithCaps(id string, caps map[string]any) string {
+	b, _ := json.Marshal(map[string]any{
+		"id":          id,
+		"name":        id,
+		"version":     "1.0.0",
+		"main":        "index.js",
+		"capabilities": caps,
+	})
+	return string(b)
+}
+
+func TestValidate_AcceptsKnownCapabilities(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "caps.silt-plugin")
+	writeZip(t, archive, map[string]string{
+		"plugin.json": manifestWithCaps("caps", map[string]any{
+			"network":     true,
+			"write-files": "notebook",
+		}),
+		"index.js": "x",
+	})
+	m, _, err := Validate(archive)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	got, ok := m.Capabilities["network"]
+	if !ok || got != true {
+		t.Errorf("network cap = %v ok=%v, want true", got, ok)
+	}
+	if q, ok := m.Capabilities["write-files"].(string); !ok || q != "notebook" {
+		t.Errorf("write-files cap = %v, want notebook string", m.Capabilities["write-files"])
+	}
+}
+
+func TestValidate_RejectsDeferredExecCapability(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "exec.silt-plugin")
+	writeZip(t, archive, map[string]string{
+		"plugin.json": manifestWithCaps("exec", map[string]any{"exec": true}),
+		"index.js":    "x",
+	})
+	if _, _, err := Validate(archive); err == nil {
+		t.Fatal("Validate must reject the deferred 'exec' capability")
+	}
+}
+
+func TestValidate_RejectsUnknownCapability(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "bogus.silt-plugin")
+	writeZip(t, archive, map[string]string{
+		"plugin.json": manifestWithCaps("bogus", map[string]any{"totally-fake": true}),
+		"index.js":    "x",
+	})
+	if _, _, err := Validate(archive); err == nil {
+		t.Fatal("Validate must reject an unknown capability")
+	}
+}
+
+func TestValidate_RejectsBadQualifier(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "badq.silt-plugin")
+	writeZip(t, archive, map[string]string{
+		"plugin.json": manifestWithCaps("badq", map[string]any{"network": "global"}),
+		"index.js":    "x",
+	})
+	if _, _, err := Validate(archive); err == nil {
+		t.Fatal("Validate must reject an invalid scope qualifier")
+	}
+}
+
+func TestNormalizeCapabilities_EmptyAndTrue(t *testing.T) {
+	out, err := NormalizeCapabilities(map[string]any{})
+	if err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("empty -> %v, want empty map", out)
+	}
+	out, err = NormalizeCapabilities(map[string]any{"network": true})
+	if err != nil {
+		t.Fatalf("true: %v", err)
+	}
+	if out["network"] != QualGranted {
+		t.Errorf("true -> %q, want granted", out["network"])
+	}
+}
+
+// An invalid qualifier reports the scopes meaningful for *that capability*
+// (write-files honors granted|notebook|vault), not a misleading "granted" from
+// treating the qualifier string itself as the capability.
+func TestNormalizeCapabilities_InvalidQualifierMessage(t *testing.T) {
+	_, err := NormalizeCapabilities(map[string]any{"write-files": "global"})
+	if err == nil {
+		t.Fatal("expected error for invalid qualifier")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "write-files") || !strings.Contains(msg, "granted|notebook|vault") {
+		t.Errorf("error %q must name the capability and its valid scopes", msg)
+	}
+	if strings.Contains(msg, `(expected granted)`) {
+		t.Errorf("error %q still uses the misleading default-scope message", msg)
+	}
+}
+
+func TestValidateSettingsSchema(t *testing.T) {
+	good := []map[string]any{
+		{"key": "columns", "label": "Columns", "type": "list", "default": []any{"TODO", "DONE"}},
+		{"key": "color", "label": "Accent", "type": "color"},
+	}
+	if err := validateSettingsSchema(good); err != nil {
+		t.Fatalf("good schema rejected: %v", err)
+	}
+
+	badCases := []struct {
+		name string
+		s    []map[string]any
+	}{
+		{"missing key", []map[string]any{{"label": "X", "type": "string"}}},
+		{"missing label", []map[string]any{{"key": "x", "type": "string"}}},
+		{"bad type", []map[string]any{{"key": "x", "label": "X", "type": "bogus"}}},
+		{"duplicate key", []map[string]any{
+			{"key": "x", "label": "X", "type": "string"},
+			{"key": "x", "label": "Y", "type": "string"},
+		}},
+	}
+	for _, bc := range badCases {
+		if err := validateSettingsSchema(bc.s); err == nil {
+			t.Errorf("%s: expected error, got nil", bc.name)
+		}
 	}
 }

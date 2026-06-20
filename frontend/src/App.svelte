@@ -29,6 +29,8 @@
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { matchHotkey } from './settings/hotkeys'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
+  import PluginModalHost from './components/PluginModalHost.svelte'
+  import PluginStatusBar from './components/PluginStatusBar.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import ToastContainer from './components/ToastContainer.svelte'
   import { pushNotification } from './notifications/store.svelte'
@@ -220,20 +222,23 @@
     // so the UI reflects the new workspace. If the optional old-vault removal
     // didn't happen, payload.warning carries the reason → surface a non-
     // blocking toast (the move itself succeeded).
-    const offVaultMoved = EventsOn('vault:moved', (e: { from?: string; to?: string; warning?: string }) => {
-      activeNotebook = ''
-      activeSection = ''
-      activePage = ''
-      activeView = 'notes'
-      showSettings = false
-      loadConfig().catch((e) =>
-        console.error('Post-move config reload failed:', e)
-      )
-      window.dispatchEvent(new CustomEvent('refresh-navigation'))
-      if (e?.warning) {
-        pushNotification({ kind: 'error', message: e.warning })
+    const offVaultMoved = EventsOn(
+      'vault:moved',
+      (e: { from?: string; to?: string; warning?: string }) => {
+        activeNotebook = ''
+        activeSection = ''
+        activePage = ''
+        activeView = 'notes'
+        showSettings = false
+        loadConfig().catch((e) =>
+          console.error('Post-move config reload failed:', e)
+        )
+        window.dispatchEvent(new CustomEvent('refresh-navigation'))
+        if (e?.warning) {
+          pushNotification({ kind: 'error', message: e.warning })
+        }
       }
-    })
+    )
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
@@ -241,7 +246,10 @@
       window.removeEventListener('switch-view', handleSwitchView)
       window.removeEventListener('open-plugin-manager', handleOpenPluginManager)
       window.removeEventListener('open-settings', handleOpenSettings)
-      window.removeEventListener('open-template-picker', handleOpenTemplatePicker)
+      window.removeEventListener(
+        'open-template-picker',
+        handleOpenTemplatePicker
+      )
       offPluginsChanged()
       offVaultMoved()
       offConfigChangedReload()
@@ -564,9 +572,13 @@
       onCreatedPage={handleTemplatePageCreated}
     />
   {/if}
+
+  <!-- Plugin rendered-UI surfaces (#117) -->
+  <PluginModalHost />
 </main>
 
 <ToastContainer />
+<PluginStatusBar />
 
 <style>
   .animate-spin-slow {

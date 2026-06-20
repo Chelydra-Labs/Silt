@@ -5,9 +5,66 @@ import {
   PluginMutateBlock,
   PluginUpdateBlockState,
   PluginUpdateTaskMeta,
-  GetPluginSettingsForNotebook
+  GetPluginSettingsForNotebook,
+  PluginCreateBlock,
+  PluginDeleteBlock,
+  PluginMoveBlock,
+  PluginCreatePage,
+  PluginCreateSection,
+  PluginCreateNotebook,
+  PluginDeletePage,
+  PluginRenamePage,
+  PluginResolveNotebookRoot,
+  PluginReadFile,
+  PluginWriteFile,
+  PluginDeleteFile,
+  PluginListDir,
+  PluginScratchDir,
+  PluginOpenInNativeHandler,
+  PluginOpenUrl,
+  PluginPickOpenFile,
+  PluginPickSaveFile,
+  PluginClipboardReadText,
+  PluginClipboardWriteText,
+  PluginNotify,
+  PluginFetch,
+  AddAttachment,
+  OpenAttachment,
+  DeleteAttachment,
+  PluginResolveAsset,
+  PluginVaultScratchDir,
+  PluginReadPluginAsset,
+  PluginListNavigation,
+  GetNetworkAudit,
+  ClearNetworkAudit
 } from '../../wailsjs/go/main/App.js'
 import { getActiveLocation } from './location.svelte'
+import { subscribe } from './events'
+import {
+  registerSlashCommand,
+  unregisterSlashCommand
+} from '../lib/editor/slash-registry'
+import { registerDecorationProvider } from '../lib/editor/decorations'
+import { loadedPlugins } from './store.svelte'
+import { registerSurface, unregisterSurface } from './surfaces'
+
+// getPluginSchemaDefault reads a plugin's declarative settings schema from the
+// live registry and returns the default for key, or undefined (#103).
+function getPluginSchemaDefault(pluginID: string, key: string): unknown {
+  const reg = loadedPlugins.plugins.get(pluginID)
+  const schema = reg?.manifest?.settings
+  if (!schema) return undefined
+  const field = schema.find((f) => f.key === key)
+  return field?.default
+}
+
+// hasCapability checks whether a plugin DECLARED a capability in its manifest.
+// Used for client-side gating of editor-schema (slash commands, decorations).
+// The manifest was validated at install time, so this is a trusted check.
+function hasCapability(pluginID: string, cap: string): boolean {
+  const reg = loadedPlugins.plugins.get(pluginID)
+  return !!reg?.manifest?.capabilities?.[cap]
+}
 
 /**
  * Build a PluginContext whose `activeNotebook/Section/Page` are live reactive
@@ -86,6 +143,221 @@ export function makePluginContext(pluginID: string): PluginContext {
     getPluginSettings: () =>
       GetPluginSettingsForNotebook(pluginID, loc.notebook).then(
         (settings) => settings ?? {}
-      )
+      ),
+    // Resolve a single setting with schema-default fallback (#103). The schema
+    // is read from the live plugin registry (manifest); the value from the
+    // merged per-notebook settings.
+    getSetting: (key) =>
+      GetPluginSettingsForNotebook(pluginID, loc.notebook).then((settings) => {
+        const merged = settings ?? {}
+        if (key in merged) return merged[key]
+        // Fall back to the schema default if the plugin declared one.
+        const schema = getPluginSchemaDefault(pluginID, key)
+        return schema
+      }),
+    // v2 typed event bus (#106). Delegates to the module-scoped bus so
+    // subscriptions are auto-cleaned on disable/uninstall/vault-close.
+    on: (event, cb) => subscribe(pluginID, event, cb),
+
+    // --- Expanded content API (#104) — query helpers built on sqliteQuery ---
+    queryByTag: (path) =>
+      ctxSqliteQuery(
+        `SELECT b.* FROM blocks b JOIN tags t ON t.block_id = b.id WHERE t.raw_path = ? OR t.raw_path LIKE ? ORDER BY b.notebook, b.section, b.page, b.line_number`,
+        [path, path + '/%']
+      ),
+    queryByDateRange: (start, end) =>
+      ctxSqliteQuery(
+        `SELECT b.id, b.notebook, b.section, b.page, b.clean_content, t.status, t.due_date, t.start_date
+         FROM blocks b JOIN tasks t ON t.block_id = b.id
+         WHERE (t.due_date BETWEEN ? AND ?) OR (t.start_date BETWEEN ? AND ?)
+         ORDER BY t.due_date ASC`,
+        [start, end, start, end]
+      ),
+    fullTextSearch: (query) =>
+      ctxSqliteQuery(
+        `SELECT b.id, b.notebook, b.section, b.page, b.clean_content, snippet(blocks_fts, -1, '<mark>', '</mark>', '…', 12) as snippet
+         FROM blocks_fts f JOIN blocks b ON b.id = f.rowid
+         WHERE blocks_fts MATCH ? ORDER BY rank LIMIT 50`,
+        [query]
+      ),
+    getBacklinks: (id) =>
+      ctxSqliteQuery(
+        `SELECT b.id, b.notebook, b.section, b.page, b.clean_content
+         FROM blocks b WHERE b.raw_content LIKE ? ORDER BY b.notebook, b.section, b.page`,
+        ['%((' + id + ')%']
+      ),
+    getEmbeds: (id) =>
+      ctxSqliteQuery(
+        `SELECT b.id, b.notebook, b.section, b.page, b.clean_content
+         FROM blocks b WHERE b.raw_content LIKE ? ORDER BY b.notebook, b.section, b.page`,
+        ['%{{embed:' + id + '}}%']
+      ),
+
+    // --- Block CRUD (#104) — same atomic-write path as mutateBlock ----------
+    createBlock: (opts) =>
+      PluginCreateBlock(
+        opts.after ?? '',
+        opts.notebook ?? '',
+        opts.section ?? '',
+        opts.page ?? '',
+        opts.type,
+        opts.text
+      ),
+    deleteBlock: (uuid) => PluginDeleteBlock(uuid).then(() => true),
+    moveBlock: (uuid, opts) =>
+      PluginMoveBlock(
+        uuid,
+        opts.after ?? '',
+        opts.notebook ?? '',
+        opts.section ?? '',
+        opts.page ?? ''
+      ).then(() => true),
+
+    // --- Page / section / notebook CRUD (#104) ------------------------------
+    createPage: (notebook, section, page, date) =>
+      PluginCreatePage(notebook, section, page, date ?? ''),
+    createSection: (notebook, section) =>
+      PluginCreateSection(notebook, section).then(() => true),
+    createNotebook: (name) => PluginCreateNotebook(name).then(() => true),
+    deletePage: (notebook, section, page) =>
+      PluginDeletePage(notebook, section, page).then(() => true),
+    renamePage: (notebook, section, oldName, newName) =>
+      PluginRenamePage(notebook, section, oldName, newName).then(() => true),
+
+    // --- Plugin file I/O (#108) — capability-gated --------------------------
+    readFile: (notebook, relPath) =>
+      PluginReadFile(pluginID, notebook, relPath).then((res) => {
+        // Wails encodes []byte as a base64 string over the IPC boundary.
+        const b64 = (res?.bytes as unknown as string) ?? ''
+        return base64ToUint8(b64)
+      }),
+    writeFile: (notebook, relPath, data) =>
+      PluginWriteFile(
+        pluginID,
+        notebook,
+        relPath,
+        data as unknown as never
+      ).then(() => true),
+    deleteFile: (notebook, relPath) =>
+      PluginDeleteFile(pluginID, notebook, relPath).then(() => true),
+    listDir: (notebook, relPath) =>
+      PluginListDir(pluginID, notebook, relPath).then((r) => r ?? []),
+    notebookRoot: (notebook) => PluginResolveNotebookRoot(pluginID, notebook),
+    scratchDir: (notebook) => PluginScratchDir(pluginID, notebook),
+    vaultScratchDir: () => PluginVaultScratchDir(pluginID),
+    resolveAsset: (notebook, relPath) =>
+      PluginResolveAsset(pluginID, notebook, relPath),
+    readPluginAsset: (relPath) => PluginReadPluginAsset(pluginID, relPath),
+    getNavigationTree: () =>
+      PluginListNavigation(pluginID).then((tree) => tree ?? { notebooks: [] }),
+    // --- OS integration (#114) — capability-gated ---------------------------
+    openInNativeHandler: (notebook, relPath) =>
+      PluginOpenInNativeHandler(pluginID, notebook, relPath).then(() => true),
+    openUrl: (url) => PluginOpenUrl(pluginID, url).then(() => true),
+    pickOpenFile: (filterPattern) => PluginPickOpenFile(filterPattern ?? '*'),
+    pickSaveFile: (defaultFilename) =>
+      PluginPickSaveFile(defaultFilename ?? ''),
+    clipboardRead: () => PluginClipboardReadText(pluginID),
+    clipboardWrite: (text) =>
+      PluginClipboardWriteText(pluginID, text).then(() => true),
+    notify: (opts) =>
+      PluginNotify(pluginID, opts.title, opts.body).then(() => true),
+
+    // --- Network / fetch (#115) — capability-gated --------------------------
+    fetch: (url, opts) =>
+      PluginFetch(pluginID, {
+        url,
+        method: opts?.method ?? '',
+        headers: opts?.headers ?? {},
+        body: opts?.body ?? '',
+        timeout: opts?.timeoutMs ?? 0
+      }).then((res) => ({
+        status: res?.status ?? 0,
+        headers: res?.headers ?? {},
+        body: res?.body ?? '',
+        ok: !!res?.ok,
+        truncated: !!res?.truncated
+      })),
+
+    // --- Editor extension points (#110) — plugin slash commands -------------
+    // editor-schema capability check: only plugins that DECLARED editor-schema
+    // in their manifest can register slash commands / decorations. The manifest
+    // was validated at install time (installer.go), so this is a trusted
+    // client-side gate.
+    registerSlashCommand: (cmd) => {
+      if (!hasCapability(pluginID, 'editor-schema')) {
+        console.warn(
+          `[silt] plugin ${pluginID} cannot register slash commands without the editor-schema capability`
+        )
+        return () => {}
+      }
+      const namespacedId = `${pluginID}:${cmd.id}`
+      registerSlashCommand({
+        id: namespacedId,
+        label: cmd.label,
+        description: cmd.description,
+        icon: cmd.icon,
+        pluginID,
+        onSelect: cmd.onSelect
+      })
+      return () => unregisterSlashCommand(namespacedId)
+    },
+
+    // --- Editor decorations (#110) — read-only overlays --------------------
+    provideDecorations: (id, provider) => {
+      if (!hasCapability(pluginID, 'editor-schema')) {
+        console.warn(
+          `[silt] plugin ${pluginID} cannot provide decorations without the editor-schema capability`
+        )
+        return () => {}
+      }
+      return registerDecorationProvider(id, pluginID, provider as any)
+    },
+
+    // --- Rendered UI surfaces (#117) — capability-gated --------------------
+    registerSurface: (surface) => {
+      // The capability check is advisory here (the surface only renders if the
+      // host mounts it); the Go side re-checks on any privileged call the
+      // surface makes through the bridge.
+      const id = `${pluginID}:${surface.id}`
+      registerSurface({
+        id,
+        pluginID,
+        kind: surface.kind,
+        label: surface.label,
+        icon: surface.icon,
+        html: surface.html
+      })
+      return () => unregisterSurface(id)
+    },
+
+    // --- Attachments (#101) ------------------------------------------------
+    addAttachment: (srcPath, notebook) =>
+      AddAttachment(srcPath, notebook ?? loc.notebook),
+    openAttachment: (nb, relPath) =>
+      OpenAttachment(nb, relPath).then(() => true),
+    deleteAttachment: (nb, relPath) =>
+      DeleteAttachment(nb, relPath).then(() => true)
   }
+}
+
+// ctxSqliteQuery is the shared sqliteQuery closure used by the query helpers.
+function ctxSqliteQuery(
+  sql: string,
+  params: unknown[]
+): Promise<SqliteQueryResult> {
+  return PluginRawQuery(sql, params ?? []).then((res) => ({
+    rows: (res?.rows as Record<string, unknown>[]) ?? [],
+    truncated: !!res?.truncated
+  }))
+}
+
+// base64ToUint8 decodes a base64 string into a Uint8Array (Wails transports
+// []byte as base64 over the IPC boundary).
+function base64ToUint8(b64: string): Uint8Array {
+  if (!b64) return new Uint8Array(0)
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
 }

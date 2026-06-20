@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -151,6 +152,12 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	// Emit vault:closing so the frontend plugin loader runs every plugin's
+	// onVaultClose/onShutdown hook (#106) before IPC tears down. Best-effort:
+	// a nil ctx (headless test) skips the emit.
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vault:closing", struct{}{})
+	}
 	// Wait for any in-flight Wails-bound calls (UpdateBlockState,
 	// QueryTasks, FetchSectionTimeline) to complete before tearing
 	// down the DB, tracker, and watcher. Without this a fast window
@@ -232,6 +239,13 @@ func (a *App) CloseVault() error {
 	defer a.vaultMu.Unlock()
 	if a.vaultPath == "" && a.db == nil {
 		return nil // nothing to close
+	}
+	// Emit vault:closing BEFORE teardown so the frontend plugin loader can run
+	// every plugin's onVaultClose hook (#106) while IPC is still live. The
+	// event is best-effort: if no frontend is mounted (e.g. headless test), the
+	// emit is a no-op (a.ctx == nil guard).
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vault:closing", struct{}{})
 	}
 	a.teardownVaultServices()
 	return nil
@@ -1827,16 +1841,27 @@ func splitFrontmatter(content string) (frontmatter, body string) {
 // root. Generalized from the vault-only check for #100: callers pass the
 // resolved notebook root (vault root, an in-vault notebook dir, or a linked
 // notebook root) so the same traversal guard covers external notebooks.
-// Both paths are cleaned and made absolute before comparison so that `..`
-// segments in the joined path are resolved before the check.
+//
+// Both paths are cleaned, made absolute, and resolved through EvalSymlinks
+// (mirroring backend/plugins/installer.go:isWithin) so a symlink planted
+// inside a notebook that points outside it cannot mask an escape. The
+// comparison is case-insensitive on Windows where the filesystem itself is
+// case-insensitive. EvalSymlinks errors (e.g. non-existent target during
+// construction) fall back to the lexical form.
 func isPathWithinRoot(target, root string) bool {
-	absTarget, err := filepath.Abs(target)
+	absTarget, err := filepath.Abs(filepath.Clean(target))
 	if err != nil {
 		return false
 	}
-	absRoot, err := filepath.Abs(root)
+	absRoot, err := filepath.Abs(filepath.Clean(root))
 	if err != nil {
 		return false
+	}
+	if resolved, err := filepath.EvalSymlinks(absTarget); err == nil {
+		absTarget = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = resolved
 	}
 	absTarget = filepath.Clean(absTarget)
 	absRoot = filepath.Clean(absRoot)
@@ -1844,6 +1869,9 @@ func isPathWithinRoot(target, root string) bool {
 		return true
 	}
 	prefix := absRoot + string(os.PathSeparator)
+	if goruntime.GOOS == "windows" {
+		return strings.HasPrefix(strings.ToLower(absTarget), strings.ToLower(prefix))
+	}
 	return strings.HasPrefix(absTarget, prefix)
 }
 
@@ -2037,7 +2065,41 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 	sort.Slice(tree.Notebooks, func(i, j int) bool {
 		return tree.Notebooks[i].Name < tree.Notebooks[j].Name
 	})
-	return tree, nil
+	return normalizeNavTree(tree), nil
+}
+
+// normalizeNavTree guarantees no nil slices cross the Wails IPC boundary. A Go
+// nil slice serializes to JSON `null`, but the generated TS constructor passes
+// `null` through unchanged — the frontend's `.length` reads then crash with
+// "Cannot read properties of null", which tears down the reactive update and
+// leaves the sidebar blank even though the data is correct (#140). Every
+// Sections / Pages / Children slice is normalized to a non-nil empty array.
+func normalizeNavTree(tree parser.NavigationTree) parser.NavigationTree {
+	if tree.Notebooks == nil {
+		tree.Notebooks = []parser.NavigationNotebook{}
+	}
+	for i := range tree.Notebooks {
+		if tree.Notebooks[i].Sections == nil {
+			tree.Notebooks[i].Sections = []parser.NavigationSection{}
+		}
+		for j := range tree.Notebooks[i].Sections {
+			tree.Notebooks[i].Sections[j] = normalizeNavSection(tree.Notebooks[i].Sections[j])
+		}
+	}
+	return tree
+}
+
+func normalizeNavSection(s parser.NavigationSection) parser.NavigationSection {
+	if s.Pages == nil {
+		s.Pages = []parser.NavigationPage{}
+	}
+	if s.Children == nil {
+		s.Children = []parser.NavigationSection{}
+	}
+	for i := range s.Children {
+		s.Children[i] = normalizeNavSection(s.Children[i])
+	}
+	return s
 }
 
 // walkSections reads `dirPath` once and returns:
@@ -2067,6 +2129,11 @@ func (a *App) walkSections(
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+		// Skip the attachments/ directory in the sidebar navigator (#101) —
+		// it holds binary assets, not pages/sections.
+		if e.IsDir() && strings.EqualFold(name, "attachments") {
+			continue
+		}
 		if e.IsDir() {
 			subDirs = append(subDirs, name)
 			continue
@@ -2083,7 +2150,7 @@ func (a *App) walkSections(
 	sortNavPages(pages)
 	sortStrings(subDirs)
 
-	var sections []parser.NavigationSection
+	sections := []parser.NavigationSection{}
 
 	for _, sd := range subDirs {
 		var childID string
@@ -2916,6 +2983,49 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 // With the per-day file model removed, a page is a single file. Each block
 // carries its own file_date. The notebook's source is resolved server-side
 // from its (globally-unique) name (#100).
+// writePageFileLocked reads the existing file content, renders the new block
+// list through the single serializer (preserving unmanaged lines), writes
+// atomically, and re-indexes in SQLite. The caller MUST already hold
+// LockFileWrite for filePath — this method does NOT acquire the per-file lock
+// (it would deadlock against a re-entrant LockFileWrite on the same path).
+// Extracted from SaveFileBlocks so the cross-page source-removal path in
+// applyBlocksOps can do an atomic read-parse-filter-write under a single
+// LockFileWrite scope (#104 TOCTOU fix).
+func (a *App) writePageFileLocked(filePath, source, notebook, section, page string, blocks []parser.ParsedBlock) error {
+	contentBytes, err := os.ReadFile(filePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read existing file: %w", err)
+	}
+
+	frontmatter, body := splitFrontmatter(string(contentBytes))
+
+	if frontmatter == "" {
+		today := time.Now().Format("2006-01-02")
+		frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(notebook), strconv.Quote(section), strconv.Quote(page), strconv.Quote(today))
+		body = string(contentBytes)
+	}
+
+	newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
+
+	a.tracker.RegisterWrite(filePath)
+
+	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+		return err
+	}
+
+	parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
+	if err == nil {
+		var idxErr error
+		a.coordinator.WithDBWrite(func() {
+			idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
+		})
+		if idxErr != nil {
+			log.Printf("writePageFileLocked: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+		}
+	}
+	return nil
+}
+
 func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -2966,47 +3076,7 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	var writeErr error
 	a.coordinator.LockBlocksWrite(blockIDs, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
-			contentBytes, err := os.ReadFile(filePath)
-			if err != nil && !os.IsNotExist(err) {
-				writeErr = fmt.Errorf("failed to read existing file: %w", err)
-				return
-			}
-
-			// Split frontmatter from body. The body (frontmatter stripped) is
-			// handed to RenderFileContent so it can preserve unmanaged lines
-			// (code fences, blanks, prose) in their relative position to the
-			// managed blocks. The frontmatter is emitted verbatim; if the file
-			// had none, synthesize the default so the note stays self-describing.
-			frontmatter, body := splitFrontmatter(string(contentBytes))
-
-			if frontmatter == "" {
-				today := time.Now().Format("2006-01-02")
-				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
-				body = string(contentBytes)
-			}
-
-			// RenderFileContent is the single serializer: it assigns any missing
-			// block IDs, weaves preserved unmanaged lines around the managed
-			// blocks, and emits the canonical per-block format.
-			newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
-
-			a.tracker.RegisterWrite(filePath)
-
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-				writeErr = err
-				return
-			}
-
-			parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
-			if err == nil {
-				var idxErr error
-				a.coordinator.WithDBWrite(func() {
-					idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
-				})
-				if idxErr != nil {
-					log.Printf("SaveFileBlocks: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
-				}
-			}
+			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks)
 		})
 	}) // LockBlocksWrite
 
@@ -4296,6 +4366,31 @@ func (a *App) applyConfigLocked(cfg config.SystemConfig) {
 	if cfg.Editor.TabIndentSpaces > 0 {
 		a.spacesPerTab = cfg.Editor.TabIndentSpaces
 	}
+	a.seedFirstPartyGrants()
+}
+
+// seedFirstPartyGrants populates the in-memory grants table with every
+// capability for each first-party plugin ID, so bundled plugins are implicitly
+// trusted WITHOUT a special-case bypass in requireGrant. This closes the
+// spoofing vector where a third-party plugin passes 'silt-attachments' as
+// pluginID to bypass all capability checks (#113 security hardening).
+//
+// The grants are merged into the in-memory config on every applyConfigLocked
+// call. If they happen to persist to config.yaml via a later Save, that is
+// harmless — they are just grant entries. If a user removes them, they are
+// re-seeded on the next config load.
+func (a *App) seedFirstPartyGrants() {
+	if a.cfg.Plugins.Grants == nil {
+		a.cfg.Plugins.Grants = map[string]map[string]string{}
+	}
+	for id := range firstPartyPluginIDs {
+		if a.cfg.Plugins.Grants[id] == nil {
+			a.cfg.Plugins.Grants[id] = map[string]string{}
+		}
+		for cap := range plugins.KnownCapabilities {
+			a.cfg.Plugins.Grants[id][string(cap)] = plugins.QualGranted
+		}
+	}
 }
 
 // UpdatePluginSetting atomically updates a single per-plugin setting key and
@@ -4463,6 +4558,10 @@ func (a *App) ListPlugins() ([]parser.PluginInfo, error) {
 				info.Author = m.Author
 				info.Description = m.Description
 				info.Icon = m.Icon
+				info.Capabilities = m.Capabilities
+				info.Settings = m.Settings
+				info.Homepage = m.Homepage
+				info.UpdateURL = m.UpdateURL
 			}
 		}
 		if _, err := os.Stat(filepath.Join(dir, "index.js")); err == nil {
@@ -4547,11 +4646,24 @@ func (a *App) InstallPlugin(archivePath string) (parser.PluginManifest, error) {
 		_ = plugins.Uninstall(a.vaultPath, manifest.ID)
 		return parser.PluginManifest{}, verr
 	}
+	// Publisher-trust gate (#111 distribution v2, #150 follow-up): when the
+	// user has populated TrustedPublishers, the plugin's Author must be on
+	// the list. An empty TrustedPublishers preserves the current "everyone
+	// is welcome" posture — populating the list is an explicit opt-in to
+	// a stricter stance. A plugin with an empty Author cannot be matched
+	// against a non-empty trust list, which is the correct (defense-
+	// in-depth) default: anonymous plugins require no trust decision.
+	if verr := enforcePublisherTrust(manifest.Author); verr != nil {
+		_ = plugins.Uninstall(a.vaultPath, manifest.ID)
+		return parser.PluginManifest{}, verr
+	}
 	a.emitPluginsChanged()
 	return manifestToParser(manifest), nil
 }
 
-// UninstallPlugin removes a plugin folder and emits plugins:changed.
+// UninstallPlugin removes a plugin folder and emits plugins:changed. It also
+// revokes every capability grant for the plugin so a later reinstall re-prompts
+// rather than inheriting the prior trust decision (#113).
 func (a *App) UninstallPlugin(pluginID string) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -4561,8 +4673,31 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	if err := plugins.Uninstall(a.vaultPath, pluginID); err != nil {
 		return err
 	}
+	// Best-effort grant cleanup; a failure here must not mask the successful
+	// uninstall (the folder is already gone). The grants block is harmless if
+	// it lingers, but cleaning it keeps the manager UI honest.
+	_ = a.revokeAllGrants(pluginID)
 	a.emitPluginsChanged()
 	return nil
+}
+
+// revokeAllGrants removes every capability grant for pluginID without
+// emitting plugins:changed (the caller decides whether to emit). Used by
+// UninstallPlugin and the vault teardown path. Acquires configMu internally.
+func (a *App) revokeAllGrants(pluginID string) error {
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.cfg.Plugins.Grants == nil {
+		return nil
+	}
+	if _, ok := a.cfg.Plugins.Grants[pluginID]; !ok {
+		return nil
+	}
+	delete(a.cfg.Plugins.Grants, pluginID)
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	return config.Save(a.vaultPath, a.cfg)
 }
 
 // EnablePlugin / DisablePlugin toggle a per-plugin ".disabled" sentinel
@@ -4594,6 +4729,187 @@ func (a *App) emitPluginsChanged() {
 	runtime.EventsEmit(a.ctx, "plugins:changed", struct{}{})
 }
 
+// --- v2 SDK capability & permission model (#113) -------------------------
+
+// firstPartyPluginIDs is the set of bundled plugin ids. First-party plugins
+// ship compiled with the app and are trusted by definition, so the capability
+// gate grants them every capability implicitly — they never need a user grant.
+// Third-party (disk) plugins route through requireGrant. Kept in sync with the
+// frontend registry (frontend/src/plugins/registry.ts); Phase 5 appends
+// "silt-attachments".
+var firstPartyPluginIDs = map[string]bool{
+	"silt-agenda":      true,
+	"silt-calendar":    true,
+	"silt-kanban":      true,
+	"silt-attachments": true,
+}
+
+// isFirstPartyPlugin reports whether pluginID is a bundled (trusted) plugin.
+func isFirstPartyPlugin(pluginID string) bool {
+	return firstPartyPluginIDs[pluginID]
+}
+
+// requireGrant is the single server-side enforcement point for every privileged
+// v2 SDK binding (#113). It returns nil if the plugin may use the capability,
+// or a structured *plugins.CapabilityDeniedError (never a panic) the frontend
+// SDK surfaces as an actionable message + re-prompt.
+//
+// pluginID is validated against IsValidID to reject path-traversal payloads
+// before they reach filepath.Join in scratch-dir / audit-log paths. First-party
+// plugins receive their grants via seedFirstPartyGrants at config-load time,
+// so there is NO special-case bypass here — a third-party plugin cannot
+// spoof a first-party ID to bypass capability checks.
+//
+// Callers that need the qualifier (e.g. to enforce notebook vs vault scope on
+// file writes) read it via grantedQualifier after a successful requireGrant.
+func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
+	if !plugins.IsValidID(pluginID) {
+		return &plugins.CapabilityDeniedError{
+			Plugin:     "<invalid>",
+			Capability: string(cap),
+			Requested:  plugins.QualGranted,
+		}
+	}
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	if _, ok := a.cfg.Plugins.Grants[pluginID]; ok {
+		if qual, ok := a.cfg.Plugins.Grants[pluginID][string(cap)]; ok && qual != "" {
+			return nil
+		}
+	}
+	return &plugins.CapabilityDeniedError{
+		Plugin:     pluginID,
+		Capability: string(cap),
+		Requested:  plugins.QualGranted,
+	}
+}
+
+// grantedQualifier returns the scope qualifier for a granted capability, or
+// ("", false) if not granted. Used by bindings that narrow scope (file-write
+// notebook vs vault).
+func (a *App) grantedQualifier(pluginID string, cap plugins.Capability) (string, bool) {
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	if caps, ok := a.cfg.Plugins.Grants[pluginID]; ok {
+		if qual, ok := caps[string(cap)]; ok && qual != "" {
+			return qual, true
+		}
+	}
+	return "", false
+}
+
+// RequestCapability grants a capability to a plugin and persists it atomically
+// to config.yaml (#113). qualifier is normalized to a known value ("" or
+// "true" → "granted"). The capability must be a recognized one (unknown caps
+// are rejected). Emits plugins:changed so the manager UI refreshes.
+func (a *App) RequestCapability(pluginID, capability, qualifier string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	if !plugins.IsValidID(pluginID) {
+		return fmt.Errorf("invalid plugin id %q (must match ^[a-z0-9-]+$)", pluginID)
+	}
+	if !plugins.KnownCapabilities[plugins.Capability(capability)] {
+		return fmt.Errorf("unknown capability %q (recognized: %s)", capability, plugins.ListCapabilities())
+	}
+	qual := plugins.QualGranted
+	if qualifier != "" && qualifier != "true" {
+		if !pluginsValidQualifier(qualifier) {
+			return fmt.Errorf("invalid qualifier %q", qualifier)
+		}
+		qual = qualifier
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.cfg.Plugins.Grants == nil {
+		a.cfg.Plugins.Grants = map[string]map[string]string{}
+	}
+	caps, ok := a.cfg.Plugins.Grants[pluginID]
+	if !ok || caps == nil {
+		caps = map[string]string{}
+	}
+	caps[capability] = qual
+	a.cfg.Plugins.Grants[pluginID] = caps
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+		return err
+	}
+	a.emitPluginsChanged()
+	return nil
+}
+
+// RevokeCapability revokes a capability grant. capability == "" revokes every
+// grant for the plugin (used on uninstall). Emits plugins:changed.
+func (a *App) RevokeCapability(pluginID, capability string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	if !plugins.IsValidID(pluginID) {
+		return fmt.Errorf("invalid plugin id %q (must match ^[a-z0-9-]+$)", pluginID)
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.cfg.Plugins.Grants == nil {
+		return nil // nothing to revoke
+	}
+	caps, ok := a.cfg.Plugins.Grants[pluginID]
+	if !ok {
+		return nil
+	}
+	if capability == "" {
+		delete(a.cfg.Plugins.Grants, pluginID)
+	} else {
+		delete(caps, capability)
+		if len(caps) == 0 {
+			delete(a.cfg.Plugins.Grants, pluginID)
+		}
+	}
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+		return err
+	}
+	a.emitPluginsChanged()
+	return nil
+}
+
+// GetGrantedCapabilities returns the full per-plugin capability grant table
+// (pluginID → capability → qualifier) so the manager UI can show
+// requested-vs-granted. First-party plugins are NOT included (they are
+// implicitly granted). Returns an empty (non-nil) map pre-vault.
+func (a *App) GetGrantedCapabilities() (map[string]map[string]string, error) {
+	if a.vaultPath == "" {
+		return map[string]map[string]string{}, nil
+	}
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	out := make(map[string]map[string]string, len(a.cfg.Plugins.Grants))
+	for pid, caps := range a.cfg.Plugins.Grants {
+		if isFirstPartyPlugin(pid) {
+			continue
+		}
+		clone := make(map[string]string, len(caps))
+		for k, v := range caps {
+			clone[k] = v
+		}
+		out[pid] = clone
+	}
+	return out, nil
+}
+
+// pluginsValidQualifier is a tiny adapter so app.go does not need to reach into
+// the plugins package's unexported validQualifiers map.
+func pluginsValidQualifier(q string) bool {
+	switch q {
+	case plugins.QualGranted, plugins.QualNotebook, plugins.QualVault:
+		return true
+	}
+	return false
+}
+
 // enforceMinVersion rejects a plugin whose minSiltVersion exceeds the current
 // app version (semver-style segment-by-segment comparison).
 func enforceMinVersion(minSiltVersion string) error {
@@ -4604,6 +4920,45 @@ func enforceMinVersion(minSiltVersion string) error {
 		return fmt.Errorf("plugin requires Silt %s or later (current: %s)", minSiltVersion, appVersion)
 	}
 	return nil
+}
+
+// enforcePublisherTrust gates a plugin install on its Author matching a name
+// in settings.TrustedPublishers (#111 distribution v2, #150 follow-up).
+//
+// Policy:
+//   - Empty/nil TrustedPublishers → allow (preserves the current
+//     "everyone-is-welcome" behavior so populating the list is an explicit
+//     opt-in to a stricter stance).
+//   - Non-empty TrustedPublishers AND author in the list → allow.
+//   - Non-empty TrustedPublishers AND author NOT in the list → reject.
+//   - Non-empty TrustedPublishers AND empty author → reject (anonymous
+//     plugins cannot match a trust list, which is the correct
+//     defense-in-depth default).
+//
+// The function distinguishes "settings file does not exist" (fail-open: no
+// trust list configured) from "settings file exists but unreadable/corrupt"
+// (fail-closed: a hostile plugin that can interfere with settings reads must
+// not disable the trust gate). The error is logged at warn level.
+func enforcePublisherTrust(author string) error {
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		log.Printf("enforcePublisherTrust: settings file exists but is unreadable — failing closed to protect the trust gate: %v", err)
+		return fmt.Errorf("trusted-publishers list is configured but settings could not be read (corrupt settings.json?): %w", err)
+	}
+	trusted := settings.TrustedPublishers
+	if len(trusted) == 0 {
+		return nil
+	}
+	author = strings.TrimSpace(author)
+	if author == "" {
+		return fmt.Errorf("plugin author is empty; cannot be matched against the non-empty trusted-publishers list")
+	}
+	for _, p := range trusted {
+		if strings.EqualFold(strings.TrimSpace(p), author) {
+			return nil
+		}
+	}
+	return fmt.Errorf("plugin author %q is not in the trusted-publishers list (add it via AddTrustedPublisher to install)", author)
 }
 
 func versionLessThan(a, b string) bool {
@@ -4632,5 +4987,9 @@ func manifestToParser(m plugins.Manifest) parser.PluginManifest {
 		Icon:           m.Icon,
 		Main:           m.Main,
 		MinSiltVersion: m.MinSiltVersion,
+		Capabilities:   m.Capabilities,
+		Settings:       m.Settings,
+		Homepage:       m.Homepage,
+		UpdateURL:      m.UpdateURL,
 	}
 }

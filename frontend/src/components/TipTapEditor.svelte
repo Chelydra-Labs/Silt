@@ -26,6 +26,8 @@
   import { measureFrameBudget } from '../lib/perf/frame-budget'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
+  import { getSlashCommands } from '../lib/editor/slash-registry'
+  import { dispatch as dispatchPluginEvent } from '../plugins/events'
 
   interface Props {
     notebook: string
@@ -147,6 +149,26 @@
       unsavedChanges = true
       triggerAutoSave()
     },
+    onSelectionUpdate: ({ editor }) => {
+      // Emit selection:changed on the plugin event bus (#106/#110).
+      const { selection } = editor.state
+      const selFrom = selection.$from
+      // Attempt to read the block id at the selection anchor.
+      let blockId: string | undefined
+      try {
+        const parentAttrs = selFrom.parent.attrs
+        if (parentAttrs && parentAttrs.id) blockId = parentAttrs.id
+      } catch {
+        /* not in a block node */
+      }
+      // Emit selection:changed on the plugin event bus (#106/#110).
+      dispatchPluginEvent('selection:changed', {
+        notebook,
+        section,
+        page,
+        blockId
+      })
+    },
     onFocus: () => {
       isFocused = true
       acquireFocus()
@@ -218,6 +240,8 @@
       await SaveFileBlocks(notebook, section, page, updatedBlocks)
       lastSaveError = null
       unsavedChanges = false
+      // Emit editor:save on the plugin event bus (#110).
+      dispatchPluginEvent('editor:save', { notebook, section, page })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.error('TipTapEditor: SaveFileBlocks failed:', e)
@@ -319,6 +343,15 @@
       // blocks are inserted at the cursor position (ARCHITECTURE §5.1 — the
       // UniqueBlockIds extension mints fresh UUIDs for the inserted nodes).
       showTemplatePicker = true
+    } else {
+      // v2 SDK plugin-registered slash command (#110): look up the command in
+      // the registry and invoke its onSelect handler with the live editor +
+      // cursor position. Built-ins are handled by the id branches above; any
+      // other id must be a plugin command with a handler.
+      const cmd = getSlashCommands().find((c) => c.id === commandId)
+      if (cmd?.onSelect) {
+        cmd.onSelect(editorInstance, editorInstance.state.selection.to)
+      }
     }
   }
 

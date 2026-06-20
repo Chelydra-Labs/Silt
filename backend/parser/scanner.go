@@ -74,6 +74,14 @@ func WalkMarkdown(root string) (files []string, warnings []string, err error) {
 			if path != root && strings.HasPrefix(name, ".") {
 				return filepath.SkipDir
 			}
+			// Skip the attachments/ directory (#101): it holds copied-in
+			// binary assets (PDFs, images), not markdown. Skipping it here
+			// keeps the scanner from treating it as an empty Section and
+			// avoids ingesting non-markdown files. Visible placement
+			// (<notebook>/attachments/) per the #100 data-scoping principle.
+			if path != root && strings.EqualFold(name, "attachments") {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if strings.ToLower(filepath.Ext(path)) == ".md" {

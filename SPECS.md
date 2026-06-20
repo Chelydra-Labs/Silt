@@ -507,6 +507,16 @@ UI Frame Budget: To keep typing smooth, Svelte must complete inline shorthand pr
 
 Memory Footprint: The application must maintain an idle memory footprint of less than 65MB RAM, ensuring Silt remains a lightweight utility running in your system tray.
 
+7.3 Installation & Distribution Requirements
+
+The Windows NSIS installer MUST satisfy the following:
+
+- **No-admin installation:** The user must be able to install Silt without administrator access. The installer presents a choice between "Install for all users" (per-machine, requires elevation) and "Install for just me" (per-user, no elevation), defaulting to per-user. The per-user install directory is `%LOCALAPPDATA%\Programs\ChrisUFO\Silt`.
+- **Upgrade support:** Installing a newer version over an existing installation MUST upgrade in place. The installer detects a prior install (via the registry uninstall key), silently runs the old uninstaller, then installs the new version to the same scope (per-user or per-machine) and directory.
+- **Registry correctness:** Uninstall registry entries (Add/Remove Programs) are written to HKCU for per-user installs and HKLM for per-machine installs, so both scopes appear correctly in Windows Settings regardless of elevation.
+- **User data preservation:** The vault (notebooks, config.yaml, plugins, themes, templates) lives in user-chosen directories, NOT in the install directory. Upgrading or uninstalling never touches user data.
+- **Portable alternative:** A portable .zip (no installer, no registry entries) is also produced for users who prefer a zero-install experience.
+
 8. Local-First Plugin Architecture
 
 To support core system extension while retaining a lightweight base engine, Silt abstracts all dynamic dashboards—including the Agenda, Calendar, and Kanban viewports—into explicit plugins. The host application acts strictly as a raw block editor, tree compiler, and IPC router.
@@ -563,7 +573,11 @@ export interface SiltPlugin {
 
 The active `notebook/section/page` from the navigator is bound into the context as LIVE reactive getters; reading them inside a Svelte reactive context (template, `$derived`, `$effect`) tracks navigation changes automatically. `sqliteQuery` is read-only (anything other than SELECT/WITH is rejected). `getPluginSettings` resolves per-active-notebook so a plugin rendering for a linked notebook sees the co-located overrides; writes still persist to the vault config via `updatePluginSetting`. See `docs/PLUGIN_DEVELOPMENT.md` for the full author guide.
 
+**v2 SDK (milestone #11).** The PluginContext was expanded with: a capability/permission model (`capabilities` in the manifest, per-vault grants in `config.yaml`); lifecycle hooks (`onVaultOpen`/`onVaultClose`/`onShutdown`); a typed event bus (`ctx.on`); content CRUD (`createBlock`/`deleteBlock`/`moveBlock` + page/section/notebook CRUD); file I/O (`readFile`/`writeFile`/`deleteFile`/`listDir` + scratch space); OS integration (`openInNativeHandler`/`openUrl`/pickers/clipboard/notify); network/fetch (Go-side proxy, `network` capability-gated); editor extension points (slash-command registry + generic `embedBlock` node); rendered UI surfaces (sandboxed iframe + postMessage bridge); and a declarative settings schema (`settings` in the manifest, generated UI). Every privileged binding is gated server-side by `requireGrant`; `exec` is deferred. See `docs/PLUGIN_DEVELOPMENT.md` §8 for the full surface.
+
 8.3 Core Feature Decoupling
+
+**Content mutation is intentionally ungated.** PluginCreateBlock, PluginDeleteBlock, PluginMoveBlock, PluginCreatePage, PluginDeletePage, PluginRenamePage, PluginCreateSection, and PluginCreateNotebook do NOT call requireGrant. This is a deliberate trust-model decision: any loaded plugin can mutate content (create/delete/move blocks, pages, sections, notebooks), mirroring the core `mutateBlock` / `updateBlockState` pattern. The capability model gates I/O-bound operations (files, network, OS, clipboard) that have cross-process or cross-host impact; in-vault content mutation is treated as an implicit right of all loaded plugins, consistent with the editor's own mutation path. See GitHub issue #156 for the tracking discussion on whether a `content-mutate` capability should be added in a future release.
 
 To enforce architectural parity, the user interface contains no custom code for the default Calendar, Kanban, or Agenda dashboards. They use the exact same SDK constraints as any third-party developer plugin:
 
@@ -599,6 +613,16 @@ index.js      native ESM exporting { manifest, init(ctx) }
 - **Uninstall:** removes the plugin folder (id sanitized + within-vault check).
 - The in-app **Plugin Manager** (titlebar extension icon) drives validate → preview → install, plus per-plugin enable/disable and uninstall.
 - First-party plugins (Agenda, Calendar) are always available (bundled) regardless of `.system/plugins/` contents.
+
+8.5 Attachments Plugin Convention (#101)
+
+The `silt-attachments` plugin lets users attach arbitrary files to notes.
+
+- **File placement:** Files are copied into `<notebook>/attachments/` (visible placement, per the #100 data-scoping principle). The `attachments/` directory is excluded from the scanner (`WalkMarkdown`), the sidebar navigator (`ListNavigation`), and the fsnotify watcher, so it never appears as an empty section and binary files are never indexed.
+- **Markdown convention:** Images use standard `![alt](attachments/foo.png)` syntax (rendered as `embedBlock` type `image`). Non-image files use the generic `embedBlock` node serialized via an HTML-comment marker `<!-- silt-embed: {"embedType":"attachment","src":"attachments/foo.pdf",...} -->`. The marker is preserved verbatim by the Go parser as the NOTE block's `clean_text` (the parser does not need to recognize the marker — the frontend converter detects it on load and emits it on save, so the round-trip is byte-identical). This is a deliberate design choice: parser-level recognition would require a new `ParsedBlock` field + renderer + indexer changes for no functional benefit over the converter-level approach.
+- **Open in native handler:** Activating an attachment embed block opens the file in the OS default handler (Preview / Adobe / `xdg-open` / etc.), not in-app. The path is resolved against the notebook's actual root (#100, in-vault or linked).
+- **Kanban travel:** An attachment embedBlock inserted as a CHILD of a task block (indented under it) automatically travels with its parent when the task is reordered. This is inherent to the block hierarchy — no explicit association model is needed.
+- **Copy-in semantics:** The source file is copied (not linked/moved) into `attachments/`. Filename collisions are resolved with a counter suffix (`report-1.pdf`, `report-2.pdf`). A 100 MB size limit and an executable filetype blocklist (`.exe`, `.bat`, `.sh`, etc.) prevent the attachment folder from becoming an unbounded executable drop zone.
 
 9. System Configuration Engine
 
