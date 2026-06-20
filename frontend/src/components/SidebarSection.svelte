@@ -105,7 +105,7 @@
 <div class="mb-0.5">
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
-    class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-bg-hover transition-colors"
+    class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-hover transition-colors"
     class:drag-over-top={dropTarget?.level === 'section' && dropTarget.name === section.name && dropTarget.before}
     class:drag-over-bottom={dropTarget?.level === 'section' && dropTarget.name === section.name && !dropTarget.before}
     draggable="true"
@@ -143,7 +143,7 @@
       {section.name ? section.name : 'Pages (no section)'}
     </span>
     <span
-      class="text-[9px] font-label-sm text-text-muted bg-bg-panel border border-border-muted rounded-full px-1.5 py-0.5"
+      class="text-[9px] font-label-sm text-text-muted bg-panel border border-border-muted rounded-full px-1.5 py-0.5"
     >
       {totalCount}
     </span>
@@ -179,7 +179,7 @@
             ondrop={(e) => onDrop(e, 'page', pg.name, activeNotebook, section.name)}
             ondragend={onDragEnd}
             class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
-            class:bg-bg-hover={isActive}
+            class:bg-hover={isActive}
             class:text-accent-primary-start={isActive}
             class:text-text-muted={!isActive}
             class:hover:text-text-primary={!isActive}

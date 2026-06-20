@@ -45,7 +45,7 @@
         role="dialog"
         aria-modal="true"
         aria-label={surface.label}
-        class="relative bg-bg-panel border border-border-active rounded-xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden"
+        class="relative bg-panel border border-border-active rounded-xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden"
         style="min-height: 200px; max-height: 80vh;"
       >
         <div

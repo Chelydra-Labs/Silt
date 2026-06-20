@@ -18,7 +18,7 @@
   function kindClasses(kind: string): string {
     if (kind === 'error') return 'border-status-danger/40 bg-status-danger/10 text-status-danger'
     if (kind === 'success') return 'border-status-success/40 bg-status-success/10 text-status-success'
-    return 'border-border-zinc bg-bg-surface text-text-primary'
+    return 'border-border-zinc bg-surface text-text-primary'
   }
 </script>
 

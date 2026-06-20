@@ -35,7 +35,7 @@ const minimalValidJSON = `{
         "primary": {"start":"#2dd4bf","end":"#0d9488","glow":"rgba(20,184,166,0.15)"},
         "secondary": {"start":"#6366f1","end":"#a855f7","glow":"rgba(168,85,247,0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e"}
+      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
     },
     "light": {
       "bg": {"void":"#ffffff","surface":"#f8fafc","panel":"#f1f5f9","hover":"#e2e8f0","active":"#cbd5e1"},
@@ -45,7 +45,7 @@ const minimalValidJSON = `{
         "primary": {"start":"#0d9488","end":"#115e59","glow":"rgba(13,148,136,0.10)"},
         "secondary": {"start":"#4f46e5","end":"#7c3aed","glow":"rgba(79,70,229,0.08)"}
       },
-      "status": {"warn":"#d97706","danger":"#e11d48"}
+      "status": {"warn":"#d97706","danger":"#e11d48","success":"#16a34a"}
     }
   }
 }`
@@ -156,7 +156,7 @@ const darkOnlyJSON = `{
         "primary": {"start":"#2dd4bf","end":"#0d9488","glow":"rgba(20,184,166,0.15)"},
         "secondary": {"start":"#6366f1","end":"#a855f7","glow":"rgba(168,85,247,0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e"}
+      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
     }
   }
 }`
@@ -183,8 +183,8 @@ func TestValidate_MissingLightMode(t *testing.T) {
 			t.Errorf("unexpected non-light error: %+v", e)
 		}
 	}
-	if lightErrs != len(requiredTokens) {
-		t.Errorf("expected all %d required light tokens flagged, got %d", len(requiredTokens), lightErrs)
+	if lightErrs != len(requiredTokens)-1 {
+		t.Errorf("expected all %d required light tokens flagged (status.success backfilled), got %d", len(requiredTokens)-1, lightErrs)
 	}
 }
 
@@ -240,7 +240,7 @@ func TestParseDefault_IsValid(t *testing.T) {
 		"--text-primary", "--text-muted", "--text-disabled",
 		"--accent-primary-start", "--accent-primary-end", "--accent-primary-glow",
 		"--accent-secondary-start", "--accent-secondary-end", "--accent-secondary-glow",
-		"--status-warn", "--status-danger",
+		"--status-warn", "--status-danger", "--status-success",
 	}
 	for _, k := range expected {
 		if _, ok := tokens[k]; !ok {
@@ -570,7 +570,7 @@ func TestValidate_TextureRejectsCSSInjection(t *testing.T) {
 
 	// End-to-end: a crafted theme JSON file with an injection image is
 	// rejected by the full ParseAndValidate pipeline (not just validateTexture).
-	darkStatus := `"status": {"warn":"#fbbf24","danger":"#f43f5e"}`
+	darkStatus := `"status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}`
 	crafted := strings.Replace(
 		minimalValidJSON,
 		darkStatus,
@@ -668,5 +668,42 @@ func TestIsValidFontFamily(t *testing.T) {
 		if isValidFontFamily(v) {
 			t.Errorf("expected %q to be rejected", v)
 		}
+	}
+}
+
+// TestParseAndValidate_BackfillsMissingSuccess: a legacy theme (exported
+// before the status.success schema change) must still load. ParseAndValidate
+// backfills a default so the theme doesn't fail validation and silently
+// revert to the embedded default on next launch.
+func TestParseAndValidate_BackfillsMissingSuccess(t *testing.T) {
+	// Strip success from both mode status blocks. Each appears as:
+	//   ,"success":"<color>"   (second key, has leading comma)
+	legacy := strings.ReplaceAll(minimalValidJSON, `,"success":"#22c55e"`, "")
+	legacy = strings.ReplaceAll(legacy, `,"success":"#16a34a"`, "")
+
+	th, err := ParseAndValidate([]byte(legacy))
+	if err != nil {
+		t.Fatalf("legacy theme without success should still load: %v", err)
+	}
+	if th.Modes.Dark.Status.Success != "#22c55e" {
+		t.Errorf("expected dark success backfill #22c55e, got %q", th.Modes.Dark.Status.Success)
+	}
+	if th.Modes.Light.Status.Success != "#16a34a" {
+		t.Errorf("expected light success backfill #16a34a, got %q", th.Modes.Light.Status.Success)
+	}
+}
+
+// TestParseAndValidate_PreservesExplicitSuccess: when a theme explicitly
+// defines status.success, the backfill must not overwrite it.
+func TestParseAndValidate_PreservesExplicitSuccess(t *testing.T) {
+	th, err := ParseAndValidate([]byte(minimalValidJSON))
+	if err != nil {
+		t.Fatalf("valid theme should load: %v", err)
+	}
+	if th.Modes.Dark.Status.Success != "#22c55e" {
+		t.Errorf("explicit dark success preserved: want #22c55e, got %q", th.Modes.Dark.Status.Success)
+	}
+	if th.Modes.Light.Status.Success != "#16a34a" {
+		t.Errorf("explicit light success preserved: want #16a34a, got %q", th.Modes.Light.Status.Success)
 	}
 }

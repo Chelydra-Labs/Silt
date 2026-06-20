@@ -208,7 +208,7 @@
         Workspace
       </h3>
       <div
-        class="flex items-center gap-2 bg-bg-surface border border-border-muted rounded-lg px-3 py-2.5"
+        class="flex items-center gap-2 bg-surface border border-border-muted rounded-lg px-3 py-2.5"
       >
         <span class="material-symbols-outlined text-text-muted text-[18px]"
           >folder</span
@@ -229,7 +229,7 @@
             aria-expanded={vaultMenuOpen}
             aria-label="Vault actions"
             title="Vault actions"
-            class="flex-shrink-0 p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-hover border-none bg-transparent cursor-pointer transition-colors"
+            class="flex-shrink-0 p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-hover border-none bg-transparent cursor-pointer transition-colors"
           >
             <span class="material-symbols-outlined text-[20px]">more_vert</span>
           </button>
@@ -237,7 +237,7 @@
             <div
               role="menu"
               aria-label="Vault actions"
-              class="absolute right-0 top-full mt-1 z-10 w-44 bg-bg-panel border border-border-zinc rounded-lg shadow-xl py-1"
+              class="absolute right-0 top-full mt-1 z-10 w-44 bg-panel border border-border-zinc rounded-lg shadow-xl py-1"
             >
               <button
                 type="button"
@@ -245,7 +245,7 @@
                 role="menuitem"
                 onclick={() => openAction('move')}
                 onkeydown={(e) => handleMenuItemKeydown(e, 0)}
-                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-bg-hover border-none bg-transparent cursor-pointer"
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
               >
                 <span class="material-symbols-outlined text-[18px] text-text-muted">drive_file_move</span>
                 Move vault…
@@ -256,7 +256,7 @@
                 role="menuitem"
                 onclick={() => openAction('copy')}
                 onkeydown={(e) => handleMenuItemKeydown(e, 1)}
-                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-bg-hover border-none bg-transparent cursor-pointer"
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
               >
                 <span class="material-symbols-outlined text-[18px] text-text-muted">content_copy</span>
                 Copy vault…
@@ -268,7 +268,7 @@
                 role="menuitem"
                 onclick={() => openAction('export')}
                 onkeydown={(e) => handleMenuItemKeydown(e, 2)}
-                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-bg-hover border-none bg-transparent cursor-pointer"
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
               >
                 <span class="material-symbols-outlined text-[18px] text-text-muted">archive</span>
                 Export vault…
@@ -279,7 +279,7 @@
                 role="menuitem"
                 onclick={() => openAction('import')}
                 onkeydown={(e) => handleMenuItemKeydown(e, 3)}
-                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-bg-hover border-none bg-transparent cursor-pointer"
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
               >
                 <span class="material-symbols-outlined text-[18px] text-text-muted">unarchive</span>
                 Import vault…
@@ -319,7 +319,7 @@
                 onclick={() => resetFont('font_family')}
                 title="Reset to theme default ({displayFamilyName(themeBodyFont)})"
                 aria-label="Reset body font to theme default"
-                class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-bg-surface border border-border-zinc text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
+                class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-surface border border-border-zinc text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
               >
                 <span class="material-symbols-outlined text-[18px]">restart_alt</span>
               </button>
@@ -344,7 +344,7 @@
                 onclick={() => resetFont('mono_font_family')}
                 title="Reset to theme default ({displayFamilyName(themeMonoFont)})"
                 aria-label="Reset monospace font to theme default"
-                class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-bg-surface border border-border-zinc text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
+                class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-surface border border-border-zinc text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
               >
                 <span class="material-symbols-outlined text-[18px]">restart_alt</span>
               </button>
@@ -361,7 +361,7 @@
             type="number"
             min="8"
             max="48"
-            class="bg-bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+            class="bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
           />
         </label>
         <label class="flex flex-col gap-1.5">
@@ -375,7 +375,7 @@
             step="0.1"
             min="1"
             max="3"
-            class="bg-bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+            class="bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
           />
         </label>
         <label class="flex flex-col gap-1.5">
@@ -388,7 +388,7 @@
             type="number"
             min="1"
             max="8"
-            class="bg-bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+            class="bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
           />
         </label>
         <label class="flex flex-col gap-1.5">
@@ -401,7 +401,7 @@
             type="number"
             min="0"
             step="100"
-            class="bg-bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+            class="bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
           />
         </label>
       </div>
@@ -445,7 +445,7 @@
                   touch()
                 }}
                 type="text"
-                class="flex-1 bg-bg-surface border border-border-zinc rounded-lg px-3 py-1.5 text-text-primary text-[12px] font-mono outline-none focus:border-accent-primary-start transition-colors"
+                class="flex-1 bg-surface border border-border-zinc rounded-lg px-3 py-1.5 text-text-primary text-[12px] font-mono outline-none focus:border-accent-primary-start transition-colors"
               />
             </label>
           {/each}

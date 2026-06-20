@@ -394,7 +394,7 @@
 </script>
 
 <main
-  class="w-full h-full flex flex-col bg-bg-void text-text-primary overflow-hidden font-body-md"
+  class="w-full h-full flex flex-col bg-void text-text-primary overflow-hidden font-body-md"
 >
   {#if loading}
     <div class="onboarding-container">
@@ -443,7 +443,7 @@
           transition:fade={{ duration: 150 }}
           aria-label="Show sidebar"
           title="Show sidebar (Ctrl+B)"
-          class="absolute bottom-4 left-4 z-50 w-8 h-8 rounded-lg bg-bg-surface/80 backdrop-blur-md border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
+          class="absolute bottom-4 left-4 z-50 w-8 h-8 rounded-lg bg-surface/80 backdrop-blur-md border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
         >
           <span class="material-symbols-outlined text-[18px]"
             >left_panel_open</span
@@ -480,7 +480,7 @@
 
       <!-- Content viewport -->
       <div
-        class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-bg-void"
+        class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-void"
       >
         {#if activeView === 'notes'}
           {#if notesReady}

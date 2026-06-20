@@ -201,7 +201,7 @@
       <div class="mb-4">
         <span class="text-text-muted text-[11px] font-label-sm-bold">Destination</span>
         <div
-          class="flex items-center gap-2 mt-1.5 bg-bg-surface border border-border-zinc rounded-lg px-3 py-2"
+          class="flex items-center gap-2 mt-1.5 bg-surface border border-border-zinc rounded-lg px-3 py-2"
         >
           <span class="material-symbols-outlined text-text-muted text-[18px]">folder</span>
           <span class="text-text-primary text-[13px] font-body-md truncate flex-1">
@@ -212,7 +212,7 @@
             bind:this={destBtn}
             onclick={chooseDestination}
             disabled={busy}
-            class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-bg-hover border border-border-zinc text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-border-zinc text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Choose…
           </button>

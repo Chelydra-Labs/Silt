@@ -130,7 +130,7 @@
         bind:value={query}
         type="text"
         placeholder="Filter tags…"
-        class="w-full bg-bg-surface border border-border-zinc rounded-lg px-3 py-1.5 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+        class="w-full bg-surface border border-border-zinc rounded-lg px-3 py-1.5 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
       />
     </div>
     <div class="flex-1 overflow-y-auto custom-scrollbar p-2">
@@ -195,7 +195,7 @@
         {#each results as res (res.id)}
           <button
             onclick={() => openBlock(res)}
-            class="w-full text-left px-6 py-3 border-b border-border-muted/50 hover:bg-bg-hover transition-colors border-none bg-transparent cursor-pointer flex flex-col gap-1"
+            class="w-full text-left px-6 py-3 border-b border-border-muted/50 hover:bg-hover transition-colors border-none bg-transparent cursor-pointer flex flex-col gap-1"
           >
             <div
               class="flex items-center gap-1.5 text-[10px] text-text-muted uppercase tracking-widest font-label-sm-bold"

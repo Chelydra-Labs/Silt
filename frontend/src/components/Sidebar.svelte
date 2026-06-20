@@ -654,7 +654,7 @@
 </script>
 
 <aside
-  class="bg-bg-surface border-r border-border-muted flex flex-col py-[4px] h-full flex-shrink-0 select-none z-40"
+  class="bg-surface border-r border-border-muted flex flex-col py-[4px] h-full flex-shrink-0 select-none z-40"
   style:width={collapsed ? '0px' : sidebarWidth + 'px'}
   style:transition={sidebarDragging ? 'none' : 'all 200ms ease-out'}
   style:overflow={collapsed ? 'hidden' : 'visible'}
@@ -668,7 +668,7 @@
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         onclick={() => (showNotebookDropdown = !showNotebookDropdown)}
-        class="flex items-center gap-2 cursor-pointer group py-1.5 rounded hover:bg-bg-hover transition-colors"
+        class="flex items-center gap-2 cursor-pointer group py-1.5 rounded hover:bg-hover transition-colors"
         role="button"
         tabindex="0"
       >
@@ -712,7 +712,7 @@
             {#each tree.notebooks as nb (nb.name)}
               <button
                 onclick={() => handleSelectNotebook(nb.name)}
-                class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-bg-hover transition-colors font-body-md border-none bg-transparent"
+                class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent"
               >
                 <span
                   class="material-symbols-outlined text-accent-primary-start text-[18px]"
@@ -752,7 +752,7 @@
                 showNotebookDropdown = false
                 openCreate('notebook')
               }}
-              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-bg-hover transition-colors font-body-md border-none bg-transparent text-accent-primary-start"
+              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-accent-primary-start"
             >
               <span class="material-symbols-outlined text-[18px]"
                 >create_new_folder</span
@@ -762,7 +762,7 @@
             <button
               onclick={handleOpenNotebookFolder}
               disabled={creating}
-              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-bg-hover transition-colors font-body-md border-none bg-transparent text-text-muted disabled:opacity-50"
+              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-text-muted disabled:opacity-50"
             >
               <span class="material-symbols-outlined text-[18px]"
                 >folder_open</span
@@ -773,7 +773,7 @@
               onclick={handleLinkExternalNotebook}
               disabled={creating}
               title="Link a folder that lives outside the vault (e.g. a synced SharePoint mount); it is edited in place, never copied in."
-              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-bg-hover transition-colors font-body-md border-none bg-transparent text-text-muted disabled:opacity-50"
+              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-text-muted disabled:opacity-50"
             >
               <span class="material-symbols-outlined text-[18px]">add_link</span
               >
@@ -809,7 +809,7 @@
           disabled={!activeNotebook}
           title={pageHint}
           aria-label="New Page"
-          class="w-full bg-bg-panel border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+          class="w-full bg-panel border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <span class="material-symbols-outlined text-[20px]">note_add</span>
         </button>
@@ -821,7 +821,7 @@
           disabled={!activeNotebook}
           title="New page from template (Ctrl+Shift+T)"
           aria-label="New Page from Template"
-          class="w-9 bg-bg-panel border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+          class="w-9 bg-panel border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <span class="material-symbols-outlined text-[20px]">content_copy</span
           >
@@ -936,7 +936,7 @@
               : createMode === 'notebook'
                 ? 'Notebook name…'
                 : 'Section name…'}
-            class="w-full bg-bg-surface border border-border-zinc rounded-lg px-3 py-2.5 text-text-primary text-[14px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+            class="w-full bg-surface border border-border-zinc rounded-lg px-3 py-2.5 text-text-primary text-[14px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
           />
           {#if createError}
             <p class="text-error text-[12px] font-body-md mt-2">
@@ -973,14 +973,14 @@
 
   <!-- Sidebar Footer -->
   <div
-    class="px-3 py-2 border-t border-border-muted flex items-center justify-between bg-bg-surface flex-shrink-0"
+    class="px-3 py-2 border-t border-border-muted flex items-center justify-between bg-surface flex-shrink-0"
   >
     {#if onCloseVault}
       <button
         onclick={onCloseVault}
         aria-label="Change Vault"
         title="Close this vault and return to the setup screen"
-        class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start hover:bg-bg-hover transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none"
+        class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start hover:bg-hover transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none"
       >
         <span class="material-symbols-outlined text-[15px]">swap_horiz</span>
         <span>Change Vault</span>
@@ -990,7 +990,7 @@
       onclick={() => (collapsed = true)}
       aria-label="Hide sidebar"
       title="Hide sidebar (Ctrl+B)"
-      class="p-1.5 rounded hover:bg-bg-hover text-text-muted hover:text-accent-primary-start transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none flex items-center justify-center hover:scale-105 active:scale-95"
+      class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none flex items-center justify-center hover:scale-105 active:scale-95"
     >
       <span class="material-symbols-outlined text-[18px]">left_panel_close</span
       >
@@ -1060,7 +1060,7 @@
       aria-modal="true"
       aria-label="Confirm delete"
       tabindex="-1"
-      class="relative bg-bg-panel border border-border-active rounded-xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden"
+      class="relative bg-panel border border-border-active rounded-xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden"
     >
       <div class="px-5 py-4 border-b border-border-muted">
         <h2 class="font-headline-md text-headline-md text-text-primary">

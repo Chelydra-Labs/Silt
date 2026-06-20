@@ -147,7 +147,7 @@
   >
     <!-- Left rail: tab list -->
     <nav
-      class="w-52 flex-shrink-0 border-r border-border-muted bg-bg-surface/40 flex flex-col py-3"
+      class="w-52 flex-shrink-0 border-r border-border-muted bg-surface/40 flex flex-col py-3"
       aria-label="Settings sections"
     >
       {#each tabs as tab, i (tab.id)}
@@ -162,7 +162,7 @@
           class:bg-accent-primary-glow={activeTab === tab.id}
           class:text-accent-primary-start={activeTab === tab.id}
           class:text-text-muted={activeTab !== tab.id}
-          class:hover:bg-bg-hover={activeTab !== tab.id}
+          class:hover:bg-hover={activeTab !== tab.id}
         >
           <span class="material-symbols-outlined text-[20px]">{tab.icon}</span>
           {tab.label}

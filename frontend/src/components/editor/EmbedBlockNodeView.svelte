@@ -13,7 +13,7 @@
   const cardClass = $derived(
     selected
       ? 'border-accent-primary-start/60 bg-accent-primary-glow'
-      : 'border-border-muted bg-bg-surface/60'
+      : 'border-border-muted bg-surface/60'
   )
   // Read the live active location so the click-to-open path always has a
   // notebook to pass to OpenAttachment, even if the user has navigated away

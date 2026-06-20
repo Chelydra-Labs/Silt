@@ -310,7 +310,7 @@
 >
   <!-- Modal panel -->
   <div
-    class="flex max-h-[85vh] w-[min(900px,92vw)] flex-col overflow-hidden rounded-xl border border-border-zinc bg-bg-surface shadow-2xl"
+    class="flex max-h-[85vh] w-[min(900px,92vw)] flex-col overflow-hidden rounded-xl border border-border-zinc bg-surface shadow-2xl"
     role="dialog"
     aria-modal="true"
     aria-label="Template picker"
@@ -323,7 +323,7 @@
       </h2>
       <button
         onclick={onClose}
-        class="rounded p-1 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
+        class="rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
         aria-label="Close template picker"
       >
         <span class="material-symbols-outlined text-[20px]">close</span>
@@ -340,7 +340,7 @@
             bind:value={searchQuery}
             type="text"
             placeholder="Search templates…"
-            class="w-full rounded-lg border border-border-zinc bg-bg-void px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
+            class="w-full rounded-lg border border-border-zinc bg-void px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
             aria-label="Search templates"
           />
         </div>
@@ -386,8 +386,8 @@
                 aria-selected={selectedId === t.id}
                 tabindex={selectedId === t.id ? 0 : -1}
                 class="flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left transition-colors {selectedId === t.id
-                  ? 'bg-bg-active'
-                  : 'hover:bg-bg-hover'}"
+                  ? 'bg-active'
+                  : 'hover:bg-hover'}"
               >
                 <span class="material-symbols-outlined mt-0.5 text-[18px] text-accent-secondary-start">
                   {t.icon || 'description'}
@@ -431,7 +431,7 @@
                   bind:value={pageName}
                   type="text"
                   placeholder="e.g. Sprint Planning"
-                  class="w-full rounded-lg border border-border-zinc bg-bg-void px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
+                  class="w-full rounded-lg border border-border-zinc bg-void px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
                   onkeydown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
@@ -456,7 +456,7 @@
                       value={placeholderValues[ph.name] ?? ''}
                       oninput={(e) => (placeholderValues[ph.name] = e.currentTarget.value)}
                       placeholder={ph.default || `{{${ph.name}}}`}
-                      class="w-full rounded-lg border border-border-zinc bg-bg-void px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
+                      class="w-full rounded-lg border border-border-zinc bg-void px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
                     />
                   </div>
                 {/each}
@@ -484,7 +484,7 @@
           </div>
           <button
             onclick={onClose}
-            class="rounded-lg px-4 py-2 text-sm text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
+            class="rounded-lg px-4 py-2 text-sm text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
           >
             Cancel
           </button>
@@ -492,7 +492,7 @@
             onclick={() => void handleConfirm()}
             disabled={!selectedId || creating || (mode === 'new-page' && !pageName.trim())}
             title="Confirm (Enter or Ctrl+Enter)"
-            class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-bg-void transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-void transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {creating ? '…' : confirmLabel}
           </button>

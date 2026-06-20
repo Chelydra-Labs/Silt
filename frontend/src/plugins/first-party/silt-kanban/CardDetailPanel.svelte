@@ -48,7 +48,7 @@
     return s === 'TODO' ? 'To Do' : s === 'DOING' ? 'In Progress' : 'Done'
   }
   function statusChipClass(s: TaskStatus): string {
-    if (s === 'TODO') return 'text-text-muted border-border-muted bg-bg-surface'
+    if (s === 'TODO') return 'text-text-muted border-border-muted bg-surface'
     if (s === 'DOING')
       return 'text-accent-secondary-start border-accent-secondary-start/30 bg-accent-secondary-glow'
     return 'text-accent-primary-start border-accent-primary-start/30 bg-accent-primary-glow'
@@ -243,7 +243,7 @@
           <div class="flex items-center justify-between">
             <dt class="text-text-muted">Owner</dt>
             <dd
-              class="px-2 py-0.5 border rounded-sm text-text-primary border-border-muted bg-bg-surface"
+              class="px-2 py-0.5 border rounded-sm text-text-primary border-border-muted bg-surface"
             >
               {card.owner || '—'}
             </dd>
@@ -286,7 +286,7 @@
           type="button"
           onclick={togglePin}
           disabled={pinPending}
-          class="w-full flex items-center justify-between px-3 py-2 rounded border border-border-muted bg-bg-surface hover:bg-bg-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          class="w-full flex items-center justify-between px-3 py-2 rounded border border-border-muted bg-surface hover:bg-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           aria-pressed={pinState}
         >
           <span
@@ -333,7 +333,7 @@
           class="w-full accent-accent-secondary-start disabled:opacity-50"
         />
         <div
-          class="mt-2 h-1 bg-bg-surface border border-border-muted rounded overflow-hidden"
+          class="mt-2 h-1 bg-surface border border-border-muted rounded overflow-hidden"
         >
           <div
             class="h-full bg-accent-secondary-start transition-all"
