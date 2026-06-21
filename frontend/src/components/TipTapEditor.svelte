@@ -825,6 +825,23 @@
     activeBlockNode?: any
   } | null>(null)
 
+  $effect(() => {
+    if (contextMenu) {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+          contextMenu = null
+          editorInstance?.commands.focus()
+        }
+      }
+      window.addEventListener('keydown', handleKeyDown, true)
+      return () => {
+        window.removeEventListener('keydown', handleKeyDown, true)
+      }
+    }
+  })
+
   function handleContextMenu(e: MouseEvent): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     e.preventDefault()
@@ -854,9 +871,27 @@
       }
     }
 
+    // Viewport collision boundary adjustment to prevent offscreen rendering
+    const menuWidth = 220
+    const menuHeight = 320
+    const screenWidth = window.innerWidth
+    const screenHeight = window.innerHeight
+
+    let x = e.clientX
+    let y = e.clientY
+
+    if (x + menuWidth > screenWidth) {
+      x = screenWidth - menuWidth - 8
+    }
+    if (y + menuHeight > screenHeight) {
+      y = screenHeight - menuHeight - 8
+    }
+    x = Math.max(8, x)
+    y = Math.max(8, y)
+
     contextMenu = {
-      x: e.clientX,
-      y: e.clientY,
+      x,
+      y,
       activeBlockId,
       activeBlockNode
     }
@@ -1041,6 +1076,7 @@
           role="menu"
           tabindex="-1"
           aria-label="Editor actions"
+          oncontextmenu={(e) => e.preventDefault()}
         >
           <button
             type="button"
