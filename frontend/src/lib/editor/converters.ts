@@ -84,8 +84,8 @@ function markClose(mark: MarkRef): string {
     case 'backgroundColor':
       return '</span>'
     case 'link': {
-      const href = (mark.attrs as Record<string, unknown> | undefined)?.href
-      return `](${href || ''})`
+      const href = (mark.attrs as Record<string, unknown> | undefined)?.href as string
+      return `](${isSafeLinkHref(href) ? href : ''})`
     }
     default: return ''
   }
@@ -95,7 +95,7 @@ function markClose(mark: MarkRef): string {
 // Walks nodes left-to-right, emitting open/close delimiters as the active mark
 // set changes. Smart Graph nodes close all active marks, emit their token, then
 // resume. Replaces the old plain-concatenation inlineText (#168).
-function serializeInlineContent(content?: NodeJSON[]): string {
+export function serializeInlineContent(content?: NodeJSON[]): string {
   if (!content) return ''
   let result = ''
   let active: MarkRef[] = []
@@ -153,8 +153,25 @@ interface MarkPattern {
   regex: RegExp
   shield?: boolean // if true, inner content is NOT recursively parsed (code)
   wordBoundary?: boolean // if true, only match at word boundaries (_, __)
-  extractAttrs?: (m: RegExpExecArray) => Record<string, unknown>
+  extractAttrs?: (m: RegExpExecArray) => Record<string, unknown> | null
   innerGroup?: number // capture group for inner content (default 1; color marks use 2)
+}
+
+// Allowlisted URL schemes for link hrefs (#168 security). Mirrors TipTap's
+// Link.isAllowedUri default. Non-allowlisted schemes (javascript:, data:,
+// vbscript:, etc.) are dropped — the link text survives as literal text.
+const SAFE_LINK_SCHEMES = new Set([
+  'http', 'https', 'ftp', 'ftps', 'mailto', 'tel', 'callto', 'sms', 'cid', 'xmpp'
+])
+
+function isSafeLinkHref(href: string): boolean {
+  if (!href) return false
+  // Relative URLs and anchors are safe.
+  if (href.startsWith('#') || href.startsWith('/') || href.startsWith('./') || href.startsWith('../')) return true
+  const colonIdx = href.indexOf(':')
+  if (colonIdx === -1) return true // no scheme — relative
+  const scheme = href.slice(0, colonIdx).toLowerCase()
+  return SAFE_LINK_SCHEMES.has(scheme)
 }
 
 // Ordered by priority: code first (shields), then longer delimiters before
@@ -164,7 +181,7 @@ const MARK_PATTERNS: MarkPattern[] = [
   {
     type: 'link',
     regex: /\[([^\]]*)\]\(([^)\s]*)\)/y,
-    extractAttrs: (m) => ({ href: m[2] })
+    extractAttrs: (m) => isSafeLinkHref(m[2]) ? { href: m[2] } : null
   },
   { type: 'bold', regex: /\*\*(.+?)\*\*/y },
   { type: 'bold', regex: /__(.+?)__/y, wordBoundary: true },
@@ -175,17 +192,18 @@ const MARK_PATTERNS: MarkPattern[] = [
   { type: 'underline', regex: /<u>(.+?)<\/u>/y },
   { type: 'subscript', regex: /<sub>(.+?)<\/sub>/y },
   { type: 'superscript', regex: /<sup>(.+?)<\/sup>/y },
-  // Text color (#170): <span style="color: X">text</span>
+  // Color spans (#170): [^>]* after the style attribute absorbs any extra
+  // HTML attributes (e.g. onmouseover), which are then dropped on round-trip
+  // since the serializer only emits <span style="color:X">.
   {
     type: 'textColor',
-    regex: /<span style="color:\s*([^;"]+?)\s*;?">(.+?)<\/span>/y,
+    regex: /<span style="color:\s*([^;"]+?)\s*;?"[^>]*>(.+?)<\/span>/y,
     innerGroup: 2,
     extractAttrs: (m) => ({ color: m[1].trim() })
   },
-  // Background color (#170): <span style="background-color: X">text</span>
   {
     type: 'backgroundColor',
-    regex: /<span style="background-color:\s*([^;"]+?)\s*;?">(.+?)<\/span>/y,
+    regex: /<span style="background-color:\s*([^;"]+?)\s*;?"[^>]*>(.+?)<\/span>/y,
     innerGroup: 2,
     extractAttrs: (m) => ({ color: m[1].trim() })
   }
@@ -213,12 +231,14 @@ function tryMatchMarkAt(text: string, pos: number): MarkMatch | null {
       const after = afterEnd < text.length ? text[afterEnd] : ''
       if (/[a-zA-Z0-9]/.test(before) || /[a-zA-Z0-9]/.test(after)) continue
     }
+    const attrs = pattern.extractAttrs?.(m)
+    if (attrs === null) continue
     return {
       type: pattern.type,
       inner: m[pattern.innerGroup ?? 1],
       end: pos + m[0].length,
       shield: pattern.shield === true,
-      attrs: pattern.extractAttrs?.(m)
+      attrs: attrs ?? undefined
     }
   }
   return null

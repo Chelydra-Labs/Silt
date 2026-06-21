@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Editor } from 'svelte-tiptap'
+  import { serializeInlineContent } from '../../lib/editor/converters'
 
   interface Props {
     editor: Editor | null
@@ -26,11 +27,30 @@
   async function copyAsMarkdown(): Promise<void> {
     if (!editor) return
     const { selection } = editor.state
-    const text = selection.empty
-      ? ''
-      : editor.state.doc.textBetween(selection.from, selection.to, '\n')
+    let md = ''
+    if (selection.empty) {
+      // Copy the entire block's content as markdown
+      const pos = selection.$from
+      for (let d = pos.depth; d >= 1; d--) {
+        const node = pos.node(d)
+        if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
+          const json = node.toJSON()
+          md = json.content ? serializeInlineContent(json.content) : ''
+          break
+        }
+      }
+    } else {
+      // Serialize the selection range as markdown
+      const slice = editor.state.doc.slice(selection.from, selection.to)
+      const parts: string[] = []
+      slice.content.forEach((node) => {
+        const json = node.toJSON()
+        parts.push(json.content ? serializeInlineContent(json.content) : (json.text || ''))
+      })
+      md = parts.join('\n')
+    }
     try {
-      await navigator.clipboard.writeText(text)
+      await navigator.clipboard.writeText(md)
     } catch {
       // Clipboard may be unavailable
     }

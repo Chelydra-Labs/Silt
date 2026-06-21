@@ -84,7 +84,12 @@
     onUpdate
   }: Props = $props()
 
-  let editorInstance = $state<Editor | null>(null)
+  // svelte-ignore non_reactive_update
+  // editorInstance is intentionally non-reactive to avoid per-keystroke
+  // re-renders of FormatToolbar/SelectionBubble/BlockHoverMenu. Components
+  // are gated behind the reactive `editorReady` flag instead.
+  let editorInstance: Editor | null = null
+  let editorReady = $state(false)
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null
   let hasFocusLock = false
@@ -108,10 +113,22 @@
     settings.config?.ui?.show_format_toolbar !== false
   )
 
+  // Track OS dark/light preference reactively so isDark updates when the
+  // OS theme changes under mode === 'system' (#168 color palette).
+  let osPrefersDark = $state(
+    window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
+  )
+  $effect(() => {
+    const mql = window.matchMedia?.('(prefers-color-scheme: dark)')
+    if (!mql) return
+    const handler = (e: MediaQueryListEvent) => { osPrefersDark = e.matches }
+    mql.addEventListener('change', handler)
+    return () => mql.removeEventListener('change', handler)
+  })
+
   let isDark = $derived(
     themeState.mode === 'dark' ||
-    (themeState.mode === 'system' &&
-      window.matchMedia?.('(prefers-color-scheme: dark)').matches)
+    (themeState.mode === 'system' && osPrefersDark)
   )
 
   let colorEnabled = $derived(
@@ -415,6 +432,7 @@
     },
     onCreate: ({ editor }) => {
       editorInstance = editor as Editor
+      editorReady = true
     }
   })
 
@@ -778,10 +796,11 @@
   {#if viewMode === 'source'}
     <MarkdownSourceViewer {blocks} filePath="{notebook}/{section}/{page}.md" />
   {:else}
-    {#if showFormatToolbar}
-      <FormatToolbar editor={editorInstance} {activeMarks} {isDark} {colorEnabled} />
-    {/if}
-    <BlockHoverMenu editor={editorInstance} {colorEnabled} {isDark} />
+    {#if editorReady}
+      {#if showFormatToolbar}
+        <FormatToolbar editor={editorInstance} {activeMarks} {isDark} {colorEnabled} />
+      {/if}
+      <BlockHoverMenu editor={editorInstance} {colorEnabled} {isDark} />
     <FormattingFirstRunTip dismissed={formatTipDismissed} onDismiss={dismissFormatTip} />
     <SelectionBubble
       editor={editorInstance}
@@ -791,6 +810,7 @@
     />
     {#if editorStore}
       <EditorContent editor={$editorStore} />
+    {/if}
     {/if}
     {#if unsavedChanges || lastSaveError}
       <div

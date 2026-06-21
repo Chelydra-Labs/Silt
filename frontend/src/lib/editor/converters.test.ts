@@ -763,6 +763,49 @@ describe('color mark round-trips (#170)', () => {
     expect(back[0].clean_text).toContain('after')
   })
 
+  it('javascript: scheme links are not parsed as links (inert literal text)', () => {
+    const cleanText = 'click [here](javascript:alert(1)) now'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const doc = blocksToDoc([block])
+    // Verify the text node has NO link mark (the scheme was rejected).
+    const textNode = doc.content![0].content?.[0]
+    expect(textNode?.marks?.some((m: any) => m.type === 'link')).toBeFalsy()
+    // The text round-trips byte-for-byte as inert literal text.
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe(cleanText)
+  })
+
+  it('data:text/html scheme links are not parsed as links', () => {
+    const cleanText = '[x](data:text/html,<script>alert(1)</script>)'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const doc = blocksToDoc([block])
+    const textNode = doc.content![0].content?.[0]
+    expect(textNode?.marks?.some((m: any) => m.type === 'link')).toBeFalsy()
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe(cleanText)
+  })
+
+  it('safe schemes (https, mailto, #anchor) round-trip correctly', () => {
+    for (const text of [
+      'see [docs](https://example.com) for more',
+      'email [me](mailto:a@b.com) please',
+      'jump to [section](#section-1)'
+    ]) {
+      const block = mkBlock('NOTE', { clean_text: text })
+      const back = docToBlocks(blocksToDoc([block]))
+      expect(back[0].clean_text, `round-trip of "${text}"`).toBe(text)
+    }
+  })
+
+  it('span with onmouseover attribute is stripped on round-trip', () => {
+    const cleanText = '<span style="color: #ff0000" onmouseover="alert(1)">red</span>'
+    const block = mkBlock('NOTE', { clean_text: cleanText })
+    const back = docToBlocks(blocksToDoc([block]))
+    expect(back[0].clean_text).toContain('color: #ff0000')
+    expect(back[0].clean_text).not.toContain('onmouseover')
+    expect(back[0].clean_text).not.toContain('alert')
+  })
+
   it('text color survives the editor round-trip', () => {
     const editor = makeEditor()
     const cleanText = '<span style="color: #dc2626">red text</span>'
