@@ -19,6 +19,7 @@
     UniqueBlockIds,
     SiltBlockKeymaps,
     convertToBlock,
+    setBlockAlign,
     TaskMetaSuggest,
     applyMetaSuggestion,
     filterMetaKeys,
@@ -458,7 +459,7 @@
   }
   function onSetBlockAlign(e: Event): void {
     const align = (e as CustomEvent).detail as string
-    if (align) setBlockAlignAttr(align)
+    if (align) setBlockAlign(editorInstance as any, align)
   }
   function onEditorScroll(): void {
     selectionCoords = null
@@ -650,26 +651,6 @@
     }
   }
 
-  // Set block alignment attr (#173). No-op for TASK blocks.
-  function setBlockAlignAttr(align: string): void {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    const pos = editorInstance.state.selection.$from
-    for (let d = pos.depth; d >= 1; d--) {
-      const node = pos.node(d)
-      if (node.type.name === 'taskBlock') return
-      if (['noteBlock', 'headerBlock'].includes(node.type.name)) {
-        const nodePos = pos.before(d)
-        const tr = editorInstance.state.tr.setNodeAttribute(
-          nodePos,
-          'align',
-          align
-        )
-        editorInstance.view.dispatch(tr)
-        return
-      }
-    }
-  }
-
   function handleSlashSelect(commandId: string): void {
     showSlashMenu = false
     slashQuery = ''
@@ -694,13 +675,13 @@
     } else if (commandId === 'task') {
       convertToBlock(editorInstance as any, 'taskBlock')
     } else if (commandId === 'align-left') {
-      setBlockAlignAttr('left')
+      setBlockAlign(editorInstance as any, 'left')
     } else if (commandId === 'align-center') {
-      setBlockAlignAttr('center')
+      setBlockAlign(editorInstance as any, 'center')
     } else if (commandId === 'align-right') {
-      setBlockAlignAttr('right')
+      setBlockAlign(editorInstance as any, 'right')
     } else if (commandId === 'align-justify') {
-      setBlockAlignAttr('justify')
+      setBlockAlign(editorInstance as any, 'justify')
     } else if (commandId === 'text-color') {
       openColorPickerPopover('textColor')
     } else if (commandId === 'background-color') {
