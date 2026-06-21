@@ -4,7 +4,7 @@
 
   // SvelteNodeViewRenderer auto-applies a `node-{type.name}` (camelCase) class
   // to the wrapper, so we don't redeclare it here (#179).
-  let { node, updateAttributes, selected }: NodeViewProps = $props()
+  let { node, updateAttributes }: NodeViewProps = $props()
 
   const status = $derived(node.attrs.status || 'TODO')
   let isEmpty = $derived(

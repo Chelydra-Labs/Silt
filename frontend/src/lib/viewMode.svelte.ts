@@ -21,20 +21,35 @@ const viewModes = $state<Record<string, ViewMode>>({})
 // mirror the TabEntry.lastActivatedAt pattern from lib/tabs.ts.
 const lastUsed: Record<string, number> = {}
 
+// Insertion-order tie-breaker: keys entered earlier sort first. Combined with
+// the lastUsed timestamp this gives a fully-deterministic eviction order even
+// when many setViewMode calls land in the same millisecond (real wall-clock
+// Date.now() collisions are common in a tab-switch flurry).
+let insertionCounter = 0
+const insertionSeq: Record<string, number> = {}
+
 // Internal: drop the least-recently-used key from both the reactive cache and
-// the access-order bookkeeping. Mirrors tabs.ts pickEvictionVictim's reduce.
+// the access-order bookkeeping. Mirrors tabs.ts pickEvictionVictim's reduce,
+// with a stable insertion-order tie-breaker so same-millisecond timestamps
+// resolve deterministically across JS engines (for...in ordering is not
+// specified by ECMA-262).
 function evictLRU(): void {
   let victim: string | undefined
   let oldest = Infinity
+  let oldestSeq = Infinity
   for (const k in lastUsed) {
-    if (lastUsed[k] < oldest) {
-      oldest = lastUsed[k]
+    const ts = lastUsed[k]
+    const seq = insertionSeq[k] ?? 0
+    if (ts < oldest || (ts === oldest && seq < oldestSeq)) {
+      oldest = ts
+      oldestSeq = seq
       victim = k
     }
   }
   if (victim !== undefined) {
     delete lastUsed[victim]
     delete viewModes[victim]
+    delete insertionSeq[victim]
   }
 }
 
@@ -63,6 +78,9 @@ export function setViewMode(
   const key = pageKey(notebook, section, page)
   viewModes[key] = mode
   lastUsed[key] = Date.now()
+  // Mint a fresh insertion-order token for new keys so the LRU tie-breaker
+  // can resolve same-millisecond timestamps deterministically.
+  if (!(key in lastUsed)) insertionSeq[key] = insertionCounter++
   if (Object.keys(viewModes).length > MAX_VIEW_MODES) evictLRU()
 }
 
@@ -75,10 +93,14 @@ export function toggleViewMode(
   setViewMode(notebook, section, page, current === 'edit' ? 'source' : 'edit')
 }
 
-// Test seam: the LRU bookkeeping is module-scoped state. Tests reset both
-// the reactive cache and the access-order map; not exported on the public
-// surface (no consumer outside the test should reach for this).
+// Test seam: the LRU bookkeeping is module-scoped state. Tests reset the
+// reactive cache, the access-order map, and the insertion-sequence counter.
+//
+// @internal Not part of the public API — exported only so the viewMode test
+// file can reset between cases. Do not import from application code.
 export function __resetViewModesForTests(): void {
   for (const k of Object.keys(viewModes)) delete viewModes[k]
   for (const k of Object.keys(lastUsed)) delete lastUsed[k]
+  for (const k of Object.keys(insertionSeq)) delete insertionSeq[k]
+  insertionCounter = 0
 }

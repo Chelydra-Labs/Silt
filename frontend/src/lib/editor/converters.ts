@@ -32,6 +32,15 @@
 //                                  based, byte-for-byte proven across #168).
 //                                  Public API for ProseMirror callers.
 //
+// Implementation note: the typed Token model is the canonical in-memory
+// *output* representation. The MARK_PATTERNS table + tryMatchMarkAt +
+// parseInlineTokens stack below is the canonical mark *grammar* — Phase 7
+// was scoped to introduce the typed output, not to rewrite each mark's
+// grammar rule one-by-one. Future work that wants a per-mark migration
+// should preserve the existing MARK_PATTERNS dispatch order (longer
+// delimiters before shorter, code-first) — the existing test suite pins
+// this contract byte-for-byte.
+//
 // The legacy NodeJSON[] surface (`{ type: 'text', text, marks }`) is preserved
 // via a thin adapter so the ProseMirror integration is unchanged. New code
 // that doesn't need NodeJSON should consume the typed Token API directly.
@@ -121,6 +130,13 @@ function isSafeLinkHref(href: string): boolean {
 // - color span with extra attrs (e.g. onmouseover) → already stripped at
 //   tokenize time via the [^>]* regex absorption; this is the documented
 //   last-line-of-defense contract.
+//
+// Adding a new sanitize rule: emit `{ kind: 'mark', markType: '__flat__',
+// children: <inner> }` from validateOne; flattenFlat then strips the wrapper
+// and splices the children into the parent stream. Failure to use the
+// sentinel for a "drop enclosing mark" intent will leak a non-standard
+// markType into the legacy NodeJSON serializer, which silently emits empty
+// markup.
 function validateTokens(tokens: Token[]): Token[] {
   return tokens.map((t) => validateOne(t))
 }

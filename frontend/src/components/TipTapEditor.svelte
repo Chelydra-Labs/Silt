@@ -166,9 +166,24 @@
     settings.config?.ui?.dismissed_tips?.includes('formatting_tip_v1') ?? false
   )
 
-  function dismissFormatTip(): void {
+  async function dismissFormatTip(): Promise<void> {
     if (formatTipDismissed) return
-    void appendDismissedTip('formatting_tip_v1')
+    // Snapshot the previous dismissed_tips so we can roll back the optimistic
+    // mirror if the IPC call fails — otherwise the UI hides the tip but the
+    // on-disk config never recorded the dismissal, so the tip reappears on
+    // next launch with no indication that anything went wrong.
+    const previous = settings.config?.ui?.dismissed_tips
+      ? [...settings.config.ui.dismissed_tips]
+      : []
+    const ok = await appendDismissedTip('formatting_tip_v1')
+    if (!ok) {
+      const cfg = settings.config
+      if (cfg?.ui) cfg.ui.dismissed_tips = previous
+      pushNotification({
+        kind: 'error',
+        message: 'Could not save the dismiss preference — please try again.'
+      })
+    }
   }
 
   // --- Inline link URL input (#168) ----------------------------------------

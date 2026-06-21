@@ -640,7 +640,7 @@ func TestSetOpenTabs_SelfWriteSuppressed(t *testing.T) {
 	select {
 	case <-changed:
 		t.Fatalf("self-write should be suppressed, but config:changed fired")
-	case <-time.After(700 * time.Millisecond):
+	case <-time.After(config.SelfWriteSuppressionTimeout):
 		// expected: no reload within the cooldown window
 	}
 }
@@ -691,7 +691,7 @@ func TestAppendDismissedTip_SelfWriteSuppressed(t *testing.T) {
 	select {
 	case <-changed:
 		t.Fatalf("self-write should be suppressed, but config:changed fired")
-	case <-time.After(700 * time.Millisecond):
+	case <-time.After(config.SelfWriteSuppressionTimeout):
 		// expected: no reload within the cooldown window
 	}
 }
