@@ -32,13 +32,10 @@
   import { measureFrameBudget } from '../lib/perf/frame-budget'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
-  import FormatToolbar from './editor/FormatToolbar.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
   import BlockHoverMenu from './editor/BlockHoverMenu.svelte'
-  import ViewModeToggle from './editor/ViewModeToggle.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
-  import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
@@ -71,6 +68,9 @@
     onBlockFocus?: (blockId: string, ancestors: string[]) => void
     onBlockBlur?: () => void
     onUpdate: (updatedBlocks: ParsedBlock[]) => void
+    editorInstance?: Editor | null
+    activeMarks?: Set<string>
+    viewMode?: 'edit' | 'source'
   }
 
   let {
@@ -81,14 +81,11 @@
     activeFocusedBlockAncestors = [],
     onBlockFocus,
     onBlockBlur,
-    onUpdate
+    onUpdate,
+    editorInstance = $bindable(null),
+    activeMarks = $bindable(new Set()),
+    viewMode = 'edit'
   }: Props = $props()
-
-  // svelte-ignore non_reactive_update
-  // editorInstance is intentionally non-reactive to avoid per-keystroke
-  // re-renders of FormatToolbar/SelectionBubble/BlockHoverMenu. Components
-  // are gated behind the reactive `editorReady` flag instead.
-  let editorInstance: Editor | null = null
   let editorReady = $state(false)
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null
@@ -100,18 +97,28 @@
 
   // Active inline marks in the current selection (#168). Updated on every
   // selection change so the FormatToolbar buttons reflect aria-pressed state.
-  const ALL_MARKS = ['bold', 'italic', 'underline', 'strike', 'code', 'highlight', 'subscript', 'superscript', 'link', 'textColor', 'backgroundColor']
-  let activeMarks = $state<Set<string>>(new Set())
+  const ALL_MARKS = [
+    'bold',
+    'italic',
+    'underline',
+    'strike',
+    'code',
+    'highlight',
+    'subscript',
+    'superscript',
+    'link',
+    'textColor',
+    'backgroundColor'
+  ]
 
   // Selection bubble state (#168): tracks whether the selection is non-
   // collapsed and the screen coords for positioning the floating bubble.
   let selectionEmpty = $state(true)
-  let selectionCoords = $state<{ left: number; top: number; bottom: number } | null>(null)
-
-  // show_format_toolbar config (default true; *bool on Go side, nil = true).
-  let showFormatToolbar = $derived(
-    settings.config?.ui?.show_format_toolbar !== false
-  )
+  let selectionCoords = $state<{
+    left: number
+    top: number
+    bottom: number
+  } | null>(null)
 
   // Track OS dark/light preference reactively so isDark updates when the
   // OS theme changes under mode === 'system' (#168 color palette).
@@ -121,14 +128,16 @@
   $effect(() => {
     const mql = window.matchMedia?.('(prefers-color-scheme: dark)')
     if (!mql) return
-    const handler = (e: MediaQueryListEvent) => { osPrefersDark = e.matches }
+    const handler = (e: MediaQueryListEvent) => {
+      osPrefersDark = e.matches
+    }
     mql.addEventListener('change', handler)
     return () => mql.removeEventListener('change', handler)
   })
 
   let isDark = $derived(
     themeState.mode === 'dark' ||
-    (themeState.mode === 'system' && osPrefersDark)
+      (themeState.mode === 'system' && osPrefersDark)
   )
 
   let colorEnabled = $derived(
@@ -142,9 +151,7 @@
 
   // focus_mode config (default false; Phase 3). When true, CSS dims non-active
   // paragraphs for distraction-free writing.
-  let focusModeEnabled = $derived(
-    settings.config?.editor?.focus_mode === true
-  )
+  let focusModeEnabled = $derived(settings.config?.editor?.focus_mode === true)
 
   // Word count (updated on every editor transaction via CharacterCount storage).
   let wordCount = $state(0)
@@ -162,12 +169,7 @@
   let colorPickerMarkType = $state<'textColor' | 'backgroundColor'>('textColor')
   let colorPickerCoords = $state<{ left: number; top: number } | null>(null)
 
-  // View mode (#171): edit (TipTap WYSIWYG) vs source (raw markdown).
-  // Synced via $effect so it reacts to both prop changes and store toggles.
-  let viewMode = $state<'edit' | 'source'>('edit')
-  $effect(() => {
-    viewMode = getViewMode(notebook, section, page)
-  })
+  // View mode (#171) is managed by the parent container.
 
   // First-run tip: dismissed when 'formatting_tip_v1' is in dismissed_tips.
   let formatTipDismissed = $derived(
@@ -223,7 +225,9 @@
   }
 
   // --- Color picker popover (#170) -----------------------------------------
-  function openColorPickerPopover(markType: 'textColor' | 'backgroundColor'): void {
+  function openColorPickerPopover(
+    markType: 'textColor' | 'backgroundColor'
+  ): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     try {
       const { selection } = editorInstance.state
@@ -237,14 +241,20 @@
   }
 
   function onOpenColorPicker(e: Event): void {
-    const markType = (e as CustomEvent).detail as 'textColor' | 'backgroundColor'
+    const markType = (e as CustomEvent).detail as
+      | 'textColor'
+      | 'backgroundColor'
     if (markType) openColorPickerPopover(markType)
   }
 
   function applyColorFromPopover(color: string | null): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     if (color && HEX_COLOR_RE.test(color)) {
-      editorInstance.chain().focus().setMark(colorPickerMarkType, { color }).run()
+      editorInstance
+        .chain()
+        .focus()
+        .setMark(colorPickerMarkType, { color })
+        .run()
     } else if (!color) {
       editorInstance.chain().focus().unsetMark(colorPickerMarkType).run()
     }
@@ -341,9 +351,9 @@
       link: { openOnClick: false, autolink: true }
     }),
     ...SiltBlockExtensionsWithNodeViews,
-      ...SiltInlineMarkExtensions,
-      ...SiltColorMarkExtensions,
-      UniqueBlockIds,
+    ...SiltInlineMarkExtensions,
+    ...SiltColorMarkExtensions,
+    UniqueBlockIds,
     TaskMetaSuggest.configure({
       onChange: onMetaChange,
       onNavigate: onMetaNavigate,
@@ -367,7 +377,9 @@
       detectSlashCommand()
       unsavedChanges = true
       // Update word count from CharacterCount storage (#168 Phase 3).
-      const storage = editorInstance?.storage as unknown as Record<string, unknown> | undefined
+      const storage = editorInstance?.storage as unknown as
+        | Record<string, unknown>
+        | undefined
       const cc = storage?.characterCount as { words?: () => number } | undefined
       if (cc?.words) wordCount = cc.words()
       triggerAutoSave()
@@ -436,17 +448,9 @@
     }
   })
 
-  function handleToggleViewMode(): void {
-    toggleViewMode(notebook, section, page)
-    viewMode = getViewMode(notebook, section, page)
-  }
-
   // Global event listeners for cross-component hotkeys.
   function onOpenLinkInput(): void {
     openLinkInput()
-  }
-  function onToggleViewModeEvent(): void {
-    handleToggleViewMode()
   }
   function onChangeBlockType(e: Event): void {
     const detail = (e as CustomEvent).detail
@@ -470,12 +474,12 @@
   function onDocumentClick(e: MouseEvent): void {
     const target = e.target as HTMLElement | null
     if (!target) return
-    if (target.closest('.ProseMirror') || target.closest('.selection-bubble')) return
+    if (target.closest('.ProseMirror') || target.closest('.selection-bubble'))
+      return
     selectionCoords = null
   }
 
   window.addEventListener('silt:open-link-input', onOpenLinkInput)
-  window.addEventListener('toggle-view-mode', onToggleViewModeEvent)
   window.addEventListener('silt:change-block-type', onChangeBlockType)
   window.addEventListener('silt:set-block-align', onSetBlockAlign)
   window.addEventListener('silt:open-color-picker', onOpenColorPicker)
@@ -486,7 +490,6 @@
     stopHeartbeat()
     void flushPendingSave().then(() => releaseFocus())
     window.removeEventListener('silt:open-link-input', onOpenLinkInput)
-    window.removeEventListener('toggle-view-mode', onToggleViewModeEvent)
     window.removeEventListener('silt:change-block-type', onChangeBlockType)
     window.removeEventListener('silt:set-block-align', onSetBlockAlign)
     window.removeEventListener('silt:open-color-picker', onOpenColorPicker)
@@ -672,9 +675,11 @@
     } else if (commandId === 'background-color') {
       openColorPickerPopover('backgroundColor')
     } else if (commandId === 'remove-color') {
-      if (editorInstance) editorInstance.chain().focus().unsetMark('textColor').run()
+      if (editorInstance)
+        editorInstance.chain().focus().unsetMark('textColor').run()
     } else if (commandId === 'remove-background') {
-      if (editorInstance) editorInstance.chain().focus().unsetMark('backgroundColor').run()
+      if (editorInstance)
+        editorInstance.chain().focus().unsetMark('backgroundColor').run()
     } else if (commandId === 'today') {
       const d = new Date()
       const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -789,28 +794,29 @@
   }
 </script>
 
-<div class="tiptap-editor-host" class:focused={isFocused} class:focus-mode={focusModeEnabled}>
-  <div class="view-mode-bar">
-    <ViewModeToggle mode={viewMode} onToggle={handleToggleViewMode} />
-  </div>
+<div
+  class="tiptap-editor-host"
+  class:focused={isFocused}
+  class:focus-mode={focusModeEnabled}
+>
   {#if viewMode === 'source'}
     <MarkdownSourceViewer {blocks} filePath="{notebook}/{section}/{page}.md" />
   {:else}
     {#if editorReady}
-      {#if showFormatToolbar}
-        <FormatToolbar editor={editorInstance} {activeMarks} {isDark} {colorEnabled} />
-      {/if}
       <BlockHoverMenu editor={editorInstance} {colorEnabled} {isDark} />
-    <FormattingFirstRunTip dismissed={formatTipDismissed} onDismiss={dismissFormatTip} />
-    <SelectionBubble
-      editor={editorInstance}
-      {activeMarks}
-      {selectionEmpty}
-      {selectionCoords}
-    />
-    {#if editorStore}
-      <EditorContent editor={$editorStore} />
-    {/if}
+      <FormattingFirstRunTip
+        dismissed={formatTipDismissed}
+        onDismiss={dismissFormatTip}
+      />
+      <SelectionBubble
+        editor={editorInstance}
+        {activeMarks}
+        {selectionEmpty}
+        {selectionCoords}
+      />
+      {#if editorStore}
+        <EditorContent editor={$editorStore} />
+      {/if}
     {/if}
     {#if unsavedChanges || lastSaveError}
       <div
@@ -833,7 +839,8 @@
     {/if}
     {#if showWordCount && wordCount > 0}
       <div class="word-count" role="status" aria-live="off">
-        {wordCount} {wordCount === 1 ? 'word' : 'words'}
+        {wordCount}
+        {wordCount === 1 ? 'word' : 'words'}
       </div>
     {/if}
     {#if showSlashMenu}
@@ -875,8 +882,13 @@
           placeholder="https://"
           bind:value={linkInputValue}
           onkeydown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); applyLinkInput() }
-            else if (e.key === 'Escape') { e.preventDefault(); cancelLinkInput() }
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              applyLinkInput()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              cancelLinkInput()
+            }
           }}
           onblur={applyLinkInput}
         />
@@ -889,11 +901,22 @@
         style="left:{colorPickerCoords.left}px; top:{colorPickerCoords.top}px"
         role="menu"
         tabindex="-1"
-        aria-label={colorPickerMarkType === 'textColor' ? 'Text color' : 'Background color'}
+        aria-label={colorPickerMarkType === 'textColor'
+          ? 'Text color'
+          : 'Background color'}
         onclick={(e) => e.stopPropagation()}
       >
-        <button type="button" class="cp-swatch cp-reset" onclick={() => applyColorFromPopover(null)} aria-label="No color">
-          <span class="material-symbols-outlined" style="font-size:16px" aria-hidden="true">format_color_reset</span>
+        <button
+          type="button"
+          class="cp-swatch cp-reset"
+          onclick={() => applyColorFromPopover(null)}
+          aria-label="No color"
+        >
+          <span
+            class="material-symbols-outlined"
+            style="font-size:16px"
+            aria-hidden="true">format_color_reset</span
+          >
         </button>
         {#each DEFAULT_COLOR_PALETTE as entry (entry.id)}
           <button
@@ -907,7 +930,15 @@
           </button>
         {/each}
         <label class="cp-custom-row">
-          <input type="color" class="cp-custom-input" onchange={(e) => applyColorFromPopover((e.currentTarget as HTMLInputElement).value)} aria-label="Custom color" />
+          <input
+            type="color"
+            class="cp-custom-input"
+            onchange={(e) =>
+              applyColorFromPopover(
+                (e.currentTarget as HTMLInputElement).value
+              )}
+            aria-label="Custom color"
+          />
         </label>
       </div>
     {/if}
@@ -925,12 +956,6 @@
 <style>
   .tiptap-editor-host {
     width: 100%;
-  }
-
-  .view-mode-bar {
-    display: flex;
-    justify-content: flex-end;
-    padding: 4px 8px;
   }
 
   .unsaved-indicator {
@@ -989,7 +1014,11 @@
     display: inline-block;
     padding: 0.125rem 0.5rem;
     border-radius: 9999px;
-    background: color-mix(in srgb, var(--color-surface, #1a1d24) 90%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-surface, #1a1d24) 90%,
+      transparent
+    );
     color: var(--color-text-muted, #8b95a3);
     font-size: 11px;
   }
@@ -1075,7 +1104,9 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .cp-swatch { transition: none; }
+    .cp-swatch {
+      transition: none;
+    }
   }
 
   .meta-suggest {
