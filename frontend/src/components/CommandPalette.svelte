@@ -21,16 +21,39 @@
   // sourced from the slash-command registry (#110).
   const allCommands = getSlashCommands()
 
-  // Filter commands by the query prop reactively
+  // Filter and rank commands by the query prop reactively
   let filteredCommands = $derived.by(() => {
     const q = query.toLowerCase().trim()
     if (!q) return allCommands
-    return allCommands.filter(
-      (cmd) =>
-        cmd.label.toLowerCase().includes(q) ||
-        cmd.id.toLowerCase().includes(q) ||
-        (cmd.description && cmd.description.toLowerCase().includes(q))
-    )
+
+    const scored = allCommands
+      .map((cmd, index) => {
+        const label = cmd.label.toLowerCase()
+        const id = cmd.id.toLowerCase()
+        const desc = cmd.description ? cmd.description.toLowerCase() : ''
+
+        let score = 0
+        if (label.startsWith(q) || id.startsWith(q)) {
+          score = 10
+        } else if (label.includes(q) || id.includes(q)) {
+          score = 5
+        } else if (desc.includes(q)) {
+          score = 1
+        }
+
+        return { cmd, score, index }
+      })
+      .filter((item) => item.score > 0)
+
+    // Sort by score descending, then preserve original order
+    scored.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score
+      }
+      return a.index - b.index
+    })
+
+    return scored.map((item) => item.cmd)
   })
 
   // Reset selection index when query changes

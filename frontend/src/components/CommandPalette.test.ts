@@ -45,4 +45,26 @@ describe('CommandPalette', () => {
 
     expect(getByText('No matching commands')).toBeTruthy()
   })
+
+  it('ranks label matches higher than description matches', () => {
+    const onSelect = vi.fn()
+    const onClose = vi.fn()
+    const { container } = render(CommandPalette, {
+      props: { onSelect, onClose, query: 'h' }
+    })
+
+    const buttons = container.querySelectorAll('button')
+    const labels = Array.from(buttons).map((btn) => {
+      const span = btn.querySelector('.font-label-sm-bold')
+      return span ? span.textContent : ''
+    })
+
+    // "Heading 1" starts with "h", so it should rank higher than "Italic" (whose description contains "h")
+    const h1Index = labels.indexOf('Heading 1')
+    const italicIndex = labels.indexOf('Italic')
+
+    expect(h1Index).toBeGreaterThan(-1)
+    expect(italicIndex).toBeGreaterThan(-1)
+    expect(h1Index).toBeLessThan(italicIndex)
+  })
 })
