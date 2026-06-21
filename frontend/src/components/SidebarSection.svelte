@@ -38,6 +38,7 @@
       pages: Record<string, string[]>
     }
     dropTarget?: DropTarget | null
+    dragItem?: { level: string; name: string; section?: string } | null
     onToggleSection: (name: string) => void
     onSelectPage: (section: string, page: string) => void
     onPinPage: (section: string, page: string) => void
@@ -77,6 +78,7 @@
     expandedSections,
     navOrder,
     dropTarget = null,
+    dragItem = null,
     onToggleSection,
     onSelectPage,
     onPinPage,
@@ -132,16 +134,21 @@
   <div
     class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-hover transition-colors"
     class:drag-over-top={dropTarget?.level === 'section' &&
+      dragItem?.level !== 'page' &&
       dropTarget.name === section.name &&
       dropTarget.before}
     class:drag-over-bottom={dropTarget?.level === 'section' &&
+      dragItem?.level !== 'page' &&
       dropTarget.name === section.name &&
       !dropTarget.before}
+    class:drag-over-into={dropTarget?.level === 'section' &&
+      dragItem?.level === 'page' &&
+      dropTarget.name === section.name}
     draggable="true"
     ondragstart={(e) => onDragStart(e, 'section', section.name)}
     ondragover={(e) => onDragOver(e, 'section', section.name)}
     ondragleave={onDragLeave}
-    ondrop={(e) => onDrop(e, 'section', section.name, activeNotebook)}
+    ondrop={(e) => onDrop(e, 'section', section.name, activeNotebook, sectionKey)}
     ondragend={onDragEnd}
     onclick={() => onToggleSection(sectionKey)}
     onkeydown={(e) => {
@@ -226,6 +233,12 @@
             class:text-accent-primary-start={isActive}
             class:text-text-muted={!isActive}
             class:hover:text-text-primary={!isActive}
+            class:drag-over-top={dropTarget?.level === 'page' &&
+              dropTarget.name === pg.name &&
+              dropTarget.before}
+            class:drag-over-bottom={dropTarget?.level === 'page' &&
+              dropTarget.name === pg.name &&
+              !dropTarget.before}
             role="treeitem"
             aria-level={depth + 2}
             aria-selected={isActive}
@@ -253,6 +266,7 @@
           {expandedSections}
           {navOrder}
           {dropTarget}
+          {dragItem}
           {onToggleSection}
           {onSelectPage}
           {onPinPage}

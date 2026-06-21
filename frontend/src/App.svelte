@@ -809,6 +809,21 @@
         }}
         onSelectView={(v) => (activeView = v)}
         onCloseVault={handleChangeVault}
+        onPageMoved={(nb, _fromSection, toSection, page) => {
+          // A page was dragged across sections in the sidebar (#177). Update
+          // any open tab for this page so its section field points to the new
+          // location — otherwise the editor's next SaveFileBlocks call would
+          // write to the stale old path (data-loss bug).
+          openTabs = openTabs.map((t) =>
+            t.notebook === nb && t.page === page
+              ? { ...t, section: toSection }
+              : t
+          )
+          if (activeNotebook === nb && activePage === page) {
+            activeSection = toSection
+          }
+          schedulePersistTabs()
+        }}
       />
 
       {#if !sidebarCollapsed}
