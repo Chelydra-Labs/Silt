@@ -476,7 +476,11 @@
   function onDocumentClick(e: MouseEvent): void {
     const target = e.target as HTMLElement | null
     if (!target) return
-    if (target.closest('.ProseMirror') || target.closest('.selection-bubble'))
+    if (
+      target.closest('.ProseMirror') ||
+      target.closest('.selection-bubble') ||
+      target.closest('.glass-palette')
+    )
       return
     selectionCoords = null
     showSlashMenu = false
@@ -928,7 +932,11 @@
     try {
       const text = await navigator.clipboard.readText()
       if (text) {
-        editorInstance.commands.insertContent(text)
+        editorInstance.commands.command(({ tr, state }) => {
+          const { selection } = state
+          tr.insertText(text, selection.from, selection.to)
+          return true
+        })
       }
     } catch {
       // fallback
@@ -1067,6 +1075,7 @@
           onclick={() => (contextMenu = null)}
           oncontextmenu={(e) => {
             e.preventDefault()
+            e.stopPropagation()
             contextMenu = null
           }}
         ></div>

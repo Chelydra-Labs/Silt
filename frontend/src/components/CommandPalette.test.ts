@@ -67,4 +67,49 @@ describe('CommandPalette', () => {
     expect(italicIndex).toBeGreaterThan(-1)
     expect(h1Index).toBeLessThan(italicIndex)
   })
+
+  // Contract: the root element must carry the `.glass-palette` class.
+  // TipTapEditor.svelte's onDocumentClick guard checks for this class to
+  // avoid clobbering slashMenuDismissed after a click-selection. If this
+  // class is renamed, the guard in onDocumentClick must be updated too.
+  it('root element carries the glass-palette class for click-outside guard', () => {
+    const { container } = render(CommandPalette, {
+      props: { onSelect: vi.fn(), onClose: vi.fn() }
+    })
+    const root = container.firstElementChild as HTMLElement
+    expect(root.classList.contains('glass-palette')).toBe(true)
+  })
+
+  // Regression: after selecting a slash command via mouse click, the
+  // document-level click listener (onDocumentClick in TipTapEditor) must
+  // NOT dismiss/clobber the slash menu state. The guard early-returns when
+  // the click target is inside `.glass-palette`. This test simulates that
+  // guard logic and verifies clicks on palette items are ignored.
+  it('document click inside glass-palette does not trigger dismissal', () => {
+    const { container } = render(CommandPalette, {
+      props: { onSelect: vi.fn(), onClose: vi.fn() }
+    })
+
+    let dismissed = false
+    const onDocumentClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      if (
+        target.closest('.ProseMirror') ||
+        target.closest('.selection-bubble') ||
+        target.closest('.glass-palette')
+      )
+        return
+      dismissed = true
+    }
+    document.addEventListener('click', onDocumentClick)
+
+    // Click a command button inside the palette
+    const btn = container.querySelector('button') as HTMLButtonElement
+    btn.click()
+
+    expect(dismissed).toBe(false)
+
+    document.removeEventListener('click', onDocumentClick)
+  })
 })

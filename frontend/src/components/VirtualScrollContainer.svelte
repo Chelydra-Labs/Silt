@@ -22,6 +22,7 @@
     activeFocusedBlockAncestors?: string[]
     onPageRenamed?: (newName: string) => void
     onFirstEdit?: () => void
+    isActive?: boolean
   }
 
   let {
@@ -34,7 +35,8 @@
     onBlockBlur,
     activeFocusedBlockAncestors = [],
     onPageRenamed,
-    onFirstEdit
+    onFirstEdit,
+    isActive = true
   }: Props = $props()
 
   // Editor bindings
@@ -52,8 +54,11 @@
     viewMode = getViewMode(notebook, section, page)
   }
 
-  // Listen for the toggle-view-mode event (global hotkey)
+  // Listen for the toggle-view-mode event (global hotkey). Only the active
+  // tab responds — all displayed tabs are mounted simultaneously (display:none
+  // for inactive tabs), so without this guard the hotkey would flip every tab.
   $effect(() => {
+    if (!isActive) return
     const handler = () => handleToggleViewMode()
     window.addEventListener('toggle-view-mode', handler)
     return () => window.removeEventListener('toggle-view-mode', handler)
