@@ -39,6 +39,7 @@
   import ViewModeToggle from './editor/ViewModeToggle.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
+  import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
 
@@ -104,7 +105,7 @@
 
   // show_format_toolbar config (default true; *bool on Go side, nil = true).
   let showFormatToolbar = $derived(
-    (settings.config?.ui as unknown as Record<string, unknown> | undefined)?.show_format_toolbar !== false
+    settings.config?.ui?.show_format_toolbar !== false
   )
 
   let isDark = $derived(
@@ -114,18 +115,18 @@
   )
 
   let colorEnabled = $derived(
-    ((settings.config?.ui as unknown as Record<string, unknown> | undefined)?.formatting as Record<string, unknown> | undefined)?.color_enabled !== false
+    settings.config?.ui?.formatting?.color_enabled !== false
   )
 
   // show_word_count config (default false; opt-in, Phase 3).
   let showWordCount = $derived(
-    (settings.config?.editor as unknown as Record<string, unknown> | undefined)?.show_word_count === true
+    settings.config?.editor?.show_word_count === true
   )
 
   // focus_mode config (default false; Phase 3). When true, CSS dims non-active
   // paragraphs for distraction-free writing.
   let focusModeEnabled = $derived(
-    (settings.config?.editor as unknown as Record<string, unknown> | undefined)?.focus_mode === true
+    settings.config?.editor?.focus_mode === true
   )
 
   // Word count (updated on every editor transaction via CharacterCount storage).
@@ -138,6 +139,12 @@
   let linkInputValue = $state('')
   let linkInputCoords = $state<{ left: number; top: number } | null>(null)
 
+  // Color picker popover (#170). Shows ColorPickerMenu as a floating element
+  // near the selection, replacing the window.prompt slash-command path.
+  let showColorPicker = $state(false)
+  let colorPickerMarkType = $state<'textColor' | 'backgroundColor'>('textColor')
+  let colorPickerCoords = $state<{ left: number; top: number } | null>(null)
+
   // View mode (#171): edit (TipTap WYSIWYG) vs source (raw markdown).
   // Synced via $effect so it reacts to both prop changes and store toggles.
   let viewMode = $state<'edit' | 'source'>('edit')
@@ -147,16 +154,15 @@
 
   // First-run tip: dismissed when 'formatting_tip_v1' is in dismissed_tips.
   let formatTipDismissed = $derived(
-    ((settings.config?.ui as unknown as Record<string, unknown> | undefined)?.dismissed_tips as string[] | undefined)?.includes('formatting_tip_v1') ?? false
+    settings.config?.ui?.dismissed_tips?.includes('formatting_tip_v1') ?? false
   )
 
   function dismissFormatTip(): void {
     const cfg = settings.config
     if (!cfg) return
-    const ui = cfg.ui as unknown as Record<string, unknown>
-    const tips = (ui.dismissed_tips as string[] | undefined) ?? []
+    const tips = cfg.ui?.dismissed_tips ?? []
     if (!tips.includes('formatting_tip_v1')) {
-      ui.dismissed_tips = [...tips, 'formatting_tip_v1']
+      cfg.ui.dismissed_tips = [...tips, 'formatting_tip_v1']
       void saveConfig(cfg)
     }
   }
@@ -197,6 +203,36 @@
     showLinkInput = false
     linkInputValue = ''
     editorInstance?.chain().focus().run()
+  }
+
+  // --- Color picker popover (#170) -----------------------------------------
+  function openColorPickerPopover(markType: 'textColor' | 'backgroundColor'): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    try {
+      const { selection } = editorInstance.state
+      const coords = editorInstance.view.coordsAtPos(selection.from)
+      colorPickerCoords = { left: coords.left, top: coords.bottom }
+    } catch {
+      colorPickerCoords = null
+    }
+    colorPickerMarkType = markType
+    showColorPicker = true
+  }
+
+  function onOpenColorPicker(e: Event): void {
+    const markType = (e as CustomEvent).detail as 'textColor' | 'backgroundColor'
+    if (markType) openColorPickerPopover(markType)
+  }
+
+  function applyColorFromPopover(color: string | null): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    if (color && HEX_COLOR_RE.test(color)) {
+      editorInstance.chain().focus().setMark(colorPickerMarkType, { color }).run()
+    } else if (!color) {
+      editorInstance.chain().focus().unsetMark(colorPickerMarkType).run()
+    }
+    showColorPicker = false
+    editorInstance.chain().focus().run()
   }
 
   // Auto-focus the link input when it appears.
@@ -271,10 +307,7 @@
   // These take effect on the next page load; toggling in Settings does not
   // hot-swap extensions mid-session (acceptable for v1).
   const typographyEnabled = untrack(
-    () => {
-      const formatting = (settings.config?.ui as unknown as Record<string, unknown> | undefined)?.formatting as Record<string, unknown> | undefined
-      return formatting?.typography_enabled !== false
-    }
+    () => settings.config?.ui?.formatting?.typography_enabled !== false
   )
 
   const editorExtensions = [
@@ -415,12 +448,21 @@
   function onEditorScroll(): void {
     selectionCoords = null
   }
+  // Dismiss SelectionBubble when clicking outside the editor and bubble (#168).
+  function onDocumentClick(e: MouseEvent): void {
+    const target = e.target as HTMLElement | null
+    if (!target) return
+    if (target.closest('.ProseMirror') || target.closest('.selection-bubble')) return
+    selectionCoords = null
+  }
 
   window.addEventListener('silt:open-link-input', onOpenLinkInput)
   window.addEventListener('toggle-view-mode', onToggleViewModeEvent)
   window.addEventListener('silt:change-block-type', onChangeBlockType)
   window.addEventListener('silt:set-block-align', onSetBlockAlign)
+  window.addEventListener('silt:open-color-picker', onOpenColorPicker)
   window.addEventListener('scroll', onEditorScroll, true)
+  document.addEventListener('click', onDocumentClick)
 
   onDestroy(() => {
     stopHeartbeat()
@@ -429,7 +471,9 @@
     window.removeEventListener('toggle-view-mode', onToggleViewModeEvent)
     window.removeEventListener('silt:change-block-type', onChangeBlockType)
     window.removeEventListener('silt:set-block-align', onSetBlockAlign)
+    window.removeEventListener('silt:open-color-picker', onOpenColorPicker)
     window.removeEventListener('scroll', onEditorScroll, true)
+    document.removeEventListener('click', onDocumentClick)
   })
 
   // --- External content sync ------------------------------------------------
@@ -606,17 +650,9 @@
     } else if (commandId === 'align-justify') {
       setBlockAlignAttr('justify')
     } else if (commandId === 'text-color') {
-      const input = window.prompt('Enter color (hex, e.g. #ff0000):')
-      const color = input?.trim()
-      if (color && HEX_COLOR_RE.test(color) && editorInstance) {
-        editorInstance.chain().focus().setMark('textColor', { color }).run()
-      }
+      openColorPickerPopover('textColor')
     } else if (commandId === 'background-color') {
-      const input = window.prompt('Enter background color (hex, e.g. #ffff00):')
-      const color = input?.trim()
-      if (color && HEX_COLOR_RE.test(color) && editorInstance) {
-        editorInstance.chain().focus().setMark('backgroundColor', { color }).run()
-      }
+      openColorPickerPopover('backgroundColor')
     } else if (commandId === 'remove-color') {
       if (editorInstance) editorInstance.chain().focus().unsetMark('textColor').run()
     } else if (commandId === 'remove-background') {
@@ -826,6 +862,35 @@
         />
       </div>
     {/if}
+    {#if showColorPicker && colorPickerCoords}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div
+        class="color-picker-popover"
+        style="left:{colorPickerCoords.left}px; top:{colorPickerCoords.top}px"
+        role="menu"
+        tabindex="-1"
+        aria-label={colorPickerMarkType === 'textColor' ? 'Text color' : 'Background color'}
+        onclick={(e) => e.stopPropagation()}
+      >
+        <button type="button" class="cp-swatch cp-reset" onclick={() => applyColorFromPopover(null)} aria-label="No color">
+          <span class="material-symbols-outlined" style="font-size:16px" aria-hidden="true">format_color_reset</span>
+        </button>
+        {#each DEFAULT_COLOR_PALETTE as entry (entry.id)}
+          <button
+            type="button"
+            class="cp-swatch"
+            style="background-color: {resolveColor(entry, isDark)}"
+            aria-label={entry.label}
+            role="menuitem"
+            onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
+          >
+          </button>
+        {/each}
+        <label class="cp-custom-row">
+          <input type="color" class="cp-custom-input" onchange={(e) => applyColorFromPopover((e.currentTarget as HTMLInputElement).value)} aria-label="Custom color" />
+        </label>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -933,6 +998,64 @@
 
   .link-input:focus {
     border-color: var(--color-accent-primary-glow, #6fa3ff);
+  }
+
+  .color-picker-popover {
+    position: fixed;
+    z-index: 100;
+    margin-top: 4px;
+    padding: 6px;
+    border-radius: 8px;
+    background: var(--color-surface, #1e1e22);
+    border: 1px solid var(--color-border-muted, #33333a);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 3px;
+    max-width: 200px;
+  }
+
+  .cp-swatch {
+    width: 24px;
+    height: 24px;
+    border: 2px solid transparent;
+    border-radius: 5px;
+    cursor: pointer;
+    padding: 0;
+    transition: border-color 0.1s;
+  }
+
+  .cp-swatch:hover {
+    border-color: var(--color-text-primary, #e6e6e6);
+  }
+
+  .cp-reset {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: var(--color-text-muted, #8b95a3);
+  }
+
+  .cp-custom-row {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: center;
+    margin-top: 2px;
+  }
+
+  .cp-custom-input {
+    width: 28px;
+    height: 22px;
+    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cp-swatch { transition: none; }
   }
 
   .meta-suggest {

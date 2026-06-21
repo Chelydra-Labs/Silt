@@ -129,14 +129,7 @@
     background: transparent;
     color: var(--color-text-muted, #8b95a3);
     cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-
-  :global(.ProseMirror div[data-type]:hover) .hover-trigger,
-  :global(.ProseMirror div[data-type]:focus-within) .hover-trigger,
-  .hover-trigger:focus-visible {
-    opacity: 1;
+    transition: background 0.1s, color 0.1s;
   }
 
   .hover-trigger:hover {

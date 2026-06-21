@@ -20,7 +20,7 @@
   ]
 
   function currentLabel(): string {
-    if (!editor) return 'Text'
+    if (!editor) return 'Note'
     const pos = editor.state.selection.$from
     for (let d = pos.depth; d >= 1; d--) {
       const node = pos.node(d)
@@ -29,9 +29,9 @@
         return `H${depth}`
       }
       if (node.type.name === 'taskBlock') return 'Task'
-      if (node.type.name === 'noteBlock') return 'Text'
+      if (node.type.name === 'noteBlock') return 'Note'
     }
-    return 'Text'
+    return 'Note'
   }
 
   function isCurrent(opt: Option): boolean {

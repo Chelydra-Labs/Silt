@@ -22,7 +22,7 @@ describe('HeadingLevelMenu', () => {
     const editor = makeMockEditor('noteBlock') as any
     const { getByRole } = render(HeadingLevelMenu, { props: { editor } })
     const trigger = getByRole('button')
-    expect(trigger.textContent).toContain('Text')
+    expect(trigger.textContent).toContain('Note')
   })
 
   it('shows H1 label for a headerBlock with depth 1', () => {
