@@ -223,8 +223,6 @@ export function tokenizeInline(text: string): Token[] {
   for (const seg of segments) {
     if (seg.kind === 'text') {
       tokens.push(...parseInlineTokens(seg.text))
-    } else if (seg.kind === 'embed') {
-      tokens.push(seg)
     } else {
       tokens.push(seg)
     }

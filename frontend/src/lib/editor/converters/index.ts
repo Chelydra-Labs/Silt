@@ -25,6 +25,8 @@
 //   serialize(content) -> string — mark-diff serializer (serialize.ts),
 //                                  NodeJSON[]-based, byte-for-byte proven.
 //
+// Block-level ParsedBlock ↔ doc JSON conversion lives in blocks.ts.
+//
 // Implementation note: the typed Token model is the canonical in-memory
 // *output* representation. The MARK_PATTERNS table + tryMatchMarkAt +
 // parseInlineTokens stack in tokenize.ts is the canonical mark *grammar*.

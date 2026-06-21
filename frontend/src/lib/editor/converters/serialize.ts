@@ -14,10 +14,7 @@ import type { NodeJSON } from '../types'
 // NodeJSON[] surface used by ProseMirror / the legacy serializer. Both
 // directions live here so the rest of the pipeline can speak Token.
 
-export function tokenToNodeJSON(
-  t: Token,
-  inheritedMarks: MarkRef[] = []
-): NodeJSON[] {
+function tokenToNodeJSON(t: Token, inheritedMarks: MarkRef[] = []): NodeJSON[] {
   switch (t.kind) {
     case 'text': {
       const marks = [...inheritedMarks, ...t.marks]
@@ -45,10 +42,16 @@ export function tokenToNodeJSON(
       }
       return out
     }
+    default: {
+      // Exhaustiveness guard: if a new Token variant is added without
+      // updating this switch, the assignment below fails to compile.
+      const _exhaustive: never = t
+      return _exhaustive
+    }
   }
 }
 
-export function tokensToNodeJSON(tokens: Token[]): NodeJSON[] {
+function tokensToNodeJSON(tokens: Token[]): NodeJSON[] {
   const out: NodeJSON[] = []
   for (const t of tokens) {
     out.push(...tokenToNodeJSON(t))
