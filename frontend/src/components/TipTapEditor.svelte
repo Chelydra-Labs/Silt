@@ -39,6 +39,7 @@
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
+  import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 
   // Map of slash command ids to their mark type (#168). 'clear' is special
   // (strips all marks); 'link' opens a URL prompt.
@@ -603,7 +604,19 @@
     const pos = selection.$from.start()
     try {
       const c = editorInstance.view.coordsAtPos(pos)
-      return { left: c.left, top: c.bottom }
+      const paletteWidth = 256
+      const paletteHeight = 300
+      let left = c.left
+      let top = c.bottom
+      if (left + paletteWidth > window.innerWidth) {
+        left = window.innerWidth - paletteWidth - 8
+      }
+      if (top + paletteHeight > window.innerHeight) {
+        top = window.innerHeight - paletteHeight - 8
+      }
+      left = Math.max(8, left)
+      top = Math.max(8, top)
+      return { left, top }
     } catch (err) {
       return null
     }
@@ -826,7 +839,7 @@
     x: number
     y: number
     activeBlockId?: string
-    activeBlockNode?: any
+    activeBlockNode?: ProseMirrorNode
   } | null>(null)
 
   $effect(() => {
@@ -846,6 +859,52 @@
     }
   })
 
+  // Context menu keyboard navigation (ArrowUp/Down, Home/End)
+  let contextMenuEl = $state<HTMLDivElement | null>(null)
+
+  $effect(() => {
+    if (contextMenu && contextMenuEl) {
+      const id = requestAnimationFrame(() => {
+        const first = contextMenuEl?.querySelector<HTMLButtonElement>(
+          'button:not([disabled])'
+        )
+        first?.focus()
+      })
+      return () => cancelAnimationFrame(id)
+    }
+  })
+
+  function handleMenuKeyDown(e: KeyboardEvent): void {
+    if (!contextMenuEl) return
+    const items = Array.from(
+      contextMenuEl.querySelectorAll<HTMLButtonElement>(
+        'button:not([disabled])'
+      )
+    )
+    if (items.length === 0) return
+    const currentIndex = items.findIndex(
+      (item) => item === document.activeElement
+    )
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        items[(currentIndex + 1) % items.length]?.focus()
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        items[(currentIndex - 1 + items.length) % items.length]?.focus()
+        break
+      case 'Home':
+        e.preventDefault()
+        items[0]?.focus()
+        break
+      case 'End':
+        e.preventDefault()
+        items[items.length - 1]?.focus()
+        break
+    }
+  }
+
   function handleContextMenu(e: MouseEvent): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     e.preventDefault()
@@ -864,7 +923,7 @@
 
     // Resolve the active block and its unique ID
     let activeBlockId: string | undefined
-    let activeBlockNode: any = null
+    let activeBlockNode: ProseMirrorNode | null = null
     const selPos = editorInstance.state.selection.$from
     for (let d = selPos.depth; d >= 1; d--) {
       const node = selPos.node(d)
@@ -902,6 +961,11 @@
   }
 
   // Menu action handlers
+  function closeContextMenu(): void {
+    contextMenu = null
+    editorInstance?.commands.focus()
+  }
+
   function handleCut(): void {
     if (!editorInstance) return
     const { selection } = editorInstance.state
@@ -912,7 +976,7 @@
     )
     navigator.clipboard.writeText(text).catch(() => {})
     editorInstance.commands.deleteSelection()
-    contextMenu = null
+    closeContextMenu()
   }
 
   function handleCopy(): void {
@@ -924,7 +988,7 @@
       '\n'
     )
     navigator.clipboard.writeText(text).catch(() => {})
-    contextMenu = null
+    closeContextMenu()
   }
 
   async function handlePaste(): Promise<void> {
@@ -932,16 +996,12 @@
     try {
       const text = await navigator.clipboard.readText()
       if (text) {
-        editorInstance.commands.command(({ tr, state }) => {
-          const { selection } = state
-          tr.insertText(text, selection.from, selection.to)
-          return true
-        })
+        editorInstance.commands.insertContent({ type: 'text', text })
       }
     } catch {
       // fallback
     }
-    contextMenu = null
+    closeContextMenu()
   }
 
   async function handleCopyAsMarkdown(): Promise<void> {
@@ -965,7 +1025,7 @@
       md = parts.join('\n')
     }
     await navigator.clipboard.writeText(md).catch(() => {})
-    contextMenu = null
+    closeContextMenu()
   }
 
   async function handleCopyAsPlainText(): Promise<void> {
@@ -975,7 +1035,7 @@
       ? ''
       : editorInstance.state.doc.textBetween(selection.from, selection.to, '\n')
     await navigator.clipboard.writeText(text).catch(() => {})
-    contextMenu = null
+    closeContextMenu()
   }
 
   async function handleCopyBlockReference(): Promise<void> {
@@ -984,7 +1044,7 @@
         .writeText(`((${contextMenu.activeBlockId}))`)
         .catch(() => {})
     }
-    contextMenu = null
+    closeContextMenu()
   }
 
   async function handleCopyBlockEmbed(): Promise<void> {
@@ -993,7 +1053,7 @@
         .writeText(`{{embed:${contextMenu.activeBlockId}}}`)
         .catch(() => {})
     }
-    contextMenu = null
+    closeContextMenu()
   }
 
   function handleDuplicateBlock(): void {
@@ -1013,7 +1073,7 @@
       delete json.attrs.id
     }
     editorInstance.chain().insertContentAt(endPos, json).focus().run()
-    contextMenu = null
+    closeContextMenu()
   }
 
   function handleDeleteBlock(): void {
@@ -1030,12 +1090,12 @@
     const from = pos.before(blockDepth)
     const to = pos.after(blockDepth)
     editorInstance.chain().deleteRange({ from, to }).focus().run()
-    contextMenu = null
+    closeContextMenu()
   }
 
   function handleClearFormatting(): void {
     editorInstance?.chain().focus().unsetAllMarks().run()
-    contextMenu = null
+    closeContextMenu()
   }
 </script>
 
@@ -1080,16 +1140,19 @@
           }}
         ></div>
         <div
+          bind:this={contextMenuEl}
           class="fixed context-menu-card"
           style="left: {contextMenu.x}px; top: {contextMenu.y}px"
           role="menu"
           tabindex="-1"
           aria-label="Editor actions"
           oncontextmenu={(e) => e.preventDefault()}
+          onkeydown={handleMenuKeyDown}
         >
           <button
             type="button"
             class="context-menu-item"
+            role="menuitem"
             onclick={handleCut}
             disabled={selectionEmpty}
           >
@@ -1101,6 +1164,7 @@
           <button
             type="button"
             class="context-menu-item"
+            role="menuitem"
             onclick={handleCopy}
             disabled={selectionEmpty}
           >
@@ -1109,7 +1173,12 @@
             >
             Copy
           </button>
-          <button type="button" class="context-menu-item" onclick={handlePaste}>
+          <button
+            type="button"
+            class="context-menu-item"
+            role="menuitem"
+            onclick={handlePaste}
+          >
             <span class="material-symbols-outlined text-[16px]"
               >content_paste</span
             >
@@ -1121,6 +1190,7 @@
           <button
             type="button"
             class="context-menu-item"
+            role="menuitem"
             onclick={handleCopyAsMarkdown}
           >
             <span class="material-symbols-outlined text-[16px]">markdown</span>
@@ -1129,6 +1199,7 @@
           <button
             type="button"
             class="context-menu-item"
+            role="menuitem"
             onclick={handleCopyAsPlainText}
           >
             <span class="material-symbols-outlined text-[16px]">notes</span>
@@ -1140,6 +1211,7 @@
             <button
               type="button"
               class="context-menu-item"
+              role="menuitem"
               onclick={handleCopyBlockReference}
             >
               <span class="material-symbols-outlined text-[16px]">link</span>
@@ -1148,6 +1220,7 @@
             <button
               type="button"
               class="context-menu-item"
+              role="menuitem"
               onclick={handleCopyBlockEmbed}
             >
               <span class="material-symbols-outlined text-[16px]"
@@ -1160,6 +1233,7 @@
             <button
               type="button"
               class="context-menu-item"
+              role="menuitem"
               onclick={handleDuplicateBlock}
             >
               <span class="material-symbols-outlined text-[16px]"
@@ -1170,6 +1244,7 @@
             <button
               type="button"
               class="context-menu-item text-status-danger"
+              role="menuitem"
               onclick={handleDeleteBlock}
             >
               <span class="material-symbols-outlined text-[16px]">delete</span>
@@ -1181,6 +1256,7 @@
           <button
             type="button"
             class="context-menu-item"
+            role="menuitem"
             onclick={handleClearFormatting}
           >
             <span class="material-symbols-outlined text-[16px]"

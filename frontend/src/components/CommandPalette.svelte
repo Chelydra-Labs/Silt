@@ -66,7 +66,7 @@
   $effect(() => {
     if (containerEl && selectedIdx !== -1) {
       const activeEl = containerEl.querySelector(
-        '.bg-accent-primary-glow'
+        '[data-active-cmd="true"]'
       ) as HTMLElement | null
       if (activeEl && typeof activeEl.scrollIntoView === 'function') {
         activeEl.scrollIntoView({ block: 'nearest' })
@@ -145,6 +145,7 @@
         class:bg-accent-primary-glow={idx === selectedIdx}
         class:text-accent-primary-start={idx === selectedIdx}
         class:text-text-primary={idx !== selectedIdx}
+        data-active-cmd={idx === selectedIdx}
         onmouseenter={() => (selectedIdx = idx)}
       >
         <span class="material-symbols-outlined text-[18px] select-none"
