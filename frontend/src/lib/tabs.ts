@@ -326,3 +326,31 @@ export function cycleTab(state: TabsState, dir: 1 | -1): TabsState {
   const nextIdx = (currentIdx + dir + ordered.length) % ordered.length
   return activateTab(state, ordered[nextIdx].id)
 }
+
+/**
+ * Reorder a tab within the tabs array (visual position only). The tab
+ * identified by `fromId` is moved to before or after the tab identified by
+ * `toId`, depending on the `before` flag. MRU order (`lastActivatedAt`) is
+ * NOT affected — reorder changes visual position only, matching VS Code
+ * behavior (#175). No-op if either id is missing or they are the same.
+ * Returns a new state.
+ */
+export function reorderTab(
+  state: TabsState,
+  fromId: string,
+  toId: string,
+  before: boolean
+): TabsState {
+  if (fromId === toId) return state
+  const fromIdx = state.tabs.findIndex((t) => t.id === fromId)
+  const toIdx = state.tabs.findIndex((t) => t.id === toId)
+  if (fromIdx === -1 || toIdx === -1) return state
+  const next = state.tabs.slice()
+  const [moved] = next.splice(fromIdx, 1)
+  // Recompute the target index after removal (it may have shifted if
+  // fromIdx was before toIdx).
+  const adjustedToIdx = next.findIndex((t) => t.id === toId)
+  const insertIdx = before ? adjustedToIdx : adjustedToIdx + 1
+  next.splice(insertIdx, 0, moved)
+  return { tabs: next, activeId: state.activeId }
+}

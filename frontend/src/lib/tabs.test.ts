@@ -4,6 +4,7 @@ import {
   closeTab,
   promotePreview,
   cycleTab,
+  reorderTab,
   mruOrder,
   pickEvictionVictim,
   findTab,
@@ -412,5 +413,76 @@ describe('generateTabId', () => {
       ids.add(generateTabId())
     }
     expect(ids.size).toBe(100)
+  })
+})
+
+describe('reorderTab (#175)', () => {
+  it('moves a tab before the target', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const t3 = mkTab(PAGE_C, { id: 't3' })
+    const s = state([t1, t2, t3], 't1')
+    const next = reorderTab(s, 't3', 't1', true)
+    expect(next.tabs.map((t) => t.id)).toEqual(['t3', 't1', 't2'])
+  })
+
+  it('moves a tab after the target', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const t3 = mkTab(PAGE_C, { id: 't3' })
+    const s = state([t1, t2, t3], 't1')
+    const next = reorderTab(s, 't1', 't3', false)
+    expect(next.tabs.map((t) => t.id)).toEqual(['t2', 't3', 't1'])
+  })
+
+  it('is a no-op when fromId === toId', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const s = state([t1], 't1')
+    const next = reorderTab(s, 't1', 't1', true)
+    expect(next).toBe(s)
+  })
+
+  it('is a no-op when an id is missing', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const s = state([t1, t2], 't1')
+    expect(reorderTab(s, 't1', 'nonexistent', true)).toBe(s)
+    expect(reorderTab(s, 'nonexistent', 't2', true)).toBe(s)
+  })
+
+  it('preserves lastActivatedAt (MRU unaffected by visual reorder)', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1', lastActivatedAt: 100 })
+    const t2 = mkTab(PAGE_B, { id: 't2', lastActivatedAt: 200 })
+    const t3 = mkTab(PAGE_C, { id: 't3', lastActivatedAt: 300 })
+    const s = state([t1, t2, t3], 't1')
+    const next = reorderTab(s, 't1', 't3', false)
+    // Visual order changed, but MRU order is unchanged (t3 > t2 > t1).
+    expect(mruOrder(next.tabs).map((t) => t.id)).toEqual(['t3', 't2', 't1'])
+  })
+
+  it('preserves activeId', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const s = state([t1, t2], 't2')
+    const next = reorderTab(s, 't2', 't1', true)
+    expect(next.activeId).toBe('t2')
+  })
+
+  it('handles moving the first tab to the last position', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const t3 = mkTab(PAGE_C, { id: 't3' })
+    const s = state([t1, t2, t3], 't2')
+    const next = reorderTab(s, 't1', 't3', false)
+    expect(next.tabs.map((t) => t.id)).toEqual(['t2', 't3', 't1'])
+  })
+
+  it('handles moving the last tab to the first position', () => {
+    const t1 = mkTab(PAGE_A, { id: 't1' })
+    const t2 = mkTab(PAGE_B, { id: 't2' })
+    const t3 = mkTab(PAGE_C, { id: 't3' })
+    const s = state([t1, t2, t3], 't1')
+    const next = reorderTab(s, 't3', 't1', true)
+    expect(next.tabs.map((t) => t.id)).toEqual(['t3', 't1', 't2'])
   })
 })
