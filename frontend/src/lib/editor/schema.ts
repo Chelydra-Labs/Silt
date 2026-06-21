@@ -201,7 +201,10 @@ export const NoteBlock = Node.create({
       bullet: {
         // '- ' (default), '* ', '+ ', or '' (plain prose, no bullet marker)
         default: '- ',
-        parseHTML: (el) => el.getAttribute('data-bullet') || '- ',
+        parseHTML: (el) => {
+          const b = el.getAttribute('data-bullet')
+          return b !== null ? b : '- '
+        },
         renderHTML: (attrs) => ({ 'data-bullet': attrs.bullet })
       },
       // Block-level text alignment (#173). Only NOTE and HEADER support it;

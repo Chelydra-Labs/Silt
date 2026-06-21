@@ -703,7 +703,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       // as brand-new prose.
       block.raw_text = `- [${block.status === 'DOING' ? '/' : block.status === 'DONE' ? 'x' : ' '}] ${block.status} TASK ${cleanText}`
     } else if (type === 'NOTE') {
-      const bullet: string = attrs.bullet || '- '
+      const bullet: string = attrs.bullet !== undefined ? attrs.bullet : '- '
       block.raw_text = `${bullet}${cleanText}`
     } else {
       // HEADER
