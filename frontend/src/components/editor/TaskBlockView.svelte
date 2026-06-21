@@ -20,9 +20,13 @@
     if (p === 2) return '! HIGH'
     return ''
   }
+  let depth = $derived(node.attrs.depth || 0)
 </script>
 
-<NodeViewWrapper class="task-block flex items-start gap-3 py-1 min-h-[32px]">
+<NodeViewWrapper
+  class="task-block flex items-start gap-3 py-1 min-h-[32px]"
+  data-depth={depth}
+>
   <!-- Drag handle -->
   <span
     class="material-symbols-outlined text-text-muted/30 hover:text-primary transition-colors cursor-move mt-0.5 select-none text-[18px]"

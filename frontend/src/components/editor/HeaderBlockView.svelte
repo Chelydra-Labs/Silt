@@ -23,6 +23,7 @@
 <NodeViewWrapper
   class="header-block flex items-start gap-3 py-1"
   data-align={align}
+  data-depth={level}
 >
   <span
     class="material-symbols-outlined text-text-muted/30 hover:text-primary transition-colors cursor-move mt-0.5 select-none text-[18px]"
