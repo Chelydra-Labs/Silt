@@ -34,8 +34,8 @@
   import CommandPalette from './CommandPalette.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
-  import BlockHoverMenu from './editor/BlockHoverMenu.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
+  import { serializeInlineContent } from '../lib/editor/converters'
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
@@ -792,18 +792,198 @@
       }
     }
   }
+
+  // Context Menu state
+  let contextMenu = $state<{
+    x: number
+    y: number
+    activeBlockId?: string
+    activeBlockNode?: any
+  } | null>(null)
+
+  function handleContextMenu(e: MouseEvent): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    e.preventDefault()
+
+    // Move editor cursor to the click location if the click is outside the current selection.
+    const pos = editorInstance.view.posAtCoords({
+      left: e.clientX,
+      top: e.clientY
+    })
+    if (pos) {
+      const { selection } = editorInstance.state
+      if (pos.pos < selection.from || pos.pos > selection.to) {
+        editorInstance.commands.setTextSelection(pos.pos)
+      }
+    }
+
+    // Resolve the active block and its unique ID
+    let activeBlockId: string | undefined
+    let activeBlockNode: any = null
+    const selPos = editorInstance.state.selection.$from
+    for (let d = selPos.depth; d >= 1; d--) {
+      const node = selPos.node(d)
+      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
+        activeBlockId = node.attrs.id
+        activeBlockNode = node
+        break
+      }
+    }
+
+    contextMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      activeBlockId,
+      activeBlockNode
+    }
+  }
+
+  // Menu action handlers
+  function handleCut(): void {
+    if (!editorInstance) return
+    const { selection } = editorInstance.state
+    const text = editorInstance.state.doc.textBetween(
+      selection.from,
+      selection.to,
+      '\n'
+    )
+    navigator.clipboard.writeText(text).catch(() => {})
+    editorInstance.commands.deleteSelection()
+    contextMenu = null
+  }
+
+  function handleCopy(): void {
+    if (!editorInstance) return
+    const { selection } = editorInstance.state
+    const text = editorInstance.state.doc.textBetween(
+      selection.from,
+      selection.to,
+      '\n'
+    )
+    navigator.clipboard.writeText(text).catch(() => {})
+    contextMenu = null
+  }
+
+  async function handlePaste(): Promise<void> {
+    if (!editorInstance) return
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text) {
+        editorInstance.commands.insertContent(text)
+      }
+    } catch {
+      // fallback
+    }
+    contextMenu = null
+  }
+
+  async function handleCopyAsMarkdown(): Promise<void> {
+    if (!editorInstance) return
+    const { selection } = editorInstance.state
+    let md = ''
+    if (selection.empty) {
+      if (contextMenu?.activeBlockNode) {
+        const json = contextMenu.activeBlockNode.toJSON()
+        md = json.content ? serializeInlineContent(json.content) : ''
+      }
+    } else {
+      const slice = editorInstance.state.doc.slice(selection.from, selection.to)
+      const parts: string[] = []
+      slice.content.forEach((node) => {
+        const json = node.toJSON()
+        parts.push(
+          json.content ? serializeInlineContent(json.content) : json.text || ''
+        )
+      })
+      md = parts.join('\n')
+    }
+    await navigator.clipboard.writeText(md).catch(() => {})
+    contextMenu = null
+  }
+
+  async function handleCopyAsPlainText(): Promise<void> {
+    if (!editorInstance) return
+    const { selection } = editorInstance.state
+    const text = selection.empty
+      ? ''
+      : editorInstance.state.doc.textBetween(selection.from, selection.to, '\n')
+    await navigator.clipboard.writeText(text).catch(() => {})
+    contextMenu = null
+  }
+
+  async function handleCopyBlockReference(): Promise<void> {
+    if (contextMenu?.activeBlockId) {
+      await navigator.clipboard
+        .writeText(`((${contextMenu.activeBlockId}))`)
+        .catch(() => {})
+    }
+    contextMenu = null
+  }
+
+  async function handleCopyBlockEmbed(): Promise<void> {
+    if (contextMenu?.activeBlockId) {
+      await navigator.clipboard
+        .writeText(`{{embed:${contextMenu.activeBlockId}}}`)
+        .catch(() => {})
+    }
+    contextMenu = null
+  }
+
+  function handleDuplicateBlock(): void {
+    if (!editorInstance || !contextMenu?.activeBlockNode) return
+    const pos = editorInstance.state.selection.$from
+    let blockDepth = 1
+    for (let d = pos.depth; d >= 1; d--) {
+      const node = pos.node(d)
+      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
+        blockDepth = d
+        break
+      }
+    }
+    const endPos = pos.after(blockDepth)
+    const json = contextMenu.activeBlockNode.toJSON()
+    if (json.attrs && json.attrs.id) {
+      delete json.attrs.id
+    }
+    editorInstance.chain().insertContentAt(endPos, json).focus().run()
+    contextMenu = null
+  }
+
+  function handleDeleteBlock(): void {
+    if (!editorInstance) return
+    const pos = editorInstance.state.selection.$from
+    let blockDepth = 1
+    for (let d = pos.depth; d >= 1; d--) {
+      const node = pos.node(d)
+      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
+        blockDepth = d
+        break
+      }
+    }
+    const from = pos.before(blockDepth)
+    const to = pos.after(blockDepth)
+    editorInstance.chain().deleteRange({ from, to }).focus().run()
+    contextMenu = null
+  }
+
+  function handleClearFormatting(): void {
+    editorInstance?.chain().focus().unsetAllMarks().run()
+    contextMenu = null
+  }
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- Contextmenu listener is on the outer host wrapper to handle editor-wide custom right-click menus -->
 <div
   class="tiptap-editor-host"
   class:focused={isFocused}
   class:focus-mode={focusModeEnabled}
+  oncontextmenu={handleContextMenu}
 >
   {#if viewMode === 'source'}
     <MarkdownSourceViewer {blocks} filePath="{notebook}/{section}/{page}.md" />
   {:else}
     {#if editorReady}
-      <BlockHoverMenu editor={editorInstance} {colorEnabled} {isDark} />
       <FormattingFirstRunTip
         dismissed={formatTipDismissed}
         onDismiss={dismissFormatTip}
@@ -818,6 +998,131 @@
         <EditorContent editor={$editorStore} />
       {/if}
     {/if}
+
+    {#if contextMenu}
+      <div class="fixed inset-0 z-[180]">
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="absolute inset-0 cursor-default"
+          onclick={() => (contextMenu = null)}
+          oncontextmenu={(e) => {
+            e.preventDefault()
+            contextMenu = null
+          }}
+        ></div>
+        <div
+          class="fixed context-menu-card"
+          style="left: {contextMenu.x}px; top: {contextMenu.y}px"
+          role="menu"
+          tabindex="-1"
+          aria-label="Editor actions"
+        >
+          <button
+            type="button"
+            class="context-menu-item"
+            onclick={handleCut}
+            disabled={selectionEmpty}
+          >
+            <span class="material-symbols-outlined text-[16px]"
+              >content_cut</span
+            >
+            Cut
+          </button>
+          <button
+            type="button"
+            class="context-menu-item"
+            onclick={handleCopy}
+            disabled={selectionEmpty}
+          >
+            <span class="material-symbols-outlined text-[16px]"
+              >content_copy</span
+            >
+            Copy
+          </button>
+          <button type="button" class="context-menu-item" onclick={handlePaste}>
+            <span class="material-symbols-outlined text-[16px]"
+              >content_paste</span
+            >
+            Paste
+          </button>
+
+          <div class="context-menu-separator"></div>
+
+          <button
+            type="button"
+            class="context-menu-item"
+            onclick={handleCopyAsMarkdown}
+          >
+            <span class="material-symbols-outlined text-[16px]">markdown</span>
+            Copy as Markdown
+          </button>
+          <button
+            type="button"
+            class="context-menu-item"
+            onclick={handleCopyAsPlainText}
+          >
+            <span class="material-symbols-outlined text-[16px]">notes</span>
+            Copy as Plain Text
+          </button>
+
+          {#if contextMenu.activeBlockId}
+            <div class="context-menu-separator"></div>
+            <button
+              type="button"
+              class="context-menu-item"
+              onclick={handleCopyBlockReference}
+            >
+              <span class="material-symbols-outlined text-[16px]">link</span>
+              Copy Block Reference
+            </button>
+            <button
+              type="button"
+              class="context-menu-item"
+              onclick={handleCopyBlockEmbed}
+            >
+              <span class="material-symbols-outlined text-[16px]"
+                >integration_instructions</span
+              >
+              Copy Block Embed
+            </button>
+
+            <div class="context-menu-separator"></div>
+            <button
+              type="button"
+              class="context-menu-item"
+              onclick={handleDuplicateBlock}
+            >
+              <span class="material-symbols-outlined text-[16px]"
+                >difference</span
+              >
+              Duplicate Block
+            </button>
+            <button
+              type="button"
+              class="context-menu-item text-status-danger"
+              onclick={handleDeleteBlock}
+            >
+              <span class="material-symbols-outlined text-[16px]">delete</span>
+              Delete Block
+            </button>
+          {/if}
+
+          <div class="context-menu-separator"></div>
+          <button
+            type="button"
+            class="context-menu-item"
+            onclick={handleClearFormatting}
+          >
+            <span class="material-symbols-outlined text-[16px]"
+              >format_clear</span
+            >
+            Clear Formatting
+          </button>
+        </div>
+      </div>
+    {/if}
+
     {#if unsavedChanges || lastSaveError}
       <div
         class="unsaved-indicator {lastSaveError ? 'error' : ''}"
@@ -1152,5 +1457,64 @@
   .meta-suggest-desc {
     font-size: 0.8rem;
     opacity: 0.8;
+  }
+
+  .context-menu-card {
+    background-color: rgba(22, 22, 25, 0.9);
+    backdrop-filter: blur(12px) saturate(140%);
+    border: 1px solid var(--color-border-muted, #33333a);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    padding: 4px;
+    min-width: 180px;
+    z-index: 181;
+  }
+
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-primary, #e6e6e6);
+    font-size: 12px;
+    font-family: var(--font-body, inherit);
+    text-align: left;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background-color 120ms ease-out;
+  }
+
+  .context-menu-item:hover {
+    background-color: var(--color-hover, #1e2128);
+  }
+
+  .context-menu-item:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .context-menu-item.text-status-danger {
+    color: var(--color-status-danger, #e5484d);
+  }
+
+  .context-menu-item.text-status-danger .material-symbols-outlined {
+    color: var(--color-status-danger, #e5484d);
+  }
+
+  .context-menu-item:hover.text-status-danger {
+    background-color: color-mix(
+      in srgb,
+      var(--color-status-danger, #e5484d) 15%,
+      transparent
+    );
+  }
+
+  .context-menu-separator {
+    height: 1px;
+    background: var(--color-border-muted, #33333a);
+    margin: 4px;
   }
 </style>
