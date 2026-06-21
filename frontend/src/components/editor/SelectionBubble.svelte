@@ -33,8 +33,7 @@
       if (editor.isActive('link')) {
         editor.chain().focus().unsetLink().run()
       } else {
-        const url = window.prompt('Enter URL:')
-        if (url) editor.chain().focus().toggleLink({ href: url }).run()
+        window.dispatchEvent(new CustomEvent('silt:open-link-input'))
       }
     } else {
       editor.chain().focus().toggleMark(mark).run()

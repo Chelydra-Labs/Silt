@@ -1,25 +1,17 @@
 <script lang="ts">
   import type { Editor } from 'svelte-tiptap'
-
-  // FormatToolbar — the persistent top toolbar for inline text formatting (#168).
-  // Cyber-Ink styled, 36px tall, sticky-positioned below the titlebar. Carries
-  // the 8 inline mark buttons + link + clear-formatting. The H1▾ heading slot
-  // is filled by HeadingLevelMenu in #169.
-  //
-  // Accessibility: role="toolbar", roving tabindex (first button tabindex=0,
-  // rest -1), arrow-key navigation, Home/End jump, Esc returns focus to editor.
-  // Each button has aria-label + aria-keyshortcuts + aria-pressed (reflecting
-  // editor.isActive(mark)).
+  import HeadingLevelMenu from './HeadingLevelMenu.svelte'
+  import ColorPickerMenu from './ColorPickerMenu.svelte'
 
   interface Props {
     editor: Editor | null
     activeMarks: Set<string>
+    isDark: boolean
+    colorEnabled: boolean
   }
 
-  let { editor, activeMarks }: Props = $props()
+  let { editor, activeMarks, isDark, colorEnabled }: Props = $props()
 
-  // Button definitions: id, label, material icon, hotkey, mark type.
-  // 'link' and 'clear' are special-cased in onclick.
   interface FormatButton {
     id: string
     label: string
@@ -39,6 +31,13 @@
     { id: 'superscript', label: 'Superscript', icon: 'superscript', shortcut: 'Ctrl.', mark: 'superscript' }
   ]
 
+  const ALIGN_BUTTONS = [
+    { id: 'left', label: 'Align left', icon: 'format_align_left', shortcut: 'Ctrl+Shift+L' },
+    { id: 'center', label: 'Align center', icon: 'format_align_center', shortcut: 'Ctrl+Shift+E' },
+    { id: 'right', label: 'Align right', icon: 'format_align_right', shortcut: 'Ctrl+Shift+R' },
+    { id: 'justify', label: 'Align justify', icon: 'format_align_justify', shortcut: 'Ctrl+Shift+J' }
+  ]
+
   function handleClick(btn: FormatButton): void {
     if (!editor) return
     editor.chain().focus().toggleMark(btn.mark).run()
@@ -49,8 +48,7 @@
     if (editor.isActive('link')) {
       editor.chain().focus().unsetLink().run()
     } else if (!editor.state.selection.empty) {
-      const url = window.prompt('Enter URL:')
-      if (url) editor.chain().focus().toggleLink({ href: url }).run()
+      window.dispatchEvent(new CustomEvent('silt:open-link-input'))
     }
   }
 
@@ -59,49 +57,58 @@
     editor.chain().focus().unsetAllMarks().run()
   }
 
+  function handleAlign(align: string): void {
+    if (!editor) return
+    window.dispatchEvent(new CustomEvent('silt:set-block-align', { detail: align }))
+  }
+
   function isActive(mark: string): boolean {
     return activeMarks.has(mark)
   }
 
-  // --- Roving tabindex keyboard navigation ---
-  const ALL_BUTTONS = [...BUTTONS, { id: 'link', special: true }, { id: 'clear', special: true }]
+  function currentAlign(): string {
+    if (!editor) return 'left'
+    const pos = editor.state.selection.$from
+    for (let d = pos.depth; d >= 1; d--) {
+      const node = pos.node(d)
+      const attrs = node.attrs as Record<string, unknown>
+      if (attrs.align) return attrs.align as string
+    }
+    return 'left'
+  }
+
   let focusedIdx = $state(0)
+  let totalButtons = $derived(BUTTONS.length + 1 + (colorEnabled ? 2 : 0) + ALIGN_BUTTONS.length + 1)
 
   function handleKeydown(e: KeyboardEvent): void {
-    const count = ALL_BUTTONS.length
+    const count = totalButtons
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault()
       focusedIdx = (focusedIdx + 1) % count
-      focusButton(focusedIdx)
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
       e.preventDefault()
       focusedIdx = (focusedIdx - 1 + count) % count
-      focusButton(focusedIdx)
     } else if (e.key === 'Home') {
       e.preventDefault()
       focusedIdx = 0
-      focusButton(0)
     } else if (e.key === 'End') {
       e.preventDefault()
       focusedIdx = count - 1
-      focusButton(count - 1)
     } else if (e.key === 'Escape') {
       e.preventDefault()
       editor?.chain().focus().run()
     }
   }
-
-  function focusButton(idx: number): void {
-    const el = document.getElementById(`fmt-btn-${ALL_BUTTONS[idx].id}`)
-    el?.focus()
-  }
 </script>
 
 <div class="format-toolbar" role="toolbar" aria-label="Text formatting" tabindex="-1" onkeydown={handleKeydown}>
+  <HeadingLevelMenu {editor} />
+
+  <span class="toolbar-divider" aria-hidden="true"></span>
+
   <div class="toolbar-group">
     {#each BUTTONS as btn, i (btn.id)}
       <button
-        id="fmt-btn-{btn.id}"
         type="button"
         class="toolbar-btn"
         class:active={isActive(btn.mark)}
@@ -118,7 +125,6 @@
     {/each}
 
     <button
-      id="fmt-btn-link"
       type="button"
       class="toolbar-btn"
       class:active={isActive('link')}
@@ -137,15 +143,39 @@
   <span class="toolbar-divider" aria-hidden="true"></span>
 
   <div class="toolbar-group">
+    {#each ALIGN_BUTTONS as btn (btn.id)}
+      <button
+        type="button"
+        class="toolbar-btn"
+        class:active={currentAlign() === btn.id}
+        aria-pressed={currentAlign() === btn.id}
+        aria-label={btn.label}
+        aria-keyshortcuts={btn.shortcut}
+        tabindex={-1}
+        onclick={() => handleAlign(btn.id)}
+        title={btn.label}
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">{btn.icon}</span>
+      </button>
+    {/each}
+  </div>
+
+  {#if colorEnabled}
+    <span class="toolbar-divider" aria-hidden="true"></span>
+    <ColorPickerMenu {editor} markType="textColor" {isDark} />
+    <ColorPickerMenu {editor} markType="backgroundColor" {isDark} />
+  {/if}
+
+  <span class="toolbar-divider" aria-hidden="true"></span>
+
+  <div class="toolbar-group">
     <button
-      id="fmt-btn-clear"
       type="button"
       class="toolbar-btn"
       aria-label="Clear formatting"
       aria-keyshortcuts="Ctrl+\\"
       tabindex={-1}
       onclick={handleClear}
-      onfocus={() => (focusedIdx = BUTTONS.length + 1)}
       title="Clear formatting"
     >
       <span class="material-symbols-outlined" aria-hidden="true">format_clear</span>
@@ -179,6 +209,7 @@
     height: 20px;
     background: var(--color-border-muted, #2a2e36);
     margin: 0 4px;
+    flex-shrink: 0;
   }
 
   .toolbar-btn {
@@ -193,6 +224,7 @@
     color: var(--color-text-muted, #8b95a3);
     cursor: pointer;
     transition: background 0.1s, color 0.1s;
+    flex-shrink: 0;
   }
 
   .toolbar-btn:hover {

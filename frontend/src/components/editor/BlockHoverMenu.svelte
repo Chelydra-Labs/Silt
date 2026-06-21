@@ -1,22 +1,25 @@
 <script lang="ts">
   import type { Editor } from 'svelte-tiptap'
 
-  // BlockHoverMenu — a ⋮ hover button rendered per block on :hover /
-  // :focus-within (#168). Opens a context menu with block-level formatting
-  // operations: Clear formatting, Copy as Markdown, Copy as plain text.
-  // role="menu", Tab-reachable, Enter/Space activate, Esc dismiss.
-
   interface Props {
     editor: Editor | null
+    colorEnabled: boolean
+    isDark: boolean
   }
 
-  let { editor }: Props = $props()
+  let { editor, colorEnabled, isDark }: Props = $props()
 
   let menuOpen = $state(false)
 
+  const ALIGN_OPTS = [
+    { id: 'left', label: 'Align left', icon: 'format_align_left' },
+    { id: 'center', label: 'Align center', icon: 'format_align_center' },
+    { id: 'right', label: 'Align right', icon: 'format_align_right' },
+    { id: 'justify', label: 'Align justify', icon: 'format_align_justify' }
+  ]
+
   function clearFormatting(): void {
-    if (!editor) return
-    editor.chain().focus().unsetAllMarks().run()
+    editor?.chain().focus().unsetAllMarks().run()
     menuOpen = false
   }
 
@@ -24,12 +27,12 @@
     if (!editor) return
     const { selection } = editor.state
     const text = selection.empty
-      ? '' // no selection — could copy block-level in future
+      ? ''
       : editor.state.doc.textBetween(selection.from, selection.to, '\n')
     try {
       await navigator.clipboard.writeText(text)
     } catch {
-      // Clipboard may be unavailable in some contexts
+      // Clipboard may be unavailable
     }
     menuOpen = false
   }
@@ -37,15 +40,24 @@
   async function copyAsPlainText(): Promise<void> {
     if (!editor) return
     const { selection } = editor.state
-    // Strip all marks: get plain text from the selection
     const text = selection.empty
       ? ''
       : editor.state.doc.textBetween(selection.from, selection.to, '\n')
     try {
       await navigator.clipboard.writeText(text)
     } catch {
-      // Clipboard may be unavailable in some contexts
+      // Clipboard may be unavailable
     }
+    menuOpen = false
+  }
+
+  function handleAlign(align: string): void {
+    window.dispatchEvent(new CustomEvent('silt:set-block-align', { detail: align }))
+    menuOpen = false
+  }
+
+  function openColorPicker(markType: 'textColor' | 'backgroundColor'): void {
+    window.dispatchEvent(new CustomEvent('silt:open-color-picker', { detail: markType }))
     menuOpen = false
   }
 </script>
@@ -64,6 +76,26 @@
 
   {#if menuOpen}
     <div class="block-menu" role="menu" aria-label="Block actions">
+      {#each ALIGN_OPTS as opt (opt.id)}
+        <button type="button" class="menu-item" role="menuitem" onclick={() => handleAlign(opt.id)}>
+          <span class="material-symbols-outlined" aria-hidden="true">{opt.icon}</span>
+          <span>{opt.label}</span>
+        </button>
+      {/each}
+
+      {#if colorEnabled}
+        <div class="menu-separator" aria-hidden="true"></div>
+        <button type="button" class="menu-item" role="menuitem" onclick={() => openColorPicker('textColor')}>
+          <span class="material-symbols-outlined" aria-hidden="true">format_color_text</span>
+          <span>Text color</span>
+        </button>
+        <button type="button" class="menu-item" role="menuitem" onclick={() => openColorPicker('backgroundColor')}>
+          <span class="material-symbols-outlined" aria-hidden="true">format_color_fill</span>
+          <span>Background color</span>
+        </button>
+      {/if}
+
+      <div class="menu-separator" aria-hidden="true"></div>
       <button type="button" class="menu-item" role="menuitem" onclick={clearFormatting}>
         <span class="material-symbols-outlined" aria-hidden="true">format_clear</span>
         <span>Clear formatting</span>
@@ -101,8 +133,8 @@
     transition: opacity 0.15s;
   }
 
-  :global(.ProseMirror .silt-block:hover) .hover-trigger,
-  :global(.ProseMirror .silt-block:focus-within) .hover-trigger,
+  :global(.ProseMirror div[data-type]:hover) .hover-trigger,
+  :global(.ProseMirror div[data-type]:focus-within) .hover-trigger,
   .hover-trigger:focus-visible {
     opacity: 1;
   }
@@ -132,16 +164,22 @@
     gap: 1px;
   }
 
+  .menu-separator {
+    height: 1px;
+    background: var(--color-border-muted, #33333a);
+    margin: 2px 4px;
+  }
+
   .menu-item {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 10px;
+    padding: 5px 10px;
     border: none;
     border-radius: 6px;
     background: transparent;
     color: var(--color-text-primary, #e6e6e6);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     text-align: left;
     cursor: pointer;
   }
@@ -153,5 +191,11 @@
   .menu-item .material-symbols-outlined {
     font-size: 16px;
     color: var(--color-text-muted, #8b95a3);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hover-trigger {
+      transition: none;
+    }
   }
 </style>

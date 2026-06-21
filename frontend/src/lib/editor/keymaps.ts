@@ -18,10 +18,9 @@ import { TextSelection } from '@tiptap/pm/state'
 const BLOCK_TYPES = ['taskBlock', 'noteBlock', 'headerBlock']
 
 // Convert the current block to a new type (#169). Provides the correct attrs
-// for each type (discarding type-specific attrs that don't apply). Mirrors
-// TipTapEditor.svelte's changeBlockType logic — both use setNode to swap the
-// block type while preserving inline content + id + depth + file_date.
-function convertToBlock(
+// for each type (discarding type-specific attrs that don't apply). Shared by
+// the keymap shortcuts and TipTapEditor's slash command handler.
+export function convertToBlock(
   editor: Editor,
   type: 'headerBlock' | 'noteBlock' | 'taskBlock',
   headerDepth?: number
@@ -283,18 +282,15 @@ export const SiltBlockKeymaps = Extension.create({
         return true
       },
 
-      // Link — no built-in shortcut. Toggle: if selection is linked, remove;
-      // otherwise prompt for a URL and apply (#168).
+      // Link — no built-in shortcut. Dispatches a custom event so TipTapEditor
+      // can show its inline URL input (#168). If already linked, removes.
       'Mod-k': () => {
         const { selection } = this.editor.state
         if (selection.empty) return false
         if (this.editor.isActive('link')) {
           this.editor.chain().focus().unsetLink().run()
         } else {
-          const url = window.prompt('Enter URL:')
-          if (url) {
-            this.editor.chain().focus().toggleLink({ href: url }).run()
-          }
+          window.dispatchEvent(new CustomEvent('silt:open-link-input'))
         }
         return true
       },

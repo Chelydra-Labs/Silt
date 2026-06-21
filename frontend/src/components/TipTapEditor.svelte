@@ -18,6 +18,7 @@
     SiltColorMarkExtensions,
     UniqueBlockIds,
     SiltBlockKeymaps,
+    convertToBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
     filterMetaKeys,
@@ -27,12 +28,14 @@
   import type { ParsedBlock, MetaKey, SuggestContext } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings, saveConfig } from '../settings/store.svelte'
+  import { themeState } from '../theme/store.svelte'
   import { measureFrameBudget } from '../lib/perf/frame-budget'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
   import FormatToolbar from './editor/FormatToolbar.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
+  import BlockHoverMenu from './editor/BlockHoverMenu.svelte'
   import ViewModeToggle from './editor/ViewModeToggle.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
@@ -100,6 +103,16 @@
     (settings.config?.ui as unknown as Record<string, unknown> | undefined)?.show_format_toolbar !== false
   )
 
+  let isDark = $derived(
+    themeState.mode === 'dark' ||
+    (themeState.mode === 'system' &&
+      window.matchMedia?.('(prefers-color-scheme: dark)').matches)
+  )
+
+  let colorEnabled = $derived(
+    ((settings.config?.ui as unknown as Record<string, unknown> | undefined)?.formatting as Record<string, unknown> | undefined)?.color_enabled !== false
+  )
+
   // show_word_count config (default false; opt-in, Phase 3).
   let showWordCount = $derived(
     (settings.config?.editor as unknown as Record<string, unknown> | undefined)?.show_word_count === true
@@ -113,6 +126,13 @@
 
   // Word count (updated on every editor transaction via CharacterCount storage).
   let wordCount = $state(0)
+
+  // Inline link URL input (#168). Shows a small <input> near the selection
+  // when the user clicks the link button or presses Ctrl+K. Enter applies,
+  // Esc cancels, blur applies.
+  let showLinkInput = $state(false)
+  let linkInputValue = $state('')
+  let linkInputCoords = $state<{ left: number; top: number } | null>(null)
 
   // View mode (#171): edit (TipTap WYSIWYG) vs source (raw markdown).
   // Synced via $effect so it reacts to both prop changes and store toggles.
@@ -136,6 +156,54 @@
       void saveConfig(cfg)
     }
   }
+
+  // --- Inline link URL input (#168) ----------------------------------------
+  function openLinkInput(): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    const { selection } = editorInstance.state
+    if (selection.empty) return
+    // If already linked, remove instead of prompting.
+    if (editorInstance.isActive('link')) {
+      editorInstance.chain().focus().unsetLink().run()
+      return
+    }
+    try {
+      const coords = editorInstance.view.coordsAtPos(selection.from)
+      linkInputCoords = { left: coords.left, top: coords.bottom }
+    } catch {
+      linkInputCoords = null
+    }
+    linkInputValue = ''
+    showLinkInput = true
+  }
+
+  function applyLinkInput(): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    const url = linkInputValue.trim()
+    if (url) {
+      editorInstance.chain().focus().toggleLink({ href: url }).run()
+    } else {
+      editorInstance.chain().focus().run()
+    }
+    showLinkInput = false
+    linkInputValue = ''
+  }
+
+  function cancelLinkInput(): void {
+    showLinkInput = false
+    linkInputValue = ''
+    editorInstance?.chain().focus().run()
+  }
+
+  // Auto-focus the link input when it appears.
+  $effect(() => {
+    if (showLinkInput) {
+      requestAnimationFrame(() => {
+        const input = document.querySelector<HTMLInputElement>('.link-input')
+        input?.focus()
+      })
+    }
+  })
 
   // --- Task metadata suggest (%-autocomplete) ------------------------------
   // `metaPopup` is null when the popup is closed. While open it carries the
@@ -199,9 +267,10 @@
   // These take effect on the next page load; toggling in Settings does not
   // hot-swap extensions mid-session (acceptable for v1).
   const typographyEnabled = untrack(
-    () =>
-      (settings.config?.ui as unknown as Record<string, unknown> | undefined)
-        ?.formatting !== false
+    () => {
+      const formatting = (settings.config?.ui as unknown as Record<string, unknown> | undefined)?.formatting as Record<string, unknown> | undefined
+      return formatting?.typography_enabled !== false
+    }
   )
 
   const editorExtensions = [
@@ -218,8 +287,9 @@
       link: { openOnClick: false, autolink: true }
     }),
     ...SiltBlockExtensionsWithNodeViews,
-    ...SiltInlineMarkExtensions,
-    UniqueBlockIds,
+      ...SiltInlineMarkExtensions,
+      ...SiltColorMarkExtensions,
+      UniqueBlockIds,
     TaskMetaSuggest.configure({
       onChange: onMetaChange,
       onNavigate: onMetaNavigate,
@@ -316,9 +386,46 @@
     viewMode = getViewMode(notebook, section, page)
   }
 
+  // Global event listeners for cross-component hotkeys.
+  function onOpenLinkInput(): void {
+    openLinkInput()
+  }
+  function onToggleViewModeEvent(): void {
+    handleToggleViewMode()
+  }
+  function onChangeBlockType(e: Event): void {
+    const detail = (e as CustomEvent).detail
+    if (!editorInstance) return
+    if (detail?.type === 'headerBlock') {
+      convertToBlock(editorInstance as any, 'headerBlock', detail.depth || 1)
+    } else if (detail?.type === 'noteBlock') {
+      convertToBlock(editorInstance as any, 'noteBlock')
+    } else if (detail?.type === 'taskBlock') {
+      convertToBlock(editorInstance as any, 'taskBlock')
+    }
+  }
+  function onSetBlockAlign(e: Event): void {
+    const align = (e as CustomEvent).detail as string
+    if (align) setBlockAlignAttr(align)
+  }
+  function onEditorScroll(): void {
+    selectionCoords = null
+  }
+
+  window.addEventListener('silt:open-link-input', onOpenLinkInput)
+  window.addEventListener('toggle-view-mode', onToggleViewModeEvent)
+  window.addEventListener('silt:change-block-type', onChangeBlockType)
+  window.addEventListener('silt:set-block-align', onSetBlockAlign)
+  window.addEventListener('scroll', onEditorScroll, true)
+
   onDestroy(() => {
     stopHeartbeat()
     void flushPendingSave().then(() => releaseFocus())
+    window.removeEventListener('silt:open-link-input', onOpenLinkInput)
+    window.removeEventListener('toggle-view-mode', onToggleViewModeEvent)
+    window.removeEventListener('silt:change-block-type', onChangeBlockType)
+    window.removeEventListener('silt:set-block-align', onSetBlockAlign)
+    window.removeEventListener('scroll', onEditorScroll, true)
   })
 
   // --- External content sync ------------------------------------------------
@@ -475,17 +582,17 @@
     editorInstance.commands.deleteRange({ from, to })
 
     if (commandId === 'todo') {
-      changeBlockType('taskBlock', { status: 'TODO' })
+      convertToBlock(editorInstance as any, 'taskBlock')
     } else if (commandId === 'h1') {
-      changeBlockType('headerBlock', { depth: 1 })
+      convertToBlock(editorInstance as any, 'headerBlock', 1)
     } else if (commandId === 'h2') {
-      changeBlockType('headerBlock', { depth: 2 })
+      convertToBlock(editorInstance as any, 'headerBlock', 2)
     } else if (commandId === 'h3') {
-      changeBlockType('headerBlock', { depth: 3 })
+      convertToBlock(editorInstance as any, 'headerBlock', 3)
     } else if (commandId === 'note') {
-      changeBlockType('noteBlock', {})
+      convertToBlock(editorInstance as any, 'noteBlock')
     } else if (commandId === 'task') {
-      changeBlockType('taskBlock', { status: 'TODO' })
+      convertToBlock(editorInstance as any, 'taskBlock')
     } else if (commandId === 'align-left') {
       setBlockAlignAttr('left')
     } else if (commandId === 'align-center') {
@@ -520,10 +627,7 @@
       // Inline formatting slash commands (#168). Each toggles its mark.
       const mark = FORMAT_COMMANDS[commandId]
       if (mark === 'link') {
-        if (!editorInstance.state.selection.empty) {
-          const url = window.prompt('Enter URL:')
-          if (url) editorInstance.chain().focus().toggleLink({ href: url }).run()
-        }
+        openLinkInput()
       } else if (mark === 'clear') {
         editorInstance.chain().focus().unsetAllMarks().run()
       } else {
@@ -629,8 +733,9 @@
     <MarkdownSourceViewer {blocks} filePath="{notebook}/{section}/{page}.md" />
   {:else}
     {#if showFormatToolbar}
-      <FormatToolbar editor={editorInstance} {activeMarks} />
+      <FormatToolbar editor={editorInstance} {activeMarks} {isDark} {colorEnabled} />
     {/if}
+    <BlockHoverMenu editor={editorInstance} {colorEnabled} {isDark} />
     <FormattingFirstRunTip dismissed={formatTipDismissed} onDismiss={dismissFormatTip} />
     <SelectionBubble
       editor={editorInstance}
@@ -690,6 +795,26 @@
           {/each}
         </div>
       {/if}
+    {/if}
+    {#if showLinkInput && linkInputCoords}
+      <div
+        class="link-input-popover"
+        style="left:{linkInputCoords.left}px; top:{linkInputCoords.top}px"
+        role="dialog"
+        aria-label="Insert link URL"
+      >
+        <input
+          type="url"
+          class="link-input"
+          placeholder="https://"
+          bind:value={linkInputValue}
+          onkeydown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); applyLinkInput() }
+            else if (e.key === 'Escape') { e.preventDefault(); cancelLinkInput() }
+          }}
+          onblur={applyLinkInput}
+        />
+      </div>
     {/if}
   {/if}
 </div>
@@ -765,13 +890,39 @@
   .word-count {
     position: sticky;
     bottom: 0;
-    float: right;
-    margin: 0.25rem 0;
+    margin: 0.25rem 0 0 auto;
+    display: inline-block;
     padding: 0.125rem 0.5rem;
     border-radius: 9999px;
     background: color-mix(in srgb, var(--color-surface, #1a1d24) 90%, transparent);
     color: var(--color-text-muted, #8b95a3);
     font-size: 11px;
+  }
+
+  .link-input-popover {
+    position: fixed;
+    z-index: 100;
+    margin-top: 4px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--color-surface, #1e1e22);
+    border: 1px solid var(--color-border-muted, #33333a);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+
+  .link-input {
+    width: 240px;
+    padding: 4px 8px;
+    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border-radius: 6px;
+    background: var(--color-surface, #1a1d24);
+    color: var(--color-text-primary, #e6e6e6);
+    font-size: 0.8rem;
+    outline: none;
+  }
+
+  .link-input:focus {
+    border-color: var(--color-accent-primary-glow, #6fa3ff);
   }
 
   .meta-suggest {

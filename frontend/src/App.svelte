@@ -409,6 +409,10 @@
         templatePickerMode = 'new-page'
         showTemplatePicker = !showTemplatePicker
       }
+      if (matchHotkey(e, hotkeys.toggle_view_mode)) {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('toggle-view-mode'))
+      }
       // Tab-strip hotkeys (#142). Ctrl+Tab / Ctrl+Shift+Tab cycle MRU;
       // Ctrl+W closes the active tab. All three are remappable / disable-
       // able (empty string) from Settings → General. No-op when 0 tabs.
