@@ -1746,9 +1746,9 @@ func TestAppendDismissedTip_ConcurrentWithExternalReload(t *testing.T) {
 	}()
 
 	const n = 60
-	// Only odd IDs are unique to avoid colliding with the idempotency check;
-	// even IDs intentionally repeat the same tipID to exercise that branch
-	// under contention.
+	// 60 goroutines cycle through 3 distinct tipIDs (20 concurrent appends
+	// each). The idempotency check + configMu serialization must collapse
+	// each tipID to a single slot; cardinality asserted below.
 	unique := []string{"t1", "t3", "t5"}
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
