@@ -50,6 +50,11 @@ export interface TabEntry extends PageRef {
   blockTarget?: { fileDate?: string; blockId?: string }
   /** Monotonic timestamp for MRU ordering (higher = more recent). */
   lastActivatedAt: number
+  /** True when the tab's editor has unsaved edits pending (#167). Runtime
+   *  only — not persisted (auto-save means dirty state is sub-second). */
+  dirty?: boolean
+  /** Non-null when the tab's last save failed (#167). Runtime only. */
+  saveError?: string | null
 }
 
 /**

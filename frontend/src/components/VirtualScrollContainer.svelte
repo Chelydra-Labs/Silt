@@ -23,6 +23,11 @@
     onPageRenamed?: (newName: string) => void
     onFirstEdit?: () => void
     isActive?: boolean
+    /** Forwarded to TipTapEditor; surfaces save-state changes (#167). */
+    onSaveStateChange?: (state: {
+      dirty: boolean
+      error: string | null
+    }) => void
   }
 
   let {
@@ -36,7 +41,8 @@
     activeFocusedBlockAncestors = [],
     onPageRenamed,
     onFirstEdit,
-    isActive = true
+    isActive = true,
+    onSaveStateChange
   }: Props = $props()
 
   // Editor bindings
@@ -331,6 +337,7 @@
           bind:editorInstance
           bind:activeMarks
           {viewMode}
+          {onSaveStateChange}
         />
       {/if}
 

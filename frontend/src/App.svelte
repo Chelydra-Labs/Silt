@@ -871,6 +871,7 @@
             onCloseTab={handleCloseTab}
             onPromoteTab={handlePromoteTab}
             onReorderTab={handleReorderTab}
+            showDirtyIndicators={settings.config?.ui?.show_tab_dirty_indicators !== false}
           />
           {#if notesReady}
             <div
@@ -912,6 +913,15 @@
                     onFirstEdit={tab.preview
                       ? () => handlePromoteTab(tab.id)
                       : undefined}
+                    onSaveStateChange={(s) => {
+                      // Surface the editor's save state on the tab header
+                      // so it's visible from any tab (#167).
+                      openTabs = openTabs.map((t) =>
+                        t.id === tab.id
+                          ? { ...t, dirty: s.dirty, saveError: s.error }
+                          : t
+                      )
+                    }}
                   />
                 </div>
               {/each}

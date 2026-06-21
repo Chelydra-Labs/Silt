@@ -9,6 +9,8 @@
     onCloseTab: (id: string) => void
     onPromoteTab: (id: string) => void
     onReorderTab: (fromId: string, toId: string, before: boolean) => void
+    /** When true (default), show per-tab dirty/save-failed glyphs (#167). */
+    showDirtyIndicators?: boolean
   }
 
   let {
@@ -17,7 +19,8 @@
     onSelectTab,
     onCloseTab,
     onPromoteTab,
-    onReorderTab
+    onReorderTab,
+    showDirtyIndicators = true
   }: Props = $props()
 
   // Roving tabindex: the active tab (or the first tab if none active) is the
@@ -39,7 +42,10 @@
     const parts = [tab.notebook]
     if (tab.section) parts.push(tab.section)
     parts.push(tab.page)
-    return parts.join(' › ')
+    let tip = parts.join(' › ')
+    if (tab.saveError) tip += ' — save failed'
+    else if (tab.dirty) tip += ' — unsaved edits'
+    return tip
   }
 
   function handleTablistKeydown(e: KeyboardEvent): void {
@@ -191,6 +197,18 @@
         onauxclick={(e) => handleAuxClick(e, tab)}
         ondblclick={() => handleDblClick(tab)}
       >
+        {#if showDirtyIndicators && (tab.dirty || tab.saveError)}
+          <span
+            class="tab-save-state"
+            class:error={!!tab.saveError}
+            class:dirty={!tab.saveError}
+            aria-hidden="true"
+          >
+            <span class="material-symbols-outlined text-[12px]">
+              {tab.saveError ? 'error' : 'circle'}
+            </span>
+          </span>
+        {/if}
         <span class="tab-label" class:italic={tab.preview}>{tab.page}</span>
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -357,5 +375,37 @@
     background: var(--color-accent-primary-start, #2dd4bf);
     border-radius: 1px;
     z-index: 1;
+  }
+
+  /* Per-tab dirty/save-state indicators (#167). The dirty dot uses
+     --text-muted; the error glyph uses --status-danger. Both are icons
+     (not color alone) + the tab's title/tooltip carries the state text
+     for AT users. */
+  .tab-save-state {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+
+  .tab-save-state.dirty {
+    color: var(--color-text-muted, #8b8b94);
+    animation: dirty-pulse 2s ease-in-out infinite;
+  }
+
+  .tab-save-state.error {
+    color: var(--color-status-danger, #f43f5e);
+  }
+
+  @keyframes dirty-pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tab-save-state.dirty {
+      animation: none;
+      opacity: 0.8;
+    }
   }
 </style>

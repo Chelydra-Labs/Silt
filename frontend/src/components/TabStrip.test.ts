@@ -5,7 +5,13 @@ import type { TabEntry } from '../lib/tabs'
 
 function mkTab(
   ref: { notebook: string; section: string; page: string },
-  opts: { preview?: boolean; lastActivatedAt?: number; id?: string } = {}
+  opts: {
+    preview?: boolean
+    lastActivatedAt?: number
+    id?: string
+    dirty?: boolean
+    saveError?: string | null
+  } = {}
 ): TabEntry {
   return {
     id: opts.id ?? `tab-${ref.page}`,
@@ -13,7 +19,9 @@ function mkTab(
     section: ref.section,
     page: ref.page,
     preview: opts.preview ?? false,
-    lastActivatedAt: opts.lastActivatedAt ?? Date.now()
+    lastActivatedAt: opts.lastActivatedAt ?? Date.now(),
+    dirty: opts.dirty,
+    saveError: opts.saveError
   }
 }
 
@@ -29,7 +37,8 @@ function defaultProps(
     onSelectTab: vi.fn(),
     onCloseTab: vi.fn(),
     onPromoteTab: vi.fn(),
-    onReorderTab: vi.fn()
+    onReorderTab: vi.fn(),
+    showDirtyIndicators: true
   }
 }
 
@@ -335,5 +344,80 @@ describe('TabStrip (#142)', () => {
     expect(document.activeElement).toBe(tabButtons[0])
     await fireEvent.keyDown(tablist, { key: 'Delete' })
     expect(props.onCloseTab).toHaveBeenCalledWith('tab-A')
+  })
+
+  it('dirty tab shows the dirty glyph (#167)', () => {
+    const tabs = [
+      mkTab({ notebook: 'W', section: '', page: 'A' }, { dirty: true })
+    ]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const glyph = screen.getByText('circle')
+    expect(glyph).toBeInTheDocument()
+    expect(glyph.closest('.tab-save-state')?.classList.contains('dirty')).toBe(
+      true
+    )
+  })
+
+  it('save-failed tab shows the error glyph (#167)', () => {
+    const tabs = [
+      mkTab(
+        { notebook: 'W', section: '', page: 'A' },
+        { saveError: 'disk full' }
+      )
+    ]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const glyph = screen.getByText('error')
+    expect(glyph).toBeInTheDocument()
+    expect(glyph.closest('.tab-save-state')?.classList.contains('error')).toBe(
+      true
+    )
+  })
+
+  it('clean tab shows no save-state glyph (#167)', () => {
+    const tabs = [mkTab({ notebook: 'W', section: '', page: 'A' })]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    expect(screen.queryByText('circle')).toBeNull()
+    expect(screen.queryByText('error')).toBeNull()
+  })
+
+  it('dirty glyph hidden when showDirtyIndicators is false (#167)', () => {
+    const tabs = [
+      mkTab({ notebook: 'W', section: '', page: 'A' }, { dirty: true })
+    ]
+    const props = defaultProps({ tabs, activeTabId: 'tab-A' })
+    props.showDirtyIndicators = false
+    render(TabStrip, { props })
+    expect(screen.queryByText('circle')).toBeNull()
+  })
+
+  it('dirty tab tooltip includes unsaved edits hint (#167)', () => {
+    const tabs = [
+      mkTab({ notebook: 'W', section: '', page: 'A' }, { dirty: true })
+    ]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const tab = screen.getAllByRole('tab')[0]
+    expect(tab.getAttribute('title')).toContain('unsaved edits')
+  })
+
+  it('error tab tooltip includes save failed hint (#167)', () => {
+    const tabs = [
+      mkTab(
+        { notebook: 'W', section: '', page: 'A' },
+        { saveError: 'disk full' }
+      )
+    ]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const tab = screen.getAllByRole('tab')[0]
+    expect(tab.getAttribute('title')).toContain('save failed')
   })
 })
