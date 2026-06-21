@@ -33,6 +33,7 @@
     bind:this={dragHandleEl}
     class="material-symbols-outlined text-text-muted/30 hover:text-primary transition-all duration-150 cursor-move mt-0.5 select-none text-[18px] opacity-0"
     class:group-hover:opacity-100={!isEmpty}
+    spellcheck="false"
     data-drag-handle
   >
     drag_indicator

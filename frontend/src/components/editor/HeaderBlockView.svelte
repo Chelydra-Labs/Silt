@@ -43,6 +43,7 @@
   <span
     bind:this={dragHandleEl}
     class="material-symbols-outlined text-text-muted/30 hover:text-primary transition-all duration-150 cursor-move mt-0.5 select-none text-[18px] opacity-0 group-hover:opacity-100"
+    spellcheck="false"
     data-drag-handle
   >
     drag_indicator
