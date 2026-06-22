@@ -17,8 +17,7 @@
     DeleteSection,
     DeleteNotebook,
     GetNavOrder,
-    SetNavOrder,
-    MovePage
+    SetNavOrder
   } from '../../wailsjs/go/main/App.js'
 
   interface NavPage {
@@ -55,12 +54,6 @@
     onPinPage: (notebook: string, section: string, page: string) => void
     onSelectView: (view: string) => void
     onCloseVault?: () => void
-    onPageMoved?: (
-      notebook: string,
-      fromSection: string,
-      toSection: string,
-      page: string
-    ) => void
   }
 
   let {
@@ -76,8 +69,7 @@
     onSelectPage,
     onPinPage,
     onSelectView,
-    onCloseVault,
-    onPageMoved
+    onCloseVault
   }: Props = $props()
 
   let tree = $state<NavigationTree>({ notebooks: [] })
@@ -147,17 +139,6 @@
     name: string
     before: boolean
   } | null>(null)
-  let dndError = $state('')
-  let dndErrorTimer: ReturnType<typeof setTimeout> | null = null
-
-  function showDndError(msg: string) {
-    dndError = msg
-    if (dndErrorTimer) clearTimeout(dndErrorTimer)
-    dndErrorTimer = setTimeout(() => {
-      dndError = ''
-      dndErrorTimer = null
-    }, 4000)
-  }
 
   function sortByName<T extends { name: string }>(
     items: T[],
@@ -227,13 +208,7 @@
   }
 
   function handleDragOver(e: DragEvent, level: string, name: string) {
-    if (!dragItem) return
-    // Same-level reorder (section↔section, page↔page) is always allowed.
-    // Page→section drop (move into section, #177) is also allowed so users
-    // can drag a page onto a section header to reparent it.
-    if (dragItem.level !== level && !(dragItem.level === 'page' && level === 'section')) {
-      return
-    }
+    if (!dragItem || dragItem.level !== level) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
     // Determine if dropping before or after based on mouse position
@@ -246,7 +221,7 @@
     dropTarget = null
   }
 
-  async function handleDrop(
+  function handleDrop(
     e: DragEvent,
     level: string,
     targetName: string,
@@ -255,45 +230,13 @@
   ) {
     e.preventDefault()
     e.stopPropagation()
-    if (!dragItem) {
-      dropTarget = null
-      return
-    }
-    // Allow same-level reorder and page→section cross-section move (#177).
-    const isPageToSection = dragItem.level === 'page' && level === 'section'
-    if (dragItem.level !== level && !isPageToSection) {
-      dragItem = null
-      dropTarget = null
-      return
-    }
-    if (dragItem.name === targetName && !isPageToSection) {
+    if (!dragItem || dragItem.level !== level || dragItem.name === targetName) {
       dragItem = null
       dropTarget = null
       return
     }
 
-    if (isPageToSection && section !== undefined) {
-      // Page dropped onto a section header → cross-section move (#177).
-      // `section` here is the sectionKey (full path) passed by
-      // SidebarSection's ondrop handler.
-      const fromSection = dragItem.section ?? ''
-      const toSection = section
-      if (fromSection === toSection) {
-        dragItem = null
-        dropTarget = null
-        return
-      }
-      try {
-        await MovePage(notebook ?? activeNotebook, fromSection, toSection, dragItem.name)
-        await loadNavigation()
-        await loadNavOrder()
-        onPageMoved?.(notebook ?? activeNotebook, fromSection, toSection, dragItem.name)
-      } catch (err) {
-        showDndError(
-          err instanceof Error ? err.message : 'Failed to move page'
-        )
-      }
-    } else if (level === 'section' && notebook) {
+    if (level === 'section' && notebook) {
       const sorted = sortByName(
         activeNotebookObj?.sections ?? [],
         navOrder.sections[notebook]
@@ -301,11 +244,7 @@
       const names = sorted.map((s) => s.name)
       const fromIdx = names.indexOf(dragItem.name)
       const toIdx = names.indexOf(targetName)
-      if (fromIdx === -1 || toIdx === -1) {
-        dragItem = null
-        dropTarget = null
-        return
-      }
+      if (fromIdx === -1 || toIdx === -1) return
       names.splice(fromIdx, 1)
       const insertAt = dropTarget?.before
         ? names.indexOf(targetName)
@@ -319,11 +258,7 @@
       const names = sorted.map((p) => p.name)
       const fromIdx = names.indexOf(dragItem.name)
       const toIdx = names.indexOf(targetName)
-      if (fromIdx === -1 || toIdx === -1) {
-        dragItem = null
-        dropTarget = null
-        return
-      }
+      if (fromIdx === -1 || toIdx === -1) return
       names.splice(fromIdx, 1)
       const insertAt = dropTarget?.before
         ? names.indexOf(targetName)
@@ -722,7 +657,6 @@
     window.addEventListener('refresh-navigation', handleRefresh)
     return () => {
       window.removeEventListener('refresh-navigation', handleRefresh)
-      if (dndErrorTimer) clearTimeout(dndErrorTimer)
     }
   })
 </script>
@@ -926,14 +860,13 @@
             Select a notebook.
           {/if}
         </div>
+      {:else if activeNotebookObj.sections.length === 0}
+        <div
+          class="text-text-muted py-10 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
+        >
+          No sections yet.<br />Create a section to add pages.
+        </div>
       {:else}
-        {#if activeNotebookObj.sections.length === 0}
-          <div
-            class="text-text-muted py-6 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
-          >
-            No sections yet.<br />Create a section to add pages.
-          </div>
-        {/if}
         {#each sortedSections as sec (sec.name)}
           <SidebarSection
             section={sec}
@@ -944,7 +877,6 @@
             {expandedSections}
             {navOrder}
             {dropTarget}
-            {dragItem}
             onToggleSection={toggleSection}
             onSelectPage={handleSelectPage}
             onPinPage={handlePinPage}
@@ -958,81 +890,9 @@
             onContextMenu={openContextMenu}
           />
         {/each}
-        <!-- Notebook-root drop zone (#177): drag a page here to move it
-             out of any section (section-less / root). Invisible until a
-             page is actively dragged over it. -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="mx-1 mt-1 rounded transition-colors min-h-[24px]"
-          class:drag-over-into={dropTarget?.level === 'section' &&
-            dropTarget.name === '__root__'}
-          ondragover={(e) => {
-            if (!dragItem || dragItem.level !== 'page') return
-            e.preventDefault()
-            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-            dropTarget = { level: 'section', name: '__root__', before: false }
-          }}
-          ondragleave={handleDragLeave}
-          ondrop={async (e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            if (!dragItem || dragItem.level !== 'page') {
-              dragItem = null
-              dropTarget = null
-              return
-            }
-            const fromSection = dragItem.section ?? ''
-            if (fromSection === '') {
-              // Already at root — no-op.
-              dragItem = null
-              dropTarget = null
-              return
-            }
-            try {
-              await MovePage(activeNotebook, fromSection, '', dragItem.name)
-              await loadNavigation()
-              await loadNavOrder()
-              onPageMoved?.(activeNotebook, fromSection, '', dragItem.name)
-            } catch (err) {
-              showDndError(
-                err instanceof Error ? err.message : 'Failed to move page'
-              )
-            }
-            dragItem = null
-            dropTarget = null
-          }}
-          role="region"
-          aria-label={dragItem?.level === 'page'
-            ? 'Drop here to move page to notebook root'
-            : undefined}
-        >
-          {#if dragItem?.level === 'page'}
-            <div
-              class="text-text-muted text-[11px] font-body-md py-1.5 px-2 text-center border border-dashed border-border-muted rounded"
-            >
-              Drop to move to notebook root
-            </div>
-          {/if}
-        </div>
       {/if}
     </div>
   </div>
-
-  <!-- DnD error toast (#177 collision / FS error). Perceivable without
-       color via icon + text; aria-live so AT users hear the error. -->
-  {#if dndError}
-    <div
-      class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-2xl border border-status-danger/40 bg-panel"
-      role="alert"
-      aria-live="assertive"
-    >
-      <span
-        class="material-symbols-outlined text-status-danger text-[18px]"
-        aria-hidden="true">error</span
-      >
-      <span class="text-text-primary text-[13px] font-body-md">{dndError}</span>
-    </div>
-  {/if}
 
   <!-- Inline create/rename modal -->
   {#if createMode}
@@ -1281,10 +1141,5 @@
   }
   :global(.drag-over-bottom) {
     box-shadow: inset 0 -2px 0 var(--color-accent-primary-start);
-  }
-  :global(.drag-over-into) {
-    background: color-mix(in srgb, var(--color-accent-primary-start) 18%, transparent);
-    box-shadow: inset 0 0 0 1px var(--color-accent-primary-start);
-    border-radius: 6px;
   }
 </style>

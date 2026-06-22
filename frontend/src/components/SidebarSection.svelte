@@ -38,7 +38,6 @@
       pages: Record<string, string[]>
     }
     dropTarget?: DropTarget | null
-    dragItem?: { level: string; name: string; section?: string } | null
     onToggleSection: (name: string) => void
     onSelectPage: (section: string, page: string) => void
     onPinPage: (section: string, page: string) => void
@@ -78,7 +77,6 @@
     expandedSections,
     navOrder,
     dropTarget = null,
-    dragItem = null,
     onToggleSection,
     onSelectPage,
     onPinPage,
@@ -134,21 +132,16 @@
   <div
     class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-hover transition-colors"
     class:drag-over-top={dropTarget?.level === 'section' &&
-      dragItem?.level !== 'page' &&
       dropTarget.name === section.name &&
       dropTarget.before}
     class:drag-over-bottom={dropTarget?.level === 'section' &&
-      dragItem?.level !== 'page' &&
       dropTarget.name === section.name &&
       !dropTarget.before}
-    class:drag-over-into={dropTarget?.level === 'section' &&
-      dragItem?.level === 'page' &&
-      dropTarget.name === section.name}
     draggable="true"
     ondragstart={(e) => onDragStart(e, 'section', section.name)}
     ondragover={(e) => onDragOver(e, 'section', section.name)}
     ondragleave={onDragLeave}
-    ondrop={(e) => onDrop(e, 'section', section.name, activeNotebook, sectionKey)}
+    ondrop={(e) => onDrop(e, 'section', section.name, activeNotebook)}
     ondragend={onDragEnd}
     onclick={() => onToggleSection(sectionKey)}
     onkeydown={(e) => {
@@ -213,7 +206,7 @@
             onclick={() => onSelectPage(sectionKey, pg.name)}
             ondblclick={() => onPinPage(sectionKey, pg.name)}
             onauxclick={(e) => {
-              // Middle-click (button 1) pins the page — industry-standard parity (#142).
+              // Middle-click (button 1) pins the page (#142 preview/pin contract).
               if (e.button === 1) {
                 e.preventDefault()
                 onPinPage(sectionKey, pg.name)
@@ -222,23 +215,17 @@
             oncontextmenu={(e) =>
               onContextMenu(e, 'page', activeNotebook, sectionKey, pg.name)}
             draggable="true"
-            ondragstart={(e) => onDragStart(e, 'page', pg.name, sectionKey)}
+            ondragstart={(e) => onDragStart(e, 'page', pg.name, section.name)}
             ondragover={(e) => onDragOver(e, 'page', pg.name)}
             ondragleave={onDragLeave}
             ondrop={(e) =>
-              onDrop(e, 'page', pg.name, activeNotebook, sectionKey)}
+              onDrop(e, 'page', pg.name, activeNotebook, section.name)}
             ondragend={onDragEnd}
             class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
             class:bg-hover={isActive}
             class:text-accent-primary-start={isActive}
             class:text-text-muted={!isActive}
             class:hover:text-text-primary={!isActive}
-            class:drag-over-top={dropTarget?.level === 'page' &&
-              dropTarget.name === pg.name &&
-              dropTarget.before}
-            class:drag-over-bottom={dropTarget?.level === 'page' &&
-              dropTarget.name === pg.name &&
-              !dropTarget.before}
             role="treeitem"
             aria-level={depth + 2}
             aria-selected={isActive}
@@ -266,7 +253,6 @@
           {expandedSections}
           {navOrder}
           {dropTarget}
-          {dragItem}
           {onToggleSection}
           {onSelectPage}
           {onPinPage}

@@ -123,8 +123,6 @@ Path resolution: the **notebook** is the top folder under the vault; the **page*
 
 Silt starts blank — no default notebook or section is created. The user creates or opens their first notebook from the sidebar's notebook selector.
 
-**Moving pages across sections (#177).** A page can be dragged from one section to another, or from a section into the notebook root (section-less), via sidebar drag-and-drop. The `MovePage` IPC renames the `.md` file on disk, rewrites its `section:` frontmatter, rebuilds the block index at the new path, and updates `nav_order` for both the source and target section keys. **Name collisions are rejected** (not auto-suffixed) — if a page with the same name already exists in the target section, the move fails with a user-visible error. This matches `RenamePage` semantics and prevents silent data loss.
-
 **Linked / external notebooks (#100).** A notebook root does not have to live
 inside the vault. The user can LINK an external folder (e.g. a synced
 SharePoint/OneDrive mount) as a notebook from the sidebar ("Link External
@@ -771,27 +769,12 @@ ui:
   max_open_tabs: 8
   # Format toolbar visibility (#168). Default true; hide for outliner density.
   show_format_toolbar: true
-  # Per-tab dirty/save-failed glyph on the tab header (#167). Default true;
-  # auto-save means most dirty state is sub-second, so users who find the
-  # visual churn noisy can disable. The in-editor indicator is unaffected.
-  show_tab_dirty_indicators: true
-  # Open-tab persistence (#142). Pinned tabs only; preview tabs are ephemeral.
-  open_tabs: []        # list of {notebook, section, page}
-  active_tab: null     # {notebook, section, page} or null
   # One-time tip dismissals (#168).
   dismissed_tips: []
   # Inline formatting toggles (#168, #170).
   formatting:
     typography_enabled: true   # smart quotes, em-dashes
     color_enabled: true        # text/background color pickers
-
-# Explicit navigation ordering for drag-to-reorder (#68, #177). Section/page
-# keys use the format `${notebook}/${section}` (empty section for root pages).
-# Items absent from the map fall back to alphabetical sort.
-nav_order:
-  notebooks: []                    # ordered notebook names
-  sections: {}                     # notebook name → [section names]
-  pages: {}                        # sectionKey → [page names]
 
 # Plugin Registry
 plugins:

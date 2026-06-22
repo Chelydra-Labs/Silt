@@ -74,13 +74,6 @@
     editorInstance?: Editor | null
     activeMarks?: Set<string>
     viewMode?: 'edit' | 'source'
-    /** Emitted when the editor's save state changes (dirty/error → clean).
-     *  Used by the tab strip to show per-tab dirty/save-failed indicators
-     *  (#167). */
-    onSaveStateChange?: (state: {
-      dirty: boolean
-      error: string | null
-    }) => void
   }
 
   let {
@@ -94,8 +87,7 @@
     onUpdate,
     editorInstance = $bindable(null),
     activeMarks = $bindable(new Set()),
-    viewMode = 'edit',
-    onSaveStateChange
+    viewMode = 'edit'
   }: Props = $props()
   let editorReady = $state(false)
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
@@ -384,7 +376,6 @@
       if (suppressUpdate) return
       detectSlashCommand()
       unsavedChanges = true
-      emitSaveState()
       isLastBlock = editorInstance
         ? editorInstance.state.doc.childCount <= 1
         : false
@@ -531,11 +522,6 @@
       emitUpdate: false
     })
     suppressUpdate = false
-    // Reset save state — new content loaded, nothing is dirty (#167).
-    unsavedChanges = false
-    lastSaveError = null
-    lastEmittedSaveState = { dirty: false, error: null }
-    emitSaveState()
   })
 
   // --- Auto-save (debounced, config-driven, same contract as legacy) --------
@@ -557,20 +543,6 @@
 
   let unsavedChanges = $state(false)
   let lastSaveError: string | null = $state(null)
-  // Tracks the last-emitted snapshot so onSaveStateChange only fires on
-  // actual transitions (avoids churn on every keystroke).
-  let lastEmittedSaveState = { dirty: false, error: null as string | null }
-
-  function emitSaveState() {
-    const next = { dirty: unsavedChanges, error: lastSaveError }
-    if (
-      next.dirty !== lastEmittedSaveState.dirty ||
-      next.error !== lastEmittedSaveState.error
-    ) {
-      lastEmittedSaveState = next
-      onSaveStateChange?.(next)
-    }
-  }
 
   async function doSave(): Promise<void> {
     if (!editorInstance || editorInstance.isDestroyed) return
@@ -581,14 +553,12 @@
       await SaveFileBlocks(notebook, section, page, updatedBlocks)
       lastSaveError = null
       unsavedChanges = false
-      emitSaveState()
       // Emit editor:save on the plugin event bus (#110).
       dispatchPluginEvent('editor:save', { notebook, section, page })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.error('TipTapEditor: SaveFileBlocks failed:', e)
       lastSaveError = msg
-      emitSaveState()
       pushNotification({
         kind: 'error',
         message: `Save failed: ${msg}`,
