@@ -1445,10 +1445,16 @@ func TestClearNetworkAudit_AtomicWithConcurrentFetch(t *testing.T) {
 	app.auditNetwork("clear-race", "GET", "https://example.com/pre", 200)
 
 	startNetworkAuditWriter(app.vaultPath)
-	// Wait for the pre-entry to land on disk (the writer is async).
+	// Wait for the pre-entry to land on disk (the writer is async). Use the
+	// synchronized accessor rather than touching the package-level pointer
+	// directly so the test honors the encapsulation pattern.
+	w := currentNetworkAuditWriter()
+	if w == nil {
+		t.Fatal("writer not running after startNetworkAuditWriter")
+	}
 	{
 		op := &networkAuditOp{done: make(chan struct{})}
-		networkAuditWriter.ch <- op
+		w.ch <- op
 		<-op.done
 	}
 
