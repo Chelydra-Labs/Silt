@@ -10,6 +10,7 @@
   // page — top-level or deeply nested — retains those capabilities.
   import SidebarSection from './SidebarSection.svelte'
   import type { NavSection } from '../lib/sidebar/types'
+  import { sortByName } from '../lib/sidebar/navOrder'
 
   interface DropTarget {
     level: string
@@ -84,20 +85,6 @@
 
   let sectionKey = $derived(section.path || section.name)
   let isExpanded = $derived(expandedSections.has(sectionKey))
-
-  function sortByName<T extends { name: string }>(
-    items: T[],
-    order: string[] | undefined
-  ): T[] {
-    if (!order || order.length === 0) return items
-    const orderMap = new Map(order.map((n, i) => [n, i]))
-    return [...items].sort((a, b) => {
-      const ai = orderMap.has(a.name) ? orderMap.get(a.name)! : Infinity
-      const bi = orderMap.has(b.name) ? orderMap.get(b.name)! : Infinity
-      if (ai !== bi) return ai - bi
-      return a.name.localeCompare(b.name)
-    })
-  }
 
   let sortedPages = $derived(
     sortByName(

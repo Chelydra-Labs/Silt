@@ -25,6 +25,13 @@
     reconcileActive,
     generateUniquePageName as generateUniquePageNameHelper
   } from '../lib/sidebar/navTree'
+  import {
+    linkedNotebookId,
+    isLinkedNotebook,
+    deleteTargetLabel,
+    reconcileActiveAfterDelete,
+    findNotebook
+  } from '../lib/sidebar/navActions'
 
   interface Props {
     activeNotebook: string
@@ -106,9 +113,7 @@
   let deleteTargetLinked = $derived(
     !!deleteTarget &&
       deleteTarget.level === 'notebook' &&
-      tree.notebooks.find((n) => n.name === deleteTarget!.notebook)?.source !==
-        'vault' &&
-      !!tree.notebooks.find((n) => n.name === deleteTarget!.notebook)?.source
+      isLinkedNotebook(findNotebook(tree, deleteTarget.notebook))
   )
 
   // Nav order for drag-to-reorder (#68). Explicit ordering from config.yaml;
@@ -498,47 +503,43 @@
     if (!contextMenu) return
     const { level, notebook, section, page } = contextMenu
     contextMenu = null
-    let label = ''
-    if (level === 'page' && page) label = `page "${page}"`
-    else if (level === 'section' && section)
-      label = `section "${section}" and all its pages`
-    else if (level === 'notebook')
-      label = `notebook "${notebook}" and all its content`
-    deleteTarget = { level, notebook, section, page, label }
+    deleteTarget = {
+      level,
+      notebook,
+      section,
+      page,
+      label: deleteTargetLabel({ level, notebook, section, page })
+    }
   }
 
   async function confirmDelete() {
     if (!deleteTarget) return
-    const { level, notebook, section, page } = deleteTarget
+    const target = deleteTarget
     deleteTarget = null
     try {
-      if (level === 'page' && page !== undefined) {
-        await DeletePage(notebook, section ?? '', page)
-      } else if (level === 'section' && section !== undefined) {
-        await DeleteSection(notebook, section)
-      } else if (level === 'notebook') {
+      if (target.level === 'page' && target.page !== undefined) {
+        await DeletePage(target.notebook, target.section ?? '', target.page)
+      } else if (target.level === 'section' && target.section !== undefined) {
+        await DeleteSection(target.notebook, target.section)
+      } else if (target.level === 'notebook') {
         // #100: a linked notebook is UNLINKED (files untouched), not moved to
         // trash. Vault notebooks are deleted as before.
-        const nb = tree.notebooks.find((n) => n.name === notebook)
-        if (nb && nb.source && nb.source !== 'vault') {
-          const id = nb.source.slice('linked:'.length)
-          if (id) await UnlinkNotebook(id)
+        const id = linkedNotebookId(findNotebook(tree, target.notebook))
+        if (id !== null) {
+          await UnlinkNotebook(id)
         } else {
-          await DeleteNotebook(notebook)
+          await DeleteNotebook(target.notebook)
         }
       }
       await loadNavigation()
-      // Navigate away if the active item was deleted.
-      if (level === 'notebook' && activeNotebook === notebook) {
-        activeNotebook = ''
-        activeSection = ''
-        activePage = ''
-      } else if (level === 'section' && activeSection === section) {
-        activeSection = ''
-        activePage = ''
-      } else if (level === 'page' && activePage === page) {
-        activePage = ''
-      }
+      const next = reconcileActiveAfterDelete(target, {
+        notebook: activeNotebook,
+        section: activeSection,
+        page: activePage
+      })
+      activeNotebook = next.notebook
+      activeSection = next.section
+      activePage = next.page
     } catch (e) {
       console.error('Delete failed:', e)
     }
@@ -814,34 +815,8 @@
             dropTarget = { level: 'section', name: '__root__', before: false }
           }}
           ondragleave={handleDragLeave}
-          ondrop={async (e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            if (!dragItem || dragItem.level !== 'page') {
-              dragItem = null
-              dropTarget = null
-              return
-            }
-            const fromSection = dragItem.section ?? ''
-            if (fromSection === '') {
-              // Already at root — no-op.
-              dragItem = null
-              dropTarget = null
-              return
-            }
-            try {
-              await MovePage(activeNotebook, fromSection, '', dragItem.name)
-              await loadNavigation()
-              await loadNavOrder()
-              onPageMoved?.(activeNotebook, fromSection, '', dragItem.name)
-            } catch (err) {
-              showDndError(
-                err instanceof Error ? err.message : 'Failed to move page'
-              )
-            }
-            dragItem = null
-            dropTarget = null
-          }}
+          ondrop={(e) =>
+            handleDrop(e, 'section', '__root__', activeNotebook, '')}
           role="region"
           aria-label={dragItem?.level === 'page'
             ? 'Drop here to move page to notebook root'

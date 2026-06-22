@@ -98,12 +98,42 @@ export class DragDropManager {
       this.clear()
       return
     }
+    // The notebook-root drop zone (#177) uses targetName='__root__' to mean
+    // "move this page out of any section" (target section = ''). It's the
+    // page→section path with an empty target section.
+    const isRootDrop = isPageToSection && targetName === '__root__'
     if (this.dragItem.name === targetName && !isPageToSection) {
       this.clear()
       return
     }
 
-    if (isPageToSection && section !== undefined) {
+    if (isRootDrop) {
+      const fromSection = this.dragItem.section ?? ''
+      if (fromSection === '') {
+        // Already at root — no-op.
+        this.clear()
+        return
+      }
+      try {
+        await MovePage(
+          notebook ?? this.deps.getActiveNotebook(),
+          fromSection,
+          '',
+          this.dragItem.name
+        )
+        await this.deps.onMoved()
+        this.deps.onPageMoved?.(
+          notebook ?? this.deps.getActiveNotebook(),
+          fromSection,
+          '',
+          this.dragItem.name
+        )
+      } catch (err) {
+        this.deps.onError(
+          err instanceof Error ? err.message : 'Failed to move page'
+        )
+      }
+    } else if (isPageToSection && section !== undefined) {
       // Page dropped onto a section header → cross-section move (#177).
       const fromSection = this.dragItem.section ?? ''
       const toSection = section

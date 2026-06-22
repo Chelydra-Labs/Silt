@@ -175,6 +175,38 @@ describe('DragDropManager', () => {
     expect(MovePage).not.toHaveBeenCalled()
   })
 
+  it('handleDrop page→__root__ moves the page out of its section', async () => {
+    const { MovePage } = await import('../../../wailsjs/go/main/App.js')
+    const deps = makeDeps()
+    const dnd = new DragDropManager(deps)
+    const e = makeDragEvent()
+
+    dnd.handleDragStart(e, 'page', '2026-06-22', 'Journal')
+    // Root dropzone calls handleDrop with targetName='__root__' + section='' (#177).
+    await dnd.handleDrop(e, 'section', '__root__', 'Work', '')
+
+    expect(MovePage).toHaveBeenCalledWith('Work', 'Journal', '', '2026-06-22')
+    expect(deps.onPageMoved).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      '',
+      '2026-06-22'
+    )
+  })
+
+  it('handleDrop page→__root__ is a no-op when the page is already at root', async () => {
+    const { MovePage } = await import('../../../wailsjs/go/main/App.js')
+    const deps = makeDeps()
+    const dnd = new DragDropManager(deps)
+    const e = makeDragEvent()
+
+    // dragItem.section === '' → page already at root.
+    dnd.handleDragStart(e, 'page', '2026-06-22', '')
+    await dnd.handleDrop(e, 'section', '__root__', 'Work', '')
+
+    expect(MovePage).not.toHaveBeenCalled()
+  })
+
   it('handleDragEnd clears state', () => {
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
