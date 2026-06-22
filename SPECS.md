@@ -739,30 +739,30 @@ hotkeys:
   open_template_picker: "Ctrl+Shift+T"
   next_tab: "Ctrl+Tab"
   prev_tab: "Ctrl+Shift+Tab"
-   close_tab: "Ctrl+W"
-   # Inline formatting hotkeys (#168).
-   format_bold: "Ctrl+B"
-   format_italic: "Ctrl+I"
-   format_underline: "Ctrl+U"
-   format_strike: "Ctrl+Shift+X"
-   format_code: "Ctrl+E"
-   format_link: "Ctrl+K"
-   format_highlight: "Ctrl+Shift+H"
-   format_subscript: "Ctrl+,"
-   format_superscript: "Ctrl+."
-   # Heading level hotkeys (#169).
-   set_h1: "Ctrl+Alt+1"
-   set_h2: "Ctrl+Alt+2"
-   set_h3: "Ctrl+Alt+3"
-   set_note: "Ctrl+Alt+0"
-   set_task: "Ctrl+Alt+4"
-   # Text alignment hotkeys (#173).
-   align_left: "Ctrl+Shift+L"
-   align_center: "Ctrl+Shift+E"
-   align_right: "Ctrl+Shift+R"
-   align_justify: "Ctrl+Shift+J"
-   # View mode toggle (#171).
-   toggle_view_mode: "Ctrl+Shift+V"
+  close_tab: "Ctrl+W"
+  # Inline formatting hotkeys (#168).
+  format_bold: "Ctrl+B"
+  format_italic: "Ctrl+I"
+  format_underline: "Ctrl+U"
+  format_strike: "Ctrl+Shift+X"
+  format_code: "Ctrl+E"
+  format_link: "Ctrl+K"
+  format_highlight: "Ctrl+Shift+H"
+  format_subscript: "Ctrl+,"
+  format_superscript: "Ctrl+."
+  # Heading level hotkeys (#169).
+  set_h1: "Ctrl+Alt+1"
+  set_h2: "Ctrl+Alt+2"
+  set_h3: "Ctrl+Alt+3"
+  set_note: "Ctrl+Alt+0"
+  set_task: "Ctrl+Alt+4"
+  # Text alignment hotkeys (#173).
+  align_left: "Ctrl+Shift+L"
+  align_center: "Ctrl+Shift+E"
+  align_right: "Ctrl+Shift+R"
+  align_justify: "Ctrl+Shift+J"
+  # View mode toggle (#171).
+  toggle_view_mode: "Ctrl+Shift+V"
 
 # UI Preferences (per-vault)
 ui:
