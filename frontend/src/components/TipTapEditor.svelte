@@ -16,6 +16,7 @@
     SiltBlockKeymaps,
     convertToBlock,
     setBlockAlign,
+    findActiveBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
     filterMetaKeys,
@@ -29,9 +30,20 @@
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
-  import { serializeInlineContent } from '../lib/editor/converters'
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
+  import { clampToViewport } from '../lib/editor/popoverPositioning'
+  import {
+    cutSelection,
+    copySelection,
+    pasteFromClipboard,
+    copyAsMarkdown,
+    copyAsPlainText,
+    copyBlockReference,
+    copyBlockEmbed,
+    duplicateBlock,
+    deleteBlock
+  } from '../lib/editor/clipboard'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
   import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
   import { isSystemDark } from '../lib/systemTheme.svelte'
@@ -578,19 +590,10 @@
     const pos = selection.$from.start()
     try {
       const c = editorInstance.view.coordsAtPos(pos)
-      const paletteWidth = 256
-      const paletteHeight = 300
-      let left = c.left
-      let top = c.bottom
-      if (left + paletteWidth > window.innerWidth) {
-        left = window.innerWidth - paletteWidth - 8
-      }
-      if (top + paletteHeight > window.innerHeight) {
-        top = window.innerHeight - paletteHeight - 8
-      }
-      left = Math.max(8, left)
-      top = Math.max(8, top)
-      return { left, top }
+      return clampToViewport(
+        { x: c.left, y: c.bottom, width: 256, height: 300 },
+        { width: window.innerWidth, height: window.innerHeight }
+      )
     } catch (err) {
       return null
     }
@@ -798,33 +801,17 @@
     // Resolve the active block and its unique ID
     let activeBlockId: string | undefined
     let activeBlockNode: ProseMirrorNode | null = null
-    const selPos = editorInstance.state.selection.$from
-    for (let d = selPos.depth; d >= 1; d--) {
-      const node = selPos.node(d)
-      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
-        activeBlockId = node.attrs.id
-        activeBlockNode = node
-        break
-      }
+    const active = findActiveBlock(editorInstance)
+    if (active) {
+      activeBlockId = active.node.attrs.id
+      activeBlockNode = active.node
     }
 
     // Viewport collision boundary adjustment to prevent offscreen rendering
-    const menuWidth = 220
-    const menuHeight = 320
-    const screenWidth = window.innerWidth
-    const screenHeight = window.innerHeight
-
-    let x = e.clientX
-    let y = e.clientY
-
-    if (x + menuWidth > screenWidth) {
-      x = screenWidth - menuWidth - 8
-    }
-    if (y + menuHeight > screenHeight) {
-      y = screenHeight - menuHeight - 8
-    }
-    x = Math.max(8, x)
-    y = Math.max(8, y)
+    const { left: x, top: y } = clampToViewport(
+      { x: e.clientX, y: e.clientY, width: 220, height: 320 },
+      { width: window.innerWidth, height: window.innerHeight }
+    )
 
     contextMenu = {
       x,
@@ -834,141 +821,73 @@
     }
   }
 
-  // Menu action handlers
+  // Menu action handlers — thin wrappers around the extracted clipboard
+  // module. Each handler operates on `editorInstance` + the live `contextMenu`
+  // state (passed via a getter so the module sees the current snapshot).
   function closeContextMenu(): void {
     contextMenu = null
     editorInstance?.commands.focus()
   }
 
+  function clipboardDeps() {
+    return {
+      editor: editorInstance!,
+      notify: pushNotification,
+      menu: () => contextMenu
+    }
+  }
+
   function handleCut(): void {
     if (!editorInstance) return
-    const { selection } = editorInstance.state
-    const text = editorInstance.state.doc.textBetween(
-      selection.from,
-      selection.to,
-      '\n'
-    )
-    navigator.clipboard.writeText(text).catch(() => {})
-    editorInstance.commands.deleteSelection()
+    cutSelection(clipboardDeps())
     closeContextMenu()
   }
 
   function handleCopy(): void {
     if (!editorInstance) return
-    const { selection } = editorInstance.state
-    const text = editorInstance.state.doc.textBetween(
-      selection.from,
-      selection.to,
-      '\n'
-    )
-    navigator.clipboard.writeText(text).catch(() => {})
+    copySelection(clipboardDeps())
     closeContextMenu()
   }
 
   async function handlePaste(): Promise<void> {
     if (!editorInstance) return
-    try {
-      const text = await navigator.clipboard.readText()
-      if (text) {
-        editorInstance.commands.insertContent({ type: 'text', text })
-      }
-    } catch {
-      pushNotification({
-        kind: 'error',
-        message: 'Paste failed: clipboard could not be read.'
-      })
-    }
+    await pasteFromClipboard(clipboardDeps())
     closeContextMenu()
   }
 
   async function handleCopyAsMarkdown(): Promise<void> {
     if (!editorInstance) return
-    const { selection } = editorInstance.state
-    let md = ''
-    if (selection.empty) {
-      if (contextMenu?.activeBlockNode) {
-        const json = contextMenu.activeBlockNode.toJSON()
-        md = json.content ? serializeInlineContent(json.content) : ''
-      }
-    } else {
-      const slice = editorInstance.state.doc.slice(selection.from, selection.to)
-      const parts: string[] = []
-      slice.content.forEach((node) => {
-        const json = node.toJSON()
-        parts.push(
-          json.content ? serializeInlineContent(json.content) : json.text || ''
-        )
-      })
-      md = parts.join('\n')
-    }
-    await navigator.clipboard.writeText(md).catch(() => {})
+    await copyAsMarkdown(clipboardDeps())
     closeContextMenu()
   }
 
   async function handleCopyAsPlainText(): Promise<void> {
     if (!editorInstance) return
-    const { selection } = editorInstance.state
-    const text = selection.empty
-      ? ''
-      : editorInstance.state.doc.textBetween(selection.from, selection.to, '\n')
-    await navigator.clipboard.writeText(text).catch(() => {})
+    await copyAsPlainText(clipboardDeps())
     closeContextMenu()
   }
 
   async function handleCopyBlockReference(): Promise<void> {
-    if (contextMenu?.activeBlockId) {
-      await navigator.clipboard
-        .writeText(`((${contextMenu.activeBlockId}))`)
-        .catch(() => {})
-    }
+    if (!editorInstance) return
+    await copyBlockReference(clipboardDeps())
     closeContextMenu()
   }
 
   async function handleCopyBlockEmbed(): Promise<void> {
-    if (contextMenu?.activeBlockId) {
-      await navigator.clipboard
-        .writeText(`{{embed:${contextMenu.activeBlockId}}}`)
-        .catch(() => {})
-    }
+    if (!editorInstance) return
+    await copyBlockEmbed(clipboardDeps())
     closeContextMenu()
   }
 
   function handleDuplicateBlock(): void {
-    if (!editorInstance || !contextMenu?.activeBlockNode) return
-    const pos = editorInstance.state.selection.$from
-    let blockDepth = 1
-    for (let d = pos.depth; d >= 1; d--) {
-      const node = pos.node(d)
-      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
-        blockDepth = d
-        break
-      }
-    }
-    const endPos = pos.after(blockDepth)
-    const json = contextMenu.activeBlockNode.toJSON()
-    if (json.attrs && json.attrs.id) {
-      delete json.attrs.id
-    }
-    editorInstance.chain().insertContentAt(endPos, json).focus().run()
+    if (!editorInstance) return
+    duplicateBlock(clipboardDeps())
     closeContextMenu()
   }
 
   function handleDeleteBlock(): void {
     if (!editorInstance) return
-    const { doc } = editorInstance.state
-    if (doc.childCount <= 1) return
-    const pos = editorInstance.state.selection.$from
-    let blockDepth = 1
-    for (let d = pos.depth; d >= 1; d--) {
-      const node = pos.node(d)
-      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
-        blockDepth = d
-        break
-      }
-    }
-    const from = pos.before(blockDepth)
-    const to = pos.after(blockDepth)
-    editorInstance.chain().deleteRange({ from, to }).focus().run()
+    deleteBlock(clipboardDeps())
     closeContextMenu()
   }
 

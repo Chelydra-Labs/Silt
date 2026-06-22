@@ -21,6 +21,10 @@
   import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
   import { DragDropManager } from '../lib/sidebar/useDragDrop'
   import type { NavNotebook, NavigationTree } from '../lib/sidebar/types'
+  import {
+    reconcileActive,
+    generateUniquePageName as generateUniquePageNameHelper
+  } from '../lib/sidebar/navTree'
 
   interface Props {
     activeNotebook: string
@@ -233,32 +237,19 @@
   async function loadNavigation() {
     try {
       const data = await ListNavigation()
-      if (data) {
-        tree = data
-        // Pick a sensible active notebook if none selected.
-        if (tree.notebooks.length > 0) {
-          if (
-            !activeNotebook ||
-            !tree.notebooks.some((nb) => nb.name === activeNotebook)
-          ) {
-            activeNotebook = tree.notebooks[0].name
-            onSelectNotebook(activeNotebook)
-          }
-          // Ensure active section/page still exist; clear if not.
-          const nb = tree.notebooks.find((n) => n.name === activeNotebook)
-          if (nb) {
-            if (
-              activeSection &&
-              !nb.sections.some((s) => s.name === activeSection)
-            ) {
-              activeSection = ''
-            }
-          } else {
-            activeSection = ''
-            activePage = ''
-          }
-        }
+      if (!data) return
+      tree = data
+      const next = reconcileActive(tree, {
+        notebook: activeNotebook,
+        section: activeSection,
+        page: activePage
+      })
+      if (next.notebook !== activeNotebook) {
+        activeNotebook = next.notebook
+        onSelectNotebook(activeNotebook)
       }
+      if (next.section !== activeSection) activeSection = next.section
+      if (next.page !== activePage) activePage = next.page
     } catch (e) {
       console.error('Failed to load navigation:', e)
     }
@@ -464,16 +455,7 @@
   }
 
   async function generateUniquePageName(sectionName: string): Promise<string> {
-    const base = 'Untitled'
-    const nb = tree.notebooks.find((n) => n.name === activeNotebook)
-    if (!nb) return base
-    const sec = nb.sections.find((s) => s.name === sectionName)
-    if (!sec) return base
-    const existing = new Set(sec.pages.map((p) => p.name))
-    if (!existing.has(base)) return base
-    let i = 2
-    while (existing.has(`${base} ${i}`)) i++
-    return `${base} ${i}`
+    return generateUniquePageNameHelper(tree, activeNotebook, sectionName)
   }
 
   // --- Context menu handlers (#62) ---
