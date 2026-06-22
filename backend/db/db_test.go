@@ -354,6 +354,21 @@ func TestBlocksSource_DefaultsVault(t *testing.T) {
 	}
 }
 
+// TestSchema_TagsRawPathIndex guards the index that backs QueryBlocksByTag
+// and the tag filter in QueryTasksWithFilters (both filter tags on raw_path).
+func TestSchema_TagsRawPathIndex(t *testing.T) {
+	dm := newTestDB(t)
+	var n int
+	if err := dm.db.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_tags_raw_path'",
+	).Scan(&n); err != nil {
+		t.Fatalf("check index: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected idx_tags_raw_path to exist, got count=%d", n)
+	}
+}
+
 func TestIndexFileBlocks_ReplacesExistingRows(t *testing.T) {
 	dm := newTestDB(t)
 

@@ -179,6 +179,11 @@ func (dm *DatabaseManager) initSchema() error {
 		"CREATE INDEX IF NOT EXISTS idx_blocks_src_file ON blocks(source, notebook, section, page, file_date);",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_tags_lookup ON tags(level_0, level_1, level_2);",
+		// QueryBlocksByTag and the tag filter in QueryTasksWithFilters both
+		// filter on raw_path (equality + prefix LIKE 'path/%'); the level_*
+		// index above can't serve those. Prefix-LIKE is sargable under the
+		// default BINARY collation.
+		"CREATE INDEX IF NOT EXISTS idx_tags_raw_path ON tags(raw_path);",
 		// Functional indexes for case-insensitive search (SearchBlocks).
 		"CREATE INDEX IF NOT EXISTS idx_blocks_clean_lower ON blocks(LOWER(clean_content));",
 		"CREATE INDEX IF NOT EXISTS idx_blocks_notebook_lower ON blocks(LOWER(notebook));",
