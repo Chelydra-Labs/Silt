@@ -5,6 +5,7 @@ import {
   promotePreview,
   cycleTab,
   reorderTab,
+  mergeReorderedTabs,
   mruOrder,
   pickEvictionVictim,
   findTab,
@@ -519,5 +520,82 @@ describe('TabEntry dirty/saveError defaults (#167)', () => {
     expect(reused.page).toBe(PAGE_B.page)
     expect(reused.dirty).toBe(false)
     expect(reused.saveError).toBe(null)
+  })
+})
+
+describe('mergeReorderedTabs (#175)', () => {
+  const WA = { notebook: 'Work', section: '', page: 'A' }
+  const WB = { notebook: 'Work', section: '', page: 'B' }
+  const WC = { notebook: 'Work', section: '', page: 'C' }
+  const PA = { notebook: 'Personal', section: '', page: 'D' }
+  const PB = { notebook: 'Personal', section: '', page: 'E' }
+
+  it('replaces displayed tabs in-order, preserving other-notebook positions', () => {
+    // Full: [WA, PA, WB, PB, WC] — Work and Personal interleaved.
+    // Reordered Work subset: [WC, WB, WA] (reversed).
+    // Expected: [WC, PA, WB, PB, WA].
+    const full = [
+      mkTab(WA, { id: 'wa' }),
+      mkTab(PA, { id: 'pa' }),
+      mkTab(WB, { id: 'wb' }),
+      mkTab(PB, { id: 'pb' }),
+      mkTab(WC, { id: 'wc' })
+    ]
+    const reordered = [
+      mkTab(WC, { id: 'wc' }),
+      mkTab(WB, { id: 'wb' }),
+      mkTab(WA, { id: 'wa' })
+    ]
+    const merged = mergeReorderedTabs(full, reordered, 'Work')
+    expect(merged.map((t) => t.id)).toEqual([
+      'wc',
+      'pa',
+      'wb',
+      'pb',
+      'wa'
+    ])
+  })
+
+  it('preserves all non-displayed tabs exactly', () => {
+    const full = [
+      mkTab(WA, { id: 'wa' }),
+      mkTab(PA, { id: 'pa' }),
+      mkTab(WB, { id: 'wb' })
+    ]
+    const reordered = [mkTab(WB, { id: 'wb' }), mkTab(WA, { id: 'wa' })]
+    const merged = mergeReorderedTabs(full, reordered, 'Work')
+    // Personal tab at index 1 is untouched.
+    expect(merged[1].id).toBe('pa')
+    expect(merged[1].notebook).toBe('Personal')
+  })
+
+  it('handles a notebook with zero tabs in the full array', () => {
+    const full = [mkTab(PA, { id: 'pa' }), mkTab(PB, { id: 'pb' })]
+    const reordered: TabEntry[] = []
+    const merged = mergeReorderedTabs(full, reordered, 'Work')
+    expect(merged.map((t) => t.id)).toEqual(['pa', 'pb'])
+  })
+
+  it('preserves the full array length', () => {
+    const full = [
+      mkTab(WA, { id: 'wa' }),
+      mkTab(PA, { id: 'pa' }),
+      mkTab(WB, { id: 'wb' })
+    ]
+    const reordered = [mkTab(WB, { id: 'wb' }), mkTab(WA, { id: 'wa' })]
+    const merged = mergeReorderedTabs(full, reordered, 'Work')
+    expect(merged.length).toBe(full.length)
+  })
+
+  it('does not mutate the input array', () => {
+    const full = [
+      mkTab(WA, { id: 'wa' }),
+      mkTab(PA, { id: 'pa' }),
+      mkTab(WB, { id: 'wb' })
+    ]
+    const reordered = [mkTab(WB, { id: 'wb' }), mkTab(WA, { id: 'wa' })]
+    const originalIds = full.map((t) => t.id)
+    mergeReorderedTabs(full, reordered, 'Work')
+    expect(full.map((t) => t.id)).toEqual(originalIds)
   })
 })

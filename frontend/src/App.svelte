@@ -44,6 +44,7 @@
     promotePreview as promotePreviewState,
     cycleTab as cycleTabState,
     reorderTab as reorderTabState,
+    mergeReorderedTabs,
     generateTabId,
     type TabEntry,
     type PageRef,
@@ -173,21 +174,14 @@
     }
     // Reorder within the displayed (per-notebook) tabs, then splice the
     // reordered subset back into the full openTabs array — non-displayed
-    // (other-notebook) tabs keep their relative positions. The displayed
-    // tabs are replaced in-order as we walk openTabs.
+    // (other-notebook) tabs keep their relative positions.
     const result = reorderTabState(
       { tabs: displayedTabs, activeId: activeTabId },
       fromId,
       toId,
       before
     )
-    let displayIdx = 0
-    openTabs = openTabs.map((t) => {
-      if (t.notebook === activeNotebook) {
-        return result.tabs[displayIdx++]
-      }
-      return t
-    })
+    openTabs = mergeReorderedTabs(openTabs, result.tabs, activeNotebook)
     schedulePersistTabs()
   }
 

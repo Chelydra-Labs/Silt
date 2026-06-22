@@ -364,3 +364,28 @@ export function reorderTab(
   next.splice(insertIdx, 0, moved)
   return { tabs: next, activeId: state.activeId }
 }
+
+/**
+ * Merge a reordered subset of displayed tabs (one notebook's tabs) back into
+ * the full openTabs array, preserving the relative positions of other-notebook
+ * tabs. Used by handleReorderTab in App.svelte (#175). Pure and testable so
+ * the merge logic doesn't require an App-level component test.
+ *
+ * @param fullTabs The full openTabs array (all notebooks, interleaved)
+ * @param reorderedDisplayed The reordered subset for the active notebook
+ * @param notebook The active notebook name (filters which tabs to replace)
+ * @returns A new array with the reordered subset spliced in
+ */
+export function mergeReorderedTabs(
+  fullTabs: TabEntry[],
+  reorderedDisplayed: TabEntry[],
+  notebook: string
+): TabEntry[] {
+  let displayIdx = 0
+  return fullTabs.map((t) => {
+    if (t.notebook === notebook) {
+      return reorderedDisplayed[displayIdx++]
+    }
+    return t
+  })
+}
