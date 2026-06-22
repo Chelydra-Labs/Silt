@@ -74,7 +74,7 @@ func (a *App) ClearNetworkAudit() error {
 				}
 				logPath := filepath.Join(pluginsDir, e.Name(), "network.log")
 				if _, err := os.Stat(logPath); err == nil {
-					_ = os.WriteFile(logPath, []byte{}, 0o644)
+					_ = os.WriteFile(logPath, []byte{}, 0o600)
 				}
 			}
 		}
