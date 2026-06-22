@@ -184,6 +184,9 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		results = append(results, r)
 		blockIDs = append(blockIDs, r.ID)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating task results: %w", err)
+	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
@@ -253,6 +256,9 @@ func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 			direct[p] = make(map[string]struct{})
 		}
 		direct[p][id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating tag hierarchy: %w", err)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -375,6 +381,9 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 		r.DueDate = due
 		r.Priority = priority
 		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating blocks by tag: %w", err)
 	}
 	return results, nil
 }

@@ -11,6 +11,10 @@ import (
 	"silt/backend/parser"
 )
 
+// tagRegex matches inline tags starting with # followed by a letter.
+// Package-level var so the regex is compiled once, not per ExtractTags call.
+var tagRegex = regexp.MustCompile(`\B#([a-zA-Z][a-zA-Z0-9_/-]*)`)
+
 // IsFileUnchanged reports whether the file at `path` was previously indexed
 // with the exact same mtime (Unix nanoseconds) and size. A warm restart uses
 // this to skip re-parsing files the user has not touched since the last index.
@@ -81,6 +85,9 @@ func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error)
 		}
 		pruned = append(pruned, p)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating stale files: %w", err)
+	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
@@ -119,6 +126,9 @@ func (dm *DatabaseManager) KnownFiles() (map[string]FileStat, error) {
 		}
 		out[path] = fs
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating known files: %w", err)
+	}
 	return out, nil
 }
 
@@ -126,7 +136,6 @@ func (dm *DatabaseManager) KnownFiles() (map[string]FileStat, error) {
 // Tag names may contain letters, digits, underscores, hyphens, and slashes
 // (so #work/project/milestone-one is captured in full).
 func ExtractTags(text string) []string {
-	tagRegex := regexp.MustCompile(`\B#([a-zA-Z][a-zA-Z0-9_/-]*)`)
 	matches := tagRegex.FindAllStringSubmatch(text, -1)
 	var tags []string
 	seen := make(map[string]bool)

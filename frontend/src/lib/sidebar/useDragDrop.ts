@@ -44,7 +44,6 @@ export interface DragDropDeps {
 export class DragDropManager {
   private dragItem: DragItem | null = null
   private dropTarget: DropTarget | null = null
-  private errorTimer: ReturnType<typeof setTimeout> | null = null
   private deps: DragDropDeps
 
   constructor(deps: DragDropDeps) {

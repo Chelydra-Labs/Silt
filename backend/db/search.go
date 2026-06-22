@@ -126,6 +126,9 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int) (p
 		r.Priority = priority
 		flat = append(flat, r)
 	}
+	if err := rows.Err(); err != nil {
+		return parser.SearchResult{}, fmt.Errorf("failed iterating search results: %w", err)
+	}
 	if err := rows.Close(); err != nil {
 		return parser.SearchResult{}, err
 	}
