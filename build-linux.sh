@@ -270,7 +270,7 @@ chmod 755 "$DEBROOT/usr/bin/${APP_NAME}"
 cp "$ROOT/build/appicon.png" "$DEBROOT/usr/share/icons/hicolor/1024x1024/apps/${APP_NAME}.png"
 cp "$DESKTOP_FILE" "$DEBROOT/usr/share/applications/${APP_NAME}.desktop"
 cat > "$DEBROOT/usr/share/doc/${APP_NAME}/copyright" <<EOF
-Copyright (c) $(date +%Y) ChrisUFO. Licensed per the project LICENSE.
+Copyright (c) $(date +%Y) Chelydra Labs. Licensed per the project LICENSE.
 EOF
 cat > "$DEBROOT/usr/share/doc/${APP_NAME}/changelog.Debian" <<EOF
 ${APP_NAME} (${VERSION}) stable; urgency=low
@@ -287,7 +287,7 @@ Section: office
 Priority: optional
 Architecture: amd64
 Depends: ${WEBKIT_DEB}
-Maintainer: ChrisUFO <chrisufo@users.noreply.github.com>
+Maintainer: Chelydra Labs <turtle@chelydra.dev>
 Installed-Size: ${INSTALLED_SIZE_KB}
 Description: ${PRODUCT_NAME} - local-first hybrid journal and task manager
  Plain-text Markdown on your drive, real-time index in memory.

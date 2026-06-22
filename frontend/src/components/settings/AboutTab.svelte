@@ -39,12 +39,14 @@
     <ul class="space-y-1.5 text-[13px] font-body-md">
       <li>
         <span class="text-text-muted">Source:</span>
-        <span class="text-accent-primary-start">github.com/ChrisUFO/Silt</span>
+        <span class="text-accent-primary-start"
+          >github.com/Chelydra-Labs/Silt</span
+        >
       </li>
       <li>
         <span class="text-text-muted">Issues &amp; feedback:</span>
         <span class="text-accent-primary-start"
-          >github.com/ChrisUFO/Silt/issues</span
+          >github.com/Chelydra-Labs/Silt/issues</span
         >
       </li>
     </ul>

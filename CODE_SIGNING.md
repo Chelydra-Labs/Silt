@@ -27,7 +27,7 @@ New certificate identities accrue SmartScreen reputation per-file over time. Exp
 
 > SignPath Foundation requires the project to publish the following three roles. **TODO:** replace the placeholders once your SignPath application is approved and you've configured the team.
 
-- **Committers and reviewers** — members with push access to [`ChrisUFO/Silt`](https://github.com/ChrisUFO/Silt). *(Placeholder — list maintainers or link to a team.)*
+- **Committers and reviewers** — members with push access to [`Chelydra-Labs/Silt`](https://github.com/Chelydra-Labs/Silt). *(Placeholder — list maintainers or link to a team.)*
 - **Approvers** — the designated release approvers who click *Approve* in SignPath for each `release-signing` request. Currently: `@ChrisUFO`. *(Placeholder — add additional approvers as the team grows.)*
 
 All team members use multi-factor authentication on both GitHub and SignPath.io.
@@ -44,7 +44,7 @@ Every signed release is built from a tagged commit on `main` by the [`Release` w
 
 ## Setup (one-time, manual)
 
-> Tracked in [issue #140](https://github.com/ChrisUFO/Silt/issues/140). The sections below are the same checklist, kept here for future maintainers.
+> Tracked in [issue #140](https://github.com/Chelydra-Labs/Silt/issues/140). The sections below are the same checklist, kept here for future maintainers.
 
 ### Prerequisites
 
@@ -61,7 +61,7 @@ Every signed release is built from a tagged commit on `main` by the [`Release` w
 
 1. Create a project:
    - **Slug:** `Silt` (must match `project-slug` in `release.yml`).
-   - **Repository URL:** `https://github.com/ChrisUFO/Silt`
+   - **Repository URL:** `https://github.com/Chelydra-Labs/Silt`
    - **Trusted Build System:** GitHub.com
 2. Upload [`default.xml`](.signpath/artifact-configurations/default.xml) as the default artifact configuration.
 3. Add two signing policies:
