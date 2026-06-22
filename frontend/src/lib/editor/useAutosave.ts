@@ -103,8 +103,8 @@ export class AutosaveManager {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.error('AutosaveManager: SaveFileBlocks failed:', e)
-      this.deps.onStateChange(false, msg)
-      this.emitSaveState(false, msg)
+      this.deps.onStateChange(true, msg)
+      this.emitSaveState(true, msg)
       pushNotification({
         kind: 'error',
         message: `Save failed: ${msg}`,

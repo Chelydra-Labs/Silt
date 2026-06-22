@@ -117,7 +117,7 @@ describe('AutosaveManager', () => {
     // Wait for the async save to settle.
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(deps.onStateChange).toHaveBeenCalledWith(false, 'disk full')
+    expect(deps.onStateChange).toHaveBeenCalledWith(true, 'disk full')
   })
 
   it('markClean() resets state', () => {
