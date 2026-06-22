@@ -384,6 +384,7 @@ export function mergeReorderedTabs(
   let displayIdx = 0
   return fullTabs.map((t) => {
     if (t.notebook === notebook) {
+      if (displayIdx >= reorderedDisplayed.length) return t
       return reorderedDisplayed[displayIdx++]
     }
     return t

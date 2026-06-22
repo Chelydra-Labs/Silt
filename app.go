@@ -3380,12 +3380,10 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 		// the new path with stale frontmatter — we log the error and
 		// continue through the index cleanup (step 5) so the index doesn't
 		// dangle at the old path. The scanner will reconcile on next pass.
-		var fmErr error
 		content := updateFrontmatterField(string(contentBytes), "section", safeTo)
 		a.tracker.RegisterWrite(newFile)
 		if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
 			log.Printf("MovePage: WriteFileAtomic failed at %s (file already moved): %v", newFile, err)
-			fmErr = err
 		}
 
 		// 5. Clear old index entries + re-index at the new path. These run
@@ -3398,7 +3396,9 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 			_ = a.db.ForgetFile(oldFile)
 		})
 		a.reindexFile(newFile, safeNotebook, safeTo, safePage)
-		runErr = fmErr
+		// If frontmatter write failed, the file has already moved — do not
+		// surface the error to the user. The scanner reconciles stale
+		// frontmatter on the next pass (comment at line 3380).
 	})
 	if runErr != nil {
 		return runErr

@@ -839,17 +839,18 @@
         }}
         onSelectView={(v) => (activeView = v)}
         onCloseVault={handleChangeVault}
-        onPageMoved={(nb, _fromSection, toSection, page) => {
+        onPageMoved={(nb, fromSection, toSection, page) => {
           // A page was dragged across sections in the sidebar (#177). Update
-          // any open tab for this page so its section field points to the new
-          // location — otherwise the editor's next SaveFileBlocks call would
-          // write to the stale old path (data-loss bug).
+          // the open tab for this specific page+section so its section field
+          // points to the new location. Matching on fromSection is critical —
+          // without it, a same-named sibling in another section would also be
+          // repointed, causing its next save to write to the wrong path.
           openTabs = openTabs.map((t) =>
-            t.notebook === nb && t.page === page
+            t.notebook === nb && t.section === fromSection && t.page === page
               ? { ...t, section: toSection }
               : t
           )
-          if (activeNotebook === nb && activePage === page) {
+          if (activeNotebook === nb && activePage === page && activeSection === fromSection) {
             activeSection = toSection
           }
           schedulePersistTabs()
