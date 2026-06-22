@@ -1,33 +1,20 @@
 package main
 
-// Plugin v2 SDK bindings — expanded content API (#104), file I/O (#108), and
-// OS integration (#114). These live in the main package alongside app.go so
-// they share the coordinator / atomic-write / traversal-guard helpers. Each
-// privileged binding calls a.requireGrant before its work; content-mutation
-// bindings reuse the same atomic-write + re-index + emitBlockChanged path as
-// the core editor (SPECS §8.3: "core feature decoupling").
-
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
-	"sort"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
-
 	"silt/backend/parser"
 	"silt/backend/plugins"
 	"silt/backend/vault"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -165,22 +152,22 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 
 	// 1. Resolve every op to a concrete (source, notebook, section, page).
 	type resolved struct {
-		op        PluginCreateBlockOp
-		source    string
-		notebook  string
-		section   string
-		page      string
+		op       PluginCreateBlockOp
+		source   string
+		notebook string
+		section  string
+		page     string
 		// For cross-page moves: the block's original location before the
 		// target overwrite. Preserved so the second pass can find/remove it
 		// from the source page, and so the first pass can fetch the block's
 		// content for insertion into the target.
-		origSource  string
+		origSource   string
 		origNotebook string
 		origSection  string
 		origPage     string
-		newID     string
-		blockType parser.BlockType
-		text      string
+		newID        string
+		blockType    parser.BlockType
+		text         string
 	}
 	var resolvedOps []resolved
 
@@ -337,52 +324,52 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 		if err := a.SaveFileBlocks(first.notebook, first.section, first.page, mutated); err != nil {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
-	// For cross-page moves, remove the block from its source page.
-	//
-	// The source-page block list is read from the DB (FetchPageBlocks), NOT
-	// from the file. The first-pass SaveFileBlocks already re-indexed the
-	// moved block into the TARGET page, so the DB no longer lists it under
-	// the source page. Reading the file instead would see stale content
-	// (the file hasn't been rewritten yet) and IndexFileBlocks would
-	// re-insert the block under the source page, stealing it back from the
-	// target — silent data loss under concurrency.
-	//
-	// LockFileWrite serializes concurrent source-page writes so the file
-	// never has a torn write. Errors are NOT swallowed — a failed
-	// source-removal would leave the block duplicated.
-	for _, r := range pageOps {
-		if r.op.Kind == "move" && r.origNotebook != "" &&
-			(r.origNotebook != r.notebook ||
-				r.origSection != r.section ||
-				r.origPage != r.page) {
-			sn := sanitizePathSegment(r.origNotebook)
-			ss := sanitizePathSegment(r.origSection)
-			sp := sanitizePathSegment(r.origPage)
-			origDir, dirErr := a.resolveNotebookDir(sn, r.origSource)
-			if dirErr != nil {
-				return fmt.Errorf("cross-page move: resolve source dir %s: %w", sn, dirErr)
-			}
-			origPath := filepath.Join(origDir, ss, sp+".md")
-			if !isPathWithinRoot(origPath, origDir) {
-				return fmt.Errorf("cross-page move: source path escapes notebook root")
-			}
-			// Remove the moved block from the source page. We do a TARGETED
-			// delete (DELETE WHERE id = ?) instead of re-indexing the whole
-			// page via IndexFileBlocks. This is critical for concurrency:
-			// IndexFileBlocks does "DELETE FROM blocks WHERE id IN (...)"
-			// for every block in the filtered list, which would delete blocks
-			// that a concurrent goroutine already moved to ANOTHER page.
-			// The targeted delete only removes the single block being moved.
-			blockID := r.op.BlockID
-			var writeErr error
-			a.coordinator.LockFileWrite(origPath, func() {
-				writeErr = a.removeBlockFromSourcePage(origPath, r.origSource, sn, ss, sp, blockID)
-			})
-			if writeErr != nil {
-				return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, writeErr)
+		// For cross-page moves, remove the block from its source page.
+		//
+		// The source-page block list is read from the DB (FetchPageBlocks), NOT
+		// from the file. The first-pass SaveFileBlocks already re-indexed the
+		// moved block into the TARGET page, so the DB no longer lists it under
+		// the source page. Reading the file instead would see stale content
+		// (the file hasn't been rewritten yet) and IndexFileBlocks would
+		// re-insert the block under the source page, stealing it back from the
+		// target — silent data loss under concurrency.
+		//
+		// LockFileWrite serializes concurrent source-page writes so the file
+		// never has a torn write. Errors are NOT swallowed — a failed
+		// source-removal would leave the block duplicated.
+		for _, r := range pageOps {
+			if r.op.Kind == "move" && r.origNotebook != "" &&
+				(r.origNotebook != r.notebook ||
+					r.origSection != r.section ||
+					r.origPage != r.page) {
+				sn := sanitizePathSegment(r.origNotebook)
+				ss := sanitizePathSegment(r.origSection)
+				sp := sanitizePathSegment(r.origPage)
+				origDir, dirErr := a.resolveNotebookDir(sn, r.origSource)
+				if dirErr != nil {
+					return fmt.Errorf("cross-page move: resolve source dir %s: %w", sn, dirErr)
+				}
+				origPath := filepath.Join(origDir, ss, sp+".md")
+				if !isPathWithinRoot(origPath, origDir) {
+					return fmt.Errorf("cross-page move: source path escapes notebook root")
+				}
+				// Remove the moved block from the source page. We do a TARGETED
+				// delete (DELETE WHERE id = ?) instead of re-indexing the whole
+				// page via IndexFileBlocks. This is critical for concurrency:
+				// IndexFileBlocks does "DELETE FROM blocks WHERE id IN (...)"
+				// for every block in the filtered list, which would delete blocks
+				// that a concurrent goroutine already moved to ANOTHER page.
+				// The targeted delete only removes the single block being moved.
+				blockID := r.op.BlockID
+				var writeErr error
+				a.coordinator.LockFileWrite(origPath, func() {
+					writeErr = a.removeBlockFromSourcePage(origPath, r.origSource, sn, ss, sp, blockID)
+				})
+				if writeErr != nil {
+					return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, writeErr)
+				}
 			}
 		}
-	}
 		for _, id := range createdIDs {
 			a.emitBlockChanged(id, first.notebook, first.section, first.page, "")
 		}
@@ -999,92 +986,7 @@ func (a *App) PluginNotify(pluginID, title, body string) error {
 
 // isSafeUrl reports whether url uses an allowed scheme (http/https/mailto).
 // Used by PluginOpenUrl (browser-open path).
-func isSafeUrl(rawURL string) bool {
-	u := strings.TrimSpace(rawURL)
-	if u == "" {
-		return false
-	}
-	lower := strings.ToLower(u)
-	for _, scheme := range []string{"https://", "http://", "mailto:"} {
-		if strings.HasPrefix(lower, scheme) {
-			return true
-		}
-	}
-	return false
-}
 
-// isSafeFetchUrl is the stricter check for PluginFetch: only http/https (no
-// mailto), and the resolved host must NOT be a loopback, link-local, or
-// private IP address (SSRF defense, #115).
-func isSafeFetchUrl(rawURL string) bool {
-	u := strings.TrimSpace(rawURL)
-	lower := strings.ToLower(u)
-	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
-		return false
-	}
-	parsed, err := url.Parse(u)
-	if err != nil {
-		return false
-	}
-	return blockInternalHost(parsed.Host) == nil
-}
-
-// blockInternalHost returns an error if host resolves to (or is literally) a
-// loopback, link-local, private, or multicast address — the standard SSRF
-// defense so a granted plugin cannot reach internal services or cloud metadata.
-func blockInternalHost(host string) error {
-	// Strip port.
-	hostname := host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		hostname = h
-	}
-	hostname = strings.TrimSpace(hostname)
-	if hostname == "" {
-		return fmt.Errorf("empty host")
-	}
-	// Resolve and check every returned IP.
-	ips, err := net.LookupIP(hostname)
-	if err != nil {
-		// If we can't resolve, err on the side of caution for literal IPs.
-		ips = []net.IP{net.ParseIP(hostname)}
-		if ips[0] == nil {
-			return fmt.Errorf("cannot resolve host %q", hostname)
-		}
-	}
-	for _, ip := range ips {
-		if ip == nil {
-			continue
-		}
-		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-			ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-			return fmt.Errorf("host %s resolves to a blocked address %s", hostname, ip)
-		}
-		if isPrivateIP(ip) {
-			return fmt.Errorf("host %s resolves to a private address %s", hostname, ip)
-		}
-	}
-	return nil
-}
-
-// isPrivateIP reports whether ip is in an RFC-1918 private range (10/8,
-// 172.16/12, 192.168/16). net.IP.IsPrivate covers this on Go 1.17+, but
-// cloud metadata (169.254.169.254) is link-local and caught by the
-// IsLinkLocalUnicast check above.
-func isPrivateIP(ip net.IP) bool {
-	if ip.IsPrivate() {
-		return true
-	}
-	// Explicitly catch 169.254.x.x (cloud metadata endpoints) even if Go's
-	// IsPrivate doesn't (it's link-local, caught above, but belt + suspenders).
-	if v4 := ip.To4(); v4 != nil {
-		if v4[0] == 169 && v4[1] == 254 {
-			return true
-		}
-	}
-	return false
-}
-
-// openNative opens a path in the OS default handler, cross-platform.
 var openNative = func(path string) error {
 	switch goruntime.GOOS {
 	case "darwin":
@@ -1110,91 +1012,7 @@ var openNative = func(path string) error {
 //
 // Tests can override the DialContext to swap the resolver (see
 // app_plugins_v2_test.go) and exercise the rebinding defense deterministically.
-func newSafeFetchClient(timeout time.Duration) *http.Client {
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, splitErr := net.SplitHostPort(addr)
-			if splitErr != nil {
-				return nil, splitErr
-			}
-			ips, lookupErr := net.DefaultResolver.LookupIP(ctx, "ip", host)
-			if lookupErr != nil || len(ips) == 0 {
-				// Fall through to the system dialer with the literal address;
-				// net.Dialer will surface the lookup error in its own error
-				// chain, so the call still fails closed.
-				return dialer.DialContext(ctx, network, addr)
-			}
-			// Re-validate every resolved IP at dial time so a DNS rebind
-			// between isSafeFetchUrl and the actual connect is rejected.
-			for _, ip := range ips {
-				if isInternalIP(ip) {
-					return nil, fmt.Errorf("blocked: dial to %s resolves to a blocked address %s", host, ip)
-				}
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
-		},
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          10,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
-	return &http.Client{
-		Timeout:   timeout,
-		Transport: transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxPluginFetchRedirects {
-				return fmt.Errorf("too many redirects (max %d)", maxPluginFetchRedirects)
-			}
-			// Re-validate every redirect destination for scheme + SSRF (#115).
-			if !isSafeFetchUrl(req.URL.String()) {
-				return fmt.Errorf("redirect to blocked URL: %s", req.URL.String())
-			}
-			if err := blockInternalHost(req.URL.Host); err != nil {
-				return fmt.Errorf("redirect to internal host: %w", err)
-			}
-			// Strict header allowlist (#160): strip everything except safe,
-			// non-sensitive headers so custom auth (X-Api-Key, etc.) cannot
-			// leak ACROSS hosts. Go's net/http already drops Authorization +
-			// Cookie on cross-host redirects, but custom auth headers are not
-			// covered. Same-host redirects keep custom headers so legitimate
-			// same-origin API redirects (e.g. a version path migration) that
-			// depend on X-Api-Key are not broken; cross-host is where the leak
-			// risk lives.
-			prev := via[len(via)-1]
-			if !strings.EqualFold(req.URL.Host, prev.URL.Host) {
-				stripHeadersForRedirect(req)
-			}
-			return nil
-		},
-	}
-}
 
-// isInternalIP is the dial-time analogue of blockInternalHost: it rejects
-// loopback, link-local, multicast, unspecified, and private IPs. Sharing
-// the predicate with blockInternalHost keeps the dial and the URL check in
-// lock-step so the rebinding defense and the URL-level check can never
-// drift (#115 hardening).
-func isInternalIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-		return true
-	}
-	return isPrivateIP(ip)
-}
-
-// notifyDesktop shows a desktop notification, cross-platform. Best-effort: a
-// spawn error is returned but callers may ignore it for non-critical UX.
-//
-// title and body are plugin-controlled strings. They are passed as DATA —
-// never interpolated into the command string — so a granted but untrusted
-// plugin cannot escape the notifier to execute arbitrary code. On macOS they
-// are osascript argv; on Windows they are environment variables (PowerShell
-// reads $env: values as data, not source); on Linux they are notify-send argv.
 func notifyDesktop(title, body string) error {
 	switch goruntime.GOOS {
 	case "darwin":
@@ -1248,167 +1066,7 @@ const maxPluginFetchRequestBytes = 10 * 1024 * 1024 // 10 MB
 //     must not forge.
 //   - Cookie / Authorization: would let a plugin exfiltrate or reuse host
 //     credentials.
-func isForbiddenPluginHeader(lowerKey string) bool {
-	switch lowerKey {
-	case "host", "connection", "content-length", "transfer-encoding",
-		"cookie", "authorization", "proxy-authorization",
-		"x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
-		"x-real-ip",
-		"sec-fetch-mode", "sec-fetch-site", "sec-fetch-user", "sec-fetch-dest",
-		"sec-websocket-key", "sec-websocket-version":
-		return true
-	}
-	if strings.HasPrefix(lowerKey, "proxy-") || strings.HasPrefix(lowerKey, "sec-") {
-		return true
-	}
-	return false
-}
 
-// redirectSafeHeaders is the strict allowlist of request headers that survive
-// a cross-host redirect (#160). Go's net/http strips only Authorization and
-// Cookie automatically; custom auth headers (X-Api-Key, etc.) that are not in
-// isForbiddenPluginHeader would otherwise leak to the redirect target. This
-// allowlist is applied in CheckRedirect so ONLY safe, non-sensitive headers
-// are forwarded.
-var redirectSafeHeaders = map[string]bool{
-	"accept":          true,
-	"accept-language": true,
-	"content-type":    true,
-	"user-agent":      true,
-}
-
-// stripHeadersForRedirect removes every header from req that is NOT in the
-// redirectSafeHeaders allowlist (#160). Called from CheckRedirect on every
-// redirect hop so custom auth headers cannot leak to the redirect target.
-func stripHeadersForRedirect(req *http.Request) {
-	for k := range req.Header {
-		if !redirectSafeHeaders[strings.ToLower(k)] {
-			req.Header.Del(k)
-		}
-	}
-}
-
-// =========================================================================
-// Per-plugin token-bucket rate limiter (#153)
-// =========================================================================
-
-// defaultPluginFetchRPS is the default refill rate (1 request/sec).
-const defaultPluginFetchRPS = 1.0
-
-// defaultPluginFetchBurst is the default bucket capacity (10 requests instantly,
-// then throttled to rps).
-const defaultPluginFetchBurst = 10
-
-// maxPluginFetchRPS is the hard cap on a manifest-declared rps override. A
-// plugin cannot declare more than this; the host rejects it at install.
-const maxPluginFetchRPS = 10.0
-
-// maxPluginFetchBurst is the hard cap on a manifest-declared burst override.
-// Mirrors the install-time validation in plugins.Validate.
-const maxPluginFetchBurst = 100
-
-// tokenBucket is a standard token-bucket rate limiter. tokens refill at rps
-// up to burst capacity. allow() consumes one token if available.
-type tokenBucket struct {
-	tokens float64
-	last   time.Time
-	rps    float64
-	burst  int
-}
-
-// allow reports whether one token is available, consuming it if so.
-func (tb *tokenBucket) allow(now time.Time) bool {
-	elapsed := now.Sub(tb.last).Seconds()
-	tb.tokens += elapsed * tb.rps
-	if tb.tokens > float64(tb.burst) {
-		tb.tokens = float64(tb.burst)
-	}
-	tb.last = now
-	if tb.tokens >= 1 {
-		tb.tokens--
-		return true
-	}
-	return false
-}
-
-// pluginRateLimiter is a per-plugin token-bucket map guarded by a mutex.
-// A network-granted plugin's fetch calls consult this before hitting the
-// network (#153). Buckets are evicted on uninstall so uninstalled plugins
-// don't leak entries.
-type pluginRateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*tokenBucket
-}
-
-func newPluginRateLimiter() *pluginRateLimiter {
-	return &pluginRateLimiter{buckets: make(map[string]*tokenBucket)}
-}
-
-// allow checks (and consumes) one token for pluginID. Returns false if the
-// rate limit is exceeded. vaultPath is used only to resolve a manifest-declared
-// ratelimit override (#153) the first time a plugin's bucket is created; the
-// bucket is then cached, so the disk read happens at most once per plugin per
-// session (and is evicted on uninstall).
-func (rl *pluginRateLimiter) allow(vaultPath, pluginID string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	b, ok := rl.buckets[pluginID]
-	if !ok {
-		rps, burst := resolvePluginRatelimit(vaultPath, pluginID)
-		b = &tokenBucket{
-			tokens: float64(burst),
-			last:   time.Now(),
-			rps:    rps,
-			burst:  burst,
-		}
-		rl.buckets[pluginID] = b
-	}
-	return b.allow(time.Now())
-}
-
-// resolvePluginRatelimit reads the installed plugin's manifest ratelimit
-// override (#153) and returns the effective (rps, burst). Returns the host
-// defaults when vaultPath is empty, the plugin has no manifest on disk, or the
-// declared values are out of range. This is defense in depth — Install already
-// validates the override — so a hand-edited or corrupted plugin.json falls back
-// to the safe default instead of granting an outsized quota.
-func resolvePluginRatelimit(vaultPath, pluginID string) (rps float64, burst int) {
-	rps = defaultPluginFetchRPS
-	burst = defaultPluginFetchBurst
-	if vaultPath == "" || !plugins.IsValidID(pluginID) {
-		return
-	}
-	manifestPath := filepath.Join(vaultPath, ".system", "plugins", pluginID, "plugin.json")
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return
-	}
-	var raw struct {
-		Ratelimit *struct {
-			RPS   float64 `json:"rps"`
-			Burst int     `json:"burst"`
-		} `json:"ratelimit"`
-	}
-	if json.Unmarshal(data, &raw) != nil || raw.Ratelimit == nil {
-		return
-	}
-	if raw.Ratelimit.RPS > 0 && raw.Ratelimit.RPS <= maxPluginFetchRPS {
-		rps = raw.Ratelimit.RPS
-	}
-	if raw.Ratelimit.Burst > 0 && raw.Ratelimit.Burst <= maxPluginFetchBurst {
-		burst = raw.Ratelimit.Burst
-	}
-	return
-}
-
-// evict removes the bucket for pluginID (called on uninstall/disable).
-func (rl *pluginRateLimiter) evict(pluginID string) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	delete(rl.buckets, pluginID)
-}
-
-// maxPluginFetchRedirects caps redirect hops so a plugin can't be tricked into
 // an infinite redirect loop.
 const maxPluginFetchRedirects = 5
 
@@ -1436,25 +1094,7 @@ type PluginFetchInput struct {
 // networkAuditMu guards the in-memory network audit log. The log is a simple
 // append-only slice of {plugin, host, status, time} entries, surfaced in
 // Settings → Plugins so a user can see what a networked plugin is doing (#115).
-var (
-	networkAuditMu sync.Mutex
-	networkAudit   []NetworkAuditEntry
-)
 
-// NetworkAuditEntry is one row of the plugin network audit log.
-type NetworkAuditEntry struct {
-	Plugin string `json:"plugin"`
-	Host   string `json:"host"`
-	Status int    `json:"status"`
-	Method string `json:"method"`
-	At     string `json:"at"` // RFC3339
-}
-
-// PluginFetch performs an HTTP request through the Go backend (CORS-free),
-// with timeout / size / redirect caps. Gated by the network capability.
-// The host + status are appended to the in-memory audit log (never the body).
-// Per-plugin rate-limited (#153): a network-granted plugin's RPS is capped.
-// Session-token verified (#151): a plugin cannot impersonate another.
 func (a *App) PluginFetch(pluginID, sessionToken string, input PluginFetchInput) (PluginFetchResult, error) {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return PluginFetchResult{}, err
@@ -1551,180 +1191,7 @@ func (a *App) PluginFetch(pluginID, sessionToken string, input PluginFetchInput)
 // truncateNetworkLog reads the log file, keeps the last n lines, and rewrites
 // it. Best-effort — errors are silently ignored (the audit log is not a
 // security boundary, just a diagnostic aid).
-func truncateNetworkLog(path string, keepLines int) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if len(lines) <= keepLines {
-		return
-	}
-	kept := lines[len(lines)-keepLines:]
-	_ = os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o644)
-}
 
-func (a *App) GetNetworkAudit() ([]NetworkAuditEntry, error) {
-	networkAuditMu.Lock()
-	defer networkAuditMu.Unlock()
-	out := make([]NetworkAuditEntry, len(networkAudit))
-	copy(out, networkAudit)
-	return out, nil
-}
-
-// ClearNetworkAudit empties the in-memory audit log AND truncates the on-disk
-// per-plugin network.log files so a clear is durable across restarts (#157).
-// The on-disk truncation runs under the same lock auditNetwork holds while
-// appending, so a concurrent fetch cannot interleave a fresh line into a file
-// we just emptied (the I/O is bounded by the small number of plugin dirs).
-func (a *App) ClearNetworkAudit() error {
-	networkAuditMu.Lock()
-	defer networkAuditMu.Unlock()
-	networkAudit = nil
-	// Best-effort on-disk truncation: walk <vault>/.system/plugins/*/network.log
-	// and empty each file. Errors are non-fatal (audit log is diagnostic).
-	if a.vaultPath != "" {
-		pluginsDir := filepath.Join(a.vaultPath, ".system", "plugins")
-		entries, err := os.ReadDir(pluginsDir)
-		if err == nil {
-			for _, e := range entries {
-				if !e.IsDir() {
-					continue
-				}
-				logPath := filepath.Join(pluginsDir, e.Name(), "network.log")
-				if _, err := os.Stat(logPath); err == nil {
-					_ = os.WriteFile(logPath, []byte{}, 0o644)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// seedNetworkAuditFromDisk reads every on-disk network.log file under the
-// vault's .system/plugins/ tree and seeds the in-memory audit log so entries
-// survive a restart (#157). Called once during initializeVaultServices. The
-// on-disk format is one line per entry: `<RFC3339> <METHOD> <host> <status>
-// <pluginID>`. The in-memory log is capped at 500 entries (most recent).
-func seedNetworkAuditFromDisk(vaultPath string) {
-	if vaultPath == "" {
-		return
-	}
-	pluginsDir := filepath.Join(vaultPath, ".system", "plugins")
-	entries, err := os.ReadDir(pluginsDir)
-	if err != nil {
-		return
-	}
-	var seeded []NetworkAuditEntry
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		logPath := filepath.Join(pluginsDir, e.Name(), "network.log")
-		data, err := os.ReadFile(logPath)
-		if err != nil || len(data) == 0 {
-			continue
-		}
-		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-		for _, line := range lines {
-			entry, ok := parseNetworkLogLine(line)
-			if ok {
-				seeded = append(seeded, entry)
-			}
-		}
-	}
-	// Sort by timestamp (oldest first) so we can trim to the last 500.
-	sort.Slice(seeded, func(i, j int) bool {
-		return seeded[i].At < seeded[j].At
-	})
-	if len(seeded) > 500 {
-		seeded = seeded[len(seeded)-500:]
-	}
-	networkAuditMu.Lock()
-	// Only seed if the in-memory log is empty (don't overwrite entries that
-	// may have been added between vault open and this call).
-	if len(networkAudit) == 0 {
-		networkAudit = seeded
-	}
-	networkAuditMu.Unlock()
-}
-
-// parseNetworkLogLine parses one line from a network.log file into a
-// NetworkAuditEntry. The format is: `<RFC3339> <METHOD> <host> <status>
-// <pluginID>`. Returns ok=false on any parse failure (best-effort). Parsing
-// from the right (status = second-to-last field, pluginID = last) tolerates
-// spaces in the host/path segment, which a left-to-right split would misalign.
-func parseNetworkLogLine(line string) (NetworkAuditEntry, bool) {
-	parts := strings.Fields(line)
-	n := len(parts)
-	if n < 5 {
-		return NetworkAuditEntry{}, false
-	}
-	status, err := strconv.Atoi(parts[n-2])
-	if err != nil {
-		return NetworkAuditEntry{}, false
-	}
-	return NetworkAuditEntry{
-		At:     parts[0],
-		Method: parts[1],
-		Host:   strings.Join(parts[2:n-2], " "),
-		Status: status,
-		Plugin: parts[n-1],
-	}, true
-}
-
-// auditNetwork appends a {plugin, host, status, time} row. The body is NEVER
-// logged — only the host + status so a user can see what a plugin is doing
-// without leaking sensitive request/response payloads.
-func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
-	host := rawURL
-	// Best-effort host extraction without a full URL parse (the URL was already
-	// validated as http/https above).
-	if i := strings.Index(rawURL, "://"); i >= 0 {
-		rest := rawURL[i+3:]
-		// Include the path (up to but not including query string) so the
-		// audit log distinguishes GET /health from DELETE /data/all.
-		if j := strings.IndexAny(rest, "?#"); j >= 0 {
-			rest = rest[:j]
-		}
-		host = rest
-	}
-	entry := NetworkAuditEntry{
-		Plugin: pluginID,
-		Host:   host,
-		Status: status,
-		Method: method,
-		At:     time.Now().Format(time.RFC3339),
-	}
-	networkAuditMu.Lock()
-	networkAudit = append(networkAudit, entry)
-	// Bound the in-memory log to the last 500 entries so it does not grow
-	// unbounded.
-	if len(networkAudit) > 500 {
-		networkAudit = networkAudit[len(networkAudit)-500:]
-	}
-	// Persist to the on-disk log inside the same lock so concurrent
-	// PluginFetch calls cannot interleave file writes and corrupt lines.
-	// The I/O is a single WriteString — holding the lock briefly is fine.
-	const maxPluginNetworkLogBytes = 1 * 1024 * 1024 // 1 MB
-	if a.vaultPath != "" {
-		logPath := filepath.Join(a.vaultPath, ".system", "plugins", pluginID, "network.log")
-		line := fmt.Sprintf("%s %s %s %d %s\n", entry.At, entry.Method, entry.Host, entry.Status, pluginID)
-		_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
-		if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginNetworkLogBytes {
-			truncateNetworkLog(logPath, 200)
-		}
-		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err == nil {
-			_, _ = f.WriteString(line)
-			_ = f.Close()
-		}
-	}
-	networkAuditMu.Unlock()
-}
-
-// newUUID mints a UUIDv4 string. Wraps the existing uuid import so the v2
-// bindings stay decoupled from the google/uuid API shape.
 func newUUID() string {
 	return uuid.NewString()
 }
@@ -2019,52 +1486,3 @@ func (a *App) PluginReadPluginAsset(pluginID, relPath string) (string, error) {
 // privileged bindings can verify the caller's identity (#151). Called by the
 // frontend loader at plugin load time. Returns the token the SDK captures in
 // its closures.
-func (a *App) RegisterPluginSession(pluginID string) (string, error) {
-	if !plugins.IsValidID(pluginID) {
-		return "", fmt.Errorf("invalid plugin id %q", pluginID)
-	}
-	token := newUUID()
-	a.pluginSessionsMu.Lock()
-	defer a.pluginSessionsMu.Unlock()
-	if a.pluginSessions == nil {
-		a.pluginSessions = make(map[string]string)
-	}
-	a.pluginSessions[token] = pluginID
-	return token, nil
-}
-
-// UnregisterPluginSession invalidates a session token. Called by the loader
-// on disable/uninstall/vault-close so a stale token cannot be reused.
-func (a *App) UnregisterPluginSession(token string) error {
-	a.pluginSessionsMu.Lock()
-	defer a.pluginSessionsMu.Unlock()
-	if a.pluginSessions != nil {
-		delete(a.pluginSessions, token)
-	}
-	return nil
-}
-
-// validatePluginSession verifies that token maps to pluginID. Returns nil if
-// valid; an error otherwise. This is the boundary check that prevents a plugin
-// from impersonating another by calling a privileged binding with a different
-// pluginID (#151). A plugin that bypasses the SDK and calls App.PluginFetch
-// directly doesn't have the target plugin's token, so it's rejected here.
-//
-// First-party plugins (whose SDK closures also capture tokens) are unaffected.
-// The residual gap — a main-webview plugin reading another plugin's token from
-// closure scope — is documented in docs/PLUGIN_DEVELOPMENT.md §7 (#152).
-func (a *App) validatePluginSession(pluginID, token string) error {
-	if token == "" {
-		return fmt.Errorf("missing session token for plugin %q", pluginID)
-	}
-	a.pluginSessionsMu.RLock()
-	registeredID, ok := a.pluginSessions[token]
-	a.pluginSessionsMu.RUnlock()
-	if !ok {
-		return fmt.Errorf("invalid session token for plugin %q", pluginID)
-	}
-	if registeredID != pluginID {
-		return fmt.Errorf("session token mismatch: token belongs to %q, not %q", registeredID, pluginID)
-	}
-	return nil
-}
