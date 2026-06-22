@@ -166,6 +166,21 @@
   let titleEl = $state<HTMLHeadingElement | null>(null)
   let renameTimer: ReturnType<typeof setTimeout> | null = null
   let lastRenamedFrom = ''
+  // Track whether the title is actively focused so we can guard reactive
+  // re-patching from the `page` prop (#259). Without this guard, Svelte
+  // patches the `<h1>` text whenever `page` changes — which happens after
+  // every debounced rename round-trip, collapsing the caret to position 0.
+  let titleFocused = $state(false)
+  let displayTitle = $state(untrack(() => page))
+
+  // Sync displayTitle from the page prop ONLY when the user is not editing.
+  // When focused, the DOM is the source of truth (the user's caret position
+  // must be preserved across rename round-trips).
+  $effect(() => {
+    if (!titleFocused) {
+      displayTitle = page
+    }
+  })
 
   function handleFocusTitle() {
     if (titleEl) {
@@ -201,18 +216,21 @@
       titleEl?.blur()
     } else if (e.key === 'Escape') {
       e.preventDefault()
+      displayTitle = page
       if (titleEl) titleEl.textContent = page
       titleEl?.blur()
     }
   }
 
   function handleTitleBlur() {
+    titleFocused = false
     if (renameTimer) {
       clearTimeout(renameTimer)
       renameTimer = null
     }
     const newName = titleEl?.textContent?.trim() ?? ''
     if (newName === '' || newName === page) {
+      displayTitle = page
       if (titleEl) titleEl.textContent = page
       return
     }
@@ -275,11 +293,12 @@
         oninput={handleTitleInput}
         onkeydown={handleTitleKeydown}
         onblur={handleTitleBlur}
+        onfocus={() => (titleFocused = true)}
         class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
         style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
         aria-label="Page title"
       >
-        {page}
+        {displayTitle}
       </h1>
       <p class="text-text-muted/60 text-sm font-body-sm">
         {formatDate(pageDate)}
