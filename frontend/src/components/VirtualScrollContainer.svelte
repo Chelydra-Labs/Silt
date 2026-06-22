@@ -271,7 +271,7 @@
 
   <div
     bind:this={containerEl}
-    class="flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-void flex flex-col min-h-0"
+    class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-void flex flex-col min-h-0"
   >
     <nav
       class="mb-6 flex items-center gap-2 text-text-muted font-label-sm text-label-sm"
