@@ -1,5 +1,6 @@
 import { MovePage } from '../../../wailsjs/go/main/App.js'
 import { sortByName, type NavOrderManager } from './navOrder'
+import type { NavSection } from './types'
 
 export interface DragItem {
   level: string
@@ -11,12 +12,6 @@ export interface DropTarget {
   level: string
   name: string
   before: boolean
-}
-
-export interface NavSection {
-  name: string
-  pages: { name: string }[]
-  children?: NavSection[]
 }
 
 export interface DragDropDeps {
@@ -97,7 +92,8 @@ export class DragDropManager {
       return
     }
 
-    const isPageToSection = this.dragItem.level === 'page' && level === 'section'
+    const isPageToSection =
+      this.dragItem.level === 'page' && level === 'section'
     if (this.dragItem.level !== level && !isPageToSection) {
       this.clear()
       return

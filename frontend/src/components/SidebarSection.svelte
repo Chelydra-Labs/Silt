@@ -9,17 +9,7 @@
   // handlers are threaded in from the parent Sidebar so every section and
   // page — top-level or deeply nested — retains those capabilities.
   import SidebarSection from './SidebarSection.svelte'
-
-  interface NavPage {
-    name: string
-    count: number
-  }
-  interface NavSection {
-    name: string
-    path?: string
-    pages: NavPage[]
-    children?: NavSection[]
-  }
+  import type { NavSection } from '../lib/sidebar/types'
 
   interface DropTarget {
     level: string
@@ -148,7 +138,8 @@
     ondragstart={(e) => onDragStart(e, 'section', section.name)}
     ondragover={(e) => onDragOver(e, 'section', section.name)}
     ondragleave={onDragLeave}
-    ondrop={(e) => onDrop(e, 'section', section.name, activeNotebook, sectionKey)}
+    ondrop={(e) =>
+      onDrop(e, 'section', section.name, activeNotebook, sectionKey)}
     ondragend={onDragEnd}
     onclick={() => onToggleSection(sectionKey)}
     onkeydown={(e) => {

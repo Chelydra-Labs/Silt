@@ -7,8 +7,10 @@
   import { settings, updatePluginSetting } from '../../../settings/store.svelte'
   import { measureFrameBudget } from '../../../lib/perf/frame-budget'
   import { EventsOn } from '../../../../wailsjs/runtime/runtime.js'
-  import FilterBar, { type KanbanFilters } from './FilterBar.svelte'
-  import CardDetailPanel, { type KanbanCard } from './CardDetailPanel.svelte'
+  import FilterBar from './FilterBar.svelte'
+  import CardDetailPanel from './CardDetailPanel.svelte'
+  import type { KanbanCard, KanbanFilters, Scope } from './types'
+  import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
 
   interface Props {
     ctx: PluginContext
@@ -16,8 +18,6 @@
   }
 
   let { ctx, manifest }: Props = $props()
-
-  type Scope = 'vault' | 'notebook' | 'section' | 'page'
 
   const ALL_STATUSES: TaskStatus[] = ['TODO', 'DOING', 'DONE']
   const SCOPES: Scope[] = ['vault', 'notebook', 'section', 'page']
@@ -636,25 +636,6 @@
       e.preventDefault()
       selectedCard = card
     }
-  }
-
-  const PRIORITY_LABELS: Record<number, string> = {
-    1: 'Critical',
-    2: 'Normal',
-    3: 'Low'
-  }
-  function priorityClass(p: number): string {
-    if (p <= 1) return 'text-error border-error/20 bg-error/10'
-    if (p === 2)
-      return 'text-accent-primary-start border-accent-primary-start/20 bg-accent-primary-glow'
-    return 'text-text-muted border-border-muted bg-surface'
-  }
-  // Standard statuses get friendly labels; custom lanes show their raw name.
-  function laneLabel(s: string): string {
-    if (s === 'TODO') return 'To Do'
-    if (s === 'DOING') return 'In Progress'
-    if (s === 'DONE') return 'Done'
-    return s
   }
 </script>
 

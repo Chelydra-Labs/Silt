@@ -20,26 +20,7 @@
   } from '../../wailsjs/go/main/App.js'
   import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
   import { DragDropManager } from '../lib/sidebar/useDragDrop'
-
-  interface NavPage {
-    name: string
-    count: number
-  }
-  interface NavSection {
-    name: string
-    pages: NavPage[]
-    children?: NavSection[]
-  }
-  interface NavNotebook {
-    name: string
-    sections: NavSection[]
-    source?: string
-    root_path?: string
-    disconnected?: boolean
-  }
-  interface NavigationTree {
-    notebooks: NavNotebook[]
-  }
+  import type { NavNotebook, NavigationTree } from '../lib/sidebar/types'
 
   interface Props {
     activeNotebook: string
@@ -160,17 +141,25 @@
   }
 
   const navOrderManager = new NavOrderManager({
-    onStateChange: (s) => { navOrder = s }
+    onStateChange: (s) => {
+      navOrder = s
+    }
   })
 
-  async function loadNavOrder() { await navOrderManager.load() }
+  async function loadNavOrder() {
+    await navOrderManager.load()
+  }
 
   const dnd = new DragDropManager({
     getActiveNotebook: () => activeNotebook,
     getActiveNotebookSections: () => activeNotebookObj?.sections ?? [],
     navOrder: navOrderManager,
-    onDragItemChange: (item) => { dragItem = item },
-    onDropTargetChange: (target) => { dropTarget = target },
+    onDragItemChange: (item) => {
+      dragItem = item
+    },
+    onDropTargetChange: (target) => {
+      dropTarget = target
+    },
     onError: showDndError,
     onMoved: async () => {
       await loadNavigation()
@@ -179,17 +168,32 @@
     onPageMoved: (nb, from, to, page) => onPageMoved?.(nb, from, to, page)
   })
 
-  function handleDragStart(e: DragEvent, level: string, name: string, section?: string) {
+  function handleDragStart(
+    e: DragEvent,
+    level: string,
+    name: string,
+    section?: string
+  ) {
     dnd.handleDragStart(e, level, name, section)
   }
   function handleDragOver(e: DragEvent, level: string, name: string) {
     dnd.handleDragOver(e, level, name)
   }
-  function handleDragLeave() { dnd.handleDragLeave() }
-  async function handleDrop(e: DragEvent, level: string, targetName: string, notebook?: string, section?: string) {
+  function handleDragLeave() {
+    dnd.handleDragLeave()
+  }
+  async function handleDrop(
+    e: DragEvent,
+    level: string,
+    targetName: string,
+    notebook?: string,
+    section?: string
+  ) {
     await dnd.handleDrop(e, level, targetName, notebook, section)
   }
-  function handleDragEnd() { dnd.handleDragEnd() }
+  function handleDragEnd() {
+    dnd.handleDragEnd()
+  }
 
   // Expanded section names (within the active notebook). The active section is
   // always expanded so the active path stays visible (spatial memory).
@@ -591,7 +595,12 @@
     <div class="px-1 mb-3 relative">
       <div
         onclick={() => (showNotebookDropdown = !showNotebookDropdown)}
-        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showNotebookDropdown = !showNotebookDropdown } }}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            showNotebookDropdown = !showNotebookDropdown
+          }
+        }}
         class="flex items-center gap-2 cursor-pointer group py-1.5 rounded hover:bg-hover transition-colors"
         role="button"
         tabindex="0"
@@ -1133,7 +1142,11 @@
     box-shadow: inset 0 -2px 0 var(--color-accent-primary-start);
   }
   :global(.drag-over-into) {
-    background: color-mix(in srgb, var(--color-accent-primary-start) 18%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start) 18%,
+      transparent
+    );
     box-shadow: inset 0 0 0 1px var(--color-accent-primary-start);
     border-radius: 6px;
   }

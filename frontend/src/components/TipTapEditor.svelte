@@ -24,7 +24,6 @@
   import type { ParsedBlock, MetaKey, SuggestContext } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
-  import { themeState } from '../theme/store.svelte'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
@@ -534,7 +533,8 @@
     getNotebook: () => notebook,
     getSection: () => section,
     getPage: () => page,
-    getDelay: () => Math.max(settings.config?.editor?.auto_save_delay_ms ?? 500, 50),
+    getDelay: () =>
+      Math.max(settings.config?.editor?.auto_save_delay_ms ?? 500, 50),
     onUpdate: (blocks) => onUpdate(blocks),
     onStateChange: (dirty, error) => {
       unsavedChanges = dirty
@@ -543,8 +543,12 @@
     onSaveStateChange: (state) => onSaveStateChange?.(state)
   })
 
-  function triggerAutoSave(): void { autosave.trigger() }
-  function flushPendingSave(): Promise<void> { return autosave.flush() }
+  function triggerAutoSave(): void {
+    autosave.trigger()
+  }
+  function flushPendingSave(): Promise<void> {
+    return autosave.flush()
+  }
 
   // --- Slash menu -----------------------------------------------------------
 
@@ -589,44 +593,6 @@
       return { left, top }
     } catch (err) {
       return null
-    }
-  }
-
-  function changeBlockType(
-    type: string,
-    newAttrs: Record<string, unknown>
-  ): void {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    const pos = editorInstance.state.selection.$from
-    for (let d = pos.depth; d >= 1; d--) {
-      const node = pos.node(d)
-      if (['noteBlock', 'taskBlock', 'headerBlock'].includes(node.type.name)) {
-        const mergedAttrs = {
-          ...node.attrs,
-          ...newAttrs
-        }
-        if (type === 'taskBlock') {
-          delete (mergedAttrs as Record<string, unknown>).bullet
-        } else if (type === 'headerBlock') {
-          delete (mergedAttrs as Record<string, unknown>).bullet
-          delete (mergedAttrs as Record<string, unknown>).status
-          delete (mergedAttrs as Record<string, unknown>).owner
-          delete (mergedAttrs as Record<string, unknown>).start_date
-          delete (mergedAttrs as Record<string, unknown>).due_date
-          delete (mergedAttrs as Record<string, unknown>).priority
-        } else if (type === 'noteBlock') {
-          delete (mergedAttrs as Record<string, unknown>).status
-          delete (mergedAttrs as Record<string, unknown>).owner
-          delete (mergedAttrs as Record<string, unknown>).start_date
-          delete (mergedAttrs as Record<string, unknown>).due_date
-          delete (mergedAttrs as Record<string, unknown>).priority
-          if (mergedAttrs.bullet === undefined) {
-            ;(mergedAttrs as Record<string, unknown>).bullet = '- '
-          }
-        }
-        editorInstance.commands.setNode(type, mergedAttrs)
-        return
-      }
     }
   }
 
@@ -726,11 +692,21 @@
     onBlockFocus: (id, ancestors) => onBlockFocus?.(id, ancestors)
   })
 
-  function acquireFocus(): void { void focusLock.acquire() }
-  function releaseFocus(): void { void focusLock.release() }
-  function startHeartbeat(): void { focusLock.startHeartbeat() }
-  function stopHeartbeat(): void { focusLock.stopHeartbeat() }
-  function notifyFocus(): void { focusLock.notifyFocus() }
+  function acquireFocus(): void {
+    void focusLock.acquire()
+  }
+  function releaseFocus(): void {
+    void focusLock.release()
+  }
+  function startHeartbeat(): void {
+    focusLock.startHeartbeat()
+  }
+  function stopHeartbeat(): void {
+    focusLock.stopHeartbeat()
+  }
+  function notifyFocus(): void {
+    focusLock.notifyFocus()
+  }
 
   // Context Menu state
   let contextMenu = $state<{

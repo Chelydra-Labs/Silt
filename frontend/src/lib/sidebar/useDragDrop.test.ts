@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { DragDropManager } from './useDragDrop'
-import type { DragDropDeps, NavSection } from './useDragDrop'
+import type { DragDropDeps } from './useDragDrop'
+import type { NavSection } from './types'
 import { NavOrderManager } from './navOrder'
 
 // Mock the Wails IPC bindings.
@@ -14,11 +15,17 @@ function makeSections(): NavSection[] {
   return [
     {
       name: 'Journal',
-      pages: [{ name: '2026-06-22' }, { name: '2026-06-21' }]
+      pages: [
+        { name: '2026-06-22', count: 0 },
+        { name: '2026-06-21', count: 0 }
+      ]
     },
     {
       name: 'Projects',
-      pages: [{ name: 'Roadmap' }, { name: 'Backlog' }]
+      pages: [
+        { name: 'Roadmap', count: 0 },
+        { name: 'Backlog', count: 0 }
+      ]
     }
   ]
 }
@@ -38,9 +45,7 @@ function makeDeps(overrides: Partial<DragDropDeps> = {}): DragDropDeps {
   }
 }
 
-function makeDragEvent(
-  overrides: Partial<DragEvent> = {}
-): DragEvent {
+function makeDragEvent(overrides: Partial<DragEvent> = {}): DragEvent {
   return {
     preventDefault: vi.fn(),
     stopPropagation: vi.fn(),
@@ -75,7 +80,10 @@ describe('DragDropManager', () => {
       section: undefined
     })
     expect(e.dataTransfer!.effectAllowed).toBe('move')
-    expect(e.dataTransfer!.setData).toHaveBeenCalledWith('text/plain', 'Journal')
+    expect(e.dataTransfer!.setData).toHaveBeenCalledWith(
+      'text/plain',
+      'Journal'
+    )
   })
 
   it('handleDragOver sets dropTarget for same-level', () => {
@@ -139,7 +147,12 @@ describe('DragDropManager', () => {
     dnd.handleDragOver(e, 'section', 'Projects')
     await dnd.handleDrop(e, 'section', 'Projects', 'Work', 'Projects')
 
-    expect(MovePage).toHaveBeenCalledWith('Work', 'Journal', 'Projects', '2026-06-22')
+    expect(MovePage).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Projects',
+      '2026-06-22'
+    )
     expect(deps.onMoved).toHaveBeenCalled()
     expect(deps.onPageMoved).toHaveBeenCalledWith(
       'Work',
