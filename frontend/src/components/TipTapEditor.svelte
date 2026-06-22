@@ -531,9 +531,9 @@
 
   const autosave = new AutosaveManager({
     getEditor: () => editorInstance,
-    notebook,
-    section,
-    page,
+    getNotebook: () => notebook,
+    getSection: () => section,
+    getPage: () => page,
     getDelay: () => Math.max(settings.config?.editor?.auto_save_delay_ms ?? 500, 50),
     onUpdate,
     onStateChange: (dirty, error) => {
@@ -719,9 +719,9 @@
   // --- Focus lock (reuses the #38 TTL-lease bindings) -----------------------
 
   const focusLock = new FocusLockManager({
-    notebook,
-    section,
-    page,
+    getNotebook: () => notebook,
+    getSection: () => section,
+    getPage: () => page,
     getEditor: () => editorInstance,
     onBlockFocus
   })

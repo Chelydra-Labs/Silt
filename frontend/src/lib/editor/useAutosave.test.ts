@@ -30,9 +30,9 @@ vi.mock('../../plugins/events', () => ({
 function makeDeps(overrides: Partial<AutosaveDeps> = {}): AutosaveDeps {
   return {
     getEditor: () => ({ getJSON: () => ({ type: 'doc', content: [] }) }) as any,
-    notebook: 'Work',
-    section: 'Journal',
-    page: '2026-06-22',
+    getNotebook: () => 'Work',
+    getSection: () => 'Journal',
+    getPage: () => '2026-06-22',
     getDelay: () => 100,
     onUpdate: vi.fn(),
     onStateChange: vi.fn(),
@@ -153,5 +153,24 @@ describe('AutosaveManager', () => {
     // At 60ms, should have saved.
     await vi.advanceTimersByTimeAsync(30)
     expect(deps.onUpdate).toHaveBeenCalled()
+  })
+
+  it('reads current identity after a page rename (stale-capture regression)', async () => {
+    const { SaveFileBlocks } = await import('../../../wailsjs/go/main/App.js')
+    let currentPage = 'OldPage'
+    const deps = makeDeps({ getPage: () => currentPage })
+    const autosave = new AutosaveManager(deps)
+
+    // Save with the original page name.
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(SaveFileBlocks).toHaveBeenCalledWith('Work', 'Journal', 'OldPage', expect.any(Array))
+
+    // Simulate a rename: the getter now returns the new name.
+    currentPage = 'RenamedPage'
+    vi.mocked(SaveFileBlocks).mockClear()
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(SaveFileBlocks).toHaveBeenCalledWith('Work', 'Journal', 'RenamedPage', expect.any(Array))
   })
 })

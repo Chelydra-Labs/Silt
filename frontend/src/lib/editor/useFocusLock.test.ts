@@ -11,9 +11,9 @@ vi.mock('../../../wailsjs/go/main/App.js', () => ({
 
 function makeDeps(overrides: Partial<FocusLockDeps> = {}): FocusLockDeps {
   return {
-    notebook: 'Work',
-    section: 'Journal',
-    page: '2026-06-22',
+    getNotebook: () => 'Work',
+    getSection: () => 'Journal',
+    getPage: () => '2026-06-22',
     getEditor: () => null,
     onBlockFocus: vi.fn(),
     ...overrides
@@ -111,5 +111,21 @@ describe('FocusLockManager', () => {
     // Should not throw.
     lock.notifyFocus()
     expect(deps.onBlockFocus).not.toHaveBeenCalled()
+  })
+
+  it('reads current identity after a page rename (stale-capture regression)', async () => {
+    const { AcquireFocusLock, ReleaseFocusLock } = await import(
+      '../../../wailsjs/go/main/App.js'
+    )
+    let currentPage = 'OldPage'
+    const lock = new FocusLockManager(makeDeps({ getPage: () => currentPage }))
+
+    await lock.acquire()
+    expect(AcquireFocusLock).toHaveBeenCalledWith('Work', 'Journal', 'OldPage')
+
+    // Simulate a rename: the getter now returns the new name.
+    currentPage = 'RenamedPage'
+    await lock.release()
+    expect(ReleaseFocusLock).toHaveBeenCalledWith('Work', 'Journal', 'RenamedPage')
   })
 })

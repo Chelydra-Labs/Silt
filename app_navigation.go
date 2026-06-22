@@ -45,16 +45,11 @@ func (a *App) resolveNotebookDir(notebookName, source string) (string, error) {
 // counts (#100).
 type nspKey struct{ src, n, s, p string }
 
-// resolveSourceByName returns the blocks.source discriminator for a notebook
-// display name: 'linked:<id>' if the name matches a registered linked
-// notebook, else 'vault'. Notebook display names are globally unique
-// (LinkNotebook rejects collisions), so the name unambiguously resolves the
-// source. This lets the notebook-scoped CRUD/focus-lock operations keep their
-// IPC signatures source-free while still routing to the correct root (#100),
-// avoiding a parallel frontend source-flow.
 // resolveSourceByName maps a notebook display name to its index source
 // ("vault" or "linked:<id>"). It acquires configMu in read mode for the
-// standalone callers below.
+// standalone callers below. Notebook display names are globally unique
+// (LinkNotebook rejects collisions), so the name unambiguously resolves the
+// source (#100).
 func (a *App) resolveSourceByName(notebookName string) string {
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()

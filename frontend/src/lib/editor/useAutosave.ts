@@ -12,9 +12,9 @@ export interface SaveState {
 
 export interface AutosaveDeps {
   getEditor: () => Editor | null
-  notebook: string
-  section: string
-  page: string
+  getNotebook: () => string
+  getSection: () => string
+  getPage: () => string
   getDelay: () => number
   onUpdate: (blocks: import('./types').ParsedBlock[]) => void
   onStateChange: (dirty: boolean, error: string | null) => void
@@ -88,17 +88,17 @@ export class AutosaveManager {
     )
     try {
       await SaveFileBlocks(
-        this.deps.notebook,
-        this.deps.section,
-        this.deps.page,
+        this.deps.getNotebook(),
+        this.deps.getSection(),
+        this.deps.getPage(),
         updatedBlocks
       )
       this.deps.onStateChange(false, null)
       this.emitSaveState(false, null)
       dispatchPluginEvent('editor:save', {
-        notebook: this.deps.notebook,
-        section: this.deps.section,
-        page: this.deps.page
+        notebook: this.deps.getNotebook(),
+        section: this.deps.getSection(),
+        page: this.deps.getPage()
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)

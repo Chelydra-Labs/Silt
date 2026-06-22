@@ -5,9 +5,9 @@ import {
 } from '../../../wailsjs/go/main/App.js'
 
 export interface FocusLockDeps {
-  notebook: string
-  section: string
-  page: string
+  getNotebook: () => string
+  getSection: () => string
+  getPage: () => string
   getEditor: () => import('svelte-tiptap').Editor | null
   onBlockFocus?: (blockId: string, ancestors: string[]) => void
 }
@@ -40,9 +40,9 @@ export class FocusLockManager {
   async acquire(): Promise<void> {
     try {
       await AcquireFocusLock(
-        this.deps.notebook,
-        this.deps.section,
-        this.deps.page
+        this.deps.getNotebook(),
+        this.deps.getSection(),
+        this.deps.getPage()
       )
       this.hasLock = true
     } catch (e) {
@@ -55,9 +55,9 @@ export class FocusLockManager {
     this.hasLock = false
     try {
       await ReleaseFocusLock(
-        this.deps.notebook,
-        this.deps.section,
-        this.deps.page
+        this.deps.getNotebook(),
+        this.deps.getSection(),
+        this.deps.getPage()
       )
     } catch (e) {
       console.error('FocusLockManager: ReleaseFocusLock failed:', e)
@@ -68,9 +68,9 @@ export class FocusLockManager {
     this.stopHeartbeat()
     this.heartbeatInterval = setInterval(() => {
       RefreshFocusLock(
-        this.deps.notebook,
-        this.deps.section,
-        this.deps.page
+        this.deps.getNotebook(),
+        this.deps.getSection(),
+        this.deps.getPage()
       ).catch(() => {
         // Transient IPC error — the next tick retries.
       })
