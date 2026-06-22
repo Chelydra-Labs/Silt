@@ -57,6 +57,7 @@ describe('FocusLockManager', () => {
     const { RefreshFocusLock } = await import('../../../wailsjs/go/main/App.js')
     const lock = new FocusLockManager(makeDeps())
 
+    await lock.acquire()
     lock.startHeartbeat()
 
     // After 20 seconds, one refresh should have fired.
@@ -74,6 +75,7 @@ describe('FocusLockManager', () => {
     const { RefreshFocusLock } = await import('../../../wailsjs/go/main/App.js')
     const lock = new FocusLockManager(makeDeps())
 
+    await lock.acquire()
     lock.startHeartbeat()
     lock.stopHeartbeat()
 
@@ -85,6 +87,7 @@ describe('FocusLockManager', () => {
     const { RefreshFocusLock } = await import('../../../wailsjs/go/main/App.js')
     const lock = new FocusLockManager(makeDeps())
 
+    await lock.acquire()
     lock.startHeartbeat()
     lock.startHeartbeat() // should not create two intervals
 

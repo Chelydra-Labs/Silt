@@ -65,8 +65,10 @@ export class FocusLockManager {
   }
 
   startHeartbeat(): void {
+    if (!this.hasLock) return
     this.stopHeartbeat()
     this.heartbeatInterval = setInterval(() => {
+      if (!this.hasLock) return
       RefreshFocusLock(
         this.deps.getNotebook(),
         this.deps.getSection(),

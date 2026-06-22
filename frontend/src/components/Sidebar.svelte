@@ -589,9 +589,9 @@
   >
     <!-- Notebook selector -->
     <div class="px-1 mb-3 relative">
-      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div
         onclick={() => (showNotebookDropdown = !showNotebookDropdown)}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showNotebookDropdown = !showNotebookDropdown } }}
         class="flex items-center gap-2 cursor-pointer group py-1.5 rounded hover:bg-hover transition-colors"
         role="button"
         tabindex="0"

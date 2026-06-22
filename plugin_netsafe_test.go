@@ -55,6 +55,76 @@ func TestIsInternalIP(t *testing.T) {
 	}
 }
 
+func TestIsSafeUrl(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"https://example.com", true},
+		{"http://example.com", true},
+		{"mailto:user@example.com", true},
+		{"javascript:alert(1)", false},
+		{"file:///etc/passwd", false},
+		{"ftp://example.com", false},
+		{"", false},
+		{"  https://example.com  ", true},
+		{"HTTPS://EXAMPLE.COM", true},
+	}
+	for _, c := range cases {
+		if got := isSafeUrl(c.url); got != c.want {
+			t.Errorf("isSafeUrl(%q) = %v, want %v", c.url, got, c.want)
+		}
+	}
+}
+
+func TestIsSafeFetchUrl(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"https://example.com/path", true},
+		{"http://8.8.8.8/api", true},
+		{"http://localhost:3000/api", false},
+		{"http://127.0.0.1:8080", false},
+		{"http://169.254.169.254/latest/meta-data", false},
+		{"file:///etc/passwd", false},
+		{"ftp://example.com", false},
+		{"javascript:alert(1)", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isSafeFetchUrl(c.url); got != c.want {
+			t.Errorf("isSafeFetchUrl(%q) = %v, want %v", c.url, got, c.want)
+		}
+	}
+}
+
+func TestIsForbiddenPluginHeader(t *testing.T) {
+	forbidden := []string{
+		"host", "connection", "content-length", "transfer-encoding",
+		"cookie", "authorization", "proxy-authorization",
+		"x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
+		"x-real-ip",
+		"sec-fetch-mode", "sec-fetch-site", "sec-fetch-user", "sec-fetch-dest",
+		"sec-websocket-key", "sec-websocket-version",
+		"proxy-connection",
+	}
+	for _, h := range forbidden {
+		if !isForbiddenPluginHeader(h) {
+			t.Errorf("isForbiddenPluginHeader(%q) should be true", h)
+		}
+	}
+	allowed := []string{
+		"accept", "content-type", "user-agent", "accept-language",
+		"x-custom-header", "authorization-bearer",
+	}
+	for _, h := range allowed {
+		if isForbiddenPluginHeader(h) {
+			t.Errorf("isForbiddenPluginHeader(%q) should be false", h)
+		}
+	}
+}
+
 // Verifies the redirectSafeHeaders allowlist contains exactly the expected
 // safe headers and excludes sensitive ones — guards against accidental
 // additions to the allowlist.

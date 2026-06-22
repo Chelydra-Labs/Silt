@@ -55,6 +55,8 @@ type PluginFetchInput struct {
 // The host + status are appended to the in-memory audit log (never the body).
 // Per-plugin rate-limited (#153): a network-granted plugin's RPS is capped.
 func (a *App) PluginFetch(pluginID, sessionToken string, input PluginFetchInput) (PluginFetchResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return PluginFetchResult{}, err
 	}

@@ -71,13 +71,15 @@ func (rl *pluginRateLimiter) allow(vaultPath, pluginID string) bool {
 	b, ok := rl.buckets[pluginID]
 	if !ok {
 		rps, burst := resolvePluginRatelimit(vaultPath, pluginID)
+		now := time.Now()
 		b = &tokenBucket{
 			tokens: float64(burst),
-			last:   time.Now(),
+			last:   now,
 			rps:    rps,
 			burst:  burst,
 		}
 		rl.buckets[pluginID] = b
+		return b.allow(now)
 	}
 	return b.allow(time.Now())
 }

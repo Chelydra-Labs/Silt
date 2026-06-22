@@ -38,6 +38,8 @@ export interface AutosaveDeps {
 export class AutosaveManager {
   private timeout: ReturnType<typeof setTimeout> | null = null
   private lastEmitted: SaveState = { dirty: false, error: null }
+  private pendingSave: Promise<void> | null = null
+  private saveQueued = false
   private deps: AutosaveDeps
 
   constructor(deps: AutosaveDeps) {
@@ -65,13 +67,15 @@ export class AutosaveManager {
   }
 
   /** Flush any pending save immediately. Call on unmount or page change. */
-  flush(): Promise<void> {
+  async flush(): Promise<void> {
     if (this.timeout) {
       clearTimeout(this.timeout)
       this.timeout = null
-      return this.save()
+      void this.save()
     }
-    return Promise.resolve()
+    while (this.pendingSave) {
+      await this.pendingSave
+    }
   }
 
   /** Mark the editor as clean (e.g. after loading new content). */
@@ -81,37 +85,56 @@ export class AutosaveManager {
   }
 
   private async save(): Promise<void> {
+    if (this.pendingSave) {
+      this.saveQueued = true
+      return
+    }
     const editor = this.deps.getEditor()
     if (!editor || editor.isDestroyed) return
     const updatedBlocks = measureFrameBudget('tiptap-transaction', () =>
       docToBlocks(editor.getJSON())
     )
+    this.pendingSave = (async () => {
+      try {
+        await SaveFileBlocks(
+          this.deps.getNotebook(),
+          this.deps.getSection(),
+          this.deps.getPage(),
+          updatedBlocks
+        )
+        this.deps.onStateChange(false, null)
+        this.emitSaveState(false, null)
+        dispatchPluginEvent('editor:save', {
+          notebook: this.deps.getNotebook(),
+          section: this.deps.getSection(),
+          page: this.deps.getPage()
+        })
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        console.error('AutosaveManager: SaveFileBlocks failed:', e)
+        this.deps.onStateChange(true, msg)
+        this.emitSaveState(true, msg)
+        pushNotification({
+          kind: 'error',
+          message: `Save failed: ${msg}`,
+          action: { label: 'Retry', run: () => this.save() }
+        })
+      }
+      // onUpdate fires on both success and failure paths: the parent needs
+      // current blocks for rendering regardless of persistence status. The
+      // dirty flag tracks save state; a failed save leaves dirty=true so
+      // the next trigger re-attempts and re-converges.
+      this.deps.onUpdate(updatedBlocks)
+    })()
     try {
-      await SaveFileBlocks(
-        this.deps.getNotebook(),
-        this.deps.getSection(),
-        this.deps.getPage(),
-        updatedBlocks
-      )
-      this.deps.onStateChange(false, null)
-      this.emitSaveState(false, null)
-      dispatchPluginEvent('editor:save', {
-        notebook: this.deps.getNotebook(),
-        section: this.deps.getSection(),
-        page: this.deps.getPage()
-      })
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.error('AutosaveManager: SaveFileBlocks failed:', e)
-      this.deps.onStateChange(true, msg)
-      this.emitSaveState(true, msg)
-      pushNotification({
-        kind: 'error',
-        message: `Save failed: ${msg}`,
-        action: { label: 'Retry', run: () => this.save() }
-      })
+      await this.pendingSave
+    } finally {
+      this.pendingSave = null
+      if (this.saveQueued) {
+        this.saveQueued = false
+        void this.save()
+      }
     }
-    this.deps.onUpdate(updatedBlocks)
   }
 
   private emitSaveState(dirty: boolean, error: string | null): void {

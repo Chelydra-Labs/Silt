@@ -41,7 +41,7 @@ func truncateNetworkLog(path string, keepLines int) {
 		return
 	}
 	kept := lines[len(lines)-keepLines:]
-	_ = os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o644)
+	_ = os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o600)
 }
 
 // GetNetworkAudit returns the in-memory plugin network audit log (#115).
@@ -195,7 +195,7 @@ func (a *App) auditNetwork(pluginID, method, rawURL string, status int) {
 		if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginNetworkLogBytes {
 			truncateNetworkLog(logPath, 200)
 		}
-		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err == nil {
 			_, _ = f.WriteString(line)
 			_ = f.Close()
