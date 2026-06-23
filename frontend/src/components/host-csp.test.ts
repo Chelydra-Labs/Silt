@@ -108,6 +108,12 @@ describe('Host-webview CSP (#237, F2)', () => {
     // The CSP meta is present inside <head>.
     expect(head).toContain('Content-Security-Policy')
 
+    // Pin the literal CSP value, not just the directive name, so the
+    // index.html ↔ host-csp.ts pair cannot silently drift. The header of
+    // host-csp.ts advertises itself as the shared source of truth; this
+    // assertion is what actually enforces that contract.
+    expect(indexHtml).toContain(HOST_CSP)
+
     // And it is the first <meta> tag in <head> (after the charset, which
     // the HTML spec requires to be first; the CSP comes immediately after).
     const charsetIdx = head.indexOf('<meta charset')
