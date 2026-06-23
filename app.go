@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -130,7 +131,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	settings, err := vault.LoadSettings()
-	if err != nil {
+	if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 		// The settings file exists on disk but is unreadable or
 		// malformed. Don't silently fall through to "no vault" — the
 		// user has a vault setup, something is just broken.
@@ -139,6 +140,14 @@ func (a *App) startup(ctx context.Context) {
 				fmt.Sprintf("failed to load settings.json: %v", err))
 		}
 		return
+	}
+	// F20: settings loaded fine but the trust-anchor fingerprint changed
+	// since last launch (possible tampering, or a legit external edit the
+	// user hasn't acknowledged yet). Surface a confirmation dialog so the
+	// user can accept or reject the change. The settings are still used
+	// in-memory (they are valid JSON with a valid schema).
+	if errors.Is(err, vault.ErrSettingsFingerprintMismatch) && a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "settings:fingerprint-mismatch", nil)
 	}
 	if settings.VaultPath != "" {
 		if _, statErr := os.Stat(settings.VaultPath); statErr == nil {
@@ -149,6 +158,21 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// ConfirmSettingsChange is the F20 user-ack binding. When the frontend detects
+// a settings:fingerprint-mismatch event (the trust-anchor fields in
+// settings.json changed since last launch), it shows a confirmation dialog;
+// if the user confirms the change was intentional, it calls this binding,
+// which updates the on-disk fingerprint to match the current values so the
+// next launch proceeds without a prompt. A user who rejects the dialog can
+// manually fix settings.json; the mismatch persists across relaunches until
+// either the values are restored or the user confirms.
+func (a *App) ConfirmSettingsChange() error {
+	if _, err := vault.ConfirmSettingsChange(); err != nil {
+		return fmt.Errorf("confirm settings change: %w", err)
+	}
+	return nil
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -600,7 +624,7 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 			return fmt.Errorf("vault changed during move (concurrent lifecycle transition)")
 		}
 		prior, err := vault.LoadSettings()
-		if err != nil {
+		if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 			return fmt.Errorf("move vault: snapshot settings: %w", err)
 		}
 		a.teardownVaultServices()

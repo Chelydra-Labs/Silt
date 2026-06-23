@@ -7,7 +7,8 @@
     GetSidebarWidth,
     SetSidebarWidth,
     GetOpenTabs,
-    SetOpenTabs
+    SetOpenTabs,
+    ConfirmSettingsChange
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import { fade } from 'svelte/transition'
@@ -312,6 +313,11 @@
   let settingsTab = $state('general')
   let showTemplatePicker = $state(false)
   let templatePickerMode = $state<'new-page' | 'insert'>('new-page')
+  // F20: set when the backend emits settings:fingerprint-mismatch — the
+  // trust-anchor fields (vault_path / trusted_publishers) changed since the
+  // last launch. The modal asks the user to confirm or dismiss; confirm
+  // clears the sentinel via ConfirmSettingsChange so the next launch is quiet.
+  let showSettingsMismatch = $state(false)
 
   // Focused block ancestry path highlighting
   let activeFocusedBlockAncestors = $state<string[]>([])
@@ -552,6 +558,17 @@
         }
       }
     )
+    // F20: trust-anchor fingerprint mismatch — the backend detected that
+    // vault_path or trusted_publishers changed since last launch (possible
+    // tampering, or a legit external edit). Show a confirmation modal; the
+    // user can confirm (clears the sentinel) or dismiss (mismatch persists
+    // on next launch).
+    const offSettingsMismatch = EventsOn(
+      'settings:fingerprint-mismatch',
+      () => {
+        showSettingsMismatch = true
+      }
+    )
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
@@ -566,6 +583,7 @@
       offPluginsChanged()
       offVaultMoved()
       offConfigChangedReload()
+      offSettingsMismatch()
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()
@@ -992,9 +1010,120 @@
     />
   {/if}
 
+  {#if showSettingsMismatch}
+    <div
+      class="settings-mismatch-overlay"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="settings-mismatch-title"
+      aria-describedby="settings-mismatch-desc"
+      transition:fade={{ duration: 150 }}
+    >
+      <div class="settings-mismatch-modal">
+        <h2 id="settings-mismatch-title">Settings changed</h2>
+        <p id="settings-mismatch-desc">
+          Silt's vault path or trusted-publishers list has changed since the
+          last launch. Confirm this change is intentional. If you did not make
+          this change, dismiss and verify your <code>settings.json</code>.
+        </p>
+        <div class="settings-mismatch-actions">
+          <button
+            class="secondary"
+            onclick={() => (showSettingsMismatch = false)}>Dismiss</button
+          >
+          <button
+            class="primary"
+            onclick={async () => {
+              try {
+                await ConfirmSettingsChange()
+              } catch (e) {
+                console.error('ConfirmSettingsChange failed:', e)
+              }
+              showSettingsMismatch = false
+            }}>Confirm change</button
+          >
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <!-- Plugin rendered-UI surfaces (#117) -->
   <PluginModalHost />
 </main>
 
 <ToastContainer />
 <PluginStatusBar />
+
+<style>
+  .settings-mismatch-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+  }
+
+  .settings-mismatch-modal {
+    max-width: 460px;
+    padding: 28px 32px;
+    border-radius: 12px;
+    background: var(--color-surface, #1a1a1e);
+    border: 1px solid var(--color-border, rgba(255, 255, 255, 0.1));
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  }
+
+  .settings-mismatch-modal h2 {
+    margin: 0 0 12px;
+    font-size: 1.15rem;
+    color: var(--color-text, #e0e0e0);
+  }
+
+  .settings-mismatch-modal p {
+    margin: 0 0 20px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--color-text-muted, #999);
+  }
+
+  .settings-mismatch-modal code {
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    font-family: var(--font-mono, monospace);
+    font-size: 0.85em;
+  }
+
+  .settings-mismatch-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .settings-mismatch-actions button {
+    padding: 8px 18px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+
+  .settings-mismatch-actions button:hover {
+    opacity: 0.85;
+  }
+
+  .settings-mismatch-actions .secondary {
+    background: transparent;
+    color: var(--color-text-muted, #999);
+    border: 1px solid var(--color-border, rgba(255, 255, 255, 0.15));
+  }
+
+  .settings-mismatch-actions .primary {
+    background: var(--color-accent-primary-start, #4a9eff);
+    color: #fff;
+    font-weight: 600;
+  }
+</style>

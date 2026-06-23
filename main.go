@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"errors"
 	"path/filepath"
 
 	"silt/backend/themes"
@@ -27,7 +28,7 @@ var assets embed.FS
 func launchBackgroundColour() *options.RGBA {
 	fallback := func() *options.RGBA { return &options.RGBA{R: 12, G: 12, B: 14, A: 1} } // #0c0c0e
 	settings, err := vault.LoadSettings()
-	if err != nil {
+	if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 		// No settings → no active id → embedded default bg.void (always
 		// available from the binary).
 		if th, perr := themes.ParseDefault(); perr == nil {

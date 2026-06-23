@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -78,21 +79,66 @@ func LoadSettings() (*AppSettings, error) {
 		// No settings file yet (first run): return defaults rather than a
 		// zero struct so callers see a valid ActiveTheme/ThemeMode.
 		out := AppSettings{}.withDefaults()
+		// Seed the fingerprint for the defaults so the next launch (which
+		// WILL write a real settings.json) has a baseline to compare against.
+		// A missing fingerprint on a later launch is treated as first-run
+		// migration (written silently), so this is belt-and-suspenders.
 		return &out, nil
 	}
-	bytes, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	// Schema-strict decode: DisallowUnknownFields rejects a co-tenant's
+	// field-injection attack (F20) — a settings.json with an unrecognized
+	// top-level key fails loudly rather than being silently ignored. The
+	// AppSettings struct is the schema; any key not modeled here is rejected.
 	var settings AppSettings
-	if err := json.Unmarshal(bytes, &settings); err != nil {
-		return nil, err
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&settings); err != nil {
+		return nil, fmt.Errorf("invalid settings.json: %w", err)
+	}
+	// vault_path must be absolute (or empty for a first-run file). A relative
+	// path like "../../etc" or "evil" would resolve against the process CWD
+	// and could redirect the vault to an attacker-chosen location (F20).
+	// On Windows, filepath.IsAbs requires a drive letter or UNC prefix; on
+	// POSIX, a leading slash. An empty path is the documented first-run state.
+	if settings.VaultPath != "" && !filepath.IsAbs(settings.VaultPath) {
+		return nil, fmt.Errorf("settings.json vault_path %q is not an absolute path", settings.VaultPath)
 	}
 	// Backward compatibility: an older settings.json written before theme
 	// fields existed unmarshals with zero values, which withDefaults()
 	// normalizes to the dark default theme. This also normalizes any
 	// unrecognized ThemeMode to "dark".
 	settings = settings.withDefaults()
+
+	// F20 fingerprint tripwire: compare the trust-anchor fields against the
+	// stored fingerprint. See fingerprint.go for the full rationale.
+	currentFP := computeSettingsFingerprint(&settings)
+	storedFP, hasFP, fpErr := readSettingsFingerprint()
+	if fpErr != nil {
+		return nil, fmt.Errorf("settings fingerprint read failed: %w", fpErr)
+	}
+	if !hasFP {
+		// First launch after upgrade (or fresh install with a settings.json
+		// but no fingerprint yet): seed the fingerprint silently. Silt is
+		// making the first observation, not the user — no prompt.
+		if wErr := writeSettingsFingerprint(&settings); wErr != nil {
+			// Non-fatal: log-worthy but the settings are still usable. The
+			// next launch retries the write.
+			return &settings, nil
+		}
+		return &settings, nil
+	}
+	if storedFP != currentFP {
+		// Mismatch: the trust-anchor fields changed since the last launch.
+		// Return the settings (they are valid — usable) PLUS the sentinel so
+		// the App startup can surface a confirmation dialog. The fingerprint
+		// is NOT updated here; only ConfirmSettingsChange or SaveSettings
+		// (Silt's own trusted write) updates it.
+		return &settings, ErrSettingsFingerprintMismatch
+	}
 	return &settings, nil
 }
 
@@ -118,7 +164,16 @@ func SaveSettings(settings *AppSettings) error {
 	// temp file, fsync, and rename. This guarantees the settings.json on
 	// disk is either the previous version or the new one in full, never a
 	// half-written file truncated by power loss.
-	return parser.WriteFileAtomic(path, bytes)
+	if err := parser.WriteFileAtomic(path, bytes); err != nil {
+		return err
+	}
+	// F20: Silt's own write is trusted, so update the fingerprint to match
+	// the just-saved trust-anchor values. This means a legitimate
+	// user-initiated vault switch (SaveSettings with a new vault_path) does
+	// NOT trip the mismatch wire on the next launch — only external
+	// (non-Silt) edits to settings.json do. WriteFileAtomic produces 0o600
+	// perms (os.CreateTemp default), satisfying the F7 perm-pairing rule.
+	return writeSettingsFingerprint(&normalized)
 }
 
 func ScaffoldVault(vaultPath string) error {
