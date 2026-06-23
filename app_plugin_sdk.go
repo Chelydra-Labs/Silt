@@ -486,7 +486,7 @@ func (a *App) seedFirstPartyGrants() {
 	if a.cfg.Plugins.Grants == nil {
 		a.cfg.Plugins.Grants = map[string]map[string]string{}
 	}
-	for id := range firstPartyPluginIDs {
+	for id := range plugins.FirstPartyPluginIDs {
 		if a.cfg.Plugins.Grants[id] == nil {
 			a.cfg.Plugins.Grants[id] = map[string]string{}
 		}

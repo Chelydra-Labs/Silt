@@ -456,6 +456,83 @@ func sha256hex(data []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
+// =========================================================================
+// First-party id reservation (#240, audit F5)
+// =========================================================================
+
+// TestValidate_RejectsFirstPartyIDs verifies that every reserved first-party
+// id is rejected at install time. Without this gate a third-party archive
+// claiming "silt-kanban" would install cleanly into
+// .system/plugins/silt-kanban/ and either confuse the user with a duplicate
+// Settings entry (while the real Kanban runs from the bundle) or, should the
+// bundle ever drop the id, inherit the seeded first-party grants.
+func TestValidate_RejectsFirstPartyIDs(t *testing.T) {
+	for id := range FirstPartyPluginIDs {
+		t.Run(id, func(t *testing.T) {
+			archive := filepath.Join(t.TempDir(), "impostor.silt-plugin")
+			writeZip(t, archive, map[string]string{
+				"plugin.json": manifestJSON(id, "Impostor", "1.0.0"),
+				"index.js":    "x",
+			})
+			_, _, err := Validate(archive)
+			if err == nil {
+				t.Fatalf("Validate must reject reserved first-party id %q", id)
+			}
+			if !strings.Contains(err.Error(), "reserved for a bundled plugin") {
+				t.Errorf("error %q must explain the id is reserved", err)
+			}
+		})
+	}
+}
+
+// TestValidate_AcceptsNearCollisionIDs verifies the reservation gate is an
+// EXACT match — ids that merely share a prefix or suffix with a first-party
+// id must still be accepted so the gate does not over-broadly reject
+// legitimate plugin ids.
+func TestValidate_AcceptsNearCollisionIDs(t *testing.T) {
+	nearMisses := []string{
+		"silt-kanban2",     // suffix
+		"silt-kanban-evil", // extra segment
+		"silt-agenda2",     // suffix
+		"silts-kanban",     // prefix typo
+		"my-silt-kanban",   // prefix
+	}
+	for _, id := range nearMisses {
+		t.Run(id, func(t *testing.T) {
+			archive := filepath.Join(t.TempDir(), "near.silt-plugin")
+			writeZip(t, archive, map[string]string{
+				"plugin.json": manifestJSON(id, "Near Miss", "1.0.0"),
+				"index.js":    "x",
+			})
+			if _, _, err := Validate(archive); err != nil {
+				t.Errorf("Validate must accept near-collision id %q (exact-match gate): %v", id, err)
+			}
+		})
+	}
+}
+
+// TestInstall_RejectsFirstPartyID verifies the defense-in-depth check inside
+// Install: even if Validate somehow returned a manifest with a first-party id
+// (it never should), Install must refuse to create the on-disk plugin
+// directory. The reserved-id gate is too important to live in one place only.
+func TestInstall_RejectsFirstPartyID(t *testing.T) {
+	vault := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(vault, ".system", "plugins"), 0o755)
+	archive := filepath.Join(t.TempDir(), "impostor.silt-plugin")
+	writeZip(t, archive, map[string]string{
+		"plugin.json": manifestJSON("silt-kanban", "Impostor", "1.0.0"),
+		"index.js":    "x",
+	})
+
+	if _, err := Install(vault, archive); err == nil {
+		t.Fatal("Install must reject a reserved first-party id")
+	}
+	// And critically, no directory was created on disk.
+	if _, err := os.Stat(filepath.Join(vault, ".system", "plugins", "silt-kanban")); !os.IsNotExist(err) {
+		t.Errorf("Install must not create a directory for a reserved id; stat err=%v", err)
+	}
+}
+
 // TestInstall_PreservesUnknownManifestFields verifies the sha256 injection
 // round-trips plugin.json through a generic map so custom/unknown fields the
 // author included (repository, bugs, keywords, ...) survive on disk instead of

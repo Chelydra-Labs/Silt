@@ -123,6 +123,15 @@ func Validate(archivePath string) (Manifest, []string, error) {
 	if !idRegex.MatchString(manifest.ID) {
 		return Manifest{}, warnings, fmt.Errorf("manifest id %q must be lowercase letters, digits, and hyphens only", manifest.ID)
 	}
+	// Reject ids reserved for bundled (first-party) plugins (#240, audit F5).
+	// A third-party archive claiming "silt-kanban" would otherwise install
+	// cleanly into .system/plugins/silt-kanban/ and shadow (or, should the
+	// bundle ever drop the id, inherit the seeded first-party grants of) the
+	// real bundled plugin. The frontend loader's getFirstParty skip is a
+	// secondary defense; this install-time gate is the primary one.
+	if IsFirstPartyID(manifest.ID) {
+		return Manifest{}, warnings, fmt.Errorf("id %q is reserved for a bundled plugin", manifest.ID)
+	}
 	if manifest.Name == "" {
 		manifest.Name = manifest.ID
 		warnings = append(warnings, "manifest has no name; using id as name")
@@ -202,6 +211,12 @@ func Install(vaultPath, archivePath string) (Manifest, error) {
 	manifest, _, err := Validate(archivePath)
 	if err != nil {
 		return Manifest{}, err
+	}
+	// Defense in depth (mirrors the zip-slip re-checks below): even if
+	// Validate somehow let a first-party id through, Install must refuse to
+	// create the on-disk plugin directory. Never trust a reserved id on disk.
+	if IsFirstPartyID(manifest.ID) {
+		return Manifest{}, fmt.Errorf("id %q is reserved for a bundled plugin", manifest.ID)
 	}
 
 	dest := filepath.Join(vaultPath, ".system", "plugins", manifest.ID)

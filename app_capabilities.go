@@ -13,22 +13,13 @@ import (
 
 // --- v2 SDK capability & permission model (#113) -------------------------
 
-// firstPartyPluginIDs is the set of bundled plugin ids. First-party plugins
-// ship compiled with the app and are trusted by definition, so the capability
-// gate grants them every capability implicitly — they never need a user grant.
-// Third-party (disk) plugins route through requireGrant. Kept in sync with the
-// frontend registry (frontend/src/plugins/registry.ts); Phase 5 appends
-// "silt-attachments".
-var firstPartyPluginIDs = map[string]bool{
-	"silt-agenda":      true,
-	"silt-calendar":    true,
-	"silt-kanban":      true,
-	"silt-attachments": true,
-}
-
 // isFirstPartyPlugin reports whether pluginID is a bundled (trusted) plugin.
+// Delegates to plugins.IsFirstPartyID so the reserved-id set has a single
+// source of truth in package plugins (where Validate can also reach it to
+// reject impostor archives at install time — #240, audit F5). Kept as a
+// package-main shim so existing call sites keep their readable name.
 func isFirstPartyPlugin(pluginID string) bool {
-	return firstPartyPluginIDs[pluginID]
+	return plugins.IsFirstPartyID(pluginID)
 }
 
 // requireGrant is the single server-side enforcement point for every privileged
