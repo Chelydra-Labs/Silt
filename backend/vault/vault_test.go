@@ -546,3 +546,28 @@ func TestImportVaultTree_RestrictiveFilePermissions(t *testing.T) {
 	}
 }
 
+// TestLoadSettings_RejectsOversize pins F12: an oversized settings.json is
+// rejected at read time without unbounded allocation ahead of the strict decode.
+func TestLoadSettings_RejectsOversize(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	path, err := GetSettingsPath()
+	if err != nil {
+		t.Skipf("cannot determine config path on this platform: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, make([]byte, maxSettingsJSONBytes+1), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err = LoadSettings()
+	if err == nil {
+		t.Fatal("expected oversize settings.json to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}
+

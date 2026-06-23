@@ -12,7 +12,13 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"silt/backend/safeio"
 )
+
+// maxConfigYAMLBytes bounds a vault/linked config.yaml before it is parsed.
+// A hostile synced config cannot drive unbounded allocation ahead of
+// yaml.Unmarshal (audit F12).
+const maxConfigYAMLBytes int64 = 256 << 10 // 256 KB
 
 // SystemConfig is the parsed contents of <vault>/.system/config.yaml. It
 // mirrors the schema documented in SPECS.md §9.1.
@@ -317,7 +323,7 @@ func Defaults() SystemConfig {
 // through to defaults — the user has a config, it is just broken). Fields
 // absent from the file keep their default values.
 func Load(vaultPath string) (SystemConfig, error) {
-	data, err := os.ReadFile(ConfigPath(vaultPath))
+	data, err := safeio.ReadFileMax(ConfigPath(vaultPath), maxConfigYAMLBytes)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Defaults(), nil
@@ -381,7 +387,7 @@ func LinkedConfigPath(linkedRoot string) string {
 // semantics so omitted sections keep their default values.
 func LoadLinked(linkedRoot string) (SystemConfig, error) {
 	path := LinkedConfigPath(linkedRoot)
-	data, err := os.ReadFile(path)
+	data, err := safeio.ReadFileMax(path, maxConfigYAMLBytes)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Defaults(), nil

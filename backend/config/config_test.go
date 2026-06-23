@@ -83,6 +83,44 @@ func TestSave_RestrictiveFilePermissions(t *testing.T) {
 	}
 }
 
+// TestLoad_RejectsOversizeConfig pins F12: an oversized config.yaml is rejected
+// at read time without unbounded allocation ahead of yaml.Unmarshal.
+func TestLoad_RejectsOversizeConfig(t *testing.T) {
+	vault := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(vault, ".system"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ConfigPath(vault), make([]byte, maxConfigYAMLBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(vault)
+	if err == nil {
+		t.Fatal("expected oversize config.yaml to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}
+
+// TestLoadLinked_RejectsOversizeConfig pins F12 for the co-located linked
+// notebook config.yaml override layer.
+func TestLoadLinked_RejectsOversizeConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".system"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(LinkedConfigPath(root), make([]byte, maxConfigYAMLBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadLinked(root)
+	if err == nil {
+		t.Fatal("expected oversize linked config.yaml to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}
+
 func TestLoad_MissingFile_ReturnsDefaults(t *testing.T) {
 	tmp := t.TempDir() // no config.yaml present
 	cfg, err := Load(tmp)

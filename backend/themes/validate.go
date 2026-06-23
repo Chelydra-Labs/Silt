@@ -339,11 +339,21 @@ func isValidColor(s string) bool {
 	return true
 }
 
+// maxThemeJSONBytes bounds a theme JSON before it is parsed. A hostile or
+// corrupted theme file cannot drive unbounded allocation ahead of Validate
+// (audit F12). The read-side cap lives at LoadTheme/ImportThemeFromPath; this
+// is a defense-in-depth guard so an in-process caller passing raw bytes cannot
+// blow the budget either.
+const maxThemeJSONBytes int64 = 1 << 20 // 1 MB
+
 // ParseAndValidate unmarshals theme JSON and runs Validate in one step.
 // The raw bytes are returned alongside for callers that want to re-emit the
 // canonical form. A nil theme with an error is never returned for valid
 // JSON that is merely missing fields — those surface as ValidationErrors.
 func ParseAndValidate(raw []byte) (*Theme, error) {
+	if int64(len(raw)) > maxThemeJSONBytes {
+		return nil, fmt.Errorf("theme JSON exceeds the %d-byte cap; refusing to parse", maxThemeJSONBytes)
+	}
 	var t Theme
 	if err := json.Unmarshal(raw, &t); err != nil {
 		return nil, fmt.Errorf("theme JSON is not parseable: %w", err)

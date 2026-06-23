@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"silt/backend/safeio"
 )
 
 // ErrThemeNotFound is returned (wrapped) by loadThemeByID when no theme
@@ -32,7 +34,7 @@ func ParseDefault() (*Theme, error) {
 // or schema-invalid file returns a structured error (ValidationErrors) so
 // the UI can show which token is wrong without crashing the app.
 func LoadTheme(path string) (*Theme, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := safeio.ReadFileMax(path, maxThemeJSONBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read theme %s: %w", filepath.Base(path), err)
 	}

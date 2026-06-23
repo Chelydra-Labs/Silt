@@ -8,8 +8,14 @@ import (
 	"path/filepath"
 
 	"silt/backend/parser"
+	"silt/backend/safeio"
 	"silt/backend/themes"
 )
+
+// maxSettingsJSONBytes bounds settings.json before it is parsed. A hostile
+// co-tenant file cannot drive unbounded allocation ahead of the strict
+// json.Decode (audit F12).
+const maxSettingsJSONBytes int64 = 64 << 10 // 64 KB
 
 // AppSettings is the user-global Silt settings, persisted at
 // <UserConfigDir>/silt/settings.json. It is written atomically via
@@ -85,7 +91,7 @@ func LoadSettings() (*AppSettings, error) {
 		// migration (written silently), so this is belt-and-suspenders.
 		return &out, nil
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := safeio.ReadFileMax(path, maxSettingsJSONBytes)
 	if err != nil {
 		return nil, err
 	}
