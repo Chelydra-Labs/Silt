@@ -134,6 +134,14 @@ jobs:
           npm audit --omit=dev --audit-level=high
 
       - name: gitleaks (secrets in full history)
-        uses: gitleaks/gitleaks-action@v2
+        # Run the gitleaks CLI directly rather than via gitleaks-action, which
+        # requires a paid license for organization repos. The CLI binary is
+        # identical; only the action wrapper charges. gh release download
+        # fetches the latest stable binary for linux-x64.
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo gitleaks/gitleaks --pattern "gitleaks_*_linux_x64.tar.gz" --output /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp
+          chmod +x /tmp/gitleaks
+          /tmp/gitleaks detect --source . --no-banner --verbose --redact
