@@ -544,3 +544,19 @@ func TestRejectPluginIDInFrontmatter(t *testing.T) {
 		t.Errorf("benign frontmatter should pass: %v", err)
 	}
 }
+
+// TestLoadOne_RejectsOversize pins F12: an oversized template file is rejected
+// at read time without unbounded allocation ahead of the frontmatter parse.
+func TestLoadOne_RejectsOversize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "big.md")
+	if err := os.WriteFile(path, make([]byte, maxTemplateFileBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadOne(path)
+	if err == nil {
+		t.Fatal("expected oversize template file to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}

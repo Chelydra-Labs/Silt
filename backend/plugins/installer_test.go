@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -74,6 +75,42 @@ func TestValidateAndInstall_HappyPath(t *testing.T) {
 	// Files extracted.
 	if _, err := os.Stat(filepath.Join(vault, ".system", "plugins", "my-plugin", "index.js")); err != nil {
 		t.Errorf("index.js not installed: %v", err)
+	}
+}
+
+// TestInstall_RestrictiveFilePermissions pins F19: the extracted plugin files
+// (plugin.json + index.js) are 0o600 and the plugin directory tree 0o700 so a
+// co-tenant cannot read a plugin's cached data.
+func TestInstall_RestrictiveFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	vault := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(vault, ".system", "plugins"), 0o700)
+	archive := filepath.Join(t.TempDir(), "perm.silt-plugin")
+	writeZip(t, archive, map[string]string{
+		"plugin.json": manifestJSON("perm-plugin", "Perm", "1.0.0"),
+		"index.js":    "export default {};\n",
+	})
+	if _, err := Install(vault, archive); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	base := filepath.Join(vault, ".system", "plugins", "perm-plugin")
+	for _, rel := range []string{"plugin.json", "index.js"} {
+		info, err := os.Stat(filepath.Join(base, rel))
+		if err != nil {
+			t.Fatalf("stat %s: %v", rel, err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("%s perm = %o, want 0o600", rel, got)
+		}
+	}
+	dirInfo, err := os.Stat(base)
+	if err != nil {
+		t.Fatalf("stat plugin dir: %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf("plugin dir perm = %o, want 0o700", got)
 	}
 }
 

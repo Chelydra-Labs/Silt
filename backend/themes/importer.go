@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"silt/backend/parser"
+	"silt/backend/safeio"
 )
 
 // importMu serializes concurrent ImportThemeFromPath calls so the
@@ -79,7 +80,7 @@ func ImportThemeFromPath(themesDir, srcPath string) (*ImportResult, error) {
 	if _, err := os.Stat(srcPath); err != nil {
 		return nil, fmt.Errorf("failed to read source: %w", err)
 	}
-	raw, err := os.ReadFile(srcPath)
+	raw, err := safeio.ReadFileMax(srcPath, maxThemeJSONBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read source %s: %w", filepath.Base(srcPath), err)
 	}
@@ -118,7 +119,7 @@ func ImportThemeFromPath(themesDir, srcPath string) (*ImportResult, error) {
 		return nil, err
 	}
 
-	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+	if err := os.MkdirAll(themesDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to ensure themes dir %s: %w", themesDir, err)
 	}
 

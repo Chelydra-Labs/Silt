@@ -10,7 +10,13 @@ import (
 	"sync"
 
 	"gopkg.in/yaml.v3"
+	"silt/backend/safeio"
 )
+
+// maxTemplateFileBytes bounds an on-disk template file before it is parsed.
+// Caps the whole-file read so the frontmatter yaml.Unmarshal cannot be fed
+// unbounded bytes by a hostile synced template (audit F12).
+const maxTemplateFileBytes int64 = 64 << 10 // 64 KB
 
 // ErrTemplateNotFound is returned (wrapped) by GetTemplate when no template
 // with the requested id is available on disk or in the embedded set. Callers
@@ -272,7 +278,7 @@ func ParseTemplateBytes(raw []byte, filename, source string) (*Template, error) 
 // returns a structured error (ValidationErrors) so ListTemplates can surface
 // "file X is missing field Y" without aborting the enumeration.
 func loadOne(path string) (*Template, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := safeio.ReadFileMax(path, maxTemplateFileBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read template %s: %w", filepath.Base(path), err)
 	}

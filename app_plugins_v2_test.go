@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -396,6 +397,36 @@ func TestPluginScratchDir(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); err != nil {
 		t.Errorf("scratch dir not created: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat scratch dir: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0o700 {
+			t.Errorf("scratch dir perm = %o, want 0o700 (F19)", got)
+		}
+	}
+}
+
+// PluginVaultScratchDir creates the vault-scoped plugin data dir and (F19)
+// must create it 0o700 so a co-tenant cannot read a plugin's cached data.
+func TestPluginVaultScratchDir_RestrictivePermissions(t *testing.T) {
+	app := newTestApp(t)
+	token := registerTestSession(t, app, "p")
+	_ = app.RequestCapability("p", string(plugins.CapWriteFiles), "")
+	dir, err := app.PluginVaultScratchDir("p", token)
+	if err != nil {
+		t.Fatalf("PluginVaultScratchDir: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat vault scratch dir: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0o700 {
+			t.Errorf("vault scratch dir perm = %o, want 0o700 (F19)", got)
+		}
 	}
 }
 

@@ -18,6 +18,34 @@ func mustWriteTheme(t *testing.T, dir, name, json string) {
 	}
 }
 
+// TestParseAndValidate_RejectsOversize pins the F12 defense-in-depth cap: a
+// theme JSON larger than the budget is rejected before Unmarshal allocates.
+func TestParseAndValidate_RejectsOversize(t *testing.T) {
+	_, err := ParseAndValidate(make([]byte, maxThemeJSONBytes+1))
+	if err == nil {
+		t.Fatal("expected oversize theme JSON to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}
+
+// TestLoadTheme_RejectsOversize pins the F12 read-side cap: a hostile theme
+// file on disk is rejected without unbounded allocation.
+func TestLoadTheme_RejectsOversize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "huge.json")
+	if err := os.WriteFile(path, make([]byte, maxThemeJSONBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadTheme(path)
+	if err == nil {
+		t.Fatal("expected oversize theme file to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}
+
 // minimalValidJSON is a structurally-valid canonical theme (two modes, full
 // token set) used as the base for mutation in tests.
 const minimalValidJSON = `{

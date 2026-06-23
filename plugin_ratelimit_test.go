@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -85,5 +87,23 @@ func TestResolvePluginRatelimit_EdgeCases(t *testing.T) {
 	rps, burst = resolvePluginRatelimit(dir, "nonexistent-plugin")
 	if rps != defaultPluginFetchRPS || burst != defaultPluginFetchBurst {
 		t.Errorf("missing manifest should return defaults, got rps=%v burst=%v", rps, burst)
+	}
+}
+
+// TestResolvePluginRatelimit_OversizeManifestFallsBack pins F12: an oversized
+// or hostile plugin.json is rejected by the read cap and resolve falls back to
+// the host defaults rather than panicking or allocating unbounded bytes.
+func TestResolvePluginRatelimit_OversizeManifestFallsBack(t *testing.T) {
+	vault := t.TempDir()
+	pluginDir := filepath.Join(vault, ".system", "plugins", "p")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), make([]byte, maxRatelimitManifestBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rps, burst := resolvePluginRatelimit(vault, "p")
+	if rps != defaultPluginFetchRPS || burst != defaultPluginFetchBurst {
+		t.Errorf("oversize manifest should fall back to defaults, got rps=%v burst=%v", rps, burst)
 	}
 }

@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => {
     },
     parsing: {
       auto_inject_uuid: true,
-      shorthand_regex: '.*',
       default_task_priority: 3
     },
     hotkeys: { open_search: 'Ctrl+P' },

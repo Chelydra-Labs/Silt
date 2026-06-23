@@ -8,8 +8,14 @@ import (
 	"path/filepath"
 
 	"silt/backend/parser"
+	"silt/backend/safeio"
 	"silt/backend/themes"
 )
+
+// maxSettingsJSONBytes bounds settings.json before it is parsed. A hostile
+// co-tenant file cannot drive unbounded allocation ahead of the strict
+// json.Decode (audit F12).
+const maxSettingsJSONBytes int64 = 64 << 10 // 64 KB
 
 // AppSettings is the user-global Silt settings, persisted at
 // <UserConfigDir>/silt/settings.json. It is written atomically via
@@ -85,7 +91,7 @@ func LoadSettings() (*AppSettings, error) {
 		// migration (written silently), so this is belt-and-suspenders.
 		return &out, nil
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := safeio.ReadFileMax(path, maxSettingsJSONBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +198,7 @@ func ScaffoldVault(vaultPath string) error {
 	}
 
 	for _, folder := range folders {
-		if err := os.MkdirAll(folder, 0755); err != nil {
+		if err := os.MkdirAll(folder, 0o700); err != nil {
 			return fmt.Errorf("failed to create vault folder %s: %w", folder, err)
 		}
 	}
@@ -216,10 +222,11 @@ editor:
   focus_highlight_ancestors: true
 
 # Task Parse Rules
+# The task checkbox/metadata regexes are fixed in the binary (parser
+# package) and intentionally not exposed here — a user-supplied regex on a
+# synced vault is a parser-DoS vector (audit F11).
 parsing:
   auto_inject_uuid: true
-  checkbox_regex: "^([\\s]*)-\\s\\[([ x/])\\]\\s+(.*)$"
-  metadata_token_regex: "\\[([\\w]+)::\\s*([^\\]]*)\\]"
   default_task_priority: 3
 
 # Key-Binding Map
@@ -257,7 +264,7 @@ ui:
 	// Format config with absolute vault path (with forward slashes for cross platform consistency)
 	formattedVaultPath := filepath.ToSlash(vaultPath)
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		err = os.WriteFile(configPath, []byte(fmt.Sprintf(configYAML, formattedVaultPath)), 0644)
+		err = os.WriteFile(configPath, []byte(fmt.Sprintf(configYAML, formattedVaultPath)), 0o600)
 		if err != nil {
 			return fmt.Errorf("failed to write config.yaml: %w", err)
 		}
@@ -277,7 +284,7 @@ ui:
 		themePath := filepath.Join(vaultPath, ".system", "themes", fileName)
 		if _, err := os.Stat(themePath); err != nil {
 			if os.IsNotExist(err) {
-				if err := os.WriteFile(themePath, raw, 0644); err != nil {
+				if err := os.WriteFile(themePath, raw, 0o600); err != nil {
 					return fmt.Errorf("failed to write theme %s: %w", fileName, err)
 				}
 				continue
@@ -305,7 +312,7 @@ See docs/PLUGIN_DEVELOPMENT.md for the full SDK reference.
 `
 	pluginsReadmePath := filepath.Join(vaultPath, ".system", "plugins", "README.md")
 	if _, err := os.Stat(pluginsReadmePath); os.IsNotExist(err) {
-		if err := os.WriteFile(pluginsReadmePath, []byte(pluginsReadme), 0644); err != nil {
+		if err := os.WriteFile(pluginsReadmePath, []byte(pluginsReadme), 0o600); err != nil {
 			return fmt.Errorf("failed to write plugins README: %w", err)
 		}
 	}

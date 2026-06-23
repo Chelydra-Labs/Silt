@@ -367,10 +367,10 @@ func ExportVaultTree(src, destPath, vaultName, siltVersion string, onProgress Pr
 
 	// Create the destination file. The save-file picker is expected to supply
 	// a non-existent path; truncate handles a same-name re-export.
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
 		return ExportResult{}, fmt.Errorf("create destination dir: %w", err)
 	}
-	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return ExportResult{}, fmt.Errorf("create archive file: %w", err)
 	}
@@ -720,10 +720,10 @@ func extractAndVerify(f *zip.File, target string, want ArchiveEntry) error {
 		return fmt.Errorf("entry %q exceeds the %d-byte per-entry limit", want.Path, maxArchiveEntrySize)
 	}
 	limit := want.Size + 1024 // safe: want.Size ≤ maxArchiveEntrySize (256 MiB)
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return err
 	}
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}

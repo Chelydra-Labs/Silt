@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -38,9 +39,6 @@ func TestDefaults_Populated(t *testing.T) {
 	if !d.Parsing.AutoInjectUUID {
 		t.Errorf("defaults auto_inject_uuid should be true")
 	}
-	if d.Parsing.ShorthandRegex == "" {
-		t.Errorf("defaults shorthand_regex must be set")
-	}
 	if d.Parsing.DefaultTaskPriority <= 0 {
 		t.Errorf("defaults default_task_priority must be positive")
 	}
@@ -52,6 +50,90 @@ func TestDefaults_Populated(t *testing.T) {
 	}
 	if len(d.Plugins.Active) == 0 {
 		t.Errorf("defaults plugins.active must be populated")
+	}
+}
+
+// TestSave_RestrictiveFilePermissions pins the F7 hardening: config.yaml is
+// written 0o600 and its .system/ parent 0o700 so a co-tenant on a multi-user
+// host cannot read the plugin grant table / linked-notebook paths / settings.
+func TestSave_RestrictiveFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	vault := t.TempDir()
+	if err := Save(vault, Defaults()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	cfgInfo, err := os.Stat(ConfigPath(vault))
+	if err != nil {
+		t.Fatalf("stat config.yaml: %v", err)
+	}
+	if got := cfgInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("config.yaml perm = %o, want 0o600", got)
+	}
+	sysInfo, err := os.Stat(filepath.Join(vault, ".system"))
+	if err != nil {
+		t.Fatalf("stat .system: %v", err)
+	}
+	if got := sysInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf(".system perm = %o, want 0o700", got)
+	}
+}
+
+// TestLoad_RejectsOversizeConfig pins F12: an oversized config.yaml is rejected
+// at read time without unbounded allocation ahead of yaml.Unmarshal.
+func TestLoad_RejectsOversizeConfig(t *testing.T) {
+	vault := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(vault, ".system"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ConfigPath(vault), make([]byte, maxConfigYAMLBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(vault)
+	if err == nil {
+		t.Fatal("expected oversize config.yaml to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}
+
+// TestLoadLinked_RejectsOversizeConfig pins F12 for the co-located linked
+// notebook config.yaml override layer.
+func TestLoadLinked_RejectsOversizeConfig(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".system"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(LinkedConfigPath(root), make([]byte, maxConfigYAMLBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadLinked(root)
+	if err == nil {
+		t.Fatal("expected oversize linked config.yaml to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}
+
+// TestLoad_LegacyShorthandRegexIgnored pins F11: the user-editable
+// shorthand_regex is removed (it was dead config — the parser uses fixed
+// package-level regexes, never this field). A synced vault carrying a
+// catastrophic-backtracking regex such as ^(a+)+$ must load cleanly with the
+// value silently dropped (yaml.v3 ignores unknown keys), so it can never
+// reach the indexer.
+func TestLoad_LegacyShorthandRegexIgnored(t *testing.T) {
+	vault := t.TempDir()
+	hostile := "parsing:\n  auto_inject_uuid: true\n  default_task_priority: 3\n  shorthand_regex: \"^(a+)+$\"\n"
+	writeFile(t, ConfigPath(vault), hostile)
+	cfg, err := Load(vault)
+	if err != nil {
+		t.Fatalf("config with legacy shorthand_regex should load: %v", err)
+	}
+	if want := Defaults().Parsing; cfg.Parsing != want {
+		t.Errorf("legacy shorthand_regex should be dropped; Parsing = %+v, want %+v", cfg.Parsing, want)
 	}
 }
 

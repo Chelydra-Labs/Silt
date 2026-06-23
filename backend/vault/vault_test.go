@@ -451,3 +451,123 @@ func TestSaveSettings_Fingerprint0600Perms(t *testing.T) {
 	}
 }
 
+// TestScaffoldVault_RestrictiveFilePermissions pins the F7 hardening: the
+// scaffolded config.yaml / theme files / plugins README are 0o600, and the
+// .system/ + themes/ + plugins/ folders are 0o700 (co-tenant cannot read).
+func TestScaffoldVault_RestrictiveFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	vault := t.TempDir()
+	if err := ScaffoldVault(vault); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+	for _, c := range []struct{ name string; want os.FileMode }{
+		{".system", 0o700},
+		{".system/themes", 0o700},
+		{".system/plugins", 0o700},
+		{".system/config.yaml", 0o600},
+		{".system/plugins/README.md", 0o600},
+	} {
+		info, err := os.Stat(filepath.Join(vault, c.name))
+		if err != nil {
+			t.Fatalf("stat %s: %v", c.name, err)
+		}
+		if got := info.Mode().Perm(); got != c.want {
+			t.Errorf("%s perm = %o, want %o", c.name, got, c.want)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(vault, ".system", "themes"))
+	if err != nil {
+		t.Fatalf("read themes dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected scaffolded theme files")
+	}
+	tInfo, err := os.Stat(filepath.Join(vault, ".system", "themes", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("stat theme file: %v", err)
+	}
+	if got := tInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("theme file %s perm = %o, want 0o600", entries[0].Name(), got)
+	}
+}
+
+// TestExportVaultTree_ArchiveFile0600Perms pins F7: the exported .silt-vault
+// archive is written 0o600 (manifest + digests travel with it).
+func TestExportVaultTree_ArchiveFile0600Perms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	root := t.TempDir()
+	scaffoldArchiveTree(t, root)
+	dest := filepath.Join(t.TempDir(), "out.silt-vault")
+	if _, err := ExportVaultTree(root, dest, "MyVault", "0.1.25-test", nil); err != nil {
+		t.Fatalf("ExportVaultTree: %v", err)
+	}
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatalf("stat archive: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("archive perm = %o, want 0o600", got)
+	}
+}
+
+// TestImportVaultTree_RestrictiveFilePermissions pins F7: extracted files are
+// 0o600 and the extraction-created directories 0o700.
+func TestImportVaultTree_RestrictiveFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	root := t.TempDir()
+	scaffoldArchiveTree(t, root)
+	archive := filepath.Join(t.TempDir(), "exp.silt-vault")
+	if _, err := ExportVaultTree(root, archive, "MyVault", "0.1.25-test", nil); err != nil {
+		t.Fatalf("ExportVaultTree: %v", err)
+	}
+	dest := t.TempDir()
+	if _, err := ImportVaultTree(archive, dest, nil); err != nil {
+		t.Fatalf("ImportVaultTree: %v", err)
+	}
+	pageInfo, err := os.Stat(filepath.Join(dest, "Work", "Inbox.md"))
+	if err != nil {
+		t.Fatalf("stat extracted page: %v", err)
+	}
+	if got := pageInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("extracted file perm = %o, want 0o600", got)
+	}
+	dirInfo, err := os.Stat(filepath.Join(dest, "Work"))
+	if err != nil {
+		t.Fatalf("stat extracted dir: %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf("extracted dir perm = %o, want 0o700", got)
+	}
+}
+
+// TestLoadSettings_RejectsOversize pins F12: an oversized settings.json is
+// rejected at read time without unbounded allocation ahead of the strict decode.
+func TestLoadSettings_RejectsOversize(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	path, err := GetSettingsPath()
+	if err != nil {
+		t.Skipf("cannot determine config path on this platform: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, make([]byte, maxSettingsJSONBytes+1), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err = LoadSettings()
+	if err == nil {
+		t.Fatal("expected oversize settings.json to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}
+

@@ -446,7 +446,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// remains the source of truth; deleting the 3 index files forces a clean
 	// full rebuild. The .system dir is created by ScaffoldVault.
 	systemDir := filepath.Join(vaultPath, ".system")
-	if err := os.MkdirAll(systemDir, 0755); err != nil {
+	if err := os.MkdirAll(systemDir, 0o700); err != nil {
 		return fmt.Errorf("failed to ensure .system dir: %w", err)
 	}
 	indexPath := filepath.Join(systemDir, "index.sqlite")

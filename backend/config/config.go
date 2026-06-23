@@ -12,7 +12,13 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"silt/backend/safeio"
 )
+
+// maxConfigYAMLBytes bounds a vault/linked config.yaml before it is parsed.
+// A hostile synced config cannot drive unbounded allocation ahead of
+// yaml.Unmarshal (audit F12).
+const maxConfigYAMLBytes int64 = 256 << 10 // 256 KB
 
 // SystemConfig is the parsed contents of <vault>/.system/config.yaml. It
 // mirrors the schema documented in SPECS.md §9.1.
@@ -52,11 +58,14 @@ type EditorConfig struct {
 	DefaultViewMode *string `yaml:"default_view_mode,omitempty" json:"default_view_mode,omitempty"`
 }
 
-// ParsingConfig holds the task-parse rules consumed by the AST parser.
+// ParsingConfig holds the task-parse rules. The task regexes themselves
+// (TaskCheckboxRegex / TaskTokenRegex) are fixed package-level constants in
+// the parser and are intentionally NOT user-editable: a user-supplied regex
+// on a synced vault is a catastrophic-backtracking DoS vector against the
+// indexer (audit F11). Only non-regex parse knobs live here.
 type ParsingConfig struct {
-	AutoInjectUUID      bool   `yaml:"auto_inject_uuid" json:"auto_inject_uuid"`
-	ShorthandRegex      string `yaml:"shorthand_regex" json:"shorthand_regex"`
-	DefaultTaskPriority int    `yaml:"default_task_priority" json:"default_task_priority"`
+	AutoInjectUUID      bool `yaml:"auto_inject_uuid" json:"auto_inject_uuid"`
+	DefaultTaskPriority int  `yaml:"default_task_priority" json:"default_task_priority"`
 }
 
 // PluginsConfig mirrors the `plugins:` block of config.yaml. PluginSettings is
@@ -221,7 +230,6 @@ func Defaults() SystemConfig {
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
-			ShorthandRegex:      `^([ ]|[/]|[x])\s(TODO|DOING|DONE)\sTASK\s(?:\s*\[([^\]]*)\])?(?:\(([^)]*)\))?(?:#(\d+))?\s(.*)$`,
 			DefaultTaskPriority: 3,
 		},
 		Hotkeys: map[string]string{
@@ -317,7 +325,7 @@ func Defaults() SystemConfig {
 // through to defaults — the user has a config, it is just broken). Fields
 // absent from the file keep their default values.
 func Load(vaultPath string) (SystemConfig, error) {
-	data, err := os.ReadFile(ConfigPath(vaultPath))
+	data, err := safeio.ReadFileMax(ConfigPath(vaultPath), maxConfigYAMLBytes)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Defaults(), nil
@@ -354,7 +362,7 @@ func Save(vaultPath string, cfg SystemConfig) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config.yaml: %w", err)
 	}
-	return writeFileAtomic(ConfigPath(vaultPath), out, 0o644)
+	return writeFileAtomic(ConfigPath(vaultPath), out, 0o600)
 }
 
 // LinkedConfigPath returns the absolute path to a linked notebook's
@@ -381,7 +389,7 @@ func LinkedConfigPath(linkedRoot string) string {
 // semantics so omitted sections keep their default values.
 func LoadLinked(linkedRoot string) (SystemConfig, error) {
 	path := LinkedConfigPath(linkedRoot)
-	data, err := os.ReadFile(path)
+	data, err := safeio.ReadFileMax(path, maxConfigYAMLBytes)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Defaults(), nil
@@ -572,7 +580,7 @@ func stringPtr(s string) *string { return &s }
 // config package stays decoupled from the markdown parser.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".config-*.tmp")

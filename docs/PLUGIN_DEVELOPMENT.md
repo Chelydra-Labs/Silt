@@ -391,6 +391,20 @@ const scratch = await ctx.scratchDir('Work')  // <notebook>/.system/plugins/<id>
 
 Writes are restricted to `attachments/` + the plugin's own scratch dir.
 
+**Attachment blocklist.** Copy-in rejects file types that would turn
+`attachments/` into an executable/scriptable drop zone handed to the OS
+default handler at a `file://` URL: executables/installers/scripts
+(`.exe .bat .cmd .com .scr .sh .msi .dll .app .ps1 .vbs .wsf .hta`),
+scriptable web content (`.html .htm .xhtml .xht .svg .svgz .js .mjs
+.webmanifest`), shortcuts/descriptors that can point anywhere or run
+commands (`.lnk .url .command .scpt .applescript .desktop`), scriptable
+runtimes (`.jar .class`), interpreter scripts (`.py .pyc .rb .php .pl`),
+and Windows Script Host / control-panel applets (`.wsh .cpl`). Common document/media types
+(`.png .jpg .gif .mp4 .mp3 .wav .txt .csv .md .json .docx .xlsx .pptx`)
+attach normally. `.pdf` is also allowed (a common legitimate attachment);
+the residual risk of a JS-bearing PDF opened via the OS handler is
+tracked for a sandboxed in-app viewer follow-up.
+
 ### 8.5 OS integration (#114)
 
 ```ts

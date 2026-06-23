@@ -58,7 +58,7 @@ func SaveTemplate(templatesDir string, t *Template) error {
 	if !IsValidID(t.ID) {
 		return fmt.Errorf("invalid template id %q (must be lowercase [a-z0-9_-])", t.ID)
 	}
-	if err := os.MkdirAll(templatesDir, 0o755); err != nil {
+	if err := os.MkdirAll(templatesDir, 0o700); err != nil {
 		return fmt.Errorf("failed to ensure templates dir %s: %w", templatesDir, err)
 	}
 	dst := filepath.Join(templatesDir, t.ID+".md")

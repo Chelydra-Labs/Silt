@@ -2,12 +2,18 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"silt/backend/plugins"
+	"silt/backend/safeio"
 	"sync"
 	"time"
 )
+
+// maxRatelimitManifestBytes bounds the plugin.json read in
+// resolvePluginRatelimit. It is already implicitly covered by the install-time
+// 10 MB per-file cap, but the explicit read is bounded too so a hand-edited or
+// corrupted plugin.json cannot drive unbounded allocation here (audit F12).
+const maxRatelimitManifestBytes int64 = 64 << 10 // 64 KB
 
 const defaultPluginFetchRPS = 1.0
 
@@ -97,7 +103,7 @@ func resolvePluginRatelimit(vaultPath, pluginID string) (rps float64, burst int)
 		return
 	}
 	manifestPath := filepath.Join(vaultPath, ".system", "plugins", pluginID, "plugin.json")
-	data, err := os.ReadFile(manifestPath)
+	data, err := safeio.ReadFileMax(manifestPath, maxRatelimitManifestBytes)
 	if err != nil {
 		return
 	}
