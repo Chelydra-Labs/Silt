@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -51,6 +52,21 @@ type App struct {
 	// startup load runs before the frontend subscribes to config:error, so
 	// that event is typically lost; GetConfigLoadError surfaces this one-shot.
 	configLoadErr error
+
+	// grants is the per-host plugin capability grant table (F4). It lives in
+	// <configDir>/silt/grants.json (NOT in vault-scoped config.yaml) so a
+	// vault synced from another host cannot carry the counterpart's grant
+	// decisions. Guarded by configMu (grants are config-tier state even
+	// though they persist to a different file than config.yaml). Loaded in
+	// initializeVaultServices, torn down in teardownVaultServices.
+	grants vault.GrantsStore
+	// quarantinedLinks holds the IDs of linked notebooks whose on-disk root
+	// no longer matches the stored RootFingerprint (F3). Presence in this set
+	// means the link is quarantined: excluded from indexing, reads, and
+	// writes; the user sees a re-link prompt. Guarded by configMu. Populated
+	// at vault open (fingerprint mismatch) and on fsnotify reload (root_path
+	// changed); cleared by UnlinkNotebook (re-link = unlink + link).
+	quarantinedLinks map[string]struct{}
 
 	// templateWatcher hot-reloads <vault>/.system/templates/ so the picker
 	// stays live when a user adds/edits/deletes a custom template externally.
@@ -130,7 +146,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	settings, err := vault.LoadSettings()
-	if err != nil {
+	if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 		// The settings file exists on disk but is unreadable or
 		// malformed. Don't silently fall through to "no vault" — the
 		// user has a vault setup, something is just broken.
@@ -139,6 +155,14 @@ func (a *App) startup(ctx context.Context) {
 				fmt.Sprintf("failed to load settings.json: %v", err))
 		}
 		return
+	}
+	// F20: settings loaded fine but the trust-anchor fingerprint changed
+	// since last launch (possible tampering, or a legit external edit the
+	// user hasn't acknowledged yet). Surface a confirmation dialog so the
+	// user can accept or reject the change. The settings are still used
+	// in-memory (they are valid JSON with a valid schema).
+	if errors.Is(err, vault.ErrSettingsFingerprintMismatch) && a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "settings:fingerprint-mismatch", nil)
 	}
 	if settings.VaultPath != "" {
 		if _, statErr := os.Stat(settings.VaultPath); statErr == nil {
@@ -149,6 +173,95 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// ConfirmSettingsChange is the F20 user-ack binding. When the frontend detects
+// a settings:fingerprint-mismatch event (the trust-anchor fields in
+// settings.json changed since last launch), it shows a confirmation dialog;
+// if the user confirms the change was intentional, it calls this binding,
+// which updates the on-disk fingerprint to match the current values so the
+// next launch proceeds without a prompt. A user who rejects the dialog can
+// manually fix settings.json; the mismatch persists across relaunches until
+// either the values are restored or the user confirms.
+func (a *App) ConfirmSettingsChange() error {
+	if _, err := vault.ConfirmSettingsChange(); err != nil {
+		return fmt.Errorf("confirm settings change: %w", err)
+	}
+	return nil
+}
+
+// ConfirmGrantsMigration is the F4 user-ack binding. When the frontend detects
+// a grants:migration-required event (the vault's legacy config.yaml carries a
+// grants block this host has never seen), it shows a one-time confirmation
+// dialog. If the user confirms, this binding:
+//  1. Merges the legacy grants into the per-host store (preserving any grants
+//     the host already has — e.g. first-party seeds).
+//  2. Persists the merged store to grants.json.
+//  3. Rewrites config.yaml WITHOUT the grants block (the field is already
+//     gone from the struct, so a normalize + Save strips it from disk).
+//
+// If the user denies, the host store keeps its first-party seeds only; every
+// third-party plugin re-prompts on first use (the safe default).
+func (a *App) ConfirmGrantsMigration(legacyGrants map[string]map[string]string) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	// Merge legacy grants into the host store. First-party IDs are skipped —
+	// they are always seeded implicitly and the user never granted them
+	// manually.
+	if a.grants == nil {
+		a.grants = vault.GrantsStore{}
+	}
+	for pid, caps := range legacyGrants {
+		if isFirstPartyPlugin(pid) {
+			continue
+		}
+		if a.grants[pid] == nil {
+			a.grants[pid] = map[string]string{}
+		}
+		for cap, qual := range caps {
+			a.grants[pid][cap] = qual
+		}
+	}
+	if err := vault.SaveGrants(a.grants); err != nil {
+		return fmt.Errorf("persist migrated grants: %w", err)
+	}
+	// Rewrite config.yaml so the legacy grants block is stripped from disk.
+	// The struct no longer has a Grants field, so a round-trip through Save
+	// drops it. RegisterSelfWrite suppresses the watcher's reaction.
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+		return fmt.Errorf("strip legacy grants from config.yaml: %w", err)
+	}
+	a.emitPluginsChanged()
+	return nil
+}
+
+// DeclineGrantsMigration is the F4 user-decline binding. When the user
+// dismisses the grants-migration dialog, this strips the legacy grants:
+// block from config.yaml so the dialog does NOT re-fire on the next launch.
+// The host store keeps its first-party seeds only; every third-party plugin
+// re-prompts on first use (the safe default). The user's third-party grants
+// are lost — they chose not to migrate.
+func (a *App) DeclineGrantsMigration() error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	// config.Save drops the grants field (it's gone from the struct), so
+	// the on-disk file no longer carries the legacy block.
+	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+		return fmt.Errorf("strip legacy grants from config.yaml: %w", err)
+	}
+	return nil
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -221,6 +334,13 @@ func (a *App) teardownVaultServices() {
 	}
 	a.coordinator = nil
 	a.vaultPath = ""
+	// F4: clear the per-host grants store so a subsequent vault open starts
+	// fresh (LoadGrants + seedFirstPartyGrants repopulate). The on-disk file
+	// is untouched — it persists across vault sessions.
+	a.configMu.Lock()
+	a.grants = nil
+	a.quarantinedLinks = nil
+	a.configMu.Unlock()
 	templates.ResetPluginRegistry()
 }
 
@@ -264,13 +384,62 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	if cfgErr != nil && a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "config:error", cfgErr.Error())
 	}
-	a.applyConfigLocked(cfg) // sets a.cfg + a.spacesPerTab before scanning
+	// F4: load the per-host grants store BEFORE applyConfigLocked so the
+	// first-party seed merges into the real store, not a transient empty one.
+	// Grants live in <configDir>/silt/grants.json (NOT vault-scoped config.yaml)
+	// so a synced vault cannot carry the counterpart's grant decisions.
+	grantsStore, grantsErr := vault.LoadGrants()
+	if grantsErr != nil {
+		// A corrupt grants file is non-fatal — log + start with an empty
+		// store. The user re-grants on first use (the safe default). Every
+		// third-party plugin will prompt; first-party plugins seed regardless.
+		log.Printf("initializeVaultServices: grants load failed (starting with empty store): %v", grantsErr)
+		grantsStore = vault.GrantsStore{}
+	}
+	a.configMu.Lock()
+	a.grants = grantsStore
+	a.configMu.Unlock()
+	a.applyConfigLocked(cfg) // sets a.cfg + a.spacesPerTab + seeds first-party grants into a.grants
 	// The config:error event above fires before the frontend mounts and
 	// subscribes, so it is typically lost. Stash the error for
 	// GetConfigLoadError() to surface on the frontend's initial loadConfig().
 	a.configMu.Lock()
 	a.configLoadErr = cfgErr
 	a.configMu.Unlock()
+
+	// F4 migration: if the vault's config.yaml still carries a legacy
+	// `plugins.grants:` block AND the host store was empty before we seeded
+	// first-party grants, this is a pre-F4 vault opening on a host that has
+	// never seen it. Emit grants:migration-required so the frontend shows a
+	// one-time confirmation dialog. The user's confirm calls
+	// ConfirmGrantsMigration, which writes the legacy grants to the host file
+	// and rewrites config.yaml without the grants block. If the user denies,
+	// the host store stays seeded with first-party only; every third-party
+	// plugin re-prompts on first use (the safe default).
+	if len(grantsStore) == 0 && grantsErr == nil {
+		legacy := vault.LoadLegacyVaultGrants(vaultPath)
+		// Strip first-party entries — they are always seeded implicitly, never
+		// migrated (the user never granted them manually).
+		hasThirdParty := false
+		for pid := range legacy {
+			if !isFirstPartyPlugin(pid) {
+				hasThirdParty = true
+				break
+			}
+		}
+		if hasThirdParty && a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "grants:migration-required", legacy)
+		}
+	}
+
+	// F3: verify linked-notebook fingerprints before the vault scan. Legacy
+	// links (pre-F3, no fingerprint) get one assigned silently; mismatched
+	// links are quarantined (excluded from indexing/reads/writes) and emit
+	// linked-notebook:quarantined so the frontend shows a re-link prompt.
+	a.configMu.Lock()
+	a.quarantinedLinks = make(map[string]struct{})
+	a.configMu.Unlock()
+	a.verifyLinkedNotebookFingerprints()
 
 	// Persistent on-disk WAL index at <vault>/.system/index.sqlite. Survives
 	// restarts so a warm launch re-indexes only changed files (#29). Markdown
@@ -600,7 +769,7 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 			return fmt.Errorf("vault changed during move (concurrent lifecycle transition)")
 		}
 		prior, err := vault.LoadSettings()
-		if err != nil {
+		if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 			return fmt.Errorf("move vault: snapshot settings: %w", err)
 		}
 		a.teardownVaultServices()

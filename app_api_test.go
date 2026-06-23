@@ -22,6 +22,20 @@ func newTestApp(t *testing.T) *App {
 	t.Helper()
 	vaultPath := t.TempDir()
 
+	// F4: isolate the per-host grants + settings files so tests never touch
+	// the developer's real <configDir>/silt/. Both GrantsPath and
+	// GetSettingsPath resolve via os.UserConfigDir, which honors APPDATA
+	// (Windows) / XDG_CONFIG_HOME (POSIX). Tests that need to pre-stage
+	// settings.json (e.g. publisher-trust tests via saveTrustedPublishers)
+	// set APPDATA BEFORE calling newTestApp; check for a prior override and
+	// respect it so we don't clobber their settings dir.
+	if os.Getenv("SILT_TEST_HOST_CONFIG") == "" {
+		hostConfigDir := t.TempDir()
+		t.Setenv("APPDATA", hostConfigDir)
+		t.Setenv("XDG_CONFIG_HOME", hostConfigDir)
+		t.Setenv("SILT_TEST_HOST_CONFIG", hostConfigDir)
+	}
+
 	if err := vault.ScaffoldVault(vaultPath); err != nil {
 		t.Fatalf("ScaffoldVault: %v", err)
 	}
@@ -2613,4 +2627,246 @@ func TestLinkNotebook_IndexPopulatesFilesCacheForWarmRestart(t *testing.T) {
 		t.Errorf("files.size = %d, want %d (actual file size)", gotSize, st.Size())
 	}
 	_ = ln
+}
+
+// =========================================================================
+// F3: linked-notebook RootPath fingerprinting (#238)
+// =========================================================================
+
+// TestLinkNotebook_CapturesFingerprint verifies that LinkNotebook records a
+// non-empty RootFingerprint alongside RootPath in config.yaml. Without this,
+// a synced edit to root_path could redirect the link to an attacker-chosen
+// folder and every downstream containment check would be satisfied.
+func TestLinkNotebook_CapturesFingerprint(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	if ln.RootFingerprint == "" {
+		t.Fatal("LinkNotebook must capture a non-empty RootFingerprint")
+	}
+	// The fingerprint persists to config.yaml.
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	found := false
+	for _, entry := range loaded.LinkedNotebooks {
+		if entry.ID == ln.ID {
+			if entry.RootFingerprint == "" {
+				t.Fatal("persisted linked notebook has empty root_fingerprint")
+			}
+			if entry.RootFingerprint != ln.RootFingerprint {
+				t.Errorf("fingerprint mismatch: persisted %q vs in-memory %q", entry.RootFingerprint, ln.RootFingerprint)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("linked notebook %s not found in loaded config", ln.ID)
+	}
+}
+
+// TestResolveNotebookDir_QuarantinesOnTamper simulates a synced-vault attack:
+// link a folder, then a config.yaml reload arrives with a tampered root_path
+// (a different folder). applyConfigLocked must detect the change, quarantine
+// the link, and preserve the trusted in-memory root. resolveNotebookDir must
+// then fail closed.
+func TestResolveNotebookDir_QuarantinesOnTamper(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	// Baseline: resolve works.
+	if _, err := app.resolveNotebookDir(ln.DisplayName, ln.Source()); err != nil {
+		t.Fatalf("baseline resolveNotebookDir: %v", err)
+	}
+
+	// Simulate the watcher delivering a config with a tampered root_path.
+	// Must be a genuine COPY (not a reference to a.cfg) so applyConfigLocked's
+	// comparison detects the difference.
+	attackDir := t.TempDir()
+	app.configMu.RLock()
+	tamperedCfg := app.cfg
+	tamperedCfg.LinkedNotebooks = make([]config.LinkedNotebook, len(app.cfg.LinkedNotebooks))
+	for i, entry := range app.cfg.LinkedNotebooks {
+		tamperedCfg.LinkedNotebooks[i] = entry
+		if entry.ID == ln.ID {
+			tamperedCfg.LinkedNotebooks[i].RootPath = attackDir
+		}
+	}
+	app.configMu.RUnlock()
+	app.applyConfigLocked(tamperedCfg)
+
+	// resolveNotebookDir must fail — the link is quarantined.
+	_, err = app.resolveNotebookDir(ln.DisplayName, ln.Source())
+	if err == nil {
+		t.Fatal("resolveNotebookDir must fail after root_path tampering")
+	}
+}
+
+// TestVaultOpen_QuarantinesFingerprintMismatch verifies that a vault with a
+// corrupted stored fingerprint is quarantined at open time.
+func TestVaultOpen_QuarantinesFingerprintMismatch(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	// Corrupt the stored fingerprint.
+	app.configMu.Lock()
+	for i := range app.cfg.LinkedNotebooks {
+		if app.cfg.LinkedNotebooks[i].ID == ln.ID {
+			app.cfg.LinkedNotebooks[i].RootFingerprint = "corrupted-fingerprint"
+			break
+		}
+	}
+	config.Save(app.vaultPath, app.cfg)
+	app.configMu.Unlock()
+
+	// Run verification — should quarantine the link.
+	app.quarantinedLinks = make(map[string]struct{})
+	app.verifyLinkedNotebookFingerprints()
+
+	app.configMu.RLock()
+	_, quarantined := app.quarantinedLinks[ln.ID]
+	app.configMu.RUnlock()
+	if !quarantined {
+		t.Fatal("verifyLinkedNotebookFingerprints must quarantine a link with a mismatched fingerprint")
+	}
+	// resolveNotebookDir must fail closed for the quarantined link.
+	if _, err := app.resolveNotebookDir(ln.DisplayName, ln.Source()); err == nil {
+		t.Fatal("resolveNotebookDir must deny a quarantined link")
+	}
+}
+
+// TestVaultOpen_MigratesLegacyLinksWithoutFingerprint verifies that a pre-F3
+// vault (links with no fingerprint) gets one assigned silently at open time,
+// and the link is NOT quarantined.
+func TestVaultOpen_MigratesLegacyLinksWithoutFingerprint(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	// Simulate a pre-F3 vault: clear the fingerprint.
+	app.configMu.Lock()
+	for i := range app.cfg.LinkedNotebooks {
+		if app.cfg.LinkedNotebooks[i].ID == ln.ID {
+			app.cfg.LinkedNotebooks[i].RootFingerprint = ""
+			break
+		}
+	}
+	config.Save(app.vaultPath, app.cfg)
+	app.configMu.Unlock()
+
+	// Run verification — should assign a fingerprint, NOT quarantine.
+	app.quarantinedLinks = make(map[string]struct{})
+	app.verifyLinkedNotebookFingerprints()
+
+	app.configMu.RLock()
+	_, quarantined := app.quarantinedLinks[ln.ID]
+	hasFP := false
+	for _, entry := range app.cfg.LinkedNotebooks {
+		if entry.ID == ln.ID {
+			hasFP = entry.RootFingerprint != ""
+			break
+		}
+	}
+	app.configMu.RUnlock()
+	if quarantined {
+		t.Fatal("legacy link without fingerprint must NOT be quarantined (silent migration)")
+	}
+	if !hasFP {
+		t.Fatal("verifyLinkedNotebookFingerprints must assign a fingerprint to a legacy link")
+	}
+}
+
+// TestFingerprint_CrossPlatform smoke-tests ComputeRootFingerprint: it returns
+// a non-empty, stable string for the same path across two calls on this platform.
+func TestFingerprint_CrossPlatform(t *testing.T) {
+	dir := t.TempDir()
+	fp1, err := config.ComputeRootFingerprint(dir)
+	if err != nil {
+		t.Fatalf("ComputeRootFingerprint: %v", err)
+	}
+	if fp1 == "" {
+		t.Fatal("fingerprint must be non-empty")
+	}
+	fp2, err := config.ComputeRootFingerprint(dir)
+	if err != nil {
+		t.Fatalf("second ComputeRootFingerprint: %v", err)
+	}
+	if fp1 != fp2 {
+		t.Errorf("fingerprint not stable: first %q, second %q", fp1, fp2)
+	}
+}
+
+// TestApplyConfigLocked_QuarantinesNewLinkFromExternalEdit verifies the P1
+// fix: a config.yaml reload that injects a brand-new linked notebook (one the
+// host has never seen) is quarantined, not silently adopted. Without this
+// check, the M2 (synced-vault) adversary can inject a link to an attacker-
+// chosen folder and bypass the entire F3 fingerprint gate.
+func TestApplyConfigLocked_QuarantinesNewLinkFromExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+
+	// Build a config that adds a brand-new link the host has never seen.
+	app.configMu.RLock()
+	tamperedCfg := app.cfg
+	attackDir := t.TempDir()
+	tamperedCfg.LinkedNotebooks = append(tamperedCfg.LinkedNotebooks, config.LinkedNotebook{
+		ID:          "linked-evilinject123",
+		RootPath:    attackDir,
+		DisplayName: "Evil",
+		// No RootFingerprint — a synced-edit injection wouldn't have one.
+	})
+	app.configMu.RUnlock()
+
+	app.applyConfigLocked(tamperedCfg)
+
+	// The injected link must be quarantined.
+	app.configMu.RLock()
+	_, quarantined := app.quarantinedLinks["linked-evilinject123"]
+	app.configMu.RUnlock()
+	if !quarantined {
+		t.Fatal("applyConfigLocked must quarantine a new link from an external edit")
+	}
+
+	// resolveNotebookDir must deny the quarantined link.
+	if _, err := app.resolveNotebookDir("Evil", "linked:linked-evilinject123"); err == nil {
+		t.Fatal("resolveNotebookDir must deny a quarantined injected link")
+	}
+}
+
+// TestApplyConfigLocked_PrunesStaleQuarantineEntries verifies the P2 prune:
+// after a config reload removes a quarantined link, its ID is cleaned from
+// the quarantine set so the map doesn't grow unbounded.
+func TestApplyConfigLocked_PrunesStaleQuarantineEntries(t *testing.T) {
+	app := newTestApp(t)
+
+	// Stage: manually quarantine a stale ID that no longer exists in config.
+	app.configMu.Lock()
+	if app.quarantinedLinks == nil {
+		app.quarantinedLinks = make(map[string]struct{})
+	}
+	app.quarantinedLinks["linked-gone"] = struct{}{}
+	// Config has no links at all (fresh test app).
+	app.configMu.Unlock()
+
+	// Reload the same config (no linked-gone entry).
+	app.applyConfigLocked(app.cfg)
+
+	app.configMu.RLock()
+	_, stillQuarantined := app.quarantinedLinks["linked-gone"]
+	app.configMu.RUnlock()
+	if stillQuarantined {
+		t.Fatal("applyConfigLocked must prune quarantine entries for removed links")
+	}
 }

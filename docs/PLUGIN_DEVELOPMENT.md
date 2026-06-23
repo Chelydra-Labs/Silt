@@ -268,6 +268,30 @@ First-party plugins inherit this capability implicitly. Third-party plugins
 that previously mutated blocks without declaring it will need to update their
 manifest.
 
+### 7.3 Reserved first-party plugin ids (#240)
+
+The ids in `plugins.FirstPartyPluginIDs` (`silt-agenda`, `silt-calendar`,
+`silt-kanban`, `silt-attachments`) are reserved for the bundled first-party
+plugins. A `.silt-plugin` archive whose manifest `id` collides with one of
+these is **rejected at install time** with:
+
+```
+id "silt-kanban" is reserved for a bundled plugin
+```
+
+This is a deliberate exact-match gate — near-collision ids like
+`silt-kanban2`, `silt-kanban-evil`, or `silts-kanban` are still accepted.
+The install-time check (in `plugins.Validate`, with a mirror defense-in-depth
+check in `plugins.Install`) is the primary gate; the frontend loader's
+`getFirstParty` skip is a secondary defense that keeps a stray on-disk copy
+from shadowing the bundled component.
+
+If a first-party plugin is ever split out of the bundle intentionally (so its
+id is no longer reserved), its id MUST be removed from
+`plugins.FirstPartyPluginIDs` at the same time, and any pre-existing on-disk
+copies should be migrated through the standard capability-prompt flow (the
+user re-grants capabilities on first use).
+
 ---
 
 ## 8. v2 SDK — Capabilities, Lifecycle, and Extended APIs

@@ -60,17 +60,18 @@ type ParsingConfig struct {
 }
 
 // PluginsConfig mirrors the `plugins:` block of config.yaml. PluginSettings is
-// an opaque per-plugin map (the plugin manager surfaces it read-only). Grants
-// is the v2 SDK capability grant table (#113): pluginID → capability →
-// qualifier ("granted" | "notebook" | "vault"). It is the single source of
-// truth for per-vault capability permission — vault state, not user-global,
-// aligning with #100's trust-scoping principle. A missing entry means "not
-// granted" (privileged bindings return a structured CapabilityDeniedError).
+// an opaque per-plugin map (the plugin manager surfaces it read-only).
+//
+// NOTE: capability Grants lived here pre-F4 but have moved to per-host storage
+// (see backend/vault/grants.go). A legacy config.yaml may still carry a
+// `grants:` block under `plugins:` — it is silently ignored on load (yaml.v3
+// drops unknown fields) and migrated to the host store on first launch
+// (initializeVaultServices → ConfirmGrantsMigration). The field is gone from
+// the struct so a synced vault can never re-introduce grants via config.yaml.
 type PluginsConfig struct {
-	Active         []string                     `yaml:"active" json:"active"`
-	Disabled       []string                     `yaml:"disabled" json:"disabled"`
-	PluginSettings map[string]any               `yaml:"plugin_settings" json:"plugin_settings"`
-	Grants         map[string]map[string]string `yaml:"grants,omitempty" json:"grants,omitempty"`
+	Active         []string       `yaml:"active" json:"active"`
+	Disabled       []string       `yaml:"disabled" json:"disabled"`
+	PluginSettings map[string]any `yaml:"plugin_settings" json:"plugin_settings"`
 }
 
 // LinkedNotebook is an external notebook root registered into the vault but
@@ -81,9 +82,10 @@ type PluginsConfig struct {
 // plugin list; the markdown content (and any co-located <root>/.system/) stays
 // with the notebook root and is the product.
 type LinkedNotebook struct {
-	ID          string `yaml:"id" json:"id"`                     // stable id, e.g. "linked-<short>"; source column = "linked:"+ID
-	RootPath    string `yaml:"root_path" json:"root_path"`       // absolute path to the external notebook root
-	DisplayName string `yaml:"display_name" json:"display_name"` // sidebar label (the notebook "name")
+	ID              string `yaml:"id" json:"id"`                               // stable id, e.g. "linked-<short>"; source column = "linked:"+ID
+	RootPath        string `yaml:"root_path" json:"root_path"`                 // absolute path to the external notebook root
+	DisplayName     string `yaml:"display_name" json:"display_name"`           // sidebar label (the notebook "name")
+	RootFingerprint string `yaml:"root_fingerprint,omitempty" json:"root_fingerprint,omitempty"` // F3: host-verified trust anchor; see fingerprint.go
 }
 
 // Source returns the `blocks.source` discriminator value for this linked
@@ -274,7 +276,6 @@ func Defaults() SystemConfig {
 					"columns":     []any{"TODO", "DOING", "DONE"},
 				},
 			},
-			Grants: map[string]map[string]string{},
 		},
 		UI: UIConfig{
 			SidebarWidth: 256,
@@ -484,9 +485,9 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.Plugins.PluginSettings == nil {
 		cfg.Plugins.PluginSettings = map[string]any{}
 	}
-	if cfg.Plugins.Grants == nil {
-		cfg.Plugins.Grants = map[string]map[string]string{}
-	}
+	// NOTE: grants normalization removed — grants now live in per-host storage
+	// (backend/vault/grants.go, F4). The field is gone from PluginsConfig so a
+	// synced vault's legacy `grants:` block is silently ignored by yaml.v3.
 	if cfg.Hotkeys == nil {
 		cfg.Hotkeys = map[string]string{}
 	}

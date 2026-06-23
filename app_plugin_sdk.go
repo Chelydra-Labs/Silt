@@ -11,6 +11,7 @@ import (
 	"silt/backend/db"
 	"silt/backend/parser"
 	"silt/backend/plugins"
+	"silt/backend/vault"
 	"strconv"
 	"strings"
 
@@ -453,45 +454,128 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 // Go-side knobs (tab indent width), then emits config:changed so the frontend
 // refreshes editor settings, hotkeys, and per-plugin settings.
 func (a *App) applyConfig(cfg config.SystemConfig) {
-	a.applyConfigLocked(cfg)
+	quarantined := a.applyConfigLocked(cfg)
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "config:changed", cfg)
+		// F3: emit linked-notebook:quarantined for any links whose root_path
+		// changed in the external edit (synced-vault attack vector).
+		for _, q := range quarantined {
+			runtime.EventsEmit(a.ctx, "linked-notebook:quarantined", q)
+		}
 	}
 }
 
 // applyConfigLocked updates a.cfg + live knobs under the write lock. Split out
 // so initializeVaultServices can set the config (and spacesPerTab) before the
 // first scan without emitting an event for a vault the frontend hasn't seen yet.
-func (a *App) applyConfigLocked(cfg config.SystemConfig) {
+// Returns a slice of newly-quarantined linked-notebook event payloads (for
+// applyConfig to emit after unlock — the lock is held here so quarantineLink
+// cannot be called).
+func (a *App) applyConfigLocked(cfg config.SystemConfig) []map[string]string {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
+	// F3: when a config reloads from disk (fsnotify), preserve the in-memory
+	// RootFingerprint for each linked notebook and quarantine any link whose
+	// root changed or was added by an external edit. The M2 (synced-vault)
+	// adversary can edit config.yaml freely — without these checks they could
+	// redirect an existing link's root_path to an attacker folder, or inject a
+	// brand-new link pointing at a hostile root, both with no fingerprint.
+	var quarantined []map[string]string
+	if a.quarantinedLinks == nil {
+		a.quarantinedLinks = make(map[string]struct{})
+	}
+	// Snapshot the set of known link IDs so we can detect new entries.
+	knownIDs := make(map[string]bool, len(a.cfg.LinkedNotebooks))
+	for _, existing := range a.cfg.LinkedNotebooks {
+		knownIDs[existing.ID] = true
+	}
+	newlyQuarantined := make(map[string]bool) // IDs quarantined in THIS call
+	for i, reloaded := range cfg.LinkedNotebooks {
+		if !knownIDs[reloaded.ID] {
+			// NEW link from an external edit — the M2 adversary injected a
+			// link to an attacker-chosen root. Quarantine immediately; the
+			// user confirms via the re-link modal or unlinks.
+			a.quarantinedLinks[reloaded.ID] = struct{}{}
+			newlyQuarantined[reloaded.ID] = true
+			quarantined = append(quarantined, map[string]string{
+				"id":           reloaded.ID,
+				"display_name": reloaded.DisplayName,
+				"reason":       "new_link_from_external_edit",
+			})
+			log.Printf("applyConfigLocked: quarantined new link %s (appeared in external config edit)", reloaded.DisplayName)
+			continue
+		}
+		for _, existing := range a.cfg.LinkedNotebooks {
+			if reloaded.ID != existing.ID {
+				continue
+			}
+			if reloaded.RootPath != existing.RootPath {
+				// root_path changed via external edit — quarantine and
+				// preserve the trusted in-memory root + fingerprint.
+				a.quarantinedLinks[reloaded.ID] = struct{}{}
+				newlyQuarantined[reloaded.ID] = true
+				cfg.LinkedNotebooks[i].RootPath = existing.RootPath
+				cfg.LinkedNotebooks[i].RootFingerprint = existing.RootFingerprint
+				quarantined = append(quarantined, map[string]string{
+					"id":           reloaded.ID,
+					"display_name": reloaded.DisplayName,
+					"reason":       "root_path_changed",
+				})
+				log.Printf("applyConfigLocked: quarantined %s (root_path changed in external edit)", reloaded.DisplayName)
+			} else {
+				// RootPath unchanged — preserve the fingerprint captured at link time.
+				cfg.LinkedNotebooks[i].RootFingerprint = existing.RootFingerprint
+			}
+			break
+		}
+	}
+	// P2 prune: remove stale quarantine entries for links that no longer exist
+	// in the reloaded config (user unlinked, or synced config removed them).
+	// Keep entries for links quarantined in THIS call (they ARE in the config).
+	for id := range a.quarantinedLinks {
+		if newlyQuarantined[id] {
+			continue
+		}
+		stillExists := false
+		for _, ln := range cfg.LinkedNotebooks {
+			if ln.ID == id {
+				stillExists = true
+				break
+			}
+		}
+		if !stillExists {
+			delete(a.quarantinedLinks, id)
+		}
+	}
 	a.cfg = cfg
 	if cfg.Editor.TabIndentSpaces > 0 {
 		a.spacesPerTab = cfg.Editor.TabIndentSpaces
 	}
 	a.seedFirstPartyGrants()
+	return quarantined
 }
 
-// seedFirstPartyGrants populates the in-memory grants table with every
+// seedFirstPartyGrants populates the per-host grants store with every
 // capability for each first-party plugin ID, so bundled plugins are implicitly
 // trusted WITHOUT a special-case bypass in requireGrant. This closes the
 // spoofing vector where a third-party plugin passes 'silt-attachments' as
 // pluginID to bypass all capability checks (#113 security hardening).
 //
-// The grants are merged into the in-memory config on every applyConfigLocked
-// call. If they happen to persist to config.yaml via a later Save, that is
-// harmless — they are just grant entries. If a user removes them, they are
-// re-seeded on the next config load.
+// F4: grants now live in the per-host store (a.grants), not vault-scoped
+// config.yaml. Seeding is in-memory only for the session — the store is NOT
+// re-persisted on every applyConfigLocked (that would write grants.json on
+// every config reload for no reason). The seeded entries persist for the vault
+// session; a fresh launch re-seeds from LoadGrants + this function.
 func (a *App) seedFirstPartyGrants() {
-	if a.cfg.Plugins.Grants == nil {
-		a.cfg.Plugins.Grants = map[string]map[string]string{}
+	if a.grants == nil {
+		a.grants = vault.GrantsStore{}
 	}
-	for id := range firstPartyPluginIDs {
-		if a.cfg.Plugins.Grants[id] == nil {
-			a.cfg.Plugins.Grants[id] = map[string]string{}
+	for id := range plugins.FirstPartyPluginIDs {
+		if a.grants[id] == nil {
+			a.grants[id] = map[string]string{}
 		}
 		for cap := range plugins.KnownCapabilities {
-			a.cfg.Plugins.Grants[id][string(cap)] = plugins.QualGranted
+			a.grants[id][string(cap)] = plugins.QualGranted
 		}
 	}
 }

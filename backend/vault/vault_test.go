@@ -12,6 +12,14 @@ import (
 	"silt/backend/themes"
 )
 
+// jsonQuote wraps a string as a JSON string literal (with escaping) so a test
+// can embed a platform-specific filesystem path into a settings.json template
+// without string-concatenation quoting bugs.
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 func TestLoadSettings_CorruptJSON(t *testing.T) {
 	// settings.json exists but contains unparseable content. LoadSettings
 	// must return an error, not silently return AppSettings{}.
@@ -84,7 +92,9 @@ func TestLoadSettings_BackwardCompat(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	// Pre-theme-era settings.json: only vault_path.
-	legacy := []byte(`{"vault_path":"/old/vault"}`)
+	// Use a platform-absolute path so the F20 absolute-path validation passes.
+	legacyPath := filepath.Join(dir, "old-vault")
+	legacy := []byte(`{"vault_path":` + jsonQuote(legacyPath) + `}`)
 	if err := os.WriteFile(path, legacy, 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -93,8 +103,8 @@ func TestLoadSettings_BackwardCompat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSettings legacy: %v", err)
 	}
-	if loaded.VaultPath != "/old/vault" {
-		t.Errorf("legacy vault_path lost: got %q", loaded.VaultPath)
+	if loaded.VaultPath != legacyPath {
+		t.Errorf("legacy vault_path lost: got %q, want %q", loaded.VaultPath, legacyPath)
 	}
 	if loaded.ActiveTheme != themes.DefaultThemeID {
 		t.Errorf("legacy active_theme should default to %q, got %q", themes.DefaultThemeID, loaded.ActiveTheme)
@@ -137,7 +147,8 @@ func TestThemeModeNormalization(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	bad := []byte(`{"vault_path":"/v","active_theme":"terra_noir","theme_mode":"neon"}`)
+	absVault := filepath.Join(dir, "v")
+	bad := []byte(`{"vault_path":` + jsonQuote(absVault) + `,"active_theme":"terra_noir","theme_mode":"neon"}`)
 	if err := os.WriteFile(path, bad, 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -151,7 +162,7 @@ func TestThemeModeNormalization(t *testing.T) {
 	}
 
 	// Saving a struct with an invalid mode persists the normalized value.
-	if err := SaveSettings(&AppSettings{VaultPath: "/v", ActiveTheme: "x", ThemeMode: "neon"}); err != nil {
+	if err := SaveSettings(&AppSettings{VaultPath: absVault, ActiveTheme: "x", ThemeMode: "neon"}); err != nil {
 		t.Fatalf("SaveSettings: %v", err)
 	}
 	raw, _ := os.ReadFile(path)
@@ -262,6 +273,181 @@ func TestScaffoldVault_ThemeStatErrorPropagates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to stat theme") {
 		t.Errorf("ScaffoldVault: error %q should wrap the stat failure", err)
+	}
+}
+
+// =========================================================================
+// F20: settings.json integrity (#251)
+// =========================================================================
+
+// writeSettingsRaw writes a raw settings.json + optional fingerprint to the
+// overridden config dir, so each F20 test can stage an exact on-disk state.
+func writeSettingsRaw(t *testing.T, settingsJSON string, fingerprint string, writeFP bool) {
+	t.Helper()
+	path, err := GetSettingsPath()
+	if err != nil {
+		t.Skipf("cannot determine config path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(settingsJSON), 0o644); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	if writeFP {
+		fpPath := path + ".fingerprint"
+		if err := os.WriteFile(fpPath, []byte(fingerprint), 0o644); err != nil {
+			t.Fatalf("write fingerprint: %v", err)
+		}
+	}
+}
+
+func TestLoadSettings_RejectsUnknownTopLevelKey(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	writeSettingsRaw(t, `{"vault_path":`+jsonQuote(filepath.Join(dir, "v"))+`,"evil":"x"}`, "", false)
+
+	_, err := LoadSettings()
+	if err == nil {
+		t.Fatal("LoadSettings must reject an unknown top-level key")
+	}
+	if !strings.Contains(err.Error(), "evil") {
+		t.Errorf("error %q should name the offending key", err)
+	}
+}
+
+func TestLoadSettings_RejectsRelativeVaultPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	writeSettingsRaw(t, `{"vault_path":"relative/path"}`, "", false)
+
+	_, err := LoadSettings()
+	if err == nil {
+		t.Fatal("LoadSettings must reject a relative vault_path")
+	}
+	if !strings.Contains(err.Error(), "absolute") {
+		t.Errorf("error %q should explain the path must be absolute", err)
+	}
+}
+
+func TestLoadSettings_FingerprintMismatchTriggersError(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	// Write settings with a STALE fingerprint — simulates a co-tenant
+	// editing settings.json without updating the fingerprint.
+	writeSettingsRaw(t,
+		`{"vault_path":`+jsonQuote(filepath.Join(dir, "vault"))+`}`,
+		"stale-fingerprint-that-does-not-match",
+		true,
+	)
+
+	settings, err := LoadSettings()
+	if !errors.Is(err, ErrSettingsFingerprintMismatch) {
+		t.Fatalf("expected ErrSettingsFingerprintMismatch, got %v", err)
+	}
+	// Settings are still returned (valid JSON + valid schema) so the app
+	// remains usable while the user decides.
+	if settings == nil {
+		t.Fatal("settings must be returned alongside the sentinel so the app stays usable")
+	}
+	if settings.VaultPath != filepath.Join(dir, "vault") {
+		t.Errorf("vault_path not loaded: got %q", settings.VaultPath)
+	}
+	// The fingerprint must NOT have been updated by LoadSettings — only
+	// SaveSettings or ConfirmSettingsChange updates it.
+	fpPath, _ := settingsFingerprintPath()
+	fpAfter, _ := os.ReadFile(fpPath)
+	if string(fpAfter) != "stale-fingerprint-that-does-not-match" {
+		t.Errorf("LoadSettings must not update the fingerprint on mismatch; got %q", string(fpAfter))
+	}
+}
+
+func TestLoadSettings_FirstLaunchWritesFingerprint(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	// settings.json exists but NO fingerprint file — first launch after upgrade.
+	writeSettingsRaw(t, `{"vault_path":`+jsonQuote(filepath.Join(dir, "vault"))+`}`, "", false)
+
+	settings, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("first-launch LoadSettings: %v", err)
+	}
+	// A fingerprint should now exist matching the loaded values.
+	fpPath, _ := settingsFingerprintPath()
+	fpData, err := os.ReadFile(fpPath)
+	if err != nil {
+		t.Fatalf("fingerprint should have been written on first launch: %v", err)
+	}
+	expected := computeSettingsFingerprint(settings)
+	if string(fpData) != expected {
+		t.Errorf("fingerprint mismatch: got %q, want %q", string(fpData), expected)
+	}
+	// Second call should succeed without error (fingerprint now matches).
+	if _, err := LoadSettings(); err != nil {
+		t.Errorf("second LoadSettings after first-launch seeding: %v", err)
+	}
+}
+
+func TestSaveSettings_UpdatesFingerprint(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	// First save establishes the baseline (writes settings + fingerprint).
+	vault1 := filepath.Join(dir, "vault1")
+	if err := SaveSettings(&AppSettings{VaultPath: vault1, ActiveTheme: "x", ThemeMode: "dark"}); err != nil {
+		t.Fatalf("first SaveSettings: %v", err)
+	}
+
+	// A legitimate vault switch (Silt's own trusted write).
+	vault2 := filepath.Join(dir, "vault2")
+	if err := SaveSettings(&AppSettings{VaultPath: vault2, ActiveTheme: "x", ThemeMode: "dark"}); err != nil {
+		t.Fatalf("second SaveSettings: %v", err)
+	}
+
+	// The next LoadSettings must NOT prompt — Silt's own SaveSettings updated
+	// the fingerprint alongside the new vault_path.
+	_, err := LoadSettings()
+	if err != nil {
+		t.Errorf("LoadSettings after SaveSettings should not error (fingerprint updated): %v", err)
+	}
+}
+
+func TestSaveSettings_Fingerprint0600Perms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	if err := SaveSettings(&AppSettings{VaultPath: filepath.Join(dir, "v"), ActiveTheme: "x", ThemeMode: "dark"}); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	fpPath, _ := settingsFingerprintPath()
+	info, err := os.Stat(fpPath)
+	if err != nil {
+		t.Fatalf("stat fingerprint: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("fingerprint perm = %o, want 0o600", info.Mode().Perm())
+	}
+	// The settings file itself should also be 0o600 (WriteFileAtomic default).
+	settingsPath, _ := GetSettingsPath()
+	sInfo, err := os.Stat(settingsPath)
+	if err != nil {
+		t.Fatalf("stat settings: %v", err)
+	}
+	if sInfo.Mode().Perm() != 0o600 {
+		t.Errorf("settings perm = %o, want 0o600", sInfo.Mode().Perm())
 	}
 }
 

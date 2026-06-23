@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"silt/backend/config"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 	"silt/backend/vault"
@@ -13,22 +12,13 @@ import (
 
 // --- v2 SDK capability & permission model (#113) -------------------------
 
-// firstPartyPluginIDs is the set of bundled plugin ids. First-party plugins
-// ship compiled with the app and are trusted by definition, so the capability
-// gate grants them every capability implicitly — they never need a user grant.
-// Third-party (disk) plugins route through requireGrant. Kept in sync with the
-// frontend registry (frontend/src/plugins/registry.ts); Phase 5 appends
-// "silt-attachments".
-var firstPartyPluginIDs = map[string]bool{
-	"silt-agenda":      true,
-	"silt-calendar":    true,
-	"silt-kanban":      true,
-	"silt-attachments": true,
-}
-
 // isFirstPartyPlugin reports whether pluginID is a bundled (trusted) plugin.
+// Delegates to plugins.IsFirstPartyID so the reserved-id set has a single
+// source of truth in package plugins (where Validate can also reach it to
+// reject impostor archives at install time — #240, audit F5). Kept as a
+// package-main shim so existing call sites keep their readable name.
 func isFirstPartyPlugin(pluginID string) bool {
-	return firstPartyPluginIDs[pluginID]
+	return plugins.IsFirstPartyID(pluginID)
 }
 
 // requireGrant is the single server-side enforcement point for every privileged
@@ -54,9 +44,13 @@ func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 	}
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
-	if _, ok := a.cfg.Plugins.Grants[pluginID]; ok {
-		if qual, ok := a.cfg.Plugins.Grants[pluginID][string(cap)]; ok && qual != "" {
-			return nil
+	// F4: grants now live in the per-host store (a.grants), not vault-scoped
+	// config.yaml. A synced vault's legacy grants block is ignored on load.
+	if a.grants != nil {
+		if _, ok := a.grants[pluginID]; ok {
+			if qual, ok := a.grants[pluginID][string(cap)]; ok && qual != "" {
+				return nil
+			}
 		}
 	}
 	return &plugins.CapabilityDeniedError{
@@ -72,18 +66,21 @@ func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 func (a *App) grantedQualifier(pluginID string, cap plugins.Capability) (string, bool) {
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
-	if caps, ok := a.cfg.Plugins.Grants[pluginID]; ok {
-		if qual, ok := caps[string(cap)]; ok && qual != "" {
-			return qual, true
+	if a.grants != nil {
+		if caps, ok := a.grants[pluginID]; ok {
+			if qual, ok := caps[string(cap)]; ok && qual != "" {
+				return qual, true
+			}
 		}
 	}
 	return "", false
 }
 
 // RequestCapability grants a capability to a plugin and persists it atomically
-// to config.yaml (#113). qualifier is normalized to a known value ("" or
-// "true" → "granted"). The capability must be a recognized one (unknown caps
-// are rejected). Emits plugins:changed so the manager UI refreshes.
+// to the per-host grants file (F4 — grants no longer travel with config.yaml).
+// qualifier is normalized to a known value ("" or "true" → "granted"). The
+// capability must be a recognized one (unknown caps are rejected). Emits
+// plugins:changed so the manager UI refreshes.
 func (a *App) RequestCapability(pluginID, capability, qualifier string) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
@@ -103,19 +100,17 @@ func (a *App) RequestCapability(pluginID, capability, qualifier string) error {
 	}
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
-	if a.cfg.Plugins.Grants == nil {
-		a.cfg.Plugins.Grants = map[string]map[string]string{}
+	if a.grants == nil {
+		a.grants = vault.GrantsStore{}
 	}
-	caps, ok := a.cfg.Plugins.Grants[pluginID]
+	caps, ok := a.grants[pluginID]
 	if !ok || caps == nil {
 		caps = map[string]string{}
 	}
 	caps[capability] = qual
-	a.cfg.Plugins.Grants[pluginID] = caps
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	a.grants[pluginID] = caps
+	// F4: persist to the host-scoped grants file, NOT vault config.yaml.
+	if err := vault.SaveGrants(a.grants); err != nil {
 		return err
 	}
 	a.emitPluginsChanged()
@@ -133,25 +128,23 @@ func (a *App) RevokeCapability(pluginID, capability string) error {
 	}
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
-	if a.cfg.Plugins.Grants == nil {
+	if a.grants == nil {
 		return nil // nothing to revoke
 	}
-	caps, ok := a.cfg.Plugins.Grants[pluginID]
+	caps, ok := a.grants[pluginID]
 	if !ok {
 		return nil
 	}
 	if capability == "" {
-		delete(a.cfg.Plugins.Grants, pluginID)
+		delete(a.grants, pluginID)
 	} else {
 		delete(caps, capability)
 		if len(caps) == 0 {
-			delete(a.cfg.Plugins.Grants, pluginID)
+			delete(a.grants, pluginID)
 		}
 	}
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	// F4: persist to the host-scoped grants file, NOT vault config.yaml.
+	if err := vault.SaveGrants(a.grants); err != nil {
 		return err
 	}
 	a.emitPluginsChanged()
@@ -168,8 +161,8 @@ func (a *App) GetGrantedCapabilities() (map[string]map[string]string, error) {
 	}
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
-	out := make(map[string]map[string]string, len(a.cfg.Plugins.Grants))
-	for pid, caps := range a.cfg.Plugins.Grants {
+	out := make(map[string]map[string]string, len(a.grants))
+	for pid, caps := range a.grants {
 		if isFirstPartyPlugin(pid) {
 			continue
 		}
