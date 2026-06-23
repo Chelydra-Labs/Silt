@@ -39,9 +39,6 @@ func TestDefaults_Populated(t *testing.T) {
 	if !d.Parsing.AutoInjectUUID {
 		t.Errorf("defaults auto_inject_uuid should be true")
 	}
-	if d.Parsing.ShorthandRegex == "" {
-		t.Errorf("defaults shorthand_regex must be set")
-	}
 	if d.Parsing.DefaultTaskPriority <= 0 {
 		t.Errorf("defaults default_task_priority must be positive")
 	}
@@ -118,6 +115,25 @@ func TestLoadLinked_RejectsOversizeConfig(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds the") {
 		t.Errorf("error %q must mention the byte cap", err.Error())
+	}
+}
+
+// TestLoad_LegacyShorthandRegexIgnored pins F11: the user-editable
+// shorthand_regex is removed (it was dead config — the parser uses fixed
+// package-level regexes, never this field). A synced vault carrying a
+// catastrophic-backtracking regex such as ^(a+)+$ must load cleanly with the
+// value silently dropped (yaml.v3 ignores unknown keys), so it can never
+// reach the indexer.
+func TestLoad_LegacyShorthandRegexIgnored(t *testing.T) {
+	vault := t.TempDir()
+	hostile := "parsing:\n  auto_inject_uuid: true\n  default_task_priority: 3\n  shorthand_regex: \"^(a+)+$\"\n"
+	writeFile(t, ConfigPath(vault), hostile)
+	cfg, err := Load(vault)
+	if err != nil {
+		t.Fatalf("config with legacy shorthand_regex should load: %v", err)
+	}
+	if want := Defaults().Parsing; cfg.Parsing != want {
+		t.Errorf("legacy shorthand_regex should be dropped; Parsing = %+v, want %+v", cfg.Parsing, want)
 	}
 }
 

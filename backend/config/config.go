@@ -58,11 +58,14 @@ type EditorConfig struct {
 	DefaultViewMode *string `yaml:"default_view_mode,omitempty" json:"default_view_mode,omitempty"`
 }
 
-// ParsingConfig holds the task-parse rules consumed by the AST parser.
+// ParsingConfig holds the task-parse rules. The task regexes themselves
+// (TaskCheckboxRegex / TaskTokenRegex) are fixed package-level constants in
+// the parser and are intentionally NOT user-editable: a user-supplied regex
+// on a synced vault is a catastrophic-backtracking DoS vector against the
+// indexer (audit F11). Only non-regex parse knobs live here.
 type ParsingConfig struct {
-	AutoInjectUUID      bool   `yaml:"auto_inject_uuid" json:"auto_inject_uuid"`
-	ShorthandRegex      string `yaml:"shorthand_regex" json:"shorthand_regex"`
-	DefaultTaskPriority int    `yaml:"default_task_priority" json:"default_task_priority"`
+	AutoInjectUUID      bool `yaml:"auto_inject_uuid" json:"auto_inject_uuid"`
+	DefaultTaskPriority int  `yaml:"default_task_priority" json:"default_task_priority"`
 }
 
 // PluginsConfig mirrors the `plugins:` block of config.yaml. PluginSettings is
@@ -227,7 +230,6 @@ func Defaults() SystemConfig {
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
-			ShorthandRegex:      `^([ ]|[/]|[x])\s(TODO|DOING|DONE)\sTASK\s(?:\s*\[([^\]]*)\])?(?:\(([^)]*)\))?(?:#(\d+))?\s(.*)$`,
 			DefaultTaskPriority: 3,
 		},
 		Hotkeys: map[string]string{

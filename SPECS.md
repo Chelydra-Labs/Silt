@@ -723,10 +723,12 @@ editor:
   default_view_mode: "edit"   # "edit" or "source" (#171)
 
 # Task Parse Rules
+# The task checkbox/metadata regexes are fixed in the binary (parser package)
+# and are intentionally NOT user-editable: a user-supplied regex on a synced
+# vault is a catastrophic-backtracking DoS vector against the indexer (F11).
+# Only non-regex parse knobs are configurable here.
 parsing:
   auto_inject_uuid: true
-  checkbox_regex: "^([\\s]*)-\\s\\[([ x/])\\]\\s+(.*)$"
-  metadata_token_regex: "\\[([\\w]+)::\\s*([^\\]]*)\\]"
   default_task_priority: 3
 
 # Key-Binding Map

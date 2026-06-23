@@ -222,10 +222,11 @@ editor:
   focus_highlight_ancestors: true
 
 # Task Parse Rules
+# The task checkbox/metadata regexes are fixed in the binary (parser
+# package) and intentionally not exposed here — a user-supplied regex on a
+# synced vault is a parser-DoS vector (audit F11).
 parsing:
   auto_inject_uuid: true
-  checkbox_regex: "^([\\s]*)-\\s\\[([ x/])\\]\\s+(.*)$"
-  metadata_token_regex: "\\[([\\w]+)::\\s*([^\\]]*)\\]"
   default_task_priority: 3
 
 # Key-Binding Map
