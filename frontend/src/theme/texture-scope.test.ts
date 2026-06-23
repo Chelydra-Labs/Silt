@@ -40,4 +40,24 @@ describe('texture scope guard (#261)', () => {
     // texture overlay is scoped to the writing area, not the full app.
     expect(svelte).toMatch(/silt-texture-surface/)
   })
+
+  it('index.css does not use a blanket child selector for content lifting', () => {
+    const css = readFile('index.css')
+
+    // A `.silt-texture-surface > *` rule would create a stacking context on
+    // every direct child, trapping the editor's fixed-position overlays
+    // (slash menu, color picker, link modal). Content must be lifted by a
+    // single positioned wrapper in the component instead.
+    expect(css).not.toMatch(/silt-texture-surface\s*>\s*\*/)
+  })
+
+  it('VirtualScrollContainer lifts content via a positioned wrapper', () => {
+    const svelte = readFile('components/VirtualScrollContainer.svelte')
+
+    // The scroll content (nav, header, editor) must sit inside a single
+    // wrapper that establishes the stacking lift (relative z-[1]) so the
+    // texture overlay paints below the content without trapping each child
+    // in its own stacking context.
+    expect(svelte).toMatch(/relative z-\[1\][^"]*flex flex-col/)
+  })
 })

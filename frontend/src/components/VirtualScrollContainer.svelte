@@ -274,75 +274,79 @@
     bind:this={containerEl}
     class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-void flex flex-col min-h-0"
   >
-    <nav
-      class="mb-6 flex items-center gap-2 text-text-muted font-label-sm text-label-sm"
-    >
-      <span>{notebook}</span>
-      {#if section}
-        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-        <span>{section}</span>
-      {/if}
-      <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-      <span class="text-accent-primary-start">{displayTitle}</span>
-    </nav>
-
-    <header class="mb-8">
-      <h1
-        bind:this={titleEl}
-        contenteditable="true"
-        spellcheck="false"
-        oninput={handleTitleInput}
-        onkeydown={handleTitleKeydown}
-        onblur={handleTitleBlur}
-        onfocus={() => (titleFocused = true)}
-        class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
-        style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
-        aria-label="Page title"
+    <div class="relative z-[1] flex flex-col flex-1">
+      <nav
+        class="mb-6 flex items-center gap-2 text-text-muted font-label-sm text-label-sm"
       >
-        {displayTitle}
-      </h1>
-      <p class="text-text-muted/60 text-sm font-body-sm">
-        {formatDate(pageDate)}
-      </p>
-    </header>
+        <span>{notebook}</span>
+        {#if section}
+          <span class="material-symbols-outlined text-[14px]"
+            >chevron_right</span
+          >
+          <span>{section}</span>
+        {/if}
+        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+        <span class="text-accent-primary-start">{displayTitle}</span>
+      </nav>
 
-    <div class="max-w-4xl w-full flex-1 flex flex-col gap-4">
-      {#if loadError}
-        <div
-          class="text-error py-8 text-center font-body-md border border-error-border bg-error-bg rounded-lg flex flex-col items-center gap-3"
+      <header class="mb-8">
+        <h1
+          bind:this={titleEl}
+          contenteditable="true"
+          spellcheck="false"
+          oninput={handleTitleInput}
+          onkeydown={handleTitleKeydown}
+          onblur={handleTitleBlur}
+          onfocus={() => (titleFocused = true)}
+          class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
+          style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
+          aria-label="Page title"
         >
-          <div>Failed to load page: {loadError}</div>
-          <button
-            onclick={() => loadPage()}
-            class="px-4 py-1.5 rounded-lg bg-error/20 border border-error-border text-error font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
-          >
-            Retry
-          </button>
-        </div>
-      {:else}
-        <TipTapEditor
-          {notebook}
-          {section}
-          {page}
-          {blocks}
-          {activeFocusedBlockAncestors}
-          {onBlockFocus}
-          {onBlockBlur}
-          onUpdate={handleBlocksUpdated}
-          bind:editorInstance
-          bind:activeMarks
-          {viewMode}
-          {onSaveStateChange}
-        />
-      {/if}
+          {displayTitle}
+        </h1>
+        <p class="text-text-muted/60 text-sm font-body-sm">
+          {formatDate(pageDate)}
+        </p>
+      </header>
 
-      {#if loading}
-        <div class="flex justify-center py-6">
-          <span class="text-accent-primary-start font-body-md animate-pulse"
-            >Loading...</span
+      <div class="max-w-4xl w-full flex-1 flex flex-col gap-4">
+        {#if loadError}
+          <div
+            class="text-error py-8 text-center font-body-md border border-error-border bg-error-bg rounded-lg flex flex-col items-center gap-3"
           >
-        </div>
-      {/if}
+            <div>Failed to load page: {loadError}</div>
+            <button
+              onclick={() => loadPage()}
+              class="px-4 py-1.5 rounded-lg bg-error/20 border border-error-border text-error font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+            >
+              Retry
+            </button>
+          </div>
+        {:else}
+          <TipTapEditor
+            {notebook}
+            {section}
+            {page}
+            {blocks}
+            {activeFocusedBlockAncestors}
+            {onBlockFocus}
+            {onBlockBlur}
+            onUpdate={handleBlocksUpdated}
+            bind:editorInstance
+            bind:activeMarks
+            {viewMode}
+            {onSaveStateChange}
+          />
+        {/if}
+
+        {#if loading}
+          <div class="flex justify-center py-6">
+            <span class="text-accent-primary-start font-body-md animate-pulse"
+              >Loading...</span
+            >
+          </div>
+        {/if}
+      </div>
     </div>
   </div>
 </div>

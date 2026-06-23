@@ -146,7 +146,12 @@ body {
    The ::before uses position: sticky so the texture stays pinned within the
    scroll container's visible viewport at all scroll positions — an
    absolutely positioned element inside an overflow-y-auto container would
-   scroll out of view on long pages, leaving the lower portion untextured. */
+   scroll out of view on long pages, leaving the lower portion untextured.
+
+   Content is lifted above the overlay (z-index: 1) by a single positioned
+   wrapper inside the scroll container (see VirtualScrollContainer). This
+   avoids creating per-child stacking contexts that would trap the editor's
+   fixed-position overlays (slash menu, color picker, link modal). */
 .silt-texture-surface {
   position: relative;
 }
@@ -165,12 +170,6 @@ body {
   background-repeat: repeat;
   opacity: var(--silt-texture-opacity, 0);
   mix-blend-mode: var(--silt-texture-blend, normal);
-}
-
-/* Lift content above the texture overlay so text stays legible. */
-.silt-texture-surface > * {
-  position: relative;
-  z-index: 1;
 }
 
 /* Global transitions for interactive states */
