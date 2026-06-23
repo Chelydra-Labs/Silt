@@ -22,6 +22,20 @@ func newTestApp(t *testing.T) *App {
 	t.Helper()
 	vaultPath := t.TempDir()
 
+	// F4: isolate the per-host grants + settings files so tests never touch
+	// the developer's real <configDir>/silt/. Both GrantsPath and
+	// GetSettingsPath resolve via os.UserConfigDir, which honors APPDATA
+	// (Windows) / XDG_CONFIG_HOME (POSIX). Tests that need to pre-stage
+	// settings.json (e.g. publisher-trust tests via saveTrustedPublishers)
+	// set APPDATA BEFORE calling newTestApp; check for a prior override and
+	// respect it so we don't clobber their settings dir.
+	if os.Getenv("SILT_TEST_HOST_CONFIG") == "" {
+		hostConfigDir := t.TempDir()
+		t.Setenv("APPDATA", hostConfigDir)
+		t.Setenv("XDG_CONFIG_HOME", hostConfigDir)
+		t.Setenv("SILT_TEST_HOST_CONFIG", hostConfigDir)
+	}
+
 	if err := vault.ScaffoldVault(vaultPath); err != nil {
 		t.Fatalf("ScaffoldVault: %v", err)
 	}

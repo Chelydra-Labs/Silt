@@ -59,6 +59,9 @@ func saveTrustedPublishers(t *testing.T, settingsDir string, list []string) {
 	t.Helper()
 	t.Setenv("APPDATA", settingsDir)
 	t.Setenv("XDG_CONFIG_HOME", settingsDir)
+	// Marker so newTestApp respects our APPDATA override instead of replacing
+	// it with its own temp dir (F4 isolation).
+	t.Setenv("SILT_TEST_HOST_CONFIG", settingsDir)
 	settings := &vault.AppSettings{
 		ActiveTheme:       "cyber_forest",
 		ThemeMode:         "dark",

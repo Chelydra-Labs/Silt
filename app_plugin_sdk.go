@@ -11,6 +11,7 @@ import (
 	"silt/backend/db"
 	"silt/backend/parser"
 	"silt/backend/plugins"
+	"silt/backend/vault"
 	"strconv"
 	"strings"
 
@@ -472,26 +473,27 @@ func (a *App) applyConfigLocked(cfg config.SystemConfig) {
 	a.seedFirstPartyGrants()
 }
 
-// seedFirstPartyGrants populates the in-memory grants table with every
+// seedFirstPartyGrants populates the per-host grants store with every
 // capability for each first-party plugin ID, so bundled plugins are implicitly
 // trusted WITHOUT a special-case bypass in requireGrant. This closes the
 // spoofing vector where a third-party plugin passes 'silt-attachments' as
 // pluginID to bypass all capability checks (#113 security hardening).
 //
-// The grants are merged into the in-memory config on every applyConfigLocked
-// call. If they happen to persist to config.yaml via a later Save, that is
-// harmless — they are just grant entries. If a user removes them, they are
-// re-seeded on the next config load.
+// F4: grants now live in the per-host store (a.grants), not vault-scoped
+// config.yaml. Seeding is in-memory only for the session — the store is NOT
+// re-persisted on every applyConfigLocked (that would write grants.json on
+// every config reload for no reason). The seeded entries persist for the vault
+// session; a fresh launch re-seeds from LoadGrants + this function.
 func (a *App) seedFirstPartyGrants() {
-	if a.cfg.Plugins.Grants == nil {
-		a.cfg.Plugins.Grants = map[string]map[string]string{}
+	if a.grants == nil {
+		a.grants = vault.GrantsStore{}
 	}
 	for id := range plugins.FirstPartyPluginIDs {
-		if a.cfg.Plugins.Grants[id] == nil {
-			a.cfg.Plugins.Grants[id] = map[string]string{}
+		if a.grants[id] == nil {
+			a.grants[id] = map[string]string{}
 		}
 		for cap := range plugins.KnownCapabilities {
-			a.cfg.Plugins.Grants[id][string(cap)] = plugins.QualGranted
+			a.grants[id][string(cap)] = plugins.QualGranted
 		}
 	}
 }

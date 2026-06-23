@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"silt/backend/config"
 	"silt/backend/parser"
 	"silt/backend/plugins"
+	"silt/backend/vault"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -105,20 +105,18 @@ func (a *App) UninstallPlugin(pluginID string) error {
 // revokeAllGrants removes every capability grant for pluginID without
 // emitting plugins:changed (the caller decides whether to emit). Used by
 // UninstallPlugin and the vault teardown path. Acquires configMu internally.
+// F4: grants now live in the per-host store, persisted via vault.SaveGrants.
 func (a *App) revokeAllGrants(pluginID string) error {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
-	if a.cfg.Plugins.Grants == nil {
+	if a.grants == nil {
 		return nil
 	}
-	if _, ok := a.cfg.Plugins.Grants[pluginID]; !ok {
+	if _, ok := a.grants[pluginID]; !ok {
 		return nil
 	}
-	delete(a.cfg.Plugins.Grants, pluginID)
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, a.cfg)
+	delete(a.grants, pluginID)
+	return vault.SaveGrants(a.grants)
 }
 
 // EnablePlugin / DisablePlugin toggle a per-plugin ".disabled" sentinel

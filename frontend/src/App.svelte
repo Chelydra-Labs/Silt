@@ -8,7 +8,8 @@
     SetSidebarWidth,
     GetOpenTabs,
     SetOpenTabs,
-    ConfirmSettingsChange
+    ConfirmSettingsChange,
+    ConfirmGrantsMigration
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import { fade } from 'svelte/transition'
@@ -318,6 +319,11 @@
   // last launch. The modal asks the user to confirm or dismiss; confirm
   // clears the sentinel via ConfirmSettingsChange so the next launch is quiet.
   let showSettingsMismatch = $state(false)
+  // F4: set when the backend detects a legacy grants: block in this vault's
+  // config.yaml that the host has never seen. The modal asks the user to
+  // confirm moving grants to per-host storage.
+  let showGrantsMigration = $state(false)
+  let pendingLegacyGrants = $state<Record<string, Record<string, string>>>({})
 
   // Focused block ancestry path highlighting
   let activeFocusedBlockAncestors = $state<string[]>([])
@@ -569,6 +575,15 @@
         showSettingsMismatch = true
       }
     )
+    // F4: grants migration — the vault's legacy config.yaml carries a grants
+    // block this host has never seen. Show a one-time confirmation modal.
+    const offGrantsMigration = EventsOn(
+      'grants:migration-required',
+      (grants: Record<string, Record<string, string>>) => {
+        pendingLegacyGrants = grants
+        showGrantsMigration = true
+      }
+    )
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
@@ -584,6 +599,7 @@
       offVaultMoved()
       offConfigChangedReload()
       offSettingsMismatch()
+      offGrantsMigration()
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()
@@ -1041,6 +1057,45 @@
               }
               showSettingsMismatch = false
             }}>Confirm change</button
+          >
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showGrantsMigration}
+    <div
+      class="settings-mismatch-overlay"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="grants-migration-title"
+      aria-describedby="grants-migration-desc"
+      transition:fade={{ duration: 150 }}
+    >
+      <div class="settings-mismatch-modal">
+        <h2 id="grants-migration-title">Move plugin permissions</h2>
+        <p id="grants-migration-desc">
+          Silt is moving plugin permissions to per-host storage so they no
+          longer travel with synced vaults. {Object.keys(pendingLegacyGrants)
+            .length}{' '}
+          plugin(s) have existing permissions in this vault. Confirm to move them,
+          or dismiss to re-grant each plugin on first use.
+        </p>
+        <div class="settings-mismatch-actions">
+          <button
+            class="secondary"
+            onclick={() => (showGrantsMigration = false)}>Dismiss</button
+          >
+          <button
+            class="primary"
+            onclick={async () => {
+              try {
+                await ConfirmGrantsMigration(pendingLegacyGrants)
+              } catch (e) {
+                console.error('ConfirmGrantsMigration failed:', e)
+              }
+              showGrantsMigration = false
+            }}>Move permissions</button
           >
         </div>
       </div>

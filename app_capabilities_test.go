@@ -1,12 +1,15 @@
 package main
 
 import (
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 
 	"silt/backend/config"
 	"silt/backend/plugins"
+	"silt/backend/vault"
 )
 
 // requireGrant denies an ungranted third-party plugin and returns a structured
@@ -86,8 +89,9 @@ func TestRequestCapability_RejectsInvalidPluginID(t *testing.T) {
 	}
 }
 
-// RequestCapability + requireGrant round-trips and persists to config.yaml so
-// the grant survives a reload (re-Load).
+// RequestCapability + requireGrant round-trips and persists to the per-host
+// grants store (F4 — grants no longer travel with vault config.yaml) so the
+// grant survives a reload.
 func TestRequestCapability_RoundTripsAndPersists(t *testing.T) {
 	app := newTestApp(t)
 	pid := "net-plugin"
@@ -110,12 +114,13 @@ func TestRequestCapability_RoundTripsAndPersists(t *testing.T) {
 		t.Errorf("qualifier = %q ok=%v, want granted true", qual, ok)
 	}
 
-	// Persisted: reload config from disk and the grant survives.
-	cfg, err := reloadConfig(app)
+	// Persisted: reload the host-scoped grants store from disk and the grant
+	// survives (F4 — grants.json, NOT config.yaml).
+	reloaded, err := vault.LoadGrants()
 	if err != nil {
-		t.Fatalf("reloadConfig: %v", err)
+		t.Fatalf("LoadGrants: %v", err)
 	}
-	if got := cfg.Plugins.Grants[pid][string(plugins.CapNetwork)]; got != plugins.QualGranted {
+	if got := reloaded[pid][string(plugins.CapNetwork)]; got != plugins.QualGranted {
 		t.Errorf("persisted grant = %q, want %q", got, plugins.QualGranted)
 	}
 }
@@ -218,8 +223,186 @@ func TestGrantedQualifier_Ungranted(t *testing.T) {
 	}
 }
 
-// reloadConfig re-reads the on-disk config.yaml for a test App (without
-// re-running applyConfig), used to assert grants persisted.
-func reloadConfig(app *App) (config.SystemConfig, error) {
-	return config.Load(app.vaultPath)
+// =========================================================================
+// F4: host-scoped plugin grants (#239)
+// =========================================================================
+
+// TestGrants_PersistToHostFile verifies RequestCapability writes to the
+// per-host grants.json, NOT to vault config.yaml. This is the core F4
+// guarantee: grants do not travel with synced vaults.
+func TestGrants_PersistToHostFile(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.RequestCapability("net-plugin", string(plugins.CapNetwork), ""); err != nil {
+		t.Fatalf("RequestCapability: %v", err)
+	}
+
+	// The grant is in the host store.
+	store, err := vault.LoadGrants()
+	if err != nil {
+		t.Fatalf("LoadGrants: %v", err)
+	}
+	if got := store["net-plugin"][string(plugins.CapNetwork)]; got != plugins.QualGranted {
+		t.Errorf("host store grant = %q, want granted", got)
+	}
+
+	// The grant is NOT in vault config.yaml (the field is gone from the struct).
+	cfg, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	yamlBytes, _ := os.ReadFile(config.ConfigPath(app.vaultPath))
+	if strings.Contains(string(yamlBytes), "grants:") {
+		t.Errorf("vault config.yaml must NOT contain a grants: block post-F4; got:\n%s", string(yamlBytes))
+	}
+	_ = cfg // suppress unused var if the Contains check is sufficient
+}
+
+// TestGrants_VaultConfigGrantsIgnored verifies a synced vault carrying a
+// legacy `grants:` block for a hostile plugin is IGNORED — the host store
+// is the single source of truth, and requireGrant denies the hostile plugin.
+func TestGrants_VaultConfigGrantsIgnored(t *testing.T) {
+	app := newTestApp(t)
+
+	// Simulate a synced-vault attack: inject a grants: sub-block into the
+	// existing plugins: section of config.yaml (NOT a second plugins: key,
+	// which would be a YAML duplicate-key error).
+	configPath := config.ConfigPath(app.vaultPath)
+	yamlBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	// Insert the hostile grants right after the "plugins:" line.
+	hostile := strings.Replace(string(yamlBytes), "plugins:\n",
+		"plugins:\n  grants:\n    evil-plugin:\n      network: granted\n", 1)
+	if hostile == string(yamlBytes) {
+		t.Fatal("test setup: could not find plugins: line to inject grants into")
+	}
+	if err := os.WriteFile(configPath, []byte(hostile), 0o644); err != nil {
+		t.Fatalf("write hostile config: %v", err)
+	}
+
+	// Reload config. yaml.v3 drops the unknown `grants` field silently (the
+	// struct no longer models it), so the hostile grant is never loaded.
+	cfg, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load with hostile grants: %v", err)
+	}
+	app.applyConfigLocked(cfg)
+
+	// requireGrant MUST deny — the host store has no entry for evil-plugin.
+	if err := app.requireGrant("evil-plugin", plugins.CapNetwork); err == nil {
+		t.Fatal("requireGrant must deny evil-plugin — vault-scoped grants are ignored post-F4")
+	}
+}
+
+// TestGrants_Migration verifies the one-time migration: a pre-F4 vault with
+// a legacy grants: block triggers grants:migration-required, and
+// ConfirmGrantsMigration moves the grants to the host store + strips the
+// block from config.yaml.
+func TestGrants_Migration(t *testing.T) {
+	app := newTestApp(t)
+
+	// Stage: inject a legacy grants sub-block into the existing plugins:
+	// section of config.yaml for a third-party plugin.
+	configPath := config.ConfigPath(app.vaultPath)
+	yamlBytes := mustReadFile(t, configPath)
+	legacyYAML := strings.Replace(string(yamlBytes), "plugins:\n",
+		"plugins:\n  grants:\n    legacy-plugin:\n      network: granted\n      read-files: notebook\n", 1)
+	if legacyYAML == string(yamlBytes) {
+		t.Fatal("test setup: could not find plugins: line to inject grants into")
+	}
+	if err := os.WriteFile(configPath, []byte(legacyYAML), 0o644); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	// LoadLegacyVaultGrants extracts the third-party grant from the raw YAML.
+	extracted := vault.LoadLegacyVaultGrants(app.vaultPath)
+	if _, ok := extracted["legacy-plugin"]; !ok {
+		t.Fatalf("LoadLegacyVaultGrants should find legacy-plugin: got %v", extracted)
+	}
+
+	// ConfirmGrantsMigration writes to the host store + strips config.yaml.
+	legacyGrants := map[string]map[string]string{
+		"legacy-plugin": {
+			"network":    "granted",
+			"read-files": "notebook",
+		},
+	}
+	if err := app.ConfirmGrantsMigration(legacyGrants); err != nil {
+		t.Fatalf("ConfirmGrantsMigration: %v", err)
+	}
+
+	// Host store now has the migrated grant.
+	store, err := vault.LoadGrants()
+	if err != nil {
+		t.Fatalf("LoadGrants after migration: %v", err)
+	}
+	if got := store["legacy-plugin"]["network"]; got != "granted" {
+		t.Errorf("migrated grant = %q, want granted", got)
+	}
+
+	// requireGrant now succeeds for the migrated plugin.
+	if err := app.requireGrant("legacy-plugin", plugins.CapNetwork); err != nil {
+		t.Errorf("requireGrant after migration: %v", err)
+	}
+
+	// config.yaml no longer carries a grants: block (it was rewritten by
+	// ConfirmGrantsMigration via config.Save, which drops the unmodeled field).
+	afterYAML, _ := os.ReadFile(configPath)
+	if strings.Contains(string(afterYAML), "grants:") {
+		t.Errorf("config.yaml should not contain grants: after migration; got:\n%s", string(afterYAML))
+	}
+}
+
+// TestGrants_FirstPartyAlwaysSeeded verifies first-party plugins are
+// implicitly granted every capability after applyConfigLocked, with no
+// user prompt. This is the F4 guarantee that the provenance move doesn't
+// break the bundled-plugin experience.
+func TestGrants_FirstPartyAlwaysSeeded(t *testing.T) {
+	app := newTestApp(t)
+	for id := range plugins.FirstPartyPluginIDs {
+		for cap := range plugins.KnownCapabilities {
+			if err := app.requireGrant(id, cap); err != nil {
+				t.Errorf("first-party %s/%s should be implicitly granted: %v", id, cap, err)
+			}
+		}
+	}
+}
+
+// TestGrants_0600Perms verifies the host grants file is written 0o600
+// (matching F7's atomic-write + perm protocol). POSIX only — Windows does
+// not enforce the POSIX permission bits.
+func TestGrants_0600Perms(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses permission bits")
+	}
+	runtimeGOOS := runtime.GOOS
+	if runtimeGOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	app := newTestApp(t)
+	if err := app.RequestCapability("perm-plugin", string(plugins.CapNetwork), ""); err != nil {
+		t.Fatalf("RequestCapability: %v", err)
+	}
+	grantsPath, err := vault.GrantsPath()
+	if err != nil {
+		t.Fatalf("GrantsPath: %v", err)
+	}
+	info, err := os.Stat(grantsPath)
+	if err != nil {
+		t.Fatalf("stat grants: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("grants.json perm = %o, want 0o600", info.Mode().Perm())
+	}
+}
+
+// mustReadFile is a test helper that fails the test on a read error.
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return data
 }
