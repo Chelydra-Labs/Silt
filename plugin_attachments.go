@@ -24,12 +24,28 @@ import (
 const maxAttachmentBytes = 100 * 1024 * 1024 // 100 MB
 
 // blockedAttachmentExtensions are file types that are blocked from attachment
-// copy-in to prevent the attachment folder from becoming an executable
-// drop zone (#101 hardening).
+// copy-in to prevent the attachments folder from becoming an executable or
+// scriptable drop zone (#101 hardening, audit F6). Anything here would be
+// handed to the OS default handler by OpenAttachment (xdg-open / cmd /c start
+// / open) at a file:// URL inside the vault, where it could run script
+// (HTML/SVG/JS), point anywhere (.lnk/.url/.desktop), or launch a scriptable
+// runtime (.jar/.class). Note .pdf is intentionally NOT blocked despite
+// carrying JS — it is a common legitimate attachment; the residual risk is
+// tracked for a sandboxed in-app viewer follow-up.
 var blockedAttachmentExtensions = map[string]bool{
+	// Executables / installers / scripts.
 	".exe": true, ".bat": true, ".cmd": true, ".com": true, ".scr": true,
 	".sh": true, ".msi": true, ".dll": true, ".app": true,
 	".ps1": true, ".vbs": true, ".wsf": true, ".hta": true,
+	// Scriptable web content (runs JS in the default browser at a file:// URL).
+	".html": true, ".htm": true, ".xhtml": true, ".xht": true,
+	".svg": true, ".svgz": true, ".js": true, ".mjs": true,
+	".webmanifest": true,
+	// Shortcuts / descriptors that can point anywhere or execute commands.
+	".lnk": true, ".url": true, ".command": true, ".scpt": true,
+	".applescript": true, ".desktop": true,
+	// Scriptable runtimes shipped as archives/classes.
+	".jar": true, ".class": true,
 }
 
 func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
