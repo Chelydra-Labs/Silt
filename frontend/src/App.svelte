@@ -1100,12 +1100,12 @@
       aria-labelledby="grants-migration-title"
       aria-describedby="grants-migration-desc"
       tabindex="-1"
-      onkeydown={(e) => {
+      onkeydown={async (e) => {
         if (e.key === 'Escape') {
           try {
-            void DeclineGrantsMigration()
-          } catch (e) {
-            console.error('DeclineGrantsMigration failed:', e)
+            await DeclineGrantsMigration()
+          } catch (err) {
+            console.error('DeclineGrantsMigration failed:', err)
           }
           showGrantsMigration = false
         }

@@ -270,13 +270,13 @@ func Defaults() SystemConfig {
 		Plugins: PluginsConfig{
 			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},
 			Disabled: []string{},
-		PluginSettings: map[string]any{
-			"silt-kanban": map[string]any{
-				"default_col": "TODO",
-				"columns":     []any{"TODO", "DOING", "DONE"},
+			PluginSettings: map[string]any{
+				"silt-kanban": map[string]any{
+					"default_col": "TODO",
+					"columns":     []any{"TODO", "DOING", "DONE"},
+				},
 			},
 		},
-	},
 		UI: UIConfig{
 			SidebarWidth: 256,
 			NavOrder: NavOrder{

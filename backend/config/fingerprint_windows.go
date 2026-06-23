@@ -41,5 +41,5 @@ func computeFingerprint(absPath string, info os.FileInfo) (string, error) {
 	if err := windows.GetFileInformationByHandle(h, &fd); err != nil {
 		return "", fmt.Errorf("fingerprint: GetFileInformationByHandle %q: %w", abs, err)
 	}
-	return fmt.Sprintf("%x:%x%x", fd.VolumeSerialNumber, fd.FileIndexHigh, fd.FileIndexLow), nil
+	return fmt.Sprintf("%x:%x:%x", fd.VolumeSerialNumber, fd.FileIndexHigh, fd.FileIndexLow), nil
 }
