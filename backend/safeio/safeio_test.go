@@ -62,6 +62,23 @@ func TestReadFileMax_MissingFile(t *testing.T) {
 	}
 }
 
+// An empty file is within the cap and yields an empty (non-nil) slice with no
+// error — matching os.ReadFile so callers' empty-file handling (e.g. an empty
+// config.yaml decoding to defaults) is preserved.
+func TestReadFileMax_EmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadFileMax(path, 64)
+	if err != nil {
+		t.Fatalf("empty file should not error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("empty file should yield empty slice, got %d bytes", len(got))
+	}
+}
+
 // A large hostile file is rejected without slurping it whole: the cap is
 // enforced at read time, bounding memory (audit F12).
 func TestReadFileMax_LargeFileRejectedFast(t *testing.T) {

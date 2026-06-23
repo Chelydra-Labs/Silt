@@ -263,6 +263,7 @@ func TestAddAttachment_RejectsScriptableExtensions(t *testing.T) {
 		".html", ".htm", ".xhtml", ".xht", ".svg", ".svgz",
 		".js", ".mjs", ".webmanifest", ".lnk", ".url", ".command",
 		".scpt", ".applescript", ".desktop", ".jar", ".class",
+		".py", ".pyc", ".rb", ".php", ".pl", ".wsh", ".cpl",
 	}
 	for _, ext := range newlyBlocked {
 		src := filepath.Join(dir, "evil"+ext)

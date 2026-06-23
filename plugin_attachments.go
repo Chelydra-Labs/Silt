@@ -46,6 +46,11 @@ var blockedAttachmentExtensions = map[string]bool{
 	".applescript": true, ".desktop": true,
 	// Scriptable runtimes shipped as archives/classes.
 	".jar": true, ".class": true,
+	// Interpreter scripts that execute directly where the runtime is installed.
+	".py": true, ".pyc": true, ".rb": true, ".php": true, ".pl": true,
+	// Windows Script Host (runs .vbs/.js outside the browser) + control panel
+	// applets (loaded as executables by control.exe / rundll32).
+	".wsh": true, ".cpl": true,
 }
 
 func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
