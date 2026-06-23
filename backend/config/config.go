@@ -354,7 +354,7 @@ func Save(vaultPath string, cfg SystemConfig) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config.yaml: %w", err)
 	}
-	return writeFileAtomic(ConfigPath(vaultPath), out, 0o644)
+	return writeFileAtomic(ConfigPath(vaultPath), out, 0o600)
 }
 
 // LinkedConfigPath returns the absolute path to a linked notebook's
@@ -572,7 +572,7 @@ func stringPtr(s string) *string { return &s }
 // config package stays decoupled from the markdown parser.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".config-*.tmp")

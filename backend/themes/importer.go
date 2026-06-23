@@ -118,7 +118,7 @@ func ImportThemeFromPath(themesDir, srcPath string) (*ImportResult, error) {
 		return nil, err
 	}
 
-	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+	if err := os.MkdirAll(themesDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to ensure themes dir %s: %w", themesDir, err)
 	}
 

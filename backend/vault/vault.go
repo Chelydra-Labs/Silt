@@ -192,7 +192,7 @@ func ScaffoldVault(vaultPath string) error {
 	}
 
 	for _, folder := range folders {
-		if err := os.MkdirAll(folder, 0755); err != nil {
+		if err := os.MkdirAll(folder, 0o700); err != nil {
 			return fmt.Errorf("failed to create vault folder %s: %w", folder, err)
 		}
 	}
@@ -257,7 +257,7 @@ ui:
 	// Format config with absolute vault path (with forward slashes for cross platform consistency)
 	formattedVaultPath := filepath.ToSlash(vaultPath)
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		err = os.WriteFile(configPath, []byte(fmt.Sprintf(configYAML, formattedVaultPath)), 0644)
+		err = os.WriteFile(configPath, []byte(fmt.Sprintf(configYAML, formattedVaultPath)), 0o600)
 		if err != nil {
 			return fmt.Errorf("failed to write config.yaml: %w", err)
 		}
@@ -277,7 +277,7 @@ ui:
 		themePath := filepath.Join(vaultPath, ".system", "themes", fileName)
 		if _, err := os.Stat(themePath); err != nil {
 			if os.IsNotExist(err) {
-				if err := os.WriteFile(themePath, raw, 0644); err != nil {
+				if err := os.WriteFile(themePath, raw, 0o600); err != nil {
 					return fmt.Errorf("failed to write theme %s: %w", fileName, err)
 				}
 				continue
@@ -305,7 +305,7 @@ See docs/PLUGIN_DEVELOPMENT.md for the full SDK reference.
 `
 	pluginsReadmePath := filepath.Join(vaultPath, ".system", "plugins", "README.md")
 	if _, err := os.Stat(pluginsReadmePath); os.IsNotExist(err) {
-		if err := os.WriteFile(pluginsReadmePath, []byte(pluginsReadme), 0644); err != nil {
+		if err := os.WriteFile(pluginsReadmePath, []byte(pluginsReadme), 0o600); err != nil {
 			return fmt.Errorf("failed to write plugins README: %w", err)
 		}
 	}

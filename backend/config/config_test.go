@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -52,6 +53,33 @@ func TestDefaults_Populated(t *testing.T) {
 	}
 	if len(d.Plugins.Active) == 0 {
 		t.Errorf("defaults plugins.active must be populated")
+	}
+}
+
+// TestSave_RestrictiveFilePermissions pins the F7 hardening: config.yaml is
+// written 0o600 and its .system/ parent 0o700 so a co-tenant on a multi-user
+// host cannot read the plugin grant table / linked-notebook paths / settings.
+func TestSave_RestrictiveFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	vault := t.TempDir()
+	if err := Save(vault, Defaults()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	cfgInfo, err := os.Stat(ConfigPath(vault))
+	if err != nil {
+		t.Fatalf("stat config.yaml: %v", err)
+	}
+	if got := cfgInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("config.yaml perm = %o, want 0o600", got)
+	}
+	sysInfo, err := os.Stat(filepath.Join(vault, ".system"))
+	if err != nil {
+		t.Fatalf("stat .system: %v", err)
+	}
+	if got := sysInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf(".system perm = %o, want 0o700", got)
 	}
 }
 

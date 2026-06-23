@@ -62,7 +62,7 @@ func appendNetworkAuditLine(vaultPath string, entry *NetworkAuditEntry) {
 	}
 	logPath := filepath.Join(vaultPath, ".system", "plugins", entry.Plugin, "network.log")
 	line := fmt.Sprintf("%s %s %s %d %s\n", entry.At, entry.Method, entry.Host, entry.Status, entry.Plugin)
-	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
+	_ = os.MkdirAll(filepath.Dir(logPath), 0o700)
 	if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginNetworkLogBytes {
 		truncateNetworkLog(logPath, maxPluginNetworkLogLines)
 	}

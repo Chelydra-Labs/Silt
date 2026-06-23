@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -218,5 +219,37 @@ func TestScanner_SkipsAttachmentsDir(t *testing.T) {
 	// Should have found the two .md files.
 	if len(files) != 2 {
 		t.Errorf("expected 2 markdown files, got %d: %v", len(files), files)
+	}
+}
+
+// AddAttachment writes the destination file 0o600 and the attachments/ dir
+// 0o700 so a co-tenant cannot read user-attached files (F19).
+func TestAddAttachment_RestrictiveFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	app := newTestApp(t)
+	src := filepath.Join(t.TempDir(), "photo.png")
+	if err := os.WriteFile(src, []byte("PNG"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := app.AddAttachment(src, "Work")
+	if err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+	dest := filepath.Join(app.vaultPath, "Work", rel)
+	dInfo, err := os.Stat(dest)
+	if err != nil {
+		t.Fatalf("stat attachment: %v", err)
+	}
+	if got := dInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("attachment file perm = %o, want 0o600", got)
+	}
+	dirInfo, err := os.Stat(filepath.Join(app.vaultPath, "Work", "attachments"))
+	if err != nil {
+		t.Fatalf("stat attachments dir: %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf("attachments dir perm = %o, want 0o700", got)
 	}
 }

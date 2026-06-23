@@ -122,7 +122,7 @@ func (a *App) PluginWriteFile(pluginID, sessionToken, notebook, relPath string, 
 	// and exceed the cap (TOCTOU). attachments/ writes are bounded by
 	// maxAttachmentBytes (100 MB per file) and are exempt.
 	checkScratch := isPluginScratchRelPath(pluginID, relPath)
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
 	a.wg.Add(1)
@@ -330,7 +330,7 @@ func (a *App) PluginScratchDir(pluginID, sessionToken, notebook string) (string,
 		return "", err
 	}
 	dir := filepath.Join(notebookDir, ".system", "plugins", pluginID, "data")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create scratch dir: %w", err)
 	}
 	return dir, nil
@@ -351,7 +351,7 @@ func (a *App) PluginVaultScratchDir(pluginID, sessionToken string) (string, erro
 		return "", fmt.Errorf("vault not loaded")
 	}
 	dir := filepath.Join(a.vaultPath, ".system", "plugins", pluginID, "data")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create vault scratch dir: %w", err)
 	}
 	return dir, nil

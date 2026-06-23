@@ -82,7 +82,7 @@ func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
 		base = "attachment"
 	}
 
-	if err := os.MkdirAll(attachmentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(attachmentsDir, 0o700); err != nil {
 		return "", fmt.Errorf("create attachments dir: %w", err)
 	}
 
@@ -102,14 +102,14 @@ func (a *App) AddAttachment(srcPath, notebook string) (string, error) {
 	stem := strings.TrimSuffix(base, destExt)
 	destName := base
 	dest := filepath.Join(attachmentsDir, destName)
-	f, openErr := os.OpenFile(dest, os.O_CREATE|os.O_EXCL, 0o644)
+	f, openErr := os.OpenFile(dest, os.O_CREATE|os.O_EXCL, 0o600)
 	for i := 1; openErr != nil; i++ {
 		if !os.IsExist(openErr) {
 			return "", fmt.Errorf("reserve attachment file: %w", openErr)
 		}
 		destName = fmt.Sprintf("%s-%d%s", stem, i, destExt)
 		dest = filepath.Join(attachmentsDir, destName)
-		f, openErr = os.OpenFile(dest, os.O_CREATE|os.O_EXCL, 0o644)
+		f, openErr = os.OpenFile(dest, os.O_CREATE|os.O_EXCL, 0o600)
 	}
 	f.Close()
 

@@ -250,12 +250,12 @@ func Install(vaultPath, archivePath string) (Manifest, error) {
 			return Manifest{}, fmt.Errorf("archive entry %q escapes the plugin directory", name)
 		}
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := os.MkdirAll(target, 0o700); err != nil {
 				return Manifest{}, err
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return Manifest{}, err
 		}
 		if err := copyZipEntry(f, target); err != nil {
@@ -289,7 +289,7 @@ func Install(vaultPath, archivePath string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, fmt.Errorf("failed to serialize manifest with sha256: %w", err)
 	}
-	if err := os.WriteFile(manifestOnDisk, manifestJSONBytes, 0o644); err != nil {
+	if err := os.WriteFile(manifestOnDisk, manifestJSONBytes, 0o600); err != nil {
 		return Manifest{}, fmt.Errorf("failed to write manifest with sha256: %w", err)
 	}
 
@@ -354,7 +354,7 @@ func copyZipEntry(f *zip.File, target string) error {
 		return err
 	}
 	defer rc.Close()
-	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
