@@ -74,6 +74,12 @@ func (a *App) InstallPlugin(archivePath string) (parser.PluginManifest, error) {
 		_ = plugins.Uninstall(a.vaultPath, manifest.ID)
 		return parser.PluginManifest{}, verr
 	}
+	e := newAuditEntry("install")
+	e.PluginID = manifest.ID
+	e.Author = manifest.Author
+	e.Version = manifest.Version
+	e.SHA256 = manifest.ContentSHA256
+	appendAuditEntry(a.vaultPath, e)
 	a.emitPluginsChanged()
 	return manifestToParser(manifest), nil
 }
@@ -98,6 +104,9 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	// uninstall (the folder is already gone). The grants block is harmless if
 	// it lingers, but cleaning it keeps the manager UI honest.
 	_ = a.revokeAllGrants(pluginID)
+	e := newAuditEntry("uninstall")
+	e.PluginID = pluginID
+	appendAuditEntry(a.vaultPath, e)
 	a.emitPluginsChanged()
 	return nil
 }
@@ -127,6 +136,9 @@ func (a *App) EnablePlugin(pluginID string) error {
 	if err := plugins.SetDisabled(a.vaultPath, pluginID, false); err != nil {
 		return err
 	}
+	e := newAuditEntry("enable")
+	e.PluginID = pluginID
+	appendAuditEntry(a.vaultPath, e)
 	a.emitPluginsChanged()
 	return nil
 }
@@ -137,6 +149,9 @@ func (a *App) DisablePlugin(pluginID string) error {
 	if err := plugins.SetDisabled(a.vaultPath, pluginID, true); err != nil {
 		return err
 	}
+	e := newAuditEntry("disable")
+	e.PluginID = pluginID
+	appendAuditEntry(a.vaultPath, e)
 	a.emitPluginsChanged()
 	return nil
 }
