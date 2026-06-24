@@ -158,6 +158,23 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
   editor.view.dispatch(tr)
 }
 
+// Toggle the enclosing detailsBlock's open attr (#183). Used by both
+// Mod-. and Ctrl+Shift+D keymaps.
+function detailsToggleBlock(editor: Editor): boolean {
+  const pos = editor.state.selection.$from
+  for (let d = pos.depth; d >= 1; d--) {
+    const parent = pos.node(d)
+    if (parent.type.name === 'detailsBlock') {
+      const nodePos = pos.before(d)
+      const currentOpen = parent.attrs.open === true
+      const tr = editor.state.tr.setNodeAttribute(nodePos, 'open', !currentOpen)
+      editor.view.dispatch(tr)
+      return true
+    }
+  }
+  return false
+}
+
 // Set the alignment attr on the current block (#173). No-op for TASK blocks
 // (alignment is not supported on tasks — the taskBlock schema has no align attr).
 // Shared by the keymap shortcuts and TipTapEditor's slash command handler.
@@ -192,7 +209,7 @@ export const SiltBlockKeymaps = Extension.create({
             attrs: {
               id: null,
               depth: 0,
-              bullet: '- ',
+              bullet: '',
               file_date: new Date().toISOString().slice(0, 10)
             }
           }
@@ -466,26 +483,15 @@ export const SiltBlockKeymaps = Extension.create({
         return true
       },
 
-      // Details toggle (#183). Mod-. toggles the enclosing detailsBlock's open
-      // attr. The editor's keymap dispatches this instead of a DOM listener to
-      // avoid per-instance listener duplication and collision with superscript.
-      'Mod-.': () => {
-        const pos = this.editor.state.selection.$from
-        for (let d = pos.depth; d >= 1; d--) {
-          const parent = pos.node(d)
-          if (parent.type.name === 'detailsBlock') {
-            const nodePos = pos.before(d)
-            const currentOpen = parent.attrs.open === true
-            const tr = this.editor.state.tr.setNodeAttribute(
-              nodePos,
-              'open',
-              !currentOpen
-            )
-            this.editor.view.dispatch(tr)
-            return true
-          }
-        }
-        return false
+      // Details toggle (#183). The second binding (Ctrl+Shift+D) matches the
+      // config default so the advertised shortcut actually works. Mod-. is kept
+      // as an overload — inside a detailsBlock it toggles open/close and does
+      // not trigger superscript because marks fire before block keymaps.
+      'Mod-.': function (this: any) {
+        return detailsToggleBlock(this.editor)
+      },
+      'Ctrl-Shift-D': function (this: any) {
+        return detailsToggleBlock(this.editor)
       },
 
       // Table row/column hotkeys (#172). Default bindings match the

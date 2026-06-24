@@ -406,7 +406,7 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
       content.push({
         type: 'detailsBlock',
         attrs: {
-          id: blocks[i]?.id || crypto.randomUUID(),
+          id: blocks[startIdx]?.id || crypto.randomUUID(),
           summary,
           open: false,
           file_date: blocks[i]?.file_date || ''
@@ -426,6 +426,7 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
       i + 1 < blocks.length &&
       isGFMTableSep(blocks[i + 1].clean_text || '')
     ) {
+      const tableId = blocks[i]?.id || crypto.randomUUID()
       const tableRows: string[] = []
       while (i < blocks.length && isGFMTableRow(blocks[i].clean_text || '')) {
         tableRows.push(blocks[i].clean_text || '')
@@ -458,7 +459,7 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
       }
       content.push({
         type: 'table',
-        attrs: { id: crypto.randomUUID() },
+        attrs: { id: tableId },
         content: tableContent
       })
       continue
@@ -485,7 +486,7 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
         }
         i++
       }
-      const bodyText = bodyParts.join('')
+      const bodyText = bodyParts.join(' ')
       const bodyContent: NodeJSON[] = bodyText
         ? legacyTokenizeInline(bodyText)
         : []
@@ -695,7 +696,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         const bodyLines = wrapCalloutBody(baseText)
         for (let bi = 0; bi < bodyLines.length; bi++) {
           blocks.push({
-            id: bi === 0 ? id : crypto.randomUUID(),
+            id: crypto.randomUUID(),
             parent_id: '',
             type: 'NOTE',
             depth: 0,

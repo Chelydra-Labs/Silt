@@ -339,6 +339,52 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(back[1].clean_text).toContain('> This will delete the index.')
   })
 
+  it('preserves word boundaries across multi-line callout bodies (#180)', () => {
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '> [!note] Title' }),
+      mkBlock('NOTE', { clean_text: '> First sentence.' }),
+      mkBlock('NOTE', { clean_text: '> Second sentence.' })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    const bodyLines = back.filter(
+      (b) => b.clean_text?.startsWith('> ') && !b.clean_text.includes('![')
+    )
+    expect(bodyLines.length).toBeGreaterThanOrEqual(1)
+    const bodyText = bodyLines.map((b) => b.clean_text).join(' ')
+    expect(bodyText).not.toContain('sentence.Second')
+    expect(bodyText).toContain('First sentence.')
+    expect(bodyText).toContain('Second sentence.')
+  })
+
+  it('emits unique ids for callout body NOTE blocks (#180)', () => {
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: {
+            id: 'aaaaaaaa-0000-4000-8000-000000000001',
+            variant: 'note',
+            title: 'T'
+          },
+          content: [
+            { type: 'text', text: 'body one' },
+            { type: 'text', text: ' body two' }
+          ]
+        }
+      ]
+    }
+    const back = docToBlocks(doc)
+    const ids = back.map((b) => b.id)
+    expect(ids[0]).toBe('aaaaaaaa-0000-4000-8000-000000000001')
+    // Body blocks must not share the header id.
+    for (let j = 1; j < ids.length; j++) {
+      expect(ids[j]).not.toBe(ids[0])
+    }
+    const unique = new Set(ids)
+    expect(unique.size).toBe(ids.length)
+  })
+
   it('leaves non-callout > blocks as regular quote notes (#180)', () => {
     const blocks = [
       mkBlock('NOTE', { clean_text: '> just a quote' }),
@@ -428,6 +474,22 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(back[0].clean_text).toContain('| A |')
     expect(back[1].clean_text).toContain('---')
     expect(back[2].clean_text).toContain('| 1 |')
+  })
+
+  it('seeds the table node id from the first source NOTE block (#172)', () => {
+    const tableId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    const blocks = [
+      mkBlock('NOTE', {
+        id: tableId,
+        clean_text: '| Col1 | Col2 |'
+      }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| val1 | val2 |' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const tableNode = doc.content[0]
+    // The table node gets the first source block's id.
+    expect(tableNode.attrs?.id).toBe(tableId)
   })
 
   it('leaves a non-table pipe row (no separator) as NOTE blocks (#172)', () => {
@@ -543,6 +605,40 @@ describe('uniqueIdPlugin', () => {
     expect(back[1].id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     )
+    editor.destroy()
+  })
+
+  it('assigns UUIDs to new block types (calloutBlock, detailsBlock, codeBlock) when id is null', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: { id: null, variant: 'note', title: '', file_date: '' },
+          content: [{ type: 'text', text: 'callout body' }]
+        },
+        {
+          type: 'detailsBlock',
+          attrs: { id: null, summary: '', open: false, file_date: '' },
+          content: [{ type: 'text', text: 'details body' }]
+        },
+        {
+          type: 'codeBlock',
+          attrs: { id: null, lang: 'js' },
+          content: [{ type: 'text', text: 'code body' }]
+        }
+      ]
+    })
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    const uuidRe =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    for (const b of back) {
+      expect(b.id).toBeTruthy()
+      expect(b.id).toMatch(uuidRe)
+    }
+    const unique = new Set(back.map((b) => b.id))
+    expect(unique.size).toBe(back.length)
     editor.destroy()
   })
 
