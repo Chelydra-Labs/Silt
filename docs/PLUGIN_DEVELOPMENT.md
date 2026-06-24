@@ -324,6 +324,10 @@ Recognized capabilities: `read-files`, `write-files`, `network`, `os-open`,
 `os-clipboard`, `os-notify`, `ui-surface`, `editor-schema`. (`exec` is
 intentionally deferred.)
 
+> **os-notify limits:** `ctx.notify` caps `title` to 256 characters and `body`
+> to 1024 characters at the binding entry point. Overflow is truncated with a
+> trailing ellipsis (…) rather than rejected — notifications are best-effort UX.
+
 Grants are per-vault, stored in `config.yaml` under `plugins.grants`. The user
 is prompted on first use (contextual, low-fatigue) and can review/revoke in
 **Settings → Plugins**. Enforcement is server-side — the Go backend checks
@@ -414,7 +418,7 @@ const path = await ctx.pickOpenFile('*.pdf')                      // user-driven
 const savePath = await ctx.pickSaveFile('export.json')
 const text = await ctx.clipboardRead()                            // gated: os-clipboard
 await ctx.clipboardWrite('copied text')                           // gated: os-clipboard
-await ctx.notify({ title: 'Sync', body: 'Done!' })               // gated: os-notify
+await ctx.notify({ title: 'Sync', body: 'Done!' })               // gated: os-notify (title ≤ 256, body ≤ 1024 chars; truncated with … on overflow)
 ```
 
 ### 8.6 Network / fetch (#115)

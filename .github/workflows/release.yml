@@ -242,6 +242,9 @@ jobs:
   release:
     needs: [prepare, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # cosign keyless signing via GitHub OIDC (#253, F18)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -255,6 +258,42 @@ jobs:
           pattern: dist-*
           merge-multiple: true
 
+      # --- SBOM (SPDX) via syft (#253, F18) -------------------------------
+      # Covers both dep trees: Go modules (go.mod) and npm packages
+      # (frontend/package-lock.json). syft scans the checkout recursively and
+      # emits SPDX JSON, the format most widely consumed by security tooling.
+      - name: Generate SBOM (SPDX)
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+          syft dir:. -o spdx-json \
+            --file "release-assets/silt-sbom-v${VERSION}.spdx.json"
+
+      # --- cosign keyless signing (#253, F18) -----------------------------
+      # Signs the Linux .deb + .AppImage keyless via GitHub OIDC (Sigstore
+      # Fulcio). No long-lived signing key to manage — the signature +
+      # certificate are attached alongside the artifacts so a downloader can
+      # verify provenance via `cosign verify-blob` (see CODE_SIGNING.md). The
+      # Windows installer is separately Authenticode-signed via SignPath in the
+      # build matrix above; this step touches only Linux artifacts.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign Linux artifacts (keyless via GitHub OIDC)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for artifact in release-assets/*.deb release-assets/*.AppImage; do
+            echo "Signing $artifact"
+            cosign sign-blob --yes \
+              --output-signature "${artifact}.sig" \
+              --output-certificate "${artifact}.pem" \
+              "$artifact"
+          done
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -266,8 +305,7 @@ jobs:
           # (docs/releases/unreleased.md). If the file is missing or still holds
           # the stub comment, fall back to --generate-notes (auto-generated PR
           # list). The fallback is loud on purpose — it means a PR was merged
-          # without running the create-pr skill, or the file was reset
-          # prematurely.
+          # without running the create-pr skill.
           NOTES_FILE="docs/releases/unreleased.md"
           if [ -f "$NOTES_FILE" ] && ! grep -q "Next release notes go here" "$NOTES_FILE"; then
             echo "Using curated release notes from $NOTES_FILE"
@@ -282,28 +320,3 @@ jobs:
             --title "v${{ needs.prepare.outputs.version }}" \
             "${NOTES_ARGS[@]}" \
             release-assets/*
-
-      - name: Checkout main for notes reset
-        if: success()
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-
-      - name: Reset unreleased.md for next release
-        if: success()
-        run: |
-          set -euo pipefail
-          # After posting, reset the file back to the stub so the next PR starts
-          # with a clean slate. Push to main with [skip ci] so this doesn't
-          # trigger another release. The stub content is hard-coded here (and
-          # mirrored in the initial commit) — keeping it self-contained avoids
-          # a fragile dependency on a specific git ref.
-          cat > docs/releases/unreleased.md <<'STUB'
-          <!-- Next release notes go here. The create-pr skill overwrites this file; the release workflow reads it, posts it to GitHub, and resets it. -->
-          STUB
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/releases/unreleased.md
-          git commit -m "chore(release): reset unreleased notes [skip ci]"
-          git push origin main

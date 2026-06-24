@@ -113,6 +113,11 @@ func (a *App) RequestCapability(pluginID, capability, qualifier string) error {
 	if err := vault.SaveGrants(a.grants); err != nil {
 		return err
 	}
+	e := newAuditEntry("grant")
+	e.PluginID = pluginID
+	e.Capability = capability
+	e.Qualifier = qual
+	appendAuditEntry(a.vaultPath, e)
 	a.emitPluginsChanged()
 	return nil
 }
@@ -147,6 +152,10 @@ func (a *App) RevokeCapability(pluginID, capability string) error {
 	if err := vault.SaveGrants(a.grants); err != nil {
 		return err
 	}
+	e := newAuditEntry("revoke")
+	e.PluginID = pluginID
+	e.Capability = capability
+	appendAuditEntry(a.vaultPath, e)
 	a.emitPluginsChanged()
 	return nil
 }

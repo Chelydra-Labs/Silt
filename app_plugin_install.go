@@ -74,6 +74,12 @@ func (a *App) InstallPlugin(archivePath string) (parser.PluginManifest, error) {
 		_ = plugins.Uninstall(a.vaultPath, manifest.ID)
 		return parser.PluginManifest{}, verr
 	}
+	e := newAuditEntry("install")
+	e.PluginID = manifest.ID
+	e.Author = manifest.Author
+	e.Version = manifest.Version
+	e.SHA256 = manifest.ContentSHA256
+	appendAuditEntry(a.vaultPath, e)
 	a.emitPluginsChanged()
 	return manifestToParser(manifest), nil
 }
@@ -97,7 +103,25 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	// Best-effort grant cleanup; a failure here must not mask the successful
 	// uninstall (the folder is already gone). The grants block is harmless if
 	// it lingers, but cleaning it keeps the manager UI honest.
+	//
+	// Emit per-capability "revoke" entries before the bulk wipe so the audit
+	// trail captures exactly which capabilities were removed at uninstall time.
+	// The read happens under configMu.RLock; revokeAllGrants re-acquires the
+	// write lock — a narrow TOCTOU window is acceptable for a best-effort
+	// diagnostic path (worst case: one grant is wiped without a per-capability
+	// entry, but the "uninstall" entry still covers the lifecycle event).
+	a.configMu.RLock()
+	for capName := range a.grants[pluginID] {
+		re := newAuditEntry("revoke")
+		re.PluginID = pluginID
+		re.Capability = capName
+		appendAuditEntry(a.vaultPath, re)
+	}
+	a.configMu.RUnlock()
 	_ = a.revokeAllGrants(pluginID)
+	e := newAuditEntry("uninstall")
+	e.PluginID = pluginID
+	appendAuditEntry(a.vaultPath, e)
 	a.emitPluginsChanged()
 	return nil
 }
@@ -127,6 +151,9 @@ func (a *App) EnablePlugin(pluginID string) error {
 	if err := plugins.SetDisabled(a.vaultPath, pluginID, false); err != nil {
 		return err
 	}
+	e := newAuditEntry("enable")
+	e.PluginID = pluginID
+	appendAuditEntry(a.vaultPath, e)
 	a.emitPluginsChanged()
 	return nil
 }
@@ -137,6 +164,9 @@ func (a *App) DisablePlugin(pluginID string) error {
 	if err := plugins.SetDisabled(a.vaultPath, pluginID, true); err != nil {
 		return err
 	}
+	e := newAuditEntry("disable")
+	e.PluginID = pluginID
+	appendAuditEntry(a.vaultPath, e)
 	a.emitPluginsChanged()
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	goruntime "runtime"
 	"silt/backend/plugins"
+	"unicode/utf8"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -13,6 +14,31 @@ import (
 // =========================================================================
 // OS integration (#114)
 // =========================================================================
+
+// Desktop-notifier length caps (#255, audit F22). 256/1024 are the common
+// limits across Windows toast, Linux notify-send, and macOS UserNotifications;
+// going beyond is wasted work and an oversized payload could consume memory
+// or stall the notifier subprocess. Truncation (not an error) is the right
+// response: notifications are best-effort UX, and surfacing an error pollutes
+// the audit log for a cosmetic limit.
+const (
+	maxNotifyTitleRunes = 256
+	maxNotifyBodyRunes  = 1024
+)
+
+// capRunes returns s truncated to max runes with a trailing ellipsis on
+// overflow. The ellipsis is counted within the cap so the total never exceeds
+// max. No allocation when s is already within the limit.
+func capRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:max-1]) + "…"
+}
 
 // PluginOpenInNativeHandler opens a file within a notebook in the OS default
 // handler for its type. Traversal-guarded. Gated by os-open.
@@ -126,6 +152,11 @@ func (a *App) PluginClipboardWriteText(pluginID, sessionToken, text string) erro
 // (osascript on macOS, notify-send on Linux, msg/PowerShell on Windows). Gated
 // by os-notify. A failure to spawn the notifier is non-fatal (logged) — a
 // notification is best-effort UX, not a correctness path.
+//
+// Title/body are capped to maxNotifyTitleRunes / maxNotifyBodyRunes at the
+// binding entry point so the OS notifier subprocess never receives an
+// oversized payload (#255, audit F22). Overflow truncates with an ellipsis
+// rather than erroring.
 // Session-token verified (#236).
 func (a *App) PluginNotify(pluginID, sessionToken, title, body string) error {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
@@ -134,6 +165,8 @@ func (a *App) PluginNotify(pluginID, sessionToken, title, body string) error {
 	if err := a.requireGrant(pluginID, plugins.CapOSNotify); err != nil {
 		return err
 	}
+	title = capRunes(title, maxNotifyTitleRunes)
+	body = capRunes(body, maxNotifyBodyRunes)
 	return notifyDesktop(title, body)
 }
 
@@ -148,7 +181,7 @@ var openNative = func(path string) error {
 	}
 }
 
-func notifyDesktop(title, body string) error {
+var notifyDesktop = func(title, body string) error {
 	switch goruntime.GOOS {
 	case "darwin":
 		return exec.Command("osascript",

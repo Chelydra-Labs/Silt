@@ -198,6 +198,11 @@ func (a *App) LinkNotebook(folderPath string) (config.LinkedNotebook, error) {
 	if _, idxErr := a.indexLinkedTree(ln); idxErr != nil {
 		log.Printf("LinkNotebook(%s): indexTree failed: %v (link registered; will retry on next change)", ln.DisplayName, idxErr)
 	}
+	e := newAuditEntry("link")
+	e.ID = ln.ID
+	e.RootPath = ln.RootPath
+	e.Fingerprint = ln.RootFingerprint
+	appendAuditEntry(a.vaultPath, e)
 	return ln, nil
 }
 
@@ -257,6 +262,10 @@ func (a *App) UnlinkNotebook(id string) error {
 	a.coordinator.WithDBWrite(func() {
 		_ = a.db.ClearSourceBlocks("linked:" + id)
 	})
+	e := newAuditEntry("unlink")
+	e.ID = id
+	e.RootPath = rootPath
+	appendAuditEntry(a.vaultPath, e)
 	return nil
 }
 
