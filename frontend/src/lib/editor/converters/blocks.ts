@@ -457,10 +457,15 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
         isCalloutBodyLine(blocks[i].clean_text || '')
       ) {
         const body = (blocks[i].clean_text || '').replace(/^>\s*/, '')
-        if (body) bodyParts.push(body)
+        if (body) {
+          bodyParts.push(body)
+        } else if (bodyParts.length > 0) {
+          // Empty >  line — paragraph separator
+          bodyParts.push('\n\n')
+        }
         i++
       }
-      const bodyText = bodyParts.join(' ')
+      const bodyText = bodyParts.join('')
       const bodyContent: NodeJSON[] = bodyText
         ? legacyTokenizeInline(bodyText)
         : []

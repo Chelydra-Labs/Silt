@@ -30,7 +30,18 @@
   function onEditorKeydown(e: KeyboardEvent): void {
     if ((e.ctrlKey || e.metaKey) && e.key === '.') {
       e.preventDefault()
-      toggleOpen()
+      // Only toggle this details block if the cursor is inside it
+      const sel = editor.state.selection.$from
+      for (let d = sel.depth; d >= 1; d--) {
+        const parent = sel.node(d)
+        if (
+          parent.type.name === 'detailsBlock' &&
+          parent.attrs.id === node.attrs.id
+        ) {
+          toggleOpen()
+          break
+        }
+      }
     }
   }
 

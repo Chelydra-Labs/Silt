@@ -298,8 +298,8 @@ registerSlashCommand({
 })
 registerSlashCommand({
   id: 'table-custom',
-  label: 'Custom table',
-  description: 'Insert a table with custom dimensions',
+  label: 'Table (4x4)',
+  description: 'Insert a 4-row, 4-column table',
   icon: 'table_view'
 })
 
