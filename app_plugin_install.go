@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 	"silt/backend/vault"
@@ -111,7 +112,12 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	// diagnostic path (worst case: one grant is wiped without a per-capability
 	// entry, but the "uninstall" entry still covers the lifecycle event).
 	a.configMu.RLock()
+	caps := make([]string, 0, len(a.grants[pluginID]))
 	for capName := range a.grants[pluginID] {
+		caps = append(caps, capName)
+	}
+	sort.Strings(caps)
+	for _, capName := range caps {
 		re := newAuditEntry("revoke")
 		re.PluginID = pluginID
 		re.Capability = capName

@@ -1088,6 +1088,33 @@ func TestParseFileContent_TwoCodeBlocks(t *testing.T) {
 	}
 }
 
+// TestParseFileContent_NestedCodeFence verifies that a 4-backtick fence is not
+// prematurely closed by a 3-backtick line inside the code block (#189).
+func TestParseFileContent_NestedCodeFence(t *testing.T) {
+	input := "# Demo <!-- id: h1 -->\n\n````md\n# Markdown Header\n\nHere is a code block inside:\n\n```js\nconst x = 1;\n```\n````\n\n- A note <!-- id: n1 -->\n"
+	blocks, _, _, _, err := ParseFileContent(input, "T", "S", "P", "", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	var codeBlocks []ParsedBlock
+	for _, b := range blocks {
+		if b.Type == BlockCode {
+			codeBlocks = append(codeBlocks, b)
+		}
+	}
+	if len(codeBlocks) != 1 {
+		t.Fatalf("expected 1 CODE block, got %d", len(codeBlocks))
+	}
+	cb := codeBlocks[0]
+	if cb.CodeLang != "md" {
+		t.Errorf("expected lang 'md', got %q", cb.CodeLang)
+	}
+	// The inner ```js line must be part of the code body, not a fence toggle.
+	if !strings.Contains(cb.CleanText, "```js") {
+		t.Errorf("body should contain inner ```js, got:\n%s", cb.CleanText)
+	}
+}
+
 // Helper shared by the benchmark — writes N small daily-note files under
 // Work/Journal/Daily/ (notebook/section/page) so the scanner has realistic
 // 3-level structure to walk.

@@ -78,6 +78,18 @@ func generateUUIDv4() string {
 	return uuid.New().String()
 }
 
+// countLeadingBackticks returns the number of consecutive ` characters at the
+// start of the trimmed line. Used to enforce GFM fence-length matching (#189):
+// a closing fence must have >= backticks as the opening fence.
+func countLeadingBackticks(line string) int {
+	trimmed := strings.TrimSpace(line)
+	count := 0
+	for i := 0; i < len(trimmed) && trimmed[i] == '`'; i++ {
+		count++
+	}
+	return count
+}
+
 // EnsureBlockID extracts (or assigns) the block identity — both the UUID and
 // the per-block file_date — from the trailing comment. Returns:
 //   id        — the UUID ("" for empty lines)
@@ -403,6 +415,7 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 	// Fenced code block state (#189). When inside a ``` block we accumulate
 	// lines into a single CODE block rather than parsing line-by-line.
 	var codeFenceOpen bool
+	var codeFenceTicks int
 	var codeFenceLine string
 	var codeFenceLang string
 	var codeContentLines []string
@@ -421,13 +434,22 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		// optional language identifier; closing fence is bare ```. Lines inside
 		// the fence are accumulated into a single CODE block.
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			ticks := countLeadingBackticks(line)
 			if !codeFenceOpen {
 				// Opening fence: start accumulating. Strip any stale ID from
 				// a prior round-trip so saved output stays clean.
 				codeFenceOpen = true
+				codeFenceTicks = ticks
 				codeFenceLine = CleanLineID(line)
-				codeFenceLang = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(codeFenceLine), "```"))
+				codeFenceLang = strings.TrimSpace(strings.TrimSpace(codeFenceLine)[ticks:])
 				codeContentLines = nil
+				continue
+			}
+			// GFM spec: a closing fence must use at least as many backticks
+			// as the opening fence. Lines with fewer backticks (e.g. ``` inside
+			// a ```` fence) are treated as code content, not a fence toggle.
+			if ticks < codeFenceTicks {
+				codeContentLines = append(codeContentLines, line)
 				continue
 			}
 			// Closing fence: emit a single CODE block for the accumulated

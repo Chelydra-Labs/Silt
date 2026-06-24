@@ -118,6 +118,17 @@ export function parseEmbedBlockMarker(text: string): {
   }
 }
 
+// Decode the HTML entities produced by the details summary save-side
+// escaping (e.g. &amp; → &). Without this, summaries containing &, <, >,
+// or " compound-encode on every save cycle.
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+}
+
 // Convert a single ParsedBlock to its ProseMirror node JSON.
 function blockToNode(block: ParsedBlock): NodeJSON {
   const rawText = block.clean_text || ''
@@ -186,7 +197,9 @@ function blockToNode(block: ParsedBlock): NodeJSON {
           lang: block.code_lang || '',
           file_date: block.file_date || ''
         },
-        content: [{ type: 'text', text: block.clean_text || '' }]
+        content: block.clean_text
+          ? [{ type: 'text', text: block.clean_text }]
+          : []
       }
     case 'NOTE':
     default: {
@@ -196,7 +209,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
       // preserves HTML verbatim, so no Go-side changes are needed.
       if (text.startsWith('<details>')) {
         const summaryMatch = text.match(/<summary>(.*?)<\/summary>/)
-        const summary = summaryMatch ? summaryMatch[1] : ''
+        const summary = summaryMatch ? decodeEntities(summaryMatch[1]) : ''
         const bodyText = text
           .replace(/<details><summary>.*?<\/summary>/, '')
           .replace(/<\/details>\s*$/, '')
@@ -396,7 +409,7 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
       }
       const merged = parts.join('\n')
       const summaryMatch = merged.match(/<summary>(.*?)<\/summary>/)
-      const summary = summaryMatch ? summaryMatch[1] : ''
+      const summary = summaryMatch ? decodeEntities(summaryMatch[1]) : ''
       const bodyContent = merged
         .replace(/<details><summary>.*?<\/summary>/, '')
         .replace(/<\/details>\s*$/, '')

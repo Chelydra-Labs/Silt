@@ -424,6 +424,15 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(back[0].code_lang).toBe('go')
   })
 
+  it('handles an empty CODE block without creating an invalid text node', () => {
+    const blocks = [mkBlock('CODE', { clean_text: '', code_lang: '' })]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content).toHaveLength(1)
+    expect(doc.content[0].type).toBe('codeBlock')
+    // Empty codeBlock must not contain an empty text node (ProseMirror rejects it).
+    expect(doc.content[0].content).toEqual([])
+  })
+
   it('detects <details> HTML and creates a detailsBlock (#183)', () => {
     const blocks = [
       mkBlock('NOTE', {
@@ -449,6 +458,21 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(back[0].clean_text).toContain('<summary>S</summary>')
     expect(back[0].clean_text).toContain('B')
     expect(back[0].clean_text).toContain('</details>')
+  })
+
+  it('decodes HTML entities in details summary to prevent compound encoding (#183)', () => {
+    // Simulate a save that produced &amp; etc. in the summary.
+    const blocks = [
+      mkBlock('NOTE', {
+        clean_text:
+          '<details><summary>R&amp;D &amp; Q&amp;A</summary>body</details>'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0].attrs?.summary).toBe('R&D & Q&A')
+    // Round-trip: summary should re-escape to the same form.
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toContain('R&amp;D &amp; Q&amp;A')
   })
 
   it('detects a GFM pipe table and merges into a single table node (#172)', () => {
