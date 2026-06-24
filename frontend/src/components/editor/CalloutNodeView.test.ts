@@ -43,4 +43,13 @@ describe('CalloutNodeView (#180)', () => {
     expect(icon?.textContent).toBe('lightbulb')
     cleanup()
   })
+
+  it('sets aria-label from the callout title', async () => {
+    const { container, cleanup } = await mountNodeViewEditor([
+      mkBlock('NOTE', { clean_text: '> [!warning] Critical Alert' })
+    ])
+    const callout = container.querySelector('[data-variant="warning"]')
+    expect(callout?.getAttribute('aria-label')).toBe('Critical Alert')
+    cleanup()
+  })
 })

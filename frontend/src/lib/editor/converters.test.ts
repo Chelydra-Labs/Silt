@@ -395,6 +395,47 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(doc.content.every((n) => n.type === 'noteBlock')).toBe(true)
   })
 
+  it('round-trips a callout with an empty title (#180)', () => {
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '> [!warning]' }),
+      mkBlock('NOTE', { clean_text: '> No title body.' })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0].type).toBe('calloutBlock')
+    expect(doc.content[0].attrs?.title).toBe('')
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toContain('> [!warning]')
+    expect(back[0].clean_text).not.toContain('> [!warning] ')
+  })
+
+  it('round-trips a callout with formatted marks in the body (#180)', () => {
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: {
+            id: crypto.randomUUID(),
+            variant: 'tip',
+            title: 'Pro tip'
+          },
+          content: [
+            { type: 'text', marks: [{ type: 'bold' }], text: 'Important' },
+            { type: 'text', text: ' and ' },
+            { type: 'text', marks: [{ type: 'italic' }], text: 'italic' }
+          ]
+        }
+      ]
+    }
+    const back = docToBlocks(doc)
+    const bodyLine = back.find(
+      (b) => b.clean_text?.startsWith('> ') && !b.clean_text.includes('[!')
+    )
+    expect(bodyLine).toBeTruthy()
+    expect(bodyLine!.clean_text).toContain('Important')
+    expect(bodyLine!.clean_text).toContain('italic')
+  })
+
   it('converts a CODE block to a codeBlock node (#189)', () => {
     const blocks = [
       mkBlock('CODE', {
@@ -431,6 +472,21 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(doc.content[0].type).toBe('codeBlock')
     // Empty codeBlock must not contain an empty text node (ProseMirror rejects it).
     expect(doc.content[0].content).toEqual([])
+  })
+
+  it('round-trips a CODE block with special characters (#189)', () => {
+    const blocks = [
+      mkBlock('CODE', {
+        clean_text:
+          'const x = "| pipe"\nconst y = `backtick`\n// 11111111-1111-4111-8111-111111111111',
+        code_lang: 'js'
+      })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toContain('| pipe')
+    expect(back[0].clean_text).toContain('`backtick`')
+    expect(back[0].clean_text).toContain('11111111-1111-4111-8111-111111111111')
   })
 
   it('detects <details> HTML and creates a detailsBlock (#183)', () => {
@@ -473,6 +529,35 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     // Round-trip: summary should re-escape to the same form.
     const back = docToBlocks(doc)
     expect(back[0].clean_text).toContain('R&amp;D &amp; Q&amp;A')
+  })
+
+  it('round-trips details adjacent to regular NOTE blocks (#183)', () => {
+    const blocks = [
+      mkBlock('NOTE', { clean_text: 'Before details' }),
+      mkBlock('NOTE', {
+        clean_text: '<details><summary>S</summary>body</details>'
+      }),
+      mkBlock('NOTE', { clean_text: 'After details' })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content).toHaveLength(3)
+    expect(doc.content[0].type).toBe('noteBlock')
+    expect(doc.content[1].type).toBe('detailsBlock')
+    expect(doc.content[2].type).toBe('noteBlock')
+  })
+
+  it('round-trips details with empty body (#183)', () => {
+    const blocks = [
+      mkBlock('NOTE', {
+        clean_text: '<details><summary>Empty</summary></details>'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0].type).toBe('detailsBlock')
+    expect(doc.content[0].attrs?.summary).toBe('Empty')
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toContain('<summary>Empty</summary>')
+    expect(back[0].clean_text).toContain('</details>')
   })
 
   it('detects a GFM pipe table and merges into a single table node (#172)', () => {
@@ -520,6 +605,65 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     const blocks = [mkBlock('NOTE', { clean_text: '| just one row |' })]
     const doc = blocksToDoc(blocks)
     expect(doc.content[0].type).toBe('noteBlock')
+  })
+
+  it('escapes literal pipes in table cells (#172)', () => {
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| A | B |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| a \\| b | c |' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const tableNode = doc.content[0]
+    expect(tableNode.type).toBe('table')
+    // Table content: [0] = header row, [1] = first data row (separator skipped)
+    const dataRow = tableNode.content?.[1]
+    const firstCell = dataRow?.content?.[0]
+    const cellText = firstCell?.content?.[0]
+    expect(cellText?.text).toBe('a | b')
+  })
+
+  it('preserves UUID-shaped text in table cells (#172)', () => {
+    const uuid = 'cccccccc-1111-4111-8111-111111111111'
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| Ref |' }),
+      mkBlock('NOTE', { clean_text: '| --- |' }),
+      mkBlock('NOTE', { clean_text: `| ((${uuid})) |` })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    const dataLine = back.find((b) => b.clean_text?.includes(uuid))
+    expect(dataLine).toBeTruthy()
+    expect(dataLine!.clean_text).toContain(`((${uuid}))`)
+  })
+
+  it('round-trips all five new block types plus existing types in one document', () => {
+    const blocks = [
+      mkBlock('HEADER', { clean_text: 'Sprint Demo', depth: 1 }),
+      mkBlock('NOTE', { clean_text: '> A blockquote' }),
+      mkBlock('NOTE', { clean_text: '> [!tip] Pro tip' }),
+      mkBlock('NOTE', { clean_text: '> Callout body text' }),
+      mkBlock('CODE', { clean_text: 'const x = 1;', code_lang: 'js' }),
+      mkBlock('NOTE', {
+        clean_text: '<details><summary>Foldable</summary>Hidden</details>'
+      }),
+      mkBlock('NOTE', { clean_text: '| Col1 | Col2 |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| a | b |' }),
+      mkBlock('TASK', { clean_text: 'a task', status: 'TODO' })
+    ]
+    const doc = blocksToDoc(blocks)
+    // Verify the five new types are detected as their respective nodes
+    const types = doc.content.map((n) => n.type)
+    expect(types).toContain('headerBlock')
+    expect(types).toContain('noteBlock') // the quote
+    expect(types).toContain('calloutBlock')
+    expect(types).toContain('codeBlock')
+    expect(types).toContain('detailsBlock')
+    expect(types).toContain('table')
+    expect(types).toContain('taskBlock')
+    // Round-trip back and verify no data loss
+    const back = docToBlocks(doc)
+    expect(back.length).toBeGreaterThanOrEqual(7)
   })
 })
 

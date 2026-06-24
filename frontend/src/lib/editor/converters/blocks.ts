@@ -285,14 +285,15 @@ function isGFMTableSep(text: string): boolean {
 // Parse a GFM table row (e.g. `| a | b |`) into cell strings.
 function parseGFMRow(line: string): string[] {
   const trimmed = line.trim()
-  // Strip leading and trailing |, split on |
   const inner = trimmed.startsWith('|') ? trimmed.slice(1) : trimmed
   const end = inner.endsWith('|') ? inner.slice(0, -1) : inner
-  return end.split('|').map((s) => {
-    const cell = s.trim()
-    // Unescape escaped pipes (\| → |)
-    return cell.replace(/\\\|/g, '|')
-  })
+  // Split on unescaped pipes: temporarily replace \| with a placeholder so
+  // it survives the split, then restore after trimming.
+  const sentinel = '\u0000PIPE\u0000'
+  return end
+    .replace(/\\\|/g, sentinel)
+    .split('|')
+    .map((s) => s.trim().replace(new RegExp(sentinel, 'g'), '|'))
 }
 
 // Build a GFM table row string from cell strings. Handles pipe escaping.
@@ -369,6 +370,18 @@ function wrapCalloutBody(body: string, maxLen: number = 80): string[] {
     if (current) lines.push(current)
   }
   return lines
+}
+
+// Build inline content for a table cell. Embeds are block-level and cannot
+// live inside cells — if the text contains an embed token, warn so the user
+// knows it will render as plain text rather than a live embed (#172).
+function tableCellContent(cellText: string): NodeJSON[] {
+  if (/\{\{embed:/i.test(cellText)) {
+    console.warn(
+      '[Silt] {{embed:uuid}} is block-level and not supported inside table cells; emitted as plain text.'
+    )
+  }
+  return [{ type: 'text', text: cellText }]
 }
 
 // blocksToDoc converts an ordered list of ParsedBlocks into a ProseMirror doc
@@ -453,7 +466,7 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
           type: 'tableRow',
           content: headerCells.map((cellText) => ({
             type: 'tableHeader',
-            content: [{ type: 'text', text: cellText }]
+            content: tableCellContent(cellText)
           }))
         }
         tableContent.push(headerRow)
@@ -464,7 +477,7 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
             type: 'tableRow',
             content: rowCells.map((cellText) => ({
               type: 'tableCell',
-              content: [{ type: 'text', text: cellText }]
+              content: tableCellContent(cellText)
             }))
           }
           tableContent.push(dataRow)

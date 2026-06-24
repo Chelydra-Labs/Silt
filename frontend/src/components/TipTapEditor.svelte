@@ -688,7 +688,7 @@
       if ((editorInstance as any).commands.insertTable) {
         ;(editorInstance as any).commands.insertTable({ rows: 5, cols: 4 })
       }
-    } else if (commandId === 'table-custom') {
+    } else if (commandId === 'table-4x4') {
       if ((editorInstance as any).commands.insertTable) {
         ;(editorInstance as any).commands.insertTable({ rows: 4, cols: 4 })
       }

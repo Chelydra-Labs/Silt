@@ -297,7 +297,7 @@ registerSlashCommand({
   icon: 'table_view'
 })
 registerSlashCommand({
-  id: 'table-custom',
+  id: 'table-4x4',
   label: 'Table (4x4)',
   description: 'Insert a 4-row, 4-column table',
   icon: 'table_view'

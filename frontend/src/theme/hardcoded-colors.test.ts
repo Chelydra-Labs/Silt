@@ -16,7 +16,10 @@ const FILES_TO_CHECK = [
   'components/TipTapEditor.svelte',
   'components/settings/SettingsShell.svelte',
   'components/settings/VaultActionModal.svelte',
-  'components/settings/VaultArchiveModal.svelte'
+  'components/settings/VaultArchiveModal.svelte',
+  'components/editor/CalloutNodeView.svelte',
+  'components/editor/DetailsNodeView.svelte',
+  'components/editor/CodeBlockNodeView.svelte'
 ]
 
 // Hardcoded dark colors that should never appear outside of CSS custom
