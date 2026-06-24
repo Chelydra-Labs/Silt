@@ -2,6 +2,13 @@
   import type { Editor } from 'svelte-tiptap'
   import HeadingLevelMenu from './HeadingLevelMenu.svelte'
   import ColorPickerMenu from './ColorPickerMenu.svelte'
+  import {
+    toggleBlockQuote,
+    insertCallout,
+    insertCodeBlock,
+    insertDetails,
+    insertTable
+  } from '../../lib/editor'
 
   interface Props {
     editor: Editor | null
@@ -21,21 +28,131 @@
   }
 
   const BUTTONS: FormatButton[] = [
-    { id: 'bold', label: 'Bold', icon: 'format_bold', shortcut: 'Ctrl+B', mark: 'bold' },
-    { id: 'italic', label: 'Italic', icon: 'format_italic', shortcut: 'Ctrl+I', mark: 'italic' },
-    { id: 'underline', label: 'Underline', icon: 'format_underlined', shortcut: 'Ctrl+U', mark: 'underline' },
-    { id: 'strike', label: 'Strikethrough', icon: 'format_strikethrough', shortcut: 'Ctrl+Shift+X', mark: 'strike' },
-    { id: 'code', label: 'Inline code', icon: 'code', shortcut: 'Ctrl+E', mark: 'code' },
-    { id: 'highlight', label: 'Highlight', icon: 'highlight', shortcut: 'Ctrl+Shift+H', mark: 'highlight' },
-    { id: 'subscript', label: 'Subscript', icon: 'subscript', shortcut: 'Ctrl,', mark: 'subscript' },
-    { id: 'superscript', label: 'Superscript', icon: 'superscript', shortcut: 'Ctrl.', mark: 'superscript' }
+    {
+      id: 'bold',
+      label: 'Bold',
+      icon: 'format_bold',
+      shortcut: 'Ctrl+B',
+      mark: 'bold'
+    },
+    {
+      id: 'italic',
+      label: 'Italic',
+      icon: 'format_italic',
+      shortcut: 'Ctrl+I',
+      mark: 'italic'
+    },
+    {
+      id: 'underline',
+      label: 'Underline',
+      icon: 'format_underlined',
+      shortcut: 'Ctrl+U',
+      mark: 'underline'
+    },
+    {
+      id: 'strike',
+      label: 'Strikethrough',
+      icon: 'format_strikethrough',
+      shortcut: 'Ctrl+Shift+X',
+      mark: 'strike'
+    },
+    {
+      id: 'code',
+      label: 'Inline code',
+      icon: 'code',
+      shortcut: 'Ctrl+E',
+      mark: 'code'
+    },
+    {
+      id: 'highlight',
+      label: 'Highlight',
+      icon: 'highlight',
+      shortcut: 'Ctrl+Shift+H',
+      mark: 'highlight'
+    },
+    {
+      id: 'subscript',
+      label: 'Subscript',
+      icon: 'subscript',
+      shortcut: 'Ctrl,',
+      mark: 'subscript'
+    },
+    {
+      id: 'superscript',
+      label: 'Superscript',
+      icon: 'superscript',
+      shortcut: 'Ctrl.',
+      mark: 'superscript'
+    }
   ]
 
   const ALIGN_BUTTONS = [
-    { id: 'left', label: 'Align left', icon: 'format_align_left', shortcut: 'Ctrl+Shift+L' },
-    { id: 'center', label: 'Align center', icon: 'format_align_center', shortcut: 'Ctrl+Shift+E' },
-    { id: 'right', label: 'Align right', icon: 'format_align_right', shortcut: 'Ctrl+Shift+R' },
-    { id: 'justify', label: 'Align justify', icon: 'format_align_justify', shortcut: 'Ctrl+Shift+J' }
+    {
+      id: 'left',
+      label: 'Align left',
+      icon: 'format_align_left',
+      shortcut: 'Ctrl+Shift+L'
+    },
+    {
+      id: 'center',
+      label: 'Align center',
+      icon: 'format_align_center',
+      shortcut: 'Ctrl+Shift+E'
+    },
+    {
+      id: 'right',
+      label: 'Align right',
+      icon: 'format_align_right',
+      shortcut: 'Ctrl+Shift+R'
+    },
+    {
+      id: 'justify',
+      label: 'Align justify',
+      icon: 'format_align_justify',
+      shortcut: 'Ctrl+Shift+J'
+    }
+  ]
+
+  // Block-insert entry points (#188/#180/#189/#183/#172). Each calls the same
+  // helper the slash command dispatches, so the toolbar and slash menu stay in
+  // sync. `run` is a thunk so the editor ref is read live at click time.
+  interface InsertButton {
+    id: string
+    label: string
+    icon: string
+    run: () => void
+  }
+  const INSERT_BUTTONS: InsertButton[] = [
+    {
+      id: 'quote',
+      label: 'Quote',
+      icon: 'format_quote',
+      run: () => editor && toggleBlockQuote(editor)
+    },
+    {
+      id: 'code-block',
+      label: 'Code block',
+      icon: 'code_blocks',
+      run: () => editor && insertCodeBlock(editor)
+    },
+    {
+      id: 'callout',
+      label: 'Callout',
+      icon: 'info',
+      run: () => editor && insertCallout(editor, 'note')
+    },
+    {
+      id: 'details',
+      label: 'Foldable section',
+      icon: 'unfold_more',
+      run: () => editor && insertDetails(editor)
+    },
+    {
+      id: 'table',
+      label: 'Table',
+      icon: 'table_view',
+      run: () => editor && insertTable(editor, 3, 3)
+    }
   ]
 
   function handleClick(btn: FormatButton): void {
@@ -59,7 +176,9 @@
 
   function handleAlign(align: string): void {
     if (!editor) return
-    window.dispatchEvent(new CustomEvent('silt:set-block-align', { detail: align }))
+    window.dispatchEvent(
+      new CustomEvent('silt:set-block-align', { detail: align })
+    )
   }
 
   function isActive(mark: string): boolean {
@@ -82,7 +201,9 @@
 
   const LINK_IDX = BUTTONS.length
   const ALIGN_START = LINK_IDX + 1
-  let clearIdx = $derived(ALIGN_START + ALIGN_BUTTONS.length + (colorEnabled ? 2 : 0))
+  const INSERT_START = ALIGN_START + ALIGN_BUTTONS.length
+  const COLOR_START = INSERT_START + INSERT_BUTTONS.length
+  let clearIdx = $derived(COLOR_START + (colorEnabled ? 2 : 0))
 
   function handleKeydown(e: KeyboardEvent): void {
     const btns = toolbarEl?.querySelectorAll<HTMLButtonElement>('[data-tb]')
@@ -113,7 +234,14 @@
   }
 </script>
 
-<div class="format-toolbar" role="toolbar" aria-label="Text formatting" tabindex="-1" bind:this={toolbarEl} onkeydown={handleKeydown}>
+<div
+  class="format-toolbar"
+  role="toolbar"
+  aria-label="Text formatting"
+  tabindex="-1"
+  bind:this={toolbarEl}
+  onkeydown={handleKeydown}
+>
   <HeadingLevelMenu {editor} />
 
   <span class="toolbar-divider" aria-hidden="true"></span>
@@ -133,7 +261,9 @@
         onfocus={() => (rovingIdx = i)}
         title={btn.label}
       >
-        <span class="material-symbols-outlined" aria-hidden="true">{btn.icon}</span>
+        <span class="material-symbols-outlined" aria-hidden="true"
+          >{btn.icon}</span
+        >
       </button>
     {/each}
 
@@ -171,7 +301,30 @@
         onfocus={() => (rovingIdx = ALIGN_START + i)}
         title={btn.label}
       >
-        <span class="material-symbols-outlined" aria-hidden="true">{btn.icon}</span>
+        <span class="material-symbols-outlined" aria-hidden="true"
+          >{btn.icon}</span
+        >
+      </button>
+    {/each}
+  </div>
+
+  <span class="toolbar-divider" aria-hidden="true"></span>
+
+  <div class="toolbar-group">
+    {#each INSERT_BUTTONS as btn, i (btn.id)}
+      <button
+        type="button"
+        class="toolbar-btn"
+        aria-label={btn.label}
+        data-tb
+        tabindex={rovingIdx === INSERT_START + i ? 0 : -1}
+        onclick={() => btn.run()}
+        onfocus={() => (rovingIdx = INSERT_START + i)}
+        title={btn.label}
+      >
+        <span class="material-symbols-outlined" aria-hidden="true"
+          >{btn.icon}</span
+        >
       </button>
     {/each}
   </div>
@@ -196,7 +349,9 @@
       onfocus={() => (rovingIdx = clearIdx)}
       title="Clear formatting"
     >
-      <span class="material-symbols-outlined" aria-hidden="true">format_clear</span>
+      <span class="material-symbols-outlined" aria-hidden="true"
+        >format_clear</span
+      >
     </button>
   </div>
 </div>
@@ -211,7 +366,11 @@
     position: sticky;
     top: 0;
     z-index: 10;
-    background: color-mix(in srgb, var(--color-surface, #1a1d24) 95%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-surface, #1a1d24) 95%,
+      transparent
+    );
     backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--color-border-muted, #2a2e36);
   }
@@ -241,12 +400,18 @@
     background: transparent;
     color: var(--color-text-muted, #8b95a3);
     cursor: pointer;
-    transition: background 0.1s, color 0.1s;
+    transition:
+      background 0.1s,
+      color 0.1s;
     flex-shrink: 0;
   }
 
   .toolbar-btn:hover {
-    background: color-mix(in srgb, var(--color-accent-primary-start, #4f7cff) 15%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start, #4f7cff) 15%,
+      transparent
+    );
     color: var(--color-text-primary, #e6e6e6);
   }
 
@@ -256,7 +421,11 @@
   }
 
   .toolbar-btn.active {
-    background: color-mix(in srgb, var(--color-accent-primary-glow, #6fa3ff) 20%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow, #6fa3ff) 20%,
+      transparent
+    );
     color: var(--color-accent-primary-glow, #6fa3ff);
   }
 
