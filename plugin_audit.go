@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
@@ -56,19 +56,28 @@ func truncateNetworkLog(path string, keepLines int) {
 // appendNetworkAuditLine writes one entry to the per-plugin on-disk log file.
 // Extracted from auditNetwork's pre-#235 inline path; the I/O is identical.
 // Best-effort — errors are silently ignored (the audit log is diagnostic).
+//
+// #254: the on-disk format is a single-line JSON object per entry (one
+// json.Marshal + trailing newline). JSON is self-describing, survives column
+// re-ordering, and is parseable by standard tooling (jq, SIEM ingest). The
+// read path (parseNetworkLogLine) still accepts the legacy space-delimited
+// format for one release so existing logs survive an upgrade.
 func appendNetworkAuditLine(vaultPath string, entry *NetworkAuditEntry) {
 	if vaultPath == "" {
 		return
 	}
 	logPath := filepath.Join(vaultPath, ".system", "plugins", entry.Plugin, "network.log")
-	line := fmt.Sprintf("%s %s %s %d %s\n", entry.At, entry.Method, entry.Host, entry.Status, entry.Plugin)
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o700)
 	if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginNetworkLogBytes {
 		truncateNetworkLog(logPath, maxPluginNetworkLogLines)
 	}
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err == nil {
-		_, _ = f.WriteString(line)
+		_, _ = f.Write(append(data, '\n'))
 		_ = f.Close()
 	}
 }
@@ -143,8 +152,9 @@ func (a *App) ClearNetworkAudit() error {
 // seedNetworkAuditFromDisk reads every on-disk network.log file under the
 // vault's .system/plugins/ tree and seeds the in-memory audit log so entries
 // survive a restart (#157). Called once during initializeVaultServices. The
-// on-disk format is one line per entry: `<RFC3339> <METHOD> <host> <status>
-// <pluginID>`. The in-memory log is capped at 500 entries (most recent).
+// on-disk format is one line per entry (#254: a single-line JSON object; the
+// reader also accepts the legacy space-delimited format for one release). The
+// in-memory log is capped at 500 entries (most recent).
 func seedNetworkAuditFromDisk(vaultPath string) {
 	if vaultPath == "" {
 		return
@@ -189,11 +199,21 @@ func seedNetworkAuditFromDisk(vaultPath string) {
 }
 
 // parseNetworkLogLine parses one line from a network.log file into a
-// NetworkAuditEntry. The format is: `<RFC3339> <METHOD> <host> <status>
-// <pluginID>`. Returns ok=false on any parse failure (best-effort). Parsing
-// from the right (status = second-to-last field, pluginID = last) tolerates
-// spaces in the host/path segment, which a left-to-right split would misalign.
+// NetworkAuditEntry. The current format (#254) is a single-line JSON object.
+// Falls back to the legacy space-delimited format
+// (`<RFC3339> <METHOD> <host> <status> <pluginID>`) for logs written by the
+// previous release, so an upgrade does not drop existing entries. The legacy
+// parser will be removed after one release (follow-up issue). Returns ok=false
+// on any parse failure (best-effort). The legacy parse is right-to-left
+// (status = second-to-last field, pluginID = last) to tolerate spaces in the
+// host/path segment, which a left-to-right split would misalign.
 func parseNetworkLogLine(line string) (NetworkAuditEntry, bool) {
+	// JSON format (current release): one json object per line.
+	var entry NetworkAuditEntry
+	if err := json.Unmarshal([]byte(line), &entry); err == nil && entry.At != "" {
+		return entry, true
+	}
+	// Legacy format (pre-#254): space-delimited, parsed from the right.
 	parts := strings.Fields(line)
 	n := len(parts)
 	if n < 5 {
