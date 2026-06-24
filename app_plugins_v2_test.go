@@ -1343,7 +1343,8 @@ func TestClearNetworkAudit_TruncatesOnDiskFiles(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	logPath := filepath.Join(logDir, "network.log")
-	if err := os.WriteFile(logPath, []byte("2026-06-20T10:00:00Z GET example.com 200 clear-test\n"), 0o644); err != nil {
+	logContent := `{"at":"2026-06-20T10:00:00Z","method":"GET","host":"example.com","status":200,"plugin":"clear-test"}` + "\n"
+	if err := os.WriteFile(logPath, []byte(logContent), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if err := app.ClearNetworkAudit(); err != nil {
