@@ -236,6 +236,48 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     const back = docToBlocks(blocksToDoc(blocks))
     expect(back.map((b) => b.line_number)).toEqual([1, 2, 3])
   })
+
+  it('detects quote prefix and sets quote attr on noteBlock (#188)', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: '> quoted text' })]
+    const doc = blocksToDoc(blocks)
+    const note = doc.content[0]
+    expect(note?.attrs?.quote).toBe(true)
+    expect(note?.attrs?.quoteDepth).toBe(1)
+    expect(note?.attrs?.bullet).toBe('')
+  })
+
+  it('detects nested quote prefix (>>) as quoteDepth 2 (#188)', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: '>> nested quote' })]
+    const doc = blocksToDoc(blocks)
+    const note = doc.content[0]
+    expect(note?.attrs?.quote).toBe(true)
+    expect(note?.attrs?.quoteDepth).toBe(2)
+  })
+
+  it('round-trips a quote block preserving > prefix in clean_text (#188)', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: '> quoted text' })]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back[0].clean_text).toBe('> quoted text')
+  })
+
+  it('round-trips a nested quote with >> prefix (#188)', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: '>> nested quote' })]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe('>> nested quote')
+  })
+
+  it('converts a non-quote NOTE to quote:false attrs (#188)', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: 'plain text' })]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.attrs?.quote).toBe(false)
+  })
+
+  it('quote block with inline formatting round-trips (#188)', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: '> **bold** quote' })]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back[0].clean_text).toBe('> **bold** quote')
+  })
 })
 
 describe('doc JSON accepted by a real TipTap editor', () => {

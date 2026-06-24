@@ -9,6 +9,8 @@
   let align = $derived(node.attrs.align || 'left')
   let bullet = $derived(node.attrs.bullet || '')
   let depth = $derived(node.attrs.depth || 0)
+  let quote = $derived(node.attrs.quote === true)
+  let quoteDepth = $derived(Number(node.attrs.quoteDepth) || 1)
 
   let dragHandleEl: HTMLElement | null = $state(null)
 
@@ -41,7 +43,15 @@
     drag_indicator
   </span>
 
-  {#if bullet && bullet !== ''}
+  {#if quote}
+    <!-- Blockquote border bar (#188). Left border + indent replaces the bullet marker. -->
+    <div
+      class="w-[3px] rounded-full flex-shrink-0 self-stretch mr-3"
+      class:bg-accent-primary={quoteDepth === 1}
+      class:bg-accent-secondary={quoteDepth >= 2}
+      aria-hidden="true"
+    ></div>
+  {:else if bullet && bullet !== ''}
     {#if /^\d+/.test(bullet)}
       <!-- Numbered marker -->
       <span
@@ -59,7 +69,7 @@
     {/if}
   {/if}
 
-  <div class="flex-1 min-w-0" style="text-align: {align}">
+  <div class="flex-1 min-w-0" style="text-align: {align}" class:italic={quote}>
     <NodeViewContent
       class="whitespace-pre-wrap break-words min-h-[22px] focus:outline-none"
     />

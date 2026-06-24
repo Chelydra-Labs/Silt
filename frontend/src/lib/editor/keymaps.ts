@@ -352,6 +352,21 @@ export const SiltBlockKeymaps = Extension.create({
       'Mod-Alt-0': () => convertToBlock(this.editor, 'noteBlock'),
       'Mod-Alt-4': () => convertToBlock(this.editor, 'taskBlock'),
 
+      // Blockquote toggle (#188). Mod-Shift-9 mirrors Word/Google Docs binding.
+      'Mod-Shift-9': () => {
+        const active = findActiveBlock(this.editor)
+        if (!active || active.node.type.name !== 'noteBlock') return false
+        const nodePos = this.editor.state.selection.$from.before(active.depth)
+        const currentQuote = active.node.attrs.quote || false
+        const tr = this.editor.state.tr.setNodeAttribute(
+          nodePos,
+          'quote',
+          !currentQuote
+        )
+        this.editor.view.dispatch(tr)
+        return true
+      },
+
       // Text alignment shortcuts (#173). Mod-Shift-L/E/R/J for left/center/
       // right/justify. No-op for TASK blocks (alignment not supported on tasks).
       'Mod-Shift-l': () => setBlockAlign(this.editor, 'left'),

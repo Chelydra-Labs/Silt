@@ -179,20 +179,31 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         content
       }
     case 'NOTE':
-    default:
-      // Defensive: unknown block types map to NOTE so a malformed doc never
-      // drops content. The Go side also treats unrecognized lines as notes.
+    default: {
+      let body = text
+      // Detect blockquote `> ` prefix (#188). The Go parser does not strip
+      // `> ` from clean_text, so the prefix is present in the raw text.
+      // Number of `>` characters determines nesting depth (e.g. `>> ` = 2).
+      const quoteMatch = text.match(/^(>+)\s(.*)$/)
+      const isQuote = quoteMatch !== null
+      const quoteDepth = isQuote ? quoteMatch![1].length : 1
+      if (isQuote) body = quoteMatch![2]
+      const contentNodes: NodeJSON[] = body ? legacyTokenizeInline(body) : []
+
       return {
         type: 'noteBlock',
         attrs: {
           id: block.id,
           depth: block.depth,
-          bullet: detectBullet(block.raw_text),
+          bullet: isQuote ? '' : detectBullet(block.raw_text),
           align,
+          quote: isQuote,
+          quoteDepth: isQuote ? quoteDepth : 1,
           file_date: block.file_date || ''
         },
-        content
+        content: contentNodes
       }
+    }
   }
 }
 
@@ -338,8 +349,17 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       block.priority = Number(attrs.priority ?? 3)
       block.raw_text = `- [${block.status === 'DOING' ? '/' : block.status === 'DONE' ? 'x' : ' '}] ${block.status} TASK ${cleanText}`
     } else if (type === 'NOTE') {
-      const bullet: string = attrs.bullet !== undefined ? attrs.bullet : '- '
-      block.raw_text = `${bullet}${cleanText}`
+      const isQuote = attrs.quote === true
+      const bullet: string = isQuote
+        ? ''
+        : attrs.bullet !== undefined
+          ? attrs.bullet
+          : '- '
+      if (isQuote) {
+        const qd = Number(attrs.quoteDepth) || 1
+        block.clean_text = `${new Array(qd + 1).join('>')} ${cleanText}`
+      }
+      block.raw_text = `${bullet}${block.clean_text}`
     } else {
       block.raw_text = `${'#'.repeat(block.depth || 1)} ${cleanText}`
     }

@@ -263,6 +263,22 @@ export const NoteBlock = Node.create({
             ? { 'data-align': attrs.align }
             : {}
       },
+      // Blockquote flag (#188). When true the block is rendered with a left
+      // border / indent and serialized with a `> ` prefix. Nesting depth is
+      // tracked separately via quoteDepth (number of `>` prefixes).
+      quote: {
+        default: false,
+        parseHTML: (el) => el.getAttribute('data-quote') === 'true',
+        renderHTML: (attrs) => (attrs.quote ? { 'data-quote': 'true' } : {})
+      },
+      quoteDepth: {
+        default: 1,
+        parseHTML: (el) => Number(el.getAttribute('data-quote-depth') || 1),
+        renderHTML: (attrs) =>
+          attrs.quoteDepth && attrs.quoteDepth > 1
+            ? { 'data-quote-depth': String(attrs.quoteDepth) }
+            : {}
+      },
       file_date: {
         default: '',
         parseHTML: (el) => el.getAttribute('data-file-date') || '',
