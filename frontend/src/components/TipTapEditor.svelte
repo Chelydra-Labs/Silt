@@ -358,7 +358,12 @@
 
   const editorExtensions = [
     StarterKit.configure({
-      paragraph: false,
+      // paragraph stays enabled: TipTap's Table extension fills cells with
+      // paragraph nodes (tableCell content is 'block+'), and its row/column
+      // commands hard-depend on schema.nodes.paragraph. A stray top-level
+      // paragraph self-heals — docToBlocks maps any unknown block to NOTE.
+      // trailingNode stays disabled so no auto-trailing-paragraph is appended;
+      // Silt constructs every top-level block as a noteBlock/taskBlock/etc.
       heading: false,
       bulletList: false,
       orderedList: false,

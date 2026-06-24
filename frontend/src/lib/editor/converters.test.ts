@@ -7,7 +7,8 @@ import {
   SiltColorMarkExtensions,
   SiltDetailsExtensions,
   SiltTableExtensions,
-  UniqueBlockIds
+  UniqueBlockIds,
+  insertTable
 } from './index'
 import {
   EmbedNode,
@@ -92,7 +93,8 @@ function makeEditorWithNewBlocks() {
   return new Editor({
     extensions: [
       StarterKit.configure({
-        paragraph: false,
+        // paragraph enabled: the Table extension fills cells with paragraphs
+        // and hard-depends on schema.nodes.paragraph (mirrors the live editor).
         heading: false,
         bulletList: false,
         orderedList: false,
@@ -623,6 +625,27 @@ describe('doc JSON accepted by a real TipTap editor', () => {
     expect(joined).toContain('Engineer')
     // At least the header + separator + one data row (3 GFM lines minimum).
     expect(back.length).toBeGreaterThanOrEqual(3)
+    editor.destroy()
+  })
+
+  it('insertTable produces a real editable table node (#172 regression)', () => {
+    // Regression guard: insertTable must build valid cells (content 'block+').
+    // When paragraph was disabled, cells were created empty/invalid and the
+    // table silently failed to insert — both the /table slash command and the
+    // toolbar button did nothing.
+    const editor = makeEditorWithNewBlocks()
+    expect(insertTable(editor, 2, 2)).toBe(true)
+    const doc = editor.getJSON() as DocJSON
+    const tableNode = doc.content.find((n) => n.type === 'table')
+    expect(tableNode, 'expected a table node in the doc').toBeTruthy()
+    const rows = (tableNode?.content || []).filter((c) => c.type === 'tableRow')
+    expect(rows).toHaveLength(2)
+    // Each cell carries a paragraph child (the valid block content).
+    const firstCell = rows[0]?.content?.[0]
+    expect(
+      firstCell?.type === 'tableHeader' || firstCell?.type === 'tableCell'
+    ).toBe(true)
+    expect(firstCell?.content?.[0]?.type).toBe('paragraph')
     editor.destroy()
   })
 

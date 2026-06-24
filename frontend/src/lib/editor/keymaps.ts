@@ -310,9 +310,15 @@ export function insertTable(editor: Editor, rows = 3, cols = 3): boolean {
   if (!editor || editor.isDestroyed) return false
   const schema = editor.state.schema
   if (!schema.nodes.table) return false
+  // TipTap's tableCell has content 'block+' and its row/column commands fill
+  // new cells with paragraph nodes. Without a paragraph node in the schema
+  // the cells would be empty/invalid and the table would silently fail to
+  // insert — fail loudly instead of producing a broken table.
+  const paragraph = schema.nodes.paragraph
+  if (!paragraph) return false
   const today = new Date().toISOString().slice(0, 10)
   const emptyCell = (type: 'tableHeader' | 'tableCell') =>
-    schema.nodes[type].create({}, schema.nodes.paragraph?.create?.() ?? null)
+    schema.nodes[type].create({}, paragraph.create())
   const headerRow = schema.nodes.tableRow.create(
     {},
     Array.from({ length: cols }, () => emptyCell('tableHeader'))
