@@ -19,6 +19,7 @@ export {
   setBlockAlign,
   toggleBlockQuote,
   insertCallout,
+  insertCodeBlock,
   findActiveBlock,
   BLOCK_TYPES
 } from './keymaps'

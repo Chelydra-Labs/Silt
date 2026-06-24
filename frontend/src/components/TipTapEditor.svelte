@@ -18,6 +18,7 @@
     setBlockAlign,
     toggleBlockQuote,
     insertCallout,
+    insertCodeBlock,
     findActiveBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
@@ -638,6 +639,8 @@
       insertCallout(editorInstance as any, 'note')
     } else if (commandId.startsWith('callout-')) {
       insertCallout(editorInstance as any, commandId.slice('callout-'.length))
+    } else if (commandId === 'code-block') {
+      insertCodeBlock(editorInstance as any)
     } else if (commandId === 'text-color') {
       openColorPickerPopover('textColor')
     } else if (commandId === 'background-color') {

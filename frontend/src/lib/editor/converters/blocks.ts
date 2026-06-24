@@ -15,6 +15,19 @@
 import { serializeInlineContent, legacyTokenizeInline } from './serialize'
 import type { ParsedBlock, DocJSON, NodeJSON, BlockType } from '../types'
 
+// Concatenate the text descendants of a NodeJSON[] (used for code blocks,
+// whose content is plain `text*` with no marks). Newlines inside a text node
+// are preserved, so a multi-line code block round-trips verbatim.
+function extractTextContent(content?: NodeJSON[]): string {
+  if (!content) return ''
+  let out = ''
+  for (const child of content) {
+    if (child.text !== undefined) out += child.text
+    else if (child.content) out += extractTextContent(child.content)
+  }
+  return out
+}
+
 // Extract the bullet prefix ('- ', '* ', '+ ', or '') from a note's raw_text,
 // matching the detection logic in Go's renderBlock (parser.go ~line 515-527).
 function detectBullet(rawText: string): string {
@@ -175,6 +188,21 @@ function blockToNode(block: ParsedBlock): NodeJSON {
     return {
       type: 'embedBlock',
       attrs: { id: block.id, ...embedBlockAttrs }
+    }
+  }
+
+  // A CODE block (#189) carries multi-line fenced content verbatim. Its
+  // clean_text keeps internal newlines (the Go parser preserves them); the
+  // codeBlock node stores that text as a single text node.
+  if (block.type === 'CODE') {
+    return {
+      type: 'codeBlock',
+      attrs: {
+        id: block.id,
+        language: block.language || '',
+        file_date: block.file_date || ''
+      },
+      content: text ? [{ type: 'text', text }] : []
     }
   }
 
@@ -363,6 +391,31 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         priority: 3,
         line_number: lineNumber,
         file_date: (attrs.file_date as string) || ''
+      })
+      continue
+    }
+
+    // Code block (#189): a multi-line CODE ParsedBlock. The Go renderer's
+    // BlockCode branch re-emits the ``` ``` fence verbatim (newlines
+    // preserved). The code text is the concatenation of the node's text
+    // descendants — code is literal (no marks).
+    if (node.type === 'codeBlock') {
+      const code = extractTextContent(node.content)
+      blocks.push({
+        id,
+        parent_id: '',
+        type: 'CODE',
+        depth: 0,
+        raw_text: '',
+        clean_text: code,
+        status: '',
+        owner: '',
+        start_date: '',
+        due_date: '',
+        priority: 3,
+        line_number: lineNumber,
+        file_date: (attrs.file_date as string) || '',
+        language: (attrs.language as string) || ''
       })
       continue
     }

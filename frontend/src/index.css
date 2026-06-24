@@ -577,6 +577,112 @@ body {
   font-size: 0.95em;
 }
 
+/* Fenced code block (#189). The bar carries the language selector + copy
+   button; the body is a dual-layer stack (Shiki highlight layer behind a
+   transparent editable layer). Both layers share the mono font metrics so the
+   coloured tokens align with the invisible raw characters. */
+.silt-code {
+  border: 1px solid var(--color-border-muted, #27272a);
+  border-radius: 8px;
+  background: var(
+    --color-surface-raised,
+    color-mix(in srgb, var(--color-surface, #1a1d24) 92%, transparent)
+  );
+  overflow: hidden;
+}
+.silt-code.selected {
+  border-color: var(--color-accent-primary-start);
+}
+.silt-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--color-border-muted, #27272a);
+  background: color-mix(
+    in srgb,
+    var(--color-surface, #1a1d24) 70%,
+    transparent
+  );
+}
+.silt-code-lang {
+  background: transparent;
+  color: var(--color-text-muted, #8b95a3);
+  border: none;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  outline: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.silt-code-lang option {
+  color: #000;
+}
+.silt-code-copy {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted, #8b95a3);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: opacity 0.12s;
+}
+.silt-code-copy:hover {
+  opacity: 1;
+}
+.silt-code-copy .material-symbols-outlined {
+  font-size: 16px;
+}
+.silt-code-body {
+  position: relative;
+  margin: 0;
+}
+/* Shared font metrics for BOTH layers — alignment depends on these matching. */
+.silt-code-display,
+.silt-code-edit {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--editor-mono-font-family, var(--font-mono, monospace));
+  font-size: var(--editor-font-size, 0.875rem);
+  line-height: var(--editor-line-height, 1.5);
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 2;
+}
+/* Shiki layer: visible, behind, non-interactive. */
+.silt-code-display {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.silt-code-display :global(.shiki) {
+  margin: 0;
+  background: transparent !important;
+}
+.silt-code-display :global(.shiki code) {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+/* Editable layer: transparent text, visible caret, on top. */
+.silt-code-edit {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--color-text-primary, #e6e6e6);
+  outline: none;
+  min-height: 22px;
+}
+.silt-code-edit:focus {
+  outline: none;
+}
+
 /* Selection highlight uses the theme accent. */
 .ProseMirror ::selection {
   background: color-mix(

@@ -21,6 +21,7 @@
 //   The editor-created default is '- ' (matching renderBlock's default).
 
 import { Node, Mark, mergeAttributes, InputRule } from '@tiptap/core'
+import { newlineInCode } from '@tiptap/pm/commands'
 import Highlight from '@tiptap/extension-highlight'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
@@ -501,6 +502,60 @@ export const CalloutBlock = Node.create({
       mergeAttributes({ 'data-type': 'callout' }, HTMLAttributes),
       0
     ]
+  }
+})
+
+// ---- CodeBlock (#189) ----------------------------------------------------
+// A managed fenced code block. The Go parser emits a BlockCode ParsedBlock
+// whose clean_text retains internal newlines (parser.go); this node carries
+// that text as plain `text*` content and a `language` attr (the info string).
+// `code: true` disables inline marks inside (code is literal). Enter inserts a
+// newline rather than a new block (newlineInCode). On-disk render goes through
+// Go's renderBlock BlockCode branch, which emits the ``` ``` fence verbatim.
+export const CodeBlock = Node.create({
+  name: 'codeBlock',
+  group: 'block',
+  content: 'text*',
+  defining: true,
+  isolating: true,
+  code: true,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-id') || null,
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+      },
+      language: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-language') || '',
+        renderHTML: (attrs) =>
+          attrs.language ? { 'data-language': attrs.language } : {}
+      },
+      file_date: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-file-date') || '',
+        renderHTML: (attrs) =>
+          attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="code"]' }, { tag: 'pre[data-type="code"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes({ 'data-type': 'code' }, HTMLAttributes), 0]
+  },
+
+  addKeyboardShortcuts() {
+    return {
+      // Enter inserts a newline inside the code instead of creating a new
+      // block below — the defining behaviour of a code block.
+      Enter: () => newlineInCode(this.editor.state, this.editor.view.dispatch)
+    }
   }
 })
 

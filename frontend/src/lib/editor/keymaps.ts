@@ -197,6 +197,35 @@ export function insertCallout(editor: Editor, variant: string): boolean {
   return true
 }
 
+// Insert a fenced code block at the current selection (#189). Replaces the
+// current block when it is an empty note/header, otherwise inserts below.
+export function insertCodeBlock(editor: Editor, language = ''): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const today = new Date().toISOString().slice(0, 10)
+  const codeNode = editor.state.schema.nodes.codeBlock?.create(
+    { id: null, language, file_date: today },
+    editor.state.schema.text('')
+  )
+  if (!codeNode) return false
+  const active = findActiveBlock(editor)
+  const isEmptyNote =
+    active &&
+    (active.node.type.name === 'noteBlock' ||
+      active.node.type.name === 'headerBlock') &&
+    (active.node.content.size === 0 || active.node.textContent.trim() === '')
+  if (active && isEmptyNote) {
+    const pos = editor.state.selection.$from.before(active.depth)
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(pos, pos + active.node.nodeSize, codeNode)
+    )
+    editor.commands.focus()
+    return true
+  }
+  editor.commands.insertContent(codeNode)
+  editor.commands.focus()
+  return true
+}
+
 export const SiltBlockKeymaps = Extension.create({
   name: 'siltBlockKeymaps',
 

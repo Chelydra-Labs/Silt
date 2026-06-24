@@ -320,6 +320,14 @@ registerSlashCommand({
   icon: 'check_circle'
 })
 
+// --- Code blocks (#189) ---------------------------------------------------
+registerSlashCommand({
+  id: 'code-block',
+  label: 'Code block',
+  description: 'Insert a fenced code block with syntax highlighting',
+  icon: 'code_blocks'
+})
+
 // --- Color commands (#170) ------------------------------------------------
 registerSlashCommand({
   id: 'text-color',

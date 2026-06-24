@@ -281,6 +281,43 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(blocksToDoc(blocks).content[0]?.type).toBe('calloutBlock')
   })
 
+  it('round-trips a multi-line CODE block with language (#189)', () => {
+    const code = 'func main() {\n\tprintln("hi")\n}'
+    const blocks = [
+      mkBlock('CODE', {
+        clean_text: code,
+        language: 'go',
+        raw_text: ''
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    const node = doc.content[0]
+    expect(node?.type).toBe('codeBlock')
+    expect(node?.attrs?.language).toBe('go')
+    expect(node?.content).toEqual([{ type: 'text', text: code }])
+    // Save: a CODE ParsedBlock whose clean_text is the verbatim code.
+    const back = docToBlocks(doc)
+    expect(back[0].type).toBe('CODE')
+    expect(back[0].clean_text).toBe(code)
+    expect(back[0].language).toBe('go')
+  })
+
+  it('round-trips a CODE block with blank lines + a literal pipe (#189)', () => {
+    const code = 'first\n\nthird\n| col'
+    const blocks = [mkBlock('CODE', { clean_text: code, language: '' })]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back[0].type).toBe('CODE')
+    expect(back[0].clean_text).toBe(code)
+  })
+
+  it('round-trips an empty CODE block (#189)', () => {
+    const blocks = [mkBlock('CODE', { clean_text: '', language: 'ts' })]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.type).toBe('codeBlock')
+    expect(doc.content[0]?.content).toEqual([])
+    expect(docToBlocks(doc)[0].clean_text).toBe('')
+  })
+
   it('handles empty clean_text (placeholder block)', () => {
     const blocks = [mkBlock('NOTE', { clean_text: '' })]
     const back = docToBlocks(blocksToDoc(blocks))
