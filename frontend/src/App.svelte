@@ -110,7 +110,7 @@
   function openPage(
     ref: PageRef,
     mode: OpenPageMode,
-    blockTarget: { fileDate?: string; blockId?: string } = undefined
+    blockTarget: { fileDate?: string; blockId?: string } | undefined = undefined
   ): void {
     const enablePreviewTabs = settings.config?.ui?.enable_preview_tabs !== false
     const maxOpenTabs = settings.config?.ui?.max_open_tabs ?? 8
@@ -243,13 +243,13 @@
           section: t.section,
           page: t.page
         })),
-        activePersist
+        (activePersist
           ? {
               notebook: activePersist.notebook,
               section: activePersist.section,
               page: activePersist.page
             }
-          : null
+          : null) as any
       )
     } catch (e) {
       console.error('SetOpenTabs failed:', e)
