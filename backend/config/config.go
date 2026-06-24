@@ -276,6 +276,11 @@ func Defaults() SystemConfig {
 			"toggle_quote": "Ctrl+Shift+9",
 			// Code block (#189). Insert a fenced code block.
 			"insert_code": "Ctrl+Alt+C",
+			// Table hotkeys (#172). Row/column insertion.
+			"table_insert_row_above": "Ctrl+Shift+Up",
+			"table_insert_row_below": "Ctrl+Shift+Down",
+			"table_insert_col_left":   "Ctrl+Shift+Left",
+			"table_insert_col_right":  "Ctrl+Shift+Right",
 			// View mode toggle (#171). Standard source/view toggle binding.
 			"toggle_view_mode": "Ctrl+Shift+V",
 		},

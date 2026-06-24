@@ -12,6 +12,7 @@
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
     SiltColorMarkExtensions,
+    SiltTableExtensions,
     UniqueBlockIds,
     SiltBlockKeymaps,
     convertToBlock,
@@ -363,6 +364,7 @@
     ...SiltBlockExtensionsWithNodeViews,
     ...SiltInlineMarkExtensions,
     ...SiltColorMarkExtensions,
+    ...SiltTableExtensions,
     UniqueBlockIds,
     TaskMetaSuggest.configure({
       onChange: onMetaChange,

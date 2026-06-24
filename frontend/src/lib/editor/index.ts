@@ -10,6 +10,7 @@ export {
   DetailsBlock,
   CodeBlock,
   SiltBlockExtensions,
+  SiltTableExtensions,
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions
 } from './schema'

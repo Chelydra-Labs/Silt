@@ -251,6 +251,82 @@ function isCalloutBodyLine(text: string): boolean {
   return /^>[\s>]/.test(text) && !text.match(/^>\s*\[!/)
 }
 
+// ---- GFM pipe-table helpers (#172) ----------------------------------------
+
+// GFM header row: `| col1 | col2 |`
+const GFM_TABLE_ROW_RE = /^\|.*\|$/
+// GFM separator row: `| --- | --- |` or `| :--- | ---: |`
+const GFM_TABLE_SEP_RE = /^\|[\s:-]+(\|[\s:-]+)*\|\s*$/
+
+// Detect if a clean_text is a GFM table row (pipe-delimited).
+function isGFMTableRow(text: string): boolean {
+  return GFM_TABLE_ROW_RE.test(text.trim())
+}
+
+// Detect if a line is a GFM separator row.
+function isGFMTableSep(text: string): boolean {
+  return GFM_TABLE_SEP_RE.test(text.trim())
+}
+
+// Parse a GFM table row (e.g. `| a | b |`) into cell strings.
+function parseGFMRow(line: string): string[] {
+  const trimmed = line.trim()
+  // Strip leading and trailing |, split on |
+  const inner = trimmed.startsWith('|') ? trimmed.slice(1) : trimmed
+  const end = inner.endsWith('|') ? inner.slice(0, -1) : inner
+  return end.split('|').map((s) => {
+    const cell = s.trim()
+    // Unescape escaped pipes (\| → |)
+    return cell.replace(/\\\|/g, '|')
+  })
+}
+
+// Build a GFM table row string from cell strings. Handles pipe escaping.
+function buildGFMRow(cells: string[]): string {
+  return '| ' + cells.map((c) => c.replace(/\|/g, '\\|')).join(' | ') + ' |'
+}
+
+// Serialize a TipTap table node JSON to GFM pipe rows for docToBlocks.
+function tableToGFMRows(node: NodeJSON): string[] {
+  const rows: string[] = []
+  const content = node.content || []
+  if (content.length === 0) return rows
+  // First row is the header row.
+  const headerCells = (content[0].content || []).map((cell: NodeJSON) => {
+    const cellContent = cell.content || []
+    return cellContent
+      .map((n: NodeJSON) => {
+        if (n.text !== undefined) return n.text || ''
+        if (n.type === 'blockReferenceNode') return `((${n.attrs?.uuid || ''}))`
+        if (n.type === 'embedNode') return `{{embed:${n.attrs?.uuid || ''}}}`
+        return ''
+      })
+      .join('')
+  })
+  rows.push(buildGFMRow(headerCells))
+  // Separator row: one `---` per column.
+  const sep = '| ' + headerCells.map(() => '---').join(' | ') + ' |'
+  rows.push(sep)
+  // Data rows.
+  for (let ri = 1; ri < content.length; ri++) {
+    const row = content[ri]
+    const cells = (row.content || []).map((cell: NodeJSON) => {
+      const cellContent = cell.content || []
+      return cellContent
+        .map((n: NodeJSON) => {
+          if (n.text !== undefined) return n.text || ''
+          if (n.type === 'blockReferenceNode')
+            return `((${n.attrs?.uuid || ''}))`
+          if (n.type === 'embedNode') return `{{embed:${n.attrs?.uuid || ''}}}`
+          return ''
+        })
+        .join('')
+    })
+    rows.push(buildGFMRow(cells))
+  }
+  return rows
+}
+
 // Helper to word-wrap text into ~80-char `> ` lines (#180).
 function wrapCalloutBody(body: string, maxLen: number = 80): string[] {
   const words = body.split(' ')
@@ -277,6 +353,54 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
   let i = 0
   while (i < blocks.length) {
     const rawText = blocks[i].clean_text || ''
+
+    // GFM pipe table detection (#172). Consecutive NOTE blocks matching the
+    // GFM pipe-table pattern are merged into a single tableBlock. Requires
+    // at least a header row + separator row to be recognized.
+    if (
+      blocks[i].type === 'NOTE' &&
+      isGFMTableRow(rawText) &&
+      i + 1 < blocks.length &&
+      isGFMTableSep(blocks[i + 1].clean_text || '')
+    ) {
+      const tableRows: string[] = []
+      while (i < blocks.length && isGFMTableRow(blocks[i].clean_text || '')) {
+        tableRows.push(blocks[i].clean_text || '')
+        i++
+      }
+      const tableContent: NodeJSON[] = []
+      // Parse header row
+      if (tableRows.length > 0) {
+        const headerCells = parseGFMRow(tableRows[0])
+        const headerRow: NodeJSON = {
+          type: 'tableRow',
+          content: headerCells.map((cellText) => ({
+            type: 'tableHeader',
+            content: [{ type: 'text', text: cellText }]
+          }))
+        }
+        tableContent.push(headerRow)
+        // Data rows (skip the separator row at index 1)
+        for (let di = 2; di < tableRows.length; di++) {
+          const rowCells = parseGFMRow(tableRows[di])
+          const dataRow: NodeJSON = {
+            type: 'tableRow',
+            content: rowCells.map((cellText) => ({
+              type: 'tableCell',
+              content: [{ type: 'text', text: cellText }]
+            }))
+          }
+          tableContent.push(dataRow)
+        }
+      }
+      content.push({
+        type: 'table',
+        attrs: { id: crypto.randomUUID() },
+        content: tableContent
+      })
+      continue
+    }
+
     const calloutMatch = rawText.match(CALLOUT_RE)
     if (calloutMatch) {
       const variant = calloutMatch[1].toLowerCase()
@@ -396,6 +520,30 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         line_number: lineNumber,
         file_date: (attrs.file_date as string) || ''
       })
+      continue
+    }
+
+    // Table block (#172): serialize as GFM pipe NOTE blocks. Each row becomes
+    // one NOTE block; the header row is followed by a separator row.
+    if (node.type === 'table') {
+      const gfmRows = tableToGFMRows(node)
+      for (let ri = 0; ri < gfmRows.length; ri++) {
+        blocks.push({
+          id: ri === 0 ? id : crypto.randomUUID(),
+          parent_id: '',
+          type: 'NOTE' as const,
+          depth: 0,
+          raw_text: gfmRows[ri],
+          clean_text: gfmRows[ri],
+          status: '',
+          owner: '',
+          start_date: '',
+          due_date: '',
+          priority: 3,
+          line_number: lineNumber + ri,
+          file_date: (attrs.file_date as string) || ''
+        })
+      }
       continue
     }
 

@@ -404,6 +404,37 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(back[0].clean_text).toContain('B')
     expect(back[0].clean_text).toContain('</details>')
   })
+
+  it('detects a GFM pipe table and merges into a single table node (#172)', () => {
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| Name | Role |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| Alice | Engineer |' }),
+      mkBlock('NOTE', { clean_text: '| Bob | Designer |' })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content).toHaveLength(1)
+    expect(doc.content[0].type).toBe('table')
+  })
+
+  it('round-trips a GFM table preserving pipe syntax (#172)', () => {
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| A | B |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| 1 | 2 |' })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back.length).toBeGreaterThanOrEqual(3)
+    expect(back[0].clean_text).toContain('| A |')
+    expect(back[1].clean_text).toContain('---')
+    expect(back[2].clean_text).toContain('| 1 |')
+  })
+
+  it('leaves a non-table pipe row (no separator) as NOTE blocks (#172)', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: '| just one row |' })]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0].type).toBe('noteBlock')
+  })
 })
 
 describe('doc JSON accepted by a real TipTap editor', () => {

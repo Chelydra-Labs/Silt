@@ -283,6 +283,14 @@ registerSlashCommand({
   icon: 'unfold_more'
 })
 
+// --- Table commands (#172) --------------------------------------------------
+registerSlashCommand({
+  id: 'table',
+  label: 'Table',
+  description: 'Insert a 3x3 table',
+  icon: 'table_view'
+})
+
 // --- Code block command (#189) ----------------------------------------------
 registerSlashCommand({
   id: 'code-block',

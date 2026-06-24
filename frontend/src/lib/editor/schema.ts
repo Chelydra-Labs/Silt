@@ -24,6 +24,10 @@ import { Node, Mark, mergeAttributes, InputRule } from '@tiptap/core'
 import Highlight from '@tiptap/extension-highlight'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { TableHeader } from '@tiptap/extension-table-header'
 
 // ---- Inline mark extensions ----------------------------------------------
 // TipTap 3.x StarterKit includes Bold, Italic, Strike, Code, Link, and
@@ -560,6 +564,28 @@ export const SiltBlockExtensions = [
   CalloutBlock,
   DetailsBlock,
   CodeBlock
+]
+
+// ---- Table extensions (#172) ----------------------------------------------
+// TipTap Table extension provides the table schema (table, tableRow,
+// tableCell, tableHeader) with cell selection, Tab/arrow-key navigation,
+// column resizing, and row/column operations. These are added to the editor
+// alongside SiltBlockExtensions. The converter detects GFM pipe-table blocks
+// on load and emits GFM pipe-syntax NOTE blocks on save.
+export const SiltTableExtensions = [
+  Table.configure({
+    resizable: true,
+    HTMLAttributes: { 'data-type': 'table' }
+  }),
+  TableRow.configure({
+    HTMLAttributes: { 'data-type': 'table-row' }
+  }),
+  TableCell.configure({
+    HTMLAttributes: { 'data-type': 'table-cell' }
+  }),
+  TableHeader.configure({
+    HTMLAttributes: { 'data-type': 'table-header' }
+  })
 ]
 
 // ---- EmbedNode (block-level, atomic) -------------------------------------
