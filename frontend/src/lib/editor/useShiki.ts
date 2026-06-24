@@ -53,11 +53,12 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// The short list offered in the language picker. Shiki lazy-loads others on
-// demand when the user types a known grammar id, so this is a UX hint, not a
-// hard limit.
+// The short list offered in the language picker. 'plaintext' is the default
+// (an empty language attr renders as plaintext); there is no separate empty
+// entry, which would just duplicate it in the dropdown. Shiki lazy-loads
+// others on demand when the user types a known grammar id, so this is a UX
+// hint, not a hard limit.
 export const COMMON_LANGUAGES = [
-  '',
   'plaintext',
   'typescript',
   'javascript',

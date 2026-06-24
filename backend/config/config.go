@@ -274,6 +274,9 @@ func Defaults() SystemConfig {
 			"align_justify": "Ctrl+Shift+J",
 			// Blockquote toggle (#188). Standard blockquote binding.
 			"toggle_quote": "Ctrl+Shift+9",
+			// Foldable details toggle (#183). Ctrl+Shift+. (Ctrl+. is taken by
+			// the Superscript mark).
+			"toggle_details": "Ctrl+Shift+.",
 			// Table row/column insert hotkeys (#172). Standard Word/Google Docs
 			// bindings; deletion + merge are toolbar-only in v1.
 			"table_insert_row_above": "Ctrl+Shift+Up",

@@ -682,6 +682,13 @@ body {
 .silt-code-edit:focus {
   outline: none;
 }
+/* While Shiki lags behind the live text (during typing, before the async
+   highlighter resolves), show the editable text in a solid colour so newly
+   typed characters are visible. Once Shiki catches up the .code-stale class
+   drops and the text goes transparent, yielding to Shiki's coloured tokens. */
+.silt-code-edit.code-stale {
+  color: var(--color-text-primary, #e6e6e6);
+}
 
 /* Foldable details (#183). TipTap's Details extension renders a native
    `<details><summary>` container, which gives free disclosure + keyboard

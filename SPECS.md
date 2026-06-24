@@ -711,7 +711,7 @@ are standard syntax, interchangeable with Obsidian / Joplin / GitHub / VS Code.
 | Quote / blockquote (#188) | `> quoted text` | A `>` prefix is a note marker (parallel to `- `). Nested `>> ` quotes render deeper borders. `/quote` or Ctrl+Shift+9 toggles. |
 | Callout (#180) | `> [!variant] message` | Obsidian admonition syntax. Seven variants: `note`, `info`, `tip`, `warning`, `danger`, `success`, `quote` — each with a material icon + theme-token accent. `/callout` family. |
 | Code block (#189) | ` ```lang … ``` ` (GFM fence) | Multi-line; internal newlines are preserved (a managed `CODE` block). Shiki syntax highlighting (theme-aware), language selector, copy button. `/code-block`. |
-| Foldable details (#183) | `<details><summary>…</summary>…</details>` | Native HTML `<details>`; collapse state is ephemeral (not persisted). `/details` or Ctrl+. toggles. |
+| Foldable details (#183) | `<details><summary>…</summary>…</details>` | Native HTML `<details>`; collapse state is ephemeral (not persisted). `/details` or Ctrl+Shift+. toggles. |
 | GFM table (#172) | `| a | b |` pipe syntax | Editable grid with Tab/arrow nav, column resize, and a 7-operation contextual toolbar. Block identity on the last row. |
 
 **Multi-line blocks.** The Go parser reads files line-by-line and `renderBlock`
@@ -788,6 +788,8 @@ hotkeys:
   align_justify: "Ctrl+Shift+J"
   # Blockquote toggle (#188).
   toggle_quote: "Ctrl+Shift+9"
+  # Foldable details toggle (#183). Ctrl+Shift+. (Ctrl+. is taken by superscript).
+  toggle_details: "Ctrl+Shift+."
   # Table row/column insert hotkeys (#172). Deletion + merge are toolbar-only.
   table_insert_row_above: "Ctrl+Shift+Up"
   table_insert_row_below: "Ctrl+Shift+Down"

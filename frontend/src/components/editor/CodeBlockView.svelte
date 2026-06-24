@@ -30,11 +30,21 @@
   let shikiTheme = $derived<ShikiTheme>(isDark ? 'github-dark' : 'github-light')
 
   let highlighted = $state('')
+  // `highlightedFor` is the code string the Shiki layer currently renders.
+  // While it lags behind the live `code` (during continuous typing, before the
+  // async highlighter resolves), the editable layer shows its own text in a
+  // solid colour so newly-typed characters are visible immediately instead of
+  // disappearing into the transparent layer until the debounce fires.
+  let highlightedFor = $state('')
+  let stale = $derived(code !== highlightedFor)
   let copyState = $state<'idle' | 'done' | 'error'>('idle')
 
   // Re-highlight (debounced) whenever the code, language, or theme changes.
-  // Shiki is async (lazy grammar load); the cache in useShiki makes the common
-  // re-render-after-keystroke case synchronous from the caller's view.
+  // Shiki is async (lazy grammar load); on resolve we publish the highlighted
+  // HTML and mark the layer fresh for the code it covers. The editable layer's
+  // visibility tracks `stale`, so there is never a window where typed text is
+  // invisible — it shows solid while stale and goes transparent (yielding to
+  // Shiki's colours) once the highlighter catches up.
   let highlightTimer: ReturnType<typeof setTimeout> | null = null
   $effect(() => {
     const c = code
@@ -42,7 +52,9 @@
     const theme = shikiTheme
     if (highlightTimer) clearTimeout(highlightTimer)
     highlightTimer = setTimeout(async () => {
-      highlighted = await highlightCode(c, lang, theme)
+      const html = await highlightCode(c, lang, theme)
+      highlighted = html
+      highlightedFor = c
     }, 60)
   })
 
@@ -80,8 +92,8 @@
       onchange={onLanguageChange}
     >
       {#each COMMON_LANGUAGES as lang (lang)}
-        <option value={lang || 'plaintext'}>
-          {lang || 'plaintext'}
+        <option value={lang}>
+          {lang}
         </option>
       {/each}
     </select>
@@ -102,8 +114,12 @@
     <div class="silt-code-display" aria-hidden="true">
       {@html highlighted}
     </div>
-    <!-- Editable layer (transparent text, visible caret). ProseMirror owns it. -->
-    <NodeViewContent as="pre" class="silt-code-edit">
+    <!-- Editable layer (transparent text once Shiki is fresh, solid colour
+         while it lags so typed text is always visible). ProseMirror owns it. -->
+    <NodeViewContent
+      as="pre"
+      class={`silt-code-edit${stale ? ' code-stale' : ''}`}
+    >
       <code></code>
     </NodeViewContent>
   </div>

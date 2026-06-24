@@ -703,6 +703,9 @@ func TestDefaults_FormattingConfig(t *testing.T) {
 	if d.Hotkeys["toggle_quote"] != "Ctrl+Shift+9" {
 		t.Errorf("toggle_quote default: got %q", d.Hotkeys["toggle_quote"])
 	}
+	if d.Hotkeys["toggle_details"] != "Ctrl+Shift+." {
+		t.Errorf("toggle_details default: got %q", d.Hotkeys["toggle_details"])
+	}
 	// Table row/column insert hotkeys (#172).
 	for _, key := range []string{
 		"table_insert_row_above", "table_insert_row_below",

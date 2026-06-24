@@ -554,9 +554,11 @@ export const SiltBlockKeymaps = Extension.create({
       // binding. No-op on TASK/HEADER blocks (quote is a NOTE marker).
       'Mod-Shift-9': () => toggleBlockQuote(this.editor),
 
-      // Foldable details toggle (#183). Mod-. flips the `open` attr on the
-      // enclosing `<details>` (no-op when the cursor is not inside one).
-      'Mod-.': () => toggleDetails(this.editor),
+      // Foldable details toggle (#183). Bound to Mod-Shift-. rather than Mod-.,
+      // which is claimed by the Superscript mark extension (SiltInlineMarkExtensions
+      // is registered before this keymap, so Superscript would shadow a Mod-.
+      // binding). Mod-Shift-. flips the `open` attr on the enclosing <details>.
+      'Mod-Shift-.': () => toggleDetails(this.editor),
 
       // Table row/column insert shortcuts (#172). No-op outside a table.
       'Mod-Shift-Up': () =>

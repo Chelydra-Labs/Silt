@@ -334,7 +334,7 @@ registerSlashCommand({
   label: 'Foldable section',
   description: 'Insert a collapsible <details> section',
   icon: 'unfold_more',
-  shortcut: 'Ctrl+.'
+  shortcut: 'Ctrl+Shift+.'
 })
 
 // --- GFM tables (#172) ----------------------------------------------------
