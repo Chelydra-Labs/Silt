@@ -178,6 +178,16 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         },
         content
       }
+    case 'CODE':
+      return {
+        type: 'codeBlock',
+        attrs: {
+          id: block.id,
+          lang: block.code_lang || '',
+          file_date: block.file_date || ''
+        },
+        content: [{ type: 'text', text: block.clean_text || '' }]
+      }
     case 'NOTE':
     default: {
       let body = text
@@ -359,6 +369,30 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         start_date: '',
         due_date: '',
         priority: 3,
+        line_number: lineNumber,
+        file_date: (attrs.file_date as string) || ''
+      })
+      continue
+    }
+
+    // Code block (#189): serialize as a 'CODE' block. The Go RenderFileContent
+    // handles the fenced syntax using clean_text (with preserved newlines) and
+    // code_lang. The content is text* (plain text only, no marks).
+    if (node.type === 'codeBlock') {
+      const codeText = serializeInlineContent(node.content)
+      blocks.push({
+        id,
+        parent_id: '',
+        type: 'CODE',
+        depth: 0,
+        raw_text: '',
+        clean_text: codeText,
+        status: '',
+        owner: '',
+        start_date: '',
+        due_date: '',
+        priority: 3,
+        code_lang: (attrs.lang as string) || '',
         line_number: lineNumber,
         file_date: (attrs.file_date as string) || ''
       })

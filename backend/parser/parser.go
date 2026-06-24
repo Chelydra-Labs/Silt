@@ -399,7 +399,13 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 	// of fixing the size at 100, which previously caused silent parent_id
 	// loss for any block past depth 99.
 	activeIDs := []string{}
-	inCodeBlock := false
+
+	// Fenced code block state (#189). When inside a ``` block we accumulate
+	// lines into a single CODE block rather than parsing line-by-line.
+	var codeFenceOpen bool
+	var codeFenceLine string
+	var codeFenceLang string
+	var codeContentLines []string
 
 	for i := startIndex; i < len(lines); i++ {
 		line := lines[i]
@@ -411,16 +417,42 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			continue
 		}
 
-		// Track fenced code block state. Lines inside ``` blocks are passed
-		// through verbatim — we must not inject block IDs into code samples,
-		// HTML, or other preformatted content.
+		// Manage fenced code blocks (#189). The opening fence carries an
+		// optional language identifier; closing fence is bare ```. Lines inside
+		// the fence are accumulated into a single CODE block.
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			inCodeBlock = !inCodeBlock
-			outputLines = append(outputLines, line)
+			if !codeFenceOpen {
+				// Opening fence: start accumulating.
+				codeFenceOpen = true
+				codeFenceLine = line
+				codeFenceLang = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "```"))
+				codeContentLines = nil
+				continue
+			}
+			// Closing fence: emit a single CODE block for the accumulated content.
+			codeFenceOpen = false
+			blockID := generateUUIDv4()
+			content := strings.Join(codeContentLines, "\n")
+			idSuffix := fmt.Sprintf(" <!-- id: %s -->", blockID)
+			blocks = append(blocks, ParsedBlock{
+				ID:        blockID,
+				Type:      BlockCode,
+				Depth:     0,
+				RawText:   codeFenceLine + "\n" + content + "\n" + line,
+				CleanText: content,
+				CodeLang:  codeFenceLang,
+				LineNumber: lineNumber - len(codeContentLines) - 1,
+			})
+			outputLines = append(outputLines, codeFenceLine)
+			outputLines = append(outputLines, codeContentLines...)
+			outputLines = append(outputLines, line+idSuffix)
+			codeFenceLine = ""
+			codeFenceLang = ""
+			codeContentLines = nil
 			continue
 		}
-		if inCodeBlock {
-			outputLines = append(outputLines, line)
+		if codeFenceOpen {
+			codeContentLines = append(codeContentLines, line)
 			continue
 		}
 
@@ -525,18 +557,43 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 	// prose) by the managed block ID that follows them. This mirrors the
 	// algorithm SaveFileBlocks used to inline, now centralized here so every
 	// writer benefits from preserved user content.
+	//
+	// For fenced code blocks (#189), the entire fence (opening ``` + body +
+	// closing ``` <!-- id: uuid -->) is bucketed as a unit. When the closing
+	// fence's ID matches a CODE block in the new blocks, the full fence is
+	// assigned to that block; otherwise it falls through to pendingPreserved.
 	preservedBefore := make(map[string][]string)
 	var pendingPreserved []string
-	inCodeBlock := false
+	var codeFenceLines []string
+	var inCodeBlock bool
 	if originalBody != "" {
 		for _, line := range strings.Split(originalBody, "\n") {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "```") {
-				inCodeBlock = !inCodeBlock
-				pendingPreserved = append(pendingPreserved, line)
+				if !inCodeBlock {
+					// Opening fence: start accumulating.
+					inCodeBlock = true
+					codeFenceLines = append(codeFenceLines, line)
+				} else {
+					// Closing fence: check for block ID match.
+					codeFenceLines = append(codeFenceLines, line)
+					inCodeBlock = false
+				// Fenced code block: drop the entire fence from the body walker.
+				// renderBlock (§renderBlock) emits the authoritative fence for
+				// every CODE block in the new block list. Preserving the old
+				// fence via the body walker would double-emit it. Blank lines
+				// before the opening ``` remain in pendingPreserved and are
+				// preserved as spacing.
+				codeFenceLines = nil
+					codeFenceLines = nil
+				}
 				continue
 			}
-			if inCodeBlock || trimmed == "" {
+			if inCodeBlock {
+				codeFenceLines = append(codeFenceLines, line)
+				continue
+			}
+			if trimmed == "" {
 				pendingPreserved = append(pendingPreserved, line)
 				continue
 			}
@@ -558,6 +615,8 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 			}
 			pendingPreserved = append(pendingPreserved, line)
 		}
+		// Flush any leftover code fence lines (unclosed fence or orphan).
+		pendingPreserved = append(pendingPreserved, codeFenceLines...)
 	}
 
 	// Emit frontmatter (verbatim) + woven body (preserved + rendered blocks).
@@ -598,7 +657,16 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		}
 	}
 
-	if block.Type == BlockTask {
+	if block.Type == BlockCode {
+		// Fenced code block (#189). The language is optional; emit the
+		// opening ```lang, the body, and the closing ```. CleanText
+		// already preserves internal newlines (the multi-line exception).
+		openFence := "```"
+		if block.CodeLang != "" {
+			openFence = "```" + block.CodeLang
+		}
+		return fmt.Sprintf("%s\n%s\n```%s", openFence, block.CleanText, idSuffix)
+	} else if block.Type == BlockTask {
 		checkbox := " "
 		if block.Status == "DOING" {
 			checkbox = "/"

@@ -4,7 +4,7 @@
 // it deals only in this structured representation. Go's RenderFileContent
 // remains the single on-disk serializer (#40 contract preserved).
 
-export type BlockType = 'TASK' | 'NOTE' | 'HEADER'
+export type BlockType = 'TASK' | 'NOTE' | 'HEADER' | 'CODE'
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE' | ''
 
 export interface ParsedBlock {
@@ -19,6 +19,7 @@ export interface ParsedBlock {
   start_date?: string
   due_date?: string
   priority?: number
+  code_lang?: string
   line_number: number
   file_date?: string
 }

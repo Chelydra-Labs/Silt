@@ -6,6 +6,7 @@ const (
 	BlockTask   BlockType = "TASK"
 	BlockNote   BlockType = "NOTE"
 	BlockHeader BlockType = "HEADER"
+	BlockCode   BlockType = "CODE"
 )
 
 type ParsedBlock struct {
@@ -40,6 +41,9 @@ type ParsedBlock struct {
 	// These round-trip through parse → render so files stay interoperable
 	// with Dataview-compatible (SPECS.md §4.1). Each entry is the full
 	// `[key:: value]` string as it appeared in the source.
+	// CodeLang is the language identifier from a fenced code block (e.g. "go",
+	// "typescript", ""). Only set for CODE-type blocks (#189).
+	CodeLang string `json:"code_lang,omitempty"`
 	ExtraTokens []string `json:"extra_tokens,omitempty"`
 	LineNumber  int      `json:"line_number"`
 	FileDate   string `json:"file_date,omitempty"`

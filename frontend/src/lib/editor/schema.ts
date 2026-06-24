@@ -456,11 +456,61 @@ export const CalloutBlock = Node.create({
   }
 })
 
+// ---- CodeBlock (#189) -------------------------------------------------------
+// Fenced code block with optional language. On-disk representation is the GFM
+// ```lang\ncontent\n``` syntax. The Go parser emits a multi-line CODE block
+// whose CleanText preserves internal newlines. The converter creates a single
+// codeBlock node from the CODE block's content; on serialize, it reconstructs
+// the fenced syntax.
+export const CodeBlock = Node.create({
+  name: 'codeBlock',
+  group: 'block',
+  content: 'text*',
+  marks: '',
+  code: true,
+  defining: true,
+  isolating: true,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-id') || null,
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+      },
+      lang: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-lang') || '',
+        renderHTML: (attrs) => (attrs.lang ? { 'data-lang': attrs.lang } : {})
+      },
+      file_date: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-file-date') || '',
+        renderHTML: (attrs) =>
+          attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'pre code' }, { tag: 'div[data-type="code-block"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'pre',
+      mergeAttributes({ 'data-type': 'code-block' }, HTMLAttributes),
+      ['code', 0]
+    ]
+  }
+})
+
 export const SiltBlockExtensions = [
   NoteBlock,
   TaskBlock,
   HeaderBlock,
-  CalloutBlock
+  CalloutBlock,
+  CodeBlock
 ]
 
 // ---- EmbedNode (block-level, atomic) -------------------------------------

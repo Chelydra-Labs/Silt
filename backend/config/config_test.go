@@ -690,6 +690,13 @@ func TestDefaults_FormattingConfig(t *testing.T) {
 	if d.Hotkeys["toggle_quote"] != "Ctrl+Shift+9" {
 		t.Errorf("toggle_quote default: got %q", d.Hotkeys["toggle_quote"])
 	}
+	// Code block hotkey (#189).
+	if _, ok := d.Hotkeys["insert_code"]; !ok {
+		t.Errorf("defaults hotkeys missing %q", "insert_code")
+	}
+	if d.Hotkeys["insert_code"] != "Ctrl+Alt+C" {
+		t.Errorf("insert_code default: got %q", d.Hotkeys["insert_code"])
+	}
 	if d.Hotkeys["format_bold"] != "Ctrl+B" {
 		t.Errorf("format_bold default: got %q", d.Hotkeys["format_bold"])
 	}

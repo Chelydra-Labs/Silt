@@ -4,6 +4,7 @@ import {
   NoteBlock,
   HeaderBlock,
   CalloutBlock,
+  CodeBlock,
   EmbedNode,
   BlockReferenceNode,
   EmbedBlockNode
@@ -12,6 +13,7 @@ import TaskBlockView from '../../components/editor/TaskBlockView.svelte'
 import NoteBlockView from '../../components/editor/NoteBlockView.svelte'
 import HeaderBlockView from '../../components/editor/HeaderBlockView.svelte'
 import CalloutNodeView from '../../components/editor/CalloutNodeView.svelte'
+import CodeBlockNodeView from '../../components/editor/CodeBlockNodeView.svelte'
 import EmbedNodeView from '../../components/editor/EmbedNodeView.svelte'
 import BlockReferenceNodeView from '../../components/editor/BlockReferenceNodeView.svelte'
 import EmbedBlockNodeView from '../../components/editor/EmbedBlockNodeView.svelte'
@@ -39,6 +41,12 @@ export const SiltBlockExtensionsWithNodeViews = [
   CalloutBlock.extend({
     addNodeView() {
       return SvelteNodeViewRenderer(CalloutNodeView)
+    }
+  }),
+  // Fenced code block (#189). Renders with language badge and copy button.
+  CodeBlock.extend({
+    addNodeView() {
+      return SvelteNodeViewRenderer(CodeBlockNodeView)
     }
   }),
   // Smart Graph NodeViews (#85). EmbedNode is a block-level atomic node that

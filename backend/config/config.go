@@ -274,6 +274,8 @@ func Defaults() SystemConfig {
 			"align_justify": "Ctrl+Shift+J",
 			// Quote block (#188). Standard Word/Google Docs blockquote binding.
 			"toggle_quote": "Ctrl+Shift+9",
+			// Code block (#189). Insert a fenced code block.
+			"insert_code": "Ctrl+Alt+C",
 			// View mode toggle (#171). Standard source/view toggle binding.
 			"toggle_view_mode": "Ctrl+Shift+V",
 		},

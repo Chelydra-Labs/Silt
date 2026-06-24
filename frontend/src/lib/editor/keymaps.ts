@@ -352,6 +352,15 @@ export const SiltBlockKeymaps = Extension.create({
       'Mod-Alt-0': () => convertToBlock(this.editor, 'noteBlock'),
       'Mod-Alt-4': () => convertToBlock(this.editor, 'taskBlock'),
 
+      // Code block insert (#189). Mod-Alt-C creates a new fenced code block.
+      'Mod-Alt-c': () => {
+        this.editor.commands.insertContent({
+          type: 'codeBlock',
+          attrs: { lang: '' }
+        })
+        return true
+      },
+
       // Blockquote toggle (#188). Mod-Shift-9 mirrors Word/Google Docs binding.
       'Mod-Shift-9': () => {
         const active = findActiveBlock(this.editor)

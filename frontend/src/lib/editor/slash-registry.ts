@@ -275,6 +275,15 @@ registerSlashCommand({
   shortcut: 'Mod+Shift+9'
 })
 
+// --- Code block command (#189) ----------------------------------------------
+registerSlashCommand({
+  id: 'code-block',
+  label: 'Code block',
+  description: 'Insert a fenced code block',
+  icon: 'code',
+  shortcut: 'Mod+Alt+C'
+})
+
 // --- Callout commands (#180) ------------------------------------------------
 registerSlashCommand({
   id: 'callout',

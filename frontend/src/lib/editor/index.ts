@@ -7,6 +7,7 @@ export {
   NoteBlock,
   HeaderBlock,
   CalloutBlock,
+  CodeBlock,
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions

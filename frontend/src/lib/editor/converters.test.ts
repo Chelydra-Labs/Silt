@@ -348,6 +348,35 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     // No [!type] marker, so these remain separate noteBlocks with quote=true
     expect(doc.content.every((n) => n.type === 'noteBlock')).toBe(true)
   })
+
+  it('converts a CODE block to a codeBlock node (#189)', () => {
+    const blocks = [
+      mkBlock('CODE', {
+        clean_text: 'const x = 1;\nconst y = 2;',
+        code_lang: 'js'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content).toHaveLength(1)
+    const code = doc.content[0]
+    expect(code.type).toBe('codeBlock')
+    expect(code.attrs?.lang).toBe('js')
+  })
+
+  it('round-trips a CODE block preserving multiline clean_text (#189)', () => {
+    const blocks = [
+      mkBlock('CODE', {
+        clean_text: 'package main\n\nfunc main() {\n\tfmt.Println()\n}',
+        code_lang: 'go'
+      })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back).toHaveLength(1)
+    expect(back[0].type).toBe('CODE')
+    expect(back[0].clean_text).toContain('package main')
+    expect(back[0].clean_text).toContain('func main()')
+    expect(back[0].code_lang).toBe('go')
+  })
 })
 
 describe('doc JSON accepted by a real TipTap editor', () => {
