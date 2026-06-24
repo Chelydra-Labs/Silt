@@ -399,6 +399,111 @@ export const HeaderBlock = Node.create({
 // are opt-in types the user creates via the slash menu.
 export const SiltBlockExtensions = [NoteBlock, TaskBlock, HeaderBlock]
 
+// ---- CalloutBlock (#180) -------------------------------------------------
+// An Obsidian/GFM admonition: a `>`-prefixed line whose marker is `[!variant]`.
+// On-disk it is `> [!variant] message`; the converter detects the marker and
+// emits this node, stripping the prefix from the displayed text. The variant
+// drives the icon + accent color (CALLOUT_VARIANTS). Pure-frontend: the Go
+// parser sees the line as an opaque NOTE whose clean_text starts with
+// `> [!variant]`, exactly like a quote — no parser change.
+export type CalloutVariant =
+  | 'note'
+  | 'info'
+  | 'tip'
+  | 'warning'
+  | 'danger'
+  | 'success'
+  | 'quote'
+
+export const CALLOUT_VARIANTS: Record<
+  CalloutVariant,
+  { icon: string; label: string; accent: string; role: string }
+> = {
+  note: {
+    icon: 'info',
+    label: 'Note',
+    accent: 'var(--color-accent-primary-start)',
+    role: 'note'
+  },
+  info: {
+    icon: 'campaign',
+    label: 'Info',
+    accent: 'var(--color-accent-secondary-start)',
+    role: 'note'
+  },
+  tip: {
+    icon: 'lightbulb',
+    label: 'Tip',
+    accent: 'var(--color-status-success, #30a46c)',
+    role: 'note'
+  },
+  warning: {
+    icon: 'warning',
+    label: 'Warning',
+    accent: 'var(--color-status-warn, #f5a623)',
+    role: 'note'
+  },
+  danger: {
+    icon: 'error',
+    label: 'Danger',
+    accent: 'var(--color-status-danger, #e5484d)',
+    role: 'alert'
+  },
+  success: {
+    icon: 'check_circle',
+    label: 'Success',
+    accent: 'var(--color-status-success, #30a46c)',
+    role: 'status'
+  },
+  quote: {
+    icon: 'format_quote',
+    label: 'Quote',
+    accent: 'var(--color-text-muted)',
+    role: 'blockquote'
+  }
+}
+
+export const CalloutBlock = Node.create({
+  name: 'calloutBlock',
+  group: 'block',
+  content: 'inline*',
+  defining: true,
+  isolating: true,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-id') || null,
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+      },
+      variant: {
+        default: 'note',
+        parseHTML: (el) => el.getAttribute('data-variant') || 'note',
+        renderHTML: (attrs) => ({ 'data-variant': attrs.variant })
+      },
+      file_date: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-file-date') || '',
+        renderHTML: (attrs) =>
+          attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="callout"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'div',
+      mergeAttributes({ 'data-type': 'callout' }, HTMLAttributes),
+      0
+    ]
+  }
+})
+
 // ---- EmbedNode (block-level, atomic) -------------------------------------
 // Renders Smart Graph `{{embed:uuid}}` as a live EmbedPortal NodeView (#85).
 // Atomic (no editable children); the NodeView fetches the referenced block

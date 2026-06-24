@@ -229,6 +229,58 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(back[0].clean_text).toBe('> quoted <!-- silt-align: center -->')
   })
 
+  it('round-trips all 7 callout variants (#180)', () => {
+    const variants = [
+      'note',
+      'info',
+      'tip',
+      'warning',
+      'danger',
+      'success',
+      'quote'
+    ]
+    for (const v of variants) {
+      const blocks = [
+        mkBlock('NOTE', {
+          raw_text: `> [!${v}] message`,
+          clean_text: `> [!${v}] message`
+        })
+      ]
+      const doc = blocksToDoc(blocks)
+      const node = doc.content[0]
+      expect(node?.type).toBe('calloutBlock')
+      expect(node?.attrs?.variant).toBe(v)
+      expect(node?.content).toEqual([{ type: 'text', text: 'message' }])
+      // Save: re-emits the Obsidian `> [!variant] message` line.
+      const back = docToBlocks(doc)
+      expect(back[0].type).toBe('NOTE')
+      expect(back[0].clean_text).toBe(`> [!${v}] message`)
+      expect(back[0].raw_text).toBe(`> [!${v}] message`)
+    }
+  })
+
+  it('a callout without a message round-trips the bare marker (#180)', () => {
+    const blocks = [
+      mkBlock('NOTE', {
+        raw_text: '> [!warning]',
+        clean_text: '> [!warning]'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.type).toBe('calloutBlock')
+    expect(doc.content[0]?.attrs?.variant).toBe('warning')
+    expect(doc.content[0]?.content).toEqual([])
+    expect(docToBlocks(doc)[0].clean_text).toBe('> [!warning]')
+  })
+
+  it('callout detection takes precedence over plain quote (#180)', () => {
+    // `> [!tip] x` is a callout, NOT a quote note.
+    const blocks = [
+      mkBlock('NOTE', { raw_text: '> [!tip] x', clean_text: '> [!tip] x' })
+    ]
+    expect(blocksToDoc(blocks).content[0]?.type).toBe('calloutBlock')
+  })
+
   it('handles empty clean_text (placeholder block)', () => {
     const blocks = [mkBlock('NOTE', { clean_text: '' })]
     const back = docToBlocks(blocksToDoc(blocks))

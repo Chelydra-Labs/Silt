@@ -527,6 +527,56 @@ body {
   }
 }
 
+/* Callout / admonition (#180). A bordered, iconified box whose accent is the
+   variant's status token (warning → warn, danger → danger, etc.). The variant
+   is carried on data-variant so the accent can be themed per-type. */
+.silt-callout {
+  border-left: 3px solid var(--color-accent-primary-start);
+  background: color-mix(
+    in srgb,
+    var(--color-accent-primary-start) 8%,
+    transparent
+  );
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.silt-callout[data-variant='warning'] {
+  border-left-color: var(--color-status-warn, #f5a623);
+  background: color-mix(
+    in srgb,
+    var(--color-status-warn, #f5a623) 10%,
+    transparent
+  );
+}
+.silt-callout[data-variant='danger'] {
+  border-left-color: var(--color-status-danger, #e5484d);
+  background: color-mix(
+    in srgb,
+    var(--color-status-danger, #e5484d) 10%,
+    transparent
+  );
+}
+.silt-callout[data-variant='success'],
+.silt-callout[data-variant='tip'] {
+  border-left-color: var(--color-status-success, #30a46c);
+  background: color-mix(
+    in srgb,
+    var(--color-status-success, #30a46c) 10%,
+    transparent
+  );
+}
+.silt-callout[data-variant='info'] {
+  border-left-color: var(--color-accent-secondary-start);
+  background: color-mix(
+    in srgb,
+    var(--color-accent-secondary-start) 10%,
+    transparent
+  );
+}
+.silt-callout-body {
+  font-size: 0.95em;
+}
+
 /* Selection highlight uses the theme accent. */
 .ProseMirror ::selection {
   background: color-mix(

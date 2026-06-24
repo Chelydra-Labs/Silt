@@ -275,6 +275,51 @@ registerSlashCommand({
   shortcut: 'Ctrl+Shift+9'
 })
 
+// --- Callouts / admonitions (#180) ----------------------------------------
+// `/callout` opens a variant picker; the per-variant commands insert directly.
+registerSlashCommand({
+  id: 'callout',
+  label: 'Callout',
+  description: 'Insert a callout (pick a variant)',
+  icon: 'info'
+})
+registerSlashCommand({
+  id: 'callout-note',
+  label: 'Callout: Note',
+  description: 'Insert a note callout',
+  icon: 'info'
+})
+registerSlashCommand({
+  id: 'callout-info',
+  label: 'Callout: Info',
+  description: 'Insert an info callout',
+  icon: 'campaign'
+})
+registerSlashCommand({
+  id: 'callout-tip',
+  label: 'Callout: Tip',
+  description: 'Insert a tip callout',
+  icon: 'lightbulb'
+})
+registerSlashCommand({
+  id: 'callout-warning',
+  label: 'Callout: Warning',
+  description: 'Insert a warning callout',
+  icon: 'warning'
+})
+registerSlashCommand({
+  id: 'callout-danger',
+  label: 'Callout: Danger',
+  description: 'Insert a danger callout',
+  icon: 'error'
+})
+registerSlashCommand({
+  id: 'callout-success',
+  label: 'Callout: Success',
+  description: 'Insert a success callout',
+  icon: 'check_circle'
+})
+
 // --- Color commands (#170) ------------------------------------------------
 registerSlashCommand({
   id: 'text-color',

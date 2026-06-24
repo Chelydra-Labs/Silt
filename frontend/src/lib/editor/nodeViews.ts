@@ -5,7 +5,8 @@ import {
   HeaderBlock,
   EmbedNode,
   BlockReferenceNode,
-  EmbedBlockNode
+  EmbedBlockNode,
+  CalloutBlock
 } from './schema'
 import TaskBlockView from '../../components/editor/TaskBlockView.svelte'
 import NoteBlockView from '../../components/editor/NoteBlockView.svelte'
@@ -13,6 +14,7 @@ import HeaderBlockView from '../../components/editor/HeaderBlockView.svelte'
 import EmbedNodeView from '../../components/editor/EmbedNodeView.svelte'
 import BlockReferenceNodeView from '../../components/editor/BlockReferenceNodeView.svelte'
 import EmbedBlockNodeView from '../../components/editor/EmbedBlockNodeView.svelte'
+import CalloutBlockView from '../../components/editor/CalloutBlockView.svelte'
 
 // Production extensions: the base schema nodes extended with Svelte NodeView
 // rendering. NoteBlock first — it's the default block type (see schema.ts).
@@ -50,6 +52,13 @@ export const SiltBlockExtensionsWithNodeViews = [
   EmbedBlockNode.extend({
     addNodeView() {
       return SvelteNodeViewRenderer(EmbedBlockNodeView)
+    }
+  }),
+  // Callout / admonition (#180). A `> [!variant]` block rendered as an
+  // iconified, accent-bordered box with editable inline content.
+  CalloutBlock.extend({
+    addNodeView() {
+      return SvelteNodeViewRenderer(CalloutBlockView)
     }
   })
 ]

@@ -40,6 +40,24 @@ function detectQuote(body: string): { quote: string; body: string } {
   return { quote: m[1] + ' ', body: body.slice(m[0].length) }
 }
 
+// Detect a callout / admonition (#180). An Obsidian-style callout is a `>`
+// line whose body starts with `[!variant]`. Returns the variant + the message
+// (everything after the marker), or null when the line is not a callout. A
+// callout takes precedence over a plain quote (it IS a quote whose first token
+// is the `[!type]` marker).
+const CALLOUT_RE =
+  /^\[!(note|info|tip|warning|danger|success|quote)\](?:\s+(.*))?$/
+function detectCallout(
+  body: string
+): { variant: string; message: string } | null {
+  const q = body.match(QUOTE_PREFIX_RE)
+  if (!q) return null
+  const afterMarker = body.slice(q[0].length)
+  const m = afterMarker.match(CALLOUT_RE)
+  if (!m) return null
+  return { variant: m[1], message: m[2] ?? '' }
+}
+
 // ---- Alignment marker helpers (#173) -------------------------------------
 // Block-level alignment is persisted as a trailing HTML-comment marker in
 // clean_text: `text <!-- silt-align: center -->`. The marker is invisible
@@ -194,6 +212,20 @@ function blockToNode(block: ParsedBlock): NodeJSON {
       // Defensive: unknown block types map to NOTE so a malformed doc never
       // drops content. The Go side also treats unrecognized lines as notes.
       //
+      // Callout detection (#180) takes precedence over quote: a `> [!variant]`
+      // line is a callout node, not a plain quote.
+      const callout = detectCallout(text)
+      if (callout) {
+        return {
+          type: 'calloutBlock',
+          attrs: {
+            id: block.id,
+            variant: callout.variant,
+            file_date: block.file_date || ''
+          },
+          content: callout.message ? legacyTokenizeInline(callout.message) : []
+        }
+      }
       // Quote detection (#188): a `> ` prefix (stripped of any alignment
       // marker first) is a blockquote marker, parallel to `bullet`. The
       // marker is stored on the node so it round-trips verbatim.
@@ -299,6 +331,31 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         depth: 0,
         raw_text: marker,
         clean_text: marker,
+        status: '',
+        owner: '',
+        start_date: '',
+        due_date: '',
+        priority: 3,
+        line_number: lineNumber,
+        file_date: (attrs.file_date as string) || ''
+      })
+      continue
+    }
+
+    // Callout / admonition (#180): serialize to a NOTE whose clean_text is the
+    // Obsidian `> [!variant] message` line. renderBlock sees the leading `>`
+    // (not a bullet) and emits a plain line, so the marker survives verbatim.
+    if (node.type === 'calloutBlock') {
+      const variant = (attrs.variant as string) || 'note'
+      const message = serializeInlineContent(node.content)
+      const line = `> [!${variant}]${message ? ' ' + message : ''}`
+      blocks.push({
+        id,
+        parent_id: '',
+        type: 'NOTE',
+        depth: 0,
+        raw_text: line,
+        clean_text: line,
         status: '',
         owner: '',
         start_date: '',

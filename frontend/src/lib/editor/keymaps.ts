@@ -16,8 +16,13 @@ import { TextSelection } from '@tiptap/pm/state'
 // The extension reads the indent/unindent hotkeys live from the settings store
 // so users can remap or disable them from Settings → General.
 
-/** The three Silt block node types, in canonical order. */
-export const BLOCK_TYPES = ['taskBlock', 'noteBlock', 'headerBlock'] as const
+/** The Silt block node types, in canonical order. NoteBlock is first (default). */
+export const BLOCK_TYPES = [
+  'noteBlock',
+  'taskBlock',
+  'headerBlock',
+  'calloutBlock'
+] as const
 
 /**
  * Walk up from the editor's current selection to the nearest enclosing block
@@ -158,6 +163,37 @@ export function toggleBlockQuote(editor: Editor): boolean {
     bullet: isQuote ? active.node.attrs.bullet || '- ' : ''
   })
   editor.view.dispatch(tr)
+  return true
+}
+
+// Insert a callout block at the current selection (#180). The callout replaces
+// the current block when it is an empty note, otherwise inserts a new callout
+// below. The variant drives the icon + accent (CALLOUT_VARIANTS in schema.ts).
+export function insertCallout(editor: Editor, variant: string): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const today = new Date().toISOString().slice(0, 10)
+  const calloutNode = editor.state.schema.nodes.calloutBlock?.create(
+    { id: null, variant, file_date: today },
+    []
+  )
+  if (!calloutNode) return false
+  // If the current block is an empty note/header, replace it in place.
+  const active = findActiveBlock(editor)
+  const isEmptyNote =
+    active &&
+    (active.node.type.name === 'noteBlock' ||
+      active.node.type.name === 'headerBlock') &&
+    (active.node.content.size === 0 || active.node.textContent.trim() === '')
+  if (active && isEmptyNote) {
+    const pos = editor.state.selection.$from.before(active.depth)
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(pos, pos + active.node.nodeSize, calloutNode)
+    )
+    editor.commands.focus()
+    return true
+  }
+  editor.commands.insertContent(calloutNode)
+  editor.commands.focus()
   return true
 }
 
