@@ -275,6 +275,14 @@ registerSlashCommand({
   shortcut: 'Mod+Shift+9'
 })
 
+// --- Details block command (#183) -------------------------------------------
+registerSlashCommand({
+  id: 'details',
+  label: 'Details',
+  description: 'Insert a collapsible details section',
+  icon: 'unfold_more'
+})
+
 // --- Code block command (#189) ----------------------------------------------
 registerSlashCommand({
   id: 'code-block',

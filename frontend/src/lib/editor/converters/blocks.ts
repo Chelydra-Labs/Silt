@@ -191,6 +191,30 @@ function blockToNode(block: ParsedBlock): NodeJSON {
     case 'NOTE':
     default: {
       let body = text
+
+      // Detect <details> HTML for foldable sections (#183). The Go parser
+      // preserves HTML verbatim, so no Go-side changes are needed.
+      if (text.startsWith('<details>')) {
+        const summaryMatch = text.match(/<summary>(.*?)<\/summary>/)
+        const summary = summaryMatch ? summaryMatch[1] : ''
+        const bodyText = text
+          .replace(/<details><summary>.*?<\/summary>/, '')
+          .replace(/<\/details>\s*$/, '')
+        const contentNodes: NodeJSON[] = bodyText
+          ? legacyTokenizeInline(bodyText)
+          : []
+        return {
+          type: 'detailsBlock',
+          attrs: {
+            id: block.id,
+            summary,
+            open: false,
+            file_date: block.file_date || ''
+          },
+          content: contentNodes
+        }
+      }
+
       // Detect blockquote `> ` prefix (#188). The Go parser does not strip
       // `> ` from clean_text, so the prefix is present in the raw text.
       // Number of `>` characters determines nesting depth (e.g. `>> ` = 2).
@@ -364,6 +388,30 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         depth: 0,
         raw_text: marker,
         clean_text: marker,
+        status: '',
+        owner: '',
+        start_date: '',
+        due_date: '',
+        priority: 3,
+        line_number: lineNumber,
+        file_date: (attrs.file_date as string) || ''
+      })
+      continue
+    }
+
+    // Details block (#183): serialize to <details><summary>...</summary>...</details>
+    // in clean_text. The Go parser preserves HTML verbatim.
+    if (node.type === 'detailsBlock') {
+      const baseText = serializeInlineContent(node.content)
+      const summary = (attrs.summary as string) || ''
+      const html = `<details><summary>${summary}</summary>${baseText}</details>`
+      blocks.push({
+        id,
+        parent_id: '',
+        type: 'NOTE',
+        depth: 0,
+        raw_text: html,
+        clean_text: html,
         status: '',
         owner: '',
         start_date: '',

@@ -377,6 +377,33 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(back[0].clean_text).toContain('func main()')
     expect(back[0].code_lang).toBe('go')
   })
+
+  it('detects <details> HTML and creates a detailsBlock (#183)', () => {
+    const blocks = [
+      mkBlock('NOTE', {
+        clean_text:
+          '<details><summary>Click me</summary>Hidden content</details>'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content).toHaveLength(1)
+    expect(doc.content[0].type).toBe('detailsBlock')
+    expect(doc.content[0].attrs?.summary).toBe('Click me')
+  })
+
+  it('round-trips a detailsBlock to <details> HTML (#183)', () => {
+    const blocks = [
+      mkBlock('NOTE', {
+        clean_text: '<details><summary>S</summary>B</details>'
+      })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toContain('<details>')
+    expect(back[0].clean_text).toContain('<summary>S</summary>')
+    expect(back[0].clean_text).toContain('B')
+    expect(back[0].clean_text).toContain('</details>')
+  })
 })
 
 describe('doc JSON accepted by a real TipTap editor', () => {

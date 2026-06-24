@@ -456,12 +456,60 @@ export const CalloutBlock = Node.create({
   }
 })
 
+// ---- DetailsBlock (#183) ----------------------------------------------------
+// Foldable/collapsible section. On-disk representation is
+// `<details><summary>Title</summary>Body text...</details>`, which the Go
+// parser preserves verbatim in clean_text. The converter detects the HTML
+// pattern on load and returns to it on save. `summary` attr is the always-
+// visible title; the inline content is the collapsible body.
+export const DetailsBlock = Node.create({
+  name: 'detailsBlock',
+  group: 'block',
+  content: 'inline*',
+  defining: true,
+  isolating: true,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-id') || null,
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+      },
+      summary: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-summary') || '',
+        renderHTML: (attrs) =>
+          attrs.summary ? { 'data-summary': attrs.summary } : {}
+      },
+      open: {
+        default: false,
+        parseHTML: (el) => el.hasAttribute('open'),
+        renderHTML: (attrs) => (attrs.open ? { open: 'open' } : {})
+      },
+      file_date: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-file-date') || '',
+        renderHTML: (attrs) =>
+          attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'details[data-type="silt-details"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'details',
+      mergeAttributes({ 'data-type': 'silt-details' }, HTMLAttributes),
+      0
+    ]
+  }
+})
+
 // ---- CodeBlock (#189) -------------------------------------------------------
-// Fenced code block with optional language. On-disk representation is the GFM
-// ```lang\ncontent\n``` syntax. The Go parser emits a multi-line CODE block
-// whose CleanText preserves internal newlines. The converter creates a single
-// codeBlock node from the CODE block's content; on serialize, it reconstructs
-// the fenced syntax.
 export const CodeBlock = Node.create({
   name: 'codeBlock',
   group: 'block',
@@ -510,6 +558,7 @@ export const SiltBlockExtensions = [
   TaskBlock,
   HeaderBlock,
   CalloutBlock,
+  DetailsBlock,
   CodeBlock
 ]
 

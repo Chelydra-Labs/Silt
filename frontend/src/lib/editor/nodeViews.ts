@@ -4,6 +4,7 @@ import {
   NoteBlock,
   HeaderBlock,
   CalloutBlock,
+  DetailsBlock,
   CodeBlock,
   EmbedNode,
   BlockReferenceNode,
@@ -13,6 +14,7 @@ import TaskBlockView from '../../components/editor/TaskBlockView.svelte'
 import NoteBlockView from '../../components/editor/NoteBlockView.svelte'
 import HeaderBlockView from '../../components/editor/HeaderBlockView.svelte'
 import CalloutNodeView from '../../components/editor/CalloutNodeView.svelte'
+import DetailsNodeView from '../../components/editor/DetailsNodeView.svelte'
 import CodeBlockNodeView from '../../components/editor/CodeBlockNodeView.svelte'
 import EmbedNodeView from '../../components/editor/EmbedNodeView.svelte'
 import BlockReferenceNodeView from '../../components/editor/BlockReferenceNodeView.svelte'
@@ -41,6 +43,12 @@ export const SiltBlockExtensionsWithNodeViews = [
   CalloutBlock.extend({
     addNodeView() {
       return SvelteNodeViewRenderer(CalloutNodeView)
+    }
+  }),
+  // Foldable details (#183). Renders as a collapsible section with summary.
+  DetailsBlock.extend({
+    addNodeView() {
+      return SvelteNodeViewRenderer(DetailsNodeView)
     }
   }),
   // Fenced code block (#189). Renders with language badge and copy button.
