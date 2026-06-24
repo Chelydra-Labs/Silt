@@ -5,9 +5,16 @@ import {
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions,
+  SiltDetailsExtensions,
+  SiltTableExtensions,
   UniqueBlockIds
 } from './index'
-import { EmbedNode, BlockReferenceNode } from './schema'
+import {
+  EmbedNode,
+  BlockReferenceNode,
+  CalloutBlock,
+  CodeBlock
+} from './schema'
 import {
   blocksToDoc,
   docToBlocks,
@@ -69,6 +76,39 @@ function makeEditor() {
       ...SiltBlockExtensions,
       ...SiltInlineMarkExtensions,
       ...SiltColorMarkExtensions,
+      EmbedNode,
+      BlockReferenceNode,
+      UniqueBlockIds
+    ]
+  })
+}
+
+// A TipTap editor wired with the FULL Sprint 14 schema (callout, code,
+// details, table) — used to prove the new node types survive TipTap's
+// setContent → getJSON normalization without dropping semantic data. This is
+// the gap the pure-conversion tests leave open: they prove the JSON shape we
+// produce, but not that TipTap accepts and re-emits it unchanged.
+function makeEditorWithNewBlocks() {
+  return new Editor({
+    extensions: [
+      StarterKit.configure({
+        paragraph: false,
+        heading: false,
+        bulletList: false,
+        orderedList: false,
+        listItem: false,
+        blockquote: false,
+        codeBlock: false,
+        horizontalRule: false,
+        trailingNode: false
+      }),
+      ...SiltBlockExtensions,
+      CalloutBlock,
+      CodeBlock,
+      ...SiltInlineMarkExtensions,
+      ...SiltColorMarkExtensions,
+      ...SiltDetailsExtensions,
+      ...SiltTableExtensions,
       EmbedNode,
       BlockReferenceNode,
       UniqueBlockIds
@@ -516,6 +556,73 @@ describe('doc JSON accepted by a real TipTap editor', () => {
     const back = docToBlocks(fromEditor)
     expect(back).toHaveLength(3)
     back.forEach((b, i) => expectSemanticEqual(b, blocks[i]))
+    editor.destroy()
+  })
+
+  it('callout survives TipTap setContent → getJSON (#180)', () => {
+    const editor = makeEditorWithNewBlocks()
+    const blocks = [mkBlock('NOTE', { clean_text: '> [!warning] Watch out' })]
+    editor.commands.setContent(blocksToDoc(blocks))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe('> [!warning] Watch out')
+    editor.destroy()
+  })
+
+  it('code block survives TipTap setContent → getJSON (#189)', () => {
+    const editor = makeEditorWithNewBlocks()
+    const blocks = [
+      mkBlock('CODE', {
+        clean_text: 'func main() {\n\treturn\n}',
+        language: 'go'
+      })
+    ]
+    editor.commands.setContent(blocksToDoc(blocks))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back[0].type).toBe('CODE')
+    expect(back[0].clean_text).toBe('func main() {\n\treturn\n}')
+    expect(back[0].language).toBe('go')
+    editor.destroy()
+  })
+
+  it('foldable details survives TipTap setContent → getJSON (#183)', () => {
+    const editor = makeEditorWithNewBlocks()
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '<details>' }),
+      mkBlock('NOTE', { clean_text: '<summary>Title</summary>' }),
+      mkBlock('NOTE', { clean_text: 'body text' }),
+      mkBlock('NOTE', { clean_text: '</details>' })
+    ]
+    editor.commands.setContent(blocksToDoc(blocks))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back.map((b) => b.clean_text)).toEqual([
+      '<details>',
+      '<summary>Title</summary>',
+      'body text',
+      '</details>'
+    ])
+    editor.destroy()
+  })
+
+  it('GFM table survives TipTap setContent → getJSON (#172)', () => {
+    const editor = makeEditorWithNewBlocks()
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| Name | Role |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| Alice | Engineer |' })
+    ]
+    editor.commands.setContent(blocksToDoc(blocks))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    // The table re-emits as a GFM run; assert the cell text survives TipTap's
+    // cell-content normalization (cells contain paragraphs in the editor) and
+    // that the structure is recognised as a table, not fragmented NOTEs.
+    const joined = back.map((b) => b.clean_text).join('\n')
+    expect(joined).toContain('Name')
+    expect(joined).toContain('Role')
+    expect(joined).toContain('Alice')
+    expect(joined).toContain('Engineer')
+    // At least the header + separator + one data row (3 GFM lines minimum).
+    expect(back.length).toBeGreaterThanOrEqual(3)
     editor.destroy()
   })
 

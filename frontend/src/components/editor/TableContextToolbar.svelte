@@ -16,61 +16,86 @@
     run: () => void
   }
 
-  const ops = $derived<Op[]>([
-    {
-      id: 'row-above',
-      icon: 'add_row_above',
-      label: 'Insert row above',
-      shortcut: 'Ctrl+Shift+Up',
-      can: () => !!editor.can().addRowBefore?.(),
-      run: () => editor.chain().focus().addRowBefore().run()
-    },
-    {
-      id: 'row-below',
-      icon: 'add_row_below',
-      label: 'Insert row below',
-      shortcut: 'Ctrl+Shift+Down',
-      can: () => !!editor.can().addRowAfter?.(),
-      run: () => editor.chain().focus().addRowAfter().run()
-    },
-    {
-      id: 'col-left',
-      icon: 'add_column_left',
-      label: 'Insert column left',
-      shortcut: 'Ctrl+Shift+Left',
-      can: () => !!editor.can().addColumnBefore?.(),
-      run: () => editor.chain().focus().addColumnBefore().run()
-    },
-    {
-      id: 'col-right',
-      icon: 'add_column_right',
-      label: 'Insert column right',
-      shortcut: 'Ctrl+Shift+Right',
-      can: () => !!editor.can().addColumnAfter?.(),
-      run: () => editor.chain().focus().addColumnAfter().run()
-    },
-    {
-      id: 'del-row',
-      icon: 'delete',
-      label: 'Delete row',
-      can: () => !!editor.can().deleteRow?.(),
-      run: () => editor.chain().focus().deleteRow().run()
-    },
-    {
-      id: 'del-col',
-      icon: 'delete_sweep',
-      label: 'Delete column',
-      can: () => !!editor.can().deleteColumn?.(),
-      run: () => editor.chain().focus().deleteColumn().run()
-    },
-    {
-      id: 'merge',
-      icon: 'merge',
-      label: 'Merge cells',
-      can: () => !!editor.can().mergeCells?.(),
-      run: () => editor.chain().focus().mergeCells().run()
+  // Each op's disabled state depends on the live editor selection (e.g. Merge
+  // is only enabled with ≥ 2 cells selected). `editor.can()` reads TipTap
+  // state but is not itself reactive, so a plain `$derived` would compute the
+  // ops array once and freeze every disabled attribute for the session. We
+  // bump a tick on every selection/transaction change and thread it through
+  // the derivation so the disabled state stays honest while the cursor remains
+  // in the table.
+  let selTick = $state(0)
+  $effect(() => {
+    const handler = (): void => {
+      selTick++
     }
-  ])
+    editor.on('selectionUpdate', handler)
+    editor.on('transaction', handler)
+    return () => {
+      editor.off('selectionUpdate', handler)
+      editor.off('transaction', handler)
+    }
+  })
+
+  const ops = $derived.by<Op[]>(() => {
+    // selTick is the reactive dependency; reading it invalidates the array
+    // (and thus each disabled={!op.can()}) when the selection changes.
+    selTick
+    return [
+      {
+        id: 'row-above',
+        icon: 'add_row_above',
+        label: 'Insert row above',
+        shortcut: 'Ctrl+Shift+Up',
+        can: () => !!editor.can().addRowBefore?.(),
+        run: () => editor.chain().focus().addRowBefore().run()
+      },
+      {
+        id: 'row-below',
+        icon: 'add_row_below',
+        label: 'Insert row below',
+        shortcut: 'Ctrl+Shift+Down',
+        can: () => !!editor.can().addRowAfter?.(),
+        run: () => editor.chain().focus().addRowAfter().run()
+      },
+      {
+        id: 'col-left',
+        icon: 'add_column_left',
+        label: 'Insert column left',
+        shortcut: 'Ctrl+Shift+Left',
+        can: () => !!editor.can().addColumnBefore?.(),
+        run: () => editor.chain().focus().addColumnBefore().run()
+      },
+      {
+        id: 'col-right',
+        icon: 'add_column_right',
+        label: 'Insert column right',
+        shortcut: 'Ctrl+Shift+Right',
+        can: () => !!editor.can().addColumnAfter?.(),
+        run: () => editor.chain().focus().addColumnAfter().run()
+      },
+      {
+        id: 'del-row',
+        icon: 'delete',
+        label: 'Delete row',
+        can: () => !!editor.can().deleteRow?.(),
+        run: () => editor.chain().focus().deleteRow().run()
+      },
+      {
+        id: 'del-col',
+        icon: 'delete_sweep',
+        label: 'Delete column',
+        can: () => !!editor.can().deleteColumn?.(),
+        run: () => editor.chain().focus().deleteColumn().run()
+      },
+      {
+        id: 'merge',
+        icon: 'merge',
+        label: 'Merge cells',
+        can: () => !!editor.can().mergeCells?.(),
+        run: () => editor.chain().focus().mergeCells().run()
+      }
+    ]
+  })
 </script>
 
 <div class="table-context-toolbar" role="toolbar" aria-label="Table actions">

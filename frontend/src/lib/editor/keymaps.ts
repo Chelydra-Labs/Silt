@@ -2,6 +2,7 @@ import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
+import { freshId } from './uniqueIdPlugin'
 
 // SiltBlockKeymaps — outliner keyboard semantics for the TipTap editor.
 //
@@ -23,6 +24,15 @@ export const BLOCK_TYPES = [
   'headerBlock',
   'calloutBlock'
 ] as const
+
+/**
+ * Block node types that carry a `depth` attr and participate in the outliner's
+ * indent/outdent model. Callout blocks (and other new container/atomic types)
+ * are intentionally excluded: they have no depth attr, so indenting them would
+ * be silently dropped on save. Tab/Shift+Tab fall through for those so TipTap's
+ * default (e.g. table cell navigation) applies.
+ */
+const DEPTH_BLOCK_TYPES = new Set(['noteBlock', 'taskBlock', 'headerBlock'])
 
 /**
  * Walk up from the editor's current selection to the nearest enclosing block
@@ -234,8 +244,12 @@ export function insertDetails(editor: Editor): boolean {
   const schema = editor.state.schema
   if (!schema.nodes.details) return false
   const today = new Date().toISOString().slice(0, 10)
+  // Mint an id for the placeholder up front: it is nested inside
+  // detailsContent, so the UniqueBlockIds appendTransaction (which walks only
+  // top-level blocks) never reaches it. Without a stable id the inner note
+  // would bypass the outliner's identity-keyed ops until the next save.
   const placeholder = schema.nodes.noteBlock?.create(
-    { id: null, depth: 0, bullet: '', file_date: today },
+    { id: freshId(), depth: 0, bullet: '', file_date: today },
     []
   )
   const detailsNode = schema.nodes.details.create(
@@ -436,6 +450,10 @@ export const SiltBlockKeymaps = Extension.create({
       Tab: () => {
         const info = currentBlockInfo(this.editor)
         if (!info) return false
+        // Only the depth-bearing prose blocks support indent. Letting Tab fall
+        // through for callout/code/table/details keeps TipTap's default (table
+        // cell nav, etc.) instead of silently no-op'ing.
+        if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
 
         // Indent — max is previous sibling's depth + 1.
         const { doc } = this.editor.state
@@ -461,6 +479,7 @@ export const SiltBlockKeymaps = Extension.create({
       'Shift-Tab': () => {
         const info = currentBlockInfo(this.editor)
         if (!info) return false
+        if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
         if (info.depth > 0) {
           setBlockDepth(this.editor, info.pos, info.depth - 1)
         }

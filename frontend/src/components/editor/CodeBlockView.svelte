@@ -51,11 +51,15 @@
     const lang = language
     const theme = shikiTheme
     if (highlightTimer) clearTimeout(highlightTimer)
-    highlightTimer = setTimeout(async () => {
+    const t = setTimeout(async () => {
       const html = await highlightCode(c, lang, theme)
       highlighted = html
       highlightedFor = c
     }, 60)
+    highlightTimer = t
+    // Cancel the pending highlight if the block unmounts during the debounce
+    // window so the callback never writes $state on a destroyed scope.
+    return () => clearTimeout(t)
   })
 
   async function copyCode(): Promise<void> {

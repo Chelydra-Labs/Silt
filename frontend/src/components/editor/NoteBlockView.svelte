@@ -60,15 +60,19 @@
     {/if}
   {/if}
 
-  <div
+  <!-- A quote renders as a native <blockquote> (implicit semantics: paragraph
+       grouping, distinct SR announcement) rather than a synthetic role on a
+       div. No aria-label is set on purpose — it would override the screen
+       reader reading the quote's own content. -->
+  <svelte:element
+    this={quote ? 'blockquote' : 'div'}
     class="flex-1 min-w-0"
     class:silt-quote={!!quote}
     data-quote={quote || undefined}
     style="text-align: {align}"
-    role={quote ? 'blockquote' : undefined}
   >
     <NodeViewContent
       class="whitespace-pre-wrap break-words min-h-[22px] focus:outline-none"
     />
-  </div>
+  </svelte:element>
 </NodeViewWrapper>
