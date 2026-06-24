@@ -4,7 +4,7 @@
 // it deals only in this structured representation. Go's RenderFileContent
 // remains the single on-disk serializer (#40 contract preserved).
 
-export type BlockType = 'TASK' | 'NOTE' | 'HEADER'
+export type BlockType = 'TASK' | 'NOTE' | 'HEADER' | 'CODE'
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE' | ''
 
 export interface ParsedBlock {
@@ -21,6 +21,8 @@ export interface ParsedBlock {
   priority?: number
   line_number: number
   file_date?: string
+  /** Fenced-code-block info string (the ```{lang} prefix). CODE blocks only. */
+  language?: string
 }
 
 // ProseMirror / TipTap node JSON shape (the subset we produce/consume).

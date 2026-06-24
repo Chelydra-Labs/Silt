@@ -325,6 +325,114 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 	}, newLine, modified
 }
 
+// codeFenceLen returns the number of leading backticks on a (already
+// TrimSpace'd) line, or 0 if it is not a fenced code boundary. GFM requires
+// at least three backticks for a fence, and a closing fence must carry at
+// least as many backticks as the opening fence — so callers compare
+// `codeFenceLen(closer) >= openerLen` to find a matching close (this is what
+// lets a code sample that itself contains a ``` line round-trip behind a
+// longer outer fence).
+func codeFenceLen(trimmedLine string) int {
+	n := 0
+	for n < len(trimmedLine) && trimmedLine[n] == '`' {
+		n++
+	}
+	if n >= 3 {
+		return n
+	}
+	return 0
+}
+
+// isCodeFence reports whether a (already TrimSpace'd) line is a GFM fenced
+// code boundary — three or more backticks. Used by both ParseFileContent and
+// RenderFileContent so the two paths agree on what counts as a fence.
+func isCodeFence(trimmedLine string) bool {
+	return codeFenceLen(trimmedLine) >= 3
+}
+
+// accumulateCodeRegion reads a fenced code block starting at lines[openIdx]
+// (an opener fence) and returns:
+//   - consumedTo: the index of the last consumed input line (the closer, or
+//     the trailing id-comment line if one is present). The caller sets its
+//     loop variable to this so the next iteration continues after the region.
+//   - block: the assembled BlockCode (nil if the fence is unterminated — in
+//     which case the opener is emitted verbatim and no block is produced,
+//     matching the legacy passthrough for malformed input).
+//   - emitLines: the lines to append to outputLines (opener..closer [+ id]).
+//   - minted: true if a fresh block id was assigned (caller sets modifiedAny).
+//
+// The block id lives on its OWN line after the closing fence, never inside
+// the code body, so the fence stays strictly GFM and code is never corrupted.
+// A closing fence must have at least as many backticks as the opener (GFM),
+// so an inner ``` line does not prematurely close a ```` outer fence.
+func accumulateCodeRegion(lines []string, openIdx, lineNumber int, meta *FileMetadata) (consumedTo int, block *ParsedBlock, emitLines []string, minted bool) {
+	openerTrim := strings.TrimSpace(lines[openIdx])
+	openerLen := codeFenceLen(openerTrim)
+	lang := strings.TrimSpace(openerTrim[openerLen:])
+
+	// Find the closing fence: the first later fence with >= openerLen backticks.
+	closer := -1
+	for j := openIdx + 1; j < len(lines); j++ {
+		if codeFenceLen(strings.TrimSpace(lines[j])) >= openerLen {
+			closer = j
+			break
+		}
+	}
+	if closer == -1 {
+		// Unterminated fence: emit the opener verbatim, produce no block.
+		// The caller continues at openIdx (loop i++ moves past it).
+		return openIdx, nil, []string{lines[openIdx]}, false
+	}
+
+	inner := strings.Join(lines[openIdx+1:closer], "\n")
+
+	// Peek for a DEDICATED trailing block-identity comment line right after
+	// the closer. It must be a line that is solely the comment (trimmed starts
+	// with "<!-- id:") — otherwise a normal prose block carrying its own id
+	// comment would be mis-attributed as this code block's id line.
+	idLineIdx := closer + 1
+	blockID, blockFileDate := "", ""
+	consumedIDLine := false
+	if idLineIdx < len(lines) {
+		cand := strings.TrimSpace(lines[idLineIdx])
+		if strings.HasPrefix(cand, "<!-- id:") {
+			if m := IDRegex.FindStringSubmatch(lines[idLineIdx]); len(m) > 1 {
+				blockID = m[1]
+				if len(m) > 2 {
+					blockFileDate = m[2]
+				}
+				consumedIDLine = true
+			}
+		}
+	}
+
+	if blockID == "" {
+		blockID = generateUUIDv4()
+		minted = true
+	}
+	if blockFileDate == "" {
+		blockFileDate = meta.Date
+	}
+
+	cb := ParsedBlock{
+		ID:         blockID,
+		Type:       BlockCode,
+		Language:   lang,
+		CleanText:  inner,
+		LineNumber: lineNumber,
+		FileDate:   blockFileDate,
+	}
+
+	emitLines = append(emitLines, lines[openIdx:closer+1]...)
+	if consumedIDLine {
+		emitLines = append(emitLines, lines[idLineIdx])
+		return idLineIdx, &cb, emitLines, minted
+	}
+	// No existing id line: emit a minted one so the block has a stable identity.
+	emitLines = append(emitLines, fmt.Sprintf("<!-- id: %s @ %s -->", blockID, blockFileDate))
+	return closer, &cb, emitLines, minted
+}
+
 func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPage, defaultDate string, spacesPerTab int) ([]ParsedBlock, FileMetadata, string, bool, error) {
 	if spacesPerTab <= 0 {
 		spacesPerTab = 4
@@ -399,7 +507,6 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 	// of fixing the size at 100, which previously caused silent parent_id
 	// loss for any block past depth 99.
 	activeIDs := []string{}
-	inCodeBlock := false
 
 	for i := startIndex; i < len(lines); i++ {
 		line := lines[i]
@@ -411,16 +518,29 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			continue
 		}
 
-		// Track fenced code block state. Lines inside ``` blocks are passed
-		// through verbatim — we must not inject block IDs into code samples,
-		// HTML, or other preformatted content.
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			inCodeBlock = !inCodeBlock
-			outputLines = append(outputLines, line)
-			continue
-		}
-		if inCodeBlock {
-			outputLines = append(outputLines, line)
+		// Fenced code region (#189): a ``` opener starts a managed BlockCode
+		// spanning opener..closer. This generalizes the pre-existing verbatim
+		// pass-through (which left code unmanaged and invisible to the editor)
+		// so a code block is a first-class editable block. Content is still
+		// preserved byte-for-byte — NO id comment is ever injected into the
+		// code body. The block identity comment lives on its OWN line after
+		// the closing fence so the fence stays strictly GFM (interoperable
+		// with Obsidian / GitHub / VS Code).
+		if isCodeFence(strings.TrimSpace(line)) {
+			consumedTo, codeBlock, emitLines, minted := accumulateCodeRegion(
+				lines, i, lineNumber, &meta,
+			)
+			if codeBlock != nil {
+				if codeBlock.FileDate == "" {
+					codeBlock.FileDate = meta.Date
+				}
+				blocks = append(blocks, *codeBlock)
+			}
+			if minted {
+				modifiedAny = true
+			}
+			outputLines = append(outputLines, emitLines...)
+			i = consumedTo
 			continue
 		}
 
@@ -527,16 +647,42 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 	// writer benefits from preserved user content.
 	preservedBefore := make(map[string][]string)
 	var pendingPreserved []string
-	inCodeBlock := false
 	if originalBody != "" {
-		for _, line := range strings.Split(originalBody, "\n") {
+		bodyLines0 := strings.Split(originalBody, "\n")
+		// Code-fence regions are now managed BlockCode blocks (renderBlock
+		// re-emits them from `blocks`), so a fence run in the original body
+		// must NOT be preserved — otherwise it would double-emit. We scan a
+		// fence opener..closer (+ optional trailing id-comment line) and skip
+		// the whole run. Unterminated fences fall back to verbatim preservation.
+		for idx := 0; idx < len(bodyLines0); idx++ {
+			line := bodyLines0[idx]
 			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "```") {
-				inCodeBlock = !inCodeBlock
-				pendingPreserved = append(pendingPreserved, line)
+			if isCodeFence(trimmed) {
+				openerLen := codeFenceLen(trimmed)
+				closer := -1
+				for j := idx + 1; j < len(bodyLines0); j++ {
+					if codeFenceLen(strings.TrimSpace(bodyLines0[j])) >= openerLen {
+						closer = j
+						break
+					}
+				}
+				if closer == -1 {
+					// Unterminated: preserve verbatim (legacy behaviour).
+					pendingPreserved = append(pendingPreserved, line)
+					continue
+				}
+				consumed := closer + 1
+				// If the line right after the closer is this code block's id
+				// comment, skip it too (renderBlock emits a fresh one).
+				if consumed < len(bodyLines0) {
+					if m := IDRegex.FindStringSubmatch(bodyLines0[consumed]); len(m) > 1 {
+						consumed++
+					}
+				}
+				idx = consumed - 1
 				continue
 			}
-			if inCodeBlock || trimmed == "" {
+			if trimmed == "" {
 				pendingPreserved = append(pendingPreserved, line)
 				continue
 			}
@@ -596,6 +742,32 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		} else {
 			idSuffix = fmt.Sprintf(" <!-- id: %s -->", block.ID)
 		}
+	}
+
+	// BlockCode is multi-line: the code body keeps its internal newlines (it
+	// is NOT run through the `\n`→space collapse the prose blocks use). The
+	// identity comment goes on its own line after the closing fence so the
+	// fence stays strictly GFM (no trailing content) and the block is
+	// interoperable with Obsidian / GitHub / VS Code (#189).
+	if block.Type == BlockCode {
+		// idSuffix for a code block is a leading "\n" + the comment (the
+		// comment lives on its own line, not appended to the fence).
+		idLine := ""
+		if idSuffix != "" {
+			idLine = "\n" + strings.TrimSpace(idSuffix)
+		}
+		// Fence length grows to 4 backticks if the body itself contains a
+		// ``` line, so a code sample that includes a triple-backtick fence
+		// round-trips without prematurely closing. Rare; correct.
+		fence := "```"
+		if strings.Contains("\n"+block.CleanText+"\n", "\n"+fence+"\n") ||
+			strings.Contains("\n"+block.CleanText+"\n", "\n"+fence) {
+			fence = "````"
+			for strings.Contains("\n"+block.CleanText+"\n", "\n"+fence) {
+				fence += "`"
+			}
+		}
+		return fmt.Sprintf("%s%s\n%s\n%s%s", fence, block.Language, block.CleanText, fence, idLine)
 	}
 
 	if block.Type == BlockTask {
