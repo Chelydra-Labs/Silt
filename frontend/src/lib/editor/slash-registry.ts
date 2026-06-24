@@ -275,6 +275,56 @@ registerSlashCommand({
   shortcut: 'Mod+Shift+9'
 })
 
+// --- Callout commands (#180) ------------------------------------------------
+registerSlashCommand({
+  id: 'callout',
+  label: 'Callout',
+  description: 'Insert a callout block',
+  icon: 'info'
+})
+registerSlashCommand({
+  id: 'callout-note',
+  label: 'Callout (note)',
+  description: 'Insert a note callout',
+  icon: 'info'
+})
+registerSlashCommand({
+  id: 'callout-info',
+  label: 'Callout (info)',
+  description: 'Insert an info callout',
+  icon: 'information'
+})
+registerSlashCommand({
+  id: 'callout-tip',
+  label: 'Callout (tip)',
+  description: 'Insert a tip callout',
+  icon: 'lightbulb'
+})
+registerSlashCommand({
+  id: 'callout-warning',
+  label: 'Callout (warning)',
+  description: 'Insert a warning callout',
+  icon: 'warning'
+})
+registerSlashCommand({
+  id: 'callout-danger',
+  label: 'Callout (danger)',
+  description: 'Insert a danger callout',
+  icon: 'error'
+})
+registerSlashCommand({
+  id: 'callout-success',
+  label: 'Callout (success)',
+  description: 'Insert a success callout',
+  icon: 'check_circle'
+})
+registerSlashCommand({
+  id: 'callout-quote',
+  label: 'Callout (quote)',
+  description: 'Insert a quote callout',
+  icon: 'format_quote'
+})
+
 // --- Color commands (#170) ------------------------------------------------
 registerSlashCommand({
   id: 'text-color',

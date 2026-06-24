@@ -403,7 +403,65 @@ export const HeaderBlock = Node.create({
 // the first registered block type as the "default" for content normalization.
 // NoteBlock (plain text) is the natural default; TaskBlock and HeaderBlock
 // are opt-in types the user creates via the slash menu.
-export const SiltBlockExtensions = [NoteBlock, TaskBlock, HeaderBlock]
+// ---- CalloutBlock (#180) ----------------------------------------------------
+// Renders Obsidian-style callout/admonition blocks. On-disk representation is
+// a multi-line `> [!type] Title` / `> body` sequence, which the converter
+// (blocks.ts) merges into a single calloutBlock on load and splits back to
+// consecutive `>` lines on save. The Go parser sees each line as a separate
+// NOTE, so no parser change is needed.
+export const CalloutBlock = Node.create({
+  name: 'calloutBlock',
+  group: 'block',
+  content: 'inline*',
+  defining: true,
+  isolating: true,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-id') || null,
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+      },
+      variant: {
+        default: 'note',
+        parseHTML: (el) => el.getAttribute('data-variant') || 'note',
+        renderHTML: (attrs) => ({ 'data-variant': attrs.variant })
+      },
+      title: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-title') || '',
+        renderHTML: (attrs) =>
+          attrs.title ? { 'data-title': attrs.title } : {}
+      },
+      file_date: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-file-date') || '',
+        renderHTML: (attrs) =>
+          attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="callout"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'div',
+      mergeAttributes({ 'data-type': 'callout' }, HTMLAttributes),
+      0
+    ]
+  }
+})
+
+export const SiltBlockExtensions = [
+  NoteBlock,
+  TaskBlock,
+  HeaderBlock,
+  CalloutBlock
+]
 
 // ---- EmbedNode (block-level, atomic) -------------------------------------
 // Renders Smart Graph `{{embed:uuid}}` as a live EmbedPortal NodeView (#85).

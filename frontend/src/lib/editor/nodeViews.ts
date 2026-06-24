@@ -3,6 +3,7 @@ import {
   TaskBlock,
   NoteBlock,
   HeaderBlock,
+  CalloutBlock,
   EmbedNode,
   BlockReferenceNode,
   EmbedBlockNode
@@ -10,6 +11,7 @@ import {
 import TaskBlockView from '../../components/editor/TaskBlockView.svelte'
 import NoteBlockView from '../../components/editor/NoteBlockView.svelte'
 import HeaderBlockView from '../../components/editor/HeaderBlockView.svelte'
+import CalloutNodeView from '../../components/editor/CalloutNodeView.svelte'
 import EmbedNodeView from '../../components/editor/EmbedNodeView.svelte'
 import BlockReferenceNodeView from '../../components/editor/BlockReferenceNodeView.svelte'
 import EmbedBlockNodeView from '../../components/editor/EmbedBlockNodeView.svelte'
@@ -30,6 +32,13 @@ export const SiltBlockExtensionsWithNodeViews = [
   HeaderBlock.extend({
     addNodeView() {
       return SvelteNodeViewRenderer(HeaderBlockView)
+    }
+  }),
+  // Callout block (#180). Renders a card with variant icon, accent border and
+  // background, editable title and body.
+  CalloutBlock.extend({
+    addNodeView() {
+      return SvelteNodeViewRenderer(CalloutNodeView)
     }
   }),
   // Smart Graph NodeViews (#85). EmbedNode is a block-level atomic node that

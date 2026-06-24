@@ -207,12 +207,76 @@ function blockToNode(block: ParsedBlock): NodeJSON {
   }
 }
 
+// Regex to detect a callout marker on a NOTE block's clean_text (#180):
+// `> [!type] Title` where type is one of the seven variants.
+const CALLOUT_RE =
+  /^>\s*\[!(note|info|tip|warning|danger|success|quote)\]\s*(.*)$/i
+
+// Detect if a clean_text is a body continuation of a callout (starts with `> ` but no [!type]).
+function isCalloutBodyLine(text: string): boolean {
+  return /^>[\s>]/.test(text) && !text.match(/^>\s*\[!/)
+}
+
+// Helper to word-wrap text into ~80-char `> ` lines (#180).
+function wrapCalloutBody(body: string, maxLen: number = 80): string[] {
+  const words = body.split(' ')
+  const lines: string[] = []
+  let current = ''
+  for (const w of words) {
+    if (current && current.length + w.length + 1 > maxLen) {
+      lines.push(current)
+      current = ''
+    }
+    current = current ? `${current} ${w}` : w
+  }
+  if (current) lines.push(current)
+  return lines
+}
+
 // blocksToDoc converts an ordered list of ParsedBlocks into a ProseMirror doc
 // JSON suitable for editor.commands.setContent(). Each block becomes one
 // top-level block node; nesting is expressed via the depth attr (rendered as
-// indentation by the editor surface + NodeViews).
+// indentation by the editor surface + NodeViews). Callout-style NOTE blocks
+// with `> [!type]` prefix are merged into a single calloutBlock node (#180).
 export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
-  const content = blocks.map(blockToNode)
+  const content: NodeJSON[] = []
+  let i = 0
+  while (i < blocks.length) {
+    const rawText = blocks[i].clean_text || ''
+    const calloutMatch = rawText.match(CALLOUT_RE)
+    if (calloutMatch) {
+      const variant = calloutMatch[1].toLowerCase()
+      const title = calloutMatch[2] || ''
+      const bodyParts: string[] = []
+      i++
+      // Merge subsequent callout body lines.
+      while (
+        i < blocks.length &&
+        isCalloutBodyLine(blocks[i].clean_text || '')
+      ) {
+        const body = (blocks[i].clean_text || '').replace(/^>\s*/, '')
+        if (body) bodyParts.push(body)
+        i++
+      }
+      const bodyText = bodyParts.join(' ')
+      const bodyContent: NodeJSON[] = bodyText
+        ? legacyTokenizeInline(bodyText)
+        : []
+      content.push({
+        type: 'calloutBlock',
+        attrs: {
+          id: blocks[i - 1]?.id || crypto.randomUUID(),
+          variant,
+          title,
+          file_date: blocks[i - 1]?.file_date || ''
+        },
+        content: bodyContent
+      })
+    } else {
+      content.push(blockToNode(blocks[i]))
+      i++
+    }
+  }
   // ProseMirror requires a doc to have at least one block child; an empty
   // blocks list yields a single empty note node so the editor always has a
   // place to type (the Placeholder extension shows its hint here).
@@ -298,6 +362,51 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         line_number: lineNumber,
         file_date: (attrs.file_date as string) || ''
       })
+      continue
+    }
+
+    // Callout block (#180): emit the `> [!variant] title` header line and one
+    // `> body` line per word-wrapped segment of the body content.
+    if (node.type === 'calloutBlock') {
+      const variant: string = attrs.variant || 'note'
+      const title: string = attrs.title || ''
+      const baseText = serializeInlineContent(node.content)
+      const headerLine = `> [!${variant}]${title ? ` ${title}` : ''}`
+      blocks.push({
+        id,
+        parent_id: '',
+        type: 'NOTE',
+        depth: 0,
+        raw_text: headerLine,
+        clean_text: headerLine,
+        status: '',
+        owner: '',
+        start_date: '',
+        due_date: '',
+        priority: 3,
+        line_number: lineNumber,
+        file_date: (attrs.file_date as string) || ''
+      })
+      if (baseText) {
+        const bodyLines = wrapCalloutBody(baseText)
+        for (let bi = 0; bi < bodyLines.length; bi++) {
+          blocks.push({
+            id: bi === 0 ? id : crypto.randomUUID(),
+            parent_id: '',
+            type: 'NOTE',
+            depth: 0,
+            raw_text: `> ${bodyLines[bi]}`,
+            clean_text: `> ${bodyLines[bi]}`,
+            status: '',
+            owner: '',
+            start_date: '',
+            due_date: '',
+            priority: 3,
+            line_number: lineNumber + 1 + bi,
+            file_date: (attrs.file_date as string) || ''
+          })
+        }
+      }
       continue
     }
 

@@ -278,6 +278,76 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     const back = docToBlocks(blocksToDoc(blocks))
     expect(back[0].clean_text).toBe('> **bold** quote')
   })
+
+  it('converts a [!note] callout line to a calloutBlock (#180)', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: '> [!note] A note' })]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content).toHaveLength(1)
+    const callout = doc.content[0]
+    expect(callout.type).toBe('calloutBlock')
+    expect(callout.attrs?.variant).toBe('note')
+    expect(callout.attrs?.title).toBe('A note')
+  })
+
+  it('converts all seven callout variants (#180)', () => {
+    for (const variant of [
+      'note',
+      'info',
+      'tip',
+      'warning',
+      'danger',
+      'success',
+      'quote'
+    ]) {
+      const blocks = [mkBlock('NOTE', { clean_text: `> [!${variant}] Test` })]
+      const doc = blocksToDoc(blocks)
+      expect(doc.content[0]?.attrs?.variant).toBe(variant)
+    }
+  })
+
+  it('merges subsequent > body lines into a calloutBlock (#180)', () => {
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '> [!warning] Heads up' }),
+      mkBlock('NOTE', { clean_text: '> This is important.' }),
+      mkBlock('NOTE', { clean_text: '> Do not ignore it.' })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content).toHaveLength(1)
+    expect(doc.content[0].attrs?.title).toBe('Heads up')
+    expect(doc.content[0].attrs?.variant).toBe('warning')
+  })
+
+  it('serializes a calloutBlock to > [!type] Title and > body NOTE blocks (#180)', () => {
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: {
+            id: crypto.randomUUID(),
+            variant: 'warning',
+            title: 'Watch out'
+          },
+          content: [{ type: 'text', text: 'This will delete the index.' }]
+        }
+      ]
+    }
+    const back = docToBlocks(doc)
+    expect(back.length).toBeGreaterThanOrEqual(2)
+    expect(back[0].clean_text).toContain('[!warning]')
+    expect(back[0].clean_text).toContain('Watch out')
+    expect(back[1].clean_text).toContain('> This will delete the index.')
+  })
+
+  it('leaves non-callout > blocks as regular quote notes (#180)', () => {
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '> just a quote' }),
+      mkBlock('NOTE', { clean_text: '> another quote line' })
+    ]
+    const doc = blocksToDoc(blocks)
+    // No [!type] marker, so these remain separate noteBlocks with quote=true
+    expect(doc.content.every((n) => n.type === 'noteBlock')).toBe(true)
+  })
 })
 
 describe('doc JSON accepted by a real TipTap editor', () => {
