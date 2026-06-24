@@ -103,6 +103,21 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	// Best-effort grant cleanup; a failure here must not mask the successful
 	// uninstall (the folder is already gone). The grants block is harmless if
 	// it lingers, but cleaning it keeps the manager UI honest.
+	//
+	// Emit per-capability "revoke" entries before the bulk wipe so the audit
+	// trail captures exactly which capabilities were removed at uninstall time.
+	// The read happens under configMu.RLock; revokeAllGrants re-acquires the
+	// write lock — a narrow TOCTOU window is acceptable for a best-effort
+	// diagnostic path (worst case: one grant is wiped without a per-capability
+	// entry, but the "uninstall" entry still covers the lifecycle event).
+	a.configMu.RLock()
+	for capName := range a.grants[pluginID] {
+		re := newAuditEntry("revoke")
+		re.PluginID = pluginID
+		re.Capability = capName
+		appendAuditEntry(a.vaultPath, re)
+	}
+	a.configMu.RUnlock()
 	_ = a.revokeAllGrants(pluginID)
 	e := newAuditEntry("uninstall")
 	e.PluginID = pluginID

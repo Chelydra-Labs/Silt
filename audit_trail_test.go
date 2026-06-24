@@ -355,6 +355,57 @@ func TestAuditTrail_LinkUnlinkHooks(t *testing.T) {
 	}
 }
 
+// Uninstalling a plugin that held capability grants emits per-capability
+// "revoke" entries before the "uninstall" entry, so the audit trail captures
+// exactly which capabilities were removed at uninstall time (not just that
+// the plugin was removed).
+func TestAuditTrail_UninstallEmitsPerCapabilityRevokeEntries(t *testing.T) {
+	app := newTestApp(t)
+
+	manifest := `{"id":"granted-plugin","name":"Granted","version":"1.0.0","author":"Author","main":"index.js"}`
+	archive := buildPluginArchive(t, "granted-plugin", manifest)
+	if _, err := app.InstallPlugin(archive); err != nil {
+		t.Fatalf("InstallPlugin: %v", err)
+	}
+	// Grant two distinct capabilities so we can verify both get revoke entries.
+	if err := app.RequestCapability("granted-plugin", "network", ""); err != nil {
+		t.Fatalf("RequestCapability network: %v", err)
+	}
+	if err := app.RequestCapability("granted-plugin", "write-files", ""); err != nil {
+		t.Fatalf("RequestCapability write-files: %v", err)
+	}
+
+	if err := app.UninstallPlugin("granted-plugin"); err != nil {
+		t.Fatalf("UninstallPlugin: %v", err)
+	}
+
+	entries, err := app.GetAuditLog()
+	if err != nil {
+		t.Fatalf("GetAuditLog: %v", err)
+	}
+
+	// Expected sequence: install, grant(network), grant(write-files),
+	// revoke(network), revoke(write-files), uninstall.
+	var actions []string
+	for _, e := range entries {
+		actions = append(actions, e.Action+":"+e.Capability)
+	}
+	// The install and uninstall entries have empty Capability.
+	wantSequence := []string{
+		"install:", "grant:network", "grant:write-files",
+		"revoke:network", "revoke:write-files", "uninstall:",
+	}
+	if len(entries) != len(wantSequence) {
+		t.Fatalf("entry count = %d, want %d\nactions: %v", len(entries), len(wantSequence), actions)
+	}
+	for i, want := range wantSequence {
+		got := entries[i].Action + ":" + entries[i].Capability
+		if got != want {
+			t.Errorf("entry[%d] = %q, want %q\nfull sequence: %v", i, got, want, actions)
+		}
+	}
+}
+
 // Each audit entry on disk is valid single-line JSON (no embedded newlines
 // that would corrupt the line-oriented format).
 func TestAuditTrail_JSONSingleLine(t *testing.T) {

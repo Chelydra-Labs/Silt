@@ -30,6 +30,9 @@ const (
 // overflow. The ellipsis is counted within the cap so the total never exceeds
 // max. No allocation when s is already within the limit.
 func capRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
 	if utf8.RuneCountInString(s) <= max {
 		return s
 	}

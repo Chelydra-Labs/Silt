@@ -104,4 +104,12 @@ func TestCapRunes(t *testing.T) {
 	if utf8.RuneCountInString(gotMulti) != 3 {
 		t.Errorf("capRunes(multibyte) rune count = %d, want 3", utf8.RuneCountInString(gotMulti))
 	}
+	// Guard: max <= 0 returns empty without panicking (defensive against
+	// r[:max-1] underflow on a negative slice index).
+	if got := capRunes("hello", 0); got != "" {
+		t.Errorf("capRunes(max=0) = %q, want empty", got)
+	}
+	if got := capRunes("hello", -1); got != "" {
+		t.Errorf("capRunes(max=-1) = %q, want empty", got)
+	}
 }
