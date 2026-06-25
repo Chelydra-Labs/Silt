@@ -21,6 +21,35 @@ const (
 	// Obsidian / GitHub / VS Code unchanged. Language carries the info string
 	// from the opening fence ("" for a bare ```).
 	BlockCode BlockType = "CODE"
+	// BlockTable is a managed GFM table (#310). Like BlockCode it is inherently
+	// multi-line: CleanText retains the full GFM pipe syntax (header, separator,
+	// data rows) with internal newlines, and renderBlock emits them verbatim.
+	// The on-disk form is standard GFM plus a trailing block-identity comment:
+	//
+	//   | a | b |
+	//   |---|---|
+	//   | 1 | 2 |
+	//   <!-- id: uuid @ date -->
+	//
+	// The trailing comment sits on its own line so the table stays strictly GFM
+	// and the block round-trips through Obsidian / GitHub / VS Code unchanged.
+	// This generalizes the code-block model: every multi-line block is ONE
+	// managed entity at every layer.
+	BlockTable BlockType = "TABLE"
+	// BlockDetails is a managed foldable <details> HTML region (#310). Like
+	// BlockCode/BlockTable it is inherently multi-line: CleanText retains the
+	// full <details>…</details> HTML with internal newlines, and renderBlock
+	// emits it verbatim. The on-disk form is standard HTML plus a trailing
+	// block-identity comment:
+	//
+	//   <details>
+	//   <summary>Title</summary>
+	//   body
+	//   </details>
+	//   <!-- id: uuid @ date -->
+	//
+	// Nested <details> are depth-counted through the matching </details>.
+	BlockDetails BlockType = "DETAILS"
 )
 
 type ParsedBlock struct {
