@@ -38,6 +38,7 @@
   import SelectionBubble from './editor/SelectionBubble.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import TableContextToolbar from './editor/TableContextToolbar.svelte'
+  import TableSizePicker from './editor/TableSizePicker.svelte'
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { clampToViewport } from '../lib/editor/popoverPositioning'
@@ -178,6 +179,10 @@
   let colorPickerMarkType = $state<'textColor' | 'backgroundColor'>('textColor')
   let colorPickerCoords = $state<{ left: number; top: number } | null>(null)
 
+  // Custom-table size picker (#172) — an in-app popover replacing window.prompt.
+  let showTableSizePicker = $state(false)
+  let tableSizeCoords = $state<{ left: number; top: number } | null>(null)
+
   // View mode (#171) is managed by the parent container.
 
   // First-run tip: dismissed when 'formatting_tip_v1' is in dismissed_tips.
@@ -240,6 +245,20 @@
   function cancelLinkInput(): void {
     showLinkInput = false
     linkInputValue = ''
+    editorInstance?.chain().focus().run()
+  }
+
+  // --- Custom table size picker (#172) -------------------------------------
+  function confirmTableSize(rows: number, cols: number): void {
+    showTableSizePicker = false
+    tableSizeCoords = null
+    if (editorInstance && !editorInstance.isDestroyed) {
+      insertTable(editorInstance as any, rows, cols)
+    }
+  }
+  function cancelTableSize(): void {
+    showTableSizePicker = false
+    tableSizeCoords = null
     editorInstance?.chain().focus().run()
   }
 
@@ -665,15 +684,16 @@
     } else if (commandId === 'table-5x4') {
       insertTable(editorInstance as any, 5, 4)
     } else if (commandId === 'table-custom') {
-      const input = window.prompt('Table dimensions (rows × columns), e.g. 4x3')
-      const m = input?.match(/^(\d+)\s*[x×]\s*(\d+)$/i)
-      if (m) {
-        // Cap dimensions so a typo (e.g. 9999x9999) can't create ~100M cells
-        // and freeze the editor. 20×20 is a generous upper bound for notes.
-        const rows = Math.min(Math.max(parseInt(m[1], 10), 1), 20)
-        const cols = Math.min(Math.max(parseInt(m[2], 10), 1), 20)
-        insertTable(editorInstance as any, rows, cols)
+      // Open an in-app size popover instead of the native window.prompt.
+      if (!editorInstance || editorInstance.isDestroyed) return
+      try {
+        const { selection } = editorInstance.state
+        const coords = editorInstance.view.coordsAtPos(selection.from)
+        tableSizeCoords = { left: coords.left, top: coords.bottom }
+      } catch {
+        tableSizeCoords = { left: 100, top: 100 }
       }
+      showTableSizePicker = true
     } else if (commandId === 'text-color') {
       openColorPickerPopover('textColor')
     } else if (commandId === 'background-color') {
@@ -1245,6 +1265,14 @@
           />
         </label>
       </div>
+    {/if}
+    {#if showTableSizePicker && tableSizeCoords}
+      <TableSizePicker
+        left={tableSizeCoords.left}
+        top={tableSizeCoords.top}
+        onConfirm={confirmTableSize}
+        onCancel={cancelTableSize}
+      />
     {/if}
   {/if}
 </div>

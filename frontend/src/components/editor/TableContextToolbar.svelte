@@ -43,7 +43,7 @@
     return [
       {
         id: 'row-above',
-        icon: 'add_row_above',
+        icon: 'arrow_upward',
         label: 'Insert row above',
         shortcut: 'Ctrl+Shift+Up',
         can: () => !!editor.can().addRowBefore?.(),
@@ -51,7 +51,7 @@
       },
       {
         id: 'row-below',
-        icon: 'add_row_below',
+        icon: 'arrow_downward',
         label: 'Insert row below',
         shortcut: 'Ctrl+Shift+Down',
         can: () => !!editor.can().addRowAfter?.(),
@@ -59,7 +59,7 @@
       },
       {
         id: 'col-left',
-        icon: 'add_column_left',
+        icon: 'arrow_back',
         label: 'Insert column left',
         shortcut: 'Ctrl+Shift+Left',
         can: () => !!editor.can().addColumnBefore?.(),
@@ -67,7 +67,7 @@
       },
       {
         id: 'col-right',
-        icon: 'add_column_right',
+        icon: 'arrow_forward',
         label: 'Insert column right',
         shortcut: 'Ctrl+Shift+Right',
         can: () => !!editor.can().addColumnAfter?.(),
@@ -82,14 +82,14 @@
       },
       {
         id: 'del-col',
-        icon: 'delete_sweep',
+        icon: 'delete_outline',
         label: 'Delete column',
         can: () => !!editor.can().deleteColumn?.(),
         run: () => editor.chain().focus().deleteColumn().run()
       },
       {
         id: 'merge',
-        icon: 'merge',
+        icon: 'merge_type',
         label: 'Merge cells',
         can: () => !!editor.can().mergeCells?.(),
         run: () => editor.chain().focus().mergeCells().run()

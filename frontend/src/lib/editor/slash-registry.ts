@@ -354,7 +354,7 @@ registerSlashCommand({
   id: 'table-custom',
   label: 'Custom table…',
   description: 'Insert a table with custom dimensions',
-  icon: 'edit_grid'
+  icon: 'grid_view'
 })
 
 // --- Color commands (#170) ------------------------------------------------

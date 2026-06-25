@@ -212,10 +212,15 @@ export function insertCallout(editor: Editor, variant: string): boolean {
 export function insertCodeBlock(editor: Editor, language = ''): boolean {
   if (!editor || editor.isDestroyed) return false
   const today = new Date().toISOString().slice(0, 10)
-  const codeNode = editor.state.schema.nodes.codeBlock?.create(
-    { id: null, language, file_date: today },
-    editor.state.schema.text('')
-  )
+  // An empty code block has NO text children — codeBlock's content is 'text*'
+  // (zero or more), which a content-less create satisfies. ProseMirror rejects
+  // empty *text nodes* (schema.text('') throws), so we must not synthesize one;
+  // the user's typing adds real text nodes as they go.
+  const codeNode = editor.state.schema.nodes.codeBlock?.create({
+    id: null,
+    language,
+    file_date: today
+  })
   if (!codeNode) return false
   const active = findActiveBlock(editor)
   const isEmptyNote =
