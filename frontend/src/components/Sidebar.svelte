@@ -2,6 +2,7 @@
   import { onMount, untrack } from 'svelte'
   import SidebarSection from './SidebarSection.svelte'
   import PluginSidebarPanels from './PluginSidebarPanels.svelte'
+  import TagSidebarPanel from './TagSidebarPanel.svelte'
   import {
     ListNavigation,
     CreateNotebook,
@@ -38,6 +39,7 @@
     activeSection: string
     activePage: string
     activeView: string
+    selectedTag?: string
     collapsed: boolean
     sidebarWidth?: number
     sidebarDragging?: boolean
@@ -60,6 +62,7 @@
     activeSection = $bindable(),
     activePage = $bindable(),
     activeView = $bindable(),
+    selectedTag = $bindable(''),
     collapsed = $bindable(),
     sidebarWidth = 256,
     sidebarDragging = false,
@@ -580,323 +583,330 @@
   <div
     class="px-3 py-3 flex flex-col gap-1 relative flex-1 overflow-hidden flex"
   >
-    <!-- Notebook selector -->
-    <div class="px-1 mb-3 relative">
-      <div
-        onclick={() => (showNotebookDropdown = !showNotebookDropdown)}
-        onkeydown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            showNotebookDropdown = !showNotebookDropdown
-          }
-        }}
-        class="flex items-center gap-2 cursor-pointer group py-1.5 rounded hover:bg-hover transition-colors"
-        role="button"
-        tabindex="0"
-      >
-        <span
-          class="material-symbols-outlined text-accent-primary-start text-[20px]"
-          >menu_book</span
-        >
-        <div class="flex flex-col min-w-0 flex-1">
-          <span
-            class="text-text-primary font-headline-md text-headline-md truncate"
-            >{activeNotebook || 'No Notebook'}</span
-          >
-          <span
-            class="text-text-muted text-[9px] uppercase tracking-widest font-label-sm-bold"
-            >Active Notebook</span
-          >
-        </div>
-        <span
-          class="material-symbols-outlined text-text-muted text-[18px] group-hover:text-accent-primary-start transition-colors"
-        >
-          {showNotebookDropdown ? 'expand_less' : 'expand_more'}
-        </span>
-      </div>
-
-      {#if showNotebookDropdown}
-        <button
-          tabindex="-1"
-          aria-label="Close notebook menu"
-          onclick={() => (showNotebookDropdown = false)}
-          class="fixed inset-0 z-[60] cursor-default border-none bg-transparent p-0"
-        ></button>
+    {#if activeView === 'tags'}
+      <TagSidebarPanel bind:selectedTag />
+    {:else}
+      <!-- Notebook selector -->
+      <div class="px-1 mb-3 relative">
         <div
-          class="absolute left-1 right-1 top-14 glass-palette border border-accent-primary-start/20 rounded-lg shadow-2xl z-[70] py-2 max-h-[60vh] overflow-y-auto custom-scrollbar"
-          style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--color-panel) 92%, transparent);"
+          onclick={() => (showNotebookDropdown = !showNotebookDropdown)}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              showNotebookDropdown = !showNotebookDropdown
+            }
+          }}
+          class="flex items-center gap-2 cursor-pointer group py-1.5 rounded hover:bg-hover transition-colors"
+          role="button"
+          tabindex="0"
         >
-          {#if tree.notebooks.length === 0}
-            <div class="px-4 py-3 text-text-muted text-[12px] font-body-md">
-              No notebooks yet.
-            </div>
-          {:else}
-            {#each tree.notebooks as nb (nb.name)}
-              <button
-                onclick={() => handleSelectNotebook(nb.name)}
-                class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent"
-              >
-                <span
-                  class="material-symbols-outlined text-accent-primary-start text-[18px]"
-                  >folder_special</span
-                >
-                <span
-                  class="font-label-sm text-label-sm text-text-primary truncate flex-1"
-                  >{nb.name}</span
-                >
-                {#if nb.source && nb.source !== 'vault'}
-                  <span
-                    class="material-symbols-outlined text-[14px] {nb.disconnected
-                      ? 'text-status-warn'
-                      : 'text-text-muted'}"
-                    title={nb.disconnected
-                      ? `Linked (offline): ${nb.root_path}`
-                      : `Linked: ${nb.root_path}`}
-                    aria-label={nb.disconnected
-                      ? 'Linked notebook offline'
-                      : 'Linked notebook'}
-                    >{nb.disconnected ? 'cloud_off' : 'link'}</span
-                  >
-                {/if}
-                {#if nb.name === activeNotebook}
-                  <span
-                    class="material-symbols-outlined text-accent-primary-start text-[16px]"
-                    >check</span
-                  >
-                {/if}
-              </button>
-            {/each}
-          {/if}
-
-          <div class="border-t border-border-muted mt-1 pt-1">
-            <button
-              onclick={() => {
-                showNotebookDropdown = false
-                openCreate('notebook')
-              }}
-              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-accent-primary-start"
+          <span
+            class="material-symbols-outlined text-accent-primary-start text-[20px]"
+            >menu_book</span
+          >
+          <div class="flex flex-col min-w-0 flex-1">
+            <span
+              class="text-text-primary font-headline-md text-headline-md truncate"
+              >{activeNotebook || 'No Notebook'}</span
             >
-              <span class="material-symbols-outlined text-[18px]"
-                >create_new_folder</span
-              >
-              <span class="font-label-sm text-label-sm">New Notebook</span>
-            </button>
-            <button
-              onclick={handleOpenNotebookFolder}
-              disabled={creating}
-              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-text-muted disabled:opacity-50"
+            <span
+              class="text-text-muted text-[9px] uppercase tracking-widest font-label-sm-bold"
+              >Active Notebook</span
             >
-              <span class="material-symbols-outlined text-[18px]"
-                >folder_open</span
-              >
-              <span class="font-label-sm text-label-sm">Open Notebook…</span>
-            </button>
-            <button
-              onclick={handleLinkExternalNotebook}
-              disabled={creating}
-              title="Link a folder that lives outside the vault (e.g. a synced SharePoint mount); it is edited in place, never copied in."
-              class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-text-muted disabled:opacity-50"
-            >
-              <span class="material-symbols-outlined text-[18px]">add_link</span
-              >
-              <span class="font-label-sm text-label-sm"
-                >Link External Folder…</span
-              >
-            </button>
           </div>
-        </div>
-      {/if}
-    </div>
-
-    <!-- Primary actions (icon-only, consistent style). Each button is wrapped
-         in a span whose title gives the prerequisite reason — a native title
-         on a disabled button doesn't show, but on the wrapper it does. -->
-    <div
-      class="px-1 flex items-stretch gap-0.5 mb-1 p-0.5 bg-panel border border-border-muted rounded-lg"
-    >
-      <span title={sectionHint} class="flex-1 flex">
-        <button
-          onclick={() => openCreate('section')}
-          disabled={!activeNotebook}
-          title={sectionHint}
-          aria-label="New Section"
-          class="w-full bg-transparent border-none text-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
-        >
-          <span class="material-symbols-outlined text-[20px]"
-            >create_new_folder</span
+          <span
+            class="material-symbols-outlined text-text-muted text-[18px] group-hover:text-accent-primary-start transition-colors"
           >
-        </button>
-      </span>
-      <div class="w-px bg-border-muted my-1.5 flex-shrink-0"></div>
-      <span title={pageHint} class="flex-1 flex">
-        <button
-          onclick={() => handleCreatePageInline(activeSection || '')}
-          disabled={!activeNotebook}
-          title={pageHint}
-          aria-label="New Page"
-          class="w-full bg-transparent border-none text-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
-        >
-          <span class="material-symbols-outlined text-[20px]">note_add</span>
-        </button>
-      </span>
-      <div class="w-px bg-border-muted my-1.5 flex-shrink-0"></div>
-      <span title="New page from template" class="flex-1 flex">
-        <button
-          onclick={() =>
-            window.dispatchEvent(new CustomEvent('open-template-picker'))}
-          disabled={!activeNotebook}
-          title="New page from template (Ctrl+Shift+T)"
-          aria-label="New Page from Template"
-          class="w-full bg-transparent border-none text-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
-        >
-          <span class="material-symbols-outlined text-[20px]">content_copy</span
-          >
-        </button>
-      </span>
-    </div>
-    {#if nextStep}
-      <div
-        class="px-2 pb-2 text-[10px] text-text-muted font-label-sm flex items-center gap-1"
-      >
-        <span
-          class="material-symbols-outlined text-[12px] text-accent-primary-start/70"
-          >info</span
-        >
-        {nextStep}
-      </div>
-    {/if}
-
-    <!-- Navigation tree -->
-    <div class="flex-1 overflow-y-auto custom-scrollbar px-1">
-      {#if !activeNotebookObj}
-        <div
-          class="text-text-muted py-10 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
-        >
-          {#if tree.notebooks.length === 0}
-            No notebooks yet.<br />Create or open one to begin.
-          {:else}
-            Select a notebook.
-          {/if}
+            {showNotebookDropdown ? 'expand_less' : 'expand_more'}
+          </span>
         </div>
-      {:else}
-        {#if hasNoContent}
+
+        {#if showNotebookDropdown}
+          <button
+            tabindex="-1"
+            aria-label="Close notebook menu"
+            onclick={() => (showNotebookDropdown = false)}
+            class="fixed inset-0 z-[60] cursor-default border-none bg-transparent p-0"
+          ></button>
           <div
-            class="text-text-muted py-6 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
+            class="absolute left-1 right-1 top-14 glass-palette border border-accent-primary-start/20 rounded-lg shadow-2xl z-[70] py-2 max-h-[60vh] overflow-y-auto custom-scrollbar"
+            style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--color-panel) 92%, transparent);"
           >
-            No sections or pages yet.<br />Create one to get started.
+            {#if tree.notebooks.length === 0}
+              <div class="px-4 py-3 text-text-muted text-[12px] font-body-md">
+                No notebooks yet.
+              </div>
+            {:else}
+              {#each tree.notebooks as nb (nb.name)}
+                <button
+                  onclick={() => handleSelectNotebook(nb.name)}
+                  class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent"
+                >
+                  <span
+                    class="material-symbols-outlined text-accent-primary-start text-[18px]"
+                    >folder_special</span
+                  >
+                  <span
+                    class="font-label-sm text-label-sm text-text-primary truncate flex-1"
+                    >{nb.name}</span
+                  >
+                  {#if nb.source && nb.source !== 'vault'}
+                    <span
+                      class="material-symbols-outlined text-[14px] {nb.disconnected
+                        ? 'text-status-warn'
+                        : 'text-text-muted'}"
+                      title={nb.disconnected
+                        ? `Linked (offline): ${nb.root_path}`
+                        : `Linked: ${nb.root_path}`}
+                      aria-label={nb.disconnected
+                        ? 'Linked notebook offline'
+                        : 'Linked notebook'}
+                      >{nb.disconnected ? 'cloud_off' : 'link'}</span
+                    >
+                  {/if}
+                  {#if nb.name === activeNotebook}
+                    <span
+                      class="material-symbols-outlined text-accent-primary-start text-[16px]"
+                      >check</span
+                    >
+                  {/if}
+                </button>
+              {/each}
+            {/if}
+
+            <div class="border-t border-border-muted mt-1 pt-1">
+              <button
+                onclick={() => {
+                  showNotebookDropdown = false
+                  openCreate('notebook')
+                }}
+                class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-accent-primary-start"
+              >
+                <span class="material-symbols-outlined text-[18px]"
+                  >create_new_folder</span
+                >
+                <span class="font-label-sm text-label-sm">New Notebook</span>
+              </button>
+              <button
+                onclick={handleOpenNotebookFolder}
+                disabled={creating}
+                class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-text-muted disabled:opacity-50"
+              >
+                <span class="material-symbols-outlined text-[18px]"
+                  >folder_open</span
+                >
+                <span class="font-label-sm text-label-sm">Open Notebook…</span>
+              </button>
+              <button
+                onclick={handleLinkExternalNotebook}
+                disabled={creating}
+                title="Link a folder that lives outside the vault (e.g. a synced SharePoint mount); it is edited in place, never copied in."
+                class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-text-muted disabled:opacity-50"
+              >
+                <span class="material-symbols-outlined text-[18px]"
+                  >add_link</span
+                >
+                <span class="font-label-sm text-label-sm"
+                  >Link External Folder…</span
+                >
+              </button>
+            </div>
           </div>
         {/if}
-        {#each sortedSections.filter((s) => s.name !== '') as sec (sec.name)}
-          <SidebarSection
-            section={sec}
-            depth={0}
-            {activeNotebook}
-            {activeSection}
-            {activePage}
-            {expandedSections}
-            {navOrder}
-            {dropTarget}
-            {dragItem}
-            onToggleSection={toggleSection}
-            onSelectPage={handleSelectPage}
-            onPinPage={handlePinPage}
-            {onSelectSection}
-            onCreatePageInline={handleCreatePageInline}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onDragEnd={handleDragEnd}
-            onContextMenu={openContextMenu}
-          />
-        {/each}
+      </div>
 
-        <!-- Section-less root pages -->
-        {#each sortedSections.filter((s) => s.name === '') as rootSec}
-          {#if rootSec.pages.length > 0}
-            <div class="h-px bg-border-muted my-2 mx-1 opacity-60"></div>
-            <div
-              class="px-2 py-1 text-[9px] uppercase tracking-wider text-text-muted/40 font-label-sm-bold"
+      <!-- Primary actions (icon-only, consistent style). Each button is wrapped
+         in a span whose title gives the prerequisite reason — a native title
+         on a disabled button doesn't show, but on the wrapper it does. -->
+      <div
+        class="px-1 flex items-stretch gap-0.5 mb-1 p-0.5 bg-panel border border-border-muted rounded-lg"
+      >
+        <span title={sectionHint} class="flex-1 flex">
+          <button
+            onclick={() => openCreate('section')}
+            disabled={!activeNotebook}
+            title={sectionHint}
+            aria-label="New Section"
+            class="w-full bg-transparent border-none text-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
+          >
+            <span class="material-symbols-outlined text-[20px]"
+              >create_new_folder</span
             >
-              Root Pages
-            </div>
-            {#each sortByName(rootSec.pages, navOrder.pages[`${activeNotebook}/`] ?? []) as pg (pg.name)}
-              {@const isActive = activeSection === '' && activePage === pg.name}
-              <button
-                onclick={() => handleSelectPage('', pg.name)}
-                ondblclick={() => handlePinPage('', pg.name)}
-                onauxclick={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault()
-                    handlePinPage('', pg.name)
-                  }
-                }}
-                oncontextmenu={(e) =>
-                  openContextMenu(e, 'page', activeNotebook, '', pg.name)}
-                draggable="true"
-                ondragstart={(e) => handleDragStart(e, 'page', pg.name, '')}
-                ondragover={(e) => handleDragOver(e, 'page', pg.name)}
-                ondragleave={handleDragLeave}
-                ondrop={(e) =>
-                  handleDrop(e, 'page', pg.name, activeNotebook, '')}
-                ondragend={handleDragEnd}
-                class="relative w-full text-left pl-[28px] pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
-                class:bg-hover={isActive}
-                class:text-accent-primary-start={isActive}
-                class:text-text-muted={!isActive}
-                class:hover:text-text-primary={!isActive}
-                class:drag-over-top={dropTarget?.level === 'page' &&
-                  dropTarget.name === pg.name &&
-                  dropTarget.before}
-                class:drag-over-bottom={dropTarget?.level === 'page' &&
-                  dropTarget.name === pg.name &&
-                  !dropTarget.before}
-                role="treeitem"
-                aria-level="1"
-                aria-selected={isActive}
-              >
-                {#if isActive}
-                  <span
-                    class="absolute left-1 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
-                  ></span>
-                {/if}
-                <span class="truncate flex-1" title={pg.name}>{pg.name}</span>
-              </button>
-            {/each}
-          {/if}
-        {/each}
-        <!-- Notebook-root drop zone (#177): drag a page here to move it
-             out of any section (section-less / root). Invisible until a
-             page is actively dragged over it. -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
+          </button>
+        </span>
+        <div class="w-px bg-border-muted my-1.5 flex-shrink-0"></div>
+        <span title={pageHint} class="flex-1 flex">
+          <button
+            onclick={() => handleCreatePageInline(activeSection || '')}
+            disabled={!activeNotebook}
+            title={pageHint}
+            aria-label="New Page"
+            class="w-full bg-transparent border-none text-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
+          >
+            <span class="material-symbols-outlined text-[20px]">note_add</span>
+          </button>
+        </span>
+        <div class="w-px bg-border-muted my-1.5 flex-shrink-0"></div>
+        <span title="New page from template" class="flex-1 flex">
+          <button
+            onclick={() =>
+              window.dispatchEvent(new CustomEvent('open-template-picker'))}
+            disabled={!activeNotebook}
+            title="New page from template (Ctrl+Shift+T)"
+            aria-label="New Page from Template"
+            class="w-full bg-transparent border-none text-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
+          >
+            <span class="material-symbols-outlined text-[20px]"
+              >content_copy</span
+            >
+          </button>
+        </span>
+      </div>
+      {#if nextStep}
         <div
-          class="mx-1 mt-1 rounded transition-colors min-h-[24px]"
-          class:drag-over-into={dropTarget?.level === 'section' &&
-            dropTarget.name === '__root__'}
-          ondragover={(e) => {
-            if (!dragItem || dragItem.level !== 'page') return
-            e.preventDefault()
-            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-            dropTarget = { level: 'section', name: '__root__', before: false }
-          }}
-          ondragleave={handleDragLeave}
-          ondrop={(e) =>
-            handleDrop(e, 'section', '__root__', activeNotebook, '')}
-          role="region"
-          aria-label={dragItem?.level === 'page'
-            ? 'Drop here to move page to notebook root'
-            : undefined}
+          class="px-2 pb-2 text-[10px] text-text-muted font-label-sm flex items-center gap-1"
         >
-          {#if dragItem?.level === 'page'}
-            <div
-              class="text-text-muted text-[11px] font-body-md py-1.5 px-2 text-center border border-dashed border-border-muted rounded"
-            >
-              Drop to move to notebook root
-            </div>
-          {/if}
+          <span
+            class="material-symbols-outlined text-[12px] text-accent-primary-start/70"
+            >info</span
+          >
+          {nextStep}
         </div>
       {/if}
-    </div>
+
+      <!-- Navigation tree -->
+      <div class="flex-1 overflow-y-auto custom-scrollbar px-1">
+        {#if !activeNotebookObj}
+          <div
+            class="text-text-muted py-10 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
+          >
+            {#if tree.notebooks.length === 0}
+              No notebooks yet.<br />Create or open one to begin.
+            {:else}
+              Select a notebook.
+            {/if}
+          </div>
+        {:else}
+          {#if hasNoContent}
+            <div
+              class="text-text-muted py-6 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
+            >
+              No sections or pages yet.<br />Create one to get started.
+            </div>
+          {/if}
+          {#each sortedSections.filter((s) => s.name !== '') as sec (sec.name)}
+            <SidebarSection
+              section={sec}
+              depth={0}
+              {activeNotebook}
+              {activeSection}
+              {activePage}
+              {expandedSections}
+              {navOrder}
+              {dropTarget}
+              {dragItem}
+              onToggleSection={toggleSection}
+              onSelectPage={handleSelectPage}
+              onPinPage={handlePinPage}
+              {onSelectSection}
+              onCreatePageInline={handleCreatePageInline}
+              onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onDragEnd={handleDragEnd}
+              onContextMenu={openContextMenu}
+            />
+          {/each}
+
+          <!-- Section-less root pages -->
+          {#each sortedSections.filter((s) => s.name === '') as rootSec}
+            {#if rootSec.pages.length > 0}
+              <div class="h-px bg-border-muted my-2 mx-1 opacity-60"></div>
+              <div
+                class="px-2 py-1 text-[9px] uppercase tracking-wider text-text-muted/40 font-label-sm-bold"
+              >
+                Root Pages
+              </div>
+              {#each sortByName(rootSec.pages, navOrder.pages[`${activeNotebook}/`] ?? []) as pg (pg.name)}
+                {@const isActive =
+                  activeSection === '' && activePage === pg.name}
+                <button
+                  onclick={() => handleSelectPage('', pg.name)}
+                  ondblclick={() => handlePinPage('', pg.name)}
+                  onauxclick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault()
+                      handlePinPage('', pg.name)
+                    }
+                  }}
+                  oncontextmenu={(e) =>
+                    openContextMenu(e, 'page', activeNotebook, '', pg.name)}
+                  draggable="true"
+                  ondragstart={(e) => handleDragStart(e, 'page', pg.name, '')}
+                  ondragover={(e) => handleDragOver(e, 'page', pg.name)}
+                  ondragleave={handleDragLeave}
+                  ondrop={(e) =>
+                    handleDrop(e, 'page', pg.name, activeNotebook, '')}
+                  ondragend={handleDragEnd}
+                  class="relative w-full text-left pl-[28px] pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
+                  class:bg-hover={isActive}
+                  class:text-accent-primary-start={isActive}
+                  class:text-text-muted={!isActive}
+                  class:hover:text-text-primary={!isActive}
+                  class:drag-over-top={dropTarget?.level === 'page' &&
+                    dropTarget.name === pg.name &&
+                    dropTarget.before}
+                  class:drag-over-bottom={dropTarget?.level === 'page' &&
+                    dropTarget.name === pg.name &&
+                    !dropTarget.before}
+                  role="treeitem"
+                  aria-level="1"
+                  aria-selected={isActive}
+                >
+                  {#if isActive}
+                    <span
+                      class="absolute left-1 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
+                    ></span>
+                  {/if}
+                  <span class="truncate flex-1" title={pg.name}>{pg.name}</span>
+                </button>
+              {/each}
+            {/if}
+          {/each}
+          <!-- Notebook-root drop zone (#177): drag a page here to move it
+             out of any section (section-less / root). Invisible until a
+             page is actively dragged over it. -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="mx-1 mt-1 rounded transition-colors min-h-[24px]"
+            class:drag-over-into={dropTarget?.level === 'section' &&
+              dropTarget.name === '__root__'}
+            ondragover={(e) => {
+              if (!dragItem || dragItem.level !== 'page') return
+              e.preventDefault()
+              if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+              dropTarget = { level: 'section', name: '__root__', before: false }
+            }}
+            ondragleave={handleDragLeave}
+            ondrop={(e) =>
+              handleDrop(e, 'section', '__root__', activeNotebook, '')}
+            role="region"
+            aria-label={dragItem?.level === 'page'
+              ? 'Drop here to move page to notebook root'
+              : undefined}
+          >
+            {#if dragItem?.level === 'page'}
+              <div
+                class="text-text-muted text-[11px] font-body-md py-1.5 px-2 text-center border border-dashed border-border-muted rounded"
+              >
+                Drop to move to notebook root
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <!-- DnD error toast (#177 collision / FS error). Perceivable without

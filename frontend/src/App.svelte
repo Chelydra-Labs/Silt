@@ -90,6 +90,12 @@
   let activeSection = $state('')
   let activePage = $state('')
   let activeView = $state('notes')
+  const views = [
+    { id: 'notes', label: 'Notes', icon: 'description' },
+    { id: 'agenda', label: 'Agenda', icon: 'event_repeat' },
+    { id: 'tags', label: 'Tags', icon: 'label' },
+    { id: 'calendar', label: 'Calendar', icon: 'calendar_month' }
+  ]
   let selectedTag = $state('')
 
   // Shell state
@@ -821,14 +827,57 @@
     />
   {:else}
     <TitleBar
-      bind:activeView
       bind:sidebarCollapsed
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
-      onOpenSettings={(tab) => openSettings(tab)}
     />
 
     <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
+      <!-- Activity Bar -->
+      <div
+        class="w-12 bg-surface border-r border-border-muted flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
+      >
+        <div class="flex flex-col gap-4 items-center w-full">
+          {#each views as v (v.id)}
+            <button
+              onclick={() => {
+                if (activeView === v.id) {
+                  sidebarCollapsed = !sidebarCollapsed
+                  manuallyCollapsed = sidebarCollapsed
+                } else {
+                  activeView = v.id
+                  sidebarCollapsed = false
+                  manuallyCollapsed = false
+                }
+              }}
+              class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
+              class:text-accent-primary-start={activeView === v.id &&
+                !sidebarCollapsed}
+              class:text-text-muted={activeView !== v.id || sidebarCollapsed}
+              aria-label={v.label}
+              title={v.label}
+            >
+              {#if activeView === v.id && !sidebarCollapsed}
+                <div
+                  class="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-primary-start rounded-full shadow-[0_0_8px_var(--color-accent-primary-start)]"
+                ></div>
+              {/if}
+              <span class="material-symbols-outlined text-[20px]">{v.icon}</span
+              >
+            </button>
+          {/each}
+        </div>
+
+        <button
+          onclick={() => openSettings('workspace')}
+          class="w-9 h-9 rounded-lg flex items-center justify-center text-text-muted hover:text-accent-primary-start hover:bg-hover hover:scale-105 active:scale-95 transition-all cursor-pointer border-none bg-transparent focus:outline-none"
+          aria-label="Settings"
+          title="Settings"
+        >
+          <span class="material-symbols-outlined text-[20px]">settings</span>
+        </button>
+      </div>
+
       {#if sidebarCollapsed}
         <button
           onclick={() => {
@@ -838,7 +887,7 @@
           transition:fade={{ duration: 150 }}
           aria-label="Show sidebar"
           title="Show sidebar (Ctrl+B)"
-          class="absolute bottom-4 left-4 z-50 w-8 h-8 rounded-lg bg-surface/80 backdrop-blur-md border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
+          class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface/80 backdrop-blur-md border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
         >
           <span class="material-symbols-outlined text-[18px]"
             >left_panel_open</span
@@ -851,6 +900,7 @@
         bind:activeSection
         bind:activePage
         bind:activeView
+        bind:selectedTag
         bind:collapsed={sidebarCollapsed}
         {sidebarWidth}
         {sidebarDragging}

@@ -9,28 +9,16 @@
   } from '../../wailsjs/runtime/runtime.js'
 
   interface Props {
-    activeView: string
     sidebarCollapsed: boolean
     sidebarWidth?: number
     onSearchClick: () => void
-    onOpenSettings: (tab?: string) => void
   }
 
   let {
-    activeView = $bindable(),
     sidebarCollapsed = $bindable(),
     sidebarWidth = 256,
-    onSearchClick,
-    onOpenSettings
+    onSearchClick
   }: Props = $props()
-
-  const views: { id: string; label: string; icon: string }[] = [
-    { id: 'notes', label: 'Notes', icon: 'description' },
-    { id: 'agenda', label: 'Agenda', icon: 'event_repeat' },
-    { id: 'tags', label: 'Tags', icon: 'label' },
-    { id: 'calendar', label: 'Calendar', icon: 'calendar_month' }
-    // Kanban returns when a first-party Kanban plugin ships.
-  ]
 
   let maximised = $state(false)
 
@@ -48,51 +36,16 @@
     }
   }
 
-  let viewButtons = $state<Record<string, HTMLButtonElement>>({})
-  let pillLeft = $state(0)
-  let pillWidth = $state(0)
-  let pillOpacity = $state(0)
-
-  function updatePill() {
-    const el = viewButtons[activeView]
-    if (el) {
-      const parent = el.parentElement
-      if (parent) {
-        const parentRect = parent.getBoundingClientRect()
-        const rect = el.getBoundingClientRect()
-        pillLeft = rect.left - parentRect.left
-        pillWidth = rect.width
-        pillOpacity = 1
-      }
-    } else {
-      pillOpacity = 0
-    }
-  }
-
-  // Update pill whenever activeView changes
-  $effect(() => {
-    activeView
-    // Wait for the DOM to update so button dimensions are correct
-    setTimeout(updatePill, 0)
-  })
-
   onMount(() => {
     syncMaximised()
     isMac = /mac/i.test(navigator.platform || navigator.userAgent)
     // Maximize/restore triggers a viewport resize; re-sync the icon then.
     const onResize = () => {
       syncMaximised()
-      updatePill()
     }
     window.addEventListener('resize', onResize)
-    // Initial sync
-    setTimeout(updatePill, 100)
     return () => window.removeEventListener('resize', onResize)
   })
-
-  function selectView(id: string) {
-    activeView = id
-  }
 
   function handleToggleMax() {
     WindowToggleMaximise()
@@ -136,35 +89,6 @@
         >
       </div>
     </div>
-
-    <div class="w-px h-6 bg-border-muted mx-1 flex-shrink-0"></div>
-
-    <!-- View switcher (segmented control) -->
-    <nav
-      class="flex items-center gap-0.5 p-0.5 bg-panel border border-border-muted rounded-lg relative min-w-0 mx-2"
-    >
-      <!-- Sliding pill indicator -->
-      <div
-        class="absolute top-0.5 bottom-0.5 bg-hover rounded-md transition-all duration-200 ease-[var(--transition-standard)] pointer-events-none"
-        style:left="{pillLeft}px"
-        style:width="{pillWidth}px"
-        style:opacity={pillOpacity}
-      ></div>
-
-      {#each views as v (v.id)}
-        <button
-          bind:this={viewButtons[v.id]}
-          onclick={() => selectView(v.id)}
-          class="relative flex items-center gap-1.5 px-3 py-1 rounded-md font-label-sm text-label-sm transition-colors border-none bg-transparent cursor-pointer focus:outline-none whitespace-nowrap z-10"
-          class:text-accent-primary-start={activeView === v.id}
-          class:text-text-muted={activeView !== v.id}
-          aria-pressed={activeView === v.id}
-        >
-          <span class="material-symbols-outlined text-[18px]">{v.icon}</span>
-          <span class="hidden lg:inline">{v.label}</span>
-        </button>
-      {/each}
-    </nav>
   </div>
 
   <!-- Right: search + window controls -->
@@ -177,26 +101,6 @@
       <span class="text-[12px] font-label-sm whitespace-nowrap"
         >Search… (Ctrl+P)</span
       >
-    </button>
-
-    <div class="w-px h-6 bg-border-muted mx-1"></div>
-
-    <!-- Settings + plugin manager shortcuts (open the settings shell) -->
-    <button
-      onclick={() => onOpenSettings('plugins')}
-      aria-label="Plugin manager"
-      title="Plugin manager"
-      class="h-9 w-9 flex items-center justify-center text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none rounded-md hover:bg-hover"
-    >
-      <span class="material-symbols-outlined text-[20px]">extension</span>
-    </button>
-    <button
-      onclick={() => onOpenSettings('general')}
-      aria-label="Settings"
-      title="Settings"
-      class="h-9 w-9 flex items-center justify-center text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none rounded-md hover:bg-hover"
-    >
-      <span class="material-symbols-outlined text-[20px]">settings</span>
     </button>
 
     <div class="w-px h-6 bg-border-muted mx-1"></div>

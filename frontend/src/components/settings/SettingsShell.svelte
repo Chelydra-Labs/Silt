@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import GeneralTab from './GeneralTab.svelte'
+  import WorkspaceTab from './WorkspaceTab.svelte'
+  import EditorTab from './EditorTab.svelte'
+  import HotkeysTab from './HotkeysTab.svelte'
   import AppearanceTab from './AppearanceTab.svelte'
   import AboutTab from './AboutTab.svelte'
   import PluginsTab from './PluginsTab.svelte'
@@ -16,7 +18,7 @@
   }
 
   let {
-    activeTab = $bindable('general'),
+    activeTab = $bindable('workspace'),
     onClose,
     activeNotebook,
     activeSection,
@@ -24,8 +26,10 @@
   }: Props = $props()
 
   const tabs = [
-    { id: 'general', label: 'General', icon: 'settings' },
+    { id: 'workspace', label: 'Workspace', icon: 'folder' },
+    { id: 'editor', label: 'Editor', icon: 'edit_note' },
     { id: 'appearance', label: 'Appearance', icon: 'palette' },
+    { id: 'hotkeys', label: 'Hotkeys', icon: 'keyboard' },
     { id: 'plugins', label: 'Plugins', icon: 'extension' },
     { id: 'about', label: 'About', icon: 'info' }
   ]
@@ -120,6 +124,13 @@
     }
     lastPlugins = activeTab
   })
+
+  // Map legacy 'general' tab selection to the new 'workspace' tab
+  $effect(() => {
+    if (activeTab === 'general') {
+      activeTab = 'workspace'
+    }
+  })
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -158,12 +169,17 @@
           role="tab"
           aria-selected={activeTab === tab.id}
           tabindex={activeTab === tab.id ? 0 : -1}
-          class="flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg font-label-sm text-label-sm transition-all border-none cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-          class:bg-accent-primary-glow={activeTab === tab.id}
-          class:text-accent-primary-start={activeTab === tab.id}
-          class:text-text-muted={activeTab !== tab.id}
-          class:hover:bg-hover={activeTab !== tab.id}
+          class="relative flex items-center gap-3 pl-5 pr-4 py-2.5 mx-2 rounded-lg font-label-sm text-label-sm transition-all border-none cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 {activeTab ===
+          tab.id
+            ? 'bg-white/5 text-accent-primary-start'
+            : 'text-text-muted hover:bg-white/[0.02] hover:text-text-primary'}"
         >
+          <!-- Left rail glowing line -->
+          {#if activeTab === tab.id}
+            <div
+              class="absolute left-1.5 top-2.5 bottom-2.5 w-0.5 rounded-full bg-accent-primary-start shadow-[0_0_8px_var(--color-accent-primary-start)]"
+            ></div>
+          {/if}
           <span class="material-symbols-outlined text-[20px]">{tab.icon}</span>
           {tab.label}
         </button>
@@ -171,7 +187,7 @@
     </nav>
 
     <!-- Right: active panel -->
-    <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
+    <div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-void/5">
       <div
         class="flex items-center justify-between px-6 py-4 border-b border-border-muted flex-shrink-0"
       >
@@ -190,7 +206,20 @@
         </button>
       </div>
 
-      <div class="flex-1 overflow-y-auto custom-scrollbar">
+      <div
+        class="flex-1 min-h-0"
+        class:overflow-y-auto={['appearance', 'plugins', 'about'].includes(
+          activeTab
+        )}
+        class:custom-scrollbar={['appearance', 'plugins', 'about'].includes(
+          activeTab
+        )}
+        class:flex={['workspace', 'editor', 'hotkeys'].includes(activeTab)}
+        class:flex-col={['workspace', 'editor', 'hotkeys'].includes(activeTab)}
+        class:overflow-hidden={['workspace', 'editor', 'hotkeys'].includes(
+          activeTab
+        )}
+      >
         {#if settings.loading && !settings.config}
           <div class="p-8 text-text-muted animate-pulse font-body-md">
             Loading settings…
@@ -204,10 +233,14 @@
               <span class="flex-1">{settings.error}</span>
             </div>
           </div>
-        {:else if activeTab === 'general'}
-          <GeneralTab />
+        {:else if activeTab === 'workspace'}
+          <WorkspaceTab />
+        {:else if activeTab === 'editor'}
+          <EditorTab />
         {:else if activeTab === 'appearance'}
           <AppearanceTab />
+        {:else if activeTab === 'hotkeys'}
+          <HotkeysTab />
         {:else if activeTab === 'plugins'}
           <PluginsTab {activeNotebook} {activeSection} {activePage} />
         {:else if activeTab === 'about'}
