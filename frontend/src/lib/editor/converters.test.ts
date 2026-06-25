@@ -505,6 +505,37 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     )
   })
 
+  it('preserves GFM column alignment markers on round-trip (#172)', () => {
+    const blocks = [
+      mkBlock('TABLE', {
+        clean_text:
+          '| left | center | right |\n|:-----|:------:|------:|\n| a   | b      | c      |'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    const rows = (doc.content[0]?.content || []).filter(
+      (c) => c.type === 'tableRow'
+    )
+    // Header cells should carry align attrs.
+    const headerAligns = (rows[0]?.content || []).map(
+      (c) => ((c.attrs || {}) as Record<string, any>).align
+    )
+    expect(headerAligns).toEqual(['left', 'center', 'right'])
+    // Save: separator should include alignment markers.
+    const back = docToBlocks(doc)
+    const sep = back[0].clean_text.split('\n')[1]
+    expect(sep).toMatch(/:--+/) // left marker
+    expect(sep).toMatch(/:--+:/) // center marker
+    expect(sep).toMatch(/--+:/) // right marker
+    // Re-parse: alignment survives a second round-trip.
+    const reparsedAligns = (
+      (blocksToDoc(back).content[0]?.content || []).filter(
+        (c) => c.type === 'tableRow'
+      )[0]?.content || []
+    ).map((c) => ((c.attrs || {}) as Record<string, any>).align)
+    expect(reparsedAligns).toEqual(['left', 'center', 'right'])
+  })
+
   it('a NOTE that looks like a single pipe row is NOT a table (#310)', () => {
     // `| a | b |` with no separator is a NOTE (the Go parser's table detection
     // requires header + separator). The converter receives it as NOTE and

@@ -199,13 +199,15 @@ function blockToNode(block: ParsedBlock): NodeJSON {
     const lines = rawText.split('\n').filter(Boolean)
     if (lines.length >= 2) {
       const headerCells = parseGfmRow(lines[0])
+      const aligns = parseGfmAlignment(lines[1])
       const dataRows = lines.slice(2).map(parseGfmRow)
       const mkCell = (
         type: 'tableHeader' | 'tableCell',
-        text: string
+        text: string,
+        colIndex: number
       ): NodeJSON => ({
         type,
-        attrs: {},
+        attrs: aligns[colIndex] ? { align: aligns[colIndex] } : {},
         content: text ? legacyTokenizeInline(text) : []
       })
       const mkRow = (
@@ -214,7 +216,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
       ): NodeJSON => ({
         type: 'tableRow',
         attrs: {},
-        content: cells.map((c) => mkCell(type, c))
+        content: cells.map((c, i) => mkCell(type, c, i))
       })
       const rows: NodeJSON[] = [mkRow(headerCells, 'tableHeader')]
       for (const r of dataRows) rows.push(mkRow(r, 'tableCell'))
@@ -344,6 +346,35 @@ function parseGfmRow(line: string): string[] {
 // is a single line).
 function escapeGfmCell(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ')
+}
+
+// Parse a GFM separator row to extract per-column alignment.
+// `:---:` → center, `:---` → left, `---:` → right, `---` → '' (default).
+function parseGfmAlignment(sepRow: string): string[] {
+  return parseGfmRow(sepRow).map((cell) => {
+    const t = cell.trim()
+    const startColon = t.startsWith(':')
+    const endColon = t.endsWith(':')
+    if (startColon && endColon) return 'center'
+    if (endColon) return 'right'
+    if (startColon) return 'left'
+    return ''
+  })
+}
+
+// Emit a GFM separator cell with alignment markers for the given column width.
+function emitGfmSeparator(width: number, align: string): string {
+  const w = Math.max(width, 3)
+  switch (align) {
+    case 'center':
+      return ':' + '-'.repeat(Math.max(w - 2, 1)) + ':'
+    case 'right':
+      return '-'.repeat(Math.max(w - 1, 2)) + ':'
+    case 'left':
+      return ':' + '-'.repeat(Math.max(w - 1, 2))
+    default:
+      return '-'.repeat(w)
+  }
 }
 
 // ---- Details HTML parsing (#310) ------------------------------------------
@@ -649,6 +680,11 @@ function serializeTableToGFM(node: NodeJSON): string {
       escapeGfmCell(serializeInlineContent(c.content))
     )
   }))
+  // Extract per-column alignment from the header row's cell attrs.
+  const headerAligns = (rows[0].content || []).map((c) => {
+    const a = ((c.attrs || {}) as Record<string, any>).align
+    return typeof a === 'string' ? a : ''
+  })
   const colCount = Math.max(...grid.map((r) => r.cells.length))
   const widths = new Array(colCount).fill(0)
   for (const r of grid) {
@@ -661,7 +697,14 @@ function serializeTableToGFM(node: NodeJSON): string {
     '| ' + r.cells.map((c, i) => pad(c, i)).join(' | ') + ' |'
   const lines: string[] = []
   lines.push(renderRow(grid[0]))
-  lines.push('| ' + widths.map((w) => ''.padEnd(w, '-')).join(' | ') + ' |')
+  // Separator with alignment markers from header row.
+  lines.push(
+    '| ' +
+      widths
+        .map((w, i) => emitGfmSeparator(w, headerAligns[i] || ''))
+        .join(' | ') +
+      ' |'
+  )
   for (let r = 1; r < grid.length; r++) lines.push(renderRow(grid[r]))
   return lines.join('\n')
 }
