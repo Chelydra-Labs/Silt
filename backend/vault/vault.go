@@ -43,6 +43,32 @@ type AppSettings struct {
 	// signed plugins install without a warning (#111 distribution v2). Empty
 	// means all unsigned plugins install with a warning prompt.
 	TrustedPublishers []string `json:"trusted_publishers,omitempty"`
+
+	// AutoCheckUpdates gates the startup update check (#312). It is a pointer
+	// so an absent field in an older settings.json resolves to the default-on
+	// behavior (nil → true) via AutoCheckUpdatesEnabled(); a user who turns it
+	// off persists an explicit false. User-global, pre-vault state: the check
+	// fires before any vault is open, so it cannot live in vault config.yaml.
+	AutoCheckUpdates *bool `json:"auto_check_updates,omitempty"`
+
+	// LastUpdateCheck records the last automatic/manual update check as an
+	// RFC3339 timestamp (#312). Empty means never checked. It is a string (not
+	// time.Time) because encoding/json's omitempty does not fire for a zero
+	// time.Time struct, which would persist a junk "0001-01-01..." value.
+	// Reproductible? No — but it is user-global app state, not vault content,
+	// so it is outside the §0 rule-4 reproducibility contract that governs
+	// SQLite. settings.json is its own (non-SQLite) source of truth.
+	LastUpdateCheck string `json:"last_update_check,omitempty"`
+}
+
+// AutoCheckUpdatesEnabled reports whether the startup update check should run,
+// resolving the pointer's default-on semantics (nil/absent → true). The single
+// read path so callers never repeat the nil check.
+func (s AppSettings) AutoCheckUpdatesEnabled() bool {
+	if s.AutoCheckUpdates == nil {
+		return true
+	}
+	return *s.AutoCheckUpdates
 }
 
 // ValidThemeMode reports whether mode is a recognized ThemeMode value.
@@ -64,6 +90,13 @@ func (s AppSettings) withDefaults() AppSettings {
 	}
 	if !ValidThemeMode(s.ThemeMode) {
 		s.ThemeMode = "dark"
+	}
+	// Normalize the update toggle so a written settings.json is self-
+	// describing (explicit true/false rather than null/absent on save).
+	// LoadSettings returns the same resolved value to every caller.
+	if s.AutoCheckUpdates == nil {
+		t := true
+		s.AutoCheckUpdates = &t
 	}
 	return s
 }

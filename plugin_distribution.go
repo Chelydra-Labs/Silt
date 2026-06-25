@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"silt/backend/plugins"
+	"silt/backend/semver"
 	"silt/backend/vault"
 	"strings"
 )
@@ -54,7 +55,7 @@ func (a *App) CheckPluginUpdate(pluginID, currentVersion, updateUrl string) (Plu
 	}
 	info.LatestVersion = manifest.Version
 	info.DownloadURL = manifest.URL
-	info.UpdateAvailable = versionLessThan(currentVersion, manifest.Version)
+	info.UpdateAvailable = semver.LessThan(currentVersion, manifest.Version)
 	return info, nil
 }
 
