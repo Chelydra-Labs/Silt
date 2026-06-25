@@ -414,6 +414,26 @@ jobs:
               "$artifact"
           done
 
+      # --- SHA256SUMS (#312) ----------------------------------------------
+      # Publishes a sha256sum-compatible checksums file covering the executable
+      # binary assets only (*.exe, *.deb, *.AppImage). The in-app updater
+      # downloads this alongside its chosen asset and verifies the asset's
+      # SHA256 against it before executing — the lightweight first-line
+      # integrity check (complementary to the cosign/SignPath signatures, which
+      # remain a separate, stronger trust path). nullglob keeps the glob a
+      # no-op if a given extension has no asset this release.
+      - name: Generate SHA256SUMS for binary assets
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # Match on exact extensions so sigs (.sig/.pem), SBOM (.spdx.json),
+          # and SHA256SUMS itself are never included — those are not executable
+          # binaries and are verified by their own trust path.
+          rm -f release-assets/SHA256SUMS
+          (cd release-assets && sha256sum -- *.exe *.deb *.AppImage > SHA256SUMS)
+          echo "Generated release-assets/SHA256SUMS:"
+          cat release-assets/SHA256SUMS
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
