@@ -12,12 +12,14 @@
     sidebarCollapsed: boolean
     sidebarWidth?: number
     onSearchClick: () => void
+    children?: import('svelte').Snippet
   }
 
   let {
     sidebarCollapsed = $bindable(),
     sidebarWidth = 256,
-    onSearchClick
+    onSearchClick,
+    children
   }: Props = $props()
 
   let maximised = $state(false)
@@ -59,7 +61,7 @@
   class="drag-region bg-void flex justify-between items-center h-14 w-full z-50 fixed top-0 border-b border-border-muted select-none"
 >
   <!-- Left: brand zone (matches sidebar width) + sidebar toggle at the boundary -->
-  <div class="flex items-center min-w-0 h-full">
+  <div class="flex items-center min-w-0 h-full flex-grow">
     <!-- Brand strip aligns over the sidebar; collapses when sidebar does -->
     <div
       class="flex items-center gap-2 h-full flex-shrink-0 transition-all duration-200 ease-out overflow-hidden"
@@ -89,6 +91,12 @@
         >
       </div>
     </div>
+
+    {#if children}
+      <div class="h-full flex items-end flex-grow min-w-0">
+        {@render children()}
+      </div>
+    {/if}
   </div>
 
   <!-- Right: search + window controls -->

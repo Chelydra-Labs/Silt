@@ -325,8 +325,9 @@
     justify-content: space-between;
     height: 36px;
     min-height: 36px;
-    background: var(--color-panel, #14161b);
-    border-bottom: 1px solid var(--color-border-muted, #2a2d35);
+    background: transparent;
+    flex: 1;
+    min-width: 0;
   }
 
   .tab-strip {
@@ -361,7 +362,7 @@
     gap: 4px;
     padding: 0 12px;
     border-left: 1px solid var(--color-border-muted, #2a2d35);
-    background: var(--color-panel, #14161b);
+    background: transparent;
     flex-shrink: 0;
   }
 

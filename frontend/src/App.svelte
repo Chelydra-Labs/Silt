@@ -830,7 +830,26 @@
       bind:sidebarCollapsed
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
-    />
+    >
+      {#if activeView === 'notes'}
+        <TabStrip
+          tabs={displayedTabs}
+          {activeTabId}
+          onSelectTab={handleSelectTab}
+          onCloseTab={handleCloseTab}
+          onPromoteTab={handlePromoteTab}
+          onReorderTab={handleReorderTab}
+          showDirtyIndicators={settings.config?.ui
+            ?.show_tab_dirty_indicators !== false}
+        />
+      {:else}
+        <div
+          class="flex items-center px-4 py-1 text-text-muted text-[11px] uppercase tracking-widest font-label-sm-bold"
+        >
+          {activeView}
+        </div>
+      {/if}
+    </TitleBar>
 
     <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
       <!-- Activity Bar -->
@@ -962,17 +981,6 @@
       <!-- Content viewport -->
       <div class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-void">
         {#if activeView === 'notes'}
-          <!-- Tab strip (#142): above the editor, inside the content area -->
-          <TabStrip
-            tabs={displayedTabs}
-            {activeTabId}
-            onSelectTab={handleSelectTab}
-            onCloseTab={handleCloseTab}
-            onPromoteTab={handlePromoteTab}
-            onReorderTab={handleReorderTab}
-            showDirtyIndicators={settings.config?.ui
-              ?.show_tab_dirty_indicators !== false}
-          />
           {#if notesReady}
             <div
               id="silt-tabpanel"
