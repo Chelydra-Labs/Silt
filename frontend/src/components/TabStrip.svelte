@@ -1,6 +1,12 @@
 <script lang="ts">
   import type { TabEntry } from '../lib/tabs'
   import { fade, fly } from 'svelte/transition'
+  import {
+    settings,
+    toggleFocusMode,
+    toggleFormatToolbar
+  } from '../settings/store.svelte'
+  import { getViewMode } from '../lib/viewMode.svelte'
 
   interface Props {
     tabs: TabEntry[]
@@ -22,6 +28,31 @@
     onReorderTab,
     showDirtyIndicators = true
   }: Props = $props()
+
+  let activeTab = $derived(tabs.find((t) => t.id === activeTabId))
+  let activePageViewMode = $derived(
+    activeTab
+      ? getViewMode(activeTab.notebook, activeTab.section, activeTab.page)
+      : 'edit'
+  )
+
+  let focusModeActive = $derived(settings.config?.editor?.focus_mode === true)
+  let showFormatToolbar = $derived(
+    settings.config?.ui?.show_format_toolbar !== false
+  )
+
+  function handleToggleFocus() {
+    toggleFocusMode()
+  }
+
+  function handleToggleToolbar() {
+    toggleFormatToolbar()
+  }
+
+  function handleToggleViewMode() {
+    if (!activeTab) return
+    window.dispatchEvent(new CustomEvent('toggle-view-mode'))
+  }
 
   // Roving tabindex: the active tab (or the first tab if none active) is the
   // only tab in the tab sequence. Arrow keys move focus between tabs without
@@ -162,90 +193,146 @@
 </script>
 
 {#if tabs.length > 0}
-  <div
-    class="tab-strip"
-    role="tablist"
-    aria-label="Open pages"
-    aria-orientation="horizontal"
-    tabindex="-1"
-    onkeydown={handleTablistKeydown}
-  >
-    {#each tabs as tab, i (tab.id)}
-      <button
-        in:fly={{ duration: 150, x: -8 }}
-        out:fade={{ duration: 100 }}
-        bind:this={tabRefs[i]}
-        role="tab"
-        id="silt-tab-{tab.id}"
-        aria-selected={tab.id === activeTabId}
-        aria-controls="silt-tabpanel"
-        aria-label={tabTooltip(tab)}
-        tabindex={i === focusedIndex ? 0 : -1}
-        title={tabTooltip(tab)}
-        class="tab-button group"
-        class:active={tab.id === activeTabId}
-        class:preview={tab.preview}
-        class:tab-drop-before={dropTabTarget?.id === tab.id &&
-          dropTabTarget.before}
-        class:tab-drop-after={dropTabTarget?.id === tab.id &&
-          !dropTabTarget.before}
-        draggable="true"
-        ondragstart={(e) => handleTabDragStart(e, tab)}
-        ondragover={(e) => handleTabDragOver(e, tab)}
-        ondragleave={handleTabDragLeave}
-        ondrop={(e) => handleTabDrop(e, tab)}
-        ondragend={handleTabDragEnd}
-        onclick={() => onSelectTab(tab.id)}
-        onfocus={() => (focusedIndex = i)}
-        onauxclick={(e) => handleAuxClick(e, tab)}
-        ondblclick={() => handleDblClick(tab)}
-      >
-        {#if showDirtyIndicators && (tab.dirty || tab.saveError)}
-          <span
-            class="tab-save-state"
-            class:error={!!tab.saveError}
-            class:dirty={!tab.saveError}
-            aria-hidden="true"
-          >
-            <span class="material-symbols-outlined text-[12px]">
-              {tab.saveError ? 'error' : 'circle'}
-            </span>
-          </span>
-        {/if}
-        <span class="tab-label" class:italic={tab.preview}>{tab.page}</span>
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <!-- Close is keyboard-accessible via the parent tab's Delete and
-             Ctrl+W handlers; this span is a mouse-only convenience and
-             MUST NOT have role="button" (that would nest interactive
-             elements inside the <button role="tab"> — HTML spec violation). -->
-        <span
-          aria-label="Close tab"
-          title="Close tab"
-          class="tab-close"
-          class:preview-close={tab.preview}
-          onclick={(e) => {
-            e.stopPropagation()
-            onCloseTab(tab.id)
-          }}
+  <div class="tab-strip-wrapper">
+    <div
+      class="tab-strip"
+      role="tablist"
+      aria-label="Open pages"
+      aria-orientation="horizontal"
+      tabindex="-1"
+      onkeydown={handleTablistKeydown}
+    >
+      {#each tabs as tab, i (tab.id)}
+        <button
+          in:fly={{ duration: 150, x: -8 }}
+          out:fade={{ duration: 100 }}
+          bind:this={tabRefs[i]}
+          role="tab"
+          id="silt-tab-{tab.id}"
+          aria-selected={tab.id === activeTabId}
+          aria-controls="silt-tabpanel"
+          aria-label={tabTooltip(tab)}
+          tabindex={i === focusedIndex ? 0 : -1}
+          title={tabTooltip(tab)}
+          class="tab-button group"
+          class:active={tab.id === activeTabId}
+          class:preview={tab.preview}
+          class:tab-drop-before={dropTabTarget?.id === tab.id &&
+            dropTabTarget.before}
+          class:tab-drop-after={dropTabTarget?.id === tab.id &&
+            !dropTabTarget.before}
+          draggable="true"
+          ondragstart={(e) => handleTabDragStart(e, tab)}
+          ondragover={(e) => handleTabDragOver(e, tab)}
+          ondragleave={handleTabDragLeave}
+          ondrop={(e) => handleTabDrop(e, tab)}
+          ondragend={handleTabDragEnd}
+          onclick={() => onSelectTab(tab.id)}
+          onfocus={() => (focusedIndex = i)}
+          onauxclick={(e) => handleAuxClick(e, tab)}
+          ondblclick={() => handleDblClick(tab)}
         >
-          <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-            >close</span
+          {#if showDirtyIndicators && (tab.dirty || tab.saveError)}
+            <span
+              class="tab-save-state"
+              class:error={!!tab.saveError}
+              class:dirty={!tab.saveError}
+              aria-hidden="true"
+            >
+              <span class="material-symbols-outlined text-[12px]">
+                {tab.saveError ? 'error' : 'circle'}
+              </span>
+            </span>
+          {/if}
+          <span class="tab-label" class:italic={tab.preview}>{tab.page}</span>
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <!-- Close is keyboard-accessible via the parent tab's Delete and
+               Ctrl+W handlers; this span is a mouse-only convenience and
+               MUST NOT have role="button" (that would nest interactive
+               elements inside the <button role="tab"> — HTML spec violation). -->
+          <span
+            aria-label="Close tab"
+            title="Close tab"
+            class="tab-close"
+            class:preview-close={tab.preview}
+            onclick={(e) => {
+              e.stopPropagation()
+              onCloseTab(tab.id)
+            }}
           >
-        </span>
-      </button>
-    {/each}
+            <span
+              class="material-symbols-outlined text-[14px]"
+              aria-hidden="true">close</span
+            >
+          </span>
+        </button>
+      {/each}
+    </div>
+
+    {#if activeTab}
+      <div class="tab-actions">
+        <!-- Focus Mode Toggle -->
+        <button
+          onclick={handleToggleFocus}
+          class="h-7 w-7 flex items-center justify-center rounded transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
+          class:text-accent-primary-start={focusModeActive}
+          class:text-text-muted={!focusModeActive}
+          title="Toggle Focus Mode (Ctrl+Shift+D)"
+          aria-label="Toggle Focus Mode"
+        >
+          <span class="material-symbols-outlined text-[18px]"
+            >center_focus_strong</span
+          >
+        </button>
+
+        <!-- Zen Mode / Toolbar Toggle -->
+        <button
+          onclick={handleToggleToolbar}
+          class="h-7 w-7 flex items-center justify-center rounded transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
+          class:text-accent-primary-start={showFormatToolbar}
+          class:text-text-muted={!showFormatToolbar}
+          title="Toggle Formatting Toolbar (Ctrl+Shift+F)"
+          aria-label="Toggle Formatting Toolbar"
+        >
+          <span class="material-symbols-outlined text-[18px]">text_format</span>
+        </button>
+
+        <div class="w-px h-4 bg-border-muted mx-1"></div>
+
+        <!-- View Mode Toggle -->
+        <button
+          onclick={handleToggleViewMode}
+          class="h-7 w-7 flex items-center justify-center rounded transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover text-text-muted"
+          title={activePageViewMode === 'edit'
+            ? 'View Markdown Source (Ctrl+Shift+V)'
+            : 'View Rich Text (Ctrl+Shift+V)'}
+          aria-label="Toggle View Mode"
+        >
+          <span class="material-symbols-outlined text-[18px]">
+            {activePageViewMode === 'edit' ? 'code' : 'menu_book'}
+          </span>
+        </button>
+      </div>
+    {/if}
   </div>
 {/if}
 
 <style>
-  .tab-strip {
+  .tab-strip-wrapper {
     display: flex;
     align-items: stretch;
+    justify-content: space-between;
     height: 36px;
     min-height: 36px;
     background: var(--color-panel, #14161b);
     border-bottom: 1px solid var(--color-border-muted, #2a2d35);
+  }
+
+  .tab-strip {
+    flex: 1;
+    display: flex;
+    align-items: stretch;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none; /* Hide scrollbar Firefox */
@@ -266,6 +353,16 @@
       black calc(100% - 12px),
       transparent
     );
+  }
+
+  .tab-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 12px;
+    border-left: 1px solid var(--color-border-muted, #2a2d35);
+    background: var(--color-panel, #14161b);
+    flex-shrink: 0;
   }
 
   .tab-strip::-webkit-scrollbar {

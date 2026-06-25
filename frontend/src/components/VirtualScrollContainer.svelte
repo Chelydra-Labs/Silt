@@ -7,6 +7,7 @@
   import type { Editor } from 'svelte-tiptap'
   import EditorUtilityBar from './editor/EditorUtilityBar.svelte'
   import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
+  import { settings } from '../settings/store.svelte'
 
   interface Props {
     notebook: string
@@ -51,6 +52,9 @@
   $effect(() => {
     viewMode = getViewMode(notebook, section, page)
   })
+  let showFormatToolbar = $derived(
+    settings.config?.ui?.show_format_toolbar !== false
+  )
 
   function handleToggleViewMode() {
     toggleViewMode(notebook, section, page)
@@ -263,12 +267,9 @@
 </script>
 
 <div class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-void">
-  <EditorUtilityBar
-    editor={editorInstance}
-    {activeMarks}
-    {viewMode}
-    onToggleViewMode={handleToggleViewMode}
-  />
+  {#if viewMode === 'edit' && showFormatToolbar}
+    <EditorUtilityBar editor={editorInstance} {activeMarks} />
+  {/if}
 
   <div
     bind:this={containerEl}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  let { editor, activeMarks, viewMode, onToggleViewMode } = $props()
+  let { editor, activeMarks } = $props()
 </script>
 
 <div data-testid="editor-utility-bar-stub"></div>
