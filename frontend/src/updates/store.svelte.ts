@@ -1,0 +1,279 @@
+// Update store (#312): the reactive bridge between the About-tab update UI
+// and the backend/updates Go package. Mirrors the pattern of
+// notifications/store.svelte.ts and theme/store.svelte.ts (Svelte 5 $state
+// runes in a .svelte.ts module).
+//
+// Two check paths share one backend binding (CheckForUpdates):
+//   - checkNow(): manual, surfaces errors in updateState so the About tab can
+//     show "couldn't check".
+//   - startupCheck(): fires from App.svelte onMount under the 24h throttle;
+//     on any failure it stays silent (AC5: quiet on startup) and only raises
+//     a toast when an update exists.
+
+import {
+  CheckForUpdates,
+  DownloadUpdate,
+  InstallUpdate,
+  GetUpdateSettings,
+  SetUpdateSettings
+} from '../../wailsjs/go/main/App.js'
+import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+import { pushNotification } from '../notifications/store.svelte'
+
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'up-to-date'
+  | 'available'
+  | 'downloading'
+  | 'installing'
+  | 'error'
+
+export interface UpdateState {
+  status: UpdateStatus
+  latestVersion: string
+  releaseUrl: string
+  releaseNotes: string
+  /** Platform-matching asset download URL ('' when none for this platform). */
+  assetUrl: string
+  /** 0–100 during 'downloading', else null. */
+  downloadProgress: number | null
+  /** ISO timestamp of the last check, '' when never checked. */
+  lastChecked: string
+  autoCheck: boolean
+  /** User-facing error message for the 'error' status. */
+  error: string
+}
+
+export const updateState: UpdateState = $state({
+  status: 'idle',
+  latestVersion: '',
+  releaseUrl: '',
+  releaseNotes: '',
+  assetUrl: '',
+  downloadProgress: null,
+  lastChecked: '',
+  autoCheck: true,
+  error: ''
+})
+
+let progressUnsub: (() => void) | null = null
+
+/** 24h in ms — mirrors backend/updates.AutoCheckInterval. */
+const AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
+
+/** shouldAutoCheck mirrors updates.ShouldAutoCheck so the startup decision is local. */
+export function shouldAutoCheck(
+  lastChecked: string,
+  autoCheck: boolean
+): boolean {
+  if (!autoCheck) return false
+  if (!lastChecked) return true
+  const last = Date.parse(lastChecked)
+  if (Number.isNaN(last)) return true
+  return Date.now() - last >= AUTO_CHECK_INTERVAL_MS
+}
+
+/** loadSettings hydrates autoCheck + lastChecked from settings.json. */
+export async function loadSettings(): Promise<void> {
+  try {
+    const s = await GetUpdateSettings()
+    updateState.autoCheck = s.autoCheck
+    updateState.lastChecked = s.lastCheck ?? ''
+  } catch {
+    // Non-fatal: defaults (autoCheck true, never checked) keep the startup
+    // check working even if settings.json is momentarily unreadable.
+  }
+}
+
+/** setAutoCheck persists the toggle and updates the local state. */
+export async function setAutoCheck(on: boolean): Promise<void> {
+  updateState.autoCheck = on
+  try {
+    await SetUpdateSettings(on)
+  } catch (e) {
+    // Revert the optimistic flip so the toggle reflects on-disk truth.
+    updateState.autoCheck = !on
+    pushNotification({
+      kind: 'error',
+      message: 'Could not save the update-check preference.'
+    })
+    console.error('SetUpdateSettings failed:', e)
+  }
+}
+
+interface CheckResult {
+  hasUpdate: boolean
+  latestVersion: string
+  releaseUrl: string
+  releaseNotes: string
+  asset?: { browserDownloadUrl?: string; name?: string; size?: number } | null
+}
+
+function applyCheckResult(r: CheckResult): void {
+  updateState.latestVersion = r.latestVersion ?? ''
+  updateState.releaseUrl = r.releaseUrl ?? ''
+  updateState.releaseNotes = r.releaseNotes ?? ''
+  updateState.assetUrl = r.asset?.browserDownloadUrl ?? ''
+  updateState.status = r.hasUpdate ? 'available' : 'up-to-date'
+  updateState.error = ''
+}
+
+/** checkNow runs a manual check (always immediate, errors surfaced). */
+export async function checkNow(): Promise<void> {
+  updateState.status = 'checking'
+  updateState.error = ''
+  try {
+    const r = (await CheckForUpdates()) as CheckResult
+    applyCheckResult(r)
+    await loadSettings()
+  } catch (e) {
+    updateState.status = 'error'
+    updateState.error = friendlyCheckError(e)
+  }
+}
+
+/**
+ * startupCheck runs from App.svelte onMount. Quiet on failure (AC5): no error
+ * status, no toast. On a found update it raises a non-blocking toast with a
+ * View action (AC2). Safe to call when no vault is open — the check is
+ * user-global, not vault-scoped.
+ */
+export async function startupCheck(): Promise<void> {
+  let r: CheckResult
+  try {
+    r = (await CheckForUpdates()) as CheckResult
+  } catch {
+    // Offline / rate-limited / parse error: stay silent on startup.
+    return
+  }
+  if (!r.hasUpdate) return
+  const url = r.releaseUrl
+  pushNotification({
+    kind: 'info',
+    message: `Silt ${r.latestVersion} is available.`,
+    action: {
+      label: 'View',
+      run: () => {
+        if (url) openExternal(url)
+      }
+    },
+    autoDismissMs: 15_000
+  })
+}
+
+/** downloadAndInstall runs the download → verify → install flow. */
+export async function downloadAndInstall(assetUrl: string): Promise<void> {
+  updateState.status = 'downloading'
+  updateState.downloadProgress = 0
+  updateState.error = ''
+  // Subscribe to progress events for this download; unsubscribe on completion.
+  subscribeProgress()
+  try {
+    const localPath = await DownloadUpdate(assetUrl)
+    updateState.status = 'installing'
+    // The installer launches and Silt quits; this call is expected to return
+    // (the Go side detaches the child) right before the app exits.
+    await InstallUpdate(localPath)
+  } catch (e) {
+    updateState.status = 'error'
+    updateState.downloadProgress = null
+    updateState.error = friendlyInstallError(e)
+  } finally {
+    unsubscribeProgress()
+  }
+}
+
+function subscribeProgress(): void {
+  unsubscribeProgress()
+  progressUnsub = EventsOn(
+    'update:download:progress',
+    (p: { received: number; total: number }) => {
+      if (!p) return
+      if (p.total > 0) {
+        updateState.downloadProgress = Math.min(
+          100,
+          Math.round((p.received / p.total) * 100)
+        )
+      } else {
+        // Unknown total: show an indeterminate hint via a negative sentinel
+        // the UI can render as a busy bar.
+        updateState.downloadProgress = -1
+      }
+    }
+  )
+}
+
+function unsubscribeProgress(): void {
+  if (progressUnsub) {
+    progressUnsub()
+    progressUnsub = null
+  }
+}
+
+function friendlyCheckError(e: unknown): string {
+  const msg = String(e instanceof Error ? e.message : e)
+  if (/403|rate limit/i.test(msg))
+    return 'GitHub rate-limited the check. Try again later.'
+  if (/offline|network|connection|dial|timeout|no such host/i.test(msg))
+    return "Couldn't reach GitHub — check your connection."
+  return "Couldn't check for updates."
+}
+
+function friendlyInstallError(e: unknown): string {
+  const msg = String(e instanceof Error ? e.message : e)
+  if (/SHA256|checksum|verification/i.test(msg))
+    return 'The download failed its integrity check and was discarded.'
+  if (/not in the latest release/i.test(msg))
+    return 'The update is no longer the latest release. Re-check for updates.'
+  return 'The update could not be installed.'
+}
+
+/** openExternal opens a URL in the user's default browser via the Wails bridge. */
+function openExternal(url: string): void {
+  // Imported lazily via the runtime to keep the module side-effect-free for
+  // tests that never render the About tab. The cast avoids a circular type
+  // import in the test harness.
+  import('../../wailsjs/runtime/runtime.js')
+    .then((rt) => rt.BrowserOpenURL?.(url))
+    .catch(() => {
+      /* ignore — the link is also shown in the About tab */
+    })
+}
+
+/**
+ * initStartupUpdateCheck runs the throttled startup auto-check (AC2). Called
+ * from App.svelte onMount. It loads the persisted preferences, applies the 24h
+ * throttle, and on a found update raises a non-blocking toast. All failures
+ * are silent on startup (AC5: quiet state) — the user only sees a toast when
+ * an update exists. Safe before a vault is open (the check is user-global).
+ */
+export async function initStartupUpdateCheck(): Promise<void> {
+  await loadSettings()
+  if (!shouldAutoCheck(updateState.lastChecked, updateState.autoCheck)) return
+  await startupCheck()
+}
+
+/**
+ * disposeStartupUpdateCheck tears down any startup-check state. Currently a
+ * no-op (the startup check is a single fire-and-forget call, not a
+ * subscription) but kept as the symmetric pair to initStartupUpdateCheck so
+ * App.svelte's init/dispose pattern stays uniform.
+ */
+export function disposeStartupUpdateCheck(): void {
+  unsubscribeProgress()
+}
+
+/** Test-only: reset module state. */
+export function _resetForTests(): void {
+  unsubscribeProgress()
+  updateState.status = 'idle'
+  updateState.latestVersion = ''
+  updateState.releaseUrl = ''
+  updateState.releaseNotes = ''
+  updateState.assetUrl = ''
+  updateState.downloadProgress = null
+  updateState.lastChecked = ''
+  updateState.autoCheck = true
+  updateState.error = ''
+}
