@@ -170,23 +170,50 @@ var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
 type BlockType string
 
 const (
-	BlockTask BlockType = "TASK"
-	BlockNote BlockType = "NOTE"
+	BlockTask   BlockType = "TASK"
+	BlockNote   BlockType = "NOTE"
 	BlockHeader BlockType = "HEADER"
+	BlockCode   BlockType = "CODE"     // managed fenced code (#189)
+	BlockTable  BlockType = "TABLE"    // managed GFM table (#310)
+	BlockDetails BlockType = "DETAILS" // managed <details> HTML (#310)
+	BlockCallout BlockType = "CALLOUT" // managed Obsidian callout (#308)
 )
 
 type ParsedBlock struct {
-	ID        string    `json:"id"`
-	ParentID  string    `json:"parent_id"`
-	Type      BlockType `json:"type"`
-	Depth     int       `json:"depth"`
-	RawText   string    `json:"raw_text"`
-	CleanText string    `json:"clean_text"`
-	Owner     string    `json:"owner,omitempty"`
-	StartDate string    `json:"start_date,omitempty"`
-	DueDate   string    `json:"due_date,omitempty"`
-	Priority  int       `json:"priority,omitempty"`
+	ID         string    `json:"id"`
+	ParentID   string    `json:"parent_id"`
+	Type       BlockType `json:"type"`
+	Depth      int       `json:"depth"`
+	RawText    string    `json:"raw_text"`
+	CleanText  string    `json:"clean_text"`
+	Owner      string    `json:"owner,omitempty"`
+	StartDate  string    `json:"start_date,omitempty"`
+	DueDate    string    `json:"due_date,omitempty"`
+	Priority   int       `json:"priority,omitempty"`
+	Pinned     *bool     `json:"pinned,omitempty"`
+	Progress   int       `json:"progress,omitempty"`
+	ExtraTokens []string  `json:"extra_tokens,omitempty"`
+	Language   string    `json:"language,omitempty"`
+	LineNumber int       `json:"line_number"`
+	FileDate   string    `json:"file_date,omitempty"`
 }
+
+
+Unified Region Accumulator (#189/#310/#308)
+
+The parser's `accumulateRegion` detects four multi-line region shapes and
+collapses each into ONE managed `ParsedBlock`: fenced code (``` fence),
+GFM table runs (header + separator), `<details>` HTML (depth-counted), and
+Obsidian callouts (`> [!variant]` + consecutive `>` lines). Each becomes
+one `blocks`-table row, one UUID, one FTS5 document. The block identity
+comment lives on its own dedicated trailing line after the region content
+so the on-disk format stays strictly GFM/HTML/Obsidian syntax. The
+`detectRegionKind` / `findRegionCloser` / `skipManagedRegion` helpers are
+shared by `ParseFileContent` and `RenderFileContent` so both paths agree
+on region boundaries. Old-format files with inline id comments on each
+line are detected (id comments stripped before matching), migrated to the
+trailing-id-line format on first parse, and `((uuid))` references to
+vanished per-line ids are remapped to the typed block's id.
 
 
 Unique Block ID Injection (UUIDv4)
@@ -775,20 +802,21 @@ UUID `id` attr and a per-block `file_date`. A `UniqueBlockIds` extension
 (`appendTransaction`) mints fresh UUIDs for pasted/duplicated blocks to prevent
 `blocks`-table PK collisions.
 
-**Multi-line block model (Sprint 14).** The Go parser reads files line-by-line
-and `renderBlock` collapses `\n`→space for the prose types (TASK/NOTE/HEADER).
-Two strategies extend this without breaking the line-oriented round-trip
-guarantee: (1) fenced code is a managed `CODE` region — the parser's
-`accumulateCodeRegion` collects a ``` ``` run into ONE `ParsedBlock` whose
-`clean_text` retains internal newlines, and `renderBlock` preserves them (the
-block id lives on its own line after the closing fence, so the fence stays
-strictly GFM and interop with Obsidian/GitHub/VS Code is byte-exact); (2)
-tables, `<details>`, quotes, and callouts are stored as one NOTE per line and
-regrouped by the frontend converter's index-based scanner (`blocksToDoc`).
-Nested ``` ``` fences use a length-aware closer (GFM: closer backtick count ≥
-opener). The `blocks` SQLite table needs no schema change — `CODE` is just
-another `type` value and `clean_content` carries the (possibly multi-line) text
-that FTS5 indexes.
+**Multi-line block model (unified, #310/#308).** The Go parser reads files
+line-by-line and `renderBlock` collapses `\n`→space for the prose types
+(TASK/NOTE/HEADER). All multi-line block types use ONE unified strategy: the
+parser's `accumulateRegion` detects region openers — fenced code (```),
+GFM table runs (header + separator), `<details>` HTML, and Obsidian callouts
+(`> [!variant]` + consecutive `>` lines) — and accumulates each into ONE
+`ParsedBlock` (type CODE/TABLE/DETAILS/CALLOUT) whose `clean_text` retains
+internal newlines. `renderBlock` emits them verbatim (no `\n`→space collapse)
+with the block identity comment on its own dedicated trailing line, so the
+on-disk format stays strictly GFM/HTML/Obsidian syntax (byte-exact interop
+with Obsidian / GitHub / VS Code). The frontend converter (`blocksToDoc`) is
+a clean 1:1 map (`blocks.map(blockToNode)`) — the multi-block regrouping layer
+that previously faked single-entity semantics for tables/details/callouts is
+deleted. Each multi-line block is one `blocks`-table row, one UUID, one
+searchable FTS5 document, and one SDK mutation target.
 
 NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render the Svelte UI for each block type — checkbox cycle for tasks, drag handles, meta badges. The slash menu (`/` at block start) surfaces commands to change block types.
 

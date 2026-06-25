@@ -276,7 +276,7 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(back[0].clean_text).toBe('> quoted <!-- silt-align: center -->')
   })
 
-  it('round-trips all 7 callout variants (#180)', () => {
+  it('round-trips all 7 callout variants (#180/#308)', () => {
     const variants = [
       'note',
       'info',
@@ -288,8 +288,7 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     ]
     for (const v of variants) {
       const blocks = [
-        mkBlock('NOTE', {
-          raw_text: `> [!${v}] message`,
+        mkBlock('CALLOUT', {
           clean_text: `> [!${v}] message`
         })
       ]
@@ -297,52 +296,46 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
       const node = doc.content[0]
       expect(node?.type).toBe('calloutBlock')
       expect(node?.attrs?.variant).toBe(v)
-      expect(node?.content).toEqual([{ type: 'text', text: 'message' }])
-      // Save: re-emits the Obsidian `> [!variant] message` line.
+      // content: 'block+' → first paragraph carries the message.
+      expect(node?.content?.[0]?.type).toBe('paragraph')
+      expect(node?.content?.[0]?.content).toEqual([
+        { type: 'text', text: 'message' }
+      ])
+      // Save: re-emits as ONE CALLOUT ParsedBlock.
       const back = docToBlocks(doc)
-      expect(back[0].type).toBe('NOTE')
+      expect(back[0].type).toBe('CALLOUT')
       expect(back[0].clean_text).toBe(`> [!${v}] message`)
-      expect(back[0].raw_text).toBe(`> [!${v}] message`)
     }
   })
 
-  it('a callout without a message round-trips the bare marker (#180)', () => {
-    const blocks = [
-      mkBlock('NOTE', {
-        raw_text: '> [!warning]',
-        clean_text: '> [!warning]'
-      })
-    ]
+  it('a callout without a message round-trips the bare marker (#180/#308)', () => {
+    const blocks = [mkBlock('CALLOUT', { clean_text: '> [!warning]' })]
     const doc = blocksToDoc(blocks)
     expect(doc.content[0]?.type).toBe('calloutBlock')
     expect(doc.content[0]?.attrs?.variant).toBe('warning')
-    expect(doc.content[0]?.content).toEqual([])
+    // block+ requires ≥1 child: the first paragraph is empty.
+    expect(doc.content[0]?.content?.[0]?.type).toBe('paragraph')
     expect(docToBlocks(doc)[0].clean_text).toBe('> [!warning]')
   })
 
-  it('callout detection takes precedence over plain quote (#180)', () => {
-    // `> [!tip] x` is a callout, NOT a quote note.
-    const blocks = [
-      mkBlock('NOTE', { raw_text: '> [!tip] x', clean_text: '> [!tip] x' })
+  it('a CALLOUT block is distinct from a plain quote NOTE (#308)', () => {
+    // A CALLOUT-typed block → calloutBlock; a NOTE with `> ` prefix → noteBlock.
+    const calloutBlocks = [mkBlock('CALLOUT', { clean_text: '> [!tip] x' })]
+    expect(blocksToDoc(calloutBlocks).content[0]?.type).toBe('calloutBlock')
+
+    const quoteBlocks = [
+      mkBlock('NOTE', { raw_text: '> quote', clean_text: '> quote' })
     ]
-    expect(blocksToDoc(blocks).content[0]?.type).toBe('calloutBlock')
+    expect(blocksToDoc(quoteBlocks).content[0]?.type).toBe('noteBlock')
   })
 
-  it('callout variants are matched case-insensitively (#180)', () => {
-    // Obsidian commonly writes [!NOTE] / [!Tip] (uppercase/mixed). Detection is
-    // case-insensitive; the variant is normalized to lowercase for the NodeView
-    // lookup and the on-disk emit.
+  it('callout variants are matched case-insensitively (#180/#308)', () => {
     for (const [input, expected] of [
       ['[!NOTE]', 'note'],
       ['[!Warning]', 'warning'],
       ['[!TIP]', 'tip']
     ] as const) {
-      const blocks = [
-        mkBlock('NOTE', {
-          raw_text: `> ${input} hi`,
-          clean_text: `> ${input} hi`
-        })
-      ]
+      const blocks = [mkBlock('CALLOUT', { clean_text: `> ${input} hi` })]
       const node = blocksToDoc(blocks).content[0]
       expect(node?.type).toBe('calloutBlock')
       expect(node?.attrs?.variant).toBe(expected)
@@ -390,14 +383,15 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(docToBlocks(doc)[0].clean_text).toBe('')
   })
 
-  it('round-trips a foldable <details> section (#183)', () => {
-    // On-disk form: a run of opaque NOTE blocks the converter regroups.
+  it('round-trips a foldable <details> section (#183/#310)', () => {
+    // On-disk form: ONE DETAILS ParsedBlock whose clean_text is the full HTML.
     const id = '11111111-1111-1111-1111-111111111111'
     const blocks = [
-      mkBlock('NOTE', { id, clean_text: '<details>' }),
-      mkBlock('NOTE', { clean_text: '<summary>Title</summary>' }),
-      mkBlock('NOTE', { clean_text: 'inner note' }),
-      mkBlock('NOTE', { clean_text: '</details>' })
+      mkBlock('DETAILS', {
+        id,
+        clean_text:
+          '<details>\n<summary>Title</summary>\ninner note\n</details>'
+      })
     ]
     const doc = blocksToDoc(blocks)
     const node = doc.content[0]
@@ -413,46 +407,50 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     const child = content?.content?.[0]
     expect(child?.type).toBe('noteBlock')
 
-    // Save: re-emits the `<details>` run as opaque NOTE blocks.
+    // Save: re-emits as ONE DETAILS block with the full HTML.
     const back = docToBlocks(doc)
-    expect(back.map((b) => b.clean_text)).toEqual([
-      '<details>',
-      '<summary>Title</summary>',
-      'inner note',
-      '</details>'
-    ])
+    expect(back).toHaveLength(1)
+    expect(back[0].type).toBe('DETAILS')
+    expect(back[0].id).toBe(id)
+    expect(back[0].clean_text).toBe(
+      '<details>\n<summary>Title</summary>\ninner note\n</details>'
+    )
   })
 
   it('handles an unterminated <details> gracefully (#183)', () => {
-    // No closing tag → the opener stays a plain NOTE (no crash, no loss).
+    // No closing tag → the Go parser leaves it as a NOTE; the converter
+    // sees NOTE and produces a noteBlock (no crash, no loss).
     const blocks = [mkBlock('NOTE', { clean_text: '<details>' })]
     const doc = blocksToDoc(blocks)
     expect(doc.content[0]?.type).toBe('noteBlock')
   })
 
-  it('empty <details> round-trips without a blank inner line (#183)', () => {
+  it('empty <details> round-trips without a blank inner line (#183/#310)', () => {
     // An empty details section must not inflate the file with a placeholder
-    // NOTE line — <details><summary>…</summary></details> with no body content.
+    // body line — the DETAILS ParsedBlock's HTML has no body between summary
+    // and </details>.
     const blocks = [
-      mkBlock('NOTE', { clean_text: '<details>' }),
-      mkBlock('NOTE', { clean_text: '<summary>T</summary>' }),
-      mkBlock('NOTE', { clean_text: '</details>' })
+      mkBlock('DETAILS', {
+        clean_text: '<details>\n<summary>T</summary>\n</details>'
+      })
     ]
     const doc = blocksToDoc(blocks)
-    // buildDetailsNode seeds an empty noteBlock placeholder for TipTap; the
-    // save path must strip it so the file stays 3 lines, not 4.
-    const back = docToBlocks(doc).map((b) => b.clean_text)
-    expect(back).toEqual(['<details>', '<summary>T</summary>', '</details>'])
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].type).toBe('DETAILS')
+    expect(back[0].clean_text).toBe(
+      '<details>\n<summary>T</summary>\n</details>'
+    )
   })
 
-  it('parses a <summary> with HTML attributes (#183)', () => {
+  it('parses a <summary> with HTML attributes (#183/#310)', () => {
     // External HTML often carries attributes on <summary>; parsing should be
     // lenient (the save path emits attribute-free <summary>).
     const blocks = [
-      mkBlock('NOTE', { clean_text: '<details>' }),
-      mkBlock('NOTE', { clean_text: '<summary class="t">Title</summary>' }),
-      mkBlock('NOTE', { clean_text: 'body' }),
-      mkBlock('NOTE', { clean_text: '</details>' })
+      mkBlock('DETAILS', {
+        clean_text:
+          '<details>\n<summary class="t">Title</summary>\nbody\n</details>'
+      })
     ]
     const doc = blocksToDoc(blocks)
     const summary = (doc.content[0]?.content || []).find(
@@ -461,12 +459,14 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(summary?.content).toEqual([{ type: 'text', text: 'Title' }])
   })
 
-  it('round-trips a GFM table (#172)', () => {
+  it('round-trips a GFM table (#172/#310)', () => {
     const id = '22222222-2222-2222-2222-222222222222'
     const blocks = [
-      mkBlock('NOTE', { clean_text: '| Name | Status |' }),
-      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
-      mkBlock('NOTE', { id, clean_text: '| Alice | Active |' })
+      mkBlock('TABLE', {
+        id,
+        clean_text:
+          '| Name   | Status  |\n| ---    | ---     |\n| Alice  | Active  |'
+      })
     ]
     const doc = blocksToDoc(blocks)
     const node = doc.content[0]
@@ -480,13 +480,12 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect((rows[1]?.content || []).every((c) => c.type === 'tableCell')).toBe(
       true
     )
-    // Save: re-emits the GFM run; the block id lands on the last row. Column
-    // widths are auto-padded for readability (a deterministic normalization),
-    // so we assert on cell content + emit-stability rather than exact bytes.
+    // Save: re-emits as ONE TABLE block.
     const back = docToBlocks(doc)
-    expect(back).toHaveLength(3)
-    expect(back[2].id).toBe(id)
-    // Re-parsing the emitted run yields the same cells (semantic identity).
+    expect(back).toHaveLength(1)
+    expect(back[0].type).toBe('TABLE')
+    expect(back[0].id).toBe(id)
+    // Re-parsing the emitted block yields the same cells (semantic identity).
     const reparsed = blocksToDoc(back)
     const rrows = (reparsed.content[0]?.content || []).filter(
       (c) => c.type === 'tableRow'
@@ -506,8 +505,41 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     )
   })
 
-  it('a run without a separator is NOT a table (#172)', () => {
-    // `| a | b |` with no `| --- |` separator → plain NOTEs.
+  it('preserves GFM column alignment markers on round-trip (#172)', () => {
+    const blocks = [
+      mkBlock('TABLE', {
+        clean_text:
+          '| left | center | right |\n|:-----|:------:|------:|\n| a   | b      | c      |'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    const rows = (doc.content[0]?.content || []).filter(
+      (c) => c.type === 'tableRow'
+    )
+    // Header cells should carry align attrs.
+    const headerAligns = (rows[0]?.content || []).map(
+      (c) => ((c.attrs || {}) as Record<string, any>).align
+    )
+    expect(headerAligns).toEqual(['left', 'center', 'right'])
+    // Save: separator should include alignment markers.
+    const back = docToBlocks(doc)
+    const sep = back[0].clean_text.split('\n')[1]
+    expect(sep).toMatch(/:--+/) // left marker
+    expect(sep).toMatch(/:--+:/) // center marker
+    expect(sep).toMatch(/--+:/) // right marker
+    // Re-parse: alignment survives a second round-trip.
+    const reparsedAligns = (
+      (blocksToDoc(back).content[0]?.content || []).filter(
+        (c) => c.type === 'tableRow'
+      )[0]?.content || []
+    ).map((c) => ((c.attrs || {}) as Record<string, any>).align)
+    expect(reparsedAligns).toEqual(['left', 'center', 'right'])
+  })
+
+  it('a NOTE that looks like a single pipe row is NOT a table (#310)', () => {
+    // `| a | b |` with no separator is a NOTE (the Go parser's table detection
+    // requires header + separator). The converter receives it as NOTE and
+    // produces a noteBlock.
     const blocks = [
       mkBlock('NOTE', { clean_text: '| a | b |' }),
       mkBlock('NOTE', { clean_text: 'plain text' })
@@ -517,11 +549,11 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(doc.content[1]?.type).toBe('noteBlock')
   })
 
-  it('escapes and round-trips a literal pipe inside a cell (#172)', () => {
+  it('escapes and round-trips a literal pipe inside a cell (#172/#310)', () => {
     const blocks = [
-      mkBlock('NOTE', { clean_text: '| a | b |' }),
-      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
-      mkBlock('NOTE', { clean_text: '| x \\| y | z |' })
+      mkBlock('TABLE', {
+        clean_text: '| a      | b   |\n| ---    | --- |\n| x \\| y | z   |'
+      })
     ]
     const doc = blocksToDoc(blocks)
     const rows = (doc.content[0]?.content || []).filter(
@@ -544,13 +576,14 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(reparsedData).toEqual(['x | y', 'z'])
   })
 
-  it('round-trips a cell with backslashes (#172)', () => {
+  it('round-trips a cell with backslashes (#172/#310)', () => {
     // Backslashes must be escaped (\\) so a path like C:\x next to a pipe
     // delimiter can't be misread as an escaped pipe on re-parse.
     const blocks = [
-      mkBlock('NOTE', { clean_text: '| a | b |' }),
-      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
-      mkBlock('NOTE', { clean_text: '| C:\\path\\x | y\\|z |' })
+      mkBlock('TABLE', {
+        clean_text:
+          '| a         | b     |\n| ---       | ---   |\n| C:\\path\\x | y\\|z  |'
+      })
     ]
     const doc = blocksToDoc(blocks)
     const rows = (doc.content[0]?.content || []).filter(

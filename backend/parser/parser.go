@@ -109,6 +109,25 @@ func CleanLineID(line string) string {
 	return IDRegex.ReplaceAllString(line, "")
 }
 
+// stripInlineID removes a trailing block-identity comment from a line and
+// returns the trimmed result. This handles backward compatibility with the
+// old on-disk format where each line within a multi-line block (table row,
+// details line) carried its own inline id comment. The unified region-block
+// model puts the id on a dedicated trailing line instead, but existing files
+// may still have inline ids that need to be stripped before region detection.
+func stripInlineID(line string) string {
+	return strings.TrimSpace(IDRegex.ReplaceAllString(line, ""))
+}
+
+// extractInlineID returns the uuid from a line's trailing id comment, or "".
+func extractInlineID(line string) string {
+	m := IDRegex.FindStringSubmatch(line)
+	if len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
 func normalizeDate(d string) string {
 	d = strings.TrimSpace(d)
 	if d == "" {
@@ -362,64 +381,238 @@ func isClosingFence(trimmed string, openerLen int) bool {
 	return n >= openerLen && strings.TrimSpace(trimmed[n:]) == ""
 }
 
-// accumulateCodeRegion reads a fenced code block starting at lines[openIdx]
-// (an opener fence) and returns:
-//   - consumedTo: the index of the last consumed input line (the closer, or
-//     the trailing id-comment line if one is present). The caller sets its
-//     loop variable to this so the next iteration continues after the region.
-//   - block: the assembled BlockCode (nil if the fence is unterminated — in
-//     which case the opener is emitted verbatim and no block is produced,
-//     matching the legacy passthrough for malformed input).
-//   - emitLines: the lines to append to outputLines (opener..closer [+ id]).
-//   - minted: true if a fresh block id was assigned (caller sets modifiedAny).
-//
-// The block id lives on its OWN line after the closing fence, never inside
-// the code body, so the fence stays strictly GFM and code is never corrupted.
-// A closing fence must have at least as many backticks as the opener (GFM),
-// so an inner ``` line does not prematurely close a ```` outer fence.
-func accumulateCodeRegion(lines []string, openIdx, lineNumber int, meta *FileMetadata) (consumedTo int, block *ParsedBlock, emitLines []string, minted bool) {
-	openerTrim := strings.TrimSpace(lines[openIdx])
-	openerLen := codeFenceLen(openerTrim)
-	lang := strings.TrimSpace(openerTrim[openerLen:])
+// ---- GFM table detection (#310) -------------------------------------------
+// A GFM table is a run of pipe-prefixed lines: a header row immediately
+// followed by a separator row (|---|), then zero or more data rows. The
+// separator accepts alignment markers (:---:, :---, ---:). Ported from the
+// frontend converter so the parser is the single source of truth for table
+// detection (the unified region-block model).
+var gfmRowRe = regexp.MustCompile(`^\|.*\|$`)
+var gfmSepRe = regexp.MustCompile(`^\|[\s:|-]+\|$`)
 
-	// Find the closing fence: the first later line that is a valid GFM closer
-	// for this opener (>= openerLen backticks, no info string). A ```js line
-	// inside the block is NOT a closer (info strings are opener-only).
-	closer := -1
-	for j := openIdx + 1; j < len(lines); j++ {
-		if isClosingFence(strings.TrimSpace(lines[j]), openerLen) {
-			closer = j
-			break
-		}
+func isGfmRow(s string) bool { return gfmRowRe.MatchString(stripInlineID(s)) }
+func isGfmSeparator(s string) bool { return gfmSepRe.MatchString(stripInlineID(s)) }
+
+// isGfmTableStart reports whether lines[idx] starts a GFM table run: a pipe
+// row immediately followed by a separator row (the two-line minimum that
+// distinguishes a table from a stray pipe-prefixed note).
+func isGfmTableStart(lines []string, idx int) bool {
+	return idx+1 < len(lines) && isGfmRow(lines[idx]) && isGfmSeparator(lines[idx+1])
+}
+
+// ---- <details> HTML detection (#310) --------------------------------------
+// A foldable <details> region runs from <details> to the matching </details>,
+// depth-counted for nesting. Ported from the frontend converter.
+var detailsOpenRe = regexp.MustCompile(`(?i)^<details(?:\s+[^>]*)?>$`)
+var detailsCloseRe = regexp.MustCompile(`(?i)^</details>$`)
+
+func isDetailsOpen(s string) bool  { return detailsOpenRe.MatchString(stripInlineID(s)) }
+func isDetailsClose(s string) bool { return detailsCloseRe.MatchString(stripInlineID(s)) }
+
+// ---- Callout detection (#308) ---------------------------------------------
+// An Obsidian-style callout is a `>` line whose body starts with `[!variant]`.
+// The region absorbs all subsequent `>` lines (including bare `>` for paragraph
+// breaks) and ends at the first non-`>` line. A plain `> text` (no `[!`) is NOT
+// a callout — it stays a NOTE with a quote prefix.
+var calloutOpenRe = regexp.MustCompile(`(?i)^>\s*\[!(note|info|tip|warning|danger|success|quote)\]`)
+var gtPrefixRe = regexp.MustCompile(`^>\s?`)
+
+func isCalloutOpen(s string) bool { return calloutOpenRe.MatchString(strings.TrimSpace(s)) }
+func hasGtPrefix(s string) bool   { return gtPrefixRe.MatchString(strings.TrimSpace(s)) }
+
+// ---- Region kind discriminator --------------------------------------------
+
+// regionKind identifies which multi-line region shape was detected at a given
+// line. Used by accumulateRegion to dispatch to the right closer logic.
+type regionKind int
+
+const (
+	regionNone    regionKind = iota
+	regionCode               // ``` fence
+	regionTable              // GFM pipe table
+	regionDetails            // <details> HTML
+	regionCallout            // > [!variant] Obsidian callout
+)
+
+// detectRegionKind checks what kind of managed multi-line region starts at
+// lines[idx], if any. Code fences take priority (a ``` line inside what looks
+// like a table row is still a fence). Returns regionNone for non-region lines.
+func detectRegionKind(lines []string, idx int) regionKind {
+	trimmed := strings.TrimSpace(lines[idx])
+	if isCodeFence(trimmed) {
+		return regionCode
 	}
-	if closer == -1 {
-		// Unterminated fence: emit the opener verbatim, produce no block.
-		// The caller continues at openIdx (loop i++ moves past it).
-		return openIdx, nil, []string{lines[openIdx]}, false
+	if isGfmTableStart(lines, idx) {
+		return regionTable
 	}
+	if isDetailsOpen(trimmed) {
+		return regionDetails
+	}
+	if isCalloutOpen(lines[idx]) {
+		return regionCallout
+	}
+	return regionNone
+}
 
-	inner := strings.Join(lines[openIdx+1:closer], "\n")
-
-	// Peek for a DEDICATED trailing block-identity comment line right after
-	// the closer. It must be a line that is solely the comment (trimmed starts
-	// with "<!-- id:") — otherwise a normal prose block carrying its own id
-	// comment would be mis-attributed as this code block's id line.
-	idLineIdx := closer + 1
-	blockID, blockFileDate := "", ""
-	consumedIDLine := false
-	if idLineIdx < len(lines) {
-		cand := strings.TrimSpace(lines[idLineIdx])
-		if strings.HasPrefix(cand, "<!-- id:") {
-			if m := IDRegex.FindStringSubmatch(lines[idLineIdx]); len(m) > 1 {
-				blockID = m[1]
-				if len(m) > 2 {
-					blockFileDate = m[2]
-				}
-				consumedIDLine = true
+// findRegionCloser returns the index of the last line that is PART OF the
+// region starting at openIdx, or -1 if the region is unterminated. The return
+// value is the inclusive end of the region content (the closer itself for
+// code/details; the last pipe row for tables).
+func findRegionCloser(lines []string, openIdx int, kind regionKind) int {
+	trimmed := strings.TrimSpace(lines[openIdx])
+	switch kind {
+	case regionCode:
+		openerLen := codeFenceLen(trimmed)
+		for j := openIdx + 1; j < len(lines); j++ {
+			if isClosingFence(strings.TrimSpace(lines[j]), openerLen) {
+				return j
 			}
 		}
+		return -1
+	case regionTable:
+		endIdx := openIdx
+		for endIdx < len(lines) && isGfmRow(lines[endIdx]) {
+			endIdx++
+		}
+		return endIdx - 1
+	case regionDetails:
+		depth := 1
+		for j := openIdx + 1; j < len(lines); j++ {
+			if isDetailsOpen(lines[j]) {
+				depth++
+			} else if isDetailsClose(lines[j]) {
+				depth--
+				if depth == 0 {
+					return j
+				}
+			}
+		}
+		return -1
+	case regionCallout:
+		// The callout region absorbs all consecutive `>` lines (including bare
+		// `>` paragraph breaks). It ends at the first non-`>` line.
+		endIdx := openIdx + 1
+		for endIdx < len(lines) && hasGtPrefix(lines[endIdx]) {
+			endIdx++
+		}
+		return endIdx - 1
+	}
+	return -1
+}
+
+// resolveTrailingID peeks at the line after the region closer for a dedicated
+// block-identity comment. Returns the id, file date, the index of the id line
+// (or -1 if none), and whether it was consumed.
+func resolveTrailingID(lines []string, afterIdx int, meta *FileMetadata) (id, fileDate string, idLineIdx int, consumed bool) {
+	idLineIdx = -1
+	if afterIdx >= len(lines) {
+		return "", "", -1, false
+	}
+	cand := strings.TrimSpace(lines[afterIdx])
+	if !strings.HasPrefix(cand, "<!-- id:") {
+		return "", "", -1, false
+	}
+	m := IDRegex.FindStringSubmatch(lines[afterIdx])
+	if len(m) < 2 {
+		return "", "", -1, false
+	}
+	id = m[1]
+	if len(m) > 2 {
+		fileDate = m[2]
+	}
+	if fileDate == "" {
+		fileDate = meta.Date
+	}
+	return id, fileDate, afterIdx, true
+}
+
+// accumulateRegion reads a multi-line managed region starting at lines[openIdx]
+// and returns:
+//   - consumedTo: the index of the last consumed input line (the region closer,
+//     or the trailing id-comment line if one is present).
+//   - block: the assembled ParsedBlock (nil if the region is unterminated).
+//   - emitLines: the lines to append to outputLines (region content [+ id]).
+//   - minted: true if a fresh block id was assigned.
+//   - oldIDs: map of inline ids found on region lines (old format) → the typed
+//     block's id. Used by Migration B to remap ((uuid)) references.
+//
+// Handles four region shapes: fenced code (BlockCode), GFM table (BlockTable),
+// <details> HTML (BlockDetails), and Obsidian callout (BlockCallout). The block
+// id lives on its OWN dedicated trailing line after the region content so the
+// on-disk format stays strictly GFM/HTML and round-trips through Obsidian /
+// GitHub / VS Code unchanged.
+//
+// Backward compatibility: old on-disk files may have inline id comments on each
+// line within a region (the pre-unified format). These are stripped from
+// clean_text, and their ids are collected for ((uuid)) reference remapping.
+func accumulateRegion(lines []string, openIdx, lineNumber int, meta *FileMetadata) (consumedTo int, block *ParsedBlock, emitLines []string, minted bool, oldIDs map[string]string) {
+	kind := detectRegionKind(lines, openIdx)
+	if kind == regionNone {
+		return openIdx, nil, []string{lines[openIdx]}, false, nil
 	}
 
+	closer := findRegionCloser(lines, openIdx, kind)
+	if closer == -1 {
+		// Unterminated region: emit the opener verbatim, produce no block.
+		return openIdx, nil, []string{lines[openIdx]}, false, nil
+	}
+
+	// Build clean_text. For code blocks, the content between fences is literal
+	// — never strip id comments from code (they're part of the code). For
+	// table/details/callout, old-format files may have inline id comments on
+	// each line; strip them and collect old ids for Migration B.
+	var blockType BlockType
+	var inner string
+	openerTrim := stripInlineID(lines[openIdx])
+	oldIDs = make(map[string]string)
+
+	switch kind {
+	case regionCode:
+		blockType = BlockCode
+		inner = strings.Join(lines[openIdx+1:closer], "\n")
+		// Code blocks never have inline ids in the old format (the parser
+		// skips id injection inside fences), so no oldIDs to collect.
+	case regionTable, regionDetails, regionCallout:
+		switch kind {
+		case regionTable:
+			blockType = BlockTable
+		case regionDetails:
+			blockType = BlockDetails
+		case regionCallout:
+			blockType = BlockCallout
+		}
+		var cleanLines []string
+		var primaryInlineID string
+		for j := openIdx; j <= closer; j++ {
+			cleaned := stripInlineID(lines[j])
+			inlineID := extractInlineID(lines[j])
+			if inlineID != "" {
+				oldIDs[inlineID] = "" // placeholder
+				if kind == regionTable {
+					primaryInlineID = inlineID // last wins
+				} else if j == openIdx {
+					primaryInlineID = inlineID
+				}
+			}
+			cleanLines = append(cleanLines, cleaned)
+		}
+		inner = strings.Join(cleanLines, "\n")
+		// If no trailing id line exists (checked below), fall back to the
+		// primary inline id from the old format.
+		if primaryInlineID != "" {
+			oldIDs["__primary__"] = primaryInlineID
+		}
+	}
+
+	// Resolve the block id: first check for a dedicated trailing id line
+	// (new format), then fall back to the primary inline id (old format),
+	// then mint a new one.
+	blockID, blockFileDate, idLineIdx, consumedIDLine := resolveTrailingID(lines, closer+1, meta)
+	if blockID == "" {
+		if p, ok := oldIDs["__primary__"]; ok {
+			blockID = p
+		}
+	}
 	if blockID == "" {
 		blockID = generateUUIDv4()
 		minted = true
@@ -428,23 +621,67 @@ func accumulateCodeRegion(lines []string, openIdx, lineNumber int, meta *FileMet
 		blockFileDate = meta.Date
 	}
 
-	cb := ParsedBlock{
+	// Fill the oldID map: each old inline id → the typed block's id.
+	// Remove the __primary__ marker — it's not a real id to remap.
+	delete(oldIDs, "__primary__")
+	for k := range oldIDs {
+		oldIDs[k] = blockID
+	}
+
+	pb := ParsedBlock{
 		ID:         blockID,
-		Type:       BlockCode,
-		Language:   lang,
+		Type:       blockType,
 		CleanText:  inner,
 		LineNumber: lineNumber,
 		FileDate:   blockFileDate,
 	}
+	if kind == regionCode {
+		pb.Language = strings.TrimSpace(openerTrim[codeFenceLen(openerTrim):])
+	}
 
-	emitLines = append(emitLines, lines[openIdx:closer+1]...)
+	// Emit lines: for code blocks, emit the raw fence + content verbatim.
+	// For table/details/callout, emit cleaned lines (inline ids stripped) +
+	// trailing id line.
+	if kind == regionCode {
+		emitLines = append(emitLines, lines[openIdx:closer+1]...)
+	} else {
+		// Rebuild cleanLines for emission (same logic as clean_text above).
+		for j := openIdx; j <= closer; j++ {
+			emitLines = append(emitLines, stripInlineID(lines[j]))
+		}
+	}
 	if consumedIDLine {
 		emitLines = append(emitLines, lines[idLineIdx])
-		return idLineIdx, &cb, emitLines, minted
+		return idLineIdx, &pb, emitLines, minted, oldIDs
 	}
-	// No existing id line: emit a minted one so the block has a stable identity.
 	emitLines = append(emitLines, fmt.Sprintf("<!-- id: %s @ %s -->", blockID, blockFileDate))
-	return closer, &cb, emitLines, minted
+	return closer, &pb, emitLines, minted, oldIDs
+}
+
+// skipManagedRegion checks whether bodyLines[idx] starts a managed multi-line
+// region (code fence, GFM table, <details> HTML, or Obsidian callout) and, if
+// so, returns the index of the line AFTER the region (including any trailing
+// id-comment line). Returns -1 if the line does not start a region, or if the
+// region is unterminated (caller should preserve verbatim).
+func skipManagedRegion(bodyLines []string, idx int) int {
+	kind := detectRegionKind(bodyLines, idx)
+	if kind == regionNone {
+		return -1
+	}
+	closer := findRegionCloser(bodyLines, idx, kind)
+	if closer == -1 {
+		return -1
+	}
+	consumed := closer + 1
+	if consumed < len(bodyLines) {
+		cand := strings.TrimSpace(bodyLines[consumed])
+		if strings.HasPrefix(cand, "<!-- id:") {
+			if m := IDRegex.FindStringSubmatch(bodyLines[consumed]); len(m) > 1 {
+				consumed++
+			}
+		}
+	}
+	return consumed
 }
 
 func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPage, defaultDate string, spacesPerTab int) ([]ParsedBlock, FileMetadata, string, bool, error) {
@@ -506,6 +743,10 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 	var blocks []ParsedBlock
 	var outputLines []string
 	modifiedAny := false
+	// subsumedIDs collects old inline ids from pre-unified-format files.
+	// After parsing, ((uuid)) references to these ids are remapped to the
+	// typed block's id (Migration B).
+	subsumedIDs := make(map[string]string)
 
 	startIndex := 0
 	if hasFrontmatter {
@@ -532,23 +773,31 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			continue
 		}
 
-		// Fenced code region (#189): a ``` opener starts a managed BlockCode
-		// spanning opener..closer. This generalizes the pre-existing verbatim
-		// pass-through (which left code unmanaged and invisible to the editor)
-		// so a code block is a first-class editable block. Content is still
-		// preserved byte-for-byte — NO id comment is ever injected into the
-		// code body. The block identity comment lives on its OWN line after
-		// the closing fence so the fence stays strictly GFM (interoperable
-		// with Obsidian / GitHub / VS Code).
-		if isCodeFence(strings.TrimSpace(line)) {
-			consumedTo, codeBlock, emitLines, minted := accumulateCodeRegion(
+		// Multi-line managed regions (#189 code, #310 table/details, #308
+		// callout): each region type becomes ONE managed ParsedBlock (the
+		// unified region-block model). Content is preserved byte-for-byte;
+		// the block identity comment lives on its OWN line after the region
+		// so the on-disk format stays strictly GFM/HTML/Obsidian callout
+		// syntax (interoperable with Obsidian / GitHub / VS Code).
+		if detectRegionKind(lines, i) != regionNone {
+			consumedTo, regionBlock, emitLines, minted, oldIDs := accumulateRegion(
 				lines, i, lineNumber, &meta,
 			)
-			if codeBlock != nil {
-				if codeBlock.FileDate == "" {
-					codeBlock.FileDate = meta.Date
+			if regionBlock != nil {
+				if regionBlock.FileDate == "" {
+					regionBlock.FileDate = meta.Date
 				}
-				blocks = append(blocks, *codeBlock)
+				blocks = append(blocks, *regionBlock)
+				// Collect old inline ids for Migration B remapping. Any
+				// old-format inline ids mean the file was modified (migrated).
+				if len(oldIDs) > 0 {
+					modifiedAny = true
+					for oldID, newID := range oldIDs {
+						if oldID != newID {
+							subsumedIDs[oldID] = newID
+						}
+					}
+				}
 			}
 			if minted {
 				modifiedAny = true
@@ -591,6 +840,27 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			}
 
 			blocks = append(blocks, block)
+		}
+	}
+
+	// Migration B: remap ((uuid)) references to old per-line ids that were
+	// subsumed into typed blocks. Old-format files had inline id comments on
+	// each line of a table/details/callout; those ids are gone in the unified
+	// model. Any ((uuid)) reference pointing to a vanished id is remapped to
+	// the typed block's id so references still resolve.
+	if len(subsumedIDs) > 0 {
+		for i := range blocks {
+			matches := BlockRefRegex.FindAllStringSubmatch(blocks[i].CleanText, -1)
+			for _, m := range matches {
+				oldID := m[1]
+				if newID, ok := subsumedIDs[oldID]; ok {
+					blocks[i].CleanText = strings.ReplaceAll(
+						blocks[i].CleanText,
+						"(("+oldID+"))",
+						"(("+newID+"))",
+					)
+				}
+			}
 		}
 	}
 
@@ -663,42 +933,17 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 	var pendingPreserved []string
 	if originalBody != "" {
 		bodyLines0 := strings.Split(originalBody, "\n")
-		// Code-fence regions are now managed BlockCode blocks (renderBlock
-		// re-emits them from `blocks`), so a fence run in the original body
-		// must NOT be preserved — otherwise it would double-emit. We scan a
-		// fence opener..closer (+ optional trailing id-comment line) and skip
-		// the whole run. Unterminated fences fall back to verbatim preservation.
+		// Managed multi-line regions (code fence, GFM table, <details> HTML,
+		// Obsidian callout) are re-emitted from `blocks` via renderBlock, so a
+		// region in the original body must NOT be preserved — otherwise it
+		// would double-emit. skipManagedRegion handles all region types
+		// uniformly, returning the line index after the region (+ optional
+		// trailing id-comment line).
+		// Unterminated regions fall back to verbatim preservation (-1).
 		for idx := 0; idx < len(bodyLines0); idx++ {
 			line := bodyLines0[idx]
 			trimmed := strings.TrimSpace(line)
-			if isCodeFence(trimmed) {
-				openerLen := codeFenceLen(trimmed)
-				closer := -1
-				for j := idx + 1; j < len(bodyLines0); j++ {
-					if isClosingFence(strings.TrimSpace(bodyLines0[j]), openerLen) {
-						closer = j
-						break
-					}
-				}
-				if closer == -1 {
-					// Unterminated: preserve verbatim (legacy behaviour).
-					pendingPreserved = append(pendingPreserved, line)
-					continue
-				}
-				consumed := closer + 1
-				// If the line right after the closer is this code block's id
-				// comment, skip it too (renderBlock emits a fresh one). Mirror
-				// accumulateCodeRegion's strict predicate (a dedicated id line)
-				// so render and parse agree on the region boundary; a prose line
-				// that merely ends in an id-shaped comment must NOT be consumed.
-				if consumed < len(bodyLines0) {
-					cand := strings.TrimSpace(bodyLines0[consumed])
-					if strings.HasPrefix(cand, "<!-- id:") {
-						if m := IDRegex.FindStringSubmatch(bodyLines0[consumed]); len(m) > 1 {
-							consumed++
-						}
-					}
-				}
+			if consumed := skipManagedRegion(bodyLines0, idx); consumed > 0 {
 				idx = consumed - 1
 				continue
 			}
@@ -787,6 +1032,18 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 			}
 		}
 		return fmt.Sprintf("%s%s\n%s\n%s%s", fence, block.Language, block.CleanText, fence, idLine)
+	}
+
+	// BlockTable and BlockDetails are multi-line: the clean_text IS the
+	// on-disk content (GFM pipe rows / <details> HTML), emitted verbatim.
+	// The identity comment goes on its own trailing line so the content stays
+	// strictly GFM/HTML (#310 — unified region-block model).
+	if block.Type == BlockTable || block.Type == BlockDetails || block.Type == BlockCallout {
+		idLine := ""
+		if idSuffix != "" {
+			idLine = "\n" + strings.TrimSpace(idSuffix)
+		}
+		return block.CleanText + idLine
 	}
 
 	if block.Type == BlockTask {

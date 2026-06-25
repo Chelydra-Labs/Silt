@@ -28,35 +28,6 @@ function extractTextContent(content?: NodeJSON[]): string {
   return out
 }
 
-// Push one opaque NOTE line — used for `<details>` runs (#183) and GFM table
-// rows (#172). The Go parser preserves the clean_text verbatim (HTML passes
-// through, and pipe characters are just text), so these lines round-trip
-// byte-for-byte. Pass the block id only on the line that should carry the
-// identity (the `<details>` opener / the LAST table row).
-function pushOpaqueNoteLine(
-  blocks: ParsedBlock[],
-  id: string,
-  text: string,
-  lineNumber: number,
-  fileDate: string
-): void {
-  blocks.push({
-    id,
-    parent_id: '',
-    type: 'NOTE',
-    depth: 0,
-    raw_text: text,
-    clean_text: text,
-    status: '',
-    owner: '',
-    start_date: '',
-    due_date: '',
-    priority: 3,
-    line_number: lineNumber,
-    file_date: fileDate
-  })
-}
-
 // Extract the bullet prefix ('- ', '* ', '+ ', or '') from a note's raw_text,
 // matching the detection logic in Go's renderBlock (parser.go ~line 515-527).
 function detectBullet(rawText: string): string {
@@ -80,26 +51,6 @@ function detectQuote(body: string): { quote: string; body: string } {
   const m = body.match(QUOTE_PREFIX_RE)
   if (!m) return { quote: '', body }
   return { quote: m[1] + ' ', body: body.slice(m[0].length) }
-}
-
-// Detect a callout / admonition (#180). An Obsidian-style callout is a `>`
-// line whose body starts with `[!variant]`. Returns the variant + the message
-// (everything after the marker), or null when the line is not a callout. A
-// callout takes precedence over a plain quote (it IS a quote whose first token
-// is the `[!type]` marker). The `i` flag matches Obsidian's case-insensitive
-// variant names ([!NOTE], [!Tip]); the captured variant is lowercased so the
-// NodeView's CALLOUT_VARIANTS lookup and the on-disk emit stay canonical.
-const CALLOUT_RE =
-  /^\[!(note|info|tip|warning|danger|success|quote)\](?:\s+(.*))?$/i
-function detectCallout(
-  body: string
-): { variant: string; message: string } | null {
-  const q = body.match(QUOTE_PREFIX_RE)
-  if (!q) return null
-  const afterMarker = body.slice(q[0].length)
-  const m = afterMarker.match(CALLOUT_RE)
-  if (!m) return null
-  return { variant: m[1].toLowerCase(), message: m[2] ?? '' }
 }
 
 // ---- Alignment marker helpers (#173) -------------------------------------
@@ -240,6 +191,58 @@ function blockToNode(block: ParsedBlock): NodeJSON {
     }
   }
 
+  // A TABLE block (#310) carries the raw GFM pipe rows as multi-line
+  // clean_text. Parse the rows into a table node tree (tableRow/tableHeader/
+  // tableCell). Uses the raw clean_text directly — alignment markers are a
+  // prose-block concept.
+  if (block.type === 'TABLE') {
+    const lines = rawText.split('\n').filter(Boolean)
+    if (lines.length >= 2) {
+      const headerCells = parseGfmRow(lines[0])
+      const aligns = parseGfmAlignment(lines[1])
+      const dataRows = lines.slice(2).map(parseGfmRow)
+      const mkCell = (
+        type: 'tableHeader' | 'tableCell',
+        text: string,
+        colIndex: number
+      ): NodeJSON => ({
+        type,
+        attrs: aligns[colIndex] ? { align: aligns[colIndex] } : {},
+        content: text ? legacyTokenizeInline(text) : []
+      })
+      const mkRow = (
+        cells: string[],
+        type: 'tableHeader' | 'tableCell'
+      ): NodeJSON => ({
+        type: 'tableRow',
+        attrs: {},
+        content: cells.map((c, i) => mkCell(type, c, i))
+      })
+      const rows: NodeJSON[] = [mkRow(headerCells, 'tableHeader')]
+      for (const r of dataRows) rows.push(mkRow(r, 'tableCell'))
+      return {
+        type: 'table',
+        attrs: { id: block.id || null, file_date: block.file_date || '' },
+        content: rows
+      }
+    }
+  }
+
+  // A DETAILS block (#310) carries the full <details>…</details> HTML as
+  // multi-line clean_text. Parse into a details/detailsSummary/detailsContent
+  // tree. The body lines become child block nodes.
+  if (block.type === 'DETAILS') {
+    return parseDetailsHTML(rawText, block.id, block.file_date || '')
+  }
+
+  // A CALLOUT block (#308) carries multi-line Obsidian callout syntax as
+  // clean_text (`> [!variant] message` + subsequent `>` body lines). Parse
+  // into a calloutBlock node with paragraph children. Each `>` line becomes
+  // a paragraph; the variant is extracted from the first line's `[!variant]`.
+  if (block.type === 'CALLOUT') {
+    return parseCalloutText(rawText, block.id, block.file_date || '')
+  }
+
   const content: NodeJSON[] = text ? legacyTokenizeInline(text) : []
 
   switch (block.type) {
@@ -274,23 +277,10 @@ function blockToNode(block: ParsedBlock): NodeJSON {
       // Defensive: unknown block types map to NOTE so a malformed doc never
       // drops content. The Go side also treats unrecognized lines as notes.
       //
-      // Callout detection (#180) takes precedence over quote: a `> [!variant]`
-      // line is a callout node, not a plain quote.
-      const callout = detectCallout(text)
-      if (callout) {
-        return {
-          type: 'calloutBlock',
-          attrs: {
-            id: block.id,
-            variant: callout.variant,
-            file_date: block.file_date || ''
-          },
-          content: callout.message ? legacyTokenizeInline(callout.message) : []
-        }
-      }
       // Quote detection (#188): a `> ` prefix (stripped of any alignment
       // marker first) is a blockquote marker, parallel to `bullet`. The
-      // marker is stored on the node so it round-trips verbatim.
+      // marker is stored on the node so it round-trips verbatim. Callouts
+      // (#180/#308) are now CALLOUT-typed blocks — no longer detected here.
       const { quote, body: quoteStripped } = detectQuote(text)
       const noteContent: NodeJSON[] = quoteStripped
         ? legacyTokenizeInline(quoteStripped)
@@ -310,22 +300,9 @@ function blockToNode(block: ParsedBlock): NodeJSON {
   }
 }
 
-// Detect the opening of an HTML `<details>` region (#183). The Go parser
-// preserves each line of a `<details>` block as an opaque NOTE (HTML passes
-// through clean_text verbatim, like the color spans), so a foldable section
-// is a RUN of NOTE blocks the converter groups into one Details node tree.
-// `<details>` and `<details open>` both open; the run ends at `</details>`.
-const DETAILS_OPEN_RE = /^<details(?:\s+[^>]*)?>$/i
-const DETAILS_CLOSE_RE = /^<\/details>$/i
-const DETAILS_SUMMARY_RE = /^<summary(?:\s[^>]*)?>([\s\S]*?)<\/summary>$/i
-
-// ---- GFM table parsing (#172) --------------------------------------------
-// A table is a run of pipe-prefixed NOTE blocks: a header row, a `| --- |`
-// separator row, and one or more data rows. The converter groups the run into
-// one `table` node tree (each row → tableRow; header cells → tableHeader,
-// data cells → tableCell). Literal `|` in a cell is escaped as `\|` per GFM.
-const GFM_ROW_RE = /^\|.*\|$/
-const GFM_SEP_RE = /^\|[\s:|-]+\|$/
+// ---- GFM table helpers (used by blockToNode + docToBlocks TABLE branches) --
+// A TABLE ParsedBlock's clean_text is the raw GFM rows. These helpers split
+// rows into cells and escape cell values for round-trip serialization.
 
 // Split a GFM row into cell strings. The leading/trailing `|` are stripped;
 // cells are split on unescaped `|`; `\|` is unescaped back to `|`.
@@ -371,166 +348,80 @@ function escapeGfmCell(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ')
 }
 
-// Test whether a NOTE block's clean_text is a GFM table row.
-function isGfmRow(text: string): boolean {
-  return GFM_ROW_RE.test((text || '').trim())
-}
-function isGfmSeparator(text: string): boolean {
-  return GFM_SEP_RE.test((text || '').trim())
-}
-
-// Does a table run START at blocks[idx]? Requires a header row followed by a
-// separator row (the two-line minimum that distinguishes a table from a stray
-// pipe-prefixed note).
-function tableRunStartsAt(blocks: ParsedBlock[], idx: number): boolean {
-  return (
-    idx + 1 < blocks.length &&
-    isGfmRow(blocks[idx].clean_text || '') &&
-    isGfmSeparator(blocks[idx + 1].clean_text || '')
-  )
+// Parse a GFM separator row to extract per-column alignment.
+// `:---:` → center, `:---` → left, `---:` → right, `---` → '' (default).
+function parseGfmAlignment(sepRow: string): string[] {
+  return parseGfmRow(sepRow).map((cell) => {
+    const t = cell.trim()
+    const startColon = t.startsWith(':')
+    const endColon = t.endsWith(':')
+    if (startColon && endColon) return 'center'
+    if (endColon) return 'right'
+    if (startColon) return 'left'
+    return ''
+  })
 }
 
-// Read a GFM table run starting at blocks[idx] (header + separator + data
-// rows) and return the assembled `table` node JSON + the number of blocks
-// consumed. The block id comes from the LAST row of the run (so the whole
-// table has one identity — matches how it round-trips on disk).
-function buildTableNode(
-  blocks: ParsedBlock[],
-  startIdx: number
-): { node: NodeJSON; consumed: number; id: string } {
-  // Consume consecutive pipe rows.
-  let endIdx = startIdx
-  while (endIdx < blocks.length && isGfmRow(blocks[endIdx].clean_text || '')) {
-    endIdx++
+// Emit a GFM separator cell with alignment markers for the given column width.
+function emitGfmSeparator(width: number, align: string): string {
+  const w = Math.max(width, 3)
+  switch (align) {
+    case 'center':
+      return ':' + '-'.repeat(Math.max(w - 2, 1)) + ':'
+    case 'right':
+      return '-'.repeat(Math.max(w - 1, 2)) + ':'
+    case 'left':
+      return ':' + '-'.repeat(Math.max(w - 1, 2))
+    default:
+      return '-'.repeat(w)
   }
-  // endIdx is now one past the last table row.
-  const run = blocks.slice(startIdx, endIdx)
-  const headerCells = parseGfmRow(run[0].clean_text || '')
-  const dataRows = run.slice(2).map((b) => parseGfmRow(b.clean_text || ''))
+}
 
+// ---- Details HTML parsing (#310) ------------------------------------------
+// The Go parser produces ONE DETAILS ParsedBlock whose clean_text is the full
+// <details>…</details> HTML. These helpers parse that HTML into a details node
+// tree (load) and serialize it back (save). The body lines between <summary>
+// and </details> become child block nodes.
+
+const DETAILS_OPEN_RE = /^<details(?:\s+[^>]*)?>$/i
+const DETAILS_CLOSE_RE = /^<\/details>$/i
+const DETAILS_SUMMARY_RE = /^<summary(?:\s[^>]*)?>([\s\S]*?)<\/summary>$/i
+
+// Parse <details> HTML into a details node tree. The opener's line carries the
+// block id (inherited from the old converter model). Body lines become child
+// block nodes via synthetic ParsedBlocks fed through blockToNode.
+function parseDetailsHTML(
+  html: string,
+  blockId: string,
+  fileDate: string
+): NodeJSON {
+  const lines = html.split('\n')
   const today = new Date().toISOString().slice(0, 10)
-  const id = run[run.length - 1].id || null
 
-  const mkCell = (
-    type: 'tableHeader' | 'tableCell',
-    text: string
-  ): NodeJSON => ({
-    type,
-    attrs: {},
-    content: text ? legacyTokenizeInline(text) : []
-  })
-  const mkRow = (
-    cells: string[],
-    type: 'tableHeader' | 'tableCell'
-  ): NodeJSON => ({
-    type: 'tableRow',
-    attrs: {},
-    content: cells.map((c) => mkCell(type, c))
-  })
-
-  const rows: NodeJSON[] = [mkRow(headerCells, 'tableHeader')]
-  for (const r of dataRows) rows.push(mkRow(r, 'tableCell'))
-
-  const node: NodeJSON = {
-    type: 'table',
-    attrs: { id, file_date: run[run.length - 1].file_date || today },
-    content: rows
-  }
-  return { node, consumed: run.length, id: id || '' }
-}
-
-// blocksToDoc converts an ordered list of ParsedBlocks into a ProseMirror doc
-// JSON suitable for editor.commands.setContent(). Most blocks become one
-// top-level block node (nesting is expressed via the depth attr), but a
-// `<details>` run (#183) is grouped into a single Details node tree whose
-// inner lines become normal child blocks. An index-based scanner lets a
-// group consume multiple input blocks.
-export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
-  const content: NodeJSON[] = []
-  let i = 0
-  while (i < blocks.length) {
-    const block = blocks[i]
-    // GFM table run (#172): header + separator + data rows → one table node.
-    if (tableRunStartsAt(blocks, i)) {
-      const { node, consumed } = buildTableNode(blocks, i)
-      content.push(node)
-      i += consumed
-      continue
-    }
-    if (DETAILS_OPEN_RE.test((block.clean_text || '').trim())) {
-      const { node, consumed } = buildDetailsNode(blocks, i)
-      if (node) {
-        content.push(node)
-        i += consumed
-        continue
-      }
-    }
-    content.push(blockToNode(block))
-    i++
-  }
-  // ProseMirror requires a doc to have at least one block child; an empty
-  // blocks list yields a single empty note node so the editor always has a
-  // place to type (the Placeholder extension shows its hint here).
-  if (content.length === 0) {
-    content.push({
-      type: 'noteBlock',
-      attrs: {
-        id: crypto.randomUUID(),
-        depth: 0,
-        bullet: '- ',
-        file_date: new Date().toISOString().slice(0, 10)
-      },
-      content: []
-    })
-  }
-  return { type: 'doc', content }
-}
-
-// buildDetailsNode reads a `<details>` run starting at blocks[startIdx] and
-// returns the assembled Details node JSON plus the number of input blocks it
-// consumed (opener..closer inclusive). Nested `<details>` are handled by
-// depth counting. The opener's id becomes the Details node's id; the
-// `<summary>` line (if present) seeds the summary; every line between becomes
-// a child block (recursively, so a nested `<details>` is a child Details).
-function buildDetailsNode(
-  blocks: ParsedBlock[],
-  startIdx: number
-): { node: NodeJSON | null; consumed: number } {
-  const opener = blocks[startIdx]
-  let depth = 1
-  let endIdx = startIdx + 1
-  while (endIdx < blocks.length && depth > 0) {
-    const t = (blocks[endIdx].clean_text || '').trim()
-    if (DETAILS_OPEN_RE.test(t)) depth++
-    else if (DETAILS_CLOSE_RE.test(t)) depth--
-    if (depth === 0) break
-    endIdx++
-  }
-  if (depth !== 0) {
-    // Unterminated `<details>` — leave the opener as a plain NOTE.
-    return { node: null, consumed: 1 }
-  }
-
-  const inner = blocks.slice(startIdx + 1, endIdx) // between the tags
   let summaryText = ''
-  let bodyStart = 0
-  if (inner.length > 0) {
-    const sm = (inner[0].clean_text || '').trim().match(DETAILS_SUMMARY_RE)
+  let bodyStartIdx = 1
+
+  // Extract summary from the second line (if present).
+  if (lines.length > 1) {
+    const sm = lines[1].trim().match(DETAILS_SUMMARY_RE)
     if (sm) {
       summaryText = sm[1]
-      bodyStart = 1
+      bodyStartIdx = 2
     }
   }
-  const bodyBlocks = inner.slice(bodyStart)
-  const childNodes = bodyBlocks.length ? blocksToDoc(bodyBlocks).content : []
 
-  const today = new Date().toISOString().slice(0, 10)
-  const node: NodeJSON = {
+  // Body lines: everything between summary and </details>.
+  const bodyLines = lines.slice(bodyStartIdx, -1)
+
+  // Convert body lines to child nodes, handling nested <details>.
+  const childNodes = detailsBodyLinesToNodes(bodyLines)
+
+  return {
     type: 'details',
     attrs: {
-      id: opener.id || null,
+      id: blockId || null,
       open: false,
-      file_date: opener.file_date || today
+      file_date: fileDate || today
     },
     content: [
       {
@@ -553,7 +444,371 @@ function buildDetailsNode(
       }
     ]
   }
-  return { node, consumed: endIdx - startIdx + 1 }
+}
+
+// Convert body lines (inside <details>) to child block nodes. Detects nested
+// multi-line constructs (code fences, GFM tables, callouts, nested <details>)
+// and accumulates them into typed synthetic blocks before falling through to
+// regular NOTE lines.
+function detailsBodyLinesToNodes(lines: string[]): NodeJSON[] {
+  const nodes: NodeJSON[] = []
+  let i = 0
+  while (i < lines.length) {
+    const trimmed = lines[i].trim()
+
+    // Nested <details> → recursively parse.
+    if (DETAILS_OPEN_RE.test(trimmed)) {
+      let depth = 1
+      let j = i + 1
+      while (j < lines.length && depth > 0) {
+        if (DETAILS_OPEN_RE.test(lines[j].trim())) depth++
+        else if (DETAILS_CLOSE_RE.test(lines[j].trim())) depth--
+        if (depth === 0) break
+        j++
+      }
+      if (depth === 0) {
+        const nestedHTML = lines.slice(i, j + 1).join('\n')
+        nodes.push(parseDetailsHTML(nestedHTML, '', ''))
+        i = j + 1
+        continue
+      }
+    }
+
+    // Code fence → accumulate to closing fence → CODE synthetic block.
+    if (/^```/.test(trimmed)) {
+      let j = i + 1
+      while (j < lines.length && !/^```/.test(lines[j].trim())) j++
+      if (j < lines.length) {
+        const code = lines.slice(i + 1, j).join('\n')
+        const lang = trimmed.slice(3)
+        nodes.push(
+          blockToNode({
+            id: '',
+            parent_id: '',
+            type: 'CODE',
+            depth: 0,
+            raw_text: '',
+            clean_text: code,
+            status: '',
+            owner: '',
+            start_date: '',
+            due_date: '',
+            priority: 3,
+            line_number: i + 1,
+            file_date: '',
+            language: lang
+          })
+        )
+        i = j + 1
+        continue
+      }
+    }
+
+    // GFM table → accumulate pipe rows → TABLE synthetic block.
+    if (
+      /^\|.*\|$/.test(trimmed) &&
+      i + 1 < lines.length &&
+      /^\|[\s:|-]+\|$/.test(lines[i + 1].trim())
+    ) {
+      let j = i
+      while (j < lines.length && /^\|.*\|$/.test(lines[j].trim())) j++
+      const gfm = lines.slice(i, j).join('\n')
+      nodes.push(
+        blockToNode({
+          id: '',
+          parent_id: '',
+          type: 'TABLE',
+          depth: 0,
+          raw_text: '',
+          clean_text: gfm,
+          status: '',
+          owner: '',
+          start_date: '',
+          due_date: '',
+          priority: 3,
+          line_number: i + 1,
+          file_date: ''
+        })
+      )
+      i = j
+      continue
+    }
+
+    // Callout → accumulate `>` lines → CALLOUT synthetic block.
+    if (/^>\s*\[!/i.test(trimmed)) {
+      let j = i + 1
+      while (j < lines.length && /^>/.test(lines[j].trim())) j++
+      const calloutText = lines.slice(i, j).join('\n')
+      nodes.push(
+        blockToNode({
+          id: '',
+          parent_id: '',
+          type: 'CALLOUT',
+          depth: 0,
+          raw_text: calloutText,
+          clean_text: calloutText,
+          status: '',
+          owner: '',
+          start_date: '',
+          due_date: '',
+          priority: 3,
+          line_number: i + 1,
+          file_date: ''
+        })
+      )
+      i = j
+      continue
+    }
+
+    // Regular body line → synthetic NOTE → blockToNode.
+    const syntheticBlock: ParsedBlock = {
+      id: '',
+      parent_id: '',
+      type: 'NOTE',
+      depth: 0,
+      raw_text: lines[i],
+      clean_text: lines[i],
+      status: '',
+      owner: '',
+      start_date: '',
+      due_date: '',
+      priority: 3,
+      line_number: i + 1,
+      file_date: ''
+    }
+    nodes.push(blockToNode(syntheticBlock))
+    i++
+  }
+  return nodes
+}
+
+// Serialize a details node tree back to <details> HTML text (for docToBlocks).
+// The child nodes' text representations become body lines (without id comments
+// — the DETAILS block has its own trailing id).
+function serializeDetailsToHTML(node: NodeJSON): string {
+  const attrs = (node.attrs || {}) as Record<string, any>
+  const summaryNode = (node.content || []).find(
+    (c) => c.type === 'detailsSummary'
+  )
+  const contentNode = (node.content || []).find(
+    (c) => c.type === 'detailsContent'
+  )
+  const summaryText = summaryNode
+    ? serializeInlineContent(summaryNode.content)
+    : ''
+
+  const lines: string[] = ['<details>']
+  if (summaryText) lines.push(`<summary>${summaryText}</summary>`)
+
+  if (contentNode?.content) {
+    // Strip leading empty placeholder noteBlocks (the synthetic seed).
+    let children = contentNode.content
+    while (
+      children.length > 0 &&
+      children[0].type === 'noteBlock' &&
+      (children[0].content || []).length === 0
+    ) {
+      children = children.slice(1)
+    }
+    for (const child of children) {
+      lines.push(serializeChildNodeToBodyLine(child))
+    }
+  }
+  lines.push('</details>')
+  return lines.join('\n')
+}
+
+// Convert a child node (inside detailsContent) to a text body line (no id).
+// Handles multi-line constructs (codeBlock, table, calloutBlock) by emitting
+// their full on-disk syntax — the caller embeds the multi-line result in the
+// <details> body.
+function serializeChildNodeToBodyLine(node: NodeJSON): string {
+  const attrs = (node.attrs || {}) as Record<string, any>
+
+  // Nested details → recursively serialize to HTML.
+  if (node.type === 'details') {
+    return serializeDetailsToHTML(node)
+  }
+
+  // Code block → emit fenced code (preserves language + body).
+  if (node.type === 'codeBlock') {
+    const lang = (attrs.language as string) || ''
+    const code = extractTextContent(node.content)
+    const fence = '```'
+    return `${fence}${lang}\n${code}\n${fence}`
+  }
+
+  // Table → emit GFM rows (reuses the table serialization logic).
+  if (node.type === 'table') {
+    return serializeTableToGFM(node)
+  }
+
+  // Callout → emit Obsidian callout lines.
+  if (node.type === 'calloutBlock') {
+    return serializeCalloutToText(node)
+  }
+
+  const text = serializeInlineContent(node.content)
+
+  if (node.type === 'noteBlock') {
+    const bullet = attrs.bullet !== undefined ? attrs.bullet : ''
+    const quote = (attrs.quote as string) || ''
+    if (quote) return `${quote}${text}`
+    return `${bullet}${text}`
+  }
+  if (node.type === 'taskBlock') {
+    const checkbox =
+      attrs.status === 'DOING' ? '/' : attrs.status === 'DONE' ? 'x' : ' '
+    return `- [${checkbox}] ${text}`
+  }
+  if (node.type === 'headerBlock') {
+    const depth = Number(attrs.depth || 1)
+    return `${'#'.repeat(depth)} ${text}`
+  }
+  // paragraph or unknown: just the text.
+  return text
+}
+
+// Serialize a table node to GFM pipe rows (shared by docToBlocks TABLE branch
+// and serializeChildNodeToBodyLine for nested tables in details).
+function serializeTableToGFM(node: NodeJSON): string {
+  const rows = (node.content || []).filter((c) => c.type === 'tableRow')
+  if (rows.length === 0) return ''
+  const grid: { header: boolean; cells: string[] }[] = rows.map((r) => ({
+    header: (r.content || []).some((c) => c.type === 'tableHeader'),
+    cells: (r.content || []).map((c) =>
+      escapeGfmCell(serializeInlineContent(c.content))
+    )
+  }))
+  // Extract per-column alignment from the header row's cell attrs.
+  const headerAligns = (rows[0].content || []).map((c) => {
+    const a = ((c.attrs || {}) as Record<string, any>).align
+    return typeof a === 'string' ? a : ''
+  })
+  const colCount = Math.max(...grid.map((r) => r.cells.length))
+  const widths = new Array(colCount).fill(0)
+  for (const r of grid) {
+    while (r.cells.length < colCount) r.cells.push('')
+    for (let c = 0; c < colCount; c++)
+      widths[c] = Math.max(widths[c], r.cells[c].length, 3)
+  }
+  const pad = (cell: string, c: number) => cell.padEnd(widths[c], ' ')
+  const renderRow = (r: { cells: string[] }) =>
+    '| ' + r.cells.map((c, i) => pad(c, i)).join(' | ') + ' |'
+  const lines: string[] = []
+  lines.push(renderRow(grid[0]))
+  // Separator with alignment markers from header row.
+  lines.push(
+    '| ' +
+      widths
+        .map((w, i) => emitGfmSeparator(w, headerAligns[i] || ''))
+        .join(' | ') +
+      ' |'
+  )
+  for (let r = 1; r < grid.length; r++) lines.push(renderRow(grid[r]))
+  return lines.join('\n')
+}
+
+// ---- Callout text parsing (#308) ------------------------------------------
+// The Go parser produces ONE CALLOUT ParsedBlock whose clean_text is the full
+// Obsidian callout syntax (`> [!variant] message` + subsequent `>` body lines).
+// These helpers parse that text into a calloutBlock node with paragraph
+// children (load) and serialize it back (save).
+
+const CALLOUT_MARKER_RE =
+  /^\s*>\s*\[!(note|info|tip|warning|danger|success|quote)\](?:\s+(.*))?$/i
+
+// Parse callout text into a calloutBlock node. Each `>` line becomes a
+// paragraph child; the variant is extracted from the first line's marker.
+function parseCalloutText(
+  text: string,
+  blockId: string,
+  fileDate: string
+): NodeJSON {
+  const lines = text.split('\n')
+  const today = new Date().toISOString().slice(0, 10)
+
+  // Extract variant from the first line.
+  let variant = 'note'
+  let firstMessage = ''
+  const firstMatch = lines[0]?.match(CALLOUT_MARKER_RE)
+  if (firstMatch) {
+    variant = firstMatch[1].toLowerCase()
+    firstMessage = firstMatch[2] ?? ''
+  }
+
+  // Build paragraph children: first line's message is paragraph 1; each
+  // subsequent `>` line is another paragraph (bare `>` = empty paragraph).
+  const mkParagraph = (content: string): NodeJSON => ({
+    type: 'paragraph',
+    attrs: {},
+    content: content ? legacyTokenizeInline(content) : []
+  })
+
+  const children: NodeJSON[] = [mkParagraph(firstMessage)]
+  for (let i = 1; i < lines.length; i++) {
+    // Strip the `> ` or `>` prefix from each body line.
+    const stripped = lines[i].replace(/^\s*>\s?/, '')
+    children.push(mkParagraph(stripped))
+  }
+
+  return {
+    type: 'calloutBlock',
+    attrs: {
+      id: blockId || null,
+      variant,
+      file_date: fileDate || today
+    },
+    content: children
+  }
+}
+
+// Serialize a calloutBlock node back to Obsidian callout text (for docToBlocks).
+// The first paragraph becomes `> [!variant] message`; subsequent paragraphs
+// become `> body` lines.
+function serializeCalloutToText(node: NodeJSON): string {
+  const attrs = (node.attrs || {}) as Record<string, any>
+  const variant = (attrs.variant as string) || 'note'
+  const children = (node.content || []).filter((c) => c.type === 'paragraph')
+
+  const lines: string[] = []
+  // First paragraph: the title/message line.
+  const firstText = children.length
+    ? serializeInlineContent(children[0].content)
+    : ''
+  lines.push(`> [!${variant}]${firstText ? ' ' + firstText : ''}`)
+  // Subsequent paragraphs: body lines.
+  for (let i = 1; i < children.length; i++) {
+    const text = serializeInlineContent(children[i].content)
+    lines.push(text ? `> ${text}` : '>')
+  }
+  return lines.join('\n')
+}
+
+// blocksToDoc converts an ordered list of ParsedBlocks into a ProseMirror doc
+// JSON suitable for editor.commands.setContent(). Each ParsedBlock maps 1:1
+// to one top-level block node (nesting is expressed via the depth attr).
+// The unified region-block model (#310) eliminated the old multi-block
+// regrouping layer — tables, details, and callouts arrive as single typed
+// ParsedBlocks, not runs of NOTE blocks.
+export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
+  const content: NodeJSON[] = blocks.map(blockToNode)
+  // ProseMirror requires a doc to have at least one block child; an empty
+  // blocks list yields a single empty note node so the editor always has a
+  // place to type (the Placeholder extension shows its hint here).
+  if (content.length === 0) {
+    content.push({
+      type: 'noteBlock',
+      attrs: {
+        id: crypto.randomUUID(),
+        depth: 0,
+        bullet: '- ',
+        file_date: new Date().toISOString().slice(0, 10)
+      },
+      content: []
+    })
+  }
+  return { type: 'doc', content }
 }
 
 // docToBlocks is the inverse of blocksToDoc: it walks a ProseMirror doc JSON
@@ -626,20 +881,17 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       continue
     }
 
-    // Callout / admonition (#180): serialize to a NOTE whose clean_text is the
-    // Obsidian `> [!variant] message` line. renderBlock sees the leading `>`
-    // (not a bullet) and emits a plain line, so the marker survives verbatim.
+    // Callout / admonition (#180/#308): serialize to ONE CALLOUT ParsedBlock
+    // whose clean_text is the Obsidian `> [!variant] message` + body lines.
     if (node.type === 'calloutBlock') {
-      const variant = (attrs.variant as string) || 'note'
-      const message = serializeInlineContent(node.content)
-      const line = `> [!${variant}]${message ? ' ' + message : ''}`
+      const calloutText = serializeCalloutToText(node)
       blocks.push({
         id,
         parent_id: '',
-        type: 'NOTE',
+        type: 'CALLOUT',
         depth: 0,
-        raw_text: line,
-        clean_text: line,
+        raw_text: calloutText,
+        clean_text: calloutText,
         status: '',
         owner: '',
         start_date: '',
@@ -676,93 +928,51 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       continue
     }
 
-    // Foldable details (#183): serialize to a RUN of NOTE blocks — the
-    // `<details>` opener, a `<summary>` line, the child blocks (recursively
-    // serialized), and the `</details>` closer. The Go parser preserves each
-    // line verbatim (HTML passes through clean_text), and blocksToDoc regroups
-    // the run on load. The opener carries the block id; collapse state is
-    // ephemeral (never persisted as `<details open>` in v1).
+    // Foldable details (#183/#310): serialize to ONE DETAILS ParsedBlock whose
+    // clean_text is the full <details>…</details> HTML. The Go parser's
+    // DETAILS region accumulator produces this on parse; renderBlock emits it
+    // verbatim + a trailing id line.
     if (node.type === 'details') {
       const fileDate = (attrs.file_date as string) || ''
-      const summaryNode = (node.content || []).find(
-        (c) => c.type === 'detailsSummary'
-      )
-      const contentNode = (node.content || []).find(
-        (c) => c.type === 'detailsContent'
-      )
-      const summaryText = summaryNode
-        ? serializeInlineContent(summaryNode.content)
-        : ''
-      pushOpaqueNoteLine(blocks, id, '<details>', lineNumber, fileDate)
-      pushOpaqueNoteLine(
-        blocks,
-        '',
-        `<summary>${summaryText}</summary>`,
-        lineNumber,
-        fileDate
-      )
-      if (contentNode?.content) {
-        // Strip leading empty noteBlocks (the synthetic placeholder buildDetailsNode
-        // seeds so TipTap's detailsContent has a required child; it's always first).
-        // If the user pressed Enter without typing into the placeholder, it stays
-        // empty as a leading sibling — strip it so it doesn't inflate the file.
-        // Intentional blank lines in the middle/end are preserved.
-        let children = contentNode.content
-        while (
-          children.length > 0 &&
-          children[0].type === 'noteBlock' &&
-          (children[0].content || []).length === 0
-        ) {
-          children = children.slice(1)
-        }
-        if (children.length > 0) {
-          const childBlocks = docToBlocks({ type: 'doc', content: children })
-          for (const cb of childBlocks) blocks.push(cb)
-        }
-      }
-      pushOpaqueNoteLine(blocks, '', '</details>', lineNumber, fileDate)
+      const html = serializeDetailsToHTML(node)
+      blocks.push({
+        id,
+        parent_id: '',
+        type: 'DETAILS',
+        depth: 0,
+        raw_text: html,
+        clean_text: html,
+        status: '',
+        owner: '',
+        start_date: '',
+        due_date: '',
+        priority: 3,
+        line_number: lineNumber,
+        file_date: fileDate
+      })
       continue
     }
 
-    // GFM table (#172): serialize the table node to a run of NOTE blocks —
-    // the header row, the `| --- |` separator, and one block per data row.
-    // Auto-width padding keeps the file human-readable; literal `|` is
-    // escaped as `\|`; cell inline content goes through serializeInlineContent
-    // so marks + Smart Graph tokens survive. The block id lands on the LAST
-    // row so the whole table has one identity.
+    // GFM table (#172/#310): serialize to ONE TABLE ParsedBlock via the
+    // shared serializeTableToGFM helper (also used for nested tables in
+    // details). Literal `|` is escaped as `\|`; auto-width padding.
     if (node.type === 'table') {
-      const rows = (node.content || []).filter((c) => c.type === 'tableRow')
-      if (rows.length === 0) continue
-      const grid: { header: boolean; cells: string[] }[] = rows.map((r) => ({
-        header: (r.content || []).some((c) => c.type === 'tableHeader'),
-        cells: (r.content || []).map((c) =>
-          escapeGfmCell(serializeInlineContent(c.content))
-        )
-      }))
-      const colCount = Math.max(...grid.map((r) => r.cells.length))
-      // Pad short rows; compute column widths for readability.
-      const widths = new Array(colCount).fill(0)
-      for (const r of grid) {
-        while (r.cells.length < colCount) r.cells.push('')
-        for (let c = 0; c < colCount; c++)
-          widths[c] = Math.max(widths[c], r.cells[c].length, 3)
-      }
-      const pad = (cell: string, c: number) => cell.padEnd(widths[c], ' ')
-      const renderRow = (r: { cells: string[] }) =>
-        '| ' + r.cells.map((c, i) => pad(c, i)).join(' | ') + ' |'
-
-      const lines: string[] = []
-      // Header row (first).
-      lines.push(renderRow(grid[0]))
-      // Separator.
-      lines.push('| ' + widths.map((w) => ''.padEnd(w, '-')).join(' | ') + ' |')
-      // Data rows.
-      for (let r = 1; r < grid.length; r++) lines.push(renderRow(grid[r]))
-
-      const fileDate = (attrs.file_date as string) || ''
-      lines.forEach((line, idx) => {
-        const isLast = idx === lines.length - 1
-        pushOpaqueNoteLine(blocks, isLast ? id : '', line, lineNumber, fileDate)
+      const gfm = serializeTableToGFM(node)
+      if (!gfm) continue
+      blocks.push({
+        id,
+        parent_id: '',
+        type: 'TABLE',
+        depth: 0,
+        raw_text: '',
+        clean_text: gfm,
+        status: '',
+        owner: '',
+        start_date: '',
+        due_date: '',
+        priority: 3,
+        line_number: lineNumber,
+        file_date: (attrs.file_date as string) || ''
       })
       continue
     }

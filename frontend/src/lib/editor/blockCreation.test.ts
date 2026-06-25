@@ -154,15 +154,17 @@ describe('block creation scan (#188 / #180 / #189 / #183 / #172)', () => {
     )
   })
 
-  it('insertCallout creates a calloutBlock that saves as `> [!note]` (#180)', () => {
+  it('insertCallout creates a calloutBlock that saves as CALLOUT (#180/#308)', () => {
     const editor = track(makeFullEditor())
     focusFirstBlock(editor)
     expect(insertCallout(editor, 'warning')).toBe(true)
     const node = (editor.getJSON() as DocJSON).content[0]
     expect(node?.type).toBe('calloutBlock')
     expect(node?.attrs?.variant).toBe('warning')
+    // block+ requires ≥1 child: a placeholder paragraph is seeded.
+    expect(node?.content?.[0]?.type).toBe('paragraph')
     const saved = docToBlocks(editor.getJSON() as DocJSON)
-    expect(saved[0].type).toBe('NOTE')
+    expect(saved[0].type).toBe('CALLOUT')
     expect(saved[0].clean_text).toBe('> [!warning]')
   })
 
@@ -178,21 +180,18 @@ describe('block creation scan (#188 / #180 / #189 / #183 / #172)', () => {
     expect(saved[0].language).toBe('go')
   })
 
-  it('insertDetails creates a foldable details tree (#183)', () => {
+  it('insertDetails creates a foldable details tree (#183/#310)', () => {
     const editor = track(makeFullEditor())
     focusFirstBlock(editor)
     expect(insertDetails(editor)).toBe(true)
     const node = (editor.getJSON() as DocJSON).content[0]
     expect(node?.type).toBe('details')
-    // Save form is the <details>/<summary>/<body>/</details> run.
-    const saved = docToBlocks(editor.getJSON() as DocJSON).map(
-      (b) => b.clean_text
-    )
-    expect(saved[0]).toBe('<details>')
-    expect(saved[1]).toMatch(/^<summary>.*<\/summary>$/)
-    // The details run is intact; a trailing noteBlock may follow it (so the
-    // user can click below), so </details> is not necessarily the last line.
-    expect(saved).toContain('</details>')
+    // Save form: ONE DETAILS ParsedBlock whose clean_text is the full HTML.
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved[0].type).toBe('DETAILS')
+    expect(saved[0].clean_text).toContain('<details>')
+    expect(saved[0].clean_text).toContain('<summary>')
+    expect(saved[0].clean_text).toContain('</details>')
   })
 
   it('insertTable creates an editable grid that saves as GFM (#172)', () => {
