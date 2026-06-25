@@ -119,6 +119,23 @@ describe('WorkspaceTab vault relocate menu (#141)', () => {
     expect(
       screen.getByRole('menuitem', { name: /Import vault/ })
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Switch vault/ })
+    ).toBeInTheDocument()
+  })
+
+  it('Switch vault dispatches the silt:change-vault event', async () => {
+    render(WorkspaceTab)
+    await tick()
+    const handler = vi.fn()
+    window.addEventListener('silt:change-vault', handler)
+    await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /Switch vault/ })
+    )
+    expect(handler).toHaveBeenCalledTimes(1)
+    window.removeEventListener('silt:change-vault', handler)
   })
 
   it('selecting Move opens the VaultActionModal in move mode', async () => {

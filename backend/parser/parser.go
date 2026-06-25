@@ -760,8 +760,7 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		// ``` line, so a code sample that includes a triple-backtick fence
 		// round-trips without prematurely closing. Rare; correct.
 		fence := "```"
-		if strings.Contains("\n"+block.CleanText+"\n", "\n"+fence+"\n") ||
-			strings.Contains("\n"+block.CleanText+"\n", "\n"+fence) {
+		if strings.Contains("\n"+block.CleanText+"\n", "\n"+fence) {
 			fence = "````"
 			for strings.Contains("\n"+block.CleanText+"\n", "\n"+fence) {
 				fence += "`"

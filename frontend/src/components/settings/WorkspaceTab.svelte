@@ -181,6 +181,27 @@
                 >
                 Import vault…
               </button>
+              <div class="my-1 border-t border-border-muted"></div>
+              <button
+                type="button"
+                bind:this={menuItemRefs[4]}
+                role="menuitem"
+                onclick={() => {
+                  vaultMenuOpen = false
+                  // Tear down this vault and return to the onboarding screen so
+                  // the user can pick a different workspace folder. App.svelte
+                  // owns the CloseVault flow and closes this settings overlay.
+                  window.dispatchEvent(new CustomEvent('silt:change-vault'))
+                }}
+                onkeydown={(e) => handleMenuItemKeydown(e, 4)}
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
+              >
+                <span
+                  class="material-symbols-outlined text-[18px] text-text-muted"
+                  >swap_horiz</span
+                >
+                Switch vault…
+              </button>
             </div>
           {/if}
         </div>

@@ -89,8 +89,7 @@ describe('Sidebar', () => {
         onSelectSection: () => {},
         onSelectPage: () => {},
         onPinPage: () => {},
-        onSelectView: () => {},
-        onCloseVault: () => {}
+        onSelectView: () => {}
       }
     })
     await flush()
@@ -117,8 +116,7 @@ describe('Sidebar', () => {
         onSelectSection: () => {},
         onSelectPage: () => {},
         onPinPage: () => {},
-        onSelectView: () => {},
-        onCloseVault: () => {}
+        onSelectView: () => {}
       }
     })
     await flush()
@@ -166,7 +164,6 @@ describe('Sidebar', () => {
         onSelectPage: () => {},
         onPinPage: () => {},
         onSelectView: () => {},
-        onCloseVault: () => {},
         onPageMoved
       }
     })

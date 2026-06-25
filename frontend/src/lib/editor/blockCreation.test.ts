@@ -118,6 +118,42 @@ describe('block creation scan (#188 / #180 / #189 / #183 / #172)', () => {
     expect(docToBlocks(editor.getJSON() as DocJSON)[0].clean_text).toBe('> ')
   })
 
+  it('toggleBlockQuote off preserves the original bullet (#188)', () => {
+    // Regression: toggling quote off used to run bullet through `|| '- '`,
+    // turning a plain (non-bulleted) note into a `- ` bullet. The bullet attr
+    // is now left untouched; the converter ignores bullet while quote is set.
+    const editor = track(makeFullEditor())
+    editor.commands.setContent(
+      blocksToDoc([
+        {
+          id: '22222222-2222-2222-2222-222222222222',
+          parent_id: '',
+          type: 'NOTE',
+          depth: 0,
+          raw_text: 'plain prose, no bullet',
+          clean_text: 'plain prose, no bullet',
+          status: '',
+          owner: '',
+          start_date: '',
+          due_date: '',
+          priority: 3,
+          line_number: 1
+        }
+      ])
+    )
+    focusFirstBlock(editor)
+    // Toggle on, then back off.
+    expect(toggleBlockQuote(editor)).toBe(true)
+    expect(toggleBlockQuote(editor)).toBe(true)
+    const node = (editor.getJSON() as DocJSON).content[0]
+    expect(node?.attrs?.quote).toBe('')
+    // A plain note must stay plain — NOT mutate to a `- ` bullet.
+    expect(node?.attrs?.bullet).toBe('')
+    expect(docToBlocks(editor.getJSON() as DocJSON)[0].clean_text).toBe(
+      'plain prose, no bullet'
+    )
+  })
+
   it('insertCallout creates a calloutBlock that saves as `> [!note]` (#180)', () => {
     const editor = track(makeFullEditor())
     focusFirstBlock(editor)

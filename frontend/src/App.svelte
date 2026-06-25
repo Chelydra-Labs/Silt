@@ -560,6 +560,7 @@
     window.addEventListener('open-plugin-manager', handleOpenPluginManager)
     window.addEventListener('open-settings', handleOpenSettings)
     window.addEventListener('open-template-picker', handleOpenTemplatePicker)
+    window.addEventListener('silt:change-vault', handleSwitchVault)
     // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
     // be received via EventsOn — a DOM addEventListener would never fire.
     const offPluginsChanged = EventsOn('plugins:changed', () =>
@@ -633,6 +634,7 @@
         'open-template-picker',
         handleOpenTemplatePicker
       )
+      window.removeEventListener('silt:change-vault', handleSwitchVault)
       offPluginsChanged()
       offVaultMoved()
       offConfigChangedReload()
@@ -689,6 +691,14 @@
     } catch (e) {
       console.error('Failed to close vault:', e)
     }
+  }
+
+  // Settings → Workspace → "Switch vault…" entry. Closes the settings overlay
+  // then runs the same tear-down flow as the (removed) sidebar Change Vault
+  // button, returning the user to the onboarding screen to pick a vault.
+  async function handleSwitchVault() {
+    showSettings = false
+    await handleChangeVault()
   }
 
   function handleSearchJump(
@@ -947,7 +957,6 @@
           openPage({ notebook: nb, section: sec, page: pg }, 'pin')
         }}
         onSelectView={(v) => (activeView = v)}
-        onCloseVault={handleChangeVault}
         onPageMoved={(nb, fromSection, toSection, page) => {
           // A page was dragged across sections in the sidebar (#177). Update
           // the open tab for this specific page+section so its section field

@@ -48,7 +48,6 @@
     onSelectPage: (notebook: string, section: string, page: string) => void
     onPinPage: (notebook: string, section: string, page: string) => void
     onSelectView: (view: string) => void
-    onCloseVault?: () => void
     onPageMoved?: (
       notebook: string,
       fromSection: string,
@@ -71,7 +70,6 @@
     onSelectPage,
     onPinPage,
     onSelectView,
-    onCloseVault,
     onPageMoved
   }: Props = $props()
 
