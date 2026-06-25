@@ -49,8 +49,11 @@
     return () => window.removeEventListener('resize', onResize)
   })
 
+  // macOS reserves 80px for traffic lights (collapsed or not); other platforms
+  // use 48px. Hoisted so the inner ternary isn't evaluated twice.
+  let trafficPx = $derived(isMac ? 80 : 48)
   let brandZoneWidth = $derived(
-    sidebarCollapsed ? (isMac ? 80 : 48) : (isMac ? 80 : 48) + sidebarWidth
+    sidebarCollapsed ? trafficPx : trafficPx + sidebarWidth
   )
 
   function handleToggleMax() {

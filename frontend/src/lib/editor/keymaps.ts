@@ -156,7 +156,6 @@ export function setBlockAlign(editor: Editor, align: string): boolean {
   return true
 }
 
-// Toggle the blockquote marker on the current noteBlock (#188). Sets `> ` when
 // Toggle the blockquote marker on the current noteBlock (#188). Quote and
 // bullet are mutually exclusive — the on-disk serializer (docToBlocks) discards
 // `bullet` while `quote` is set, so turning quote ON clears the bullet here to

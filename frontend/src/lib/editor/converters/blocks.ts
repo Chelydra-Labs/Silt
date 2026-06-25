@@ -702,15 +702,20 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         fileDate
       )
       if (contentNode?.content) {
-        const children = contentNode.content
-        // Skip the synthetic empty-noteBlock placeholder buildDetailsNode
-        // seeds so TipTap's detailsContent has a required child — an empty
-        // <details></details> must round-trip without a blank inner line.
-        const isOnlyPlaceholder =
-          children.length === 1 &&
+        // Strip leading empty noteBlocks (the synthetic placeholder buildDetailsNode
+        // seeds so TipTap's detailsContent has a required child; it's always first).
+        // If the user pressed Enter without typing into the placeholder, it stays
+        // empty as a leading sibling — strip it so it doesn't inflate the file.
+        // Intentional blank lines in the middle/end are preserved.
+        let children = contentNode.content
+        while (
+          children.length > 0 &&
           children[0].type === 'noteBlock' &&
           (children[0].content || []).length === 0
-        if (!isOnlyPlaceholder) {
+        ) {
+          children = children.slice(1)
+        }
+        if (children.length > 0) {
           const childBlocks = docToBlocks({ type: 'doc', content: children })
           for (const cb of childBlocks) blocks.push(cb)
         }
