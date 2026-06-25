@@ -119,12 +119,12 @@
       {@html highlighted}
     </div>
     <!-- Editable layer (transparent text once Shiki is fresh, solid colour
-         while it lags so typed text is always visible). ProseMirror owns it. -->
+         while it lags so typed text is always visible). ProseMirror owns it;
+         the Shiki display layer provides the semantic <pre><code> markup, so
+         this layer only hosts the caret (self-closing, like every other NodeView). -->
     <NodeViewContent
       as="pre"
       class={`silt-code-edit${stale ? ' code-stale' : ''}`}
-    >
-      <code></code>
-    </NodeViewContent>
+    />
   </div>
 </NodeViewWrapper>

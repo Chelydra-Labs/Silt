@@ -1,12 +1,6 @@
 <script lang="ts">
   import type { TabEntry } from '../lib/tabs'
   import { fade, fly } from 'svelte/transition'
-  import {
-    settings,
-    toggleFocusMode,
-    toggleFormatToolbar
-  } from '../settings/store.svelte'
-  import { getViewMode } from '../lib/viewMode.svelte'
 
   interface Props {
     tabs: TabEntry[]
@@ -28,31 +22,6 @@
     onReorderTab,
     showDirtyIndicators = true
   }: Props = $props()
-
-  let activeTab = $derived(tabs.find((t) => t.id === activeTabId))
-  let activePageViewMode = $derived(
-    activeTab
-      ? getViewMode(activeTab.notebook, activeTab.section, activeTab.page)
-      : 'edit'
-  )
-
-  let focusModeActive = $derived(settings.config?.editor?.focus_mode === true)
-  let showFormatToolbar = $derived(
-    settings.config?.ui?.show_format_toolbar !== false
-  )
-
-  function handleToggleFocus() {
-    toggleFocusMode()
-  }
-
-  function handleToggleToolbar() {
-    toggleFormatToolbar()
-  }
-
-  function handleToggleViewMode() {
-    if (!activeTab) return
-    window.dispatchEvent(new CustomEvent('toggle-view-mode'))
-  }
 
   // Roving tabindex: the active tab (or the first tab if none active) is the
   // only tab in the tab sequence. Arrow keys move focus between tabs without
@@ -269,52 +238,6 @@
         </button>
       {/each}
     </div>
-
-    {#if activeTab}
-      <div class="tab-actions">
-        <!-- Focus Mode Toggle -->
-        <button
-          onclick={handleToggleFocus}
-          class="h-7 w-7 flex items-center justify-center rounded transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
-          class:text-accent-primary-start={focusModeActive}
-          class:text-text-muted={!focusModeActive}
-          title="Toggle Focus Mode (Ctrl+Shift+D)"
-          aria-label="Toggle Focus Mode"
-        >
-          <span class="material-symbols-outlined text-[18px]"
-            >center_focus_strong</span
-          >
-        </button>
-
-        <!-- Zen Mode / Toolbar Toggle -->
-        <button
-          onclick={handleToggleToolbar}
-          class="h-7 w-7 flex items-center justify-center rounded transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
-          class:text-accent-primary-start={showFormatToolbar}
-          class:text-text-muted={!showFormatToolbar}
-          title="Toggle Formatting Toolbar (Ctrl+Shift+F)"
-          aria-label="Toggle Formatting Toolbar"
-        >
-          <span class="material-symbols-outlined text-[18px]">text_format</span>
-        </button>
-
-        <div class="w-px h-4 bg-border-muted mx-1"></div>
-
-        <!-- View Mode Toggle -->
-        <button
-          onclick={handleToggleViewMode}
-          class="h-7 w-7 flex items-center justify-center rounded transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover text-text-muted"
-          title={activePageViewMode === 'edit'
-            ? 'View Markdown Source (Ctrl+Shift+V)'
-            : 'View Rich Text (Ctrl+Shift+V)'}
-          aria-label="Toggle View Mode"
-        >
-          <span class="material-symbols-outlined text-[18px]">
-            {activePageViewMode === 'edit' ? 'code' : 'menu_book'}
-          </span>
-        </button>
-      </div>
-    {/if}
   </div>
 {/if}
 
@@ -354,16 +277,6 @@
       black calc(100% - 12px),
       transparent
     );
-  }
-
-  .tab-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0 12px;
-    border-left: 1px solid var(--color-border-muted, #2a2d35);
-    background: transparent;
-    flex-shrink: 0;
   }
 
   .tab-strip::-webkit-scrollbar {

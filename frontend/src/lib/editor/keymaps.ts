@@ -157,9 +157,11 @@ export function setBlockAlign(editor: Editor, align: string): boolean {
 }
 
 // Toggle the blockquote marker on the current noteBlock (#188). Sets `> ` when
-// turning quote on (clearing any bullet so the two markers never coexist) and
-// clears it when turning off. No-op on TASK/HEADER blocks (quote is a NOTE
-// marker). Shared by the keymap shortcut and TipTapEditor's slash handler.
+// turning quote on and clears it when turning off. No-op on TASK/HEADER blocks
+// (quote is a NOTE marker). The bullet attr is left untouched: docToBlocks
+// ignores `bullet` while `quote` is set, and detectBullet restores the original
+// bullet on reload, so manually clearing/restore here would lose the user's
+// original bullet (a plain note toggled quote-on then off became `- `).
 export function toggleBlockQuote(editor: Editor): boolean {
   if (!editor || editor.isDestroyed) return false
   const active = findActiveBlock(editor)
@@ -169,8 +171,7 @@ export function toggleBlockQuote(editor: Editor): boolean {
   const isQuote = !!active.node.attrs.quote
   const tr = editor.state.tr.setNodeMarkup(nodePos, undefined, {
     ...active.node.attrs,
-    quote: isQuote ? '' : '> ',
-    bullet: isQuote ? active.node.attrs.bullet || '- ' : ''
+    quote: isQuote ? '' : '> '
   })
   editor.view.dispatch(tr)
   return true

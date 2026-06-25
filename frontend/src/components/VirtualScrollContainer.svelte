@@ -7,7 +7,11 @@
   import type { Editor } from 'svelte-tiptap'
   import EditorUtilityBar from './editor/EditorUtilityBar.svelte'
   import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
-  import { settings } from '../settings/store.svelte'
+  import {
+    settings,
+    toggleFocusMode,
+    toggleFormatToolbar
+  } from '../settings/store.svelte'
 
   interface Props {
     notebook: string
@@ -266,7 +270,9 @@
   })
 </script>
 
-<div class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-void">
+<div
+  class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-void relative"
+>
   {#if viewMode === 'edit' && showFormatToolbar}
     <EditorUtilityBar editor={editorInstance} {activeMarks} />
   {/if}
@@ -358,6 +364,60 @@
         {/if}
       </div>
     </div>
+  </div>
+
+  <!-- Floating Editor Actions Bar -->
+  <div
+    class="absolute right-6 z-40 flex items-center gap-1 p-1 bg-panel/60 backdrop-blur-md border border-border-muted/50 rounded-full shadow-lg transition-all duration-300 opacity-20 hover:opacity-100 hover:scale-105"
+    class:top-4={!(viewMode === 'edit' && showFormatToolbar)}
+    class:top-14={viewMode === 'edit' && showFormatToolbar}
+  >
+    <!-- Focus Mode Toggle -->
+    <button
+      onclick={toggleFocusMode}
+      class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
+      class:text-accent-primary-start={settings.config?.editor?.focus_mode ===
+        true}
+      class:text-text-muted={settings.config?.editor?.focus_mode !== true}
+      title={settings.config?.editor?.focus_mode === true
+        ? 'Exit Focus Mode (Ctrl+Shift+D)'
+        : 'Enter Focus Mode (Ctrl+Shift+D)'}
+      aria-label="Toggle Focus Mode"
+    >
+      <span class="material-symbols-outlined text-[18px]"
+        >center_focus_strong</span
+      >
+    </button>
+
+    <!-- Format Toolbar Toggle -->
+    <button
+      onclick={toggleFormatToolbar}
+      class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
+      class:text-accent-primary-start={showFormatToolbar}
+      class:text-text-muted={!showFormatToolbar}
+      title={showFormatToolbar
+        ? 'Hide Formatting Toolbar (Ctrl+Shift+F)'
+        : 'Show Formatting Toolbar (Ctrl+Shift+F)'}
+      aria-label="Toggle Formatting Toolbar"
+    >
+      <span class="material-symbols-outlined text-[18px]">text_format</span>
+    </button>
+
+    <div class="w-px h-4 bg-border-muted mx-0.5"></div>
+
+    <!-- View Mode Toggle -->
+    <button
+      onclick={handleToggleViewMode}
+      class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover text-text-muted"
+      title={viewMode === 'edit'
+        ? 'View Markdown Source (Ctrl+Shift+V)'
+        : 'View Rich Text (Ctrl+Shift+V)'}
+      aria-label="Toggle View Mode"
+    >
+      <span class="material-symbols-outlined text-[18px]">
+        {viewMode === 'edit' ? 'code' : 'menu_book'}
+      </span>
+    </button>
   </div>
 </div>
 
