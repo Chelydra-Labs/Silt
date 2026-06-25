@@ -238,6 +238,12 @@
   let nextStep = $derived(
     !activeNotebook ? 'Create or open a Notebook to get started.' : ''
   )
+  let hasNoContent = $derived(
+    activeNotebookObj &&
+      activeNotebookObj.sections.filter((s) => s.name !== '').length === 0 &&
+      (activeNotebookObj.sections.find((s) => s.name === '')?.pages.length ??
+        0) === 0
+  )
 
   async function loadNavigation() {
     try {
@@ -705,39 +711,43 @@
     <!-- Primary actions (icon-only, consistent style). Each button is wrapped
          in a span whose title gives the prerequisite reason — a native title
          on a disabled button doesn't show, but on the wrapper it does. -->
-    <div class="px-1 flex items-center gap-1.5 mb-1">
+    <div
+      class="px-1 flex items-stretch gap-0.5 mb-1 p-0.5 bg-panel border border-border-muted rounded-lg"
+    >
       <span title={sectionHint} class="flex-1 flex">
         <button
           onclick={() => openCreate('section')}
           disabled={!activeNotebook}
           title={sectionHint}
           aria-label="New Section"
-          class="w-full bg-accent-primary-glow border border-accent-primary-start/30 text-accent-primary-start font-label-sm-bold py-2 rounded flex items-center justify-center hover:brightness-110 hover:border-accent-primary-start transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+          class="w-full bg-transparent border-none text-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
         >
           <span class="material-symbols-outlined text-[20px]"
             >create_new_folder</span
           >
         </button>
       </span>
+      <div class="w-px bg-border-muted my-1.5 flex-shrink-0"></div>
       <span title={pageHint} class="flex-1 flex">
         <button
           onclick={() => handleCreatePageInline(activeSection || '')}
           disabled={!activeNotebook}
           title={pageHint}
           aria-label="New Page"
-          class="w-full bg-panel border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+          class="w-full bg-transparent border-none text-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
         >
           <span class="material-symbols-outlined text-[20px]">note_add</span>
         </button>
       </span>
-      <span title="New page from template" class="flex items-center">
+      <div class="w-px bg-border-muted my-1.5 flex-shrink-0"></div>
+      <span title="New page from template" class="flex-1 flex">
         <button
           onclick={() =>
             window.dispatchEvent(new CustomEvent('open-template-picker'))}
           disabled={!activeNotebook}
           title="New page from template (Ctrl+Shift+T)"
           aria-label="New Page from Template"
-          class="w-9 bg-panel border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm-bold py-2 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+          class="w-full bg-transparent border-none text-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
         >
           <span class="material-symbols-outlined text-[20px]">content_copy</span
           >
@@ -769,14 +779,14 @@
           {/if}
         </div>
       {:else}
-        {#if activeNotebookObj.sections.length === 0}
+        {#if hasNoContent}
           <div
             class="text-text-muted py-6 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
           >
-            No sections yet.<br />Create a section to add pages.
+            No sections or pages yet.<br />Create one to get started.
           </div>
         {/if}
-        {#each sortedSections as sec (sec.name)}
+        {#each sortedSections.filter((s) => s.name !== '') as sec (sec.name)}
           <SidebarSection
             section={sec}
             depth={0}
@@ -799,6 +809,61 @@
             onDragEnd={handleDragEnd}
             onContextMenu={openContextMenu}
           />
+        {/each}
+
+        <!-- Section-less root pages -->
+        {#each sortedSections.filter((s) => s.name === '') as rootSec}
+          {#if rootSec.pages.length > 0}
+            <div class="h-px bg-border-muted my-2 mx-1 opacity-60"></div>
+            <div
+              class="px-2 py-1 text-[9px] uppercase tracking-wider text-text-muted/40 font-label-sm-bold"
+            >
+              Root Pages
+            </div>
+            {#each sortByName(rootSec.pages, navOrder.pages[`${activeNotebook}/`] ?? []) as pg (pg.name)}
+              {@const isActive = activeSection === '' && activePage === pg.name}
+              <button
+                onclick={() => handleSelectPage('', pg.name)}
+                ondblclick={() => handlePinPage('', pg.name)}
+                onauxclick={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault()
+                    handlePinPage('', pg.name)
+                  }
+                }}
+                oncontextmenu={(e) =>
+                  openContextMenu(e, 'page', activeNotebook, '', pg.name)}
+                draggable="true"
+                ondragstart={(e) => handleDragStart(e, 'page', pg.name, '')}
+                ondragover={(e) => handleDragOver(e, 'page', pg.name)}
+                ondragleave={handleDragLeave}
+                ondrop={(e) =>
+                  handleDrop(e, 'page', pg.name, activeNotebook, '')}
+                ondragend={handleDragEnd}
+                class="relative w-full text-left pl-[28px] pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
+                class:bg-hover={isActive}
+                class:text-accent-primary-start={isActive}
+                class:text-text-muted={!isActive}
+                class:hover:text-text-primary={!isActive}
+                class:drag-over-top={dropTarget?.level === 'page' &&
+                  dropTarget.name === pg.name &&
+                  dropTarget.before}
+                class:drag-over-bottom={dropTarget?.level === 'page' &&
+                  dropTarget.name === pg.name &&
+                  !dropTarget.before}
+                role="treeitem"
+                aria-level="1"
+                aria-selected={isActive}
+              >
+                {#if isActive}
+                  <span
+                    class="absolute left-1 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
+                  ></span>
+                {/if}
+                <span class="truncate flex-1" title={pg.name}>{pg.name}</span>
+              </button>
+            {/each}
+          {/if}
         {/each}
         <!-- Notebook-root drop zone (#177): drag a page here to move it
              out of any section (section-less / root). Invisible until a
@@ -940,17 +1005,6 @@
   <div
     class="px-3 py-2 border-t border-border-muted flex items-center justify-between bg-surface flex-shrink-0"
   >
-    {#if onCloseVault}
-      <button
-        onclick={onCloseVault}
-        aria-label="Change Vault"
-        title="Close this vault and return to the setup screen"
-        class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start hover:bg-hover transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none"
-      >
-        <span class="material-symbols-outlined text-[15px]">swap_horiz</span>
-        <span>Change Vault</span>
-      </button>
-    {/if}
     <button
       onclick={() => (collapsed = true)}
       aria-label="Hide sidebar"
@@ -1025,7 +1079,8 @@
       aria-modal="true"
       aria-label="Confirm delete"
       tabindex="-1"
-      class="relative bg-panel border border-border-active rounded-xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden"
+      class="relative w-full max-w-sm glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
+      style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 90%, transparent);"
     >
       <div class="px-5 py-4 border-b border-border-muted">
         <h2 class="font-headline-md text-headline-md text-text-primary">

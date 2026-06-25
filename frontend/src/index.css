@@ -255,19 +255,26 @@ body {
   top: 0;
   bottom: 0;
   width: 1px;
-  background-color: var(--color-border-muted);
-  transition: all 220ms var(--transition-standard);
+  background: linear-gradient(
+    to bottom,
+    var(--color-border-muted) 60%,
+    transparent 100%
+  );
+  opacity: 0.55;
+  transition: all 250ms var(--transition-standard);
 }
 
 .guide-rail.active {
   width: 1.5px;
+  opacity: 1;
   background: linear-gradient(
     to bottom,
-    var(--color-accent-primary-start),
-    var(--color-accent-primary-end)
+    var(--color-accent-primary-start) 30%,
+    var(--color-accent-primary-end) 85%,
+    transparent 100%
   );
-  box-shadow: 0 0 4px
-    color-mix(in srgb, var(--color-accent-primary-start) 40%, transparent);
+  box-shadow: 0 0 6px
+    color-mix(in srgb, var(--color-accent-primary-start) 30%, transparent);
 }
 
 /* Frosted glass palette style */

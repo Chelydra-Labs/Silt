@@ -48,12 +48,45 @@
     }
   }
 
+  let viewButtons = $state<Record<string, HTMLButtonElement>>({})
+  let pillLeft = $state(0)
+  let pillWidth = $state(0)
+  let pillOpacity = $state(0)
+
+  function updatePill() {
+    const el = viewButtons[activeView]
+    if (el) {
+      const parent = el.parentElement
+      if (parent) {
+        const parentRect = parent.getBoundingClientRect()
+        const rect = el.getBoundingClientRect()
+        pillLeft = rect.left - parentRect.left
+        pillWidth = rect.width
+        pillOpacity = 1
+      }
+    } else {
+      pillOpacity = 0
+    }
+  }
+
+  // Update pill whenever activeView changes
+  $effect(() => {
+    activeView
+    // Wait for the DOM to update so button dimensions are correct
+    setTimeout(updatePill, 0)
+  })
+
   onMount(() => {
     syncMaximised()
     isMac = /mac/i.test(navigator.platform || navigator.userAgent)
     // Maximize/restore triggers a viewport resize; re-sync the icon then.
-    const onResize = () => syncMaximised()
+    const onResize = () => {
+      syncMaximised()
+      updatePill()
+    }
     window.addEventListener('resize', onResize)
+    // Initial sync
+    setTimeout(updatePill, 100)
     return () => window.removeEventListener('resize', onResize)
   })
 
@@ -82,22 +115,47 @@
       class:px-4={!sidebarCollapsed && !isMac}
       class:px-3={sidebarCollapsed}
     >
-      <img src={logo} alt="Silt" class="w-6 h-6 flex-shrink-0" />
-      <span
-        class="font-headline-md text-headline-md text-text-primary font-bold tracking-tight whitespace-nowrap"
-        >Silt</span
+      <div
+        class="relative logo-container flex items-center gap-2 group cursor-pointer"
       >
+        <div
+          class="relative logo-shimmer flex-shrink-0 w-6 h-6 rounded-md overflow-hidden"
+        >
+          <img
+            src={logo}
+            alt="Silt"
+            class="w-full h-full logo-img transition-all duration-300"
+          />
+          <div
+            class="absolute inset-0 logo-shimmer-sweep pointer-events-none"
+          ></div>
+        </div>
+        <span
+          class="font-headline-md text-headline-md text-text-primary font-bold tracking-tight whitespace-nowrap group-hover:text-accent-primary-start transition-colors duration-300"
+          >Silt</span
+        >
+      </div>
     </div>
 
     <div class="w-px h-6 bg-border-muted mx-1 flex-shrink-0"></div>
 
     <!-- View switcher (segmented control) -->
-    <nav class="flex items-center gap-0.5 min-w-0 px-1">
+    <nav
+      class="flex items-center gap-0.5 p-0.5 bg-panel border border-border-muted rounded-lg relative min-w-0 mx-2"
+    >
+      <!-- Sliding pill indicator -->
+      <div
+        class="absolute top-0.5 bottom-0.5 bg-hover rounded-md transition-all duration-200 ease-[var(--transition-standard)] pointer-events-none"
+        style:left="{pillLeft}px"
+        style:width="{pillWidth}px"
+        style:opacity={pillOpacity}
+      ></div>
+
       {#each views as v (v.id)}
         <button
+          bind:this={viewButtons[v.id]}
           onclick={() => selectView(v.id)}
-          class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-label-sm text-label-sm transition-all border-none cursor-pointer focus:outline-none whitespace-nowrap"
-          class:bg-hover={activeView === v.id}
+          class="relative flex items-center gap-1.5 px-3 py-1 rounded-md font-label-sm text-label-sm transition-colors border-none bg-transparent cursor-pointer focus:outline-none whitespace-nowrap z-10"
           class:text-accent-primary-start={activeView === v.id}
           class:text-text-muted={activeView !== v.id}
           aria-pressed={activeView === v.id}
@@ -187,5 +245,38 @@
   .drag-region :global(input),
   .drag-region :global(a) {
     --wails-draggable: no-drag;
+  }
+
+  .logo-container:hover .logo-img {
+    filter: drop-shadow(0 0 6px var(--color-accent-primary-start))
+      brightness(1.1);
+    transform: scale(1.05);
+  }
+
+  .logo-shimmer-sweep {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.25),
+      transparent
+    );
+    left: -150%;
+    width: 50%;
+    height: 100%;
+    transform: skewX(-20deg);
+    transition: none;
+  }
+
+  .logo-container:hover .logo-shimmer-sweep {
+    animation: logo-sweep 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes logo-sweep {
+    0% {
+      left: -150%;
+    }
+    100% {
+      left: 150%;
+    }
   }
 </style>

@@ -276,17 +276,26 @@
   >
     <div class="relative z-[1] flex flex-col flex-1">
       <nav
-        class="mb-6 flex items-center gap-2 text-text-muted font-label-sm text-label-sm"
+        class="mb-6 flex items-center gap-1.5 text-text-muted/60 text-[11px] font-medium tracking-wider uppercase font-body"
       >
-        <span>{notebook}</span>
+        <span class="hover:text-text-primary transition-colors cursor-pointer"
+          >{notebook}</span
+        >
         {#if section}
-          <span class="material-symbols-outlined text-[14px]"
+          <span class="material-symbols-outlined text-[12px] text-text-muted/30"
             >chevron_right</span
           >
-          <span>{section}</span>
+          <span class="hover:text-text-primary transition-colors cursor-pointer"
+            >{section}</span
+          >
         {/if}
-        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-        <span class="text-accent-primary-start">{displayTitle}</span>
+        <span class="material-symbols-outlined text-[12px] text-text-muted/30"
+          >chevron_right</span
+        >
+        <span
+          class="text-accent-primary-start/90 tracking-normal normal-case font-semibold"
+          >{displayTitle}</span
+        >
       </nav>
 
       <header class="mb-8">
