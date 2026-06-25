@@ -6,6 +6,21 @@ const (
 	BlockTask   BlockType = "TASK"
 	BlockNote   BlockType = "NOTE"
 	BlockHeader BlockType = "HEADER"
+	// BlockCode is a managed fenced code block (#189). Unlike NOTE/TASK/HEADER
+	// it is inherently multi-line: CleanText retains internal newlines and
+	// renderBlock emits them verbatim (no `\n`→space collapse). The on-disk
+	// form is the GFM fence plus a trailing block-identity comment line:
+	//
+	//   ```lang
+	//   <code>
+	//   ```
+	//   <!-- id: uuid @ date -->
+	//
+	// The trailing comment sits on its own line so the closing fence stays
+	// strictly GFM (no trailing content) and the block round-trips through
+	// Obsidian / GitHub / VS Code unchanged. Language carries the info string
+	// from the opening fence ("" for a bare ```).
+	BlockCode BlockType = "CODE"
 )
 
 type ParsedBlock struct {
@@ -43,6 +58,10 @@ type ParsedBlock struct {
 	ExtraTokens []string `json:"extra_tokens,omitempty"`
 	LineNumber  int      `json:"line_number"`
 	FileDate   string `json:"file_date,omitempty"`
+	// Language is the info string of a fenced code block's opening fence
+	// (BlockCode only, #189). "" for a bare ``` fence. It is the Shiki grammar
+	// identifier and round-trips as the ```{lang} prefix.
+	Language string `json:"language,omitempty"`
 }
 
 type FileMetadata struct {

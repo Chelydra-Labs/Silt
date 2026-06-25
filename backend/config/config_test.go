@@ -692,6 +692,29 @@ func TestDefaults_FormattingConfig(t *testing.T) {
 	if d.Hotkeys["format_subscript"] != "Ctrl+," {
 		t.Errorf("format_subscript default: got %q", d.Hotkeys["format_subscript"])
 	}
+	// Alignment (#173) + blockquote (#188) hotkeys.
+	for _, key := range []string{
+		"align_left", "align_center", "align_right", "align_justify", "toggle_quote",
+	} {
+		if _, ok := d.Hotkeys[key]; !ok {
+			t.Errorf("defaults hotkeys missing %q", key)
+		}
+	}
+	if d.Hotkeys["toggle_quote"] != "Ctrl+Shift+9" {
+		t.Errorf("toggle_quote default: got %q", d.Hotkeys["toggle_quote"])
+	}
+	if d.Hotkeys["toggle_details"] != "Ctrl+Shift+." {
+		t.Errorf("toggle_details default: got %q", d.Hotkeys["toggle_details"])
+	}
+	// Table row/column insert hotkeys (#172).
+	for _, key := range []string{
+		"table_insert_row_above", "table_insert_row_below",
+		"table_insert_col_left", "table_insert_col_right",
+	} {
+		if _, ok := d.Hotkeys[key]; !ok {
+			t.Errorf("defaults hotkeys missing %q", key)
+		}
+	}
 }
 
 // TestFormattingConfig_RoundTrip confirms ShowFormatToolbar + DismissedTips

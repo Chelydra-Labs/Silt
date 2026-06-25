@@ -7,6 +7,11 @@
   import type { Editor } from 'svelte-tiptap'
   import EditorUtilityBar from './editor/EditorUtilityBar.svelte'
   import { getViewMode, toggleViewMode } from '../lib/viewMode.svelte'
+  import {
+    settings,
+    toggleFocusMode,
+    toggleFormatToolbar
+  } from '../settings/store.svelte'
 
   interface Props {
     notebook: string
@@ -51,6 +56,9 @@
   $effect(() => {
     viewMode = getViewMode(notebook, section, page)
   })
+  let showFormatToolbar = $derived(
+    settings.config?.ui?.show_format_toolbar !== false
+  )
 
   function handleToggleViewMode() {
     toggleViewMode(notebook, section, page)
@@ -262,13 +270,12 @@
   })
 </script>
 
-<div class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-void">
-  <EditorUtilityBar
-    editor={editorInstance}
-    {activeMarks}
-    {viewMode}
-    onToggleViewMode={handleToggleViewMode}
-  />
+<div
+  class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-void relative"
+>
+  {#if viewMode === 'edit' && showFormatToolbar}
+    <EditorUtilityBar editor={editorInstance} {activeMarks} />
+  {/if}
 
   <div
     bind:this={containerEl}
@@ -276,17 +283,26 @@
   >
     <div class="relative z-[1] flex flex-col flex-1">
       <nav
-        class="mb-6 flex items-center gap-2 text-text-muted font-label-sm text-label-sm"
+        class="mb-6 flex items-center gap-1.5 text-text-muted/60 text-[11px] font-medium tracking-wider uppercase font-body"
       >
-        <span>{notebook}</span>
+        <span class="hover:text-text-primary transition-colors cursor-pointer"
+          >{notebook}</span
+        >
         {#if section}
-          <span class="material-symbols-outlined text-[14px]"
+          <span class="material-symbols-outlined text-[12px] text-text-muted/30"
             >chevron_right</span
           >
-          <span>{section}</span>
+          <span class="hover:text-text-primary transition-colors cursor-pointer"
+            >{section}</span
+          >
         {/if}
-        <span class="material-symbols-outlined text-[14px]">chevron_right</span>
-        <span class="text-accent-primary-start">{displayTitle}</span>
+        <span class="material-symbols-outlined text-[12px] text-text-muted/30"
+          >chevron_right</span
+        >
+        <span
+          class="text-accent-primary-start/90 tracking-normal normal-case font-semibold"
+          >{displayTitle}</span
+        >
       </nav>
 
       <header class="mb-8">
@@ -349,9 +365,66 @@
       </div>
     </div>
   </div>
+
+  <!-- Floating Editor Actions Bar -->
+  <div
+    class="absolute right-6 z-40 flex items-center gap-1 p-1 bg-panel/60 backdrop-blur-md border border-border-muted/50 rounded-full shadow-lg transition-all duration-300 opacity-60 hover:opacity-100 hover:scale-105"
+    class:top-4={!(viewMode === 'edit' && showFormatToolbar)}
+    class:top-14={viewMode === 'edit' && showFormatToolbar}
+  >
+    <!-- Focus Mode Toggle -->
+    <button
+      onclick={toggleFocusMode}
+      class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
+      class:text-accent-primary-start={settings.config?.editor?.focus_mode ===
+        true}
+      class:text-text-muted={settings.config?.editor?.focus_mode !== true}
+      title={settings.config?.editor?.focus_mode === true
+        ? 'Exit Focus Mode (Ctrl+Shift+D)'
+        : 'Enter Focus Mode (Ctrl+Shift+D)'}
+      aria-label="Toggle Focus Mode"
+    >
+      <span class="material-symbols-outlined text-[18px]"
+        >center_focus_strong</span
+      >
+    </button>
+
+    <!-- Format Toolbar Toggle -->
+    <button
+      onclick={toggleFormatToolbar}
+      class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
+      class:text-accent-primary-start={showFormatToolbar}
+      class:text-text-muted={!showFormatToolbar}
+      title={showFormatToolbar
+        ? 'Hide Formatting Toolbar (Ctrl+Shift+F)'
+        : 'Show Formatting Toolbar (Ctrl+Shift+F)'}
+      aria-label="Toggle Formatting Toolbar"
+    >
+      <span class="material-symbols-outlined text-[18px]">text_format</span>
+    </button>
+
+    <div class="w-px h-4 bg-border-muted mx-0.5"></div>
+
+    <!-- View Mode Toggle -->
+    <button
+      onclick={handleToggleViewMode}
+      class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover text-text-muted"
+      title={viewMode === 'edit'
+        ? 'View Markdown Source (Ctrl+Shift+V)'
+        : 'View Rich Text (Ctrl+Shift+V)'}
+      aria-label="Toggle View Mode"
+    >
+      <span class="material-symbols-outlined text-[18px]">
+        {viewMode === 'edit' ? 'code' : 'menu_book'}
+      </span>
+    </button>
+  </div>
 </div>
 
 <style>
+  h1[contenteditable] {
+    transition: border-bottom-color 0.25s ease-in-out;
+  }
   h1[contenteditable]:hover {
     border-bottom-color: var(--color-border-muted) !important;
   }

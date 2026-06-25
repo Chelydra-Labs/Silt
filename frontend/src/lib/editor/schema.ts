@@ -21,7 +21,17 @@
 //   The editor-created default is '- ' (matching renderBlock's default).
 
 import { Node, Mark, mergeAttributes, InputRule } from '@tiptap/core'
+import { newlineInCode } from '@tiptap/pm/commands'
 import Highlight from '@tiptap/extension-highlight'
+import {
+  Details,
+  DetailsContent,
+  DetailsSummary
+} from '@tiptap/extension-details'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { TableHeader } from '@tiptap/extension-table-header'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
 
@@ -253,6 +263,16 @@ export const NoteBlock = Node.create({
         },
         renderHTML: (attrs) => ({ 'data-bullet': attrs.bullet })
       },
+      // Blockquote prefix (#188). A `> ` (or nested `>> `, `>>> `) prefix is
+      // just another recognized marker style, parallel to `bullet`. Empty
+      // string = not a quote. The marker is stored verbatim so the exact `>`
+      // run round-trips and the NodeView can render nested left borders.
+      quote: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-quote') || '',
+        renderHTML: (attrs) =>
+          attrs.quote ? { 'data-quote': attrs.quote } : {}
+      },
       // Block-level text alignment (#173). Only NOTE and HEADER support it;
       // TASK blocks do not get this attr. Default 'left' = no marker emitted.
       align: {
@@ -388,6 +408,200 @@ export const HeaderBlock = Node.create({
 // NoteBlock (plain text) is the natural default; TaskBlock and HeaderBlock
 // are opt-in types the user creates via the slash menu.
 export const SiltBlockExtensions = [NoteBlock, TaskBlock, HeaderBlock]
+
+// ---- CalloutBlock (#180) -------------------------------------------------
+// An Obsidian/GFM admonition: a `>`-prefixed line whose marker is `[!variant]`.
+// On-disk it is `> [!variant] message`; the converter detects the marker and
+// emits this node, stripping the prefix from the displayed text. The variant
+// drives the icon + accent color (CALLOUT_VARIANTS). Pure-frontend: the Go
+// parser sees the line as an opaque NOTE whose clean_text starts with
+// `> [!variant]`, exactly like a quote — no parser change.
+export type CalloutVariant =
+  | 'note'
+  | 'info'
+  | 'tip'
+  | 'warning'
+  | 'danger'
+  | 'success'
+  | 'quote'
+
+export const CALLOUT_VARIANTS: Record<
+  CalloutVariant,
+  { icon: string; label: string; accent: string; role: string }
+> = {
+  note: {
+    icon: 'info',
+    label: 'Note',
+    accent: 'var(--color-accent-primary-start)',
+    role: 'note'
+  },
+  info: {
+    icon: 'campaign',
+    label: 'Info',
+    accent: 'var(--color-accent-secondary-start)',
+    role: 'note'
+  },
+  tip: {
+    icon: 'lightbulb',
+    label: 'Tip',
+    accent: 'var(--color-status-success, #30a46c)',
+    role: 'note'
+  },
+  warning: {
+    icon: 'warning',
+    label: 'Warning',
+    accent: 'var(--color-status-warn, #f5a623)',
+    role: 'note'
+  },
+  danger: {
+    icon: 'error',
+    label: 'Danger',
+    accent: 'var(--color-status-danger, #e5484d)',
+    role: 'alert'
+  },
+  success: {
+    icon: 'check_circle',
+    label: 'Success',
+    accent: 'var(--color-status-success, #30a46c)',
+    role: 'status'
+  },
+  quote: {
+    icon: 'format_quote',
+    label: 'Quote',
+    accent: 'var(--color-text-muted)',
+    role: 'blockquote'
+  }
+}
+
+export const CalloutBlock = Node.create({
+  name: 'calloutBlock',
+  group: 'block',
+  content: 'inline*',
+  defining: true,
+  isolating: true,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-id') || null,
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+      },
+      variant: {
+        default: 'note',
+        parseHTML: (el) => el.getAttribute('data-variant') || 'note',
+        renderHTML: (attrs) => ({ 'data-variant': attrs.variant })
+      },
+      file_date: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-file-date') || '',
+        renderHTML: (attrs) =>
+          attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="callout"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'div',
+      mergeAttributes({ 'data-type': 'callout' }, HTMLAttributes),
+      0
+    ]
+  }
+})
+
+// ---- CodeBlock (#189) ----------------------------------------------------
+// A managed fenced code block. The Go parser emits a BlockCode ParsedBlock
+// whose clean_text retains internal newlines (parser.go); this node carries
+// that text as plain `text*` content and a `language` attr (the info string).
+// `code: true` disables inline marks inside (code is literal). Enter inserts a
+// newline rather than a new block (newlineInCode). On-disk render goes through
+// Go's renderBlock BlockCode branch, which emits the ``` ``` fence verbatim.
+export const CodeBlock = Node.create({
+  name: 'codeBlock',
+  group: 'block',
+  content: 'text*',
+  defining: true,
+  isolating: true,
+  code: true,
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-id') || null,
+        renderHTML: (attrs) => (attrs.id ? { 'data-id': attrs.id } : {})
+      },
+      language: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-language') || '',
+        renderHTML: (attrs) =>
+          attrs.language ? { 'data-language': attrs.language } : {}
+      },
+      file_date: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-file-date') || '',
+        renderHTML: (attrs) =>
+          attrs.file_date ? { 'data-file-date': attrs.file_date } : {}
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="code"]' }, { tag: 'pre[data-type="code"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes({ 'data-type': 'code' }, HTMLAttributes), 0]
+  },
+
+  addKeyboardShortcuts() {
+    return {
+      // Enter inserts a newline inside the code instead of creating a new
+      // block below — the defining behaviour of a code block.
+      Enter: () => newlineInCode(this.editor.state, this.editor.view.dispatch)
+    }
+  }
+})
+
+// ---- Foldable details (#183) ---------------------------------------------
+// TipTap's Details extension renders a native `<details><summary>` container,
+// which gives free disclosure behaviour (click summary to toggle), keyboard
+// operability, and an implicit aria-expanded. The on-disk form is the HTML
+// itself, preserved line-by-line as opaque NOTE blocks by the Go parser (HTML
+// passes through clean_text verbatim). The converter groups a `<details>` run
+// into this node tree on load and re-emits the run on save. Collapse state is
+// ephemeral in v1 (never written as `<details open>`).
+//
+// `open: false` default keeps sections collapsed on load (the outliner's "the
+// file is the truth" model — collapse is a view concern, not persisted).
+export const SiltDetailsExtensions = [
+  Details.configure({ HTMLAttributes: { 'data-type': 'details' } }),
+  DetailsSummary,
+  DetailsContent
+]
+
+// ---- GFM Tables (#172) ---------------------------------------------------
+// TipTap's Table family renders an editable grid with native Tab/arrow-key
+// navigation, column resizing, and cell selection. The on-disk form is
+// standard GFM pipe syntax; the converter groups a run of pipe-prefixed NOTE
+// blocks (one per GFM line) into this node tree on load and re-emits the run
+// on save. resizable lets the user drag column borders; the table's block
+// identity lives on the LAST row (so the whole table has one id).
+export const SiltTableExtensions = [
+  Table.configure({
+    resizable: true,
+    allowTableNodeSelection: false,
+    HTMLAttributes: { 'data-type': 'table' }
+  }),
+  TableRow,
+  TableCell,
+  TableHeader
+]
 
 // ---- EmbedNode (block-level, atomic) -------------------------------------
 // Renders Smart Graph `{{embed:uuid}}` as a live EmbedPortal NodeView (#85).

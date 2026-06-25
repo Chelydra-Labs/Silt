@@ -44,10 +44,8 @@ describe('TitleBar', () => {
   it('renders the "Silt" wordmark in text-primary (not accent) per #138', async () => {
     render(TitleBar, {
       props: {
-        activeView: 'notes',
         sidebarCollapsed: false,
-        onSearchClick: () => {},
-        onOpenSettings: () => {}
+        onSearchClick: () => {}
       }
     })
     await tick()

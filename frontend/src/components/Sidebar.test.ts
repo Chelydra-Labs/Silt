@@ -89,8 +89,7 @@ describe('Sidebar', () => {
         onSelectSection: () => {},
         onSelectPage: () => {},
         onPinPage: () => {},
-        onSelectView: () => {},
-        onCloseVault: () => {}
+        onSelectView: () => {}
       }
     })
     await flush()
@@ -98,31 +97,6 @@ describe('Sidebar', () => {
     // When collapsed, the sidebar renders but the titlebar/expand button is
     // handled by App.svelte. We just verify the component didn't crash.
     expect(document.body).toBeTruthy()
-  })
-
-  it('renders the Change Vault button which calls onCloseVault', async () => {
-    const handler = vi.fn()
-    render(Sidebar, {
-      props: {
-        activeNotebook: '',
-        activeSection: '',
-        activePage: '',
-        activeView: 'notes',
-        collapsed: false,
-        onSelectNotebook: () => {},
-        onSelectSection: () => {},
-        onSelectPage: () => {},
-        onPinPage: () => {},
-        onSelectView: () => {},
-        onCloseVault: handler
-      }
-    })
-    await flush()
-
-    const changeVaultBtn = screen.getByText(/change vault/i)
-    expect(changeVaultBtn).toBeInTheDocument()
-    await fireEvent.click(changeVaultBtn)
-    expect(handler).toHaveBeenCalledTimes(1)
   })
 
   it('renders the active-notebook label in text-primary (not accent) per #138', async () => {
@@ -142,8 +116,7 @@ describe('Sidebar', () => {
         onSelectSection: () => {},
         onSelectPage: () => {},
         onPinPage: () => {},
-        onSelectView: () => {},
-        onCloseVault: () => {}
+        onSelectView: () => {}
       }
     })
     await flush()
@@ -156,15 +129,22 @@ describe('Sidebar', () => {
   it('MovePage mock is available and callable (#177)', async () => {
     // Smoke test: verify MovePage is properly mocked and resolves.
     await mocks.movePage('Work', 'Journal', 'Meetings', 'Daily')
-    expect(mocks.movePage).toHaveBeenCalledWith('Work', 'Journal', 'Meetings', 'Daily')
+    expect(mocks.movePage).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Meetings',
+      'Daily'
+    )
   })
 
   it('MovePage mock rejects on collision (#177)', async () => {
     // Verify the mock can simulate a collision error for the toast test.
-    mocks.movePage.mockRejectedValueOnce(new Error('a page named "Daily" already exists in that section'))
-    await expect(mocks.movePage('Work', 'Journal', 'Meetings', 'Daily')).rejects.toThrow(
-      'already exists'
+    mocks.movePage.mockRejectedValueOnce(
+      new Error('a page named "Daily" already exists in that section')
     )
+    await expect(
+      mocks.movePage('Work', 'Journal', 'Meetings', 'Daily')
+    ).rejects.toThrow('already exists')
   })
 
   it('onPageMoved callback is wired and updates open tabs (#177)', async () => {
@@ -184,7 +164,6 @@ describe('Sidebar', () => {
         onSelectPage: () => {},
         onPinPage: () => {},
         onSelectView: () => {},
-        onCloseVault: () => {},
         onPageMoved
       }
     })

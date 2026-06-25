@@ -4,7 +4,7 @@
   import type { Editor } from 'svelte-tiptap'
   import StarterKit from '@tiptap/starter-kit'
   import Placeholder from '@tiptap/extension-placeholder'
-  import { CharacterCount, Focus } from '@tiptap/extensions'
+  import { CharacterCount, Focus, TrailingNode } from '@tiptap/extensions'
   import Typography from '@tiptap/extension-typography'
   import { AutosaveManager } from '../lib/editor/useAutosave'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
@@ -12,10 +12,17 @@
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
     SiltColorMarkExtensions,
+    SiltDetailsExtensions,
+    SiltTableExtensions,
     UniqueBlockIds,
     SiltBlockKeymaps,
     convertToBlock,
     setBlockAlign,
+    toggleBlockQuote,
+    insertCallout,
+    insertCodeBlock,
+    insertDetails,
+    insertTable,
     findActiveBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
@@ -30,6 +37,8 @@
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
+  import TableContextToolbar from './editor/TableContextToolbar.svelte'
+  import TableSizePicker from './editor/TableSizePicker.svelte'
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { clampToViewport } from '../lib/editor/popoverPositioning'
@@ -130,6 +139,7 @@
   // collapsed and the screen coords for positioning the floating bubble.
   let selectionEmpty = $state(true)
   let isLastBlock = $state(false)
+  let cursorInTable = $state(false)
   let selectionCoords = $state<{
     left: number
     top: number
@@ -168,6 +178,10 @@
   let showColorPicker = $state(false)
   let colorPickerMarkType = $state<'textColor' | 'backgroundColor'>('textColor')
   let colorPickerCoords = $state<{ left: number; top: number } | null>(null)
+
+  // Custom-table size picker (#172) — an in-app popover replacing window.prompt.
+  let showTableSizePicker = $state(false)
+  let tableSizeCoords = $state<{ left: number; top: number } | null>(null)
 
   // View mode (#171) is managed by the parent container.
 
@@ -231,6 +245,20 @@
   function cancelLinkInput(): void {
     showLinkInput = false
     linkInputValue = ''
+    editorInstance?.chain().focus().run()
+  }
+
+  // --- Custom table size picker (#172) -------------------------------------
+  function confirmTableSize(rows: number, cols: number): void {
+    showTableSizePicker = false
+    tableSizeCoords = null
+    if (editorInstance && !editorInstance.isDestroyed) {
+      insertTable(editorInstance as any, rows, cols)
+    }
+  }
+  function cancelTableSize(): void {
+    showTableSizePicker = false
+    tableSizeCoords = null
     editorInstance?.chain().focus().run()
   }
 
@@ -349,7 +377,14 @@
 
   const editorExtensions = [
     StarterKit.configure({
-      paragraph: false,
+      // paragraph stays enabled: TipTap's Table extension fills cells with
+      // paragraph nodes (tableCell content is 'block+'), and its row/column
+      // commands hard-depend on schema.nodes.paragraph. A stray top-level
+      // paragraph self-heals — docToBlocks maps any unknown block to NOTE.
+      // StarterKit's trailingNode stays disabled (it appends a paragraph);
+      // a noteBlock-based TrailingNode is added separately below so an opaque
+      // block (table/code/details/embed) that traps the cursor always has an
+      // editable line after it the user can click into and type below.
       heading: false,
       bulletList: false,
       orderedList: false,
@@ -363,7 +398,16 @@
     ...SiltBlockExtensionsWithNodeViews,
     ...SiltInlineMarkExtensions,
     ...SiltColorMarkExtensions,
+    ...SiltDetailsExtensions,
+    ...SiltTableExtensions,
     UniqueBlockIds,
+    // Append an empty noteBlock after a cursor-trapping block (table/codeBlock/
+    // details/embedNode/embedBlock) so there is always a clickable line below it.
+    // `notAfter` skips the prose blocks the user can already press Enter from.
+    TrailingNode.configure({
+      node: 'noteBlock',
+      notAfter: ['taskBlock', 'headerBlock', 'calloutBlock']
+    }),
     TaskMetaSuggest.configure({
       onChange: onMetaChange,
       onNavigate: onMetaNavigate,
@@ -406,6 +450,10 @@
       // Track selection state for the SelectionBubble (#168).
       const { selection } = editor.state
       selectionEmpty = selection.empty
+      // Contextual table toolbar (#172): shown when the cursor is inside a
+      // table cell (the selection resolves to a tableCell/tableHeader node).
+      cursorInTable =
+        editor.isActive('tableCell') || editor.isActive('tableHeader')
       if (!selection.empty && !editor.isDestroyed) {
         try {
           const start = editor.view.coordsAtPos(selection.from)
@@ -630,6 +678,31 @@
       setBlockAlign(editorInstance as any, 'right')
     } else if (commandId === 'align-justify') {
       setBlockAlign(editorInstance as any, 'justify')
+    } else if (commandId === 'quote') {
+      toggleBlockQuote(editorInstance as any)
+    } else if (commandId === 'callout') {
+      insertCallout(editorInstance as any, 'note')
+    } else if (commandId.startsWith('callout-')) {
+      insertCallout(editorInstance as any, commandId.slice('callout-'.length))
+    } else if (commandId === 'code-block') {
+      insertCodeBlock(editorInstance as any)
+    } else if (commandId === 'details') {
+      insertDetails(editorInstance as any)
+    } else if (commandId === 'table') {
+      insertTable(editorInstance as any, 3, 3)
+    } else if (commandId === 'table-5x4') {
+      insertTable(editorInstance as any, 5, 4)
+    } else if (commandId === 'table-custom') {
+      // Open an in-app size popover instead of the native window.prompt.
+      if (!editorInstance || editorInstance.isDestroyed) return
+      try {
+        const { selection } = editorInstance.state
+        const coords = editorInstance.view.coordsAtPos(selection.from)
+        tableSizeCoords = { left: coords.left, top: coords.bottom }
+      } catch {
+        tableSizeCoords = { left: 100, top: 100 }
+      }
+      showTableSizePicker = true
     } else if (commandId === 'text-color') {
       openColorPickerPopover('textColor')
     } else if (commandId === 'background-color') {
@@ -919,6 +992,9 @@
         {selectionEmpty}
         {selectionCoords}
       />
+      {#if cursorInTable && editorInstance}
+        <TableContextToolbar editor={editorInstance} />
+      {/if}
       {#if editorStore}
         <EditorContent editor={$editorStore} />
       {/if}
@@ -1198,6 +1274,14 @@
           />
         </label>
       </div>
+    {/if}
+    {#if showTableSizePicker && tableSizeCoords}
+      <TableSizePicker
+        left={tableSizeCoords.left}
+        top={tableSizeCoords.top}
+        onConfirm={confirmTableSize}
+        onCancel={cancelTableSize}
+      />
     {/if}
   {/if}
 </div>

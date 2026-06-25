@@ -1,15 +1,8 @@
-// Component coverage for the font picker (#82) — the explicit PLAN Phase 2
-// deliverable. fonts.test.ts covers the registry; this renders GeneralTab and
-// asserts the picker interaction: the combobox reflects the current value, the
-// "Reset to theme default" button appears only when the active theme overrides
-// the font, and clicking it clears the config field.
-
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => {
-  // A minimal valid SystemConfig (matches config.SystemConfig shape).
   const baseConfig = {
     notebooks: { path: '/vault', default_active: 'Work' },
     editor: {
@@ -39,8 +32,6 @@ const mocks = vi.hoisted(() => {
     },
     saveConfig: vi.fn(async () => true),
     reloadFromBackend: vi.fn(async () => {}),
-    // themeState: darkTokens carries the theme typography overrides. Both
-    // modes carry the same --font-* (theme-level), so darkTokens suffices.
     themeState: {
       id: 'cyber_forest',
       name: 'Cyber Forest',
@@ -63,10 +54,6 @@ vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
   EventsEmit: vi.fn()
 }))
 
-// VaultActionModal + VaultArchiveModal (rendered as children when a relocate
-// or archive action is chosen) import the wailsjs binding module, so it must
-// be mocked here too. VaultArchiveModal also subscribes to the
-// vault:archive:progress event, so the runtime module is mocked as well.
 const appMocks = vi.hoisted(() => ({
   PickVaultDestination: vi.fn(),
   MoveVault: vi.fn(),
@@ -91,76 +78,9 @@ vi.mock('../../settings/store.svelte', () => ({
 }))
 vi.mock('../../theme/store.svelte', () => ({ themeState: mocks.themeState }))
 
-import GeneralTab from './GeneralTab.svelte'
+import WorkspaceTab from './WorkspaceTab.svelte'
 
-function resetThemeState(withTypography: boolean) {
-  mocks.themeState.darkTokens = withTypography
-    ? {
-        '--color-void': '#0c0c0e',
-        '--font-body': "'Plus Jakarta Sans', sans-serif",
-        '--font-mono': "'JetBrains Mono', monospace"
-      }
-    : { '--color-void': '#0c0c0e' }
-}
-
-describe('GeneralTab font picker (#82)', () => {
-  beforeEach(() => {
-    // Each test starts from the saved config + clean dirty flag.
-    mocks.settings.config.editor.font_family = 'Plus Jakarta Sans'
-    mocks.settings.config.editor.mono_font_family = 'JetBrains Mono'
-    mocks.settings.dirty = false
-    mocks.saveConfig.mockClear()
-  })
-  afterEach(() => cleanup())
-
-  it('renders a combobox for the body font reflecting the current config value', async () => {
-    resetThemeState(true)
-    render(GeneralTab)
-    await tick()
-    const combo = screen.getByRole('combobox', { name: 'Font family' })
-    expect(combo).toBeInTheDocument()
-    // The trigger shows the current family (rendered in-font).
-    expect(combo.textContent).toContain('Plus Jakarta Sans')
-  })
-
-  it('shows a Reset button for the body font when the theme overrides it', async () => {
-    resetThemeState(true)
-    render(GeneralTab)
-    await tick()
-    expect(
-      screen.getByLabelText('Reset body font to theme default')
-    ).toBeInTheDocument()
-  })
-
-  it('hides the Reset button when the active theme has no typography override', async () => {
-    resetThemeState(false)
-    render(GeneralTab)
-    await tick()
-    expect(
-      screen.queryByLabelText('Reset body font to theme default')
-    ).toBeNull()
-    expect(
-      screen.queryByLabelText('Reset monospace font to theme default')
-    ).toBeNull()
-  })
-
-  it('clicking Reset clears the config field (so the CSS fallback resolves to the theme font)', async () => {
-    resetThemeState(true)
-    render(GeneralTab)
-    await tick()
-    const reset = screen.getByLabelText('Reset body font to theme default')
-    await fireEvent.click(reset)
-    await tick()
-    // The config field is now empty; the combobox shows the theme-default
-    // leading option (which is only present because the theme overrides it).
-    const combo = screen.getByRole('combobox', { name: 'Font family' })
-    expect(combo.textContent).toContain('Theme default')
-    // The edit marked the form dirty (Save path).
-    expect(mocks.settings.dirty).toBe(true)
-  })
-})
-
-describe('GeneralTab vault relocate menu (#141)', () => {
+describe('WorkspaceTab vault relocate menu (#141)', () => {
   beforeEach(() => {
     mocks.settings.dirty = false
     appMocks.PickVaultDestination.mockClear()
@@ -175,7 +95,7 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   afterEach(() => cleanup())
 
   it('renders the vault actions kebab button', async () => {
-    render(GeneralTab)
+    render(WorkspaceTab)
     await tick()
     expect(
       screen.getByRole('button', { name: 'Vault actions' })
@@ -183,7 +103,7 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   })
 
   it('opening the menu reveals Move, Copy, Export, and Import actions', async () => {
-    render(GeneralTab)
+    render(WorkspaceTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -199,10 +119,27 @@ describe('GeneralTab vault relocate menu (#141)', () => {
     expect(
       screen.getByRole('menuitem', { name: /Import vault/ })
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Switch vault/ })
+    ).toBeInTheDocument()
+  })
+
+  it('Switch vault dispatches the silt:change-vault event', async () => {
+    render(WorkspaceTab)
+    await tick()
+    const handler = vi.fn()
+    window.addEventListener('silt:change-vault', handler)
+    await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /Switch vault/ })
+    )
+    expect(handler).toHaveBeenCalledTimes(1)
+    window.removeEventListener('silt:change-vault', handler)
   })
 
   it('selecting Move opens the VaultActionModal in move mode', async () => {
-    render(GeneralTab)
+    render(WorkspaceTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -215,7 +152,7 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   })
 
   it('selecting Export opens the VaultArchiveModal in export mode', async () => {
-    render(GeneralTab)
+    render(WorkspaceTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -230,7 +167,7 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   })
 
   it('selecting Import opens the VaultArchiveModal in import mode', async () => {
-    render(GeneralTab)
+    render(WorkspaceTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -245,7 +182,7 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   })
 
   it('Escape on a menu item collapses the menu', async () => {
-    render(GeneralTab)
+    render(WorkspaceTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -257,14 +194,13 @@ describe('GeneralTab vault relocate menu (#141)', () => {
   })
 
   it('clicking outside the menu collapses it', async () => {
-    render(GeneralTab)
+    render(WorkspaceTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
     expect(
       screen.getByRole('menuitem', { name: /Move vault/ })
     ).toBeInTheDocument()
-    // A window click outside the menu wrapper closes it.
     await fireEvent.click(document.body)
     await tick()
     expect(screen.queryByRole('menuitem', { name: /Move vault/ })).toBeNull()

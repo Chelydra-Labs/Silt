@@ -21,8 +21,13 @@ function makeEditor(nodes: { typeName: string }[]): any {
 }
 
 describe('BLOCK_TYPES', () => {
-  it('contains the three Silt block types in canonical order', () => {
-    expect([...BLOCK_TYPES]).toEqual(['taskBlock', 'noteBlock', 'headerBlock'])
+  it('contains the Silt block types in canonical order (noteBlock first)', () => {
+    expect([...BLOCK_TYPES]).toEqual([
+      'noteBlock',
+      'taskBlock',
+      'headerBlock',
+      'calloutBlock'
+    ])
   })
 })
 

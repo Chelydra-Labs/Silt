@@ -25,8 +25,20 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 
 const uniqueIdKey = new PluginKey('silt-unique-block-ids')
 
-// The block node names that carry a UUID identity.
-const BLOCK_NODE_NAMES = new Set(['taskBlock', 'noteBlock', 'headerBlock', 'embedNode'])
+// The block node names that carry a UUID identity. Includes the Sprint 14
+// top-level block types (callout, code) so freshly-inserted ones get a stable
+// id before the first save. Container nodes whose identity lives on their
+// underlying NOTE lines (details, table) are intentionally excluded — their
+// TipTap schemas do not declare an `id` attr, so setNodeAttribute would not
+// stick; the Go parser mints those ids on first write.
+const BLOCK_NODE_NAMES = new Set([
+  'taskBlock',
+  'noteBlock',
+  'headerBlock',
+  'embedNode',
+  'calloutBlock',
+  'codeBlock'
+])
 
 function freshId(): string {
   // crypto.randomUUID is available in all modern browsers and the Wails

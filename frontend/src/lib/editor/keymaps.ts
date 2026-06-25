@@ -2,6 +2,7 @@ import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
+import { freshId } from './uniqueIdPlugin'
 
 // SiltBlockKeymaps — outliner keyboard semantics for the TipTap editor.
 //
@@ -16,8 +17,22 @@ import { TextSelection } from '@tiptap/pm/state'
 // The extension reads the indent/unindent hotkeys live from the settings store
 // so users can remap or disable them from Settings → General.
 
-/** The three Silt block node types, in canonical order. */
-export const BLOCK_TYPES = ['taskBlock', 'noteBlock', 'headerBlock'] as const
+/** The Silt block node types, in canonical order. NoteBlock is first (default). */
+export const BLOCK_TYPES = [
+  'noteBlock',
+  'taskBlock',
+  'headerBlock',
+  'calloutBlock'
+] as const
+
+/**
+ * Block node types that carry a `depth` attr and participate in the outliner's
+ * indent/outdent model. Callout blocks (and other new container/atomic types)
+ * are intentionally excluded: they have no depth attr, so indenting them would
+ * be silently dropped on save. Tab/Shift+Tab fall through for those so TipTap's
+ * default (e.g. table cell navigation) applies.
+ */
+const DEPTH_BLOCK_TYPES = new Set(['noteBlock', 'taskBlock', 'headerBlock'])
 
 /**
  * Walk up from the editor's current selection to the nearest enclosing block
@@ -141,6 +156,212 @@ export function setBlockAlign(editor: Editor, align: string): boolean {
   return true
 }
 
+// Toggle the blockquote marker on the current noteBlock (#188). Quote and
+// bullet are mutually exclusive — the on-disk serializer (docToBlocks) discards
+// `bullet` while `quote` is set, so turning quote ON clears the bullet here to
+// keep the in-editor state consistent with the save→reload cycle. Toggling
+// quote OFF yields a plain note (the bullet was already '' from the quote
+// state). No-op on TASK/HEADER blocks (quote is a NOTE marker).
+export function toggleBlockQuote(editor: Editor): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const active = findActiveBlock(editor)
+  if (!active) return false
+  if (active.node.type.name !== 'noteBlock') return true // silently skip
+  const nodePos = editor.state.selection.$from.before(active.depth)
+  const isQuote = !!active.node.attrs.quote
+  // Quote and bullet are mutually exclusive on disk (docToBlocks discards
+  // bullet when quote is set). Clearing bullet on toggle-ON keeps the
+  // in-editor state consistent with the save→reload cycle.
+  const tr = editor.state.tr.setNodeMarkup(nodePos, undefined, {
+    ...active.node.attrs,
+    quote: isQuote ? '' : '> ',
+    bullet: isQuote ? (active.node.attrs.bullet ?? '') : ''
+  })
+  editor.view.dispatch(tr)
+  return true
+}
+
+// Insert a callout block at the current selection (#180). The callout replaces
+// the current block when it is an empty note, otherwise inserts a new callout
+// below. The variant drives the icon + accent (CALLOUT_VARIANTS in schema.ts).
+export function insertCallout(editor: Editor, variant: string): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const today = new Date().toISOString().slice(0, 10)
+  const calloutNode = editor.state.schema.nodes.calloutBlock?.create(
+    { id: null, variant, file_date: today },
+    []
+  )
+  if (!calloutNode) return false
+  // If the current block is an empty note/header, replace it in place.
+  const active = findActiveBlock(editor)
+  const isEmptyNote =
+    active &&
+    (active.node.type.name === 'noteBlock' ||
+      active.node.type.name === 'headerBlock') &&
+    (active.node.content.size === 0 || active.node.textContent.trim() === '')
+  if (active && isEmptyNote) {
+    const pos = editor.state.selection.$from.before(active.depth)
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(pos, pos + active.node.nodeSize, calloutNode)
+    )
+    editor.commands.focus()
+    return true
+  }
+  editor.commands.insertContent(calloutNode)
+  editor.commands.focus()
+  return true
+}
+
+// Insert a fenced code block at the current selection (#189). Replaces the
+// current block when it is an empty note/header, otherwise inserts below.
+export function insertCodeBlock(editor: Editor, language = ''): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const today = new Date().toISOString().slice(0, 10)
+  // An empty code block has NO text children — codeBlock's content is 'text*'
+  // (zero or more), which a content-less create satisfies. ProseMirror rejects
+  // empty *text nodes* (schema.text('') throws), so we must not synthesize one;
+  // the user's typing adds real text nodes as they go.
+  const codeNode = editor.state.schema.nodes.codeBlock?.create({
+    id: null,
+    language,
+    file_date: today
+  })
+  if (!codeNode) return false
+  const active = findActiveBlock(editor)
+  const isEmptyNote =
+    active &&
+    (active.node.type.name === 'noteBlock' ||
+      active.node.type.name === 'headerBlock') &&
+    (active.node.content.size === 0 || active.node.textContent.trim() === '')
+  if (active && isEmptyNote) {
+    const pos = editor.state.selection.$from.before(active.depth)
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(pos, pos + active.node.nodeSize, codeNode)
+    )
+    editor.commands.focus()
+    return true
+  }
+  editor.commands.insertContent(codeNode)
+  editor.commands.focus()
+  return true
+}
+
+// Insert a foldable `<details>` section (#183). Builds the Details >
+// DetailsSummary + DetailsContent(placeholder note) tree the TipTap extension
+// expects. Replaces an empty note/header in place, otherwise inserts below.
+export function insertDetails(editor: Editor): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const schema = editor.state.schema
+  if (!schema.nodes.details) return false
+  const today = new Date().toISOString().slice(0, 10)
+  // Mint an id for the placeholder up front: it is nested inside
+  // detailsContent, so the UniqueBlockIds appendTransaction (which walks only
+  // top-level blocks) never reaches it. Without a stable id the inner note
+  // would bypass the outliner's identity-keyed ops until the next save.
+  const placeholder = schema.nodes.noteBlock?.create(
+    { id: freshId(), depth: 0, bullet: '', file_date: today },
+    []
+  )
+  const detailsNode = schema.nodes.details.create(
+    { id: null, open: true, file_date: today },
+    [
+      schema.nodes.detailsSummary.create(
+        { id: null },
+        schema.text('Section title')
+      ),
+      schema.nodes.detailsContent.create(
+        { id: null },
+        placeholder ? [placeholder] : []
+      )
+    ]
+  )
+  const active = findActiveBlock(editor)
+  const isEmptyNote =
+    active &&
+    (active.node.type.name === 'noteBlock' ||
+      active.node.type.name === 'headerBlock') &&
+    (active.node.content.size === 0 || active.node.textContent.trim() === '')
+  if (active && isEmptyNote) {
+    const pos = editor.state.selection.$from.before(active.depth)
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(pos, pos + active.node.nodeSize, detailsNode)
+    )
+    editor.commands.focus()
+    return true
+  }
+  editor.commands.insertContent(detailsNode)
+  editor.commands.focus()
+  return true
+}
+
+// Toggle the `open` attr on the `<details>` enclosing the cursor (#183).
+// Walks up from the selection to the nearest details node and flips open.
+export function toggleDetails(editor: Editor): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const $pos = editor.state.selection.$from
+  for (let d = $pos.depth; d >= 1; d--) {
+    const node = $pos.node(d)
+    if (node.type.name === 'details') {
+      const pos = $pos.before(d)
+      editor.view.dispatch(
+        editor.state.tr.setNodeAttribute(pos, 'open', !node.attrs.open)
+      )
+      return true
+    }
+  }
+  return false
+}
+
+// Insert a GFM table (#172). rows/cols include the header row. Builds the
+// table > tableRow(tableHeader×cols) + (rows-1)×tableRow(tableCell×cols)
+// tree the TipTap Table extension expects, each cell seeded with an empty
+// paragraph. Replaces an empty note/header in place, else inserts below.
+export function insertTable(editor: Editor, rows = 3, cols = 3): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const schema = editor.state.schema
+  if (!schema.nodes.table) return false
+  // TipTap's tableCell has content 'block+' and its row/column commands fill
+  // new cells with paragraph nodes. Without a paragraph node in the schema
+  // the cells would be empty/invalid and the table would silently fail to
+  // insert — fail loudly instead of producing a broken table.
+  const paragraph = schema.nodes.paragraph
+  if (!paragraph) return false
+  const today = new Date().toISOString().slice(0, 10)
+  const emptyCell = (type: 'tableHeader' | 'tableCell') =>
+    schema.nodes[type].create({}, paragraph.create())
+  const headerRow = schema.nodes.tableRow.create(
+    {},
+    Array.from({ length: cols }, () => emptyCell('tableHeader'))
+  )
+  const dataRows = Array.from({ length: Math.max(rows - 1, 0) }, () =>
+    schema.nodes.tableRow.create(
+      {},
+      Array.from({ length: cols }, () => emptyCell('tableCell'))
+    )
+  )
+  const table = schema.nodes.table.create({ id: null, file_date: today }, [
+    headerRow,
+    ...dataRows
+  ])
+  const active = findActiveBlock(editor)
+  const isEmptyNote =
+    active &&
+    (active.node.type.name === 'noteBlock' ||
+      active.node.type.name === 'headerBlock') &&
+    (active.node.content.size === 0 || active.node.textContent.trim() === '')
+  if (active && isEmptyNote) {
+    const pos = editor.state.selection.$from.before(active.depth)
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(pos, pos + active.node.nodeSize, table)
+    )
+    editor.commands.focus()
+    return true
+  }
+  editor.commands.insertContent(table)
+  editor.commands.focus()
+  return true
+}
+
 export const SiltBlockKeymaps = Extension.create({
   name: 'siltBlockKeymaps',
 
@@ -245,6 +466,10 @@ export const SiltBlockKeymaps = Extension.create({
       Tab: () => {
         const info = currentBlockInfo(this.editor)
         if (!info) return false
+        // Only the depth-bearing prose blocks support indent. Letting Tab fall
+        // through for callout/code/table/details keeps TipTap's default (table
+        // cell nav, etc.) instead of silently no-op'ing.
+        if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
 
         // Indent — max is previous sibling's depth + 1.
         const { doc } = this.editor.state
@@ -270,6 +495,7 @@ export const SiltBlockKeymaps = Extension.create({
       'Shift-Tab': () => {
         const info = currentBlockInfo(this.editor)
         if (!info) return false
+        if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
         if (info.depth > 0) {
           setBlockDepth(this.editor, info.pos, info.depth - 1)
         }
@@ -357,7 +583,35 @@ export const SiltBlockKeymaps = Extension.create({
       'Mod-Shift-l': () => setBlockAlign(this.editor, 'left'),
       'Mod-Shift-e': () => setBlockAlign(this.editor, 'center'),
       'Mod-Shift-r': () => setBlockAlign(this.editor, 'right'),
-      'Mod-Shift-j': () => setBlockAlign(this.editor, 'justify')
+      'Mod-Shift-j': () => setBlockAlign(this.editor, 'justify'),
+
+      // Blockquote toggle (#188). Mod-Shift-9 is the standard blockquote
+      // binding. No-op on TASK/HEADER blocks (quote is a NOTE marker).
+      'Mod-Shift-9': () => toggleBlockQuote(this.editor),
+
+      // Foldable details toggle (#183). Bound to Mod-Shift-. rather than Mod-.,
+      // which is claimed by the Superscript mark extension (SiltInlineMarkExtensions
+      // is registered before this keymap, so Superscript would shadow a Mod-.
+      // binding). Mod-Shift-. flips the `open` attr on the enclosing <details>.
+      'Mod-Shift-.': () => toggleDetails(this.editor),
+
+      // Table row/column insert shortcuts (#172). No-op outside a table.
+      'Mod-Shift-Up': () =>
+        this.editor.can().addRowBefore?.()
+          ? (this.editor.chain().focus().addRowBefore().run(), true)
+          : false,
+      'Mod-Shift-Down': () =>
+        this.editor.can().addRowAfter?.()
+          ? (this.editor.chain().focus().addRowAfter().run(), true)
+          : false,
+      'Mod-Shift-Left': () =>
+        this.editor.can().addColumnBefore?.()
+          ? (this.editor.chain().focus().addColumnBefore().run(), true)
+          : false,
+      'Mod-Shift-Right': () =>
+        this.editor.can().addColumnAfter?.()
+          ? (this.editor.chain().focus().addColumnAfter().run(), true)
+          : false
     }
   }
 })

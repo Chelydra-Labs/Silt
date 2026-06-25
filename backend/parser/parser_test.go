@@ -530,9 +530,11 @@ tags: [work/project, systems/specs]
 	}
 }
 
-func TestParseFileContent_SkipsCodeBlockIDInjection(t *testing.T) {
-	// Lines inside fenced code blocks must NOT receive block ID comments;
-	// doing so would corrupt code samples in the user's notes.
+func TestParseFileContent_CodeBlockIsManaged(t *testing.T) {
+	// #189: fenced code blocks are first-class managed blocks. The block
+	// identity comment is assigned on its OWN line after the closing fence
+	// (never injected into the code body), so the fence stays strictly GFM
+	// and the code content is preserved byte-for-byte.
 	doc := "# Example <!-- id: 4a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8a -->\n" +
 		"\n" +
 		"```go\n" +
@@ -542,23 +544,59 @@ func TestParseFileContent_SkipsCodeBlockIDInjection(t *testing.T) {
 		"\n" +
 		"- A normal note line <!-- id: 5a10b1a0-d1e5-4b0d-8ea2-bfcfd2ee7f8b -->\n"
 
-	_, _, newContent, modified, err := ParseFileContent(doc, "NB", "Sec", "P", "2026-06-13", 4)
+	blocks, _, newContent, modified, err := ParseFileContent(doc, "NB", "Sec", "P", "2026-06-13", 4)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if modified {
-		t.Errorf("Did not expect modifications since both blocks already have IDs")
+	// A new code block was discovered (it had no id), so the file is rewritten.
+	if !modified {
+		t.Errorf("expected the code block to receive a minted id on first parse")
 	}
+	// The code body must be untouched — no id comment ever lands inside it.
 	if strings.Contains(newContent, "func hello() string { return \"hi\" } <!-- id:") {
-		t.Errorf("Code block line was corrupted with an ID comment:\n%s", newContent)
+		t.Errorf("Code body was corrupted with an inline id comment:\n%s", newContent)
 	}
 	if !strings.Contains(newContent, "// A code comment that must not be touched") {
-		t.Errorf("Comment line was modified:\n%s", newContent)
+		t.Errorf("Code comment line was modified:\n%s", newContent)
+	}
+	// The id comment lives on its own line, immediately after the closing fence.
+	if !strings.Contains(newContent, "```\n<!-- id: ") {
+		t.Errorf("expected an id line after the closing fence, got:\n%s", newContent)
+	}
+	// Exactly one BlockCode was produced, carrying the language + the body.
+	var code *ParsedBlock
+	managed := 0
+	for i := range blocks {
+		if blocks[i].Type == BlockCode {
+			code = &blocks[i]
+		}
+		if blocks[i].ID != "" {
+			managed++
+		}
+	}
+	if code == nil {
+		t.Fatalf("expected a BlockCode in parsed blocks, got %+v", blocks)
+	}
+	if code.Language != "go" {
+		t.Errorf("expected Language=go, got %q", code.Language)
+	}
+	wantBody := "func hello() string { return \"hi\" }\n// A code comment that must not be touched"
+	if code.CleanText != wantBody {
+		t.Errorf("code CleanText drifted:\nwant: %q\n got: %q", wantBody, code.CleanText)
+	}
+	if managed != 3 {
+		t.Errorf("expected 3 managed blocks (header, code, note), got %d", managed)
 	}
 
-	// And the full content should be unchanged.
-	if newContent != doc {
-		t.Errorf("Content changed unexpectedly. Got:\n%s", newContent)
+	// Round-trip is stable: render → parse → render is byte-identical.
+	rendered := RenderFileContent(blocks, "", "", 4)
+	second, _, _, _, err := ParseFileContent(rendered, "NB", "Sec", "P", "2026-06-13", 4)
+	if err != nil {
+		t.Fatalf("second parse: %v", err)
+	}
+	rendered2 := RenderFileContent(second, "", "", 4)
+	if rendered != rendered2 {
+		t.Errorf("code-block round trip is not byte-stable\n--- pass1 ---\n%s\n--- pass2 ---\n%s", rendered, rendered2)
 	}
 }
 

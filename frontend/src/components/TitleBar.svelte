@@ -9,28 +9,18 @@
   } from '../../wailsjs/runtime/runtime.js'
 
   interface Props {
-    activeView: string
     sidebarCollapsed: boolean
     sidebarWidth?: number
     onSearchClick: () => void
-    onOpenSettings: (tab?: string) => void
+    children?: import('svelte').Snippet
   }
 
   let {
-    activeView = $bindable(),
     sidebarCollapsed = $bindable(),
     sidebarWidth = 256,
     onSearchClick,
-    onOpenSettings
+    children
   }: Props = $props()
-
-  const views: { id: string; label: string; icon: string }[] = [
-    { id: 'notes', label: 'Notes', icon: 'description' },
-    { id: 'agenda', label: 'Agenda', icon: 'event_repeat' },
-    { id: 'tags', label: 'Tags', icon: 'label' },
-    { id: 'calendar', label: 'Calendar', icon: 'calendar_month' }
-    // Kanban returns when a first-party Kanban plugin ships.
-  ]
 
   let maximised = $state(false)
 
@@ -52,14 +42,19 @@
     syncMaximised()
     isMac = /mac/i.test(navigator.platform || navigator.userAgent)
     // Maximize/restore triggers a viewport resize; re-sync the icon then.
-    const onResize = () => syncMaximised()
+    const onResize = () => {
+      syncMaximised()
+    }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   })
 
-  function selectView(id: string) {
-    activeView = id
-  }
+  // macOS reserves 80px for traffic lights (collapsed or not); other platforms
+  // use 48px. Hoisted so the inner ternary isn't evaluated twice.
+  let trafficPx = $derived(isMac ? 80 : 48)
+  let brandZoneWidth = $derived(
+    sidebarCollapsed ? trafficPx : trafficPx + sidebarWidth
+  )
 
   function handleToggleMax() {
     WindowToggleMaximise()
@@ -73,40 +68,51 @@
   class="drag-region bg-void flex justify-between items-center h-14 w-full z-50 fixed top-0 border-b border-border-muted select-none"
 >
   <!-- Left: brand zone (matches sidebar width) + sidebar toggle at the boundary -->
-  <div class="flex items-center min-w-0 h-full">
+  <div class="flex items-center min-w-0 h-full flex-grow">
     <!-- Brand strip aligns over the sidebar; collapses when sidebar does -->
     <div
       class="flex items-center gap-2 h-full flex-shrink-0 transition-all duration-200 ease-out overflow-hidden"
-      style:width={sidebarCollapsed ? '0px' : sidebarWidth + 'px'}
+      style:width={brandZoneWidth + 'px'}
       style:padding-left={isMac && !sidebarCollapsed ? '80px' : undefined}
       class:px-4={!sidebarCollapsed && !isMac}
-      class:px-3={sidebarCollapsed}
+      class:px-3={sidebarCollapsed && !isMac}
     >
-      <img src={logo} alt="Silt" class="w-6 h-6 flex-shrink-0" />
-      <span
-        class="font-headline-md text-headline-md text-text-primary font-bold tracking-tight whitespace-nowrap"
-        >Silt</span
-      >
+      {#if !isMac || !sidebarCollapsed}
+        <div
+          class="relative logo-container flex items-center gap-2 group cursor-pointer"
+          class:justify-center={sidebarCollapsed}
+          class:w-full={sidebarCollapsed}
+        >
+          <div
+            class="relative logo-shimmer flex-shrink-0 w-6 h-6 rounded-md overflow-hidden"
+          >
+            <img
+              src={logo}
+              alt="Silt"
+              class="w-full h-full logo-img transition-all duration-300"
+            />
+            <div
+              class="absolute inset-0 logo-shimmer-sweep pointer-events-none"
+            ></div>
+          </div>
+          {#if !sidebarCollapsed}
+            <span
+              class="font-headline-md text-headline-md text-text-primary font-bold tracking-tight whitespace-nowrap group-hover:text-accent-primary-start transition-colors duration-300"
+              >Silt</span
+            >
+            {#if isMac}
+              <!-- Add a tiny dot next to the wordmark on macOS to fill space if needed, or leave it clean -->
+            {/if}
+          {/if}
+        </div>
+      {/if}
     </div>
 
-    <div class="w-px h-6 bg-border-muted mx-1 flex-shrink-0"></div>
-
-    <!-- View switcher (segmented control) -->
-    <nav class="flex items-center gap-0.5 min-w-0 px-1">
-      {#each views as v (v.id)}
-        <button
-          onclick={() => selectView(v.id)}
-          class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-label-sm text-label-sm transition-all border-none cursor-pointer focus:outline-none whitespace-nowrap"
-          class:bg-hover={activeView === v.id}
-          class:text-accent-primary-start={activeView === v.id}
-          class:text-text-muted={activeView !== v.id}
-          aria-pressed={activeView === v.id}
-        >
-          <span class="material-symbols-outlined text-[18px]">{v.icon}</span>
-          <span class="hidden lg:inline">{v.label}</span>
-        </button>
-      {/each}
-    </nav>
+    {#if children}
+      <div class="h-full flex items-end flex-grow min-w-0">
+        {@render children()}
+      </div>
+    {/if}
   </div>
 
   <!-- Right: search + window controls -->
@@ -119,26 +125,6 @@
       <span class="text-[12px] font-label-sm whitespace-nowrap"
         >Search… (Ctrl+P)</span
       >
-    </button>
-
-    <div class="w-px h-6 bg-border-muted mx-1"></div>
-
-    <!-- Settings + plugin manager shortcuts (open the settings shell) -->
-    <button
-      onclick={() => onOpenSettings('plugins')}
-      aria-label="Plugin manager"
-      title="Plugin manager"
-      class="h-9 w-9 flex items-center justify-center text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none rounded-md hover:bg-hover"
-    >
-      <span class="material-symbols-outlined text-[20px]">extension</span>
-    </button>
-    <button
-      onclick={() => onOpenSettings('general')}
-      aria-label="Settings"
-      title="Settings"
-      class="h-9 w-9 flex items-center justify-center text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus:outline-none rounded-md hover:bg-hover"
-    >
-      <span class="material-symbols-outlined text-[20px]">settings</span>
     </button>
 
     <div class="w-px h-6 bg-border-muted mx-1"></div>
@@ -187,5 +173,38 @@
   .drag-region :global(input),
   .drag-region :global(a) {
     --wails-draggable: no-drag;
+  }
+
+  .logo-container:hover .logo-img {
+    filter: drop-shadow(0 0 6px var(--color-accent-primary-start))
+      brightness(1.1);
+    transform: scale(1.05);
+  }
+
+  .logo-shimmer-sweep {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.25),
+      transparent
+    );
+    left: -150%;
+    width: 50%;
+    height: 100%;
+    transform: skewX(-20deg);
+    transition: none;
+  }
+
+  .logo-container:hover .logo-shimmer-sweep {
+    animation: logo-sweep 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes logo-sweep {
+    0% {
+      left: -150%;
+    }
+    100% {
+      left: 150%;
+    }
   }
 </style>

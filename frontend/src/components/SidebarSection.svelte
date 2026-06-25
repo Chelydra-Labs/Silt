@@ -149,19 +149,18 @@
     >
       chevron_right
     </span>
-    <span class="material-symbols-outlined text-text-muted text-[17px]">
-      {section.name ? 'folder' : 'drafts'}
-    </span>
     <span
       class="font-label-sm-bold text-label-sm-bold uppercase tracking-wider text-text-primary truncate flex-1"
     >
       {section.name ? section.name : 'Pages (no section)'}
     </span>
-    <span
-      class="text-[9px] font-label-sm text-text-muted bg-panel border border-border-muted rounded-full px-1.5 py-0.5"
-    >
-      {totalCount}
-    </span>
+    {#if totalCount > 0}
+      <span
+        class="text-[9px] font-label-sm text-text-muted bg-panel border border-border-muted rounded-full px-1.5 py-0.5"
+      >
+        {totalCount}
+      </span>
+    {/if}
     <button
       onclick={(e) => {
         e.stopPropagation()
@@ -226,7 +225,6 @@
                 class="absolute left-0 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
               ></span>
             {/if}
-            <span class="material-symbols-outlined text-[15px]">article</span>
             <span class="truncate flex-1" title={pg.name}>{pg.name}</span>
           </button>
         {/each}

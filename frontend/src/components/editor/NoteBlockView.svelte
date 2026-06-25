@@ -8,6 +8,7 @@
   let isEmpty = $derived(!node.content.size || node.textContent.trim() === '')
   let align = $derived(node.attrs.align || 'left')
   let bullet = $derived(node.attrs.bullet || '')
+  let quote = $derived(node.attrs.quote || '')
   let depth = $derived(node.attrs.depth || 0)
 
   let dragHandleEl: HTMLElement | null = $state(null)
@@ -59,9 +60,19 @@
     {/if}
   {/if}
 
-  <div class="flex-1 min-w-0" style="text-align: {align}">
+  <!-- A quote renders as a native <blockquote> (implicit semantics: paragraph
+       grouping, distinct SR announcement) rather than a synthetic role on a
+       div. No aria-label is set on purpose — it would override the screen
+       reader reading the quote's own content. -->
+  <svelte:element
+    this={quote ? 'blockquote' : 'div'}
+    class="flex-1 min-w-0"
+    class:silt-quote={!!quote}
+    data-quote={quote || undefined}
+    style="text-align: {align}"
+  >
     <NodeViewContent
       class="whitespace-pre-wrap break-words min-h-[22px] focus:outline-none"
     />
-  </div>
+  </svelte:element>
 </NodeViewWrapper>

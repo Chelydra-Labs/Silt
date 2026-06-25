@@ -1,13 +1,22 @@
 import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
+import { TrailingNode } from '@tiptap/extensions'
 import {
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions,
-  UniqueBlockIds
+  SiltDetailsExtensions,
+  SiltTableExtensions,
+  UniqueBlockIds,
+  insertTable
 } from './index'
-import { EmbedNode, BlockReferenceNode } from './schema'
+import {
+  EmbedNode,
+  BlockReferenceNode,
+  CalloutBlock,
+  CodeBlock
+} from './schema'
 import {
   blocksToDoc,
   docToBlocks,
@@ -72,6 +81,44 @@ function makeEditor() {
       EmbedNode,
       BlockReferenceNode,
       UniqueBlockIds
+    ]
+  })
+}
+
+// A TipTap editor wired with the FULL Sprint 14 schema (callout, code,
+// details, table) — used to prove the new node types survive TipTap's
+// setContent → getJSON normalization without dropping semantic data. This is
+// the gap the pure-conversion tests leave open: they prove the JSON shape we
+// produce, but not that TipTap accepts and re-emits it unchanged.
+function makeEditorWithNewBlocks() {
+  return new Editor({
+    extensions: [
+      StarterKit.configure({
+        // paragraph enabled: the Table extension fills cells with paragraphs
+        // and hard-depends on schema.nodes.paragraph (mirrors the live editor).
+        heading: false,
+        bulletList: false,
+        orderedList: false,
+        listItem: false,
+        blockquote: false,
+        codeBlock: false,
+        horizontalRule: false,
+        trailingNode: false
+      }),
+      ...SiltBlockExtensions,
+      CalloutBlock,
+      CodeBlock,
+      ...SiltInlineMarkExtensions,
+      ...SiltColorMarkExtensions,
+      ...SiltDetailsExtensions,
+      ...SiltTableExtensions,
+      EmbedNode,
+      BlockReferenceNode,
+      UniqueBlockIds,
+      TrailingNode.configure({
+        node: 'noteBlock',
+        notAfter: ['taskBlock', 'headerBlock', 'calloutBlock']
+      })
     ]
   })
 }
@@ -183,6 +230,349 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(doc.content[0]?.attrs?.bullet).toBe('')
   })
 
+  it('round-trips a blockquote (`> `) note — flat and nested (#188)', () => {
+    // Flat quote: the `> ` prefix is detected on load and re-emitted on save.
+    const blocks = [
+      mkBlock('NOTE', {
+        raw_text: '> quoted text',
+        clean_text: '> quoted text'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    const noteNode = doc.content[0]
+    expect(noteNode?.attrs?.quote).toBe('> ')
+    expect(noteNode?.attrs?.bullet).toBe('')
+    // Body is the text without the marker.
+    expect(noteNode?.content).toEqual([{ type: 'text', text: 'quoted text' }])
+    // Save: the marker is re-prepended so the on-disk line is `> quoted text`.
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe('> quoted text')
+    expect(back[0].raw_text).toBe('> quoted text')
+
+    // Nested quote (`>> `): the full `>` run round-trips verbatim.
+    const nested = [
+      mkBlock('NOTE', {
+        raw_text: '>> deep quote',
+        clean_text: '>> deep quote'
+      })
+    ]
+    const nestedDoc = blocksToDoc(nested)
+    expect(nestedDoc.content[0]?.attrs?.quote).toBe('>> ')
+    expect(docToBlocks(nestedDoc)[0].clean_text).toBe('>> deep quote')
+  })
+
+  it('a quote note with alignment round-trips both markers (#188 + #173)', () => {
+    // `> text <!-- silt-align: center -->` — quote prefix + align marker.
+    const blocks = [
+      mkBlock('NOTE', {
+        raw_text: '> quoted',
+        clean_text: '> quoted <!-- silt-align: center -->'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.attrs?.quote).toBe('> ')
+    expect(doc.content[0]?.attrs?.align).toBe('center')
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe('> quoted <!-- silt-align: center -->')
+  })
+
+  it('round-trips all 7 callout variants (#180)', () => {
+    const variants = [
+      'note',
+      'info',
+      'tip',
+      'warning',
+      'danger',
+      'success',
+      'quote'
+    ]
+    for (const v of variants) {
+      const blocks = [
+        mkBlock('NOTE', {
+          raw_text: `> [!${v}] message`,
+          clean_text: `> [!${v}] message`
+        })
+      ]
+      const doc = blocksToDoc(blocks)
+      const node = doc.content[0]
+      expect(node?.type).toBe('calloutBlock')
+      expect(node?.attrs?.variant).toBe(v)
+      expect(node?.content).toEqual([{ type: 'text', text: 'message' }])
+      // Save: re-emits the Obsidian `> [!variant] message` line.
+      const back = docToBlocks(doc)
+      expect(back[0].type).toBe('NOTE')
+      expect(back[0].clean_text).toBe(`> [!${v}] message`)
+      expect(back[0].raw_text).toBe(`> [!${v}] message`)
+    }
+  })
+
+  it('a callout without a message round-trips the bare marker (#180)', () => {
+    const blocks = [
+      mkBlock('NOTE', {
+        raw_text: '> [!warning]',
+        clean_text: '> [!warning]'
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.type).toBe('calloutBlock')
+    expect(doc.content[0]?.attrs?.variant).toBe('warning')
+    expect(doc.content[0]?.content).toEqual([])
+    expect(docToBlocks(doc)[0].clean_text).toBe('> [!warning]')
+  })
+
+  it('callout detection takes precedence over plain quote (#180)', () => {
+    // `> [!tip] x` is a callout, NOT a quote note.
+    const blocks = [
+      mkBlock('NOTE', { raw_text: '> [!tip] x', clean_text: '> [!tip] x' })
+    ]
+    expect(blocksToDoc(blocks).content[0]?.type).toBe('calloutBlock')
+  })
+
+  it('callout variants are matched case-insensitively (#180)', () => {
+    // Obsidian commonly writes [!NOTE] / [!Tip] (uppercase/mixed). Detection is
+    // case-insensitive; the variant is normalized to lowercase for the NodeView
+    // lookup and the on-disk emit.
+    for (const [input, expected] of [
+      ['[!NOTE]', 'note'],
+      ['[!Warning]', 'warning'],
+      ['[!TIP]', 'tip']
+    ] as const) {
+      const blocks = [
+        mkBlock('NOTE', {
+          raw_text: `> ${input} hi`,
+          clean_text: `> ${input} hi`
+        })
+      ]
+      const node = blocksToDoc(blocks).content[0]
+      expect(node?.type).toBe('calloutBlock')
+      expect(node?.attrs?.variant).toBe(expected)
+      // Emits the canonical lowercase marker.
+      expect(docToBlocks(blocksToDoc(blocks))[0].clean_text).toBe(
+        `> [!${expected}] hi`
+      )
+    }
+  })
+
+  it('round-trips a multi-line CODE block with language (#189)', () => {
+    const code = 'func main() {\n\tprintln("hi")\n}'
+    const blocks = [
+      mkBlock('CODE', {
+        clean_text: code,
+        language: 'go',
+        raw_text: ''
+      })
+    ]
+    const doc = blocksToDoc(blocks)
+    const node = doc.content[0]
+    expect(node?.type).toBe('codeBlock')
+    expect(node?.attrs?.language).toBe('go')
+    expect(node?.content).toEqual([{ type: 'text', text: code }])
+    // Save: a CODE ParsedBlock whose clean_text is the verbatim code.
+    const back = docToBlocks(doc)
+    expect(back[0].type).toBe('CODE')
+    expect(back[0].clean_text).toBe(code)
+    expect(back[0].language).toBe('go')
+  })
+
+  it('round-trips a CODE block with blank lines + a literal pipe (#189)', () => {
+    const code = 'first\n\nthird\n| col'
+    const blocks = [mkBlock('CODE', { clean_text: code, language: '' })]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back[0].type).toBe('CODE')
+    expect(back[0].clean_text).toBe(code)
+  })
+
+  it('round-trips an empty CODE block (#189)', () => {
+    const blocks = [mkBlock('CODE', { clean_text: '', language: 'ts' })]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.type).toBe('codeBlock')
+    expect(doc.content[0]?.content).toEqual([])
+    expect(docToBlocks(doc)[0].clean_text).toBe('')
+  })
+
+  it('round-trips a foldable <details> section (#183)', () => {
+    // On-disk form: a run of opaque NOTE blocks the converter regroups.
+    const id = '11111111-1111-1111-1111-111111111111'
+    const blocks = [
+      mkBlock('NOTE', { id, clean_text: '<details>' }),
+      mkBlock('NOTE', { clean_text: '<summary>Title</summary>' }),
+      mkBlock('NOTE', { clean_text: 'inner note' }),
+      mkBlock('NOTE', { clean_text: '</details>' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const node = doc.content[0]
+    expect(node?.type).toBe('details')
+    const summary = (node?.content || []).find(
+      (c) => c.type === 'detailsSummary'
+    )
+    const content = (node?.content || []).find(
+      (c) => c.type === 'detailsContent'
+    )
+    expect(summary?.content).toEqual([{ type: 'text', text: 'Title' }])
+    // The inner note became a child noteBlock inside detailsContent.
+    const child = content?.content?.[0]
+    expect(child?.type).toBe('noteBlock')
+
+    // Save: re-emits the `<details>` run as opaque NOTE blocks.
+    const back = docToBlocks(doc)
+    expect(back.map((b) => b.clean_text)).toEqual([
+      '<details>',
+      '<summary>Title</summary>',
+      'inner note',
+      '</details>'
+    ])
+  })
+
+  it('handles an unterminated <details> gracefully (#183)', () => {
+    // No closing tag → the opener stays a plain NOTE (no crash, no loss).
+    const blocks = [mkBlock('NOTE', { clean_text: '<details>' })]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.type).toBe('noteBlock')
+  })
+
+  it('empty <details> round-trips without a blank inner line (#183)', () => {
+    // An empty details section must not inflate the file with a placeholder
+    // NOTE line — <details><summary>…</summary></details> with no body content.
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '<details>' }),
+      mkBlock('NOTE', { clean_text: '<summary>T</summary>' }),
+      mkBlock('NOTE', { clean_text: '</details>' })
+    ]
+    const doc = blocksToDoc(blocks)
+    // buildDetailsNode seeds an empty noteBlock placeholder for TipTap; the
+    // save path must strip it so the file stays 3 lines, not 4.
+    const back = docToBlocks(doc).map((b) => b.clean_text)
+    expect(back).toEqual(['<details>', '<summary>T</summary>', '</details>'])
+  })
+
+  it('parses a <summary> with HTML attributes (#183)', () => {
+    // External HTML often carries attributes on <summary>; parsing should be
+    // lenient (the save path emits attribute-free <summary>).
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '<details>' }),
+      mkBlock('NOTE', { clean_text: '<summary class="t">Title</summary>' }),
+      mkBlock('NOTE', { clean_text: 'body' }),
+      mkBlock('NOTE', { clean_text: '</details>' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const summary = (doc.content[0]?.content || []).find(
+      (c) => c.type === 'detailsSummary'
+    )
+    expect(summary?.content).toEqual([{ type: 'text', text: 'Title' }])
+  })
+
+  it('round-trips a GFM table (#172)', () => {
+    const id = '22222222-2222-2222-2222-222222222222'
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| Name | Status |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { id, clean_text: '| Alice | Active |' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const node = doc.content[0]
+    expect(node?.type).toBe('table')
+    // 2 rows: header (tableHeader cells) + 1 data row (tableCell cells).
+    const rows = (node?.content || []).filter((c) => c.type === 'tableRow')
+    expect(rows).toHaveLength(2)
+    expect(
+      (rows[0]?.content || []).every((c) => c.type === 'tableHeader')
+    ).toBe(true)
+    expect((rows[1]?.content || []).every((c) => c.type === 'tableCell')).toBe(
+      true
+    )
+    // Save: re-emits the GFM run; the block id lands on the last row. Column
+    // widths are auto-padded for readability (a deterministic normalization),
+    // so we assert on cell content + emit-stability rather than exact bytes.
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(3)
+    expect(back[2].id).toBe(id)
+    // Re-parsing the emitted run yields the same cells (semantic identity).
+    const reparsed = blocksToDoc(back)
+    const rrows = (reparsed.content[0]?.content || []).filter(
+      (c) => c.type === 'tableRow'
+    )
+    const headerCells = (rrows[0]?.content || []).map((c) =>
+      (c.content || []).map((n) => n.text).join('')
+    )
+    const dataCells = (rrows[1]?.content || []).map((c) =>
+      (c.content || []).map((n) => n.text).join('')
+    )
+    expect(headerCells).toEqual(['Name', 'Status'])
+    expect(dataCells).toEqual(['Alice', 'Active'])
+    // Emit is byte-stable across a second pass (canonical form reached).
+    const back2 = docToBlocks(blocksToDoc(back))
+    expect(back2.map((b) => b.clean_text)).toEqual(
+      back.map((b) => b.clean_text)
+    )
+  })
+
+  it('a run without a separator is NOT a table (#172)', () => {
+    // `| a | b |` with no `| --- |` separator → plain NOTEs.
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| a | b |' }),
+      mkBlock('NOTE', { clean_text: 'plain text' })
+    ]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content[0]?.type).toBe('noteBlock')
+    expect(doc.content[1]?.type).toBe('noteBlock')
+  })
+
+  it('escapes and round-trips a literal pipe inside a cell (#172)', () => {
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| a | b |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| x \\| y | z |' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const rows = (doc.content[0]?.content || []).filter(
+      (c) => c.type === 'tableRow'
+    )
+    const dataCells = (rows[1]?.content || []).map((c) =>
+      (c.content || []).map((n) => n.text).join('')
+    )
+    expect(dataCells).toEqual(['x | y', 'z'])
+    // Save re-escapes the literal pipe; the emitted form is stable.
+    const back = docToBlocks(doc)
+    const back2 = docToBlocks(blocksToDoc(back))
+    expect(back2.map((b) => b.clean_text)).toEqual(
+      back.map((b) => b.clean_text)
+    )
+    // And the literal pipe survives the re-parse (still one cell "x | y").
+    const reparsedData = (blocksToDoc(back).content[0]?.content || [])
+      .filter((c) => c.type === 'tableRow')[1]
+      ?.content?.map((c) => (c.content || []).map((n) => n.text).join(''))
+    expect(reparsedData).toEqual(['x | y', 'z'])
+  })
+
+  it('round-trips a cell with backslashes (#172)', () => {
+    // Backslashes must be escaped (\\) so a path like C:\x next to a pipe
+    // delimiter can't be misread as an escaped pipe on re-parse.
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| a | b |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| C:\\path\\x | y\\|z |' })
+    ]
+    const doc = blocksToDoc(blocks)
+    const rows = (doc.content[0]?.content || []).filter(
+      (c) => c.type === 'tableRow'
+    )
+    const dataCells = (rows[1]?.content || []).map((c) =>
+      (c.content || []).map((n) => n.text).join('')
+    )
+    // Cell 1: "C:\path\x"; cell 2: "y|z" (backslash-pipe → pipe).
+    expect(dataCells).toEqual(['C:\\path\\x', 'y|z'])
+    // Emit is byte-stable, and a second parse recovers the same cells.
+    const back = docToBlocks(doc)
+    const back2 = docToBlocks(blocksToDoc(back))
+    expect(back2.map((b) => b.clean_text)).toEqual(
+      back.map((b) => b.clean_text)
+    )
+    const reparsed = (blocksToDoc(back).content[0]?.content || [])
+      .filter((c) => c.type === 'tableRow')[1]
+      ?.content?.map((c) => (c.content || []).map((n) => n.text).join(''))
+    expect(reparsed).toEqual(['C:\\path\\x', 'y|z'])
+  })
+
   it('handles empty clean_text (placeholder block)', () => {
     const blocks = [mkBlock('NOTE', { clean_text: '' })]
     const back = docToBlocks(blocksToDoc(blocks))
@@ -258,6 +648,96 @@ describe('doc JSON accepted by a real TipTap editor', () => {
     const back = docToBlocks(fromEditor)
     expect(back).toHaveLength(3)
     back.forEach((b, i) => expectSemanticEqual(b, blocks[i]))
+    editor.destroy()
+  })
+
+  it('callout survives TipTap setContent → getJSON (#180)', () => {
+    const editor = makeEditorWithNewBlocks()
+    const blocks = [mkBlock('NOTE', { clean_text: '> [!warning] Watch out' })]
+    editor.commands.setContent(blocksToDoc(blocks))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe('> [!warning] Watch out')
+    editor.destroy()
+  })
+
+  it('code block survives TipTap setContent → getJSON (#189)', () => {
+    const editor = makeEditorWithNewBlocks()
+    const blocks = [
+      mkBlock('CODE', {
+        clean_text: 'func main() {\n\treturn\n}',
+        language: 'go'
+      })
+    ]
+    editor.commands.setContent(blocksToDoc(blocks))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back[0].type).toBe('CODE')
+    expect(back[0].clean_text).toBe('func main() {\n\treturn\n}')
+    expect(back[0].language).toBe('go')
+    editor.destroy()
+  })
+
+  it('foldable details survives TipTap setContent → getJSON (#183)', () => {
+    const editor = makeEditorWithNewBlocks()
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '<details>' }),
+      mkBlock('NOTE', { clean_text: '<summary>Title</summary>' }),
+      mkBlock('NOTE', { clean_text: 'body text' }),
+      mkBlock('NOTE', { clean_text: '</details>' })
+    ]
+    editor.commands.setContent(blocksToDoc(blocks))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    // A trailing noteBlock is appended after the (cursor-trapping) details node
+    // so the user can click below it; the details run itself is preserved intact.
+    expect(back.slice(0, 4).map((b) => b.clean_text)).toEqual([
+      '<details>',
+      '<summary>Title</summary>',
+      'body text',
+      '</details>'
+    ])
+    editor.destroy()
+  })
+
+  it('GFM table survives TipTap setContent → getJSON (#172)', () => {
+    const editor = makeEditorWithNewBlocks()
+    const blocks = [
+      mkBlock('NOTE', { clean_text: '| Name | Role |' }),
+      mkBlock('NOTE', { clean_text: '| --- | --- |' }),
+      mkBlock('NOTE', { clean_text: '| Alice | Engineer |' })
+    ]
+    editor.commands.setContent(blocksToDoc(blocks))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    // The table re-emits as a GFM run; assert the cell text survives TipTap's
+    // cell-content normalization (cells contain paragraphs in the editor) and
+    // that the structure is recognised as a table, not fragmented NOTEs.
+    const joined = back.map((b) => b.clean_text).join('\n')
+    expect(joined).toContain('Name')
+    expect(joined).toContain('Role')
+    expect(joined).toContain('Alice')
+    expect(joined).toContain('Engineer')
+    // At least the header + separator + one data row (3 GFM lines minimum).
+    expect(back.length).toBeGreaterThanOrEqual(3)
+    editor.destroy()
+  })
+
+  it('insertTable produces a real editable table node (#172 regression)', () => {
+    // Regression guard: insertTable must build valid cells (content 'block+').
+    // When paragraph was disabled, cells were created empty/invalid and the
+    // table silently failed to insert — both the /table slash command and the
+    // toolbar button did nothing.
+    const editor = makeEditorWithNewBlocks()
+    expect(insertTable(editor, 2, 2)).toBe(true)
+    const doc = editor.getJSON() as DocJSON
+    const tableNode = doc.content.find((n) => n.type === 'table')
+    expect(tableNode, 'expected a table node in the doc').toBeTruthy()
+    const rows = (tableNode?.content || []).filter((c) => c.type === 'tableRow')
+    expect(rows).toHaveLength(2)
+    // Each cell carries a paragraph child (the valid block content).
+    const firstCell = rows[0]?.content?.[0]
+    expect(
+      firstCell?.type === 'tableHeader' || firstCell?.type === 'tableCell'
+    ).toBe(true)
+    expect(firstCell?.content?.[0]?.type).toBe('paragraph')
     editor.destroy()
   })
 
