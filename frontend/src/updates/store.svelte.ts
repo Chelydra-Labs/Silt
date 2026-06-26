@@ -44,6 +44,8 @@ export interface UpdateState {
   /** ISO timestamp of the last check, '' when never checked. */
   lastChecked: string
   autoCheck: boolean
+  /** True while SetUpdateSettings is in flight; disables the toggle button. */
+  autoCheckInflight: boolean
   /** User-facing error message for the 'error' status. */
   error: string
 }
@@ -57,40 +59,38 @@ export const updateState: UpdateState = $state({
   downloadProgress: null,
   lastChecked: '',
   autoCheck: true,
+  autoCheckInflight: false,
   error: ''
 })
 
 let progressUnsub: (() => void) | null = null
 
-/** 24h in ms — mirrors backend/updates.AutoCheckInterval. */
-const AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
-
-/** shouldAutoCheck mirrors updates.ShouldAutoCheck so the startup decision is local. */
-export function shouldAutoCheck(
-  lastChecked: string,
-  autoCheck: boolean
-): boolean {
-  if (!autoCheck) return false
-  if (!lastChecked) return true
-  const last = Date.parse(lastChecked)
-  if (Number.isNaN(last)) return true
-  return Date.now() - last >= AUTO_CHECK_INTERVAL_MS
-}
-
-/** loadSettings hydrates autoCheck + lastChecked from settings.json. */
+/** loadSettings hydrates autoCheck + lastChecked from settings.json and caches
+ * the backend's throttled startup decision (single source of truth for the 24h
+ * rule — the frontend never duplicates the constant). */
 export async function loadSettings(): Promise<void> {
   try {
     const s = await GetUpdateSettings()
     updateState.autoCheck = s.autoCheck
     updateState.lastChecked = s.lastCheck ?? ''
+    cachedShouldAutoCheck = !!s.shouldAutoCheck
   } catch {
     // Non-fatal: defaults (autoCheck true, never checked) keep the startup
     // check working even if settings.json is momentarily unreadable.
   }
 }
 
-/** setAutoCheck persists the toggle and updates the local state. */
+// cachedShouldAutoCheck holds the backend's throttled startup decision from
+// the last loadSettings() call. Default true so a first-run (never checked)
+// always fires the startup check.
+let cachedShouldAutoCheck = true
+
+/** setAutoCheck persists the toggle and updates the local state. Guarded
+ * against re-entrancy: a second click while a save is in flight is ignored so
+ * two writes cannot race and leave the toggle out of sync with disk. */
 export async function setAutoCheck(on: boolean): Promise<void> {
+  if (updateState.autoCheckInflight) return
+  updateState.autoCheckInflight = true
   updateState.autoCheck = on
   try {
     await SetUpdateSettings(on)
@@ -102,6 +102,8 @@ export async function setAutoCheck(on: boolean): Promise<void> {
       message: 'Could not save the update-check preference.'
     })
     console.error('SetUpdateSettings failed:', e)
+  } finally {
+    updateState.autoCheckInflight = false
   }
 }
 
@@ -244,6 +246,8 @@ function friendlyCheckError(e: unknown): string {
 
 function friendlyInstallError(e: unknown): string {
   const msg = String(e instanceof Error ? e.message : e)
+  if (/appimage updated but relaunch failed|restart manually/i.test(msg))
+    return 'The update was installed. Restart Silt to finish the upgrade.'
   if (/SHA256|checksum|verification/i.test(msg))
     return 'The download failed its integrity check and was discarded.'
   if (/not in the latest release/i.test(msg))
@@ -253,24 +257,25 @@ function friendlyInstallError(e: unknown): string {
 
 /**
  * initStartupUpdateCheck runs the throttled startup auto-check (AC2). Called
- * from App.svelte onMount. It loads the persisted preferences, applies the 24h
- * throttle, and on a found update raises a non-blocking toast. All failures
- * are silent on startup (AC5: quiet state) — the user only sees a toast when
- * an update exists. Safe before a vault is open (the check is user-global).
+ * from App.svelte onMount. The 24h throttle decision comes from the backend
+ * (GetUpdateSettings.shouldAutoCheck) — the frontend does not duplicate the
+ * threshold. On a found update it raises a non-blocking toast. All failures
+ * are silent on startup (AC5: quiet state). Safe before a vault is open.
  */
 export async function initStartupUpdateCheck(): Promise<void> {
   await loadSettings()
-  if (!shouldAutoCheck(updateState.lastChecked, updateState.autoCheck)) return
+  if (!cachedShouldAutoCheck) return
   await startupCheck()
 }
 
 /**
- * disposeStartupUpdateCheck tears down any startup-check state. Currently a
- * no-op (the startup check is a single fire-and-forget call, not a
- * subscription) but kept as the symmetric pair to initStartupUpdateCheck so
- * App.svelte's init/dispose pattern stays uniform.
+ * disposeUpdateStore tears down the update store's subscriptions (the
+ * download-progress event listener). Called from App.svelte's onMount
+ * cleanup. Naming reflects that this disposes general store state, not just
+ * startup — a download in flight when the app tears down would otherwise leak
+ * its progress subscription (though the process exit reclaims it anyway).
  */
-export function disposeStartupUpdateCheck(): void {
+export function disposeUpdateStore(): void {
   unsubscribeProgress()
 }
 
@@ -285,5 +290,7 @@ export function _resetForTests(): void {
   updateState.downloadProgress = null
   updateState.lastChecked = ''
   updateState.autoCheck = true
+  updateState.autoCheckInflight = false
   updateState.error = ''
+  cachedShouldAutoCheck = true
 }

@@ -6,7 +6,9 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import {
   updateState,
-  shouldAutoCheck,
+  initStartupUpdateCheck,
+  setAutoCheck,
+  loadSettings,
   startupCheck,
   downloadAndInstall,
   _resetForTests
@@ -20,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   CheckForUpdates: vi.fn(),
   DownloadUpdate: vi.fn(),
   InstallUpdate: vi.fn(),
+  GetUpdateSettings: vi.fn(),
+  SetUpdateSettings: vi.fn(),
   EventsOn: vi.fn(() => () => {}),
   BrowserOpenURL: vi.fn(),
   Quit: vi.fn()
@@ -29,8 +33,8 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   CheckForUpdates: mocks.CheckForUpdates,
   DownloadUpdate: mocks.DownloadUpdate,
   InstallUpdate: mocks.InstallUpdate,
-  GetUpdateSettings: vi.fn(async () => ({ autoCheck: true, lastCheck: '' })),
-  SetUpdateSettings: vi.fn(async () => undefined)
+  GetUpdateSettings: mocks.GetUpdateSettings,
+  SetUpdateSettings: mocks.SetUpdateSettings
 }))
 vi.mock('../../wailsjs/runtime/runtime.js', () => ({
   EventsOn: mocks.EventsOn,
@@ -45,6 +49,8 @@ describe('updates/store.svelte (#312)', () => {
     mocks.CheckForUpdates.mockReset()
     mocks.DownloadUpdate.mockReset()
     mocks.InstallUpdate.mockReset()
+    mocks.GetUpdateSettings.mockReset()
+    mocks.SetUpdateSettings.mockReset()
     mocks.BrowserOpenURL.mockReset()
     mocks.Quit.mockReset()
     mocks.EventsOn.mockReset()
@@ -56,30 +62,37 @@ describe('updates/store.svelte (#312)', () => {
     clearAllNotifications()
   })
 
-  describe('shouldAutoCheck (24h throttle)', () => {
-    it('never fires when autoCheck is off', () => {
-      expect(shouldAutoCheck('', false)).toBe(false)
-      expect(shouldAutoCheck(new Date(0).toISOString(), false)).toBe(false)
+  describe('initStartupUpdateCheck (backend-decided 24h throttle)', () => {
+    // The 24h truth table itself lives in Go (throttle_test.go); here we only
+    // assert the frontend honors the backend's shouldAutoCheck decision and
+    // does not duplicate the threshold locally.
+    it('runs the check when the backend says shouldAutoCheck=true', async () => {
+      mocks.GetUpdateSettings.mockResolvedValue({
+        autoCheck: true,
+        lastCheck: '',
+        shouldAutoCheck: true
+      })
+      mocks.CheckForUpdates.mockResolvedValue({ hasUpdate: false })
+      await initStartupUpdateCheck()
+      expect(mocks.CheckForUpdates).toHaveBeenCalledTimes(1)
     })
 
-    it('fires when never checked and auto on', () => {
-      expect(shouldAutoCheck('', true)).toBe(true)
+    it('skips the check when the backend says shouldAutoCheck=false', async () => {
+      mocks.GetUpdateSettings.mockResolvedValue({
+        autoCheck: true,
+        lastCheck: new Date().toISOString(),
+        shouldAutoCheck: false
+      })
+      mocks.CheckForUpdates.mockResolvedValue({ hasUpdate: false })
+      await initStartupUpdateCheck()
+      expect(mocks.CheckForUpdates).not.toHaveBeenCalled()
     })
 
-    it('does not fire within 24h', () => {
-      const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
-      expect(shouldAutoCheck(oneHourAgo, true)).toBe(false)
-    })
-
-    it('fires at/after 24h', () => {
-      const twoDaysAgo = new Date(
-        Date.now() - 48 * 60 * 60 * 1000
-      ).toISOString()
-      expect(shouldAutoCheck(twoDaysAgo, true)).toBe(true)
-    })
-
-    it('treats an unparseable timestamp as never-checked', () => {
-      expect(shouldAutoCheck('not-a-date', true)).toBe(true)
+    it('still proceeds on a GetUpdateSettings failure (default-true)', async () => {
+      mocks.GetUpdateSettings.mockRejectedValue(new Error('unreadable'))
+      mocks.CheckForUpdates.mockResolvedValue({ hasUpdate: false })
+      await initStartupUpdateCheck()
+      expect(mocks.CheckForUpdates).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -175,6 +188,50 @@ describe('updates/store.svelte (#312)', () => {
       expect(updateState.status).toBe('error')
       expect(updateState.error).toMatch(/integrity check/i)
       expect(mocks.Quit).not.toHaveBeenCalled()
+    })
+
+    it('surfaces "restart manually" when the swap succeeded but relaunch failed (A4)', async () => {
+      mocks.DownloadUpdate.mockResolvedValue('/tmp/asset.AppImage')
+      mocks.InstallUpdate.mockRejectedValue(
+        new Error('appimage updated but relaunch failed; restart manually')
+      )
+      updateState.status = 'available'
+      updateState.assetUrl = 'https://example/asset.AppImage'
+      await downloadAndInstall('https://example/asset.AppImage')
+      // willQuit was false for this path → no Quit, app stays alive to show
+      // the actionable message.
+      expect(mocks.Quit).not.toHaveBeenCalled()
+      expect(updateState.status).toBe('error')
+      expect(updateState.error).toMatch(/restart silt to finish/i)
+    })
+  })
+
+  describe('setAutoCheck (in-flight re-entrancy guard)', () => {
+    it('ignores a second flip while a save is in flight', async () => {
+      let resolveSave: () => void
+      mocks.SetUpdateSettings.mockImplementation(
+        () => new Promise<void>((r) => (resolveSave = r))
+      )
+      updateState.autoCheck = true
+      const first = setAutoCheck(false) // begins the save, inflight=true
+      const second = setAutoCheck(true) // should be ignored while first runs
+      expect(updateState.autoCheckInflight).toBe(true)
+      expect(mocks.SetUpdateSettings).toHaveBeenCalledTimes(1) // second skipped
+      resolveSave!()
+      await first
+      await second // resolves immediately (it was a no-op)
+      expect(updateState.autoCheckInflight).toBe(false)
+      expect(updateState.autoCheck).toBe(false) // only the first flip landed
+    })
+
+    it('reverts the optimistic flip and toasts on save failure', async () => {
+      mocks.SetUpdateSettings.mockRejectedValue(new Error('disk full'))
+      updateState.autoCheck = true
+      await setAutoCheck(false)
+      expect(updateState.autoCheck).toBe(true) // reverted
+      expect(updateState.autoCheckInflight).toBe(false)
+      expect(notificationsState.items.length).toBe(1)
+      expect(notificationsState.items[0].kind).toBe('error')
     })
   })
 })

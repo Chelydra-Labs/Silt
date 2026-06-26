@@ -39,17 +39,28 @@ func (c *Client) DownloadAndVerify(ctx context.Context, assetURL string, emitPro
 		return "", fmt.Errorf("%w: %s", ErrAssetNotInRelease, assetURL)
 	}
 
-	hc := c.HTTPClient
-	if hc == nil {
-		hc = &http.Client{Timeout: downloadTimeout}
+	// Downloads (asset + SHA256SUMS) MUST use the long downloadTimeout, NOT
+	// c.HTTPClient directly: NewClient sets c.HTTPClient to the 15s check
+	// timeout (fine for the small /releases/latest metadata GET), and Go's
+	// http.Client.Timeout covers reading the response body — so reusing it
+	// here would cap a 50 MiB installer at 15s and fail on any realistic
+	// link. Reuse the test-injected Transport (if any) but apply the long
+	// timeout so a slow link can still complete.
+	var transport http.RoundTripper
+	if c.HTTPClient != nil {
+		transport = c.HTTPClient.Transport
+	}
+	downloadClient := &http.Client{
+		Transport: transport,
+		Timeout:   downloadTimeout,
 	}
 
-	localPath, err := Download(ctx, hc, assetURL, emitProgress)
+	localPath, err := Download(ctx, downloadClient, assetURL, emitProgress)
 	if err != nil {
 		return "", err
 	}
 
-	sums, err := FetchSHA256Sums(ctx, hc, rel.Assets)
+	sums, err := FetchSHA256Sums(ctx, downloadClient, rel.Assets)
 	if err != nil {
 		// Cleanup the downloaded asset; verification cannot proceed.
 		removeQuiet(localPath)

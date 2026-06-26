@@ -29,9 +29,13 @@ const updateProgressEvent = "update:download:progress"
 
 // UpdateSettingsResult is the frontend-facing view of the update preferences
 // in settings.json. AutoCheck is the resolved default-on value (nil→true).
+// ShouldAutoCheck is the backend's throttled startup decision (autoCheck &&
+// lastCheck older than 24h), so the frontend does not duplicate the 24h
+// constant or the comparison locally.
 type UpdateSettingsResult struct {
-	AutoCheck       bool   `json:"autoCheck"`
-	LastCheckRFC3339 string `json:"lastCheck"` // empty when never checked
+	AutoCheck        bool   `json:"autoCheck"`
+	LastCheckRFC3339 string `json:"lastCheck"`      // empty when never checked
+	ShouldAutoCheck  bool   `json:"shouldAutoCheck"` // throttled startup decision
 }
 
 // InstallUpdateResult reports the outcome of launching the verified installer.
@@ -105,40 +109,43 @@ func (a *App) InstallUpdate(localPath string) (InstallUpdateResult, error) {
 }
 
 // GetUpdateSettings returns the user's update preferences from settings.json.
-// AutoCheck reflects the default-on resolution (absent → true).
+// AutoCheck reflects the default-on resolution (absent → true). ShouldAutoCheck
+// is the backend-computed throttled startup decision (single source of truth
+// for the 24h rule — the frontend does not duplicate the constant).
 func (a *App) GetUpdateSettings() (UpdateSettingsResult, error) {
 	settings, err := vault.LoadSettings()
 	if err != nil {
 		return UpdateSettingsResult{}, fmt.Errorf("load settings: %w", err)
 	}
+	var last time.Time
+	if settings.LastUpdateCheck != "" {
+		last, _ = time.Parse(time.RFC3339, settings.LastUpdateCheck)
+	}
 	return UpdateSettingsResult{
 		AutoCheck:        settings.AutoCheckUpdatesEnabled(),
 		LastCheckRFC3339: settings.LastUpdateCheck,
+		ShouldAutoCheck:  updates.ShouldAutoCheck(last, settings.AutoCheckUpdatesEnabled()),
 	}, nil
 }
 
 // SetUpdateSettings persists the auto-check toggle. It preserves every other
-// settings.json field (vault path, theme, trusted publishers) via the existing
-// read-modify-write + atomic SaveSettings path.
+// settings.json field (vault path, theme, trusted publishers) via the
+// transactional vault.UpdateSettings read-modify-write (serialized against all
+// other settings writers).
 func (a *App) SetUpdateSettings(autoCheck bool) error {
-	settings, err := vault.LoadSettings()
-	if err != nil {
-		return fmt.Errorf("load settings: %w", err)
-	}
-	settings.AutoCheckUpdates = &autoCheck
-	if err := vault.SaveSettings(settings); err != nil {
-		return fmt.Errorf("save settings: %w", err)
-	}
-	return nil
+	_, err := vault.UpdateSettings(func(s *vault.AppSettings) {
+		s.AutoCheckUpdates = &autoCheck
+	})
+	return err
 }
 
 // stampUpdateCheckTime records now as the last update-check time. Non-fatal on
 // error: the check itself already succeeded and the throttle is best-effort.
+// Serialized with other settings writers via vault.UpdateSettings.
 func (a *App) stampUpdateCheckTime() error {
-	settings, err := vault.LoadSettings()
-	if err != nil {
-		return err
-	}
-	settings.LastUpdateCheck = time.Now().UTC().Format(time.RFC3339)
-	return vault.SaveSettings(settings)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := vault.UpdateSettings(func(s *vault.AppSettings) {
+		s.LastUpdateCheck = now
+	})
+	return err
 }

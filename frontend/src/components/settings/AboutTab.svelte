@@ -29,11 +29,16 @@
     return new Date(t).toLocaleString()
   }
 
-  // The changelog excerpt: the first few non-empty lines of the release notes,
-  // capped so a long notes body doesn't blow out the panel.
+  // The changelog excerpt: the first few content-bearing lines of the release
+  // notes. GitHub release notes typically open with section headers (## New,
+  // ## Fixes, …) which carry no signal in a raw-text preview, so heading-only
+  // lines are filtered out first; if the whole excerpt is headings, fall back
+  // to the leading lines so the panel is never empty.
   function notesExcerpt(notes: string): string {
     const lines = notes.split('\n').filter((l) => l.trim())
-    return lines.slice(0, 6).join('\n')
+    const content = lines.filter((l) => !/^\s{0,3}#{1,6}\s/.test(l))
+    const picked = content.length > 0 ? content : lines
+    return picked.slice(0, 6).join('\n')
   }
 
   async function onCheck() {
@@ -45,8 +50,14 @@
     await downloadAndInstall(updateState.assetUrl)
   }
 
-  function openNotes() {
-    if (updateState.releaseUrl) BrowserOpenURL(updateState.releaseUrl)
+  // External links keep real <a> semantics (links list, ctrl/middle-click,
+  // keyboard focus) but route through the Wails bridge so they open in the
+  // OS browser rather than the webview. preventDefault stops the webview
+  // navigation; the href stays for a11y and shortcut support.
+  function openExternal(e: MouseEvent): void {
+    e.preventDefault()
+    const url = (e.currentTarget as HTMLAnchorElement).href
+    if (url) BrowserOpenURL(url)
   }
 </script>
 
@@ -130,13 +141,13 @@
                   Install update
                 </button>
               {/if}
-              <button
-                type="button"
-                onclick={openNotes}
-                class="font-label-sm-bold text-[12px] underline text-accent-primary-start hover:brightness-110 bg-transparent border-none cursor-pointer"
+              <a
+                href={updateState.releaseUrl}
+                onclick={openExternal}
+                class="font-label-sm-bold text-[12px] underline text-accent-primary-start hover:brightness-110"
               >
                 View full notes
-              </button>
+              </a>
             </div>
           </div>
         {:else if updateState.status === 'downloading'}
@@ -187,9 +198,12 @@
       {/if}
 
       <!-- Auto-check toggle: default on. role=switch + aria-checked per the
-           a11y rules; Space/Toggle operate natively as a button. -->
+           a11y rules; Space/Toggle operate natively as a button. Disabled
+           while a save is in flight so two rapid flips cannot race. -->
       <label
-        class="flex items-center justify-between gap-3 pt-2 border-t border-border-muted cursor-pointer"
+        class="flex items-center justify-between gap-3 pt-2 border-t border-border-muted {updateState.autoCheckInflight
+          ? ''
+          : 'cursor-pointer'}"
       >
         <span class="text-text-primary text-[12px] font-body-md">
           Automatically check for updates
@@ -199,8 +213,11 @@
           role="switch"
           aria-checked={updateState.autoCheck}
           aria-label="Automatically check for updates"
+          disabled={updateState.autoCheckInflight}
           onclick={() => setAutoCheck(!updateState.autoCheck)}
-          class="relative w-9 h-5 rounded-full transition-colors border-none cursor-pointer {updateState.autoCheck
+          class="relative w-9 h-5 rounded-full transition-colors border-none {updateState.autoCheckInflight
+            ? 'cursor-wait opacity-60'
+            : 'cursor-pointer'} {updateState.autoCheck
             ? 'bg-accent-primary-start'
             : 'bg-border-muted'}"
         >
@@ -223,25 +240,21 @@
     <ul class="space-y-1.5 text-[13px] font-body-md">
       <li>
         <span class="text-text-muted">Source:</span>
-        <button
-          type="button"
-          onclick={() =>
-            BrowserOpenURL('https://github.com/Chelydra-Labs/Silt')}
-          class="text-accent-primary-start hover:brightness-110 bg-transparent border-none cursor-pointer p-0 font-body-md"
+        <a
+          href="https://github.com/Chelydra-Labs/Silt"
+          onclick={openExternal}
+          class="text-accent-primary-start hover:brightness-110"
+          >github.com/Chelydra-Labs/Silt</a
         >
-          github.com/Chelydra-Labs/Silt
-        </button>
       </li>
       <li>
         <span class="text-text-muted">Issues &amp; feedback:</span>
-        <button
-          type="button"
-          onclick={() =>
-            BrowserOpenURL('https://github.com/Chelydra-Labs/Silt/issues')}
-          class="text-accent-primary-start hover:brightness-110 bg-transparent border-none cursor-pointer p-0 font-body-md"
+        <a
+          href="https://github.com/Chelydra-Labs/Silt/issues"
+          onclick={openExternal}
+          class="text-accent-primary-start hover:brightness-110"
+          >github.com/Chelydra-Labs/Silt/issues</a
         >
-          github.com/Chelydra-Labs/Silt/issues
-        </button>
       </li>
     </ul>
   </section>
@@ -251,11 +264,10 @@
   </p>
 
   <p class="text-text-muted text-[11px] font-label-sm mt-1">
-    A <button
-      type="button"
-      onclick={() => BrowserOpenURL('https://chelydra.dev')}
-      class="text-accent-primary-start hover:brightness-110 bg-transparent border-none cursor-pointer p-0 font-label-sm"
-      >Chelydra Labs</button
+    A <a
+      href="https://chelydra.dev"
+      onclick={openExternal}
+      class="text-accent-primary-start hover:brightness-110">Chelydra Labs</a
     > project.
   </p>
 </div>

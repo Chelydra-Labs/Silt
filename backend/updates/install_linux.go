@@ -39,11 +39,16 @@ func installForCurrentOS(localPath string) (bool, error) {
 		return false, fmt.Errorf("replace AppImage: %w", err)
 	}
 
-	// Relaunch the new version detached, then let the caller quit.
+	// Relaunch the new version detached, then let the caller quit. If the
+	// relaunch fails AFTER the swap succeeded, the on-disk AppImage is already
+	// the new version but the user is still running the old one (its inode is
+	// mapped). Returning willQuit=false + ErrSwapOKRelaunchFailed keeps the
+	// app alive so the UI can tell the user to relaunch manually — quitting
+	// here would leave them with no running instance and a confusing error.
 	cmd := exec.Command(appImage)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
 	if err := cmd.Start(); err != nil {
-		return true, fmt.Errorf("relaunch AppImage: %w", err)
+		return false, fmt.Errorf("%w: relaunch AppImage: %v", ErrSwapOKRelaunchFailed, err)
 	}
 	_ = cmd.Process.Release()
 	return true, nil
@@ -103,5 +108,9 @@ func replaceFile(dst, src string) error {
 	if err := os.Rename(siblingPath, dst); err != nil {
 		return fmt.Errorf("rename sibling over AppImage: %w", err)
 	}
+	// The cross-device copy left the original downloaded temp (src) in place;
+	// remove it so repeated updates don't litter the OS temp dir. Best-effort:
+	// a failure here doesn't undo the successful swap.
+	_ = os.Remove(src)
 	return nil
 }

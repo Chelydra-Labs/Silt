@@ -72,15 +72,18 @@ func parseExpectedHash(r io.Reader, filename string) (hash string, ok bool, err 
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// sha256sum emits `<hash>  <filename>` (two spaces). A `*` before the
-		// filename marks binary mode. Split on the first whitespace run.
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		// sha256sum emits either `<hash>  <filename>` (text mode, two spaces)
+		// or `<hash> *<filename>` (binary mode, space + asterisk). The hash is
+		// always 64 hex chars with no spaces, so the FIRST single space is the
+		// hash/filename delimiter. Split there (max 2 parts) so a filename
+		// containing internal spaces is preserved as the remainder.
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
 			err = fmt.Errorf("malformed SHA256SUMS line: %q", line)
 			return
 		}
-		h := fields[0]
-		name := strings.TrimPrefix(fields[1], "*")
+		h := parts[0]
+		name := strings.TrimPrefix(strings.TrimSpace(parts[1]), "*")
 		if name == filename {
 			return h, true, nil
 		}

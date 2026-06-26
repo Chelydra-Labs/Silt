@@ -49,7 +49,7 @@
   import { pushNotification } from './notifications/store.svelte'
   import {
     initStartupUpdateCheck,
-    disposeStartupUpdateCheck
+    disposeUpdateStore
   } from './updates/store.svelte'
   import {
     openPage as openPageState,
@@ -653,7 +653,7 @@
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()
-      disposeStartupUpdateCheck()
+      disposeUpdateStore()
       // Flush any pending tab-state persistence so the user's last tab
       // change survives a component unmount / app close (#142 hardening).
       if (persistTabsTimer) {

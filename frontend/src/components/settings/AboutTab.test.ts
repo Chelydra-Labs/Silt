@@ -113,7 +113,7 @@ describe('AboutTab update UI (#312)', () => {
       screen.getByRole('button', { name: /Install update/i })
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: /View full notes/i })
+      screen.getByRole('link', { name: /View full notes/i })
     ).toBeInTheDocument()
   })
 
@@ -128,7 +128,7 @@ describe('AboutTab update UI (#312)', () => {
     await tick()
     expect(screen.queryByRole('button', { name: /Install update/i })).toBeNull()
     expect(
-      screen.getByRole('button', { name: /View full notes/i })
+      screen.getByRole('link', { name: /View full notes/i })
     ).toBeInTheDocument()
   })
 
@@ -196,7 +196,7 @@ describe('AboutTab update UI (#312)', () => {
     render(AboutTab)
     await tick()
     await fireEvent.click(
-      screen.getByRole('button', { name: /View full notes/i })
+      screen.getByRole('link', { name: /View full notes/i })
     )
     expect(mocks.BrowserOpenURL).toHaveBeenCalledWith(
       'https://example/release-notes'

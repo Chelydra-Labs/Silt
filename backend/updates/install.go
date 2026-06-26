@@ -1,5 +1,14 @@
 package updates
 
+import "errors"
+
+// ErrSwapOKRelaunchFailed is returned by Install when the AppImage swap
+// succeeded but relaunching the new version failed (e.g. exec permission
+// denied on a noexec temp mount). The on-disk install is updated; the user is
+// still running the old process and must relaunch manually. willQuit is false
+// in this case so the app stays alive to surface the message.
+var ErrSwapOKRelaunchFailed = errors.New("appimage updated but relaunch failed; restart manually")
+
 // Install launches the verified local asset so it can replace the running
 // binary. The bool return reports whether the caller should QUIT the app:
 //   - true  (Windows NSIS, Linux AppImage in-place): a self-replacing

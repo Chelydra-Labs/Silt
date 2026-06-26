@@ -81,6 +81,23 @@ func TestVerifySHA256Sums_BinaryModeStar(t *testing.T) {
 	}
 }
 
+// A filename containing internal spaces must parse correctly (regression for
+// the strings.Fields over-segmentation the two-space/single-space split fixes).
+func TestVerifySHA256Sums_FilenameWithSpaces(t *testing.T) {
+	content := []byte("spaced name")
+	const name = "My Silt Installer.exe"
+	path := writeTempAsset(t, "silt-update-123.exe", content)
+	// Both text mode (two spaces) and binary mode (space + *) forms.
+	for _, line := range []string{
+		fmt.Sprintf("%s  %s\n", sha256Hex(content), name),
+		fmt.Sprintf("%s *%s\n", sha256Hex(content), name),
+	} {
+		if err := VerifySHA256Sums(path, name, strings.NewReader(line)); err != nil {
+			t.Fatalf("expected match for spaced filename [%s]: %v", line, err)
+		}
+	}
+}
+
 func TestVerifySHA256Sums_UppercaseHashTolerated(t *testing.T) {
 	content := []byte("x")
 	path := writeTempAsset(t, "silt-update-123.exe", content)
