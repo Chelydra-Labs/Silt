@@ -771,6 +771,23 @@ body {
   font-weight: 600;
   text-align: left;
 }
+/* Alternating row tint (zebra) + hover highlight on data rows. Both are kept
+   subtle so they read as guidance, not noise, and stay out of the way of the
+   selectedCell overlay (which paints on top via ::after). */
+.ProseMirror .tableWrapper table tbody tr:nth-child(even) td {
+  background: color-mix(
+    in srgb,
+    var(--color-surface, #1a1d24) 55%,
+    transparent
+  );
+}
+.ProseMirror .tableWrapper table tbody tr:hover td {
+  background: color-mix(
+    in srgb,
+    var(--color-accent-primary-start) 8%,
+    transparent
+  );
+}
 .ProseMirror .tableWrapper table .selectedCell::after {
   content: '';
   position: absolute;

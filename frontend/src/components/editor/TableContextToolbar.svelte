@@ -91,18 +91,77 @@
       // save and the row structure would change on reload (data corruption).
     ]
   })
+
+  // Roving tabindex (a11y): one button in the toolbar holds tabindex 0, the
+  // rest hold -1, so the whole toolbar is a single Tab stop and Arrow keys move
+  // between its buttons. Mirrors FormatToolbar.svelte. Disabled buttons are
+  // skipped while roving (a disabled control can't take focus in most browsers,
+  // so landing on one would stall the row).
+  let rovingIdx = $state(0)
+  let toolbarEl: HTMLElement | null = $state(null)
+
+  function enabledStep(
+    btns: ArrayLike<HTMLButtonElement>,
+    from: number,
+    delta: number
+  ): number {
+    const count = btns.length
+    let idx = from
+    for (let k = 0; k < count; k++) {
+      idx = (idx + delta + count) % count
+      if (!btns[idx].disabled) return idx
+    }
+    return from
+  }
+
+  function handleKeydown(e: KeyboardEvent): void {
+    const btns = toolbarEl?.querySelectorAll<HTMLButtonElement>('[data-tb]')
+    if (!btns || btns.length === 0) return
+    let next = rovingIdx
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      next = enabledStep(btns, rovingIdx, 1)
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      next = enabledStep(btns, rovingIdx, -1)
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      next = enabledStep(btns, -1, 1)
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      next = enabledStep(btns, btns.length, -1)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      editor.chain().focus().run()
+      return
+    } else {
+      return
+    }
+    rovingIdx = next
+    btns[next]?.focus()
+  }
 </script>
 
-<div class="table-context-toolbar" role="toolbar" aria-label="Table actions">
-  {#each ops as op (op.id)}
+<div
+  class="table-context-toolbar"
+  role="toolbar"
+  aria-label="Table actions"
+  tabindex="-1"
+  bind:this={toolbarEl}
+  onkeydown={handleKeydown}
+>
+  {#each ops as op, i (op.id)}
     <button
       type="button"
       class="tct-btn"
+      data-tb
       disabled={!op.can()}
       aria-label={op.label}
       aria-keyshortcuts={op.shortcut}
+      tabindex={rovingIdx === i ? 0 : -1}
       title={op.shortcut ? `${op.label} (${op.shortcut})` : op.label}
       onclick={op.run}
+      onfocus={() => (rovingIdx = i)}
     >
       <span class="material-symbols-outlined" aria-hidden="true">
         {op.icon}
