@@ -476,15 +476,15 @@ export const CALLOUT_VARIANTS: Record<
 export const CalloutBlock = Node.create({
   name: 'calloutBlock',
   group: 'block',
-  // paragraph+ restricts callout children to paragraphs only. This matches
-  // Obsidian's callout model (each `>` line is a text paragraph) and prevents
-  // silent data loss: block+ would legally admit codeBlock/table/taskBlock
-  // children, but the serializer (serializeCalloutToText) only handles
-  // paragraphs. With paragraph+, ProseMirror rejects non-paragraph insertions
-  // at the schema level — the slash menu's insertCodeBlock/insertTable simply
-  // fail inside a callout instead of succeeding in the editor but being
-  // silently dropped on save (#308 review fix).
-  content: 'paragraph+',
+  // block+ lets a callout contain arbitrary block children (task lists, code
+  // blocks, tables, nested callouts) like Obsidian and <details> already do.
+  // This is safe because the serializer (serializeCalloutToText) emits an
+  // explicit branch for every allowed block type — the same no-silent-drop
+  // guarantee <details> relies on — so block content round-trips through the
+  // `>`-prefixed on-disk lines instead of being flattened or lost. Plain body
+  // lines parse as paragraphs, so legacy multi-paragraph callouts stay
+  // byte-identical.
+  content: 'block+',
   defining: true,
   isolating: true,
 
