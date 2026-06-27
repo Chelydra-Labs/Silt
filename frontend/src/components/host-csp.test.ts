@@ -19,8 +19,11 @@ const here = dirname(fileURLToPath(import.meta.url))
 const indexHtml = readFileSync(resolve(here, '../../index.html'), 'utf8')
 
 describe('Host-webview CSP (#237, F2)', () => {
-  it('HOST_CSP covers every required directive', () => {
+  it("HOST_CSP covers every required directive", () => {
     // The CSP MUST cover at minimum the directives enumerated in F2.
+    // frame-ancestors is intentionally absent — it is ignored via <meta>
+    // (CSP spec requires an HTTP header) and the desktop webview cannot be
+    // framed externally, so including it only produces a console warning.
     const requiredDirectives = [
       'default-src',
       'script-src',
@@ -32,8 +35,7 @@ describe('Host-webview CSP (#237, F2)', () => {
       'worker-src',
       'object-src',
       'base-uri',
-      'form-action',
-      'frame-ancestors'
+      'form-action'
     ]
     for (const d of requiredDirectives) {
       expect(HOST_CSP, `HOST_CSP must include ${d}`).toContain(d)
@@ -83,11 +85,10 @@ describe('Host-webview CSP (#237, F2)', () => {
     expect(fontSrc).not.toContain('fonts.googleapis.com')
   })
 
-  it("object-src, base-uri, form-action, frame-ancestors are 'none'", () => {
+  it("object-src, base-uri, form-action are 'none'", () => {
     expect(HOST_CSP).toMatch(/object-src 'none'/)
     expect(HOST_CSP).toMatch(/base-uri 'none'/)
     expect(HOST_CSP).toMatch(/form-action 'none'/)
-    expect(HOST_CSP).toMatch(/frame-ancestors 'none'/)
   })
 
   it('HOST_CSP_META is well-formed', () => {

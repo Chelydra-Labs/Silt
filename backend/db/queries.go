@@ -314,7 +314,9 @@ func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 
 	var build func(parent *node) []parser.TagNode
 	build = func(parent *node) []parser.TagNode {
-		var kids []parser.TagNode
+		// Non-nil empty slice so leaf nodes serialize as JSON [] (not null);
+		// the frontend dereferences node.children.length unconditionally.
+		kids := make([]parser.TagNode, 0, len(parent.children))
 		// Sort the children map by name for deterministic output independent
 		// of Go's randomized map iteration order.
 		names := make([]string, 0, len(parent.children))

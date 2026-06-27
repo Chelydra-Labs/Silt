@@ -21,6 +21,11 @@
 // /wails/runtime.js scripts are same-origin. `connect-src 'self'` is
 // sufficient and tighter than an ipc:// or ipc.localhost allowlist.
 
+// No frame-ancestors: that directive is ignored when delivered via <meta>
+// (per the CSP spec it requires an HTTP header), so including it only
+// produces a console warning. The Wails desktop webview cannot be embedded
+// in an external iframe anyway, so clickjacking is not a threat here.
+
 export const HOST_CSP =
   "default-src 'self'; " +
   "script-src 'self' 'wasm-unsafe-eval' blob:; " +
@@ -32,7 +37,6 @@ export const HOST_CSP =
   "worker-src 'self' blob:; " +
   "object-src 'none'; " +
   "base-uri 'none'; " +
-  "form-action 'none'; " +
-  "frame-ancestors 'none'"
+  "form-action 'none'"
 
 export const HOST_CSP_META = `<meta http-equiv="Content-Security-Policy" content="${HOST_CSP}">`

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { loadedPlugins } from '../plugins/store.svelte'
   import { makePluginContext } from '../plugins/context'
+  import { getSessionToken } from '../plugins/loader'
 
   interface Props {
     pluginId: string
@@ -21,7 +22,7 @@
   // svelte-ignore state_referenced_locally: pluginId is a stable prop
   // identifying which plugin this view renders; it does not change during
   // the component's lifetime, so capturing the initial value is correct.
-  const ctx = makePluginContext(pluginId)
+  const ctx = makePluginContext(pluginId, getSessionToken(pluginId))
 </script>
 
 {#if loadError}

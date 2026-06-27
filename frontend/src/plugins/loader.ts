@@ -29,6 +29,16 @@ let lifecycleWired = false
 const sessionTokens = new Map<string, string>()
 
 /**
+ * Look up the session token registered for pluginID. Used by PluginView so
+ * the context it builds for the rendered component carries the same token
+ * the loader registered — without it every privileged SDK call from the
+ * component fails with "missing session token" (#236).
+ */
+export function getSessionToken(pluginID: string): string | undefined {
+  return sessionTokens.get(pluginID)
+}
+
+/**
  * Discover and initialize all active plugins:
  *   1. First-party bundled plugins (always available).
  *   2. On-disk plugins discovered under .system/plugins/ (skipping any with
