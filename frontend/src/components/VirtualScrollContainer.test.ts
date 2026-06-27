@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 import TipTapEditorStub from './TipTapEditor.stub.svelte'
 import EditorUtilityBarStub from './editor/EditorUtilityBar.stub.svelte'
+import MarkdownSourceViewerStub from './editor/MarkdownSourceViewer.stub.svelte'
 
 const mocks = vi.hoisted(() => ({
   settings: {
@@ -34,6 +35,9 @@ vi.mock('../../wailsjs/runtime/runtime.js', () => ({
 vi.mock('./TipTapEditor.svelte', () => ({ default: TipTapEditorStub }))
 vi.mock('./editor/EditorUtilityBar.svelte', () => ({
   default: EditorUtilityBarStub
+}))
+vi.mock('./editor/MarkdownSourceViewer.svelte', () => ({
+  default: MarkdownSourceViewerStub
 }))
 
 vi.mock('../settings/store.svelte.ts', () => ({
@@ -73,10 +77,29 @@ describe('VirtualScrollContainer editor chrome', () => {
       props: { ...baseProps(), viewMode: 'source' }
     })
     expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
+    // Source view: the read-only markdown projection renders in place of the
+    // editor (#171/#194).
+    expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
     // The view-mode toggle reflects the action available (switch back to edit).
     expect(
       screen.getByRole('button', { name: 'Toggle View Mode' })
     ).toHaveAttribute('title', 'View Rich Text (Ctrl+Shift+V)')
+  })
+
+  it('mounts TipTapEditor in edit mode but tears it down in source mode (#178)', () => {
+    // Edit mode: the full editor (ProseMirror + NodeViews) is mounted.
+    const { rerender } = render(VirtualScrollContainer, {
+      props: baseProps()
+    })
+    expect(screen.getByTestId('tiptap-stub')).toBeInTheDocument()
+    expect(screen.queryByTestId('markdown-source-stub')).toBeNull()
+
+    // Source mode: TipTapEditor is NOT mounted (Svelte destroyed it), so a tab
+    // held in Source view pays no editor memory cost. Only the read-only
+    // markdown projection is present.
+    rerender({ ...baseProps(), viewMode: 'source' })
+    expect(screen.queryByTestId('tiptap-stub')).toBeNull()
+    expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
   })
 
   it('hides the EditorUtilityBar when show_format_toolbar is false', () => {

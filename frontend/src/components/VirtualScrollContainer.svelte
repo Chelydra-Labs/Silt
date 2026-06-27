@@ -3,6 +3,7 @@
   import { FetchPageBlocks, RenamePage } from '../../wailsjs/go/main/App.js'
   import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import TipTapEditor from './TipTapEditor.svelte'
+  import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import type { ParsedBlock } from '../lib/editor'
   import type { Editor } from 'svelte-tiptap'
   import type { ViewMode } from '../lib/tabs'
@@ -325,20 +326,33 @@
             </button>
           </div>
         {:else}
-          <TipTapEditor
-            {notebook}
-            {section}
-            {page}
-            {blocks}
-            {activeFocusedBlockAncestors}
-            {onBlockFocus}
-            {onBlockBlur}
-            onUpdate={handleBlocksUpdated}
-            bind:editorInstance
-            bind:activeMarks
-            {viewMode}
-            {onSaveStateChange}
-          />
+          {#if viewMode === 'source'}
+            <!-- Source view (#171/#194): a read-only projection. TipTapEditor
+                 is NOT mounted here — Svelte tears the whole editor (ProseMirror
+                 doc + NodeViews + listeners) down on the switch, so a tab held
+                 in Source view pays no editor memory cost (#178). Returning to
+                 Edit remounts it and rebuilds from `blocks` (content is on
+                 disk via auto-save); scroll/cursor reset on the round-trip is
+                 the documented trade-off. -->
+            <MarkdownSourceViewer
+              {blocks}
+              filePath="{notebook}/{section}/{page}.md"
+            />
+          {:else}
+            <TipTapEditor
+              {notebook}
+              {section}
+              {page}
+              {blocks}
+              {activeFocusedBlockAncestors}
+              {onBlockFocus}
+              {onBlockBlur}
+              onUpdate={handleBlocksUpdated}
+              bind:editorInstance
+              bind:activeMarks
+              {onSaveStateChange}
+            />
+          {/if}
         {/if}
 
         {#if loading}
