@@ -694,10 +694,25 @@ palette is available via the format toolbar.
 `# H1`, `## H2`, `### H3`. Convert blocks via Mod-Alt-1/2/3/0/4 or slash
 commands `/h1` `/h2` `/h3` `/note` `/task`.
 
-### View mode toggle (#171)
+### View mode toggle (#171, #194, #195)
 
-Per-page Edit (WYSIWYG) ↔ Source (raw markdown) toggle via Ctrl+E or the
-Edit/Source radio in the page chrome. Source view is read-only.
+Per-page Edit (WYSIWYG) ↔ Source (raw markdown) toggle. The toggle is a
+floating icon button in the editor's action bar (announced via `aria-pressed`
++ `aria-keyshortcuts`) plus the `toggle_view_mode` hotkey (default
+`Ctrl+Shift+V`, remappable per-vault). Source view is read-only and renders
+the raw on-disk markdown with **Shiki syntax highlighting** driven by the
+active theme's color tokens (#194); it falls back to plain text until the
+highlighter resolves and on any error.
+
+The mode is **per-tab** (`TabEntry.viewMode`, #195): each tab keeps its own
+mode, sticky within a session and **persisted across restarts** on
+`TabRef.view_mode` in the vault `config.yaml` (only `source` is written;
+absence means the Edit default). A freshly-opened tab starts in
+`editor.default_view_mode`. Switching a tab to Source **unmounts its
+TipTapEditor** (the editor is destroyed and rebuilt from the on-disk file on
+return to Edit), so a tab held in Source view pays no editor memory cost
+(#178); the trade-off is a scroll/cursor reset on an Edit→Source→Edit
+round-trip.
 
 ### Block types (#188, #180, #189, #183, #172, #310, #308)
 
@@ -818,8 +833,8 @@ ui:
   # visual churn noisy can disable. The in-editor indicator is unaffected.
   show_tab_dirty_indicators: true
   # Open-tab persistence (#142). Pinned tabs only; preview tabs are ephemeral.
-  open_tabs: []        # list of {notebook, section, page}
-  active_tab: null     # {notebook, section, page} or null
+  open_tabs: []        # list of {notebook, section, page, view_mode?} (#195)
+  active_tab: null     # {notebook, section, page, view_mode?} or null
   # One-time tip dismissals (#168).
   dismissed_tips: []
   # Inline formatting toggles (#168, #170).
