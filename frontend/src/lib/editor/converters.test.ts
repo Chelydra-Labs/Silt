@@ -346,6 +346,173 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     }
   })
 
+  // ---- Callout block-level nesting (#290) --------------------------------
+  // A callout's `>` body lines may carry block constructs (tasks, code, tables,
+  // nested callouts). Each parses into a typed child and re-emits with a `>`
+  // prefix on every line.
+
+  it('callout containing a task list round-trips (#290)', () => {
+    const text = '> [!warning] Tasks\n> - [ ] first\n> - [x] second'
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    const node = doc.content[0]
+    expect(node?.content?.map((c) => c.type)).toEqual([
+      'paragraph',
+      'taskBlock',
+      'taskBlock'
+    ])
+    const tasks = (node?.content || []).filter((c) => c.type === 'taskBlock')
+    expect(tasks[0]?.attrs?.status).toBe('TODO')
+    expect(tasks[1]?.attrs?.status).toBe('DONE')
+    expect(docToBlocks(doc)[0].clean_text).toBe(text)
+  })
+
+  it('callout containing a fenced code block round-trips (#290)', () => {
+    const text = '> [!tip] Example\n> ```go\n> fmt.Println("hi")\n> ```'
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    const node = doc.content[0]
+    expect(node?.content?.[1]?.type).toBe('codeBlock')
+    expect(node?.content?.[1]?.attrs?.language).toBe('go')
+    expect(docToBlocks(doc)[0].clean_text).toBe(text)
+  })
+
+  it('callout containing a GFM table round-trips (#290)', () => {
+    // 3-char cells so the canonical GFM padding is byte-stable.
+    const text =
+      '> [!note] Plan\n> | Cat | Dog |\n> | --- | --- |\n> | One | Two |'
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    const node = doc.content[0]
+    expect(node?.content?.[1]?.type).toBe('table')
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe(text)
+    // Byte-stable across a second pass.
+    expect(docToBlocks(blocksToDoc(back))[0].clean_text).toBe(text)
+  })
+
+  it('callout containing a nested callout round-trips (#290)', () => {
+    const text = '> [!note] outer\n> > [!tip] inner\n> > inner body'
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    const node = doc.content[0]
+    expect(node?.content?.[1]?.type).toBe('calloutBlock')
+    expect(node?.content?.[1]?.attrs?.variant).toBe('tip')
+    expect(docToBlocks(doc)[0].clean_text).toBe(text)
+  })
+
+  it('two sibling nested callouts parse as separate children (#290)', () => {
+    const text = [
+      '> [!note] outer',
+      '> > [!tip] first inner',
+      '> > first body',
+      '> > [!warning] second inner',
+      '> > second body'
+    ].join('\n')
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    const node = doc.content[0]
+    const calloutChildren = (node?.content || []).filter(
+      (c) => c.type === 'calloutBlock'
+    )
+    expect(calloutChildren).toHaveLength(2)
+    expect(calloutChildren[0]?.attrs?.variant).toBe('tip')
+    expect(calloutChildren[1]?.attrs?.variant).toBe('warning')
+    expect(docToBlocks(doc)[0].clean_text).toBe(text)
+  })
+
+  it('callout containing a header round-trips (#290)', () => {
+    const text = '> [!note] Section\n> ## Subheading\n> body'
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    const node = doc.content[0]
+    expect(node?.content?.[1]?.type).toBe('headerBlock')
+    expect(node?.content?.[1]?.attrs?.depth).toBe(2)
+    expect(docToBlocks(doc)[0].clean_text).toBe(text)
+  })
+
+  it('callout containing a collapsible section round-trips (#290)', () => {
+    const text = [
+      '> [!note] outer',
+      '> <details>',
+      '> <summary>title</summary>',
+      '> hidden body',
+      '> </details>'
+    ].join('\n')
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    const node = doc.content[0]
+    expect(node?.content?.[1]?.type).toBe('details')
+    expect(docToBlocks(doc)[0].clean_text).toBe(text)
+  })
+
+  it('callout with mixed block + paragraph content round-trips (#290)', () => {
+    const text = [
+      '> [!tip] Mixed',
+      '> A paragraph.',
+      '> - [ ] a task',
+      '> ```js',
+      '> code',
+      '> ```',
+      '> | Cat | Dog |',
+      '> | --- | --- |',
+      '> | One | Two |'
+    ].join('\n')
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    const node = doc.content[0]
+    expect(node?.content?.map((c) => c.type)).toEqual([
+      'paragraph',
+      'paragraph',
+      'taskBlock',
+      'codeBlock',
+      'table'
+    ])
+    // Byte-stable across a second pass (table padding reaches canonical form).
+    const back = docToBlocks(doc)
+    expect(docToBlocks(blocksToDoc(back))[0].clean_text).toBe(
+      back[0].clean_text
+    )
+  })
+
+  it('callout preserves bare `>` paragraph breaks (#290)', () => {
+    const text = '> [!note] title\n> para one\n>\n> para two'
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    expect(doc.content[0]?.content?.map((c) => c.type)).toEqual([
+      'paragraph',
+      'paragraph',
+      'paragraph',
+      'paragraph'
+    ])
+    expect(docToBlocks(doc)[0].clean_text).toBe(text)
+  })
+
+  it('legacy multi-paragraph callout stays byte-identical under block+ (#290)', () => {
+    // A pre-#290 callout whose body is plain paragraphs must not change on disk.
+    const text = '> [!note] hello\n> line two\n> line three'
+    expect(
+      docToBlocks(blocksToDoc([mkBlock('CALLOUT', { clean_text: text })]))[0]
+        .clean_text
+    ).toBe(text)
+  })
+
+  it('callout schema permits every block type as a child (#290)', () => {
+    // block+ (was paragraph+) is what lets insertCodeBlock / insertTable /
+    // slash commands succeed inside a callout. Assert the content model accepts
+    // each block type directly, rather than relying on cursor-insertion
+    // mechanics that vary by selection.
+    const editor = makeEditorWithNewBlocks()
+    const schema = editor.state.schema
+    const match = schema.nodes.calloutBlock.contentMatch
+    for (const type of [
+      'paragraph',
+      'noteBlock',
+      'taskBlock',
+      'headerBlock',
+      'codeBlock',
+      'table',
+      'calloutBlock'
+    ]) {
+      expect(
+        match.matchType(schema.nodes[type]),
+        `${type} should be allowed inside a callout`
+      ).not.toBeNull()
+    }
+    editor.destroy()
+  })
+
   it('round-trips a multi-line CODE block with language (#189)', () => {
     const code = 'func main() {\n\tprintln("hi")\n}'
     const blocks = [
@@ -691,6 +858,20 @@ describe('doc JSON accepted by a real TipTap editor', () => {
     const back = docToBlocks(editor.getJSON() as DocJSON)
     expect(back).toHaveLength(1)
     expect(back[0].clean_text).toBe('> [!warning] Watch out')
+    editor.destroy()
+  })
+
+  it('block-nested callout survives TipTap setContent → getJSON (#290)', () => {
+    const editor = makeEditorWithNewBlocks()
+    const text = '> [!tip] Ex\n> ```go\n> hi\n> ```\n> - [ ] do it'
+    editor.commands.setContent(
+      blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    )
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back).toHaveLength(1)
+    expect(back[0].type).toBe('CALLOUT')
+    // The code block + task survive TipTap's normalization and re-emit verbatim.
+    expect(back[0].clean_text).toBe(text)
     editor.destroy()
   })
 

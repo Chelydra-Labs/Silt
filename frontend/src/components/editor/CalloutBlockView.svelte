@@ -33,13 +33,27 @@
 </NodeViewWrapper>
 
 <style>
-  /* block+ content: paragraphs inside the callout body get compact spacing
-     so multi-paragraph callouts don't look airy. Fully global because the
-     paragraphs are rendered by TipTap's NodeViewContent at runtime. */
+  /* block+ content: paragraphs and nested blocks (code, tables, task lists)
+     inside the callout body get compact spacing so a multi-block callout reads
+     cleanly. Fully global because the children are rendered by TipTap's
+     NodeViewContent at runtime. */
   :global(.silt-callout-body p) {
     margin: 0 0 0.25rem 0;
   }
   :global(.silt-callout-body p:last-child) {
     margin-bottom: 0;
+  }
+  /* Nested code blocks sit flush inside the callout, not as a detached card. */
+  :global(.silt-callout-body .silt-code) {
+    margin: 0.25rem 0;
+  }
+  /* Nested tables + task lists keep tight vertical rhythm. */
+  :global(.silt-callout-body table) {
+    margin: 0.25rem 0;
+  }
+  :global(.silt-callout-body ul),
+  :global(.silt-callout-body ol) {
+    margin: 0.25rem 0;
+    padding-left: 1.25rem;
   }
 </style>
