@@ -828,6 +828,25 @@ function calloutBodyLinesToNodes(lines: string[]): NodeJSON[] {
       continue
     }
 
+    // Nested <details>: accumulate to its closing tag, then parse via the
+    // existing HTML parser (the serializer already emits it correctly).
+    if (DETAILS_OPEN_RE.test(trimmed)) {
+      let depth = 1
+      let j = i + 1
+      while (j < lines.length && depth > 0) {
+        if (DETAILS_OPEN_RE.test(lines[j].trim())) depth++
+        else if (DETAILS_CLOSE_RE.test(lines[j].trim())) depth--
+        if (depth === 0) break
+        j++
+      }
+      if (depth === 0) {
+        const html = lines.slice(i, j + 1).join('\n')
+        nodes.push(parseDetailsHTML(html, '', ''))
+        i = j + 1
+        continue
+      }
+    }
+
     // Fenced code block (shared accumulator).
     const codeFence = accumulateCodeFence(lines, i)
     if (codeFence) {

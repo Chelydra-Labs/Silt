@@ -425,6 +425,20 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(docToBlocks(doc)[0].clean_text).toBe(text)
   })
 
+  it('callout containing a collapsible section round-trips (#290)', () => {
+    const text = [
+      '> [!note] outer',
+      '> <details>',
+      '> <summary>title</summary>',
+      '> hidden body',
+      '> </details>'
+    ].join('\n')
+    const doc = blocksToDoc([mkBlock('CALLOUT', { clean_text: text })])
+    const node = doc.content[0]
+    expect(node?.content?.[1]?.type).toBe('details')
+    expect(docToBlocks(doc)[0].clean_text).toBe(text)
+  })
+
   it('callout with mixed block + paragraph content round-trips (#290)', () => {
     const text = [
       '> [!tip] Mixed',
