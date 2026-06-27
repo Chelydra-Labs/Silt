@@ -261,6 +261,44 @@
     if (dates.length > 0) return dates[0]
     return new Date().toISOString().slice(0, 10)
   })
+
+  // --- Scroll preservation across the Edit↔Source round-trip (#319) ---
+  // Sprint 15's editor-teardown optimization unmounts TipTapEditor while a
+  // tab is in Source view; returning to Edit rebuilt the editor from scratch
+  // and reset the scroll position. Capture the live offset the instant we
+  // leave Edit (before the DOM patch collapses the container height) and
+  // restore it once the remounted editor signals readiness. Cursor restore is
+  // a tracked follow-up; scroll offset is the cheap, high-value slice.
+  let prevViewMode: ViewMode = untrack(() => viewMode)
+  let savedEditScroll = 0
+  let pendingRestore = false
+
+  // $effect.pre runs ahead of the DOM update, so containerEl.scrollTop still
+  // reflects Edit mode at the exact moment the editor is about to unmount —
+  // a regular $effect would read an already-clamped value.
+  $effect.pre(() => {
+    const cur = viewMode
+    if (prevViewMode === 'edit' && cur === 'source' && containerEl) {
+      savedEditScroll = containerEl.scrollTop
+      pendingRestore = true
+    }
+    prevViewMode = cur
+  })
+
+  async function handleEditorReady() {
+    if (!pendingRestore) return
+    pendingRestore = false
+    const target = savedEditScroll
+    if (target <= 0 || !containerEl) return
+    // Let the remounted NodeViews flush + measure before restoring so the
+    // target offset actually exists; then clamp in case the doc shortened
+    // (autosave/fsnotify) while the tab was in Source view.
+    await tick()
+    requestAnimationFrame(() => {
+      if (!containerEl) return
+      containerEl.scrollTop = Math.min(target, containerEl.scrollHeight)
+    })
+  }
 </script>
 
 <div
@@ -337,9 +375,9 @@
                  is NOT mounted here — Svelte tears the whole editor (ProseMirror
                  doc + NodeViews + listeners) down on the switch, so a tab held
                  in Source view pays no editor memory cost (#178). Returning to
-                 Edit remounts it and rebuilds from `blocks` (content is on
-                 disk via auto-save); scroll/cursor reset on the round-trip is
-                 the documented trade-off. -->
+                 Edit remounts it and rebuilds from `blocks` (content is on disk
+                 via auto-save); the Edit scroll offset is restored on the
+                 round-trip (#319), cursor position remains a follow-up. -->
             <MarkdownSourceViewer
               {blocks}
               filePath="{notebook}/{section}/{page}.md"
@@ -354,6 +392,7 @@
               {onBlockFocus}
               {onBlockBlur}
               onUpdate={handleBlocksUpdated}
+              onReady={handleEditorReady}
               bind:editorInstance
               bind:activeMarks
               {onSaveStateChange}

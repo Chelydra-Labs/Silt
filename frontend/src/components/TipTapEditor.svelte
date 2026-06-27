@@ -93,6 +93,10 @@
       dirty: boolean
       error: string | null
     }) => void
+    /** Fired once when the ProseMirror editor finishes its initial mount
+     *  (onCreate). Lets the parent schedule post-readiness work such as
+     *  restoring scroll across an Edit↔Source round-trip (#319). */
+    onReady?: () => void
   }
 
   let {
@@ -106,7 +110,8 @@
     onUpdate,
     editorInstance = $bindable(null),
     activeMarks = $bindable(new Set()),
-    onSaveStateChange
+    onSaveStateChange,
+    onReady
   }: Props = $props()
   let editorReady = $state(false)
   let isFocused = $state(false)
@@ -503,6 +508,7 @@
       editorInstance = editor as Editor
       editorReady = true
       isLastBlock = editor.state.doc.childCount <= 1
+      onReady?.()
     }
   })
 
