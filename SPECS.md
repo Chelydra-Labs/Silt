@@ -513,9 +513,9 @@ Memory Footprint: The application must maintain an idle memory footprint of less
 
 The Windows NSIS installer MUST satisfy the following:
 
-- **No-admin installation:** The user must be able to install Silt without administrator access. The installer presents a choice between "Install for all users" (per-machine, requires elevation) and "Install for just me" (per-user, no elevation), defaulting to per-user. The per-user install directory is `%LOCALAPPDATA%\Programs\Chelydra Labs\Silt`.
-- **Upgrade support:** Installing a newer version over an existing installation MUST upgrade in place. The installer detects a prior install (via the registry uninstall key), silently runs the old uninstaller, then installs the new version to the same scope (per-user or per-machine) and directory.
-- **Registry correctness:** Uninstall registry entries (Add/Remove Programs) are written to HKCU for per-user installs and HKLM for per-machine installs, so both scopes appear correctly in Windows Settings regardless of elevation.
+- **Per-user, no-admin installation:** Silt installs per-user only — no administrator access is ever required and no UAC prompt appears. The install directory is `%LOCALAPPDATA%\Programs\Chelydra Labs\Silt`. Each Windows user who wants Silt installs their own copy.
+- **Upgrade support:** Installing a newer version over an existing installation MUST upgrade in place. The installer detects a prior per-user install (via the HKCU registry uninstall key), silently runs the old uninstaller, then installs the new version to the same directory.
+- **Registry correctness:** Uninstall registry entries (Add/Remove Programs) are written to HKCU, so the install appears correctly in Windows Settings for the current user.
 - **User data preservation:** The vault (notebooks, config.yaml, plugins, themes, templates) lives in user-chosen directories, NOT in the install directory. Upgrading or uninstalling never touches user data.
 - **Portable alternative:** A portable .zip (no installer, no registry entries) is also produced for users who prefer a zero-install experience.
 
