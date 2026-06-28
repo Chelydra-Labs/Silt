@@ -120,6 +120,13 @@ function currentBlockInfo(editor: Editor) {
     node,
     pos: pos.before(depth),
     depth: node.attrs.depth || 0,
+    // index is the child index within the block's PARENT at its tree depth —
+    // NOT necessarily the top-level doc index. For a block nested inside a
+    // callout (tree depth 2), this is the index within the callout. Callers
+    // that need the top-level child index (moveActiveBlock / Tab / ArrowUp /
+    // ArrowDown / Backspace) re-derive it from `info.pos` against `doc`
+    // children; that loop also doubles as a nested-block guard (a nested
+    // block's pos never matches a top-level child start, so it returns -1).
     index: pos.index(depth)
   }
 }

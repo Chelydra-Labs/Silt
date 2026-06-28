@@ -1669,6 +1669,18 @@ describe('tokenize / validate pipeline (#198)', () => {
     }
   })
 
+  it('does not split mid-paragraph $$...$$ as inline math (#191)', () => {
+    // Block math is block-level; when it appears mid-paragraph it cannot become
+    // a blockMathNode (schema violation), so it must stay literal verbatim text
+    // — NOT degrade into stray `$` + inline-math(`x^2`) + `$`. The `(?<!\$)`
+    // / `(?!\$)` edges on the inline regex reject any `$` adjacent to another
+    // `$`, so `$$x^2$$` never starts an inline match.
+    const src = 'intro $$x^2$$ end'
+    const nodes = legacyTokenizeInline(src)
+    expect(nodes.filter((n) => n.type === 'inlineMathNode')).toHaveLength(0)
+    expect(serializeInlineContent(nodes)).toBe(src)
+  })
+
   it('round-trips a $$...$$ block equation via blocksToDoc/docToBlocks (#191)', () => {
     const blocks = [mkBlock('NOTE', { clean_text: '$$\\int_0^1 x\\,dx$$' })]
     const doc = blocksToDoc(blocks)

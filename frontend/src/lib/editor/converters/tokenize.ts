@@ -197,12 +197,15 @@ function parseInlineTokens(
 // math). UUIDs: 8-4-4-4-12 hex. Mention names are any non-bracket, non-newline
 // run inside `@[...]`. Inline math `$...$` guards against currency-style `$`
 // (opening `$` not followed by space, closing `$` not preceded by space), so
-// "5$ cash" and "$5" do not enter math mode. Block math `$$...$$` is NOT
-// handled here — it is a block-level node produced by the sole-content-NOTE
-// path in blocks.ts; emitting a block node inside inline content would violate
-// the ProseMirror schema.
+// "5$ cash" and "$5" do not enter math mode. Block math `$$...$$` is rejected
+// inline via the `(?<!\$)` / `(?!\$)` edges: an opening or closing `$` that is
+// itself adjacent to another `$` (i.e. part of a `$$` delimiter) never starts
+// or ends an inline match, so `$$x^2$$` stays literal text rather than
+// degrading into stray `$` + inline-math + `$`. Block math is a block-level
+// node produced by the sole-content-NOTE path in blocks.ts; emitting a block
+// node inside inline content would violate the ProseMirror schema.
 const ATOMIC_INLINE_TOKEN =
-  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)|@\[([^\[\]\n]+)\]|\$(?!\s)([^$\n]+?)(?<!\s)\$/gi
+  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)|@\[([^\[\]\n]+)\]|(?<!\$)\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\$)/gi
 
 // Inline code span. Matched BEFORE atomic tokens so that `$x$` / `@[a]` /
 // `((uuid))` written inside backticks stays literal code (not a math node,

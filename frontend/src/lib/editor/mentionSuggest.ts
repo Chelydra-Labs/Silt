@@ -142,15 +142,6 @@ export interface MentionSuggestOptions {
   onSelectActive: () => void
 }
 
-export function getMentionSuggestState(editor: Editor): MentionSuggestState {
-  return (
-    mentionSuggestKey.getState(editor.state) ?? {
-      context: null,
-      suppressed: false
-    }
-  )
-}
-
 export const MentionSuggest = Extension.create<MentionSuggestOptions>({
   name: 'siltMentionSuggest',
 

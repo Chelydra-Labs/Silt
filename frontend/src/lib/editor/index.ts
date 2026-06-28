@@ -51,8 +51,7 @@ export {
   MentionSuggest,
   applyMentionSuggestion,
   filterOwners,
-  getMentionContext,
-  getMentionSuggestState
+  getMentionContext
 } from './mentionSuggest'
 export type { MentionContext, MentionSuggestOptions } from './mentionSuggest'
 export type {
