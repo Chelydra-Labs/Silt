@@ -1760,7 +1760,7 @@ func TestDistinctOwners(t *testing.T) {
 		t.Fatalf("index: %v", err)
 	}
 
-	owners, err := dm.DistinctOwners()
+	owners, err := dm.DistinctOwners("")
 	if err != nil {
 		t.Fatalf("DistinctOwners: %v", err)
 	}
@@ -1777,7 +1777,7 @@ func TestDistinctOwners(t *testing.T) {
 
 func TestDistinctOwners_EmptyVault(t *testing.T) {
 	dm := newTestDB(t)
-	owners, err := dm.DistinctOwners()
+	owners, err := dm.DistinctOwners("")
 	if err != nil {
 		t.Fatalf("DistinctOwners on empty vault: %v", err)
 	}
@@ -1788,5 +1788,71 @@ func TestDistinctOwners_EmptyVault(t *testing.T) {
 	}
 	if len(owners) != 0 {
 		t.Errorf("DistinctOwners on empty vault = %v, want []", owners)
+	}
+}
+
+// TestDistinctOwners_Prefix covers the server-side prefix filter added in #332.
+// An unbounded SELECT DISTINCT was rejected in favor of LIKE 'prefix%' so a
+// large vault never ships a 10k-owner payload per typeahead keystroke. The
+// empty-prefix case preserves the legacy "all owners" semantics for the
+// editor's cache-seed load.
+//
+// Observed SQLite behavior (asserted exactly below, no surprises):
+//   - LIKE is ASCII-case-insensitive by default, so 'A' matches 'Aardvark',
+//     'Alice', AND 'alice'.
+//   - ORDER BY uses the BINARY collation by default, so casing affects order:
+//     uppercase ASCII sorts before lowercase ('Alice' < 'alice'). The exact
+//     ordering is asserted so a future PR cannot silently regress it.
+func TestDistinctOwners_Prefix(t *testing.T) {
+	dm := newTestDB(t)
+	// Seed owners chosen to expose (a) ASCII case-insensitive LIKE matching
+	// ('A' matches both 'Alice' and 'alice'), (b) BINARY ORDER BY casing
+	// ('Alice' precedes 'alice'), and (c) an unrelated owner ('Bob') plus a
+	// no-match prefix ('z').
+	blocks := []parser.ParsedBlock{
+		{ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", Type: parser.BlockTask, CleanText: "a", Status: "TODO", Owner: "Alice", LineNumber: 1},
+		{ID: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", Type: parser.BlockTask, CleanText: "b", Status: "TODO", Owner: "alice", LineNumber: 2},
+		{ID: "cccccccc-cccc-cccc-cccc-cccccccccccc", Type: parser.BlockTask, CleanText: "c", Status: "TODO", Owner: "Bob", LineNumber: 3},
+		{ID: "dddddddd-dddd-dddd-dddd-dddddddddddd", Type: parser.BlockTask, CleanText: "d", Status: "TODO", Owner: "Aardvark", LineNumber: 4},
+		{ID: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", Type: parser.BlockTask, CleanText: "e", Status: "TODO", Owner: "Charlie", LineNumber: 5},
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		prefix string
+		want   []string
+	}{
+		// LIKE 'A%' is ASCII-case-insensitive: Aardvark, Alice, alice all match.
+		// ORDER BY BINARY: Aardvark < Alice < Charlie < ... < alice (uppercase
+		// 0x41 < lowercase 0x61), so among the A-matches the order is Aardvark,
+		// Alice, alice.
+		{"A", "A", []string{"Aardvark", "Alice", "alice"}},
+		{"B", "B", []string{"Bob"}},
+		{"z", "z", []string{}},
+		// Empty prefix returns every owner, sorted by BINARY collation.
+		{"", "", []string{"Aardvark", "Alice", "Bob", "Charlie", "alice"}},
+	}
+	for _, c := range cases {
+		got, err := dm.DistinctOwners(c.prefix)
+		if err != nil {
+			t.Fatalf("DistinctOwners(%q): %v", c.prefix, err)
+		}
+		if got == nil {
+			t.Fatalf("DistinctOwners(%q) returned nil; want non-nil []string", c.prefix)
+		}
+		if len(got) != len(c.want) {
+			t.Errorf("DistinctOwners(%q) = %v; want %v", c.prefix, got, c.want)
+			continue
+		}
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Errorf("DistinctOwners(%q)[%d] = %q; want %q (full: %v)",
+					c.prefix, i, got[i], c.want[i], got)
+				break
+			}
+		}
 	}
 }

@@ -387,15 +387,29 @@
     )
   }
 
-  // --- @-mention typeahead (#184) -----------------------------------------
-  // Owners come from the read-only DistinctOwners index projection; refreshed
-  // on mount and on focus so newly-assigned owners appear without a reload.
+  // --- @-mention typeahead (#184, #332) -----------------------------------
+  // Owners come from the read-only DistinctOwners index projection. #332 fixes
+  // two scale problems: (1) the unbounded SELECT was narrowed to a server-side
+  // prefix filter, and (2) the per-focus re-fetch was replaced by a TTL cache +
+  // in-flight guard so a focus blip within OWNERS_TTL_MS reuses the cached set
+  // instead of round-tripping through SQLite over IPC.
   let owners = $state<string[]>([])
+  let ownersLoadedAt = 0
+  let ownersLoading = false
+  const OWNERS_TTL_MS = 5000 // a focus blip within 5s reuses the cached set
   async function loadOwners(): Promise<void> {
+    // TTL + in-flight guard: a rapid focus blip (or repeated onFocus) reuses
+    // the cached set instead of re-querying SQLite over IPC every time (#332).
+    if (ownersLoading) return
+    if (Date.now() - ownersLoadedAt < OWNERS_TTL_MS) return
+    ownersLoading = true
     try {
-      owners = (await DistinctOwners()) ?? []
+      owners = (await DistinctOwners('')) ?? []
+      ownersLoadedAt = Date.now()
     } catch (e) {
       console.error('DistinctOwners failed:', e)
+    } finally {
+      ownersLoading = false
     }
   }
 
@@ -408,17 +422,64 @@
     selected: number
   } | null>(null)
 
+  // Debounced, race-guarded server refine for non-empty mention queries. The
+  // instant popup comes from the cached full set (filterOwners stays pure); for
+  // a non-empty query we also fire a prefix-bounded DistinctOwners(query) so a
+  // 10k-owner vault never has to filter client-side. The req-id gate discards a
+  // late-resolving fetch whose result no longer matches the current popup (#332).
+  let mentionQueryReqId = 0
+  let mentionQueryTimer: ReturnType<typeof setTimeout> | null = null
+  const MENTION_QUERY_DEBOUNCE_MS = 120
+
+  // Debounces the onFocus owner re-fetch so a focus blip doesn't immediately
+  // trigger an IPC round-trip. Cleared on destroy. #332.
+  let focusLoadTimer: ReturnType<typeof setTimeout> | null = null
+
   function onMentionChange(ctx: MentionContext | null): void {
+    if (mentionQueryTimer) {
+      clearTimeout(mentionQueryTimer)
+      mentionQueryTimer = null
+    }
     if (!ctx) {
       mentionPopup = null
       suggestStatus = ''
       return
     }
-    const items = filterOwners(owners, ctx.query)
-    mentionPopup = items.length === 0 ? null : { ctx, items, selected: 0 }
-    suggestStatus = items.length
-      ? `${items.length} owner${items.length === 1 ? '' : 's'} available`
+    // Instant feedback from the cached full set — small vaults never wait.
+    const instant = filterOwners(owners, ctx.query)
+    mentionPopup =
+      instant.length === 0 ? null : { ctx, items: instant, selected: 0 }
+    suggestStatus = instant.length
+      ? `${instant.length} owner${instant.length === 1 ? '' : 's'} available`
       : 'No matching owners'
+
+    // For a non-empty query, refine from the server (prefix filter bounds the
+    // result at scale so a 10k-owner vault never filters client-side). Debounced
+    // + race-guarded: a stale result cannot overwrite the current popup.
+    const q = ctx.query.trim()
+    if (q) {
+      const myId = ++mentionQueryReqId
+      mentionQueryTimer = setTimeout(async () => {
+        try {
+          const serverItems = (await DistinctOwners(q)) ?? []
+          // Superseded by a later keystroke — drop this result.
+          if (myId !== mentionQueryReqId) return
+          // Only apply if the popup is still open for this same context/query.
+          const cur = mentionPopup
+          if (!cur || cur.ctx.from !== ctx.from || cur.ctx.query !== ctx.query)
+            return
+          mentionPopup =
+            serverItems.length === 0
+              ? null
+              : { ctx, items: serverItems, selected: 0 }
+          suggestStatus = serverItems.length
+            ? `${serverItems.length} owner${serverItems.length === 1 ? '' : 's'} available`
+            : 'No matching owners'
+        } catch (e) {
+          console.error('DistinctOwners(prefix) failed:', e)
+        }
+      }, MENTION_QUERY_DEBOUNCE_MS)
+    }
   }
 
   function onMentionNavigate(dir: 1 | -1): void {
@@ -617,7 +678,10 @@
       startHeartbeat()
       notifyFocus()
       // Refresh the owner list so newly-assigned owners are mentionable.
-      void loadOwners()
+      // Debounced (~150ms) so a micro focus-blip doesn't fire an IPC round-trip
+      // immediately; the TTL guard inside loadOwners collapses repeats (#332).
+      if (focusLoadTimer) clearTimeout(focusLoadTimer)
+      focusLoadTimer = setTimeout(() => void loadOwners(), 150)
     },
     onBlur: () => {
       isFocused = false
@@ -684,6 +748,16 @@
 
   onDestroy(() => {
     stopHeartbeat()
+    // Cancel any pending owner-fetch / mention-refine timers so they don't
+    // fire after teardown (#332).
+    if (mentionQueryTimer) {
+      clearTimeout(mentionQueryTimer)
+      mentionQueryTimer = null
+    }
+    if (focusLoadTimer) {
+      clearTimeout(focusLoadTimer)
+      focusLoadTimer = null
+    }
     void flushPendingSave().then(() => releaseFocus())
     window.removeEventListener('silt:open-link-input', onOpenLinkInput)
     window.removeEventListener('silt:change-block-type', onChangeBlockType)
