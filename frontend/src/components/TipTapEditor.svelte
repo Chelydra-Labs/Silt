@@ -381,7 +381,10 @@
   function metaPopupCoords(): { left: number; top: number } | null {
     if (!metaPopup || !editorInstance || editorInstance.isDestroyed) return null
     const c = editorInstance.view.coordsAtPos(metaPopup.ctx.from)
-    return { left: c.left, top: c.bottom }
+    return clampToViewport(
+      { x: c.left, y: c.bottom, width: 260, height: 260 },
+      { width: window.innerWidth, height: window.innerHeight }
+    )
   }
 
   // --- @-mention typeahead (#184) -----------------------------------------
@@ -447,7 +450,10 @@
     if (!mentionPopup || !editorInstance || editorInstance.isDestroyed)
       return null
     const c = editorInstance.view.coordsAtPos(mentionPopup.ctx.from)
-    return { left: c.left, top: c.bottom }
+    return clampToViewport(
+      { x: c.left, y: c.bottom, width: 220, height: 260 },
+      { width: window.innerWidth, height: window.innerHeight }
+    )
   }
 
   // Capture the initial blocks under untrack to signal that the one-shot
@@ -1318,11 +1324,14 @@
         class="meta-suggest"
         style="left:{c.left}px; top:{c.top}px"
         role="listbox"
+        tabindex="-1"
         aria-label="Task metadata"
+        aria-activedescendant="silt-meta-opt-{metaPopup.selected}"
       >
         {#each metaPopup.items as item, i}
           <button
             type="button"
+            id="silt-meta-opt-{i}"
             class="meta-suggest-item"
             class:selected={i === metaPopup.selected}
             role="option"
@@ -1343,11 +1352,14 @@
         class="mention-suggest"
         style="left:{c.left}px; top:{c.top}px"
         role="listbox"
+        tabindex="-1"
         aria-label="Mention an owner"
+        aria-activedescendant="silt-mention-opt-{mentionPopup.selected}"
       >
         {#each mentionPopup.items as item, i}
           <button
             type="button"
+            id="silt-mention-opt-{i}"
             class="mention-suggest-item"
             class:selected={i === mentionPopup.selected}
             role="option"

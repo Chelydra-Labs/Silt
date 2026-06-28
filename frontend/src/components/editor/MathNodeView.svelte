@@ -11,10 +11,17 @@
   import { NodeViewWrapper } from 'svelte-tiptap'
   import type { NodeViewProps } from '@tiptap/core'
   import { renderKatex } from '../../lib/editor/useKatex'
+  import { settings } from '../../settings/store.svelte'
 
   let { node, updateAttributes }: NodeViewProps = $props()
   const latex = $derived((node.attrs.latex as string) || '')
   const displayMode = $derived(node.type.name === 'blockMathNode')
+  // Per-vault opt-out (#191): when math is disabled, render the raw source as
+  // plain text (no KaTeX, no click-to-edit) so the toggle actually removes the
+  // math affordance rather than just the /math slash command.
+  const mathEnabled = $derived(
+    settings.config?.ui?.formatting?.math_enabled !== false
+  )
 
   let html = $state('')
   let error = $state<string | null>(null)
@@ -48,7 +55,11 @@
 </script>
 
 <NodeViewWrapper as={displayMode ? 'div' : 'span'}>
-  {#if latex}
+  {#if !mathEnabled}
+    <span class="silt-math-disabled" aria-label="LaTeX source (math disabled)">
+      {displayMode ? `$$${latex}$$` : `$${latex}$`}
+    </span>
+  {:else if latex}
     <button
       type="button"
       class="silt-math"
@@ -68,6 +79,7 @@
     <button
       type="button"
       class="silt-math-empty"
+      class:silt-math-empty-block={displayMode}
       onclick={editLatex}
       aria-label="Add LaTeX equation"
     >
@@ -123,6 +135,18 @@
     cursor: pointer;
     font-family: inherit;
     font-size: 0.9em;
+  }
+  /* Centered affordance for an empty BLOCK equation (matches the populated
+     block-math geometry instead of sitting left-aligned inline). */
+  .silt-math-empty-block {
+    display: block;
+    margin: 0.5em auto;
+    text-align: center;
+  }
+  /* math_enabled opt-out: render the raw source as plain mono text. */
+  .silt-math-disabled {
+    font-family: var(--font-mono, monospace);
+    color: var(--color-text-primary, currentColor);
   }
   .silt-math-empty:hover {
     border-color: var(--color-accent-primary-start, #4f7cff);

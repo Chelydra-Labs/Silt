@@ -244,6 +244,15 @@ export const MentionSuggest = Extension.create<MentionSuggestOptions>({
         const tr = editor.state.tr.setMeta(mentionSuggestKey, { escape: true })
         editor.view.dispatch(tr)
         return true
+      },
+      Tab: () => {
+        // Dismiss the popup on Tab (Tab then indents as usual) so it doesn't
+        // linger after the user moves on. Returns false so Tab's default runs.
+        if (!active()) return false
+        editor.view.dispatch(
+          editor.state.tr.setMeta(mentionSuggestKey, { escape: true })
+        )
+        return false
       }
     }
   }

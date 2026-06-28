@@ -709,11 +709,14 @@ export const BlockReferenceNode = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: 'span[data-type="mention"]' }]
+    return [{ tag: 'span[data-type="block-ref"]' }]
   },
 
   renderHTML({ HTMLAttributes }) {
-    return ['span', mergeAttributes({ 'data-type': 'mention' }, HTMLAttributes)]
+    return [
+      'span',
+      mergeAttributes({ 'data-type': 'block-ref' }, HTMLAttributes)
+    ]
   }
 })
 

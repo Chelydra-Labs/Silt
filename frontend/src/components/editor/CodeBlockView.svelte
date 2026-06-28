@@ -105,6 +105,12 @@
     return () => clearTimeout(t)
   })
 
+  // When the source is cleared (select-all + delete), drop back to the
+  // empty-state affordance instead of lingering on a bare editable layer.
+  $effect(() => {
+    if (!code.trim()) viewingSource = false
+  })
+
   async function copyCode(): Promise<void> {
     try {
       await navigator.clipboard.writeText(code)

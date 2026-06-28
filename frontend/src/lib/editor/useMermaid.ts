@@ -28,9 +28,14 @@ function setCache(key: string, svg: string): void {
 
 async function loadMermaid(): Promise<MermaidApi> {
   if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then(
-      (m) => (m.default as MermaidApi) ?? (m as unknown as MermaidApi)
-    )
+    mermaidPromise = import('mermaid')
+      .then((m) => (m.default as MermaidApi) ?? (m as unknown as MermaidApi))
+      .catch((e) => {
+        // Clear the singleton so a transient import failure doesn't permanently
+        // poison every subsequent render for the session.
+        mermaidPromise = null
+        throw e
+      })
   }
   return mermaidPromise
 }
@@ -55,10 +60,19 @@ export function resetMermaidForTests(): void {
   cache.clear()
 }
 
+// Stamp a unique id onto a cached SVG so two blocks sharing the same source
+// don't emit duplicate id attributes (and so internal url(#…) marker/gradient
+// refs resolve within their own diagram, not the first one in the DOM).
+function withUniqueId(rawSvg: string): string {
+  const id = `silt-mermaid-${counter++}`
+  return rawSvg.replace(/silt-mermaid-\d+/g, id)
+}
+
 // Render a diagram definition to an SVG string, or return an error message for
 // invalid source (the caller renders it inline, never a blank box). Empty
 // source renders nothing. Errors never throw — a bad diagram must not break
-// the editor.
+// the editor. The parse + render result is memoised by (theme|source); each
+// call then stamps a fresh unique id so identical-source blocks don't collide.
 export async function renderMermaid(
   source: string,
   theme: MermaidTheme
@@ -66,14 +80,13 @@ export async function renderMermaid(
   if (!source.trim()) return { svg: '', error: null }
   const key = `${theme}|${source}`
   const hit = cache.get(key)
-  if (hit !== undefined) return { svg: hit, error: null }
+  if (hit !== undefined) return { svg: withUniqueId(hit), error: null }
   try {
     const api = await ensureMermaid(theme)
     await api.parse(source)
-    const id = `silt-mermaid-${counter++}`
-    const { svg } = await api.render(id, source)
+    const { svg } = await api.render(`silt-mermaid-${counter++}`, source)
     setCache(key, svg)
-    return { svg, error: null }
+    return { svg: withUniqueId(svg), error: null }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return { svg: '', error: msg }

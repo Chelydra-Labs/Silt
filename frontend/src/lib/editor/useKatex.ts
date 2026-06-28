@@ -16,7 +16,14 @@ function loadKatex(): Promise<KatexApi> {
     katexPromise = Promise.all([
       import('katex'),
       import('katex/dist/katex.min.css')
-    ]).then(([m]) => (m.default as KatexApi) ?? (m as unknown as KatexApi))
+    ])
+      .then(([m]) => (m.default as KatexApi) ?? (m as unknown as KatexApi))
+      .catch((e) => {
+        // Clear the singleton so a transient import failure (offline blip,
+        // bundler race) doesn't permanently poison every subsequent render.
+        katexPromise = null
+        throw e
+      })
   }
   return katexPromise
 }
