@@ -27,6 +27,7 @@ export {
   insertCodeBlock,
   insertDetails,
   insertTable,
+  insertBlockMath,
   toggleDetails,
   findActiveBlock,
   BLOCK_TYPES

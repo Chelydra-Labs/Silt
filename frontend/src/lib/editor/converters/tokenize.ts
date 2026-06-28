@@ -37,12 +37,17 @@ export type MentionToken = {
   kind: 'mention'
   name: string
 }
+export type MathInlineToken = {
+  kind: 'mathInline'
+  latex: string
+}
 export type Token =
   | TextToken
   | MarkToken
   | EmbedToken
   | BlockReferenceToken
   | MentionToken
+  | MathInlineToken
 
 // ---- Tokenize stage: recursive-descent parser ----------------------------
 
@@ -186,17 +191,22 @@ function parseInlineTokens(
   return tokens
 }
 
-// ---- Smart Graph + mention tokenization ---------------------------------
+// ---- Smart Graph + mention + inline math tokenization -------------------
 
-// Atomic inline-token regex (embed + block reference + @-mention). UUIDs:
-// 8-4-4-4-12 hex. Mention names are any non-bracket, non-newline run inside
-// `@[...]` (owner labels can contain spaces, e.g. "Ada Lovelace").
+// Atomic inline-token regex (embed + block reference + @-mention + inline
+// math). UUIDs: 8-4-4-4-12 hex. Mention names are any non-bracket, non-newline
+// run inside `@[...]`. Inline math `$...$` guards against currency-style `$`
+// (opening `$` not followed by space, closing `$` not preceded by space), so
+// "5$ cash" and "$5" do not enter math mode. Block math `$$...$$` is NOT
+// handled here — it is a block-level node produced by the sole-content-NOTE
+// path in blocks.ts; emitting a block node inside inline content would violate
+// the ProseMirror schema.
 const ATOMIC_INLINE_TOKEN =
-  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)|@\[([^\[\]\n]+)\]/gi
+  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)|@\[([^\[\]\n]+)\]|\$(?!\s)([^$\n]+?)(?<!\s)\$/gi
 
 // Split clean_text on atomic inline tokens. Text segments are later parsed for
-// inline marks; token segments are emitted as-is (#85 embed/block-ref, #184
-// mention).
+// inline marks; token segments are emitted as-is (opaque — their content is
+// never re-parsed for marks, so LaTeX like `a*b*c` stays literal).
 function splitAtomicTokens(text: string): Token[] {
   const tokens: Token[] = []
   let last = 0
@@ -216,6 +226,8 @@ function splitAtomicTokens(text: string): Token[] {
       tokens.push({ kind: 'blockReference', uuid: match[3] })
     } else if (match[4]) {
       tokens.push({ kind: 'mention', name: match[4] })
+    } else if (match[5] !== undefined) {
+      tokens.push({ kind: 'mathInline', latex: match[5] })
     }
     last = match.index + match[0].length
   }

@@ -1646,6 +1646,31 @@ describe('tokenize / validate pipeline (#198)', () => {
     expect(serializeInlineContent(nodes)).toBe(src)
   })
 
+  it('round-trips inline $...$ math through tokenize + serialize (#191)', () => {
+    const src = 'energy is $E=mc^2$ here'
+    const nodes = legacyTokenizeInline(src)
+    const math = nodes.filter((n) => n.type === 'inlineMathNode')
+    expect(math).toHaveLength(1)
+    expect((math[0].attrs as { latex: string }).latex).toBe('E=mc^2')
+    expect(serializeInlineContent(nodes)).toBe(src)
+  })
+
+  it('does not tokenize currency-style $5 as math (#191)', () => {
+    const nodes = legacyTokenizeInline('cost $5 today')
+    expect(nodes.filter((n) => n.type === 'inlineMathNode')).toHaveLength(0)
+  })
+
+  it('round-trips a $$...$$ block equation via blocksToDoc/docToBlocks (#191)', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: '$$\\int_0^1 x\\,dx$$' })]
+    const doc = blocksToDoc(blocks)
+    expect(doc.content![0].type).toBe('blockMathNode')
+    expect((doc.content![0].attrs as { latex: string }).latex).toBe(
+      '\\int_0^1 x\\,dx'
+    )
+    const back = docToBlocks(doc)
+    expect(back[0].clean_text).toBe('$$\\int_0^1 x\\,dx$$')
+  })
+
   it('validate drops links with disallowed schemes (javascript:)', () => {
     const tokens = tokenizeInline('[click](javascript:alert(1))')
     // After validate, the link mark is flattened — text survives as plain

@@ -18,6 +18,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.3.1",
     "@testing-library/user-event": "^14.6.1",
+    "@types/katex": "^0.16.8",
     "@types/node": "^26.0.0",
     "jsdom": "^29.1.1",
     "prettier": "^3.8.4",
@@ -77,6 +78,7 @@
     "@tiptap/extension-underline": "^3.26.1",
     "@tiptap/pm": "^3.26.1",
     "@tiptap/starter-kit": "^3.26.1",
+    "katex": "^0.17.0",
     "shiki": "^4.2.0",
     "svelte-tiptap": "^3.0.1",
     "tailwindcss": "^4.3.1"

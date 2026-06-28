@@ -23,6 +23,7 @@
     insertCodeBlock,
     insertDetails,
     insertTable,
+    insertBlockMath,
     findActiveBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
@@ -770,6 +771,11 @@
       insertCallout(editorInstance as any, commandId.slice('callout-'.length))
     } else if (commandId === 'code-block') {
       insertCodeBlock(editorInstance as any)
+    } else if (commandId === 'math') {
+      // Best-effort entry: prompt for the LaTeX, then insert the block
+      // equation. A rich inline LaTeX editor is a tracked follow-up.
+      const latex = window.prompt('LaTeX equation:', 'a^2 + b^2 = c^2')
+      if (latex !== null) insertBlockMath(editorInstance as any, latex)
     } else if (commandId === 'details') {
       insertDetails(editorInstance as any)
     } else if (commandId === 'table') {

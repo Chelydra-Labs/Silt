@@ -256,6 +256,35 @@ export function insertCodeBlock(editor: Editor, language = ''): boolean {
   return true
 }
 
+// Insert a centered block equation ($$...$$) at the current selection (#191).
+// Replaces the current block when it is an empty note/header, otherwise inserts
+// below. The latex is set on insert; the NodeView offers click-to-edit.
+export function insertBlockMath(editor: Editor, latex = ''): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const mathNode = editor.state.schema.nodes.blockMathNode?.create({
+    id: freshId(),
+    latex
+  })
+  if (!mathNode) return false
+  const active = findActiveBlock(editor)
+  const isEmptyNote =
+    active &&
+    (active.node.type.name === 'noteBlock' ||
+      active.node.type.name === 'headerBlock') &&
+    (active.node.content.size === 0 || active.node.textContent.trim() === '')
+  if (active && isEmptyNote) {
+    const pos = editor.state.selection.$from.before(active.depth)
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(pos, pos + active.node.nodeSize, mathNode)
+    )
+    editor.commands.focus()
+    return true
+  }
+  editor.commands.insertContent(mathNode)
+  editor.commands.focus()
+  return true
+}
+
 // Insert a foldable `<details>` section (#183). Builds the Details >
 // DetailsSummary + DetailsContent(placeholder note) tree the TipTap extension
 // expects. Replaces an empty note/header in place, otherwise inserts below.
