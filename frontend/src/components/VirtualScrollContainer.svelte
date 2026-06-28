@@ -87,8 +87,12 @@
     settings.config?.editor?.show_word_count === true
   )
 
+  let lastLoadedPage = ''
+
   $effect(() => {
-    if (notebook && page) {
+    const pageKey = `${notebook}/${section}/${page}`
+    if (notebook && page && pageKey !== lastLoadedPage) {
+      lastLoadedPage = pageKey
       untrack(() => loadPage(true))
     }
   })
@@ -491,43 +495,15 @@
     </button>
   </div>
 
-  <!-- Floating Editor Status Bar (Unsaved Changes & Word Count) -->
-  {#if (dirty || saveError || (showWordCount && wordCount > 0)) && viewMode === 'edit'}
+  <!-- Floating Editor Status Bar (Word Count) -->
+  {#if showWordCount && wordCount > 0 && viewMode === 'edit'}
     <div
-      class="absolute bottom-6 right-6 z-40 flex items-center gap-2 px-3 py-1.5 bg-panel/60 backdrop-blur-md border border-border-muted/50 rounded-full shadow-lg text-[11px] font-medium tracking-wide text-text-muted transition-all duration-300 opacity-60 hover:opacity-100"
+      class="absolute bottom-6 right-6 z-40 flex items-center px-3 py-1.5 bg-panel/60 backdrop-blur-md border border-border-muted/50 rounded-full shadow-lg text-[11px] font-medium tracking-wide text-text-muted transition-all duration-300 opacity-60 hover:opacity-100"
     >
-      {#if saveError}
-        <div
-          class="flex items-center gap-1 text-status-danger"
-          role="alert"
-          aria-live="assertive"
-        >
-          <span class="material-symbols-outlined text-[14px]">error</span>
-          <span>Save failed — edits not persisted</span>
-        </div>
-      {:else if dirty}
-        <div
-          class="flex items-center gap-1 text-text-muted"
-          role="status"
-          aria-live="polite"
-        >
-          <span class="material-symbols-outlined text-[14px] animate-pulse"
-            >schedule</span
-          >
-          <span>Saving...</span>
-        </div>
-      {/if}
-
-      {#if (saveError || dirty) && showWordCount && wordCount > 0}
-        <div class="h-3 w-[1px] bg-border-muted/40"></div>
-      {/if}
-
-      {#if showWordCount && wordCount > 0}
-        <div class="font-mono text-text-muted/80" role="status" aria-live="off">
-          {wordCount}
-          {wordCount === 1 ? 'word' : 'words'}
-        </div>
-      {/if}
+      <div class="font-mono text-text-muted/80" role="status" aria-live="off">
+        {wordCount}
+        {wordCount === 1 ? 'word' : 'words'}
+      </div>
     </div>
   {/if}
 </div>
