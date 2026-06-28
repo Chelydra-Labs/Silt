@@ -63,25 +63,78 @@
     }
   }
 
-  let scope = $state<Scope>(defaultScope())
-  // #124: the board auto-narrows its scope to follow the active nav level
-  // (vault -> notebook -> section -> page) UNTIL the user manually picks a
-  // scope, after which it sticks (respects intent). The reset-to-context
-  // affordance clears this flag so the board follows navigation again.
-  let scopeUserOverride = $state(false)
+  // --- Shared state (#323) ------------------------------------------------
+  // Kanban.svelte and KanbanSidebar.svelte both read/write the SAME scope +
+  // filters via the shared module. The debounced persistence path stays
+  // here (UI concern), but the value it persists is whatever the shared
+  // module holds. The scopeUserOverride invariant (#124) is preserved:
+  // any user-initiated scope change flips the override flag; the nav-
+  // tracking $effect only mutates scope via narrowScopeTo (which is a
+  // no-op when the override is set).
+  import {
+    getKanbanState,
+    setScope as setScopeShared,
+    setFilters as setFiltersShared,
+    narrowScopeTo,
+    clearScopeOverride,
+    initFromConfig as initSharedFromConfig
+  } from './kanbanSharedState.svelte'
+  let scope = $derived(getKanbanState().scope)
+  let scopeUserOverride = $derived(getKanbanState().scopeUserOverride)
+
+  // Read the persisted scope from the synchronous settings snapshot. If
+  // the user previously picked a scope, it lives under
+  // plugins.plugin_settings.silt-kanban.scope; otherwise default to
+  // defaultScope() so the board auto-narrows on first mount.
+  function initialScope(): Scope {
+    const cfgScope = settings.config?.plugins?.plugin_settings?.['silt-kanban']
+      ?.scope as Scope | undefined
+    if (
+      cfgScope === 'vault' ||
+      cfgScope === 'notebook' ||
+      cfgScope === 'section' ||
+      cfgScope === 'page'
+    ) {
+      return cfgScope
+    }
+    return defaultScope()
+  }
+
+  // Mirror the shared filters into a local $state so the existing
+  // `$effect(() => { ... filters ... reload() })` pattern keeps working
+  // unchanged. Writes flow the other way: when the user toggles a chip
+  // locally, we setFiltersShared() so the sidebar checkboxes update,
+  // and we also update the local $state for immediate re-query.
+  // Filters derive from the shared module so a write from the sidebar
+  // propagates to the local $effect that triggers the reload. Writes
+  // from the FilterBar (the existing chip toggle path) still go through
+  // `handleFiltersChange()` which calls setFiltersShared().
+  let filters = $derived(getKanbanState().filters)
+
+  // Hydrate the shared module from the current settings snapshot so the
+  // sidebar's initial render reads the persisted scope/filters rather
+  // than the defaults. Runs once at module init.
+  initSharedFromConfig(
+    initialScope(),
+    initialFilters(),
+    // The settings store doesn't persist the override flag itself, so we
+    // infer it on mount: if the persisted scope doesn't match what
+    // defaultScope() would have produced, the user must have overridden.
+    initialScope() !== defaultScope()
+  )
 
   // setScope is the single entry point for a USER-initiated scope change
-  // (click or keyboard) — it records the override so subsequent navigation
-  // no longer re-narrows the board.
+  // (click or keyboard) — writes to the shared module so the sidebar's
+  // scope radio updates instantly, AND sets scopeUserOverride so the
+  // navigation-tracking $effect stops re-narrowing the board.
   function setScope(s: Scope) {
-    scopeUserOverride = true
-    scope = s
+    setScopeShared(s)
   }
 
   function resetScopeToContext() {
-    scopeUserOverride = false
+    clearScopeOverride()
     untrack(() => {
-      scope = defaultScope()
+      setScopeShared(defaultScope())
     })
   }
   let lanes = $state<Record<string, KanbanCard[]>>({})
@@ -130,7 +183,6 @@
       tags: f?.tags ?? []
     }
   }
-  let filters = $state<KanbanFilters>(initialFilters())
 
   // Per-active-notebook plugin settings re-resolution (#133): on mount AND
   // on a vault ↔ linked switch (or a linked-config:changed event), re-read
@@ -170,6 +222,9 @@
         }
         if (JSON.stringify(nextFilters) !== JSON.stringify(filters)) {
           filters = nextFilters
+          // Also mirror into the shared module so the sidebar's checkboxes
+          // pick up the per-notebook override (#133).
+          setFiltersShared(nextFilters)
         }
       })
       .catch((err) => {
@@ -292,11 +347,12 @@
   })
 
   // #124: auto-narrow the scope to follow the active nav level until the
-  // user manually overrides it. Reads of scope happen under untrack so this
-  // effect depends only on the nav level + the override flag (writing scope
-  // here must not re-trigger it). When the override is set but the chosen
-  // scope's nav level goes inactive (e.g. navigating off the page), re-narrow
-  // to the new default so the board never shows an empty, invalid scope.
+  // user manually overrides it. narrowScopeTo is a no-op when scopeUserOverride
+  // is set, so manual picks stick. When the override is set but the chosen
+  // scope's nav level goes inactive (e.g. navigating off the page), the
+  // shared module needs to reset to the new default so the board never shows
+  // an empty, invalid scope — but only if the user already overrode (we
+  // don't fight an auto-narrow mid-track).
   $effect(() => {
     void ctx.activeNotebook
     void ctx.activeSection
@@ -304,11 +360,17 @@
     void scopeUserOverride
     untrack(() => {
       if (!scopeUserOverride) {
-        scope = defaultScope()
+        // Auto-narrow: writes via narrowScopeTo so the override flag stays
+        // untouched. The next manual click will flip it.
+        narrowScopeTo(defaultScope())
         return
       }
       if (isScopeDisabled(scope)) {
-        scope = defaultScope()
+        // Override is set but the chosen scope is no longer valid (the user
+        // navigated off the page, etc.) — fall back to the new default
+        // and clear the override so subsequent nav re-narrows.
+        clearScopeOverride()
+        setScopeShared(defaultScope())
       }
     })
   })
@@ -316,6 +378,8 @@
   // --- Filter persistence (debounced) ---
   // Apply immediately to the board, but defer the config write so rapid
   // checkbox toggles don't hammer the plugin-setting write. 500ms of quiet commits.
+  // Writes flow into the shared module first (so the sidebar's checkboxes
+  // update instantly) and into config.yaml after the debounce.
   let saveFiltersTimer: ReturnType<typeof setTimeout> | null = null
   // Clear the pending debounce on unmount so a board torn down within the
   // 500ms window never fires a stale persistFilters against a dead component
@@ -323,9 +387,11 @@
   // race a real freshly-opened notebook).
   onDestroy(() => {
     if (saveFiltersTimer) clearTimeout(saveFiltersTimer)
+    if (saveScopeTimer) clearTimeout(saveScopeTimer)
   })
   function handleFiltersChange(f: KanbanFilters) {
     filters = f
+    setFiltersShared(f)
     if (saveFiltersTimer) clearTimeout(saveFiltersTimer)
     saveFiltersTimer = setTimeout(() => {
       void persistFilters(f)
@@ -388,6 +454,24 @@
     // Atomic Go-side read-modify-write of just this plugin's setting (#120).
     const ok = await updatePluginSetting('silt-kanban', 'columns', [...columns])
     if (!ok) configError = settings.error || 'Failed to save columns'
+  }
+
+  // Scope persistence (debounced, #323). The scope value lives in the
+  // shared module; the board's setScope() flips the override flag AND
+  // schedules a debounced persist so a reload restores the user's pick
+  // and the sidebar radio reflects the persisted value (#323 AC #4).
+  let saveScopeTimer: ReturnType<typeof setTimeout> | null = null
+  $effect(() => {
+    const s = scope
+    if (saveScopeTimer) clearTimeout(saveScopeTimer)
+    saveScopeTimer = setTimeout(() => {
+      void persistScope(s)
+    }, 500)
+  })
+  async function persistScope(s: Scope) {
+    if (!settings.config) return
+    const ok = await updatePluginSetting('silt-kanban', 'scope', s)
+    if (!ok) configError = settings.error || 'Failed to save scope'
   }
 
   // Column drag-reorder: a dedicated handle on each header sets the source

@@ -1110,4 +1110,36 @@ describe('Kanban plugin (#19)', () => {
       confirmSpy.mockRestore()
     })
   })
+
+  // --- #323 shared state — Kanban.svelte reacts to shared-state writes --
+  // Verifies the #323 contract: writes from the sidebar (via
+  // kanbanSharedState) propagate to Kanban.svelte's reload effect without
+  // needing a direct event. The shared module is the single source of
+  // truth; this test pins the bidirectional plumbing without requiring
+  // both components to be mounted at once.
+  describe('shared state reactivity (#323)', () => {
+    it('imports kanbanSharedState and reflects writes from the sidebar', async () => {
+      // First mount the Kanban component so it hydrates the shared module.
+      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+      // Re-import here so the test's vi.mock for the settings store is
+      // already in place.
+      const { setFilters: setSharedFilters } = await import(
+        './kanbanSharedState.svelte'
+      )
+      // Write a new filter from the "sidebar side"; Kanban.svelte's
+      // existing $effect on `filters` should pick it up and re-query.
+      const before = mocks.sqliteQuery.mock.calls.length
+      setSharedFilters({
+        owners: [],
+        priorities: [1],
+        dueDate: '',
+        tags: []
+      })
+      await flush()
+      // The reload $effect fired — at least one new sqliteQuery.
+      expect(mocks.sqliteQuery.mock.calls.length).toBeGreaterThan(before)
+    })
+  })
 })

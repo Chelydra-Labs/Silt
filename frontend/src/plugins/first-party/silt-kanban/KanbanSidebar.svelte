@@ -1,0 +1,551 @@
+<script lang="ts">
+  // KanbanSidebar — the primary sidebar for the Kanban view (#323).
+  // Renders three sections:
+  //
+  //   1. SAVED BOARDS — list of named board configurations. Click applies
+  //      scope+filters via the shared state. "+ Save current…" captures
+  //      the live scope+filters into a new board (debounced persist via
+  //      updatePluginSetting, atomic #120).
+  //   2. SCOPE — radio list mirroring the header segmented control.
+  //      Roving tabindex + Arrow/Home/End + Space/Enter.
+  //   3. ACTIVE FILTERS — checkboxes that mirror FilterBar state via the
+  //      shared state. Toggling is instant on both sides.
+  //
+  // The sidebar derives its live state from kanbanSharedState.svelte so
+  // every interaction is bidirectional: a filter toggle here updates the
+  // FilterBar AND the board's SQL query; toggling a chip in the FilterBar
+  // updates this sidebar's checkboxes.
+  import { onMount } from 'svelte'
+  import type { PluginContext, PluginManifest } from '../../sdk'
+  import {
+    settings,
+    updatePluginSetting
+  } from '../../../settings/store.svelte'
+  import type { SavedBoard, Scope, KanbanFilters } from './types'
+  import {
+    getKanbanState,
+    setScope,
+    setFilters,
+    clearFilters,
+    applySavedBoard
+  } from './kanbanSharedState.svelte'
+  import { PRIORITY_LABELS } from './types'
+
+  interface Props {
+    ctx: PluginContext
+    manifest?: PluginManifest
+  }
+
+  let { ctx, manifest }: Props = $props()
+
+  // Live shared state.
+  let liveScope = $derived(getKanbanState().scope)
+  let liveFilters = $derived(getKanbanState().filters)
+  let liveOverride = $derived(getKanbanState().scopeUserOverride)
+
+  // Saved boards — persisted under `plugins.plugin_settings.silt-kanban.boards[]`.
+  let savedBoards = $state<SavedBoard[]>([])
+  let newBoardName = $state('')
+  let newBoardComposing = $state(false)
+  let saveError = $state('')
+
+  // Owners and tags — queried once on mount for the filter quick-toggles.
+  // We deliberately keep these as plain lists (not reactive); adding a new
+  // owner/tag to the vault is rare and the user can refresh via the
+  // sidebar's manual refresh button if needed.
+  let owners = $state<string[]>([])
+  let tags = $state<string[]>([])
+  let listsError = $state('')
+
+  function loadFromSettings() {
+    const raw = settings.config?.plugins?.plugin_settings?.['silt-kanban']
+      ?.boards as SavedBoard[] | undefined
+    savedBoards = Array.isArray(raw) ? [...raw] : []
+  }
+
+  async function loadOwnerTagLists() {
+    try {
+      const ownersRes = await ctx.sqliteQuery(
+        `SELECT DISTINCT owner FROM tasks WHERE owner IS NOT NULL AND owner != '' ORDER BY owner ASC`
+      )
+      owners = (ownersRes.rows as Array<{ owner: string }>)
+        .map((r) => r.owner)
+        .filter(Boolean)
+      const tagsRes = await ctx.sqliteQuery(
+        `SELECT DISTINCT level_0 FROM tags WHERE level_0 IS NOT NULL AND level_0 != '' ORDER BY level_0 ASC`
+      )
+      tags = (tagsRes.rows as Array<{ level_0: string }>).map((r) => r.level_0)
+    } catch (e) {
+      listsError = e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  onMount(() => {
+    loadFromSettings()
+    void loadOwnerTagLists()
+  })
+
+  async function persistBoards(next: SavedBoard[]) {
+    const ok = await updatePluginSetting('silt-kanban', 'boards', next)
+    if (!ok) saveError = settings.error || 'Failed to save boards'
+    else saveError = ''
+  }
+
+  async function commitNewBoard() {
+    const name = newBoardName.trim()
+    if (!name) {
+      newBoardComposing = false
+      return
+    }
+    const id =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `board-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const next: SavedBoard = {
+      id,
+      name,
+      scope: liveScope,
+      filters: { ...liveFilters }
+    }
+    const updated = [...savedBoards, next]
+    savedBoards = updated
+    await persistBoards(updated)
+    newBoardName = ''
+    newBoardComposing = false
+  }
+
+  function cancelNewBoard() {
+    newBoardComposing = false
+    newBoardName = ''
+  }
+
+  function activateBoard(b: SavedBoard) {
+    applySavedBoard({ scope: b.scope, filters: b.filters })
+  }
+
+  async function deleteBoard(b: SavedBoard) {
+    const next = savedBoards.filter((x) => x.id !== b.id)
+    savedBoards = next
+    await persistBoards(next)
+  }
+
+  // --- Scope radio + filter quick-toggles -------------------------------
+
+  const SCOPES: Scope[] = ['vault', 'notebook', 'section', 'page']
+  // svelte-ignore state_referenced_locally: scopeFocusIdx is the LOCAL
+  // roving-tabindex cursor; it intentionally captures the initial scope
+  // value so the first Tab focus lands on whichever scope is currently
+  // active when the sidebar mounts.
+  let scopeFocusIdx = $state(SCOPES.indexOf(liveScope))
+
+  function onScopeKeydown(e: KeyboardEvent) {
+    const max = SCOPES.length - 1
+    let nextIdx = scopeFocusIdx
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+      e.preventDefault()
+      nextIdx = Math.min(max, scopeFocusIdx + 1)
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault()
+      nextIdx = Math.max(0, scopeFocusIdx - 1)
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      nextIdx = 0
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      nextIdx = max
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      const s = SCOPES[scopeFocusIdx]
+      if (s) setScope(s)
+      return
+    } else return
+    scopeFocusIdx = nextIdx
+    document
+      .querySelector<HTMLElement>(`[data-scope-radio="${SCOPES[nextIdx]}"]`)
+      ?.focus()
+  }
+
+  function pickScope(s: Scope) {
+    scopeFocusIdx = SCOPES.indexOf(s)
+    setScope(s)
+  }
+
+  // Filter quick-toggles: each chip mirrors one entry in liveFilters.
+  // Writes go through setFilters so the FilterBar updates.
+  function toggleOwner(o: string) {
+    const has = liveFilters.owners.includes(o)
+    setFilters({
+      ...liveFilters,
+      owners: has
+        ? liveFilters.owners.filter((x) => x !== o)
+        : [...liveFilters.owners, o]
+    })
+  }
+
+  function togglePriority(p: number) {
+    const has = liveFilters.priorities.includes(p)
+    setFilters({
+      ...liveFilters,
+      priorities: has
+        ? liveFilters.priorities.filter((x) => x !== p)
+        : [...liveFilters.priorities, p]
+    })
+  }
+
+  function setDueDateChip(d: KanbanFilters['dueDate']) {
+    setFilters({ ...liveFilters, dueDate: d })
+  }
+
+  function toggleTag(t: string) {
+    const has = liveFilters.tags.includes(t)
+    setFilters({
+      ...liveFilters,
+      tags: has ? liveFilters.tags.filter((x) => x !== t) : [...liveFilters.tags, t]
+    })
+  }
+
+  // Columns footer — read-only column summary from the user's config.
+  let columns = $derived(
+    ((settings.config?.plugins?.plugin_settings?.['silt-kanban']
+      ?.columns as string[] | undefined) ?? ['TODO', 'DOING', 'DONE'])
+  )
+
+  // Live-aria region announces filter changes (mirrors CalendarSidebar's
+  // approach — single sr-only live region, updates only on real change).
+  let liveMessage = $state('')
+  let lastMsgJson = ''
+  $effect(() => {
+    const j = JSON.stringify({
+      s: liveScope,
+      f: liveFilters,
+      b: savedBoards.length
+    })
+    if (j !== lastMsgJson) {
+      lastMsgJson = j
+      const f = liveFilters
+      liveMessage = `Scope: ${liveScope}. Active filters: ${
+        f.owners.length + f.priorities.length + (f.dueDate ? 1 : 0) + f.tags.length
+      }. ${savedBoards.length} saved boards.`
+    }
+  })
+</script>
+
+<aside
+  class="flex flex-col gap-4 px-2 py-1"
+  aria-label="Kanban sidebar"
+  data-test-kanban-sidebar
+>
+  <!-- SAVED BOARDS (#323 AC: list, highlight active, click applies, +
+       Save current…) -->
+  <section aria-labelledby="kanban-boards-heading">
+    <h3
+      id="kanban-boards-heading"
+      class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+    >
+      Saved Boards
+    </h3>
+    <ul role="list" class="mt-1 space-y-0.5">
+      {#each savedBoards as board (board.id)}
+        {@const isActive =
+          board.scope === liveScope &&
+          JSON.stringify(board.filters) === JSON.stringify(liveFilters)}
+        <li>
+          <div
+            class="flex items-center gap-1 px-1 py-0.5 rounded text-[12px] font-body-md cursor-pointer border border-transparent
+              {isActive
+              ? 'bg-accent-primary-glow border-accent-primary-start/30 text-accent-primary-start'
+              : 'text-text-primary hover:bg-hover border-transparent'}"
+            data-testid={`board-${board.id}`}
+          >
+            <button
+              type="button"
+              onclick={() => activateBoard(board)}
+              aria-pressed={isActive}
+              class="flex-1 text-left px-1.5 py-1 rounded cursor-pointer border-none bg-transparent"
+            >
+              {board.name}
+            </button>
+            <button
+              type="button"
+              onclick={() => deleteBoard(board)}
+              aria-label="Delete board {board.name}"
+              data-testid={`delete-board-${board.id}`}
+              class="p-1 rounded text-text-muted hover:text-error border-none bg-transparent cursor-pointer"
+            >
+              <span class="material-symbols-outlined text-[12px]">delete</span>
+            </button>
+          </div>
+        </li>
+      {/each}
+      {#if newBoardComposing}
+        <li class="flex items-center gap-1 px-1 py-1">
+          <input
+            type="text"
+            bind:value={newBoardName}
+            placeholder="Board name…"
+            data-testid="new-board-name"
+            onkeydown={(e) => {
+              if (e.key === 'Enter') void commitNewBoard()
+              else if (e.key === 'Escape') cancelNewBoard()
+            }}
+            class="flex-1 px-1.5 py-1 rounded bg-surface border border-accent-primary-start/40 text-text-primary text-[12px] outline-none focus:border-accent-primary-start"
+          />
+          <button
+            type="button"
+            onclick={() => void commitNewBoard()}
+            data-testid="commit-board"
+            class="p-1 rounded text-accent-primary-start hover:bg-hover border-none bg-transparent cursor-pointer"
+            aria-label="Save board"
+          >
+            <span class="material-symbols-outlined text-[12px]">check</span>
+          </button>
+          <button
+            type="button"
+            onclick={cancelNewBoard}
+            data-testid="cancel-board"
+            class="p-1 rounded text-text-muted hover:text-error border-none bg-transparent cursor-pointer"
+            aria-label="Cancel"
+          >
+            <span class="material-symbols-outlined text-[12px]">close</span>
+          </button>
+        </li>
+      {:else}
+        <li>
+          <button
+            type="button"
+            onclick={() => (newBoardComposing = true)}
+            data-testid="new-board"
+            class="w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start cursor-pointer border border-dashed border-border-muted bg-transparent transition-colors"
+          >
+            <span class="material-symbols-outlined text-[12px]">add</span>
+            Save current…
+          </button>
+        </li>
+      {/if}
+    </ul>
+    {#if saveError}
+      <p class="px-2 mt-1 text-error text-[10px] font-body-md" role="alert">
+        {saveError}
+      </p>
+    {/if}
+  </section>
+
+  <!-- SCOPE (#323 AC: scope mirror stays in sync with header) -->
+  <section aria-labelledby="kanban-scope-heading">
+    <h3
+      id="kanban-scope-heading"
+      class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+    >
+      Scope
+    </h3>
+    <ul role="radiogroup" aria-label="Board scope" class="mt-1 space-y-0.5">
+      {#each SCOPES as s, i (s)}
+        {@const selected = liveScope === s}
+        {@const disabled = !ctx.activeNotebook && s !== 'vault'}
+        <li>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            aria-disabled={disabled}
+            tabindex={i === scopeFocusIdx ? 0 : -1}
+            data-scope-radio={s}
+            data-testid={`scope-${s}`}
+            onclick={() => !disabled && pickScope(s)}
+            onkeydown={onScopeKeydown}
+            onfocus={() => (scopeFocusIdx = i)}
+            disabled={disabled}
+            class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[12px] font-body-md cursor-pointer border-none bg-transparent transition-colors
+              {selected
+              ? 'bg-accent-primary-glow text-accent-primary-start'
+              : 'text-text-primary hover:bg-hover'}
+              {disabled ? 'opacity-40 cursor-not-allowed' : ''}"
+          >
+            <span
+              class="w-2 h-2 rounded-full"
+              class:bg-accent-primary-start={selected}
+              class:bg-text-muted={!selected}
+            ></span>
+            <span class="flex-1 capitalize">
+              {s === 'vault'
+                ? 'Vault'
+                : s === 'notebook'
+                  ? 'Notebook'
+                  : s === 'section'
+                    ? 'Section'
+                    : 'Page'}
+            </span>
+            {#if selected && liveOverride}
+              <span
+                class="material-symbols-outlined text-[12px] text-accent-primary-start"
+                title="Manual override — click Follow in the board header to track navigation"
+                aria-label="Manual scope override"
+                >push_pin</span
+              >
+            {/if}
+          </button>
+        </li>
+      {/each}
+    </ul>
+  </section>
+
+  <!-- ACTIVE FILTERS (#323 AC: bidirectional sync with FilterBar) -->
+  <section aria-labelledby="kanban-filters-heading">
+    <h3
+      id="kanban-filters-heading"
+      class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+    >
+      Active Filters
+    </h3>
+    <div class="mt-1 space-y-2">
+      <!-- Owners -->
+      {#if owners.length > 0}
+        <div>
+          <p class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1">
+            Owners
+          </p>
+          <ul class="space-y-0.5">
+            {#each owners as o (o)}
+              {@const checked = liveFilters.owners.includes(o)}
+              <li>
+                <label
+                  class="flex items-center gap-2 px-2 py-1 rounded text-[12px] font-body-md cursor-pointer hover:bg-hover"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onchange={() => toggleOwner(o)}
+                    data-testid={`owner-${o}`}
+                    class="rounded border-border-muted bg-surface"
+                  />
+                  <span class="text-text-primary">{o}</span>
+                </label>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
+      <!-- Priorities -->
+      <div>
+        <p class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1">
+          Priority
+        </p>
+        <ul class="space-y-0.5">
+          {#each [1, 2, 3] as p (p)}
+            {@const checked = liveFilters.priorities.includes(p)}
+            <li>
+              <label
+                class="flex items-center gap-2 px-2 py-1 rounded text-[12px] font-body-md cursor-pointer hover:bg-hover"
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onchange={() => togglePriority(p)}
+                  data-testid={`priority-${p}`}
+                  class="rounded border-border-muted bg-surface"
+                />
+                <span class="text-text-primary"
+                  >P{p} · {PRIORITY_LABELS[p] ?? 'Normal'}</span
+                >
+              </label>
+            </li>
+          {/each}
+        </ul>
+      </div>
+
+      <!-- Due-date quick-pick -->
+      <div>
+        <p class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1">
+          Due
+        </p>
+        <ul role="radiogroup" aria-label="Due-date quick-pick" class="space-y-0.5">
+          {#each [{ v: '', l: 'All' }, { v: 'overdue', l: 'Overdue' }, { v: 'today', l: 'Today' }, { v: 'week', l: 'This Week' }, { v: 'none', l: 'No Date' }] as opt (opt.v)}
+            <li>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={liveFilters.dueDate === opt.v}
+                data-testid={`due-${opt.v || 'all'}`}
+                onclick={() => setDueDateChip(opt.v as KanbanFilters['dueDate'])}
+                class="w-full flex items-center gap-2 px-2 py-1 rounded text-[12px] font-body-md cursor-pointer border-none bg-transparent text-left
+                  {liveFilters.dueDate === opt.v
+                  ? 'bg-accent-primary-glow text-accent-primary-start'
+                  : 'text-text-primary hover:bg-hover'}"
+              >
+                <span
+                  class="w-2 h-2 rounded-full"
+                  class:bg-accent-primary-start={liveFilters.dueDate === opt.v}
+                  class:bg-text-muted={liveFilters.dueDate !== opt.v}
+                ></span>
+                <span class="flex-1">{opt.l}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+
+      <!-- Tags -->
+      {#if tags.length > 0}
+        <div>
+          <p class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1">
+            Tags
+          </p>
+          <ul class="space-y-0.5">
+            {#each tags as t (t)}
+              {@const checked = liveFilters.tags.includes(t)}
+              <li>
+                <label
+                  class="flex items-center gap-2 px-2 py-1 rounded text-[12px] font-body-md cursor-pointer hover:bg-hover"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onchange={() => toggleTag(t)}
+                    data-testid={`tag-${t}`}
+                    class="rounded border-border-muted bg-surface"
+                  />
+                  <span class="text-text-primary">{t}</span>
+                </label>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
+      <!-- Clear all -->
+      {#if liveFilters.owners.length || liveFilters.priorities.length || liveFilters.dueDate || liveFilters.tags.length}
+        <button
+          type="button"
+          onclick={clearFilters}
+          data-testid="clear-filters"
+          class="w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-border-muted bg-transparent transition-colors"
+        >
+          <span class="material-symbols-outlined text-[12px]">close</span>
+          Clear all filters
+        </button>
+      {/if}
+    </div>
+  </section>
+
+  <!-- Read-only column summary -->
+  <section aria-labelledby="kanban-columns-heading">
+    <h3
+      id="kanban-columns-heading"
+      class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+    >
+      Columns
+    </h3>
+    <p class="px-2 mt-1 text-[11px] font-body-md text-text-muted">
+      {columns.join(' · ')}
+    </p>
+  </section>
+
+  {#if listsError}
+    <p class="px-2 text-error text-[11px] font-body-md" role="alert">
+      {listsError}
+    </p>
+  {/if}
+
+  <div class="sr-only" aria-live="polite">{liveMessage}</div>
+</aside>
