@@ -79,6 +79,7 @@
     "@tiptap/pm": "^3.26.1",
     "@tiptap/starter-kit": "^3.26.1",
     "katex": "^0.17.0",
+    "mermaid": "^11.16.0",
     "shiki": "^4.2.0",
     "svelte-tiptap": "^3.0.1",
     "tailwindcss": "^4.3.1"
