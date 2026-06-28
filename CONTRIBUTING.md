@@ -30,6 +30,29 @@ cd frontend && npm run check && npm run build
   `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`.
 - Keep commits focused and reviewable; one logical change per commit.
 
+## Release notes
+
+User-visible changes ship with a fresh entry in
+[`docs/releases/unreleased.md`](./docs/releases/unreleased.md) — the staging
+file for the *next* release.
+
+- **Overwrite the file in full — do not append.** Each PR that lands a
+  user-visible change replaces `unreleased.md` completely with that PR's own
+  notes. Whatever is already in the file belongs to a release that has already
+  shipped and is stale by the time your PR lands; never layer your entry on top
+  of it.
+- Write customer-facing prose (what changed and why it matters to the person
+  using Silt), not implementation detail. Match the existing voice:
+  keep-a-changelog-style sections (`# Fixes`, `# Improvements`, `# Notes`, …)
+  with `- **Lead sentence.** body` bullets.
+- **The published version history lives in the GitHub Releases**, not in the
+  repo — there are no per-version changelog files. `unreleased.md` is only the
+  staging area for the upcoming release; once a version ships, its notes move
+  to that version's GitHub Release and the next PR overwrites the file fresh.
+
+PRs with no user-visible surface (refactors, test-only changes, internal
+plumbing) can leave `unreleased.md` untouched.
+
 ## Lockfile conflicts
 
 `frontend/package-lock.json` is large and ordering-sensitive, so hand-merging
