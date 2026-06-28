@@ -30,6 +30,7 @@ export {
   insertBlockMath,
   toggleDetails,
   findActiveBlock,
+  moveActiveBlock,
   BLOCK_TYPES
 } from './keymaps'
 export {

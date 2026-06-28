@@ -6,6 +6,7 @@
   import Placeholder from '@tiptap/extension-placeholder'
   import { CharacterCount, Focus, TrailingNode } from '@tiptap/extensions'
   import Typography from '@tiptap/extension-typography'
+  import { DragHandle } from '@tiptap/extension-drag-handle'
   import { AutosaveManager } from '../lib/editor/useAutosave'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import {
@@ -492,6 +493,26 @@
       onChange: onMentionChange,
       onNavigate: onMentionNavigate,
       onSelectActive: onMentionSelectActive
+    }),
+    // Drag-to-reorder handle (#181). A framework-agnostic DOM grip positioned
+    // by the extension over the hovered block; native ProseMirror drop reorders
+    // the whole block. Alt+Up/Down (SiltBlockKeymaps) is the keyboard
+    // equivalent. Indent-on-drop is a tracked follow-up (needs manual webview
+    // verification, which AGENTS.md forbids automating).
+    DragHandle.configure({
+      render: () => {
+        const el = document.createElement('div')
+        el.className = 'silt-drag-handle'
+        el.setAttribute('role', 'button')
+        el.setAttribute(
+          'aria-label',
+          'Drag to move block. Or press Alt+Up/Down to move by keyboard.'
+        )
+        el.setAttribute('title', 'Drag to move block (Alt+Up/Down)')
+        el.innerHTML =
+          '<span class="material-symbols-outlined" aria-hidden="true">drag_indicator</span>'
+        return el
+      }
     }),
     SiltBlockKeymaps,
     Placeholder.configure({

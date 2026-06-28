@@ -149,6 +149,49 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
   editor.view.dispatch(tr)
 }
 
+// Move the active top-level block up (-1) or down (+1), swapping it with its
+// neighbor (#181 — keyboard complement to the drag handle). No-ops at the
+// document edges or when the active block is not top-level (nested blocks are
+// not reorderable this way; Tab/Shift-Tab still indent them).
+export function moveActiveBlock(editor: Editor, direction: 1 | -1): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const info = currentBlockInfo(editor)
+  if (!info) return false
+  const { doc, tr } = editor.state
+  let idx = -1
+  let posIdx = 0
+  let acc = 0
+  for (let i = 0; i < doc.childCount; i++) {
+    if (acc === info.pos) {
+      idx = i
+      posIdx = acc
+      break
+    }
+    acc += doc.child(i).nodeSize
+  }
+  if (idx < 0) return false
+  const swap = direction === -1 ? idx - 1 : idx + 1
+  if (swap < 0 || swap >= doc.childCount) return false
+  const node = doc.child(idx)
+  const size = node.nodeSize
+  let newTr = tr.delete(posIdx, posIdx + size)
+  if (direction === -1) {
+    // Up: the previous block's start is unaffected by deleting the block after it.
+    let posPrev = 0
+    let a = 0
+    for (let i = 0; i < swap; i++) a += doc.child(i).nodeSize
+    posPrev = a
+    newTr = newTr.insert(posPrev, node)
+  } else {
+    // Down: after the deletion the next block sits at posIdx; insert after it.
+    const nextSize = doc.child(swap).nodeSize
+    newTr = newTr.insert(posIdx + nextSize, node)
+  }
+  editor.view.dispatch(newTr)
+  focusBlockAt(editor, swap)
+  return true
+}
+
 // Set the alignment attr on the current block (#173). No-op for TASK blocks
 // (alignment is not supported on tasks — the taskBlock schema has no align attr).
 // Shared by the keymap shortcuts and TipTapEditor's slash command handler.
@@ -710,6 +753,12 @@ export const SiltBlockKeymaps = Extension.create({
         }
         return false
       },
+
+      // Alt+ArrowUp/Down reorders the active block (#181) — the keyboard
+      // complement to the drag handle. No Mod prefix, to avoid colliding with
+      // the Mod-Shift-Arrow table row/column bindings.
+      'Alt-ArrowUp': () => moveActiveBlock(this.editor, -1),
+      'Alt-ArrowDown': () => moveActiveBlock(this.editor, 1),
 
       // ---- Config-driven shortcuts (#311) --------------------------------
       // Each editor-scoped shortcut reads its binding from config.hotkeys at
