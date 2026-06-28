@@ -97,6 +97,7 @@
     onUpdate: (updatedBlocks: ParsedBlock[]) => void
     editorInstance?: Editor | null
     activeMarks?: Set<string>
+    wordCount?: number
     /** Emitted when the editor's save state changes (dirty/error → clean).
      *  Used by the tab strip to show per-tab dirty/save-failed indicators
      *  (#167). */
@@ -121,6 +122,7 @@
     onUpdate,
     editorInstance = $bindable(null),
     activeMarks = $bindable(new Set()),
+    wordCount = $bindable(0),
     onSaveStateChange,
     onReady
   }: Props = $props()
@@ -183,8 +185,7 @@
   // paragraphs for distraction-free writing.
   let focusModeEnabled = $derived(settings.config?.editor?.focus_mode === true)
 
-  // Word count (updated on every editor transaction via CharacterCount storage).
-  let wordCount = $state(0)
+  // Word count is managed as a bindable prop.
 
   // Inline link URL input (#168). Shows a small <input> near the selection
   // when the user clicks the link button or presses Ctrl+K. Enter applies,
@@ -1343,31 +1344,7 @@
     </div>
   {/if}
 
-  {#if unsavedChanges || lastSaveError}
-    <div
-      class="unsaved-indicator {lastSaveError ? 'error' : ''}"
-      role={lastSaveError ? 'alert' : 'status'}
-      aria-live={lastSaveError ? 'assertive' : 'polite'}
-    >
-      {#if lastSaveError}
-        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-          >error</span
-        >
-        <span>Save failed — edits not persisted</span>
-      {:else}
-        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-          >schedule</span
-        >
-        <span>Unsaved changes</span>
-      {/if}
-    </div>
-  {/if}
-  {#if showWordCount && wordCount > 0}
-    <div class="word-count" role="status" aria-live="off">
-      {wordCount}
-      {wordCount === 1 ? 'word' : 'words'}
-    </div>
-  {/if}
+  <!-- Unsaved changes & word count are managed by the parent VirtualScrollContainer floating badge -->
   {#if showSlashMenu}
     {@const coords = slashCoords()}
     {#if coords}
@@ -1540,35 +1517,6 @@
     width: 100%;
   }
 
-  .unsaved-indicator {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    margin: 0 0 0.5rem;
-    padding: 0.125rem 0.5rem;
-    border-radius: 9999px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
-    background: color-mix(
-      in srgb,
-      var(--color-surface, #1a1d24) 90%,
-      transparent
-    );
-    color: var(--color-text-muted, #8b95a3);
-    font-size: 11px;
-    backdrop-filter: blur(4px);
-  }
-  .unsaved-indicator.error {
-    border-color: color-mix(
-      in srgb,
-      var(--color-status-danger, #e5484d) 60%,
-      transparent
-    );
-    color: var(--color-status-danger, #e5484d);
-  }
-
   /* The ProseMirror editable surface. Global styles (typography vars, guide
      rails, indentation, node rendering) live in index.css under .ProseMirror
      and [data-type] selectors so they apply to all editor instances. */
@@ -1587,22 +1535,6 @@
     .focus-mode :global(.ProseMirror > div:not(.has-focus)) {
       transition: none;
     }
-  }
-
-  .word-count {
-    position: sticky;
-    bottom: 0;
-    margin: 0.25rem 0 0 auto;
-    display: inline-block;
-    padding: 0.125rem 0.5rem;
-    border-radius: 9999px;
-    background: color-mix(
-      in srgb,
-      var(--color-surface, #1a1d24) 90%,
-      transparent
-    );
-    color: var(--color-text-muted, #8b95a3);
-    font-size: 11px;
   }
 
   .link-input-popover {

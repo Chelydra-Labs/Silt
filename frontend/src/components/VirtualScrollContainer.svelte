@@ -79,9 +79,17 @@
   let hasFirstEdit = false
   let handledTargetKey = $state('')
 
+  // Editor status state
+  let dirty = $state(false)
+  let saveError = $state<string | null>(null)
+  let wordCount = $state(0)
+  let showWordCount = $derived(
+    settings.config?.editor?.show_word_count === true
+  )
+
   $effect(() => {
     if (notebook && page) {
-      untrack(() => loadPage())
+      untrack(() => loadPage(true))
     }
   })
 
@@ -106,15 +114,17 @@
       'block:changed',
       (ev: { notebook: string; section: string; page: string }) => {
         if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
-          loadPage()
+          loadPage(false)
         }
       }
     )
     return () => off()
   })
 
-  async function loadPage() {
-    loading = true
+  async function loadPage(showLoader = true) {
+    if (showLoader) {
+      loading = true
+    }
     loadError = ''
     const reqNotebook = notebook
     const reqSection = section
@@ -127,7 +137,9 @@
       if (notebook !== reqNotebook || page !== reqPage) return
       loadError = e instanceof Error ? e.message : String(e)
     } finally {
-      loading = false
+      if (showLoader) {
+        loading = false
+      }
     }
   }
 
@@ -400,7 +412,12 @@
               onReady={handleEditorReady}
               bind:editorInstance
               bind:activeMarks
-              {onSaveStateChange}
+              bind:wordCount
+              onSaveStateChange={(s) => {
+                dirty = s.dirty
+                saveError = s.error
+                onSaveStateChange?.(s)
+              }}
             />
           {/if}
         {/if}
@@ -473,6 +490,46 @@
       </span>
     </button>
   </div>
+
+  <!-- Floating Editor Status Bar (Unsaved Changes & Word Count) -->
+  {#if (dirty || saveError || (showWordCount && wordCount > 0)) && viewMode === 'edit'}
+    <div
+      class="absolute bottom-6 right-6 z-40 flex items-center gap-2 px-3 py-1.5 bg-panel/60 backdrop-blur-md border border-border-muted/50 rounded-full shadow-lg text-[11px] font-medium tracking-wide text-text-muted transition-all duration-300 opacity-60 hover:opacity-100"
+    >
+      {#if saveError}
+        <div
+          class="flex items-center gap-1 text-status-danger"
+          role="alert"
+          aria-live="assertive"
+        >
+          <span class="material-symbols-outlined text-[14px]">error</span>
+          <span>Save failed — edits not persisted</span>
+        </div>
+      {:else if dirty}
+        <div
+          class="flex items-center gap-1 text-text-muted"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="material-symbols-outlined text-[14px] animate-pulse"
+            >schedule</span
+          >
+          <span>Saving...</span>
+        </div>
+      {/if}
+
+      {#if (saveError || dirty) && showWordCount && wordCount > 0}
+        <div class="h-3 w-[1px] bg-border-muted/40"></div>
+      {/if}
+
+      {#if showWordCount && wordCount > 0}
+        <div class="font-mono text-text-muted/80" role="status" aria-live="off">
+          {wordCount}
+          {wordCount === 1 ? 'word' : 'words'}
+        </div>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
