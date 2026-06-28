@@ -131,6 +131,13 @@
   let slashQuery = $state('')
   let slashMenuDismissed = $state(false)
   let showTemplatePicker = $state(false)
+  // Per-vault math opt-out (#191). Live so toggling it in Settings takes effect
+  // on the next slash-menu open (hides the /math command).
+  let mathEnabled = $derived(
+    settings.config?.ui?.formatting?.math_enabled !== false
+  )
+  // Visually-hidden live region text for typeahead open/count announcements.
+  let suggestStatus = $state('')
 
   // Active inline marks in the current selection (#168). Updated on every
   // selection change so the FormatToolbar buttons reflect aria-pressed state.
@@ -336,10 +343,14 @@
   function onMetaChange(ctx: SuggestContext | null): void {
     if (!ctx) {
       metaPopup = null
+      suggestStatus = ''
       return
     }
     const items = filterMetaKeys(ctx.query)
     metaPopup = items.length === 0 ? null : { ctx, items, selected: 0 }
+    suggestStatus = items.length
+      ? `${items.length} metadata key${items.length === 1 ? '' : 's'} available`
+      : 'No matching metadata keys'
   }
 
   function onMetaNavigate(dir: 1 | -1): void {
@@ -397,10 +408,14 @@
   function onMentionChange(ctx: MentionContext | null): void {
     if (!ctx) {
       mentionPopup = null
+      suggestStatus = ''
       return
     }
     const items = filterOwners(owners, ctx.query)
     mentionPopup = items.length === 0 ? null : { ctx, items, selected: 0 }
+    suggestStatus = items.length
+      ? `${items.length} owner${items.length === 1 ? '' : 's'} available`
+      : 'No matching owners'
   }
 
   function onMentionNavigate(dir: 1 | -1): void {
@@ -503,12 +518,14 @@
       render: () => {
         const el = document.createElement('div')
         el.className = 'silt-drag-handle'
-        el.setAttribute('role', 'button')
+        // Pointer-only affordance — keyboard reordering is via Alt+↑/↓
+        // (SiltBlockKeymaps). aria-hidden avoids exposing a non-functional
+        // button to AT; the title carries the hint for sighted users.
+        el.setAttribute('aria-hidden', 'true')
         el.setAttribute(
-          'aria-label',
-          'Drag to move block. Or press Alt+Up/Down to move by keyboard.'
+          'title',
+          'Drag to move block (Alt+Up/Down to move by keyboard)'
         )
-        el.setAttribute('title', 'Drag to move block (Alt+Up/Down)')
         el.innerHTML =
           '<span class="material-symbols-outlined" aria-hidden="true">drag_indicator</span>'
         return el
@@ -1278,6 +1295,7 @@
         style="position: fixed; left: {coords.left}px; top: {coords.top}px;"
         query={slashQuery}
         onSelect={handleSlashSelect}
+        exclude={mathEnabled ? [] : ['math']}
         onClose={() => {
           showSlashMenu = false
           slashMenuDismissed = true
@@ -1285,10 +1303,23 @@
       />
     {/if}
   {/if}
+  <!-- Visually-hidden live region: announces typeahead open/close + match count
+       for screen-reader users (both @-mention and %-metadata popups). -->
+  <div
+    aria-live="polite"
+    style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0"
+  >
+    {suggestStatus}
+  </div>
   {#if metaPopup}
     {@const c = metaPopupCoords()}
     {#if c}
-      <div class="meta-suggest" style="left:{c.left}px; top:{c.top}px">
+      <div
+        class="meta-suggest"
+        style="left:{c.left}px; top:{c.top}px"
+        role="listbox"
+        aria-label="Task metadata"
+      >
         {#each metaPopup.items as item, i}
           <button
             type="button"
@@ -1582,7 +1613,7 @@
     padding: 4px;
     border-radius: 8px;
     background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--border-subtle, #33333a);
+    border: 1px solid var(--color-border-muted, #33333a);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     display: flex;
     flex-direction: column;
@@ -1627,7 +1658,7 @@
     padding: 4px;
     border-radius: 8px;
     background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--border-subtle, #33333a);
+    border: 1px solid var(--color-border-muted, #33333a);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     display: flex;
     flex-direction: column;

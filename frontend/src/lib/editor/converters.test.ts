@@ -1671,6 +1671,20 @@ describe('tokenize / validate pipeline (#198)', () => {
     expect(back[0].clean_text).toBe('$$\\int_0^1 x\\,dx$$')
   })
 
+  it('does not tokenize $...$ inside an inline code span (#191 hardening)', () => {
+    const src = 'use `$x$` literally'
+    const nodes = legacyTokenizeInline(src)
+    expect(nodes.filter((n) => n.type === 'inlineMathNode')).toHaveLength(0)
+    expect(serializeInlineContent(nodes)).toBe(src)
+  })
+
+  it('does not tokenize @[name] inside an inline code span (#184 hardening)', () => {
+    const src = 'literal `@[alice]` here'
+    const nodes = legacyTokenizeInline(src)
+    expect(nodes.filter((n) => n.type === 'mentionNode')).toHaveLength(0)
+    expect(serializeInlineContent(nodes)).toBe(src)
+  })
+
   it('validate drops links with disallowed schemes (javascript:)', () => {
     const tokens = tokenizeInline('[click](javascript:alert(1))')
     // After validate, the link mark is flattened — text survives as plain

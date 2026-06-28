@@ -290,14 +290,19 @@
     pendingRestore = false
     const target = savedEditScroll
     if (target <= 0 || !containerEl) return
-    // Let the remounted NodeViews flush + measure before restoring so the
-    // target offset actually exists; then clamp in case the doc shortened
-    // (autosave/fsnotify) while the tab was in Source view.
+    // Restore once the remounted NodeViews have flushed. Async renderers
+    // (KaTeX/Mermaid lazy load, Shiki debounce) settle AFTER the first frame
+    // and grow scrollHeight, so a single rAF would clamp too early on
+    // math/diagram-heavy pages. Re-clamp across a couple of frames: each clamps
+    // to the largest valid offset, settling at `target` once the doc is tall
+    // enough (and never overscrolling if it shrank).
     await tick()
-    requestAnimationFrame(() => {
+    const restore = () => {
       if (!containerEl) return
       containerEl.scrollTop = Math.min(target, containerEl.scrollHeight)
-    })
+    }
+    requestAnimationFrame(restore)
+    requestAnimationFrame(() => requestAnimationFrame(restore))
   }
 </script>
 

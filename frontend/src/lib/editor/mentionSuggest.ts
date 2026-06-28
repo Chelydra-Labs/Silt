@@ -45,12 +45,20 @@ function inCodeBlock(selection: Selection): boolean {
   return false
 }
 
+// True when the caret sits inside an inline `code` mark (` `…` `) — mentions
+// must not trigger there either, or committing would replace text inside the
+// code span with a chip and corrupt it.
+function inCodeMark(selection: Selection): boolean {
+  return selection.$from.marks().some((m) => m.type.name === 'code')
+}
+
 export function getMentionContextAt(
   selection: Selection
 ): MentionContext | null {
   // Only a collapsed caret qualifies — never trigger over a selection.
   if (selection.from !== selection.to) return null
   if (inCodeBlock(selection)) return null
+  if (inCodeMark(selection)) return null
 
   const $from = selection.$from
   const textBefore = $from.parent.textContent.slice(0, $from.parentOffset)
@@ -100,7 +108,14 @@ export function applyMentionSuggestion(editor: Editor, name: string): boolean {
 
   const node = mentionType.create({ name })
   const tr = editor.state.tr.delete(ctx.from, ctx.to).insert(ctx.from, node)
-  const after = ctx.from + node.nodeSize
+  let after = ctx.from + node.nodeSize
+  // Preserve a separating space when the query ended with whitespace, so
+  // chaining `@alice @bob` doesn't collapse the two chips together.
+  if (/\s$/.test(ctx.query)) {
+    const space = editor.state.schema.text(' ')
+    tr.insert(after, space)
+    after += space.nodeSize
+  }
   tr.setSelection(TextSelection.create(tr.doc, after, after))
   editor.view.dispatch(tr)
   return true

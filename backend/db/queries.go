@@ -402,7 +402,10 @@ func (dm *DatabaseManager) DistinctOwners() ([]string, error) {
 	}
 	defer rows.Close()
 
-	var owners []string
+	// Non-nil empty slice so the Wails binding marshals to JSON `[]` (not
+	// `null`) for an empty vault — callers can `.filter`/iterate without a
+	// null-guard.
+	owners := make([]string, 0)
 	for rows.Next() {
 		var o string
 		if err := rows.Scan(&o); err != nil {

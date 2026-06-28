@@ -59,6 +59,16 @@
   // Shiki's colours) once the highlighter catches up.
   let highlightTimer: ReturnType<typeof setTimeout> | null = null
   $effect(() => {
+    // Mermaid blocks render an SVG, not a Shiki layer. Skip highlighting
+    // entirely for them — otherwise `highlightedFor` would resolve to `code`,
+    // `stale` would flip false, and in Edit-source mode the editable text would
+    // go transparent with no Shiki layer behind it (the mermaid branch does not
+    // render one) → typed characters would vanish after the debounce.
+    if (isMermaid) {
+      highlighted = ''
+      highlightedFor = ''
+      return
+    }
     const c = code
     const lang = language
     const theme = shikiTheme
@@ -168,12 +178,28 @@
           >
           <pre>{mermaidError}</pre>
         </div>
-      {:else}
-        <div
-          class="silt-mermaid-svg"
-          role="img"
-          aria-label="Mermaid diagram. Activate Edit source to view the definition."
+      {:else if !code.trim()}
+        <button
+          type="button"
+          class="silt-mermaid-empty"
+          onclick={() => (viewingSource = true)}
+          aria-label="Add a Mermaid diagram"
         >
+          Add a Mermaid diagram, then press the preview toggle
+        </button>
+      {:else if !mermaidSvg}
+        <div
+          class="silt-mermaid-pending"
+          role="status"
+          aria-label="Rendering diagram"
+        >
+          <span class="material-symbols-outlined silt-spin" aria-hidden="true"
+            >progress_activity</span
+          >
+          Rendering diagram…
+        </div>
+      {:else}
+        <div class="silt-mermaid-svg" role="img" aria-label="Mermaid diagram">
           {@html mermaidSvg}
         </div>
       {/if}

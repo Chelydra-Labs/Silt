@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
-import { SiltBlockExtensions, MentionNode, CodeBlock } from './index'
+import {
+  SiltBlockExtensions,
+  SiltInlineMarkExtensions,
+  MentionNode,
+  CodeBlock
+} from './index'
 import {
   MentionSuggest,
   filterOwners,
@@ -28,6 +33,7 @@ function makeEditor(): Editor {
         trailingNode: false
       }),
       ...SiltBlockExtensions,
+      ...SiltInlineMarkExtensions,
       CodeBlock,
       MentionNode,
       MentionSuggest
@@ -129,6 +135,27 @@ describe('MentionSuggest — context detection', () => {
     editor.destroy()
   })
 
+  it('does NOT trigger inside an inline code mark', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'b1', depth: 0, bullet: '- ' },
+          content: [
+            { type: 'text', text: 'see ' },
+            { type: 'text', marks: [{ type: 'code' }], text: '@al' }
+          ]
+        }
+      ]
+    })
+    // "see @al" with @al inside a code mark — caret after '@al' (pos 8).
+    editor.commands.setTextSelection(8)
+    expect(getMentionContext(editor.state)).toBeNull()
+    editor.destroy()
+  })
+
   it('does NOT trigger when there is no @ before the caret', () => {
     const editor = makeEditor()
     editor.commands.setContent(noteDoc('no trigger here'))
@@ -164,6 +191,24 @@ describe('MentionSuggest — insertion', () => {
     // Caret collapsed, sitting just after the chip.
     const sel = editor.state.selection
     expect(sel.from).toBe(sel.to)
+    editor.destroy()
+  })
+
+  it('preserves a separating space after the chip when the query ended with one', () => {
+    const editor = makeEditor()
+    editor.commands.setContent(noteDoc('assign @al '))
+    // "assign @al " -> 11 chars, caret at pos 12.
+    editor.commands.setTextSelection(12)
+    expect(applyMentionSuggestion(editor, 'Alice')).toBe(true)
+    const kids = (editor.getJSON().content![0].content ?? []) as Array<{
+      type: string
+      text?: string
+    }>
+    const mentionIdx = kids.findIndex((n) => n.type === 'mentionNode')
+    expect(mentionIdx).toBeGreaterThanOrEqual(0)
+    const after = kids[mentionIdx + 1]
+    expect(after?.type).toBe('text')
+    expect(after?.text).toBe(' ')
     editor.destroy()
   })
 

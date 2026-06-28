@@ -204,36 +204,57 @@ function parseInlineTokens(
 const ATOMIC_INLINE_TOKEN =
   /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)|@\[([^\[\]\n]+)\]|\$(?!\s)([^$\n]+?)(?<!\s)\$/gi
 
-// Split clean_text on atomic inline tokens. Text segments are later parsed for
-// inline marks; token segments are emitted as-is (opaque — their content is
-// never re-parsed for marks, so LaTeX like `a*b*c` stays literal).
+// Inline code span. Matched BEFORE atomic tokens so that `$x$` / `@[a]` /
+// `((uuid))` written inside backticks stays literal code (not a math node,
+// mention, or block ref). The content is emitted as a plain TextToken; the
+// mark stage (`code` MARK_PATTERN, shielded) re-applies the code mark to it.
+const CODE_SPAN_RE = /`[^`]+`/y
+
+// Split clean_text on atomic inline tokens, SHIELDING inline code spans first.
+// Text segments are later parsed for inline marks; atomic + code-span segments
+// are emitted as-is (opaque — their content is never re-parsed for marks, so
+// LaTeX like `a*b*c` stays literal, and `$x$` inside `…` stays literal code).
 function splitAtomicTokens(text: string): Token[] {
   const tokens: Token[] = []
-  let last = 0
-  let match: RegExpExecArray | null
-  ATOMIC_INLINE_TOKEN.lastIndex = 0
-  while ((match = ATOMIC_INLINE_TOKEN.exec(text)) !== null) {
-    if (match.index > last) {
-      tokens.push({
-        kind: 'text',
-        text: text.slice(last, match.index),
-        marks: []
-      })
+  let plain = ''
+  let i = 0
+  while (i < text.length) {
+    // 1. Inline code span — preserve verbatim, skip atomic matching inside it.
+    CODE_SPAN_RE.lastIndex = i
+    const codeMatch = CODE_SPAN_RE.exec(text)
+    if (codeMatch && codeMatch.index === i) {
+      if (plain) {
+        tokens.push({ kind: 'text', text: plain, marks: [] })
+        plain = ''
+      }
+      tokens.push({ kind: 'text', text: codeMatch[0], marks: [] })
+      i += codeMatch[0].length
+      continue
     }
-    if (match[1]) {
-      tokens.push({ kind: 'embed', uuid: match[2] })
-    } else if (match[3]) {
-      tokens.push({ kind: 'blockReference', uuid: match[3] })
-    } else if (match[4]) {
-      tokens.push({ kind: 'mention', name: match[4] })
-    } else if (match[5] !== undefined) {
-      tokens.push({ kind: 'mathInline', latex: match[5] })
+    // 2. Atomic inline token at this position.
+    ATOMIC_INLINE_TOKEN.lastIndex = i
+    const match = ATOMIC_INLINE_TOKEN.exec(text)
+    if (match && match.index === i) {
+      if (plain) {
+        tokens.push({ kind: 'text', text: plain, marks: [] })
+        plain = ''
+      }
+      if (match[1]) {
+        tokens.push({ kind: 'embed', uuid: match[2] })
+      } else if (match[3]) {
+        tokens.push({ kind: 'blockReference', uuid: match[3] })
+      } else if (match[4]) {
+        tokens.push({ kind: 'mention', name: match[4] })
+      } else if (match[5] !== undefined) {
+        tokens.push({ kind: 'mathInline', latex: match[5] })
+      }
+      i += match[0].length
+      continue
     }
-    last = match.index + match[0].length
+    plain += text[i]
+    i++
   }
-  if (last < text.length) {
-    tokens.push({ kind: 'text', text: text.slice(last), marks: [] })
-  }
+  if (plain) tokens.push({ kind: 'text', text: plain, marks: [] })
   return tokens
 }
 

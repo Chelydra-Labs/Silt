@@ -1774,3 +1774,19 @@ func TestDistinctOwners(t *testing.T) {
 		}
 	}
 }
+
+func TestDistinctOwners_EmptyVault(t *testing.T) {
+	dm := newTestDB(t)
+	owners, err := dm.DistinctOwners()
+	if err != nil {
+		t.Fatalf("DistinctOwners on empty vault: %v", err)
+	}
+	// Non-nil empty slice (marshals to JSON [] not null — callers iterate
+	// without a null-guard). #184.
+	if owners == nil {
+		t.Error("DistinctOwners returned nil for an empty vault; want non-nil []string")
+	}
+	if len(owners) != 0 {
+		t.Errorf("DistinctOwners on empty vault = %v, want []", owners)
+	}
+}

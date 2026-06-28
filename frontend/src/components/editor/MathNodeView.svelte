@@ -1,10 +1,13 @@
 <script lang="ts">
   // MathNodeView — KaTeX renderer for inline ($...$) and block ($$...$$) math
   // (#191). One component serves both nodes; displayMode follows the node type.
-  // KaTeX is lazy-loaded via useKatex (kept out of the main bundle). The raw
-  // LaTeX is the accessible name (aria-label) and KaTeX's htmlAndMathml output
-  // also exposes MathML to screen readers. Parse errors render inline in error
-  // color (visible, not silent).
+  // KaTeX is lazy-loaded via useKatex (kept out of the main bundle); while it
+  // loads the raw LaTeX shows in mono so the slot is never blank. KaTeX's
+  // htmlAndMathml output carries the MathML screen readers announce as the
+  // math content, so the button uses a human aria-label (not role="math", which
+  // conflicts with the interactive button role) and does not duplicate the raw
+  // LaTeX in the label (AT reads that poorly). Parse errors render inline in
+  // error color (visible, not silent).
   import { NodeViewWrapper } from 'svelte-tiptap'
   import type { NodeViewProps } from '@tiptap/core'
   import { renderKatex } from '../../lib/editor/useKatex'
@@ -33,10 +36,14 @@
   })
 
   // Click opens a prompt pre-filled with the raw LaTeX — both an edit affordance
-  // and a way to copy the source (#191). Cancel leaves the node unchanged.
+  // and a way to copy the source (#191). null = Cancel (no change). Clearing a
+  // previously-non-empty equation to '' is guarded (use delete to remove the
+  // node) so a stray clear+OK can't silently wipe it.
   function editLatex(): void {
     const next = window.prompt('LaTeX:', latex)
-    if (next !== null) updateAttributes({ latex: next })
+    if (next === null) return
+    if (next === '' && latex !== '') return
+    updateAttributes({ latex: next })
   }
 </script>
 
@@ -46,13 +53,15 @@
       type="button"
       class="silt-math"
       class:silt-math-block={displayMode}
-      aria-label="Equation: {latex}. Activate to edit."
+      aria-label="Equation. Activate to edit."
       onclick={editLatex}
     >
       {#if error}
         <span class="silt-math-err" role="alert">{error}</span>
-      {:else}
+      {:else if html}
         {@html html}
+      {:else}
+        <span class="silt-math-pending" aria-hidden="true">{latex}</span>
       {/if}
     </button>
   {:else}
@@ -98,6 +107,11 @@
     color: var(--color-error, #ef4444);
     font-family: var(--font-mono, monospace);
     font-size: 0.85em;
+  }
+  .silt-math-pending {
+    font-family: var(--font-mono, monospace);
+    color: var(--color-text-muted, #888);
+    opacity: 0.7;
   }
   .silt-math-empty {
     display: inline-block;
