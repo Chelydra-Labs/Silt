@@ -13,7 +13,7 @@ vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
 import CalendarSidebar from './CalendarSidebar.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
-import { resetFocusStateForTests, getFocusState } from './focusState.svelte'
+import { resetFocusStateForTests, getFocusState, setFocusDate } from './focusState.svelte'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {
@@ -214,5 +214,24 @@ describe('CalendarSidebar (#322)', () => {
     await fireEvent.click(screen.getByTestId('clear-filter'))
     expect(getFocusState().activeFilter).toBe('all')
     expect(screen.queryByTestId('clear-filter')).toBeNull()
+  })
+
+  // --- #322 polish: "Today" chip on mini-calendar header (#322 polish)
+  it('mini-cal "Today" button clears the focus date', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      return mockDayCounts([])
+    })
+    render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // Simulate a sidebar click that set the focusDate to a future day
+    // (we don't navigate the mini-cal month here — we exercise the
+    // Today chip's clear-focus behaviour directly via the public state).
+    setFocusDate('2026-08-15')
+    expect(getFocusState().focusDate).toBe('2026-08-15')
+    const todayBtn = screen.getByTestId('mini-today')
+    expect(todayBtn).toBeInTheDocument()
+    await fireEvent.click(todayBtn)
+    expect(getFocusState().focusDate).toBe('')
   })
 })

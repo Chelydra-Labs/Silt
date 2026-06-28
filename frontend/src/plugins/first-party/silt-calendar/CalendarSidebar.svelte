@@ -110,6 +110,11 @@
   }
 
   let offBlock: (() => void) | undefined
+  // Tick once a minute so the Today / Overdue / Upcoming smart-list
+  // counts stay accurate if the sidebar stays mounted across midnight
+  // (#323 hardening). Mirrors Calendar.svelte:50-53's nowInterval.
+  let nowTick = $state(0)
+  let nowInterval: ReturnType<typeof setInterval> | undefined
   onMount(() => {
     reload()
     offBlock = ctx.on('block:changed', () => {
@@ -117,19 +122,49 @@
     })
     const onRefresh = () => reload()
     window.addEventListener('refresh-navigation', onRefresh)
+    nowInterval = setInterval(() => {
+      nowTick++
+    }, 60_000)
     return () => {
       window.removeEventListener('refresh-navigation', onRefresh)
       offBlock?.()
+      if (nowInterval) clearInterval(nowInterval)
     }
   })
   onDestroy(() => {
     offBlock?.()
+    if (nowInterval) clearInterval(nowInterval)
+  })
+
+  // Re-run the count query each minute so the local-day anchor inside
+  // `reload()` (`ctx.today || localToday()`) reflects the new day.
+  $effect(() => {
+    void nowTick
+    void reload()
   })
 
   // Re-query when the mini-calendar cursor shifts months.
   $effect(() => {
     void miniCursor
     void reload()
+  })
+
+  // When the user picks a day, jump the mini-cal cursor to that month so
+  // the picked cell stays visible (and visually centered) — otherwise
+  // the sidebar's mini grid can sit on a different month than the
+  // picked day, which is jarring after a click. Mirrors the existing
+  // aria-current="date" highlight (#322 polish).
+  $effect(() => {
+    const fd = activeFocusDate
+    if (!fd) return
+    const [y, m] = fd.split('-').map(Number)
+    if (!y || !m) return
+    if (
+      miniCursor.getFullYear() === y &&
+      miniCursor.getMonth() === m - 1
+    )
+      return
+    miniCursor = new Date(y, m - 1, 1)
   })
 
   // --- Date helpers (mirror Calendar.svelte's local helpers) --------------
@@ -198,6 +233,14 @@
   }
   function pickDay(d: Date) {
     setFocusDate(ymd(d))
+  }
+  // "Today" affordance for the mini calendar — common UX expectation
+  // (every date picker has one). Resets the mini cursor AND clears any
+  // active focus-date so the main view's cursor also jumps to today
+  // (#323 polish: matching Calendar.svelte's own Today button).
+  function goMiniToday() {
+    miniCursor = new Date()
+    clearFocusDate()
   }
 
   // --- Smart-list keyboard nav -------------------------------------------
@@ -385,7 +428,7 @@
       id="cal-mini-heading"
       class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
     >
-      Jump to date
+      Jump from sidebar
     </h3>
     <div class="mt-1 px-2">
       <div class="flex items-center justify-between mb-1">
@@ -407,6 +450,17 @@
           class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
         >
           <span class="material-symbols-outlined text-[14px]">chevron_right</span>
+        </button>
+      </div>
+      <div class="flex justify-end mb-1">
+        <button
+          type="button"
+          onclick={goMiniToday}
+          aria-label="Jump mini-calendar to today"
+          data-testid="mini-today"
+          class="px-1.5 py-0.5 rounded border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
+        >
+          Today
         </button>
       </div>
       <div class="grid grid-cols-7 gap-0.5" role="grid">

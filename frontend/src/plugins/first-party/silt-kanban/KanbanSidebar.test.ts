@@ -251,4 +251,38 @@ describe('KanbanSidebar (#323)', () => {
     expect(document.querySelectorAll('[data-testid^="board-"]').length).toBe(0)
     expect(screen.getByTestId('new-board')).toBeInTheDocument()
   })
+
+  // --- #323 hardening: validation of saved-board entries on load
+  it('drops malformed saved-board entries from settings on load', async () => {
+    mocks.settings.config.plugins.plugin_settings['silt-kanban'].boards = [
+      // Valid board — should render.
+      {
+        id: 'b-ok',
+        name: 'Valid',
+        scope: 'vault',
+        filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+      },
+      // Missing scope — should be dropped silently.
+      {
+        id: 'b-bad-scope',
+        name: 'BadScope',
+        filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+      } as any,
+      // Wrong owner type — should be dropped silently.
+      {
+        id: 'b-bad-owners',
+        name: 'BadOwners',
+        scope: 'vault',
+        filters: { owners: 'not-an-array', priorities: [], dueDate: '', tags: [] }
+      } as any,
+      // Missing id — should be dropped.
+      { name: 'NoId', scope: 'vault', filters: { owners: [], priorities: [], dueDate: '', tags: [] } } as any
+    ]
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // Only the valid board should have rendered.
+    expect(screen.getByTestId('board-b-ok')).toBeInTheDocument()
+    expect(document.querySelectorAll('[data-testid^="board-"]').length).toBe(1)
+  })
 })

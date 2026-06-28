@@ -234,7 +234,12 @@
 
   // Persist view_mode to plugin settings (debounced via the same atomic
   // UpdatePluginSetting path Kanban uses for columns/filters, #120).
+  // Surface a save failure as `modeError` so the user knows their mode
+  // pick won't survive a reload (matches the `configError` pattern in
+  // Kanban.svelte). Without this, a silent saveConfig rejection leaves
+  // the user wondering why their mode reverts on restart.
   let modeSaveTimer: ReturnType<typeof setTimeout> | null = null
+  let modeError = $state('')
   onDestroy(() => {
     if (modeSaveTimer) clearTimeout(modeSaveTimer)
   })
@@ -248,9 +253,15 @@
     }
     if (modeSaveTimer) clearTimeout(modeSaveTimer)
     modeSaveTimer = setTimeout(() => {
-      void updatePluginSetting('silt-calendar', 'view_mode', m)
+      void persistMode(m)
     }, 400)
   })
+  async function persistMode(m: ViewMode) {
+    if (!settings.config) return
+    modeError = ''
+    const ok = await updatePluginSetting('silt-calendar', 'view_mode', m)
+    if (!ok) modeError = settings.error || "Couldn't save view mode"
+  }
 
   // React to the sidebar's focusDate: jump the main view's cursor to the
   // matching month/week so the user sees the day they clicked. For
@@ -258,7 +269,14 @@
   // itself, so we only need the cursor jump for month/week.
   $effect(() => {
     const focus = getFocusState().focusDate
-    if (!focus) return
+    if (!focus) {
+      // No focus date — reset cursor to today so the user lands back on
+      // the current month after clearing a jump (#323 hardening). This
+      // also covers the "user dismissed the jump" path from the
+      // mini-calendar's "Clear jump date" affordance.
+      cursor = new Date()
+      return
+    }
     const [y, m, d] = focus.split('-').map(Number)
     if (!y || !m || !d) return
     cursor = new Date(y, m - 1, d)
@@ -361,6 +379,27 @@
         }}
         aria-label="Clear filter"
         class="ml-auto p-1 rounded hover:bg-hover text-text-muted hover:text-error border-none bg-transparent cursor-pointer"
+      >
+        <span class="material-symbols-outlined text-[14px]">close</span>
+      </button>
+    </div>
+  {/if}
+
+  {#if modeError}
+    <div
+      class="px-6 py-1.5 border-b border-yellow-500/30 bg-yellow-500/10 flex items-center gap-2 text-[12px] font-body-md"
+      role="alert"
+      data-testid="mode-error"
+    >
+      <span class="material-symbols-outlined text-[14px] text-yellow-300"
+        >save</span
+      >
+      <span class="text-text-primary">{modeError}</span>
+      <button
+        type="button"
+        onclick={() => (modeError = '')}
+        aria-label="Dismiss error"
+        class="ml-auto p-1 rounded hover:bg-hover text-text-muted border-none bg-transparent cursor-pointer"
       >
         <span class="material-symbols-outlined text-[14px]">close</span>
       </button>

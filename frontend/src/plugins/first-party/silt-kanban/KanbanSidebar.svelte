@@ -15,7 +15,7 @@
   // every interaction is bidirectional: a filter toggle here updates the
   // FilterBar AND the board's SQL query; toggling a chip in the FilterBar
   // updates this sidebar's checkboxes.
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import {
     settings,
@@ -48,6 +48,10 @@
   let newBoardName = $state('')
   let newBoardComposing = $state(false)
   let saveError = $state('')
+  // Auto-focus ref so the user can start typing the moment they click
+  // "+ Save current…" (no extra click into the input). Mirrors the
+  // Sidebar's notebook-create modal which auto-focuses its input.
+  let newBoardInput = $state<HTMLInputElement | null>(null)
 
   // Owners and tags — queried once on mount for the filter quick-toggles.
   // We deliberately keep these as plain lists (not reactive); adding a new
@@ -60,7 +64,65 @@
   function loadFromSettings() {
     const raw = settings.config?.plugins?.plugin_settings?.['silt-kanban']
       ?.boards as SavedBoard[] | undefined
-    savedBoards = Array.isArray(raw) ? [...raw] : []
+    if (!Array.isArray(raw)) {
+      savedBoards = []
+      return
+    }
+    // Validate on load: drop entries missing required fields (#323 hardening).
+    // A malformed board (e.g. hand-edited YAML with a typo) would otherwise
+    // be applied via applySavedBoard and write garbage into the shared
+    // module. Re-seeding the valid set keeps the user's stored boards
+    // self-healing on next persist.
+    const valid = raw.filter(isValidBoard)
+    const dropped = raw.length - valid.length
+    if (dropped > 0) {
+      // Best-effort re-persist so the YAML catches up to the in-memory set.
+      void persistBoards(valid)
+    }
+    savedBoards = valid
+  }
+
+  // Stable fingerprint for a scope+filters pair (#323 polish). Used to
+  // mark a saved board as "active" when its scope+filters match the live
+  // shared state. Avoids per-render JSON.stringify on every board in the
+  // list — that allocation is wasted when nothing has changed.
+  function boardFingerprint(scope: Scope, filters: KanbanFilters): string {
+    return [
+      scope,
+      filters.owners.join('|'),
+      filters.priorities.join('|'),
+      filters.dueDate,
+      filters.tags.join('|')
+    ].join('\u0000')
+  }
+  let liveFingerprint = $derived(
+    boardFingerprint(liveScope, liveFilters)
+  )
+  function isBoardActive(b: SavedBoard): boolean {
+    return boardFingerprint(b.scope, b.filters) === liveFingerprint
+  }
+
+  function isValidBoard(b: unknown): b is SavedBoard {
+    if (!b || typeof b !== 'object') return false
+    const r = b as Record<string, unknown>
+    if (typeof r.id !== 'string' || r.id.length === 0) return false
+    if (typeof r.name !== 'string' || r.name.length === 0) return false
+    if (
+      r.scope !== 'vault' &&
+      r.scope !== 'notebook' &&
+      r.scope !== 'section' &&
+      r.scope !== 'page'
+    ) {
+      return false
+    }
+    const f = r.filters
+    if (!f || typeof f !== 'object') return false
+    const fr = f as Record<string, unknown>
+    if (!Array.isArray(fr.owners)) return false
+    if (!Array.isArray(fr.priorities)) return false
+    if (typeof fr.dueDate !== 'string') return false
+    if (!Array.isArray(fr.tags)) return false
+    return true
   }
 
   async function loadOwnerTagLists() {
@@ -246,9 +308,7 @@
     </h3>
     <ul role="list" class="mt-1 space-y-0.5">
       {#each savedBoards as board (board.id)}
-        {@const isActive =
-          board.scope === liveScope &&
-          JSON.stringify(board.filters) === JSON.stringify(liveFilters)}
+        {@const isActive = isBoardActive(board)}
         <li>
           <div
             class="flex items-center gap-1 px-1 py-0.5 rounded text-[12px] font-body-md cursor-pointer border border-transparent
@@ -281,6 +341,7 @@
         <li class="flex items-center gap-1 px-1 py-1">
           <input
             type="text"
+            bind:this={newBoardInput}
             bind:value={newBoardName}
             placeholder="Board name…"
             data-testid="new-board-name"
@@ -313,7 +374,13 @@
         <li>
           <button
             type="button"
-            onclick={() => (newBoardComposing = true)}
+            onclick={() => {
+              newBoardComposing = true
+              // Focus the input after Svelte commits the new DOM node.
+              // tick() awaits the next microtask so the {#if} block has
+              // already rendered the input by the time we focus it.
+              void tick().then(() => newBoardInput?.focus())
+            }}
             data-testid="new-board"
             class="w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start cursor-pointer border border-dashed border-border-muted bg-transparent transition-colors"
           >

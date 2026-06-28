@@ -114,14 +114,20 @@
   // Reactive scroll: when the sidebar's focusDate or activeFilter changes
   // and the agenda groups are rendered, scroll the relevant group into
   // view. Uses tick() to ensure the DOM has settled before scrolling.
-  import { getFocusState } from './focusState.svelte'
+  import { getFocusState, clearActiveFilter } from './focusState.svelte'
+
+  // Expose the active filter on the script body so the in-view banner
+  // (rendered below the header) can read it without a redundant
+  // getFocusState() call. The value is still reactive because it reads
+  // a $state field under the hood.
+  let activeFilter = $derived(getFocusState().activeFilter)
 
   $effect(() => {
-    const { focusDate, activeFilter } = getFocusState()
-    if (!focusDate && activeFilter === 'all') return
+    const { focusDate, activeFilter: filter } = getFocusState()
+    if (!focusDate && filter === 'all') return
     void items
     void tick().then(() => {
-      const target = focusDate || (activeFilter === 'today' ? today : '')
+      const target = focusDate || (filter === 'today' ? today : '')
       const sel = target
         ? `[data-group-date="${target}"]`
         : `[data-group="today"]`
@@ -158,6 +164,31 @@
       {items.length} active task{items.length === 1 ? '' : 's'}
     </span>
   </header>
+
+  {#if activeFilter !== 'all'}
+    <div
+      class="px-6 py-1.5 border-b border-border-muted bg-accent-primary-glow flex items-center gap-2 text-[12px] font-body-md"
+      role="status"
+      aria-live="polite"
+      data-testid="agenda-filter-banner"
+    >
+      <span class="material-symbols-outlined text-[14px] text-accent-primary-start"
+        >filter_alt</span
+      >
+      <span class="text-text-primary"
+        >Focused on: <strong>{activeFilter}</strong></span
+      >
+      <button
+        type="button"
+        onclick={clearActiveFilter}
+        aria-label="Clear filter"
+        data-testid="agenda-clear-filter"
+        class="ml-auto p-1 rounded hover:bg-hover text-text-muted hover:text-error border-none bg-transparent cursor-pointer"
+      >
+        <span class="material-symbols-outlined text-[14px]">close</span>
+      </button>
+    </div>
+  {/if}
 
   {#if markDoneError}
     <div

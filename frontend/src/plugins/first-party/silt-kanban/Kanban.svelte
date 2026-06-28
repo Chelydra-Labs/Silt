@@ -1,7 +1,7 @@
 <script lang="ts">
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
-  import { untrack, onDestroy } from 'svelte'
+  import { untrack, onMount, onDestroy } from 'svelte'
   import type { PluginContext, PluginManifest, TaskStatus } from '../../sdk'
   import { settings, updatePluginSetting } from '../../../settings/store.svelte'
   import { measureFrameBudget } from '../../../lib/perf/frame-budget'
@@ -111,17 +111,27 @@
   // `handleFiltersChange()` which calls setFiltersShared().
   let filters = $derived(getKanbanState().filters)
 
-  // Hydrate the shared module from the current settings snapshot so the
-  // sidebar's initial render reads the persisted scope/filters rather
-  // than the defaults. Runs once at module init.
-  initSharedFromConfig(
-    initialScope(),
-    initialFilters(),
-    // The settings store doesn't persist the override flag itself, so we
-    // infer it on mount: if the persisted scope doesn't match what
-    // defaultScope() would have produced, the user must have overridden.
-    initialScope() !== defaultScope()
-  )
+  // Hydrate the shared module from the current settings snapshot on
+  // mount. Running this in onMount (not at script-body top level) means
+  // the sidebar's first render already sees the persisted scope/filters
+  // rather than the defaults — avoids a brief flash of "Vault / All
+  // Tasks" before the main view writes the real values (#323 hardening).
+  // Hydration must run before any child component reads the shared
+  // module, and onMount runs synchronously before children commit.
+  let hydrated = $state(false)
+  onMount(() => {
+    if (hydrated) return
+    hydrated = true
+    initSharedFromConfig(
+      initialScope(),
+      initialFilters(),
+      // The settings store doesn't persist the override flag itself, so
+      // we infer it on mount: if the persisted scope doesn't match what
+      // defaultScope() would have produced, the user must have
+      // overridden.
+      initialScope() !== defaultScope()
+    )
+  })
 
   // setScope is the single entry point for a USER-initiated scope change
   // (click or keyboard) — writes to the shared module so the sidebar's
