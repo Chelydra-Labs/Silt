@@ -12,6 +12,7 @@
 
 - **Today smart-list excludes overdue tasks.** The "Today" badge now counts only tasks due exactly today; overdue tasks are counted under their own "Overdue" badge. Previously the SQL used `due_date <= today` and conflated the two.
 - **Mark-done failures show a dismissable banner with auto-clear.** When `updateBlockState` rejects, an in-view banner appears with the error message and an explicit close (×) button; the banner also clears itself after 8 seconds or as soon as a subsequent mark-done succeeds.
+- **Today and Upcoming smart lists are mutually exclusive.** Clicking the Upcoming badge dims only future tasks; today-due tasks live in the Today badge alone. Previously the filter and the badge disagreed by one task.
 - **Saved-board delete prompts for confirmation.** Deleting a saved board now shows a confirmation dialog matching the existing remove-column affordance, so a stray click can't wipe a named board.
 - **Calendar's sidebar state resets on vault switch.** The `refresh-navigation` event (fired after every vault switch) now clears `focusDate` and `activeFilter` so a new vault opens on Today / All Tasks instead of inheriting state from the previous vault.
 - **Kanban scope radios are keyboard-correct per WAI-ARIA APG.** The radio group reads the chosen scope from the focused element's own `data-scope-radio` attribute, so Enter on a focused radio activates it even when the cursor index hasn't been updated yet. Disabled scopes are skipped by arrow-key navigation and ignore Enter/Space activation.
@@ -21,7 +22,7 @@
 # Improvements
 
 - A separate "Agenda" entry is no longer needed in the activity bar; the Calendar entry covers it.
-- `today` re-buckets on midnight while the agenda is open. The agenda's "Today" / "Overdue" / "Upcoming" buckets recompute when the local date changes, so tasks don't sit in the wrong bucket overnight.
+- `today` re-buckets on midnight while the agenda is open. The agenda's "Today" / "Tomorrow" / "Overdue" / "Upcoming" buckets all recompute when the local date changes, so tasks don't sit in the wrong bucket overnight. Previously only the "Today" bucket followed the local clock.
 
 # Notes
 

@@ -465,7 +465,7 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 | `frontend/src/components/PluginView.test.ts` (3 tests) | Happy-path render, load-error path, not-registered empty state | Plugin host view |
 | `frontend/src/components/Sidebar.test.ts` (9 tests) | Collapse render, no-accent notebook label (#138), MovePage mock + collision rejection, onPageMoved callback, tags-view TagSidebarPanel regression, plugin-sidebarComponent fallback (#321), notes-view page-tree fallback, registered sidebarComponent render + ctx+sessionToken wiring | Sidebar interactions + the plugin-provided sidebar routing layer (#321) |
 
-`npm test` now runs **887 vitest tests** across 86 files (was 844 across 82 before the senior-review regression pass; +43 from freshly-installed katex/mermaid dependencies that unblocked 14 previously failing TipTap editor suites, +1 new for the CalendarSidebar cleanup-on-unmount verification). `npm run check` reports **0 errors** introduced by this round (12 pre-existing Wails-binding + TabRef + DistinctOwners + math_enabled errors unchanged from `main`).
+`npm test` now runs **891 vitest tests** across 86 files (was 887 across 86 before the senior-review round-3 follow-ups; +4 for the Upcoming-filter parity test, the AgendaList midnight re-bucket test, the CalendarSidebar mount-reload-count test, and the round-trip stability test). `npm run check` reports **0 errors** introduced by this round (12 pre-existing Wails-binding + TabRef + DistinctOwners + math_enabled errors unchanged from `main`).
 
 ### Dead-code cleanup
 

@@ -306,8 +306,12 @@
     // dimmed by the Today filter — they live in the separate Overdue
     // smart list. Matches the SQL bucket in CalendarSidebar.
     if (f === 'today') return dueDate === t
+    // "Upcoming" = strictly future (today is its own smart list).
+    // Matches the SQL bucket in CalendarSidebar which also excludes
+    // today from the Upcoming count. Clicking the Upcoming badge and
+    // the filter result must agree.
     if (f === 'upcoming')
-      return dueDate >= t && dueDate <= plusDaysISO(t, 7)
+      return dueDate > t && dueDate <= plusDaysISO(t, 7)
     if (f === 'completed') return false
     return true
   }

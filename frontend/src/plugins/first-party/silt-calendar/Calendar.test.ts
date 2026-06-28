@@ -300,4 +300,22 @@ describe('Calendar plugin', () => {
     expect(getFocusState().activeFilter).toBe('all')
     expect(screen.queryByTestId('agenda-filter-banner')).toBeNull()
   })
+
+  // --- #325 P2 follow-up: Upcoming filter excludes today
+  it('upcoming filter round-trips through setActiveFilter without crashing', async () => {
+    // The actual dim/highlight contract is asserted by AgendaList.test.ts
+    // where matchesFilter() is exercised directly with a today-task +
+    // future-task fixture. Here we just verify the view survives
+    // repeated filter flips so the changed boundary can't crash the
+    // dim path.
+    setActiveFilter('upcoming')
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    expect(getFocusState().activeFilter).toBe('upcoming')
+    setActiveFilter('all')
+    await flush()
+    setActiveFilter('upcoming')
+    await flush()
+    expect(getFocusState().activeFilter).toBe('upcoming')
+  })
 })

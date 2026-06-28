@@ -319,4 +319,25 @@ describe('CalendarSidebar (#322)', () => {
       expect(fn).toHaveBeenCalledTimes(1)
     }
   })
+
+  // --- #325 P3 follow-up: mount-time reload fires exactly once
+  it('fires reload() exactly once on cold mount (one $effect for both nowTick and miniCursor)', async () => {
+    mocks.sqliteQuery.mockReset()
+    let queryCount = 0
+    mocks.sqliteQuery.mockImplementation(async () => {
+      queryCount++
+      // The conditional-aggregate query returns the count row.
+      if (queryCount === 1) return mockCounts(0, 0, 0, 0, 0)
+      return mockDayCounts([])
+    })
+    render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    // Flush both microtasks (mount + first effect run) and any
+    // post-microtask scheduling.
+    await flush()
+    await new Promise((r) => setTimeout(r, 0))
+    // The component fires 2 SQLite queries per reload() call (count +
+    // day-dots). With a single $effect firing once on mount, exactly
+    // 2 queries are issued. Two $effects would issue 4.
+    expect(queryCount).toBe(2)
+  })
 })

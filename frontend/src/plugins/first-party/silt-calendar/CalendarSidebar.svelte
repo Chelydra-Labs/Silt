@@ -151,18 +151,14 @@
     }
   })
 
-  // Re-run the count query each minute so the local-day anchor inside
-  // `reload()` (`ctx.today || localToday()`) reflects the new day. The
-  // effect fires on mount too, so the onMount no longer calls reload()
-  // explicitly — three reloads on cold start (onMount + two effects)
-  // collapsed to one.
+  // Re-run the count query when the local-day anchor shifts (nowTick
+  // ticks every minute to catch midnight crossings) OR when the
+  // mini-calendar cursor moves to a different month. Both anchors feed
+  // `reload()`, so a single effect keyed on both is enough — splitting
+  // them would fire reload() twice on cold mount (one effect run per
+  // dep group), wasting a SQLite round-trip.
   $effect(() => {
     void nowTick
-    void reload()
-  })
-
-  // Re-query when the mini-calendar cursor shifts months.
-  $effect(() => {
     void miniCursor
     void reload()
   })

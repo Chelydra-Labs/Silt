@@ -84,8 +84,12 @@
     void nowTick
     return ctx.today
   })
-  let tomorrow = $derived(plusDaysISO(ctx.today, 1))
-  let weekAhead = $derived(plusDaysISO(ctx.today, 7))
+  // tomorrow / weekAhead derive from the local `today` (which is
+  // nowTick-aware), not from ctx.today directly — ctx.today is a plain
+  // getter and a $derived that only reads it has no reactive dep, so it
+  // would freeze at mount-time instead of re-bucketing after midnight.
+  let tomorrow = $derived(plusDaysISO(today, 1))
+  let weekAhead = $derived(plusDaysISO(today, 7))
 
   let overdue = $derived(items.filter((i) => i.due_date < today))
   let todayItems = $derived(items.filter((i) => i.due_date === today))
@@ -180,8 +184,11 @@
     // matched by the Today filter — they live in the separate Overdue
     // smart list. Matches the SQL bucket in CalendarSidebar.
     if (activeFilter === 'today') return item.due_date === today
+    // "Upcoming" = strictly future (today is its own smart list).
+    // Matches the SQL bucket in CalendarSidebar which also excludes
+    // today from the Upcoming count.
     if (activeFilter === 'upcoming')
-      return item.due_date >= today && item.due_date <= weekAhead
+      return item.due_date > today && item.due_date <= weekAhead
     if (activeFilter === 'completed') return false
     return true
   }

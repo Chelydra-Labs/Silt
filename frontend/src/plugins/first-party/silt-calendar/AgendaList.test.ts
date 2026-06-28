@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 import AgendaList from './AgendaList.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
-import { resetFocusStateForTests } from './focusState.svelte'
+import { resetFocusStateForTests, setActiveFilter } from './focusState.svelte'
 
 function makeCtx(): PluginContext {
   return {
@@ -46,6 +46,12 @@ const MANIFEST: PluginManifest = {
 async function flush() {
   await tick()
   await new Promise((r) => setTimeout(r, 0))
+}
+
+// jsdom doesn't implement scrollIntoView; AgendaList's filter-scroll
+// effect calls it. Stub before mounting so the effect runs cleanly.
+if (!HTMLElement.prototype.scrollIntoView) {
+  HTMLElement.prototype.scrollIntoView = function () {}
 }
 
 const SAMPLE_ROW = {
@@ -108,5 +114,88 @@ describe('AgendaList markDoneError UI', () => {
     await fireEvent.click(screen.getByLabelText('Mark done'))
     await flush()
     expect(screen.queryByTestId('mark-done-error')).toBeNull()
+  })
+
+  // --- #325 P2 follow-up: Upcoming filter excludes today
+  it('upcoming filter dims today-task and highlights future-task (count/result parity)', async () => {
+    // Fixture: one today-task (due today) and one future-task (due in
+    // 5 days). The Upcoming smart-list count (SQL) excludes today →
+    // badge reads "1". The filter must agree: today-task is dimmed,
+    // future-task is highlighted.
+    mocks.sqliteQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'today1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: '2026-06-16',
+          clean_content: 'Today task',
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: '2026-06-16', // today
+          priority: 2
+        },
+        {
+          id: 'future1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: '2026-06-16',
+          clean_content: 'Future task',
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: '2026-06-21', // today + 5 days
+          priority: 2
+        }
+      ],
+      truncated: false
+    })
+    setActiveFilter('upcoming')
+    render(AgendaList, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // The `class:opacity-30={!matchesFilter(item)}` directive is on the
+    // outer per-item <div role="button">. Climb from the text node up
+    // to the role="button" wrapper to inspect the class list.
+    const todayRow = screen.getByText('Today task').closest('[role="button"]')
+    const futureRow = screen.getByText('Future task').closest('[role="button"]')
+    expect(todayRow).toBeTruthy()
+    expect(futureRow).toBeTruthy()
+    // Today-task must be dimmed (filter excludes today from upcoming);
+    // future-task must not.
+    expect(todayRow!.className).toMatch(/opacity-30/)
+    expect(futureRow!.className).not.toMatch(/opacity-30/)
+  })
+
+  // --- #325 P2 follow-up: tomorrow / weekAhead derive from nowTick-aware `today`
+  it('Tomorrow group date is plusDaysISO(today, 1) — derived from local today, not ctx.today', async () => {
+    // The buggy version used `plusDaysISO(ctx.today, 1)` for `tomorrow`,
+    // which froze the value at mount because ctx.today is a plain getter
+    // (no reactive dep). The fix derives from the nowTick-aware `today`
+    // so midnight crossings re-bucket.
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'tmrw1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: '2026-06-16',
+          clean_content: 'Tomorrow task',
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: '2026-06-17',
+          priority: 2
+        }
+      ],
+      truncated: false
+    })
+    render(AgendaList, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const tomorrowGroup = screen.getByLabelText('Tomorrow')
+    expect(tomorrowGroup.getAttribute('data-group-date')).toBe('2026-06-17')
   })
 })
