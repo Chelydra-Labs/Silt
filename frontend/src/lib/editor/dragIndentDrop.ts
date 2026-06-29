@@ -4,10 +4,11 @@ import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { dropPoint } from '@tiptap/pm/transform'
 
-// Notion-style indent-on-drop for the @tiptap/extension-drag-handle (#330,
-// #181 follow-up). Native ProseMirror drop already reorders whole top-level
-// blocks; this extension adds (a) a horizontal-position-driven depth change
-// on drop and (b) a drop-zone indicator showing the target depth.
+// Notion-style indent-on-drop for the Silt block drag handle (#330, #181
+// follow-up; drag-init moved to SiltInlineDragHandle in #339). Native
+// ProseMirror drop already reorders whole top-level blocks; this extension
+// adds (a) a horizontal-position-driven depth change on drop and (b) a
+// drop-zone indicator showing the target depth.
 //
 // The depth math is extracted as a pure helper (`resolveDropDepth`) so it
 // can be unit-tested in jsdom — the HTML5 drag/drop pipeline itself cannot
@@ -81,7 +82,7 @@ export function resolveDropDepth(
 // Shape of `view.dragging` at runtime. ProseMirror's public .d.ts types this
 // as `{slice, move}` only, but the runtime Dragging class also carries
 // `node: NodeSelection | undefined` for node drags (prosemirror-view's
-// `class Dragging`). The DragHandle extension populates this whenever it
+// `class Dragging`). SiltInlineDragHandle (#339) populates this whenever it
 // initiates a block drag, so `node.from` gives us the dragged block's
 // current source position — kept fresh across doc changes by
 // `EditorView.updateDraggedNode`. No id-scan, no guessing.
