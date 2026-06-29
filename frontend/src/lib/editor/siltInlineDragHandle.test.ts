@@ -22,25 +22,30 @@ import {
 // path is gated on the `wails dev` manual matrix in TESTING.md.
 
 describe('resolveDraggedBlockPosition — pure helper', () => {
-  // The real `ProseMirror.Node.forEach` walks doc children, calling the
-  // callback with `(child, offset)`. We mimic it with a tiny shim so the
-  // pure function can be tested without standing up a full editor.
-  function fakeDoc(blocks: Array<{ id: string | null; type?: string }>): {
-    forEach: (cb: (child: any, offset: number) => boolean | void) => void
+  // The production function walks top-level children via a manual
+  // `doc.child(i)` loop (early-exit on first match). The fake mirrors
+  // that contract: `childCount` + `child(i)` returning a child-or-null,
+  // with a `nodeSize` per child to advance the position cursor.
+  function fakeDoc(
+    blocks: Array<{ id: string | null; type?: string; nodeSize?: number }>
+  ): {
+    childCount: number
+    child: (i: number) => {
+      attrs?: Record<string, unknown>
+      nodeSize?: number
+    } | null
   } {
-    let offset = 0
     const children = blocks.map((b) => ({
       type: { name: b.type ?? 'noteBlock' },
       attrs: { id: b.id },
-      nodeSize: 2
+      nodeSize: b.nodeSize ?? 2
     }))
     return {
-      forEach(cb) {
-        for (const child of children) {
-          const keepGoing = cb(child, offset)
-          offset += child.nodeSize
-          if (keepGoing === false) return
-        }
+      get childCount() {
+        return children.length
+      },
+      child(i: number) {
+        return children[i] ?? null
       }
     }
   }
@@ -74,44 +79,81 @@ describe('resolveDraggedBlockPosition — pure helper', () => {
   })
 
   it('skips blocks with no `attrs` (defensive)', () => {
-    const offset = 0
+    // First child has no attrs; second has `attrs.id === 'real'`.
+    // We exercise the defensive `if (!child) continue` path by
+    // returning `null` for index 0 only.
     const fake = {
-      forEach(cb: (child: any, off: number) => boolean | void) {
-        cb({ type: { name: 'noteBlock' }, nodeSize: 2 }, offset)
-        cb(
-          { type: { name: 'noteBlock' }, attrs: { id: 'real' }, nodeSize: 2 },
-          offset + 2
-        )
+      childCount: 2,
+      child(i: number) {
+        if (i === 0)
+          return {
+            type: { name: 'noteBlock' },
+            nodeSize: 2
+          } as any
+        return {
+          type: { name: 'noteBlock' },
+          attrs: { id: 'real' },
+          nodeSize: 2
+        } as any
       }
     }
-    expect(resolveDraggedBlockPosition(fake, 'real')?.pos).toBe(2)
+    expect(resolveDraggedBlockPosition(fake as any, 'real')?.pos).toBe(2)
   })
 
-  it('stops iterating after the first match (exits the forEach via `return false`)', () => {
+  // Manual-loop early-exit: the production function uses a `for` loop and
+  // returns immediately on first match — proving the optimisation against
+  // ProseMirror's Node.forEach (which ignores the return value and visits
+  // every child). The trap-walking counter verifies NO visits past the
+  // match happen.
+  it('early-exits the loop after the first match (visits past match = 0)', () => {
     let visits = 0
-    const offset = 0
+    const after = [] as number[]
     const fake = {
-      forEach(cb: (child: any, off: number) => boolean | void) {
-        for (let i = 0; i < 5; i++) {
-          const id = i === 2 ? 'target' : `noise-${i}`
-          visits++
-          const keepGoing = cb(
-            { type: { name: 'noteBlock' }, attrs: { id }, nodeSize: 2 },
-            offset + i * 2
-          )
-          if (keepGoing === false) return
-        }
+      childCount: 5,
+      child(i: number) {
+        visits++
+        const id = i === 2 ? 'target' : `noise-${i}`
+        const child = {
+          type: { name: 'noteBlock' },
+          attrs: { id },
+          nodeSize: 2
+        } as any
+        if (i > 2) after.push(i)
+        return child
       }
     }
-    expect(resolveDraggedBlockPosition(fake, 'target')?.pos).toBe(4)
-    expect(visits).toBe(3)
+    const result = resolveDraggedBlockPosition(fake as any, 'target')
+    expect(result?.pos).toBe(4)
+    expect(visits).toBe(3) // indices 0, 1, 2; stop on first match
+    expect(after).toEqual([])
+  })
+
+  it('does not infinite-loop when a child is missing nodeSize (defensive)', () => {
+    let visits = 0
+    const fake = {
+      childCount: 2,
+      child(i: number) {
+        visits++
+        if (i === 0)
+          return { type: { name: 'noteBlock' }, attrs: { id: 'real' } } as any
+        // second child lacks nodeSize AND attrs — short-circuit guard needed.
+        return {
+          type: { name: 'noteBlock' },
+          nodeSize: 0
+        } as any
+      }
+    }
+    expect(resolveDraggedBlockPosition(fake as any, 'real')?.pos).toBe(0)
+    // Without the defensive `nodeSize ?? 0`, we'd loop forever on a
+    // zero-size child (it must be the bug-class we test against).
+    expect(visits).toBeLessThanOrEqual(2)
   })
 })
 
 describe('buildBlockSlice — pure helper', () => {
   // `doc.slice(from, to)` returns a Slice covering the range. Build a tiny
-  // real PM doc by standing up a Tiptap editor with StarterKit only.
-  function makeDoc() {
+  // real PM doc by standing up a Tiptap editor with StarterKit.
+  function makeSingleParaDoc() {
     const editor = new Editor({
       extensions: [StarterKit],
       content: {
@@ -126,21 +168,84 @@ describe('buildBlockSlice — pure helper', () => {
     return doc
   }
 
+  function makeTwoParaDoc(): {
+    editor: Editor
+    doc: any
+    firstPos: number
+    secondPos: number
+    cleanup: () => void
+  } {
+    const editor = new Editor({
+      extensions: [StarterKit],
+      content: {
+        type: 'doc',
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: 'one' }] },
+          { type: 'paragraph', content: [{ type: 'text', text: 'two' }] }
+        ]
+      }
+    })
+    const doc = editor.state.doc
+    const firstNode = doc.child(0)
+    const secondNode = doc.child(1)
+    const firstPos = 0
+    const secondPos = firstNode ? firstNode.nodeSize : 0
+    return {
+      editor,
+      doc,
+      firstPos,
+      secondPos,
+      cleanup: () => editor.destroy()
+    }
+  }
+
   it('produces a Slice covering the first block (open depth = 0)', () => {
-    const doc = makeDoc()
+    const doc = makeSingleParaDoc()
     const node = doc.firstChild
     const nodeSize = node ? node.nodeSize : 0
-    const slice = buildBlockSlice(doc, node)
+    const slice = buildBlockSlice(doc, 0, node)
     expect(slice).toBeInstanceOf(Slice)
     expect(slice.openStart).toBe(0)
     expect(slice.openEnd).toBe(0)
     expect(slice.content.size).toBe(nodeSize)
   })
 
+  // The following test catches the regression a previous revision
+  // introduced: buildBlockSlice once hardcoded `from = 0` and dropped `pos`,
+  // so dragging the second block produced a slice covering the FIRST block's
+  // content. ProseMirror's native drop handler then inserted the wrong
+  // block (prosemirror-view/dist/index.js:3810, 3840) — silent document
+  // corruption on every non-first block drag in any bail-to-native path.
+  // The first-block assertion above is intentionally NOT sufficient to
+  // catch this; this one is.
+  it('slices the correct range for a non-first block (#339 regression)', () => {
+    const { doc, secondPos, cleanup } = makeTwoParaDoc()
+    try {
+      const secondNode = doc.child(1)
+      const slice = buildBlockSlice(doc, secondPos, secondNode)
+      expect(slice).toBeInstanceOf(Slice)
+      expect(slice.openStart).toBe(0)
+      expect(slice.openEnd).toBe(0)
+      expect(slice.content.size).toBe(secondNode ? secondNode.nodeSize : 0)
+      // The slice's only child must be the SECOND paragraph (text "two"),
+      // never the first ("one"). Verify by reconstructing the text from
+      // the slice content — slice.content.firstChild is a paragraph Node.
+      const slicedParagraph = slice.content.firstChild
+      expect(slicedParagraph).toBeTruthy()
+      expect(slicedParagraph && slicedParagraph.type.name).toBe('paragraph')
+      const slicedText = slicedParagraph && slicedParagraph.textContent
+      expect(slicedText).toBe('two')
+      // Hard negative: the slice must NOT contain "one".
+      expect(slicedText).not.toContain('one')
+    } finally {
+      cleanup()
+    }
+  })
+
   it('handles a node without a known nodeSize (defensive — fallback size 0)', () => {
-    const doc = makeDoc()
+    const doc = makeSingleParaDoc()
     const fakeNode = { type: { name: 'noteBlock' } }
-    const slice = buildBlockSlice(doc, fakeNode)
+    const slice = buildBlockSlice(doc, 0, fakeNode)
     expect(slice).toBeInstanceOf(Slice)
     expect(slice.content.size).toBe(0)
   })

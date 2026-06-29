@@ -48,35 +48,57 @@ const siltInlineDragHandleKey = new PluginKey('siltInlineDragHandle')
  * surface nested blocks (e.g. inside a callout or details container) which
  * are not reorder-eligible via the inline drag handle; the consumer in
  * `dragIndentDrop.ts` enforces the same top-level-only invariant.
+ *
+ * Why a manual loop instead of `doc.forEach`: ProseMirror's `Node.forEach`
+ * (see `prosemirror-model/dist/index.js:257-263`) ignores the callback's
+ * return value and visits every child. An early-exit on first match is
+ * a real optimisation on large docs (a 500-block note is a 500-iteration
+ * scan otherwise) and is exactly the behaviour the helper needs. The
+ * returned `pos` is the doc-relative start offset of the block — same
+ * convention `Node.child(i)` and `doc.forEach` use.
  */
 export function resolveDraggedBlockPosition(
   doc: {
-    forEach: (cb: (child: any, offset: number) => boolean | void) => void
+    childCount: number
+    child: (index: number) => { attrs?: Record<string, unknown> } | null
   },
   blockId: string
 ): { pos: number; node: any } | null {
-  let found: { pos: number; node: any } | null = null
-  doc.forEach((child, offset) => {
-    if (found) return false
-    const attrs = child && (child.attrs as Record<string, unknown> | undefined)
+  for (let i = 0, p = 0; i < doc.childCount; i++) {
+    const child = doc.child(i)
+    if (!child) continue
+    const attrs = child.attrs as Record<string, unknown> | undefined
     if (attrs && attrs.id === blockId) {
-      found = { pos: offset, node: child }
-      return false
+      return { pos: p, node: child }
     }
-    return true
-  })
-  return found
+    // ProseMirror positions are flat; advance by `child.nodeSize`. A missing
+    // nodeSize (defensive — should not happen for real doc children) falls
+    // through with a no-op so we don't infinite-loop.
+    const size = (child as { nodeSize?: number }).nodeSize
+    p += typeof size === 'number' ? size : 0
+  }
+  return null
 }
 
 /**
- * Build a `Slice` from a single top-level block node — exactly the slice
- * the upstream `@tiptap/extension-drag-handle` builds via
+ * Build a `Slice` covering a single top-level block at `pos` — mirrors the
+ * upstream `@tiptap/extension-drag-handle` build via
  * `view.state.doc.slice(from, to)` for a single-block drag (line 492 of
- * `dist/index.js`). The block runs from `from` to `from + node.nodeSize`.
+ * `dist/index.js`). The block runs from `pos` to `pos + node.nodeSize`.
+ *
+ * `pos` MUST be passed: ProseMirror's native drop handler
+ * (`prosemirror-view/dist/index.js:3810, 3840`) reads `dragging.slice`
+ * whenever any consumer (including our `BlockIndentOnDrop` in bail-to-
+ * native scenarios, plus `draggable: true` schema-native drops) returns
+ * false on `handleDrop`. The native path deletes the source via
+ * `node.replace(tr)` and inserts `slice.content.firstChild` at the drop
+ * position — so a wrong slice is document-mutating (insertion of the
+ * wrong block's content). The call site (`handleDragStart`) resolves
+ * `pos` via `resolveDraggedBlockPosition` and forwards it here.
  */
-export function buildBlockSlice(doc: any, node: any): Slice {
+export function buildBlockSlice(doc: any, pos: number, node: any): Slice {
   const nodeSize = typeof node?.nodeSize === 'number' ? node.nodeSize : 0
-  return doc.slice(0, nodeSize)
+  return doc.slice(pos, pos + nodeSize)
 }
 
 /**
@@ -204,7 +226,7 @@ function handleDragStart(view: EditorView, event: DragEvent): void {
 
   const { pos, node } = found
 
-  const slice = buildBlockSlice(view.state.doc, node)
+  const slice = buildBlockSlice(view.state.doc, pos, node)
   const selection = buildNodeDragSelection(view.state.doc, pos)
 
   if (event.dataTransfer) {
