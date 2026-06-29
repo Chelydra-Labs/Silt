@@ -228,6 +228,13 @@ jobs:
       # install` triggers the `prepare` script, which regenerates the bindings
       # and seeds a placeholder frontend/dist/.gitkeep so the subsequent vite
       # build can write the real assets. Same flow as ci.yml.
+      # 
+      # Force-clean Vite cache + dist before install so no stale build output
+      # from a previous CI run can embed corrupted assets into the binary (#342).
+      - name: Clean stale frontend build artifacts
+        shell: bash
+        run: |
+          rm -rf frontend/dist frontend/.vite frontend/node_modules/.vite
       - name: Install frontend dependencies (regenerates wailsjs/)
         shell: bash
         run: |
