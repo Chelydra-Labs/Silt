@@ -13,6 +13,14 @@
   import { PlainPaste } from '../lib/editor/plainPaste'
   import { Search } from '../lib/editor/search/searchExtension'
   import {
+    Spellcheck,
+    requestSpellcheckRecheck
+  } from '../lib/editor/spellcheck/SpellcheckExtension'
+  import {
+    loadDictionary,
+    setCustomWords
+  } from '../lib/editor/spellcheck/dictionary'
+  import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
     SiltColorMarkExtensions,
@@ -664,6 +672,10 @@
     // In-page find (Ctrl+F) — wraps prosemirror-search; decorations + match
     // navigation. Cheap when the query is empty (FindBar closed).
     Search,
+    // Inline spellcheck (#196) — wavy underlines on misspellings. The
+    // dictionary loads + the decoration set rebuilds when the spellcheck config
+    // changes (see the $effect below); cheap (no decorations) when disabled.
+    Spellcheck,
     Placeholder.configure({
       placeholder: 'Type / for commands, or start writing…'
     }),
@@ -765,6 +777,32 @@
       // Seed the @-mention owner list on mount (#184).
       void loadOwners()
     }
+  })
+
+  // Spellcheck (#196): load the dictionary + apply the per-vault custom-word
+  // list whenever the spellcheck config changes (enable/disable, language,
+  // custom_dictionary edits). Disabled → no dictionary → checkWord returns
+  // true for everything → no underlines. After load/change, force a recheck so
+  // decorations refresh immediately (no editor reload needed).
+  $effect(() => {
+    const enabled = settings.config?.editor?.spellcheck_enabled !== false
+    const lang = settings.config?.editor?.spellcheck_language || 'en-US'
+    const custom = settings.config?.editor?.custom_dictionary ?? []
+    const editor = editorInstance
+    if (!editor) return
+    // Track the reactive inputs so the effect re-runs on each change.
+    void enabled
+    void lang
+    void custom
+    if (!enabled) return
+    setCustomWords(custom)
+    // Swallow load failures (logged in loadDictionary) — spellcheck degrades
+    // to off when the dictionary can't load (stripped build, test env).
+    void loadDictionary(lang)
+      .then(() => {
+        requestSpellcheckRecheck(editor)
+      })
+      .catch(() => {})
   })
 
   // Global event listeners for cross-component hotkeys.
