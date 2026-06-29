@@ -727,6 +727,84 @@ func contains(slice []string, want string) bool {
 	return false
 }
 
+// TestSearch_Filters exercises the SearchFilters dimensions added in Sprint 17
+// (#186): notebook, section, tag (hierarchical), type, sort, and VaultOnly scope.
+// All use the indexSearchable fixture + a linked-source block for the VaultOnly
+// case.
+func TestSearch_Filters(t *testing.T) {
+	dm := indexSearchable(t)
+
+	// Add a linked-source block so VaultOnly can exclude it.
+	linked := parser.ParsedBlock{
+		ID:         "cccccccc-1111-1111-1111-111111111111",
+		Type:       parser.BlockNote,
+		CleanText:  "sprint planning from a linked notebook",
+		LineNumber: 1,
+	}
+	if err := dm.IndexFileBlocks("linked:test", "Linked", "Misc", "Doc",
+		[]parser.ParsedBlock{linked}, []string{}); err != nil {
+		t.Fatalf("index linked: %v", err)
+	}
+
+	// Baseline: "sprint" matches vault + linked → ≥4 results (a1, a2, b1, linked).
+	baseline, err := dm.SearchBlocksPaged("sprint", 0, 50, SearchFilters{})
+	if err != nil {
+		t.Fatalf("baseline search: %v", err)
+	}
+	if baseline.Total < 4 {
+		t.Errorf("baseline: expected ≥4 results, got %d", baseline.Total)
+	}
+
+	// 1. Notebook filter: "Work" narrows to vault Work blocks; "Nope" → 0.
+	workRes, _ := dm.SearchBlocksPaged("sprint", 0, 50, SearchFilters{Notebook: "Work"})
+	if workRes.Total < 3 {
+		t.Errorf("notebook=Work: expected ≥3, got %d", workRes.Total)
+	}
+	nopeRes, _ := dm.SearchBlocksPaged("sprint", 0, 50, SearchFilters{Notebook: "Nope"})
+	if nopeRes.Total != 0 {
+		t.Errorf("notebook=Nope: expected 0, got %d", nopeRes.Total)
+	}
+
+	// 2. Type filter: TASK → only the task block (a2); NOTE → the note blocks.
+	taskRes, _ := dm.SearchBlocksPaged("sprint", 0, 50, SearchFilters{Type: "TASK"})
+	if taskRes.Total != 1 {
+		t.Errorf("type=TASK: expected 1, got %d", taskRes.Total)
+	}
+	noteRes, _ := dm.SearchBlocksPaged("sprint", 0, 50, SearchFilters{Type: "NOTE"})
+	if noteRes.Total < 3 {
+		t.Errorf("type=NOTE: expected ≥3, got %d", noteRes.Total)
+	}
+
+	// 3. Tag filter: "work" narrows results (proves the filter works); "nope" → 0.
+	tagRes, _ := dm.SearchBlocksPaged("sprint", 0, 50, SearchFilters{Tag: "work"})
+	if tagRes.Total < 2 {
+		t.Errorf("tag=work: expected ≥2, got %d", tagRes.Total)
+	}
+	tagNope, _ := dm.SearchBlocksPaged("sprint", 0, 50, SearchFilters{Tag: "nope"})
+	if tagNope.Total != 0 {
+		t.Errorf("tag=nope: expected 0, got %d", tagNope.Total)
+	}
+
+	// 4. VaultOnly: true excludes the linked-source block.
+	vaultOnly, _ := dm.SearchBlocksPaged("sprint", 0, 50, SearchFilters{VaultOnly: true})
+	if vaultOnly.Total >= baseline.Total {
+		t.Errorf("VaultOnly should exclude linked results: got %d, baseline %d",
+			vaultOnly.Total, baseline.Total)
+	}
+	// Confirm the linked block is NOT in the vault-only results.
+	for _, r := range vaultOnly.Results {
+		if r.Notebook == "Linked" {
+			t.Errorf("VaultOnly leaked linked-notebook result: %+v", r)
+		}
+	}
+
+	// 5. Sort by recency doesn't crash and returns results.
+	recencyRes, _ := dm.SearchBlocksPaged("sprint", 0, 50, SearchFilters{Sort: "recency"})
+	if recencyRes.Total == 0 {
+		t.Errorf("sort=recency: expected results, got 0")
+	}
+}
+
 func TestIndexScanResults_ReturnsSkippedFiles(t *testing.T) {
 	// Files that the scanner reports as errored must appear in the skip
 	// slice returned alongside the count. The caller uses this to notify

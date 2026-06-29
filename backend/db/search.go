@@ -126,12 +126,10 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 		// Scope: in-vault blocks only (exclude linked-notebook sources).
 		where = append(where, "b.source = 'vault'")
 	}
-	orderClause := "bm25(blocks_fts) AS rank"
+	// The SELECT always includes bm25 for scoring; only the ORDER BY varies.
+	// (DESC belongs in ORDER BY, never in SELECT.)
 	order := "rank"
 	if filters.Sort == "recency" {
-		// file_date is the per-block date (YYYY-MM-DD); most-recent first, with
-		// bm25 as the tiebreaker.
-		orderClause = "b.file_date DESC, bm25(blocks_fts) AS rank"
 		order = "b.file_date DESC, rank"
 	}
 
@@ -141,7 +139,7 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''),
 		       COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
 		       snippet(blocks_fts, 0, '<mark>', '</mark>', '...', 20),
-		       ` + orderClause + `
+		       bm25(blocks_fts) AS rank
 		FROM blocks_fts
 		JOIN blocks b ON b.rowid = blocks_fts.rowid
 		LEFT JOIN tasks t ON b.id = t.block_id
