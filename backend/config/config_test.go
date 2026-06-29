@@ -1001,7 +1001,7 @@ func TestDefaults_SearchWritingAids(t *testing.T) {
 	hkCases := map[string]string{
 		"find_in_page":           "Ctrl+F",
 		"replace":                "Ctrl+H",
-		"global_replace":         "Ctrl+Shift+H",
+		"global_replace":         "Ctrl+Shift+G",
 		"toggle_typewriter_mode": "Ctrl+Shift+Y",
 	}
 	for key, want := range hkCases {

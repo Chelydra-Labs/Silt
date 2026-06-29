@@ -82,7 +82,7 @@
         tag: '',
         type: '',
         sort: '',
-        vaultOnly: false
+        vaultOnly: true
       })
       const byPage = new Map<string, PageGroup>()
       for (const r of res.results || []) {
@@ -154,26 +154,28 @@
           grp.page
         )
         const matchIds = new Set(acceptedMatches.map((m) => m.blockId))
+        // Snapshot ORIGINAL blocks ONCE before any mutation so the revert log
+        // captures the true pre-edit state — not a partially-mutated one.
+        const originalBlocks = blocks.map((bb) => ({ ...bb }))
         let changed = false
         for (const b of blocks) {
           if (!matchIds.has(b.id)) continue
           const before = b.clean_text ?? ''
           const after = applyReplace(before, matcher)
           if (before !== after) {
-            // Stash the original for revert BEFORE mutating.
-            newLog.push({
-              notebook: grp.notebook,
-              section: grp.section,
-              page: grp.page,
-              blocks: blocks.map((bb) => ({ ...bb })) // snapshot before any change
-            })
             b.clean_text = after
-            b.raw_text = after // raw mirrors clean for the render path
+            b.raw_text = after
             changed = true
             replacements++
           }
         }
         if (changed) {
+          newLog.push({
+            notebook: grp.notebook,
+            section: grp.section,
+            page: grp.page,
+            blocks: originalBlocks
+          })
           await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
           pagesChanged++
         }

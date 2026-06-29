@@ -45,8 +45,10 @@ function scopeFilter(
   // Check marks at a position INSIDE the match range, not the boundary.
   // resolve(from).marks() at a text-node boundary associates with the
   // preceding node and can miss the mark that starts at `from`; resolving at
-  // the last char of the match (to-1) is reliably inside the matched text.
-  const inside = state.doc.resolve(result.to - 1).marks()
+  // the last char of the match (to-1) is reliably inside. For single-char
+  // matches at position 0, max(from, to-1) ensures we don't resolve at 0
+  // (before the first node) where marks() returns an empty set.
+  const inside = state.doc.resolve(Math.max(result.from, result.to - 1)).marks()
   const fromMarks = $from.marks()
   const blocked = (m: { type: { name: string } }) =>
     m.type.name === 'code' || m.type.name === 'link'

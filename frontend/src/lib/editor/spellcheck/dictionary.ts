@@ -65,6 +65,18 @@ export function isDictionaryLoaded(): boolean {
 }
 
 /**
+ * Reset the dictionary to the unloaded state (dict = null). Called when
+ * spellcheck is toggled OFF so checkWord returns true for everything (no
+ * false squiggles) and the next enable re-fetches the dictionary cleanly.
+ */
+export function resetDictionary(): void {
+  dict = null
+  loadPromise = null
+  currentLang = ''
+  cache.clear()
+}
+
+/**
  * Replace the active custom-word set. Called when the config loads / changes
  * and when a word is added/removed via IPC. Clears the word cache so tokens
  * previously flagged as misspelled are re-evaluated.

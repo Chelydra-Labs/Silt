@@ -932,7 +932,7 @@ hotkeys:
   # (Ctrl+Shift+Y) pairs with toggle_focus_mode (Ctrl+Shift+D).
   find_in_page: "Ctrl+F"
   replace: "Ctrl+H"
-  global_replace: "Ctrl+Shift+H"
+  global_replace: "Ctrl+Shift+G"
   toggle_typewriter_mode: "Ctrl+Shift+Y"
 # Editor-scoped shortcuts (heading, alignment, quote, details, table, format
 # marks) are config-driven at editor-creation time (#311). Remap them here;

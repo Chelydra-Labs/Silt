@@ -19,7 +19,8 @@
   } from '../lib/editor/spellcheck/SpellcheckExtension'
   import {
     loadDictionary,
-    setCustomWords
+    setCustomWords,
+    resetDictionary
   } from '../lib/editor/spellcheck/dictionary'
   import SpellcheckMenu from './editor/SpellcheckMenu.svelte'
   import { TypewriterMode } from '../lib/editor/typewriter/TypewriterModeExtension'
@@ -800,7 +801,14 @@
     void enabled
     void lang
     void custom
-    if (!enabled) return
+    if (!enabled) {
+      // When disabled, reset the dictionary so checkWord returns true for
+      // everything (no squiggles) AND force a recheck to wipe stale
+      // decorations immediately — the user expects underlines to vanish.
+      resetDictionary()
+      requestSpellcheckRecheck(editor)
+      return
+    }
     setCustomWords(custom)
     // Swallow load failures (logged in loadDictionary) — spellcheck degrades
     // to off when the dictionary can't load (stripped build, test env).

@@ -93,16 +93,18 @@
     if (!editor || matchCount === 0) return
     editor.commands.replaceNextInPage()
     refreshCounts()
+    inputEl?.focus()
   }
   function doReplaceAll(): void {
     if (!editor || matchCount === 0) return
     const before = matchCount
     editor.commands.replaceAllInPage()
     refreshCounts()
-    lastReplaceMessage = `Replaced ${before}`
+    lastReplaceMessage = `Replaced ${before} match${before === 1 ? '' : 'es'}`
     window.setTimeout(() => {
       lastReplaceMessage = ''
     }, 2500)
+    inputEl?.focus()
   }
 
   function close(): void {

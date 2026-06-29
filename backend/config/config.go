@@ -357,7 +357,7 @@ func Defaults() SystemConfig {
 			// right-click + a FormatToolbar button (see SPECS.md).
 			"find_in_page":           "Ctrl+F",
 			"replace":                "Ctrl+H",
-			"global_replace":         "Ctrl+Shift+H",
+			"global_replace":         "Ctrl+Shift+G",
 			"toggle_typewriter_mode": "Ctrl+Shift+Y",
 		},
 		Plugins: PluginsConfig{

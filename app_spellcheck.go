@@ -46,8 +46,8 @@ func (a *App) GetCustomDictionary() ([]string, error) {
 	if a.vaultPath == "" {
 		return nil, fmt.Errorf("vault not loaded")
 	}
-	a.configMu.Lock()
-	defer a.configMu.Unlock()
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
 	if a.cfg.Editor.CustomDictionary == nil {
 		return []string{}, nil
 	}
