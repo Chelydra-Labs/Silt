@@ -33,6 +33,7 @@ import { Extension } from '@tiptap/core'
 import type { EditorView } from '@tiptap/pm/view'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { Slice } from '@tiptap/pm/model'
+import type { DraggingLike } from './dragIndentDrop'
 
 const siltInlineDragHandleKey = new PluginKey('siltInlineDragHandle')
 
@@ -187,18 +188,6 @@ function findBlockEl(target: EventTarget | null): HTMLElement | null {
  * which is exactly what we want: a transparent drag image that follows
  * the cursor with the block's full DOM.
  */
-// Shape of ProseMirror's runtime `view.dragging` slot — the public `.d.ts`
-// only types `{slice, move}` but the runtime `Dragging` class also carries
-// `node: NodeSelection | undefined`. This is the contract BlockIndentOnDrop
-// (`dragIndentDrop.ts:88`) reads. Defined here rather than imported from
-// `dragIndentDrop.ts` to keep `dragIndentDrop.ts` out of the change surface
-// (see § out-of-scope in PLAN.md).
-type DraggingLike = {
-  slice: Slice
-  move: boolean
-  node: NodeSelection | undefined
-}
-
 function handleDragStart(view: EditorView, event: DragEvent): void {
   const blockEl = findBlockEl(event.target)
   if (!blockEl) return

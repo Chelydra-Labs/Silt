@@ -91,7 +91,13 @@ export function resolveDropDepth(
 // identity-and-position machinery below depends on `nodeSel.from` being
 // accurate. If you refactor and lose `nodeSel` here, indent-on-drop
 // silently degrades to native reorder only.
-interface DraggingLike {
+// `node?: NodeSelection | null` mirrors prosemirror-view's runtime
+// `Dragging` class signature exactly (the field is optional in the
+// runtime because the public `.d.ts` declares only `{slice, move}`).
+// Exported because `siltInlineDragHandle.ts` (the producer) imports it —
+// a separate copy there would drift (and did drift once, in the senior
+// code review pass); one canonical type lives here.
+export interface DraggingLike {
   slice: Slice
   move: boolean
   node?: NodeSelection | null

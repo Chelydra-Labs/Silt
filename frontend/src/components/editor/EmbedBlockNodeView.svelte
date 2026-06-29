@@ -120,11 +120,10 @@
         <span class="material-symbols-outlined text-[18px]">delete</span>
       </button>
       <span
-        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none"
         title="Drag to reorder (Alt+ArrowUp/Down to reorder by keyboard)"
         spellcheck="false"
         aria-hidden="true"
-        draggable="true"
       >
         drag_indicator
       </span>
@@ -176,11 +175,10 @@
         <span class="material-symbols-outlined text-[18px]">delete</span>
       </button>
       <span
-        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none"
         title="Drag to reorder (Alt+ArrowUp/Down to reorder by keyboard)"
         spellcheck="false"
         aria-hidden="true"
-        draggable="true"
       >
         drag_indicator
       </span>
