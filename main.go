@@ -70,14 +70,25 @@ func shouldOpenDevtools() bool {
 		return true
 	}
 	settings, err := vault.LoadSettings()
-	if err != nil || settings.VaultPath == "" {
+	if err != nil {
+		println("[silt] devtools: vault.LoadSettings error:", err.Error())
+		return false
+	}
+	if settings.VaultPath == "" {
+		println("[silt] devtools: no vault path in settings (first run?)")
 		return false
 	}
 	cfg, err := config.Load(settings.VaultPath)
 	if err != nil {
+		println("[silt] devtools: config.Load error:", err.Error())
 		return false
 	}
-	return cfg.UI.OpenDevtoolsOnStartup != nil && *cfg.UI.OpenDevtoolsOnStartup
+	if cfg.UI.OpenDevtoolsOnStartup == nil {
+		println("[silt] devtools: open_devtools_on_startup not set in config")
+		return false
+	}
+	println("[silt] devtools: open_devtools_on_startup =", *cfg.UI.OpenDevtoolsOnStartup)
+	return *cfg.UI.OpenDevtoolsOnStartup
 }
 
 func main() {

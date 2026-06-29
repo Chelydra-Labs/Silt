@@ -88,7 +88,12 @@
   )
 
   $effect(() => {
+    console.log('[VSC] mount:', { notebook, section, page, viewMode, isActive })
+  })
+
+  $effect(() => {
     if (notebook && page) {
+      console.log('[VSC] loading page:', { notebook, section, page })
       untrack(() => loadPage(true))
     }
   })
@@ -131,11 +136,16 @@
     const reqPage = page
     try {
       const result = await FetchPageBlocks(reqNotebook, reqSection, reqPage)
-      if (notebook !== reqNotebook || page !== reqPage) return
+      if (notebook !== reqNotebook || page !== reqPage) {
+        console.log('[VSC] loadPage stale, discarding:', { reqNotebook, reqPage, currentNotebook: notebook, currentPage: page })
+        return
+      }
       blocks = result || []
+      console.log('[VSC] loadPage success:', blocks.length, 'blocks')
     } catch (e) {
       if (notebook !== reqNotebook || page !== reqPage) return
       loadError = e instanceof Error ? e.message : String(e)
+      console.error('[VSC] loadPage error:', loadError)
     } finally {
       if (showLoader) {
         loading = false
