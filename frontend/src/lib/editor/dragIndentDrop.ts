@@ -86,6 +86,11 @@ export function resolveDropDepth(
 // initiates a block drag, so `node.from` gives us the dragged block's
 // current source position — kept fresh across doc changes by
 // `EditorView.updateDraggedNode`. No id-scan, no guessing.
+// IMPORTANT: `node` is the producer-side contract from SiltInlineDragHandle.
+// Do NOT tighten this interface back to `{slice, move}` — the entire
+// identity-and-position machinery below depends on `nodeSel.from` being
+// accurate. If you refactor and lose `nodeSel` here, indent-on-drop
+// silently degrades to native reorder only.
 interface DraggingLike {
   slice: Slice
   move: boolean

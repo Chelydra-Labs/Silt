@@ -758,6 +758,7 @@ body {
 .silt-drag-handle-inline {
   cursor: grab;
   -webkit-user-drag: element;
+  user-select: none;
 }
 .silt-drag-handle-inline:active {
   cursor: grabbing;

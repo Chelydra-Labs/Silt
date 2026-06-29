@@ -165,15 +165,42 @@ function findBlockEl(target: EventTarget | null): HTMLElement | null {
  * which is exactly what we want: a transparent drag image that follows
  * the cursor with the block's full DOM.
  */
+// Shape of ProseMirror's runtime `view.dragging` slot — the public `.d.ts`
+// only types `{slice, move}` but the runtime `Dragging` class also carries
+// `node: NodeSelection | undefined`. This is the contract BlockIndentOnDrop
+// (`dragIndentDrop.ts:88`) reads. Defined here rather than imported from
+// `dragIndentDrop.ts` to keep `dragIndentDrop.ts` out of the change surface
+// (see § out-of-scope in PLAN.md).
+type DraggingLike = {
+  slice: Slice
+  move: boolean
+  node: NodeSelection | undefined
+}
+
 function handleDragStart(view: EditorView, event: DragEvent): void {
   const blockEl = findBlockEl(event.target)
   if (!blockEl) return
 
   const blockId = blockEl.getAttribute('data-id')
-  if (!blockId) return
+  // The schema's `renderHTML` only emits `data-id` when `attrs.id` is
+  // truthy (`schema.ts:138`); blocks minted by `UniqueBlockIds.appendTransaction`
+  // may briefly render with id=null until the post-transaction fixup runs.
+  // Also guard the literal string "null" that Svelte emits when
+  // `data-id={node.attrs.id}` is given an explicit null.
+  if (!blockId || blockId === 'null') return
 
   const found = resolveDraggedBlockPosition(view.state.doc, blockId)
-  if (!found) return
+  if (!found) {
+    // The block was visible when the user moused-down but no longer exists
+    // in the doc by the time dragstart fires (a rapid concurrent edit, or
+    // the doc was reloaded mid-drag). Surface to dev tools so a user
+    // report of "drag did nothing" has a paper trail — silent fallback is
+    // explicitly against the project's fail-loudly rule (AGENTS.md).
+    if (typeof console !== 'undefined') {
+      console.debug('[silt] drag-init: block no longer in doc, id=', blockId)
+    }
+    return
+  }
 
   const { pos, node } = found
 
@@ -198,19 +225,16 @@ function handleDragStart(view: EditorView, event: DragEvent): void {
     } catch {
       // setDragImage throws if the element is detached or the document
       // is hidden — degrade to "no custom drag image" (browser default)
-      // rather than failing the drag entirely.
+      // rather than failing the drag entirely. The fallback UX is
+      // "block follows cursor with the browser-default ghost" — visibly
+      // different but still functional.
     }
   }
 
   // Populate the consumer contract (see dragIndentDrop.ts:88–92).
   const nodeSel = selection instanceof NodeSelection ? selection : undefined
-  // Cast `view.dragging` — the runtime accepts `{slice, move, node}` even
-  // though the public `.d.ts` only types `slice` + `move`.
-  ;(
-    view as unknown as {
-      dragging: { slice: Slice; move: boolean; node: NodeSelection | undefined }
-    }
-  ).dragging = {
+  const draggingView = view as unknown as { dragging: DraggingLike }
+  draggingView.dragging = {
     slice,
     move: true,
     node: nodeSel
@@ -218,7 +242,15 @@ function handleDragStart(view: EditorView, event: DragEvent): void {
 
   // Land the selection on the block BEFORE the browser completes the drag
   // image — PM's drop handler reads `editor.state.selection` synchronously.
-  const tr = view.state.tr.setSelection(selection)
+  // `addToHistory: false` keeps the selection-only transaction out of undo
+  // history: without it every successful drag would leave a stray undo
+  // entry that only resets the selection (the move itself is undoable via
+  // the drop's own transaction). This mirrors the upstream
+  // `@tiptap/extension-drag-handle` behaviour but is the right call for
+  // the inline path — see PLAN.md Phase 6 P1-3.
+  const tr = view.state.tr
+    .setSelection(selection)
+    .setMeta('addToHistory', false)
   view.dispatch(tr)
 }
 
