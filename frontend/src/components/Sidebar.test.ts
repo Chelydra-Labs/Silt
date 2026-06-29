@@ -15,10 +15,13 @@ const mocks = vi.hoisted(() => ({
 }))
 
 // Hoisted plugin-store mock so tests can swap in plugin entries that
-// either do or do not register a sidebarComponent (#321).
+// either do or do not register a sidebarComponent (#321). loadersReady
+// defaults to true so existing tests render the plugin sidebar; the
+// suspend test flips it to false (#326 item 5).
 const mockPlugins = vi.hoisted(() => ({
   plugins: new Map<string, any>(),
-  errors: [] as { id: string; message: string }[]
+  errors: [] as { id: string; message: string }[],
+  loadersReady: true
 }))
 const mockGetSessionToken = vi.hoisted(() => vi.fn(() => 'tok-test'))
 
@@ -95,6 +98,7 @@ describe('Sidebar', () => {
     // a registered sidebarComponent into the next (#321 isolation).
     mockPlugins.plugins.clear()
     mockPlugins.errors = []
+    mockPlugins.loadersReady = true
     mockGetSessionToken.mockClear().mockReturnValue('tok-test')
   })
 
@@ -236,7 +240,9 @@ describe('Sidebar', () => {
     await flush()
     // TagSidebarPanel renders a "Tags" header / search input. We assert by
     // querying for any text unique to it; the query input is enough.
-    const tagSearch = document.querySelector('input[type="search"], input[placeholder*="ag"], input[placeholder*="earch"]')
+    const tagSearch = document.querySelector(
+      'input[type="search"], input[placeholder*="ag"], input[placeholder*="earch"]'
+    )
     // If the input isn't there, just confirm the component mounted without
     // throwing and rendered something inside the sidebar.
     expect(document.querySelector('aside')).toBeTruthy()
@@ -347,5 +353,43 @@ describe('Sidebar', () => {
     expect(seen).toBeTruthy()
     expect(seen.ctx.pluginID).toBe('silt-kanban')
     expect(seen.ctx.sessionToken).toBe('tok-test')
+  })
+
+  it('loadersReady=false suspends the plugin sidebar (no ctx built) (#326 item 5)', async () => {
+    // During vault:closing's clear→re-register window, getSessionToken
+    // returns undefined. Without the gate, Sidebar would build a context
+    // with an empty token and the plugin would fail every privileged call.
+    // With the gate, pluginSidebarCtx is null and the stub never mounts.
+    delete (globalThis as any).__lastStubSidebarProps
+    const StubSidebar = (await import('./__test_helpers__/StubSidebar.svelte'))
+      .default
+
+    mockPlugins.plugins.set('silt-kanban', {
+      manifest: { id: 'silt-kanban', name: 'Kanban', version: '1.0.0' },
+      component: () => null,
+      sidebarComponent: StubSidebar,
+      source: 'first-party'
+    })
+    mockPlugins.loadersReady = false // mid-teardown window
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'kanban',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    // The plugin sidebar suspended — no stub mounted, no ctx captured.
+    expect(document.querySelector('[data-test-stub-sidebar]')).toBeNull()
+    expect((globalThis as any).__lastStubSidebarProps).toBeUndefined()
+    // Critically, getSessionToken was NOT called (ctx construction skipped).
+    expect(mockGetSessionToken).not.toHaveBeenCalled()
   })
 })

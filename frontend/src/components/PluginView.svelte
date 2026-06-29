@@ -22,7 +22,17 @@
   // svelte-ignore state_referenced_locally: pluginId is a stable prop
   // identifying which plugin this view renders; it does not change during
   // the component's lifetime, so capturing the initial value is correct.
-  const ctx = makePluginContext(pluginId, getSessionToken(pluginId))
+  //
+  // $derived (not module-const) so it re-runs when loadersReady flips back
+  // to true after vault:closing's clear→re-register cycle. Without this the
+  // const captured at mount could carry an empty session token and every
+  // privileged SDK call would fail for the component's whole life (#326
+  // item 5). The render branch gates on ctx being non-null so the plugin
+  // suspends (renders nothing) during the vault-switch window.
+  let ctx = $derived.by(() => {
+    if (!loadedPlugins.loadersReady) return null // suspend during vault switch
+    return makePluginContext(pluginId, getSessionToken(pluginId))
+  })
 </script>
 
 {#if loadError}
@@ -58,7 +68,7 @@
       (Agenda, Calendar) are bundled; install others via the plugin manager.
     </p>
   </div>
-{:else}
+{:else if ctx}
   {@const Plugin = plugin.component}
   <Plugin {ctx} manifest={plugin.manifest} />
 {/if}

@@ -54,6 +54,11 @@ export function getSessionToken(pluginID: string): string | undefined {
  * usable); onVaultClose / onShutdown fire via the host vault:closing event +
  * window beforeunload. Every plugin's event-bus subscriptions are cleaned up
  * on disable/uninstall/vault-close.
+ *
+ * `loadedPlugins.loadersReady` is flipped true at the end of a successful
+ * load and false at the start of vault:closing teardown. Sidebar/PluginView
+ * gate PluginContext construction on it to avoid capturing an empty session
+ * token during the clear→re-register window (#326 item 5).
  */
 export async function loadPlugins(
   activeNotebook: string,
@@ -178,10 +183,14 @@ export async function loadPlugins(
 
   loadedPlugins.plugins = plugins
   loadedPlugins.errors = errors
+  // Session tokens are live; consumers (Sidebar/PluginView) can safely build
+  // a PluginContext now. Flipping this last re-triggers any $derived that
+  // suspended during the clear→re-register window (#326 item 5).
+  loadedPlugins.loadersReady = true
 
   wireLifecycleOnce()
 
-  return { plugins, errors }
+  return { plugins, errors, loadersReady: true }
 }
 
 /**
@@ -203,6 +212,13 @@ function wireLifecycleOnce() {
   lifecycleWired = true
 
   EventsOn('vault:closing', () => {
+    // Mark loaders not-ready BEFORE any teardown so Sidebar/PluginView
+    // suspend context construction while sessionTokens is being cleared
+    // and before the next loadPlugins re-registers them. Without this,
+    // a remount in the window captures a context with an empty token and
+    // every privileged SDK call fails until the component remounts again
+    // (#326 item 5).
+    loadedPlugins.loadersReady = false
     for (const reg of loadedPlugins.plugins.values()) {
       try {
         reg.onVaultClose?.()

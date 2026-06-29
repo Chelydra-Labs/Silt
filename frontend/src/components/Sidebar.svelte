@@ -41,6 +41,7 @@
   } from '../plugins/getPluginSidebar'
   import { getSessionToken } from '../plugins/loader'
   import { makePluginContext } from '../plugins/context'
+  import { loadedPlugins } from '../plugins/store.svelte'
 
   interface Props {
     activeNotebook: string
@@ -86,9 +87,15 @@
   // from the reactive store, build the context with the session token the
   // loader registered. The render branch uses the resolved `SidebarCmp`
   // and passes it `{ ctx, manifest }` — the same shape PluginView passes.
+  //
+  // Gating on `loadedPlugins.loadersReady` re-runs this derived when the
+  // flag flips back to true AFTER vault:closing's clear→re-register cycle,
+  // so getSessionToken(id) captures the FRESH token instead of an empty
+  // one captured mid-teardown (#326 item 5).
   let pluginSidebarEntry = $derived(getPluginSidebar(activeView))
   let SidebarCmp = $derived(pluginSidebarEntry?.sidebarComponent)
   let pluginSidebarCtx: PluginContext | null = $derived.by(() => {
+    if (!loadedPlugins.loadersReady) return null // suspend during vault switch
     const id = pluginIdForView(activeView)
     if (!id) return null
     return makePluginContext(id, getSessionToken(id))
