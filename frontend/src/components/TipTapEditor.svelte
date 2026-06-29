@@ -6,10 +6,10 @@
   import Placeholder from '@tiptap/extension-placeholder'
   import { CharacterCount, Focus, TrailingNode } from '@tiptap/extensions'
   import Typography from '@tiptap/extension-typography'
-  import { DragHandle } from '@tiptap/extension-drag-handle'
   import { AutosaveManager } from '../lib/editor/useAutosave'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
+  import { SiltInlineDragHandle } from '../lib/editor/siltInlineDragHandle'
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
@@ -642,27 +642,6 @@
       onNavigate: onMentionNavigate,
       onSelectActive: onMentionSelectActive
     }),
-    // Drag-to-reorder handle (#181). A framework-agnostic DOM grip positioned
-    // by the extension over the hovered block; native ProseMirror drop reorders
-    // the whole block. Alt+Up/Down (SiltBlockKeymaps) is the keyboard
-    // equivalent.
-    DragHandle.configure({
-      render: () => {
-        const el = document.createElement('div')
-        el.className = 'silt-drag-handle'
-        // Pointer-only affordance — keyboard reordering is via Alt+↑/↓
-        // (SiltBlockKeymaps). aria-hidden avoids exposing a non-functional
-        // button to AT; the title carries the hint for sighted users.
-        el.setAttribute('aria-hidden', 'true')
-        el.setAttribute(
-          'title',
-          'Drag to move block (Alt+Up/Down to move by keyboard)'
-        )
-        el.innerHTML =
-          '<span class="material-symbols-outlined" aria-hidden="true">drag_indicator</span>'
-        return el
-      }
-    }),
     // Notion-style indent-on-drop + drop-zone indicator (#330, #181
     // follow-up). Watches ProseMirror's handleDrop: when a top-level block
     // is dragged, snaps the dropped block's depth to the horizontal drop
@@ -672,6 +651,9 @@
     // (dragIndentDrop.ts:resolveDropDepth) unit-tested in jsdom; the
     // interactive drag path is gated on the TESTING.md manual matrix
     // (HTML5 drag/drop can't be driven from jsdom per AGENTS.md).
+    // The drag-init side is SiltInlineDragHandle (#339) — see
+    // frontend/src/lib/editor/siltInlineDragHandle.ts.
+    SiltInlineDragHandle,
     BlockIndentOnDrop,
     SiltBlockKeymaps,
     Placeholder.configure({

@@ -40,6 +40,25 @@
   }
 </script>
 
+<!--
+  Note on drag handling: the prose blocks (noteBlock / taskBlock /
+  headerBlock) carry a `data-id` attr on this wrapper, which
+  `SiltInlineDragHandle` listens for via `closest('[data-id]')` and
+  dispatches a `view.dragging` populated with the resolved block. The
+  embedBlock node has no `id` attr in the schema (see schema.ts:906-949),
+  so this wrapper's `data-id` is intentionally absent; embeds ride
+  ProseMirror's native draggable-node path instead — `prosemirror-view/
+  dist/index.js:1316` sets `dom.draggable = true` on the NodeView's
+  contenteditable=false wrapper for any node with `draggable: true` in
+  its spec, and the native dragstart handler at `:3768-3785` populates
+  `view.dragging` with the correct `NodeSelection` + slice for the
+  block being dragged. The drag_indicator glyph below is a visual
+  affordance for that native path, mirrored from the prose-block look
+  for UI consistency. Do not add `data-id={node.attrs.id}` or
+  `data-drag-handle` here — they'd misroute the drag into the inline
+  helper, which has no `data-id` to match, and silent fallback is
+  against the project's fail-loudly rule (AGENTS.md).
+-->
 <NodeViewWrapper>
   <!--
     Card is always a <div> with an explicit role: role="button" when openable
@@ -101,11 +120,10 @@
         <span class="material-symbols-outlined text-[18px]">delete</span>
       </button>
       <span
-        class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity duration-150"
-        title="Drag to reorder"
-        aria-label="Drag handle"
+        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none"
+        title="Drag to reorder (Alt+ArrowUp/Down to reorder by keyboard)"
         spellcheck="false"
-        data-drag-handle
+        aria-hidden="true"
       >
         drag_indicator
       </span>
@@ -157,11 +175,10 @@
         <span class="material-symbols-outlined text-[18px]">delete</span>
       </button>
       <span
-        class="material-symbols-outlined text-text-muted text-[16px] cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity duration-150"
-        title="Drag to reorder"
-        aria-label="Drag handle"
+        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none"
+        title="Drag to reorder (Alt+ArrowUp/Down to reorder by keyboard)"
         spellcheck="false"
-        data-drag-handle
+        aria-hidden="true"
       >
         drag_indicator
       </span>
