@@ -10,6 +10,8 @@
     downloadAndInstall,
     setAutoCheck
   } from '../../updates/store.svelte'
+  import { settings, saveConfig } from '../../settings/store.svelte'
+  import type { config } from '../../../wailsjs/go/models.js'
 
   let version = $state('…')
 
@@ -257,6 +259,38 @@
         >
       </li>
     </ul>
+  </section>
+
+  <section
+    class="border-t border-border-muted pt-4 mt-4"
+  >
+    <h4 class="font-label-sm-bold text-text-primary uppercase tracking-wider text-[10px] mb-3">
+      Developer
+    </h4>
+    <div class="space-y-2">
+      <label class="flex items-center gap-2.5 cursor-pointer select-none">
+        <input
+          checked={settings.config?.ui?.open_devtools_on_startup === true}
+          onchange={async (e: Event) => {
+            const checked = (e.currentTarget as HTMLInputElement).checked
+            const draft = structuredClone(settings.config!)
+            if (!draft.ui) draft.ui = {} as config.UIConfig
+            draft.ui.open_devtools_on_startup = checked
+            await saveConfig(draft)
+          }}
+          type="checkbox"
+          class="w-4 h-4 accent-[#10b981] cursor-pointer"
+        />
+        <span class="text-text-primary text-[13px] font-body-md">Dev Mode</span>
+      </label>
+      <p class="text-text-muted/70 text-[11px] font-body-md leading-relaxed pl-7">
+        Enables the Dev tab in Settings with tools for diagnosing issues.
+        Press <kbd
+          class="inline-block px-1.5 py-0.5 rounded bg-surface border border-border-muted text-text-primary text-[10px] font-mono"
+          >Ctrl+Shift+F12</kbd
+        > to open the Chromium inspector.
+      </p>
+    </div>
   </section>
 
   <p class="text-text-muted text-[11px] font-label-sm mt-8">

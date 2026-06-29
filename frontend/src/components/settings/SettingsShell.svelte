@@ -26,15 +26,19 @@
     activePage
   }: Props = $props()
 
-  const tabs = [
+  let devMode = $derived(
+    settings.config?.ui?.open_devtools_on_startup === true
+  )
+
+  const tabs = $derived([
     { id: 'workspace', label: 'Workspace', icon: 'folder' },
     { id: 'editor', label: 'Editor', icon: 'edit_note' },
     { id: 'appearance', label: 'Appearance', icon: 'palette' },
     { id: 'hotkeys', label: 'Hotkeys', icon: 'keyboard' },
     { id: 'plugins', label: 'Plugins', icon: 'extension' },
-    { id: 'dev', label: 'Dev', icon: 'code' },
+    ...(devMode ? [{ id: 'dev' as const, label: 'Dev', icon: 'code' }] : []),
     { id: 'about', label: 'About', icon: 'info' }
-  ]
+  ])
 
   let railRefs: HTMLButtonElement[] = $state([])
   let dialogEl: HTMLDivElement | null = $state(null)
