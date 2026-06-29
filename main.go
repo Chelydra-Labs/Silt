@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 //go:embed all:frontend/dist
@@ -70,29 +71,26 @@ func shouldOpenDevtools() bool {
 		return true
 	}
 	settings, err := vault.LoadSettings()
-	if err != nil {
-		println("[silt] devtools: vault.LoadSettings error:", err.Error())
-		return false
-	}
-	if settings.VaultPath == "" {
-		println("[silt] devtools: no vault path in settings (first run?)")
+	if err != nil || settings.VaultPath == "" {
 		return false
 	}
 	cfg, err := config.Load(settings.VaultPath)
 	if err != nil {
-		println("[silt] devtools: config.Load error:", err.Error())
 		return false
 	}
-	if cfg.UI.OpenDevtoolsOnStartup == nil {
-		println("[silt] devtools: open_devtools_on_startup not set in config")
-		return false
-	}
-	println("[silt] devtools: open_devtools_on_startup =", *cfg.UI.OpenDevtoolsOnStartup)
-	return *cfg.UI.OpenDevtoolsOnStartup
+	return cfg.UI.OpenDevtoolsOnStartup != nil && *cfg.UI.OpenDevtoolsOnStartup
 }
 
 func main() {
 	app := NewApp()
+
+	// Version-scoped WebView2 user data so a version upgrade never inherits
+	// a corrupted EBWebView cache from a previous install (#342).
+	webviewDataDir := filepath.Join(os.Getenv("APPDATA"), "Silt", "webview2", appVersion)
+	if os.Getenv("APPDATA") == "" {
+		home, _ := os.UserHomeDir()
+		webviewDataDir = filepath.Join(home, ".config", "silt", "webview2", appVersion)
+	}
 
 	err := wails.Run(&options.App{
 		Title:            "Silt",
@@ -105,6 +103,9 @@ func main() {
 		},
 		Debug: options.Debug{
 			OpenInspectorOnStartup: shouldOpenDevtools(),
+		},
+		Windows: &windows.Options{
+			WebviewUserDataPath: webviewDataDir,
 		},
 		// OS-level window paint colour shown before the webview renders,
 		// resolved from the active theme mode's bg.void so there is no
