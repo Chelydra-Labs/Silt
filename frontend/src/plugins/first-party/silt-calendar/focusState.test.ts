@@ -9,13 +9,12 @@ import {
   clearActiveFilter,
   setFocusDate,
   clearFocusDate,
-  resetFocusState,
-  resetFocusStateForTests
+  resetFocusState
 } from './focusState.svelte'
 
 describe('focusState (#322)', () => {
   beforeEach(() => {
-    resetFocusStateForTests()
+    resetFocusState()
   })
 
   describe('getFocusState()', () => {
@@ -73,13 +72,12 @@ describe('focusState (#322)', () => {
     })
   })
 
-  describe('resetFocusState() (production path)', () => {
-    // The production-mode reset is called by CalendarSidebar's
-    // refresh-navigation handler to drop stale focusDate / activeFilter
-    // state on vault switch (#141 SwitchVault, #323 hardening). It must
-    // be identical to the test reset — the only difference is the
-    // intended caller. We test both reset points to make sure the
-    // production reset stays exported and doesn't drift.
+  describe('resetFocusState()', () => {
+    // The single reset entry point: called both by the test harness
+    // (above) and by the loader's vault:closing handler + CalendarSidebar's
+    // refresh-navigation handler on vault switch (#141, #323, #326 item 1).
+    // One source of truth — mirrors the KanbanSharedState.resetKanbanState
+    // consolidation; there is no longer a separate test-only reset.
     it('clears focusDate AND activeFilter', () => {
       setFocusDate('2026-06-16')
       setActiveFilter('overdue')

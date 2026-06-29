@@ -683,6 +683,26 @@ Run with: `go test -race -count=1 ./...` (Go) and `npm run check` + `npm test` (
 
 ## Known Gaps (deferred)
 
-- **#319 cursor-position restore** across the Edit↔Source round-trip — scroll-offset ships; cursor restore needs an async editor-readiness path the jsdom layer can't drive.
-- **#181 indent-on-drop** (Notion-style depth change on horizontal drop) — the drag-handle extension ships no drop-depth API; the custom drop-depth logic needs this manual matrix before landing.
-- **Math entry UX** uses `window.prompt` for `/math` and click-to-edit; a rich inline LaTeX editor is a follow-up.
+- **Cursor-position restore (#331)** across the Edit↔Source round-trip — scroll-offset restore (#319) ships; cursor restore is deferred to its own follow-up PR because it needs an async editor-readiness path the jsdom layer can't drive (no webview e2e per AGENTS.md).
+- ~~**#181 indent-on-drop** (Notion-style depth change on horizontal drop)~~ — **Resolved** (#330): dropping a block now sets its indent from the horizontal drop position; covered by the manual matrix in the Editor & Sidebar Follow-Ups section below.
+- ~~**Math entry UX** uses `window.prompt` for `/math` and click-to-edit~~ — **Resolved** (#328): the in-app LaTeX popover (live preview, `Ctrl/Cmd+Enter` commit, `Esc` cancel) replaces the native prompt; covered by the manual matrix below.
+
+---
+
+# Editor & Sidebar Follow-Ups — Manual Matrix Additions (#326–#330, #332)
+
+These PRs ship a mix of pure-helper unit tests (the indent-depth resolver,
+the mention owner write-back planner, the math InputRule finder) and
+interactive paths the jsdom layer cannot drive (HTML5 drag/drop with layout,
+the LaTeX popover, the `@` typeahead against live IPC, vault-switch races).
+The jsdom-untestable paths are pinned here.
+
+## Manual Verification Matrix (`wails dev`)
+
+| # | Scenario | Expected |
+|---|---|---|
+| 1 | Drag a block's grip and drop it indented to the right | The block becomes a child (deeper `depth`); drop in line keeps the same depth; the drop-zone indicator shows the target depth; on-disk order + depth persist after save; `Alt+Up/Down` still moves blocks; no mis-indent at block boundaries; `Esc` cancels an in-flight drag (#330). |
+| 2 | `/math`, then type `\int_0^1 x\,dx`; also click an existing equation | The LaTeX popover opens with a live KaTeX preview; multi-line editing works; `Ctrl/Cmd+Enter` commits, `Esc` cancels; a parse error shows in the preview; committing an empty equation is blocked (#328). |
+| 3 | In a task line, type `@alice` and confirm; confirm again as `@bob` | The task's owner becomes `alice`, then `bob` (the `[owner:: …]` token is written/updated, not duplicated); mentioning `@alice` in a regular paragraph inserts the chip with no owner write-back (#329). |
+| 4 | Switch vaults while a Kanban/Calendar sidebar is mounted | No "missing session token" error; the new vault opens with default scope/filters/focusDate (not the previous vault's) (#326 items 1, 5). |
+| 5 | Press `Ctrl+Shift+B` while editing, and again with the sidebar collapsed | Focus jumps into the active sidebar's first control; if collapsed it expands first (#326 item 8). |

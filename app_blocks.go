@@ -45,9 +45,11 @@ func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBl
 }
 
 // DistinctOwners returns the sorted, de-duplicated set of task owners in the
-// vault — the source for the @-mention typeahead (#184). Read-only projection
-// of the tasks index; no mention state is persisted to SQLite.
-func (a *App) DistinctOwners() ([]string, error) {
+// vault, optionally narrowed by an ASCII-case-insensitive prefix — the source
+// for the @-mention typeahead (#184, #332). Read-only projection of the tasks
+// index; no mention state is persisted to SQLite. An empty prefix returns the
+// full set so the editor's focus-load can seed the cache.
+func (a *App) DistinctOwners(prefix string) ([]string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -60,7 +62,7 @@ func (a *App) DistinctOwners() ([]string, error) {
 	var res []string
 	var err error
 	a.coordinator.WithDBRead(func() {
-		res, err = a.db.DistinctOwners()
+		res, err = a.db.DistinctOwners(prefix)
 	})
 
 	return res, err

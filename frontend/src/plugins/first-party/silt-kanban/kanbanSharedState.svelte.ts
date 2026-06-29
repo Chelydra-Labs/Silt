@@ -28,12 +28,22 @@ export interface KanbanSharedState {
   filters: KanbanFilters
   /** True when the user has manually picked a scope (#124). */
   scopeUserOverride: boolean
+  /**
+   * Board-scoped owner/tag option lists bridged from Kanban.svelte's
+   * derived `allOwners`/`allTags`. The sidebar reads these instead of
+   * running its own vault-wide queries so a toggle never offers an owner
+   * or tag absent from the current board (#326 item 2).
+   */
+  boardOwners: string[]
+  boardTags: string[]
 }
 
 const _state: KanbanSharedState = $state({
   scope: 'vault',
   filters: { ...DEFAULT_FILTERS },
-  scopeUserOverride: false
+  scopeUserOverride: false,
+  boardOwners: [],
+  boardTags: []
 })
 
 /** Read the current shared state (used by Kanban.svelte and the sidebar). */
@@ -101,9 +111,17 @@ export function applySavedBoard(b: {
   _state.scopeUserOverride = true
 }
 
-/** Test-only: reset to defaults. */
-export function resetKanbanStateForTests(): void {
+/**
+ * Reset the shared Kanban state to defaults. Called by the loader's
+ * vault:closing handler so scope/filters/override from the previous vault
+ * don't linger into the next (#326 item 1) — the settings store is reset by
+ * loadPlugins, but these module-globals are not. Tests reuse the same entry
+ * point (no separate test-only reset — one source of truth).
+ */
+export function resetKanbanState(): void {
   _state.scope = 'vault'
   _state.filters = { ...DEFAULT_FILTERS }
   _state.scopeUserOverride = false
+  _state.boardOwners = []
+  _state.boardTags = []
 }

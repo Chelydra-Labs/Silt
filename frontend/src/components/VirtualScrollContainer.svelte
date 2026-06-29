@@ -79,9 +79,21 @@
   let hasFirstEdit = false
   let handledTargetKey = $state('')
 
+  // Editor status state
+  let dirty = $state(false)
+  let saveError = $state<string | null>(null)
+  let wordCount = $state(0)
+  let showWordCount = $derived(
+    settings.config?.editor?.show_word_count === true
+  )
+
+  let lastLoadedPage = ''
+
   $effect(() => {
-    if (notebook && page) {
-      untrack(() => loadPage())
+    const pageKey = `${notebook}/${section}/${page}`
+    if (notebook && page && pageKey !== lastLoadedPage) {
+      lastLoadedPage = pageKey
+      untrack(() => loadPage(true))
     }
   })
 
@@ -106,15 +118,17 @@
       'block:changed',
       (ev: { notebook: string; section: string; page: string }) => {
         if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
-          loadPage()
+          loadPage(false)
         }
       }
     )
     return () => off()
   })
 
-  async function loadPage() {
-    loading = true
+  async function loadPage(showLoader = true) {
+    if (showLoader) {
+      loading = true
+    }
     loadError = ''
     const reqNotebook = notebook
     const reqSection = section
@@ -127,7 +141,9 @@
       if (notebook !== reqNotebook || page !== reqPage) return
       loadError = e instanceof Error ? e.message : String(e)
     } finally {
-      loading = false
+      if (showLoader) {
+        loading = false
+      }
     }
   }
 
@@ -400,7 +416,12 @@
               onReady={handleEditorReady}
               bind:editorInstance
               bind:activeMarks
-              {onSaveStateChange}
+              bind:wordCount
+              onSaveStateChange={(s) => {
+                dirty = s.dirty
+                saveError = s.error
+                onSaveStateChange?.(s)
+              }}
             />
           {/if}
         {/if}
@@ -473,6 +494,18 @@
       </span>
     </button>
   </div>
+
+  <!-- Floating Editor Status Bar (Word Count) -->
+  {#if showWordCount && wordCount > 0 && viewMode === 'edit'}
+    <div
+      class="absolute bottom-6 right-6 z-40 flex items-center px-3 py-1.5 bg-panel/60 backdrop-blur-md border border-border-muted/50 rounded-full shadow-lg text-[11px] font-medium tracking-wide text-text-muted transition-all duration-300 opacity-60 hover:opacity-100"
+    >
+      <div class="font-mono text-text-muted/80" role="status" aria-live="off">
+        {wordCount}
+        {wordCount === 1 ? 'word' : 'words'}
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>

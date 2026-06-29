@@ -391,12 +391,24 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 }
 
 // DistinctOwners returns the sorted, de-duplicated set of non-empty task owners
-// across the whole vault. This is the read-only projection the @-mention
-// typeahead (#184) offers: typing `@` surfaces every owner already assigned to
-// a task. SQLite stays working memory — no mention state is stored here; the
-// `@[name]` token round-trips through markdown as the source of truth.
-func (dm *DatabaseManager) DistinctOwners() ([]string, error) {
-	rows, err := dm.db.Query("SELECT DISTINCT owner FROM tasks WHERE owner != '' ORDER BY owner")
+// across the whole vault, optionally filtered by a prefix. This is the
+// read-only projection the @-mention typeahead (#184) offers: typing `@`
+// surfaces every owner already assigned to a task. SQLite stays working memory
+// — no mention state is stored here; the `@[name]` token round-trips through
+// markdown as the source of truth.
+//
+// A non-empty prefix bounds the result server-side (#332): `LIKE 'prefix%'`
+// narrows the scan so a vault with thousands of owners never ships an unbounded
+// payload over IPC per keystroke. An empty prefix returns every owner (LIKE
+// '%%') for the cache-seed path. SQLite LIKE is ASCII-case-insensitive, which
+// matches the typeahead's case-insensitive client-side filter; ORDER BY uses the
+// binary collation by default (uppercase before lowercase), so casing only
+// affects ordering, not selection.
+func (dm *DatabaseManager) DistinctOwners(prefix string) ([]string, error) {
+	rows, err := dm.db.Query(
+		"SELECT DISTINCT owner FROM tasks WHERE owner != '' AND owner LIKE ? ORDER BY owner",
+		prefix+"%",
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query distinct owners: %w", err)
 	}

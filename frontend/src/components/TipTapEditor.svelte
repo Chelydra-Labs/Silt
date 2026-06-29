@@ -9,6 +9,7 @@
   import { DragHandle } from '@tiptap/extension-drag-handle'
   import { AutosaveManager } from '../lib/editor/useAutosave'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
+  import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
@@ -49,6 +50,7 @@
   import SelectionBubble from './editor/SelectionBubble.svelte'
   import TableContextToolbar from './editor/TableContextToolbar.svelte'
   import TableSizePicker from './editor/TableSizePicker.svelte'
+  import MathLatexPopover from './editor/MathLatexPopover.svelte'
   import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { clampToViewport } from '../lib/editor/popoverPositioning'
@@ -97,6 +99,7 @@
     onUpdate: (updatedBlocks: ParsedBlock[]) => void
     editorInstance?: Editor | null
     activeMarks?: Set<string>
+    wordCount?: number
     /** Emitted when the editor's save state changes (dirty/error → clean).
      *  Used by the tab strip to show per-tab dirty/save-failed indicators
      *  (#167). */
@@ -121,6 +124,7 @@
     onUpdate,
     editorInstance = $bindable(null),
     activeMarks = $bindable(new Set()),
+    wordCount = $bindable(0),
     onSaveStateChange,
     onReady
   }: Props = $props()
@@ -183,8 +187,7 @@
   // paragraphs for distraction-free writing.
   let focusModeEnabled = $derived(settings.config?.editor?.focus_mode === true)
 
-  // Word count (updated on every editor transaction via CharacterCount storage).
-  let wordCount = $state(0)
+  // Word count is managed as a bindable prop.
 
   // Inline link URL input (#168). Shows a small <input> near the selection
   // when the user clicks the link button or presses Ctrl+K. Enter applies,
@@ -202,6 +205,19 @@
   // Custom-table size picker (#172) — an in-app popover replacing window.prompt.
   let showTableSizePicker = $state(false)
   let tableSizeCoords = $state<{ left: number; top: number } | null>(null)
+
+  // LaTeX equation popover (Phase 5 / #328). Replaces window.prompt for both
+  // the /math slash command (block create) and click-to-edit on a math node
+  // (inline or block). The popover is owned here so it renders as a sibling of
+  // the editor surface — same layering model as the link/color/table popovers
+  // — and math NodeViews request editing via the silt:edit-math window event
+  // (passing their own latex/displayMode/coords/update callback in the detail).
+  let mathPopover = $state<{
+    latex: string
+    displayMode: boolean
+    coords: { left: number; top: number }
+    onCommit: (latex: string) => void
+  } | null>(null)
 
   // View mode (#171) is managed by the parent container.
 
@@ -280,6 +296,42 @@
     showTableSizePicker = false
     tableSizeCoords = null
     editorInstance?.chain().focus().run()
+  }
+
+  // --- LaTeX equation popover (Phase 5 / #328) -----------------------------
+  // EDIT site: a math NodeView dispatches silt:edit-math with its latex,
+  // displayMode, DOM-derived coords, and an onCommit that calls its own
+  // updateAttributes. CREATE site (/math) opens the popover directly below.
+  function onEditMath(e: Event): void {
+    const detail = (e as CustomEvent).detail as {
+      latex: string
+      displayMode: boolean
+      coords: { left: number; top: number }
+      onCommit: (latex: string) => void
+    } | null
+    if (!detail) return
+    mathPopover = {
+      latex: detail.latex,
+      displayMode: detail.displayMode,
+      coords: detail.coords,
+      onCommit: detail.onCommit
+    }
+  }
+
+  function commitMathPopover(latex: string): void {
+    const cb = mathPopover?.onCommit
+    mathPopover = null
+    cb?.(latex)
+    if (editorInstance && !editorInstance.isDestroyed) {
+      editorInstance.commands.focus()
+    }
+  }
+
+  function cancelMathPopover(): void {
+    mathPopover = null
+    if (editorInstance && !editorInstance.isDestroyed) {
+      editorInstance.commands.focus()
+    }
   }
 
   // --- Color picker popover (#170) -----------------------------------------
@@ -387,15 +439,29 @@
     )
   }
 
-  // --- @-mention typeahead (#184) -----------------------------------------
-  // Owners come from the read-only DistinctOwners index projection; refreshed
-  // on mount and on focus so newly-assigned owners appear without a reload.
+  // --- @-mention typeahead (#184, #332) -----------------------------------
+  // Owners come from the read-only DistinctOwners index projection. #332 fixes
+  // two scale problems: (1) the unbounded SELECT was narrowed to a server-side
+  // prefix filter, and (2) the per-focus re-fetch was replaced by a TTL cache +
+  // in-flight guard so a focus blip within OWNERS_TTL_MS reuses the cached set
+  // instead of round-tripping through SQLite over IPC.
   let owners = $state<string[]>([])
+  let ownersLoadedAt = 0
+  let ownersLoading = false
+  const OWNERS_TTL_MS = 5000 // a focus blip within 5s reuses the cached set
   async function loadOwners(): Promise<void> {
+    // TTL + in-flight guard: a rapid focus blip (or repeated onFocus) reuses
+    // the cached set instead of re-querying SQLite over IPC every time (#332).
+    if (ownersLoading) return
+    if (Date.now() - ownersLoadedAt < OWNERS_TTL_MS) return
+    ownersLoading = true
     try {
-      owners = (await DistinctOwners()) ?? []
+      owners = (await DistinctOwners('')) ?? []
+      ownersLoadedAt = Date.now()
     } catch (e) {
       console.error('DistinctOwners failed:', e)
+    } finally {
+      ownersLoading = false
     }
   }
 
@@ -408,17 +474,78 @@
     selected: number
   } | null>(null)
 
+  // Debounced, race-guarded server refine for non-empty mention queries. The
+  // instant popup comes from the cached full set (filterOwners stays pure); for
+  // a non-empty query we also fire a prefix-bounded DistinctOwners(query) so a
+  // 10k-owner vault never has to filter client-side. The req-id gate discards a
+  // late-resolving fetch whose result no longer matches the current popup (#332).
+  let mentionQueryReqId = 0
+  let mentionQueryTimer: ReturnType<typeof setTimeout> | null = null
+  const MENTION_QUERY_DEBOUNCE_MS = 120
+
+  // Debounces the onFocus owner re-fetch so a focus blip doesn't immediately
+  // trigger an IPC round-trip. Cleared on destroy. #332.
+  let focusLoadTimer: ReturnType<typeof setTimeout> | null = null
+
   function onMentionChange(ctx: MentionContext | null): void {
+    if (mentionQueryTimer) {
+      clearTimeout(mentionQueryTimer)
+      mentionQueryTimer = null
+    }
     if (!ctx) {
       mentionPopup = null
       suggestStatus = ''
       return
     }
-    const items = filterOwners(owners, ctx.query)
-    mentionPopup = items.length === 0 ? null : { ctx, items, selected: 0 }
-    suggestStatus = items.length
-      ? `${items.length} owner${items.length === 1 ? '' : 's'} available`
+    // Preserve the highlighted owner across keystrokes: if the previously
+    // selected owner is still in the new list, keep it highlighted; otherwise
+    // fall back to the top. Without this, typing after ↓-navigating snapped
+    // the highlight back to item 0 every keystroke (#332 review feedback).
+    const prevName = mentionPopup
+      ? mentionPopup.items[mentionPopup.selected]
+      : undefined
+    const pickSelected = (items: string[]): number => {
+      if (!prevName) return 0
+      const idx = items.indexOf(prevName)
+      return idx >= 0 ? idx : 0
+    }
+    // Instant feedback from the cached full set — small vaults never wait.
+    const instant = filterOwners(owners, ctx.query)
+    mentionPopup =
+      instant.length === 0
+        ? null
+        : { ctx, items: instant, selected: pickSelected(instant) }
+    suggestStatus = instant.length
+      ? `${instant.length} owner${instant.length === 1 ? '' : 's'} available`
       : 'No matching owners'
+
+    // For a non-empty query, refine from the server (prefix filter bounds the
+    // result at scale so a 10k-owner vault never filters client-side). Debounced
+    // + race-guarded: a stale result cannot overwrite the current popup.
+    const q = ctx.query.trim()
+    if (q) {
+      const myId = ++mentionQueryReqId
+      mentionQueryTimer = setTimeout(async () => {
+        try {
+          const serverItems = (await DistinctOwners(q)) ?? []
+          // Superseded by a later keystroke — drop this result.
+          if (myId !== mentionQueryReqId) return
+          // Only apply if the popup is still open for this same context/query.
+          const cur = mentionPopup
+          if (!cur || cur.ctx.from !== ctx.from || cur.ctx.query !== ctx.query)
+            return
+          mentionPopup =
+            serverItems.length === 0
+              ? null
+              : { ctx, items: serverItems, selected: pickSelected(serverItems) }
+          suggestStatus = serverItems.length
+            ? `${serverItems.length} owner${serverItems.length === 1 ? '' : 's'} available`
+            : 'No matching owners'
+        } catch (e) {
+          console.error('DistinctOwners(prefix) failed:', e)
+        }
+      }, MENTION_QUERY_DEBOUNCE_MS)
+    }
   }
 
   function onMentionNavigate(dir: 1 | -1): void {
@@ -518,8 +645,7 @@
     // Drag-to-reorder handle (#181). A framework-agnostic DOM grip positioned
     // by the extension over the hovered block; native ProseMirror drop reorders
     // the whole block. Alt+Up/Down (SiltBlockKeymaps) is the keyboard
-    // equivalent. Indent-on-drop is a tracked follow-up (needs manual webview
-    // verification, which AGENTS.md forbids automating).
+    // equivalent.
     DragHandle.configure({
       render: () => {
         const el = document.createElement('div')
@@ -537,6 +663,16 @@
         return el
       }
     }),
+    // Notion-style indent-on-drop + drop-zone indicator (#330, #181
+    // follow-up). Watches ProseMirror's handleDrop: when a top-level block
+    // is dragged, snaps the dropped block's depth to the horizontal drop
+    // position and shows a depth-guide indicator during dragover. Returns
+    // false on any uncertainty so native PM drop (reorder-only) still
+    // runs — never a partial dispatch. The depth math is a pure helper
+    // (dragIndentDrop.ts:resolveDropDepth) unit-tested in jsdom; the
+    // interactive drag path is gated on the TESTING.md manual matrix
+    // (HTML5 drag/drop can't be driven from jsdom per AGENTS.md).
+    BlockIndentOnDrop,
     SiltBlockKeymaps,
     Placeholder.configure({
       placeholder: 'Type / for commands, or start writing…'
@@ -617,7 +753,10 @@
       startHeartbeat()
       notifyFocus()
       // Refresh the owner list so newly-assigned owners are mentionable.
-      void loadOwners()
+      // Debounced (~150ms) so a micro focus-blip doesn't fire an IPC round-trip
+      // immediately; the TTL guard inside loadOwners collapses repeats (#332).
+      if (focusLoadTimer) clearTimeout(focusLoadTimer)
+      focusLoadTimer = setTimeout(() => void loadOwners(), 150)
     },
     onBlur: () => {
       isFocused = false
@@ -679,16 +818,28 @@
   window.addEventListener('silt:change-block-type', onChangeBlockType)
   window.addEventListener('silt:set-block-align', onSetBlockAlign)
   window.addEventListener('silt:open-color-picker', onOpenColorPicker)
+  window.addEventListener('silt:edit-math', onEditMath)
   window.addEventListener('scroll', onEditorScroll, true)
   document.addEventListener('click', onDocumentClick)
 
   onDestroy(() => {
     stopHeartbeat()
+    // Cancel any pending owner-fetch / mention-refine timers so they don't
+    // fire after teardown (#332).
+    if (mentionQueryTimer) {
+      clearTimeout(mentionQueryTimer)
+      mentionQueryTimer = null
+    }
+    if (focusLoadTimer) {
+      clearTimeout(focusLoadTimer)
+      focusLoadTimer = null
+    }
     void flushPendingSave().then(() => releaseFocus())
     window.removeEventListener('silt:open-link-input', onOpenLinkInput)
     window.removeEventListener('silt:change-block-type', onChangeBlockType)
     window.removeEventListener('silt:set-block-align', onSetBlockAlign)
     window.removeEventListener('silt:open-color-picker', onOpenColorPicker)
+    window.removeEventListener('silt:edit-math', onEditMath)
     window.removeEventListener('scroll', onEditorScroll, true)
     document.removeEventListener('click', onDocumentClick)
   })
@@ -816,10 +967,22 @@
     } else if (commandId === 'code-block') {
       insertCodeBlock(editorInstance as any)
     } else if (commandId === 'math') {
-      // Best-effort entry: prompt for the LaTeX, then insert the block
-      // equation. A rich inline LaTeX editor is a tracked follow-up.
-      const latex = window.prompt('LaTeX equation:', 'a^2 + b^2 = c^2')
-      if (latex !== null) insertBlockMath(editorInstance as any, latex)
+      // Open the LaTeX popover (block mode); on commit, insert a block
+      // equation at the selection via the same insertBlockMath path the old
+      // prompt used. The popover (with live preview) replaces window.prompt.
+      if (!editorInstance || editorInstance.isDestroyed) return
+      try {
+        const { selection } = editorInstance.state
+        const c = editorInstance.view.coordsAtPos(selection.from)
+        mathPopover = {
+          latex: '',
+          displayMode: true,
+          coords: { left: c.left, top: c.bottom },
+          onCommit: (l: string) => insertBlockMath(editorInstance as any, l)
+        }
+      } catch {
+        /* no selection coords → don't open the popover */
+      }
     } else if (commandId === 'details') {
       insertDetails(editorInstance as any)
     } else if (commandId === 'table') {
@@ -1269,31 +1432,7 @@
     </div>
   {/if}
 
-  {#if unsavedChanges || lastSaveError}
-    <div
-      class="unsaved-indicator {lastSaveError ? 'error' : ''}"
-      role={lastSaveError ? 'alert' : 'status'}
-      aria-live={lastSaveError ? 'assertive' : 'polite'}
-    >
-      {#if lastSaveError}
-        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-          >error</span
-        >
-        <span>Save failed — edits not persisted</span>
-      {:else}
-        <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-          >schedule</span
-        >
-        <span>Unsaved changes</span>
-      {/if}
-    </div>
-  {/if}
-  {#if showWordCount && wordCount > 0}
-    <div class="word-count" role="status" aria-live="off">
-      {wordCount}
-      {wordCount === 1 ? 'word' : 'words'}
-    </div>
-  {/if}
+  <!-- Unsaved changes & word count are managed by the parent VirtualScrollContainer floating badge -->
   {#if showSlashMenu}
     {@const coords = slashCoords()}
     {#if coords}
@@ -1451,6 +1590,15 @@
       onCancel={cancelTableSize}
     />
   {/if}
+  {#if mathPopover}
+    <MathLatexPopover
+      latex={mathPopover.latex}
+      displayMode={mathPopover.displayMode}
+      coords={mathPopover.coords}
+      onCommit={commitMathPopover}
+      onCancel={cancelMathPopover}
+    />
+  {/if}
 </div>
 
 {#if showTemplatePicker}
@@ -1464,35 +1612,6 @@
 <style>
   .tiptap-editor-host {
     width: 100%;
-  }
-
-  .unsaved-indicator {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    margin: 0 0 0.5rem;
-    padding: 0.125rem 0.5rem;
-    border-radius: 9999px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
-    background: color-mix(
-      in srgb,
-      var(--color-surface, #1a1d24) 90%,
-      transparent
-    );
-    color: var(--color-text-muted, #8b95a3);
-    font-size: 11px;
-    backdrop-filter: blur(4px);
-  }
-  .unsaved-indicator.error {
-    border-color: color-mix(
-      in srgb,
-      var(--color-status-danger, #e5484d) 60%,
-      transparent
-    );
-    color: var(--color-status-danger, #e5484d);
   }
 
   /* The ProseMirror editable surface. Global styles (typography vars, guide
@@ -1513,22 +1632,6 @@
     .focus-mode :global(.ProseMirror > div:not(.has-focus)) {
       transition: none;
     }
-  }
-
-  .word-count {
-    position: sticky;
-    bottom: 0;
-    margin: 0.25rem 0 0 auto;
-    display: inline-block;
-    padding: 0.125rem 0.5rem;
-    border-radius: 9999px;
-    background: color-mix(
-      in srgb,
-      var(--color-surface, #1a1d24) 90%,
-      transparent
-    );
-    color: var(--color-text-muted, #8b95a3);
-    font-size: 11px;
   }
 
   .link-input-popover {

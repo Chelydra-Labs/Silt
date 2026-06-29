@@ -14,7 +14,7 @@ import CalendarSidebar from './CalendarSidebar.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
 import {
-  resetFocusStateForTests,
+  resetFocusState,
   getFocusState,
   setFocusDate,
   setActiveFilter
@@ -76,7 +76,7 @@ async function flush() {
 describe('CalendarSidebar (#322)', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset()
-    resetFocusStateForTests()
+    resetFocusState()
   })
 
   afterEach(() => {
@@ -127,6 +127,33 @@ describe('CalendarSidebar (#322)', () => {
     expect(countSql).toBeDefined()
     expect(countSql).toContain('AS "all"')
     expect(countSql).not.toMatch(/AS all\b/)
+  })
+
+  it('shows an empty-state hint instead of smart-list badges when there are no active tasks (#326 item 4)', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      return mockDayCounts([])
+    })
+    render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // The hint renders; the smart-list toggle buttons do not.
+    expect(screen.getByTestId('calendar-empty-state')).toBeInTheDocument()
+    expect(screen.queryByTestId('today')).toBeNull()
+    expect(screen.queryByTestId('all')).toBeNull()
+  })
+
+  it('keeps the Completed smart list visible for a completed-only vault (#326 item 4 review)', async () => {
+    // counts.all (non-done) is 0 but there are completed tasks — the empty-
+    // state must NOT hide the Completed list, and the hint must not show.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 5, 0)
+      return mockDayCounts([])
+    })
+    render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // The empty-state hint must NOT show, and the Completed list is reachable.
+    expect(screen.queryByTestId('calendar-empty-state')).toBeNull()
+    expect(screen.getByTestId('completed')).toBeInTheDocument()
   })
 
   it('clicking the Today smart list sets activeFilter to "today"', async () => {
@@ -196,7 +223,7 @@ describe('CalendarSidebar (#322)', () => {
 
   it('arrow-key keyboard nav on smart lists moves the focus index', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      if (sql.includes('SUM(CASE')) return mockCounts(3, 12, 1, 0, 16)
       return mockDayCounts([])
     })
     render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
@@ -211,7 +238,7 @@ describe('CalendarSidebar (#322)', () => {
 
   it('Enter on a focused smart list activates it', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      if (sql.includes('SUM(CASE')) return mockCounts(3, 12, 1, 0, 16)
       return mockDayCounts([])
     })
     render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
@@ -224,7 +251,7 @@ describe('CalendarSidebar (#322)', () => {
 
   it('Clear-filter button appears when a filter is active', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      if (sql.includes('SUM(CASE')) return mockCounts(3, 12, 1, 0, 16)
       return mockDayCounts([])
     })
     render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })

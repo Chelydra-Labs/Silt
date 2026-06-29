@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 import AgendaList from './AgendaList.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
-import { resetFocusStateForTests, setActiveFilter } from './focusState.svelte'
+import { resetFocusState, setActiveFilter } from './focusState.svelte'
 
 function makeCtx(): PluginContext {
   return {
@@ -77,7 +77,7 @@ describe('AgendaList markDoneError UI', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset().mockResolvedValue(SAMPLE_ROW)
     mocks.updateBlockState.mockReset()
-    resetFocusStateForTests()
+    resetFocusState()
   })
 
   afterEach(() => {

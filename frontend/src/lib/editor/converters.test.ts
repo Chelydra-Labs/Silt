@@ -20,6 +20,7 @@ import {
 import {
   blocksToDoc,
   docToBlocks,
+  detectBullet,
   embedBlockMarker,
   parseEmbedBlockMarker,
   tokenizeInline
@@ -148,6 +149,27 @@ function expectSemanticEqual(a: ParsedBlock, b: ParsedBlock): void {
     expect(a[field], `block.${field} mismatch`).toBe(b[field])
   }
 }
+
+// detectBullet must mirror Go's renderBlock bullet detection (parser.go).
+// Pinned directly so a Go/TS drift fails here instead of surfacing as an
+// opaque round-trip mismatch.
+describe('detectBullet (#327)', () => {
+  it.each([
+    ['- item', '- '],
+    ['* item', '* '],
+    ['+ item', '+ '],
+    ['1. item', '1. '],
+    ['1) item', '1) '],
+    ['42. done', '42. '],
+    ['  - indented with leading spaces', '- '],
+    ['\t- tab-indented', '- '],
+    ['no bullet here', ''],
+    ['', ''],
+    ['-x (no space after dash)', '']
+  ])('detectBullet(%j) === %j', (input, expected) => {
+    expect(detectBullet(input)).toBe(expected)
+  })
+})
 
 describe('blocksToDoc / docToBlocks pure conversion', () => {
   it('round-trips a single NOTE block', () => {
@@ -1207,6 +1229,114 @@ describe('uniqueIdPlugin', () => {
     const reparsed = parseEmbedBlockMarker(back[0].clean_text)
     expect(reparsed).not.toBeNull()
     expect(reparsed!.notebook).toBe('Work')
+  })
+})
+
+// ---- Sole-content atomic bullet preservation (#327) -----------------------
+// A NOTE whose entire body is a sole atomic token (`- $$x$$`, `- {{embed:...}}`,
+// `- <!-- silt-embed: ... -->`) must round-trip its bullet marker. The
+// converter parses these into atomic nodes (blockMathNode / embedNode /
+// embedBlock); the bullet attr carries the marker so the Go serializer
+// re-emits it on save. Bare (non-bulleted) atomic blocks must stay bare.
+describe('sole-content atomic bullet preservation (#327)', () => {
+  const UUID = '12345678-1234-4234-8234-123456789abc'
+
+  it('round-trips `- $$x$$` preserving the `- ` bullet (blockMathNode)', () => {
+    const block = mkBlock('NOTE', {
+      raw_text: '- $$x$$',
+      clean_text: '$$x$$'
+    })
+    const doc = blocksToDoc([block])
+    expect(doc.content![0].type).toBe('blockMathNode')
+    expect((doc.content![0].attrs as any).bullet).toBe('- ')
+    expect((doc.content![0].attrs as any).latex).toBe('x')
+    const back = docToBlocks(doc)
+    expect(back[0].raw_text).toBe('- $$x$$')
+    expect(back[0].clean_text).toBe('$$x$$')
+  })
+
+  it('round-trips `* $$x$$` and `+ $$x$$` preserving their markers', () => {
+    for (const bullet of ['* ', '+ ']) {
+      const block = mkBlock('NOTE', {
+        raw_text: `${bullet}$$x$$`,
+        clean_text: '$$x$$'
+      })
+      const doc = blocksToDoc([block])
+      expect((doc.content![0].attrs as any).bullet, `bullet=${bullet}`).toBe(
+        bullet
+      )
+      const back = docToBlocks(doc)
+      expect(back[0].raw_text).toBe(`${bullet}$$x$$`)
+      expect(back[0].clean_text).toBe('$$x$$')
+    }
+  })
+
+  it('round-trips `- {{embed:<uuid>}}` preserving the bullet (embedNode)', () => {
+    const block = mkBlock('NOTE', {
+      raw_text: `- {{embed:${UUID}}}`,
+      clean_text: `{{embed:${UUID}}}`
+    })
+    const doc = blocksToDoc([block])
+    expect(doc.content![0].type).toBe('embedNode')
+    expect((doc.content![0].attrs as any).bullet).toBe('- ')
+    expect((doc.content![0].attrs as any).uuid).toBe(UUID)
+    const back = docToBlocks(doc)
+    expect(back[0].raw_text).toBe(`- {{embed:${UUID}}}`)
+    expect(back[0].clean_text).toBe(`{{embed:${UUID}}}`)
+  })
+
+  it('round-trips `- <!-- silt-embed: ... -->` preserving the bullet (embedBlock)', () => {
+    const marker = embedBlockMarker({
+      embedType: 'image',
+      src: 'x.png'
+    })
+    const block = mkBlock('NOTE', {
+      raw_text: `- ${marker}`,
+      clean_text: marker
+    })
+    const doc = blocksToDoc([block])
+    expect(doc.content![0].type).toBe('embedBlock')
+    expect((doc.content![0].attrs as any).bullet).toBe('- ')
+    const back = docToBlocks(doc)
+    expect(back[0].raw_text).toBe(`- ${marker}`)
+    expect(back[0].clean_text).toBe(marker)
+  })
+
+  it('a bare (non-bulleted) `$$x$$` still round-trips bare', () => {
+    const block = mkBlock('NOTE', { raw_text: '$$x$$', clean_text: '$$x$$' })
+    const doc = blocksToDoc([block])
+    expect(doc.content![0].type).toBe('blockMathNode')
+    expect((doc.content![0].attrs as any).bullet).toBe('')
+    const back = docToBlocks(doc)
+    expect(back[0].raw_text).toBe('$$x$$')
+    expect(back[0].clean_text).toBe('$$x$$')
+  })
+
+  it('a bare `{{embed:<uuid>}}` still round-trips bare', () => {
+    const block = mkBlock('NOTE', {
+      raw_text: `{{embed:${UUID}}}`,
+      clean_text: `{{embed:${UUID}}}`
+    })
+    const doc = blocksToDoc([block])
+    expect(doc.content![0].type).toBe('embedNode')
+    expect((doc.content![0].attrs as any).bullet).toBe('')
+    const back = docToBlocks(doc)
+    expect(back[0].raw_text).toBe(`{{embed:${UUID}}}`)
+    expect(back[0].clean_text).toBe(`{{embed:${UUID}}}`)
+  })
+
+  it('a bare `<!-- silt-embed: ... -->` still round-trips bare', () => {
+    const marker = embedBlockMarker({ embedType: 'image', src: 'x.png' })
+    const block = mkBlock('NOTE', {
+      raw_text: marker,
+      clean_text: marker
+    })
+    const doc = blocksToDoc([block])
+    expect(doc.content![0].type).toBe('embedBlock')
+    expect((doc.content![0].attrs as any).bullet).toBe('')
+    const back = docToBlocks(doc)
+    expect(back[0].raw_text).toBe(marker)
+    expect(back[0].clean_text).toBe(marker)
   })
 })
 

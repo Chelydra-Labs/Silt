@@ -716,13 +716,18 @@ cursor position is a tracked follow-up.
 
 ### Rich blocks & editor interactions (#190, #191, #184, #181, #319)
 
-**Inline math (`$...$`) and block math (`$$...$$`) — #191.** LaTeX rendered
+**Inline math (`$...$`) and block math (`$$...$$`) — #191, #328.** LaTeX rendered
 with **KaTeX**. Inline math is an atomic inline node; a block equation is a
 NOTE whose entire body is `$$...$$` (rendered centered). Both round-trip the
-raw LaTeX verbatim. Currency guards keep `5$ cash` / `$5` literal (opening `$`
-not followed by space, closing `$` not preceded by space). A per-vault
-`ui.formatting.math_enabled` toggle (default true) controls the `/math` slash
-command; existing math in files always renders.
+raw LaTeX verbatim. A balanced inline `$…$` pair at a word boundary with no
+internal spaces auto-triggers the inline node as soon as the closing `$` lands
+(currency-safe: `5$ cash`, `$5`, and `cost $5 and $3` stay literal — the
+InputRule finder rejects a `$` preceded by `$` and any pair spanning whitespace).
+Block `$$…$$` is inserted via the `/math` slash command. Editing an existing
+node, or `/math`, opens an in-app LaTeX popover with a live preview (commit
+`Ctrl/Cmd+Enter`, cancel `Esc`, empty commit rejected), replacing the native
+`window.prompt`. A per-vault `ui.formatting.math_enabled` toggle (default true)
+controls the `/math` slash command; existing math in files always renders.
 
 **Mermaid diagrams — #190.** A fenced code block whose info string is
 `mermaid` renders a live SVG diagram (```mermaid) instead of syntax-highlighted
@@ -730,13 +735,22 @@ text. The raw source is preserved verbatim; only the view differs. Invalid
 source shows a readable inline error (never a blank box). Edit-source /
 show-diagram toggle; copy button.
 
-**@-mention (`@[name]`) — #184.** Typing `@` opens a typeahead of known task
-owners (the distinct-owner set from the index). Selecting one inserts an atomic
-mention chip. The `@[name]` token round-trips through `clean_text`; the
-suggestion source is a read-only projection — no mention state is stored.
+**@-mention (`@[name]`) — #184, #329, #332.** Typing `@` opens a typeahead of
+known task owners (the distinct-owner set from the index). Selecting one
+inserts an atomic mention chip. The `@[name]` token round-trips through
+`clean_text`; the suggestion source is a read-only projection — no mention
+state is stored. The owner list is filtered server-side as you type
+(`DistinctOwners(prefix)` → `LIKE 'prefix%'`) and cached briefly with a
+debounced refine, so opening the typeahead no longer re-fetches every owner
+on each focus and a vault with thousands of owners won't ship a huge list
+over IPC. Confirming a mention inside a task line also writes `[owner:: name]`
+in the same transaction (outside a task, the mention is just a reference and
+no owner token is written).
 
-**Block drag handle — #181.** A drag grip reorders top-level blocks by direct
-manipulation; `Alt+ArrowUp/Down` moves the active block by keyboard.
+**Block drag handle — #181, #330.** A drag grip reorders top-level blocks by
+direct manipulation; dropping further to the right indents the block deeper
+(Notion-style), and a drop-zone indicator previews the target depth.
+`Alt+ArrowUp/Down` moves the active block by keyboard.
 
 ### Block types (#188, #180, #189, #183, #172, #310, #308)
 
@@ -807,6 +821,14 @@ hotkeys:
   next_tab: "Ctrl+Tab"
   prev_tab: "Ctrl+Shift+Tab"
   close_tab: "Ctrl+W"
+  # Sidebar hotkeys. Ctrl+B toggles visibility; focus_sidebar (#326 item 8)
+  # moves keyboard focus into the active sidebar's first control (the page
+  # tree, a smart-list, or a scope picker). When the editor is focused Ctrl+B
+  # resolves to format_bold (#168 below); toggle_sidebar / focus_sidebar fire
+  # only outside the editor. If the sidebar is collapsed, focus_sidebar
+  # expands it first, then focuses.
+  toggle_sidebar: "Ctrl+B"
+  focus_sidebar: "Ctrl+Shift+B"
   # Inline formatting hotkeys (#168).
   format_bold: "Ctrl+B"
   format_italic: "Ctrl+I"

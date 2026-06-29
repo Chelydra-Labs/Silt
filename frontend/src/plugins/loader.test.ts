@@ -5,7 +5,7 @@
 // the session-token + sha256 plumbing via direct assertion. The happy-path
 // (hash matches → import succeeds) is covered by the Go-side Install tests
 // (#161) and by manual verification.
-import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { describe, expect, it, beforeEach, beforeAll, vi } from 'vitest'
 
 const mockListPlugins = vi.hoisted(() => vi.fn())
 const mockReadPluginSource = vi.hoisted(() => vi.fn())
@@ -114,5 +114,104 @@ describe('plugin loader session token plumbing (#151, P7-13)', () => {
     // Since we can't easily set the map directly, verify the function
     // is exported and doesn't throw for unknown plugins.
     expect(() => teardownPlugin('nonexistent-plugin')).not.toThrow()
+  })
+})
+
+describe('plugin loader loadersReady signal (#326 item 5)', () => {
+  // The loadersReady flag gates Sidebar/PluginView context construction
+  // against the vault:closing clear→re-register race. These tests pin the
+  // transitions: false at start, true at end of loadPlugins, false again
+  // when vault:closing fires, true again on the next loadPlugins.
+  //
+  // wireLifecycleOnce is module-scope idempotent: EventsOn only fires on
+  // the FIRST loadPlugins call in this file (likely from the integrity
+  // describe block above). We capture that callback once and reuse it —
+  // do NOT reset mockEventsOn or the call record is lost.
+  let vaultClosingCb: (() => void) | null = null
+
+  beforeAll(async () => {
+    const { loadPlugins } = await import('./loader')
+    await loadPlugins('Work', '', '')
+    const call = mockEventsOn.mock.calls.find(
+      (args: unknown[]) => args[0] === 'vault:closing'
+    )
+    vaultClosingCb = call ? (call[1] as () => void) : null
+  })
+
+  beforeEach(() => {
+    mockListPlugins.mockReset().mockResolvedValue([])
+    mockReadPluginSource.mockReset()
+    mockRegisterSession.mockReset().mockResolvedValue('test-token')
+    mockUnregisterSession.mockReset().mockResolvedValue(undefined)
+  })
+
+  it('loadPlugins flips loadersReady to true after assigning plugins/errors', async () => {
+    const { loadPlugins } = await import('./loader')
+    const { loadedPlugins } = await import('./store.svelte')
+    loadedPlugins.loadersReady = false // simulating post-vault:closing state
+
+    await loadPlugins('Work', '', '')
+
+    expect(loadedPlugins.loadersReady).toBe(true)
+  })
+
+  it('vault:closing handler flips loadersReady to false BEFORE teardown', async () => {
+    const { loadPlugins } = await import('./loader')
+    const { loadedPlugins } = await import('./store.svelte')
+
+    await loadPlugins('Work', '', '')
+    expect(loadedPlugins.loadersReady).toBe(true)
+
+    expect(vaultClosingCb).toBeTruthy()
+    vaultClosingCb!()
+
+    expect(loadedPlugins.loadersReady).toBe(false)
+  })
+
+  it('loadersReady returns to true after a subsequent loadPlugins', async () => {
+    const { loadPlugins } = await import('./loader')
+    const { loadedPlugins } = await import('./store.svelte')
+
+    await loadPlugins('Work', '', '')
+    expect(vaultClosingCb).toBeTruthy()
+    vaultClosingCb!()
+    expect(loadedPlugins.loadersReady).toBe(false)
+
+    await loadPlugins('Personal', '', '')
+    expect(loadedPlugins.loadersReady).toBe(true)
+  })
+
+  it('vault:closing resets first-party shared state (kanban + focus) #326 item 1', async () => {
+    const { getKanbanState, setScope, setFilters } =
+      await import('./first-party/silt-kanban/kanbanSharedState.svelte')
+    const { getFocusState, setFocusDate, setActiveFilter } =
+      await import('./first-party/silt-calendar/focusState.svelte')
+
+    // Dirty the shared module-globals as if the previous vault left state.
+    setScope('notebook')
+    setFilters({
+      owners: ['alice'],
+      priorities: [1],
+      dueDate: 'today',
+      tags: ['x']
+    })
+    setFocusDate('2026-06-28')
+    setActiveFilter('today')
+
+    expect(vaultClosingCb).toBeTruthy()
+    vaultClosingCb!()
+
+    const k = getKanbanState()
+    expect(k.scope).toBe('vault')
+    expect(k.scopeUserOverride).toBe(false)
+    expect(k.filters).toEqual({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: []
+    })
+    const f = getFocusState()
+    expect(f.focusDate).toBe('')
+    expect(f.activeFilter).toBe('all')
   })
 })

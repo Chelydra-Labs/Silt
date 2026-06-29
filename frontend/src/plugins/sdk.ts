@@ -513,4 +513,11 @@ export interface RegisteredPlugin {
 export interface LoadedPlugins {
   plugins: Map<string, RegisteredPlugin>
   errors: { id: string; message: string }[]
+  /**
+   * False during the vault-switch window where sessionTokens have been
+   * cleared but the next loadPlugins has not yet re-registered them.
+   * Sidebar/PluginView gate context construction on this so they never
+   * capture a context with an empty session token (#326 item 5).
+   */
+  loadersReady: boolean
 }
