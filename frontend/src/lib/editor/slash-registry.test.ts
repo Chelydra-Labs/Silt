@@ -103,20 +103,50 @@ describe('formatting slash commands (#168)', () => {
     vi.mocked(isGranted).mockReturnValue(true)
   })
 
-  it('registers all formatting commands with correct metadata', () => {
-    // Re-register the built-in formatting commands (module-level registrations
-    // are cleared by resetSlashRegistryForTests).
+  it('registers formatting commands keyed to hotkey ACTION NAMES (not bindings)', () => {
+    // The display binding is resolved at render time from config — the
+    // registry stores the action name only. A stale literal here would defeat
+    // the whole point of the refactor.
     const formatCmds = [
-      { id: 'bold', label: 'Bold', icon: 'format_bold', shortcut: 'Ctrl+B' },
-      { id: 'italic', label: 'Italic', icon: 'format_italic', shortcut: 'Ctrl+I' },
-      { id: 'underline', label: 'Underline', icon: 'format_underlined', shortcut: 'Ctrl+U' },
-      { id: 'strike', label: 'Strikethrough', icon: 'format_strikethrough', shortcut: 'Ctrl+Shift+X' },
-      { id: 'code', label: 'Inline code', icon: 'code', shortcut: 'Ctrl+E' },
-      { id: 'highlight', label: 'Highlight', icon: 'highlight', shortcut: 'Ctrl+Shift+H' },
-      { id: 'subscript', label: 'Subscript', icon: 'subscript', shortcut: 'Ctrl+,' },
-      { id: 'superscript', label: 'Superscript', icon: 'superscript', shortcut: 'Ctrl+.' },
-      { id: 'link', label: 'Link', icon: 'link', shortcut: 'Ctrl+K' },
-      { id: 'clear-formatting', label: 'Clear formatting', icon: 'format_clear', shortcut: 'Ctrl+\\' }
+      { id: 'bold', label: 'Bold', icon: 'format_bold', hotkey: 'format_bold' },
+      {
+        id: 'italic',
+        label: 'Italic',
+        icon: 'format_italic',
+        hotkey: 'format_italic'
+      },
+      {
+        id: 'underline',
+        label: 'Underline',
+        icon: 'format_underlined',
+        hotkey: 'format_underline'
+      },
+      {
+        id: 'strike',
+        label: 'Strikethrough',
+        icon: 'format_strikethrough',
+        hotkey: 'format_strike'
+      },
+      { id: 'code', label: 'Inline code', icon: 'code', hotkey: 'format_code' },
+      {
+        id: 'highlight',
+        label: 'Highlight',
+        icon: 'highlight',
+        hotkey: 'format_highlight'
+      },
+      {
+        id: 'subscript',
+        label: 'Subscript',
+        icon: 'subscript',
+        hotkey: 'format_subscript'
+      },
+      {
+        id: 'superscript',
+        label: 'Superscript',
+        icon: 'superscript',
+        hotkey: 'format_superscript'
+      },
+      { id: 'link', label: 'Link', icon: 'link', hotkey: 'format_link' }
     ]
     for (const cmd of formatCmds) {
       registerSlashCommand(cmd)
@@ -127,13 +157,44 @@ describe('formatting slash commands (#168)', () => {
 
     const bold = cmds.find((c) => c.id === 'bold')
     expect(bold?.label).toBe('Bold')
-    expect(bold?.shortcut).toBe('Ctrl+B')
+    expect(bold?.hotkey).toBe('format_bold')
     expect(bold?.icon).toBe('format_bold')
 
-    const clear = cmds.find((c) => c.id === 'clear-formatting')
-    expect(clear?.label).toBe('Clear formatting')
+    const strike = cmds.find((c) => c.id === 'strike')
+    expect(strike?.hotkey).toBe('format_strike')
 
     const sub = cmds.find((c) => c.id === 'subscript')
-    expect(sub?.shortcut).toBe('Ctrl+,')
+    expect(sub?.hotkey).toBe('format_subscript')
+  })
+
+  it('clear-formatting carries no hotkey (no config action backs it)', () => {
+    registerSlashCommand({
+      id: 'clear-formatting',
+      label: 'Clear formatting',
+      icon: 'format_clear'
+    })
+    const clear = getSlashCommands().find((c) => c.id === 'clear-formatting')
+    expect(clear?.hotkey).toBeUndefined()
+    expect(clear?.shortcut).toBeUndefined()
+  })
+
+  it('non-hotkey entries keep using `shortcut` for slash-trigger characters', () => {
+    registerSlashCommand({
+      id: 'todo',
+      label: 'Task',
+      icon: 'check_box',
+      shortcut: '[]'
+    })
+    registerSlashCommand({
+      id: 'h1',
+      label: 'Heading 1',
+      icon: 'format_size',
+      shortcut: '#'
+    })
+    const cmds = getSlashCommands()
+    expect(cmds.find((c) => c.id === 'todo')?.shortcut).toBe('[]')
+    expect(cmds.find((c) => c.id === 'h1')?.shortcut).toBe('#')
+    // Trigger-char entries do NOT carry a hotkey action.
+    expect(cmds.find((c) => c.id === 'todo')?.hotkey).toBeUndefined()
   })
 })

@@ -4,6 +4,8 @@
     getSlashCommands,
     type SlashCommand
   } from '../lib/editor/slash-registry'
+  import { settings } from '../settings/store.svelte'
+  import { resolveHotkeyDisplay } from '../settings/hotkeys'
 
   interface Props {
     onSelect: (commandId: string) => void
@@ -28,6 +30,16 @@
   // The command list is the union of built-ins + plugin-registered commands,
   // sourced from the slash-command registry (#110).
   const allCommands = getSlashCommands()
+
+  // Hotkey bindings live in config and may be remapped per-vault; read them
+  // live so the right-aligned hint tracks the user's actual keymap. A `hotkey`
+  // action that resolves to '' (absent or disabled) renders no hint.
+  let hotkeys = $derived(settings.config?.hotkeys ?? {})
+
+  function hintFor(cmd: SlashCommand): string {
+    if (cmd.hotkey) return resolveHotkeyDisplay(cmd.hotkey, hotkeys)
+    return cmd.shortcut ?? ''
+  }
 
   // Filter and rank commands by the query prop reactively
   let filteredCommands = $derived.by(() => {
@@ -170,9 +182,9 @@
             >
           {/if}
         </div>
-        {#if cmd.shortcut}
+        {#if hintFor(cmd)}
           <span class="text-[10px] text-text-muted select-none"
-            >{cmd.shortcut}</span
+            >{hintFor(cmd)}</span
           >
         {:else if cmd.pluginID}
           <span class="text-[9px] text-text-muted select-none uppercase"
