@@ -129,6 +129,19 @@ describe('CalendarSidebar (#322)', () => {
     expect(countSql).not.toMatch(/AS all\b/)
   })
 
+  it('shows an empty-state hint instead of smart-list badges when there are no active tasks (#326 item 4)', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      return mockDayCounts([])
+    })
+    render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // The hint renders; the smart-list toggle buttons do not.
+    expect(screen.getByTestId('calendar-empty-state')).toBeInTheDocument()
+    expect(screen.queryByTestId('today')).toBeNull()
+    expect(screen.queryByTestId('all')).toBeNull()
+  })
+
   it('clicking the Today smart list sets activeFilter to "today"', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (sql.includes('SUM(CASE')) return mockCounts(3, 12, 1, 0, 49)
@@ -196,7 +209,7 @@ describe('CalendarSidebar (#322)', () => {
 
   it('arrow-key keyboard nav on smart lists moves the focus index', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      if (sql.includes('SUM(CASE')) return mockCounts(3, 12, 1, 0, 16)
       return mockDayCounts([])
     })
     render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
@@ -211,7 +224,7 @@ describe('CalendarSidebar (#322)', () => {
 
   it('Enter on a focused smart list activates it', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      if (sql.includes('SUM(CASE')) return mockCounts(3, 12, 1, 0, 16)
       return mockDayCounts([])
     })
     render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
@@ -224,7 +237,7 @@ describe('CalendarSidebar (#322)', () => {
 
   it('Clear-filter button appears when a filter is active', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
+      if (sql.includes('SUM(CASE')) return mockCounts(3, 12, 1, 0, 16)
       return mockDayCounts([])
     })
     render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })

@@ -391,54 +391,63 @@
     >
       Smart Lists
     </h3>
-    <ul role="listbox" aria-label="Smart lists" class="mt-1 space-y-0.5">
-      {#each smartLists as item, i (item.id)}
-        {@const selected = activeFilter === item.id}
-        <li>
-          <button
-            type="button"
-            role="option"
-            aria-selected={selected}
-            tabindex={i === listFocusIdx ? 0 : -1}
-            data-testid={item.id}
-            onclick={() => {
-              listFocusIdx = i
-              activateList(item.id)
-            }}
-            onkeydown={onListKeydown}
-            onfocus={() => (listFocusIdx = i)}
-            class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[12px] font-body-md cursor-pointer border-none bg-transparent transition-colors
+    {#if counts.all > 0}
+      <ul role="listbox" aria-label="Smart lists" class="mt-1 space-y-0.5">
+        {#each smartLists as item, i (item.id)}
+          {@const selected = activeFilter === item.id}
+          <li>
+            <button
+              type="button"
+              role="option"
+              aria-selected={selected}
+              tabindex={i === listFocusIdx ? 0 : -1}
+              data-testid={item.id}
+              onclick={() => {
+                listFocusIdx = i
+                activateList(item.id)
+              }}
+              onkeydown={onListKeydown}
+              onfocus={() => (listFocusIdx = i)}
+              class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[12px] font-body-md cursor-pointer border-none bg-transparent transition-colors
               {selected
-              ? 'bg-accent-primary-glow text-accent-primary-start'
-              : 'text-text-primary hover:bg-hover'}"
-          >
-            <span
-              class="material-symbols-outlined text-[14px]"
-              class:text-error={item.id === 'overdue'}
-              class:text-accent-primary-start={item.id !== 'overdue'}
+                ? 'bg-accent-primary-glow text-accent-primary-start'
+                : 'text-text-primary hover:bg-hover'}"
             >
-              {item.id === 'today'
-                ? 'today'
-                : item.id === 'upcoming'
-                  ? 'event_upcoming'
-                  : item.id === 'overdue'
-                    ? 'error'
-                    : item.id === 'completed'
-                      ? 'check_circle'
-                      : 'list_alt'}
-            </span>
-            <span class="flex-1 truncate">{item.label}</span>
-            <span
-              class="text-[10px] text-text-muted bg-surface px-1.5 py-0.5 rounded-sm font-label-sm"
-              aria-label="{counts[item.id as keyof Counts]} tasks"
-              data-testid={`count-${item.id}`}
-            >
-              {counts[item.id as keyof Counts]}
-            </span>
-          </button>
-        </li>
-      {/each}
-    </ul>
+              <span
+                class="material-symbols-outlined text-[14px]"
+                class:text-error={item.id === 'overdue'}
+                class:text-accent-primary-start={item.id !== 'overdue'}
+              >
+                {item.id === 'today'
+                  ? 'today'
+                  : item.id === 'upcoming'
+                    ? 'event_upcoming'
+                    : item.id === 'overdue'
+                      ? 'error'
+                      : item.id === 'completed'
+                        ? 'check_circle'
+                        : 'list_alt'}
+              </span>
+              <span class="flex-1 truncate">{item.label}</span>
+              <span
+                class="text-[10px] text-text-muted bg-surface px-1.5 py-0.5 rounded-sm font-label-sm"
+                aria-label="{counts[item.id as keyof Counts]} tasks"
+                data-testid={`count-${item.id}`}
+              >
+                {counts[item.id as keyof Counts]}
+              </span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p
+        class="mt-1 px-2 py-2 text-[11px] font-body-md text-text-muted"
+        data-testid="calendar-empty-state"
+      >
+        No active tasks — set a due date on a task to populate this view.
+      </p>
+    {/if}
     {#if activeFilter !== 'all'}
       <button
         type="button"
