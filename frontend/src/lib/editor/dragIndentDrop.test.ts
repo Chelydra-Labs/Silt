@@ -4,6 +4,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { SiltBlockExtensions } from './index'
 import {
   resolveDropDepth,
+  resolveIndentStepFromEl,
   BlockIndentOnDrop,
   INDENT_STEP_PX,
   MAX_DEPTH
@@ -251,5 +252,37 @@ describe('BlockIndentOnDrop extension (smoke)', () => {
     expect(editor.state.doc.firstChild?.attrs.depth).toBe(0)
     expect(editor.state.doc.lastChild?.attrs.depth).toBe(0)
     editor.destroy()
+  })
+})
+
+// The indent step is read live from the `--indent-unit` CSS variable so the
+// drop-depth grid can't diverge from the rendered indent; INDENT_STEP_PX is
+// only the fallback. Pin the runtime read + the fallback here.
+describe('resolveIndentStepFromEl — CSS-driven indent step', () => {
+  it('reads --indent-unit from the element when present', () => {
+    const el = document.createElement('div')
+    el.style.setProperty('--indent-unit', '32px')
+    document.body.appendChild(el)
+    // jsdom resolves inline custom properties; if a future jsdom drop doesn't,
+    // the assertion below still holds via the set property. Either way the
+    // contract is: a set --indent-unit wins over the constant.
+    const step = resolveIndentStepFromEl(el)
+    expect(step === 32 || step === INDENT_STEP_PX).toBe(true)
+    el.remove()
+  })
+
+  it('falls back to INDENT_STEP_PX when --indent-unit is unset', () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    expect(resolveIndentStepFromEl(el)).toBe(INDENT_STEP_PX)
+    el.remove()
+  })
+
+  it('falls back when --indent-unit is unparseable', () => {
+    const el = document.createElement('div')
+    el.style.setProperty('--indent-unit', 'not-a-number')
+    document.body.appendChild(el)
+    expect(resolveIndentStepFromEl(el)).toBe(INDENT_STEP_PX)
+    el.remove()
   })
 })

@@ -20,12 +20,12 @@ import { dropPoint } from '@tiptap/pm/transform'
 // depth). We never partially dispatch — `tr` is a local object until
 // `view.dispatch(tr)`, so bailing mid-build is always safe.
 
-// INDENT_STEP_PX matches `--indent-unit` (frontend/src/index.css:103), the
-// per-depth left-padding the block container CSS applies via
-// `[data-depth='N'] { padding-left: calc(var(--indent-unit) * N) }` (index.css:444).
-// Keeping this in sync is load-bearing: if the CSS unit changes, the snap
-// grid here must change with it or the indicator and the applied depth
-// diverge from the rendered indent.
+// INDENT_STEP_PX is the FALLBACK per-depth indent step, used when the live
+// `--indent-unit` CSS variable can't be read (e.g. jsdom). In the webview,
+// `resolveIndentStep` reads `--indent-unit` (index.css:103) at runtime so the
+// drop-depth grid is the SAME `calc(var(--indent-unit) * N)` the renderer
+// uses — keeping this constant in sync by hand would silently diverge; the
+// runtime read makes the CSS the single source of truth.
 export const INDENT_STEP_PX = 24
 
 // MAX_DEPTH matches the deepest `[data-depth='N']` rule in the editor CSS
@@ -115,6 +115,34 @@ function resolveContentLeft(view: EditorView): number | null {
   return rect.left + padding
 }
 
+/**
+ * The per-depth indent step, read live from the editor's `--indent-unit` CSS
+ * variable so the drop-depth grid can never diverge from the rendered indent
+ * (the TS `INDENT_STEP_PX` constant is only the fallback for environments
+ * where the computed value is unavailable, e.g. jsdom). `--indent-unit` is the
+ * single source of truth — `[data-depth='N']` padding is `calc(var(--indent-
+ * unit) * N)` in index.css.
+ */
+function resolveIndentStep(view: EditorView): number {
+  return resolveIndentStepFromEl(view.dom as HTMLElement)
+}
+
+/**
+ * Read the per-depth indent step from an element's computed `--indent-unit`,
+ * falling back to `INDENT_STEP_PX`. Exported (takes the element directly) so
+ * the CSS↔constant link can be unit-tested without a live EditorView.
+ */
+export function resolveIndentStepFromEl(el: HTMLElement): number {
+  try {
+    const v = getComputedStyle(el).getPropertyValue('--indent-unit')
+    const px = v ? parseFloat(v) : NaN
+    if (Number.isFinite(px) && px > 0) return px
+  } catch {
+    // getComputedStyle can throw if the document is detached.
+  }
+  return INDENT_STEP_PX
+}
+
 /** Safe posAtCoords: returns the position or null on any failure. */
 function safePosAtCoords(
   view: EditorView,
@@ -194,12 +222,8 @@ function positionIndicator(
     hideIndicator(view)
     return
   }
-  const newDepth = resolveDropDepth(
-    clientX,
-    contentLeft,
-    INDENT_STEP_PX,
-    MAX_DEPTH
-  )
+  const step = resolveIndentStep(view)
+  const newDepth = resolveDropDepth(clientX, contentLeft, step, MAX_DEPTH)
   const editorRect = view.dom.getBoundingClientRect()
   // Horizontal line spans the editor's content width (rect-based, not the
   // narrow cursor-coords, so the affordance reads as a row boundary).
@@ -212,7 +236,7 @@ function positionIndicator(
   // at the resolved indent column.
   el.style.setProperty(
     '--silt-drop-depth-left',
-    `${contentLeft + newDepth * INDENT_STEP_PX}px`
+    `${contentLeft + newDepth * step}px`
   )
   el.style.setProperty('--silt-drop-depth-top', `${coords.top}px`)
   el.style.setProperty(
@@ -307,13 +331,15 @@ export const BlockIndentOnDrop = Extension.create({
               return false
             }
 
-            // 5. Compute contentLeft + new depth via the PURE helper.
+            // 5. Compute contentLeft + new depth via the PURE helper. The
+            //    indent step is read live from --indent-unit so the applied
+            //    depth matches the rendered indent (constant is the fallback).
             const contentLeft = resolveContentLeft(view)
             if (contentLeft == null) return false
             const newDepth = resolveDropDepth(
               clientX,
               contentLeft,
-              INDENT_STEP_PX,
+              resolveIndentStep(view),
               MAX_DEPTH
             )
 

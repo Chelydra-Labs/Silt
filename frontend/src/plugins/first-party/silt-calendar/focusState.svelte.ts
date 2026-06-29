@@ -82,12 +82,3 @@ export function resetFocusState(): void {
   _state.focusDate = ''
   _state.activeFilter = 'all'
 }
-
-/**
- * Test-only: reset all state to defaults. Not exported in the public
- * SDK surface; only consumed by Vitest specs.
- */
-export function resetFocusStateForTests(): void {
-  _state.focusDate = ''
-  _state.activeFilter = 'all'
-}

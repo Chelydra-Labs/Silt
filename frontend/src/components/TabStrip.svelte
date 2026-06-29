@@ -220,7 +220,6 @@
               aria-label="Close tab"
               title="Close tab"
               class="tab-close"
-              class:preview-close={tab.preview}
               class:has-indicator={showDirtyIndicators &&
                 (tab.dirty || tab.saveError)}
               onclick={(e) => {

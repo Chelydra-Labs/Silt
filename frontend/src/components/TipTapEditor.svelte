@@ -497,10 +497,24 @@
       suggestStatus = ''
       return
     }
+    // Preserve the highlighted owner across keystrokes: if the previously
+    // selected owner is still in the new list, keep it highlighted; otherwise
+    // fall back to the top. Without this, typing after ↓-navigating snapped
+    // the highlight back to item 0 every keystroke (#332 review feedback).
+    const prevName = mentionPopup
+      ? mentionPopup.items[mentionPopup.selected]
+      : undefined
+    const pickSelected = (items: string[]): number => {
+      if (!prevName) return 0
+      const idx = items.indexOf(prevName)
+      return idx >= 0 ? idx : 0
+    }
     // Instant feedback from the cached full set — small vaults never wait.
     const instant = filterOwners(owners, ctx.query)
     mentionPopup =
-      instant.length === 0 ? null : { ctx, items: instant, selected: 0 }
+      instant.length === 0
+        ? null
+        : { ctx, items: instant, selected: pickSelected(instant) }
     suggestStatus = instant.length
       ? `${instant.length} owner${instant.length === 1 ? '' : 's'} available`
       : 'No matching owners'
@@ -523,7 +537,7 @@
           mentionPopup =
             serverItems.length === 0
               ? null
-              : { ctx, items: serverItems, selected: 0 }
+              : { ctx, items: serverItems, selected: pickSelected(serverItems) }
           suggestStatus = serverItems.length
             ? `${serverItems.length} owner${serverItems.length === 1 ? '' : 's'} available`
             : 'No matching owners'

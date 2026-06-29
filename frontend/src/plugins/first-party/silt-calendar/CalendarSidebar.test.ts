@@ -14,7 +14,7 @@ import CalendarSidebar from './CalendarSidebar.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
 import {
-  resetFocusStateForTests,
+  resetFocusState,
   getFocusState,
   setFocusDate,
   setActiveFilter
@@ -76,7 +76,7 @@ async function flush() {
 describe('CalendarSidebar (#322)', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset()
-    resetFocusStateForTests()
+    resetFocusState()
   })
 
   afterEach(() => {
@@ -140,6 +140,20 @@ describe('CalendarSidebar (#322)', () => {
     expect(screen.getByTestId('calendar-empty-state')).toBeInTheDocument()
     expect(screen.queryByTestId('today')).toBeNull()
     expect(screen.queryByTestId('all')).toBeNull()
+  })
+
+  it('keeps the Completed smart list visible for a completed-only vault (#326 item 4 review)', async () => {
+    // counts.all (non-done) is 0 but there are completed tasks — the empty-
+    // state must NOT hide the Completed list, and the hint must not show.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 5, 0)
+      return mockDayCounts([])
+    })
+    render(CalendarSidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // The empty-state hint must NOT show, and the Completed list is reachable.
+    expect(screen.queryByTestId('calendar-empty-state')).toBeNull()
+    expect(screen.getByTestId('completed')).toBeInTheDocument()
   })
 
   it('clicking the Today smart list sets activeFilter to "today"', async () => {

@@ -20,6 +20,7 @@ import {
 import {
   blocksToDoc,
   docToBlocks,
+  detectBullet,
   embedBlockMarker,
   parseEmbedBlockMarker,
   tokenizeInline
@@ -148,6 +149,27 @@ function expectSemanticEqual(a: ParsedBlock, b: ParsedBlock): void {
     expect(a[field], `block.${field} mismatch`).toBe(b[field])
   }
 }
+
+// detectBullet must mirror Go's renderBlock bullet detection (parser.go).
+// Pinned directly so a Go/TS drift fails here instead of surfacing as an
+// opaque round-trip mismatch.
+describe('detectBullet (#327)', () => {
+  it.each([
+    ['- item', '- '],
+    ['* item', '* '],
+    ['+ item', '+ '],
+    ['1. item', '1. '],
+    ['1) item', '1) '],
+    ['42. done', '42. '],
+    ['  - indented with leading spaces', '- '],
+    ['\t- tab-indented', '- '],
+    ['no bullet here', ''],
+    ['', ''],
+    ['-x (no space after dash)', '']
+  ])('detectBullet(%j) === %j', (input, expected) => {
+    expect(detectBullet(input)).toBe(expected)
+  })
+})
 
 describe('blocksToDoc / docToBlocks pure conversion', () => {
   it('round-trips a single NOTE block', () => {

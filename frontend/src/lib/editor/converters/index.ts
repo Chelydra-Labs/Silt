@@ -53,6 +53,7 @@ export { serializeInlineContent } from './serialize'
 export {
   blocksToDoc,
   docToBlocks,
+  detectBullet,
   stripAlignmentMarker,
   emitAlignmentMarker,
   embedBlockMarker,

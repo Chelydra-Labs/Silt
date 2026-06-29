@@ -391,7 +391,7 @@
     >
       Smart Lists
     </h3>
-    {#if counts.all > 0}
+    {#if counts.all > 0 || counts.completed > 0}
       <ul role="listbox" aria-label="Smart lists" class="mt-1 space-y-0.5">
         {#each smartLists as item, i (item.id)}
           {@const selected = activeFilter === item.id}

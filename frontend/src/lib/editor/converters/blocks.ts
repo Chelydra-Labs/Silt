@@ -30,7 +30,10 @@ function extractTextContent(content?: NodeJSON[]): string {
 
 // Extract the bullet prefix ('- ', '* ', '+ ', or '') from a note's raw_text,
 // matching the detection logic in Go's renderBlock (parser.go ~line 515-527).
-function detectBullet(rawText: string): string {
+// Exported so it can be unit-tested directly — the Go/TS bullet detection
+// must stay in lockstep, and a focused test catches drift sooner than an
+// indirect round-trip failure.
+export function detectBullet(rawText: string): string {
   const trimmed = rawText.trimStart()
   if (trimmed.startsWith('- ')) return '- '
   if (trimmed.startsWith('* ')) return '* '

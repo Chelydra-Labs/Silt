@@ -24,7 +24,7 @@ import type { PluginContext, PluginManifest } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
 import {
   getFocusState,
-  resetFocusStateForTests,
+  resetFocusState,
   setActiveFilter,
   setFocusDate
 } from './focusState.svelte'
@@ -59,7 +59,7 @@ async function flush() {
 describe('Calendar plugin', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset()
-    resetFocusStateForTests()
+    resetFocusState()
   })
 
   afterEach(() => {
