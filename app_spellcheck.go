@@ -19,6 +19,25 @@ import (
 // (Sprint 34) are a follow-up; the management card edits the vault dictionary,
 // which is the common case (vault notebooks).
 
+// SetTypewriterMode atomically toggles editor.typewriter_mode (#187), mirroring
+// SetFocusMode: vaultMu.RLock + configMu.Lock + RegisterSelfWrite + config.Save.
+// Used by the toggle_typewriter_mode hotkey (default Ctrl+Shift+Y) so a single-
+// field write doesn't clobber an unsaved Settings draft.
+func (a *App) SetTypewriterMode(value bool) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	a.cfg.Editor.TypewriterMode = &value
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	return config.Save(a.vaultPath, a.cfg)
+}
+
 // GetCustomDictionary returns the per-vault custom spellcheck word list. Empty
 // (non-nil) when none have been added yet — normalize guarantees non-nil.
 func (a *App) GetCustomDictionary() ([]string, error) {

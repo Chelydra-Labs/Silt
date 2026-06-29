@@ -22,6 +22,7 @@
     setCustomWords
   } from '../lib/editor/spellcheck/dictionary'
   import SpellcheckMenu from './editor/SpellcheckMenu.svelte'
+  import { TypewriterMode } from '../lib/editor/typewriter/TypewriterModeExtension'
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
@@ -678,6 +679,9 @@
     // dictionary loads + the decoration set rebuilds when the spellcheck config
     // changes (see the $effect below); cheap (no decorations) when disabled.
     Spellcheck,
+    // Typewriter mode (#187) — keeps the active line centered. Reads config
+    // reactively; no-op (no scroll math) when disabled.
+    TypewriterMode,
     Placeholder.configure({
       placeholder: 'Type / for commands, or start writing…'
     }),
