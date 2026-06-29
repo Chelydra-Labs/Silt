@@ -166,4 +166,47 @@ describe('Search extension (in-page find, #186)', () => {
       cleanup()
     }
   })
+
+  // --- Replace (#185) ---
+
+  it('replaceNextInPage replaces the active match and advances', () => {
+    const { editor, cleanup } = mount('<p>foo foo foo</p>')
+    try {
+      editor.commands.setSearchQuery({ search: 'foo', replace: 'bar' })
+      editor.commands.findNextInPage()
+      editor.commands.replaceNextInPage()
+      expect(editor.getText()).toBe('bar foo foo')
+      // After replacing, the next match is selected; one fewer match remains.
+      expect(getMatchCount(editor)).toBe(2)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('replaceAllInPage replaces every match in one transaction', () => {
+    const { editor, cleanup } = mount('<p>foo bar foo</p>')
+    try {
+      editor.commands.setSearchQuery({ search: 'foo', replace: 'baz' })
+      editor.commands.replaceAllInPage()
+      expect(editor.getText()).toBe('baz bar baz')
+      expect(getMatchCount(editor)).toBe(0)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('regex capture groups work in replace', () => {
+    const { editor, cleanup } = mount('<p>hello world</p>')
+    try {
+      editor.commands.setSearchQuery({
+        search: '(hello) (world)',
+        regexp: true,
+        replace: '$2 $1'
+      })
+      editor.commands.replaceAllInPage()
+      expect(editor.getText()).toBe('world hello')
+    } finally {
+      cleanup()
+    }
+  })
 })

@@ -5,12 +5,14 @@
     getActiveMatchIndex,
     clearSearch
   } from '../../lib/editor/search/searchExtension'
+  import { findBarState } from '../../lib/editor/search/findBarState.svelte'
 
   // The active tab's TipTap editor. FindBar operates on the live doc.
   let { editor, onClose }: { editor?: Editor; onClose: () => void } = $props()
 
   // User inputs.
   let query = $state('')
+  let replaceValue = $state('')
   let caseSensitive = $state(false)
   let wholeWord = $state(false)
   let regexp = $state(false)
@@ -19,6 +21,7 @@
   // update / selection change (typing, navigation, doc edit).
   let matchCount = $state(0)
   let activeIndex = $state(-1)
+  let lastReplaceMessage = $state('')
   let inputEl = $state<HTMLInputElement | null>(null)
 
   function refreshCounts(): void {
@@ -34,17 +37,17 @@
       caseSensitive,
       wholeWord,
       regexp,
-      replace: ''
+      replace: findBarState.replaceOpen ? replaceValue : ''
     })
     // Jump to the nearest match so the counter reflects a real position.
     if (query) editor.commands.findNextInPage()
     refreshCounts()
   }
 
-  // Re-apply whenever the query string or a toggle flips.
+  // Re-apply whenever the query string, replace text, or a toggle flips.
   $effect(() => {
-    // Track the reactive inputs so the effect re-runs on each change.
     void query
+    void replaceValue
     void caseSensitive
     void wholeWord
     void regexp
@@ -86,6 +89,21 @@
     editor?.commands.findPrevInPage()
     refreshCounts()
   }
+  function doReplace(): void {
+    if (!editor || matchCount === 0) return
+    editor.commands.replaceNextInPage()
+    refreshCounts()
+  }
+  function doReplaceAll(): void {
+    if (!editor || matchCount === 0) return
+    const before = matchCount
+    editor.commands.replaceAllInPage()
+    refreshCounts()
+    lastReplaceMessage = `Replaced ${before}`
+    window.setTimeout(() => {
+      lastReplaceMessage = ''
+    }, 2500)
+  }
 
   function close(): void {
     editor && clearSearch(editor)
@@ -113,86 +131,128 @@
   const noResults = $derived(!!query && matchCount === 0)
 </script>
 
-<div class="find-bar" role="toolbar" aria-label="Find">
-  <input
-    bind:this={inputEl}
-    type="search"
-    aria-label="Find"
-    aria-keyshortcuts="Ctrl+F"
-    aria-describedby="find-status"
-    placeholder="Find"
-    autocomplete="off"
-    spellcheck="false"
-    bind:value={query}
-    onkeydown={handleKeydown}
-    class="find-input"
-    class:no-results={noResults}
-  />
-  <span
-    id="find-status"
-    class="find-status"
-    aria-live="polite"
-    aria-atomic="true"
-  >
-    {status}
-  </span>
-  <div class="find-toggles">
-    <button
-      type="button"
-      class="toggle"
-      class:on={caseSensitive}
-      aria-pressed={caseSensitive}
-      aria-label="Case sensitive (Alt+C)"
-      title="Case sensitive (Alt+C)"
-      onclick={() => (caseSensitive = !caseSensitive)}>Aa</button
+<div
+  class="find-bar"
+  role="toolbar"
+  aria-label={findBarState.replaceOpen ? 'Find and replace' : 'Find'}
+>
+  <div class="row">
+    <input
+      bind:this={inputEl}
+      type="search"
+      aria-label="Find"
+      aria-keyshortcuts="Ctrl+F"
+      aria-describedby="find-status"
+      placeholder="Find"
+      autocomplete="off"
+      spellcheck="false"
+      bind:value={query}
+      onkeydown={handleKeydown}
+      class="find-input"
+      class:no-results={noResults}
+    />
+    <span
+      id="find-status"
+      class="find-status"
+      aria-live="polite"
+      aria-atomic="true"
     >
+      {status}
+    </span>
+    <div class="find-toggles">
+      <button
+        type="button"
+        class="toggle"
+        class:on={caseSensitive}
+        aria-pressed={caseSensitive}
+        aria-label="Case sensitive (Alt+C)"
+        title="Case sensitive (Alt+C)"
+        onclick={() => (caseSensitive = !caseSensitive)}>Aa</button
+      >
+      <button
+        type="button"
+        class="toggle"
+        class:on={wholeWord}
+        aria-pressed={wholeWord}
+        aria-label="Whole word (Alt+W)"
+        title="Whole word (Alt+W)"
+        onclick={() => (wholeWord = !wholeWord)}>ab</button
+      >
+      <button
+        type="button"
+        class="toggle"
+        class:on={regexp}
+        aria-pressed={regexp}
+        aria-label="Regular expression (Alt+R)"
+        title="Regular expression (Alt+R)"
+        onclick={() => (regexp = !regexp)}>.*</button
+      >
+    </div>
+    <div class="find-nav">
+      <button
+        type="button"
+        class="nav-btn"
+        aria-label="Previous match (Shift+Enter)"
+        aria-keyshortcuts="Shift+Enter"
+        title="Previous match"
+        disabled={!editor || matchCount === 0}
+        onclick={prev}>↑</button
+      >
+      <button
+        type="button"
+        class="nav-btn"
+        aria-label="Next match (Enter)"
+        aria-keyshortcuts="Enter"
+        title="Next match"
+        disabled={!editor || matchCount === 0}
+        onclick={next}>↓</button
+      >
+    </div>
     <button
       type="button"
-      class="toggle"
-      class:on={wholeWord}
-      aria-pressed={wholeWord}
-      aria-label="Whole word (Alt+W)"
-      title="Whole word (Alt+W)"
-      onclick={() => (wholeWord = !wholeWord)}>ab</button
-    >
-    <button
-      type="button"
-      class="toggle"
-      class:on={regexp}
-      aria-pressed={regexp}
-      aria-label="Regular expression (Alt+R)"
-      title="Regular expression (Alt+R)"
-      onclick={() => (regexp = !regexp)}>.*</button
+      class="close-btn"
+      aria-label="Close find bar (Esc)"
+      aria-keyshortcuts="Escape"
+      title="Close"
+      onclick={close}>✕</button
     >
   </div>
-  <div class="find-nav">
-    <button
-      type="button"
-      class="nav-btn"
-      aria-label="Previous match (Shift+Enter)"
-      aria-keyshortcuts="Shift+Enter"
-      title="Previous match"
-      disabled={!editor || matchCount === 0}
-      onclick={prev}>↑</button
-    >
-    <button
-      type="button"
-      class="nav-btn"
-      aria-label="Next match (Enter)"
-      aria-keyshortcuts="Enter"
-      title="Next match"
-      disabled={!editor || matchCount === 0}
-      onclick={next}>↓</button
-    >
-  </div>
-  <button
-    type="button"
-    class="close-btn"
-    aria-label="Close find bar (Esc)"
-    aria-keyshortcuts="Escape"
-    title="Close"
-    onclick={close}>✕</button
-  >
+  {#if findBarState.replaceOpen}
+    <div class="row replace-row">
+      <input
+        type="text"
+        aria-label="Replace with"
+        aria-keyshortcuts="Ctrl+H"
+        placeholder="Replace"
+        autocomplete="off"
+        spellcheck="false"
+        bind:value={replaceValue}
+        class="find-input"
+      />
+      <button
+        type="button"
+        class="action-btn"
+        aria-label="Replace selected match"
+        title="Replace this match"
+        disabled={!editor || matchCount === 0}
+        onclick={doReplace}>Replace</button
+      >
+      <button
+        type="button"
+        class="action-btn"
+        aria-label="Replace all matches"
+        aria-keyshortcuts="Alt+Enter"
+        title="Replace all"
+        disabled={!editor || matchCount === 0}
+        onclick={doReplaceAll}>All</button
+      >
+      {#if lastReplaceMessage}
+        <span class="replace-message" aria-live="polite"
+          >{lastReplaceMessage}</span
+        >
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <svelte:window
@@ -218,14 +278,23 @@
     right: 1rem;
     z-index: 50;
     display: flex;
-    align-items: center;
-    gap: 0.375rem;
+    flex-direction: column;
+    gap: 0.25rem;
     padding: 0.375rem 0.5rem;
     background: var(--color-surface, #1e1e22);
     border: 1px solid var(--color-border, #333);
     border-radius: 8px;
     box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.35));
     font-size: 13px;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  .replace-row {
+    border-top: 1px solid var(--color-border, #333);
+    padding-top: 0.25rem;
   }
   .find-input {
     width: 200px;
@@ -286,8 +355,30 @@
   }
   .toggle:focus-visible,
   .nav-btn:focus-visible,
-  .close-btn:focus-visible {
+  .close-btn:focus-visible,
+  .action-btn:focus-visible {
     outline: 2px solid var(--color-accent-primary-start, #10b981);
     outline-offset: 1px;
+  }
+  .action-btn {
+    padding: 0.25rem 0.625rem;
+    background: transparent;
+    color: var(--color-text-primary, #e6e6e6);
+    border: 1px solid var(--color-border, #333);
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+    line-height: 1;
+  }
+  .action-btn:hover:not(:disabled) {
+    background: var(--color-surface-hover, rgba(255, 255, 255, 0.06));
+  }
+  .action-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .replace-message {
+    color: var(--color-text-muted, #888);
+    font-size: 12px;
   }
 </style>

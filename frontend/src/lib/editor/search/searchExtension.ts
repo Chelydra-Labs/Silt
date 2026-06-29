@@ -6,6 +6,8 @@ import {
   setSearchState,
   findNext as pmFindNext,
   findPrev as pmFindPrev,
+  replaceNext as pmReplaceNext,
+  replaceAll as pmReplaceAll,
   getMatchHighlights,
   getSearchState
 } from 'prosemirror-search'
@@ -102,7 +104,20 @@ export const Search = Extension.create({
       findPrevInPage:
         () =>
         ({ state, dispatch }: { state: any; dispatch?: (tr: any) => void }) =>
-          pmFindPrev(state, dispatch)
+          pmFindPrev(state, dispatch),
+      // Replace (Ctrl+H, #185). The replace text comes from the SearchQuery
+      // (set via setSearchQuery's `replace` field, updated when the replace
+      // input changes). replaceNext swaps the active match + advances;
+      // replaceAll swaps every match in ONE transaction (one undo step),
+      // iterating matches in reverse so positions stay valid.
+      replaceNextInPage:
+        () =>
+        ({ state, dispatch }: { state: any; dispatch?: (tr: any) => void }) =>
+          pmReplaceNext(state, dispatch),
+      replaceAllInPage:
+        () =>
+        ({ state, dispatch }: { state: any; dispatch?: (tr: any) => void }) =>
+          pmReplaceAll(state, dispatch)
     }
   }
 })
@@ -156,6 +171,8 @@ declare module '@tiptap/core' {
       setSearchQuery: (params: SearchParams) => ReturnType
       findNextInPage: () => ReturnType
       findPrevInPage: () => ReturnType
+      replaceNextInPage: () => ReturnType
+      replaceAllInPage: () => ReturnType
     }
   }
 }
