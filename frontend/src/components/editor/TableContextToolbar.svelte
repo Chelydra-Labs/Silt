@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Editor } from '@tiptap/core'
   import { nearestEnabledIndex } from '../../lib/editor/rovingTabindex'
+  import { settings } from '../../settings/store.svelte'
+  import { resolveHotkeyDisplay } from '../../settings/hotkeys'
 
   // Contextual toolbar for GFM tables (#172). Renders below the format toolbar
   // when the cursor is inside a table cell. Six row/column operations map to
@@ -11,7 +13,8 @@
     id: string
     icon: string
     label: string
-    shortcut?: string
+    /** Config hotkey action name (e.g. 'table_insert_row_above'). */
+    hotkey?: string
     can: () => boolean
     run: () => void
   }
@@ -45,7 +48,7 @@
         id: 'row-above',
         icon: 'arrow_upward',
         label: 'Insert row above',
-        shortcut: 'Ctrl+Shift+Up',
+        hotkey: 'table_insert_row_above',
         can: () => !!editor.can().addRowBefore?.(),
         run: () => editor.chain().focus().addRowBefore().run()
       },
@@ -53,7 +56,7 @@
         id: 'row-below',
         icon: 'arrow_downward',
         label: 'Insert row below',
-        shortcut: 'Ctrl+Shift+Down',
+        hotkey: 'table_insert_row_below',
         can: () => !!editor.can().addRowAfter?.(),
         run: () => editor.chain().focus().addRowAfter().run()
       },
@@ -61,7 +64,7 @@
         id: 'col-left',
         icon: 'arrow_back',
         label: 'Insert column left',
-        shortcut: 'Ctrl+Shift+Left',
+        hotkey: 'table_insert_col_left',
         can: () => !!editor.can().addColumnBefore?.(),
         run: () => editor.chain().focus().addColumnBefore().run()
       },
@@ -69,7 +72,7 @@
         id: 'col-right',
         icon: 'arrow_forward',
         label: 'Insert column right',
-        shortcut: 'Ctrl+Shift+Right',
+        hotkey: 'table_insert_col_right',
         can: () => !!editor.can().addColumnAfter?.(),
         run: () => editor.chain().focus().addColumnAfter().run()
       },
@@ -114,6 +117,14 @@
     }
   })
 
+  // Hotkey bindings live in config and may be remapped per-vault; read them
+  // live so aria-keyshortcuts + title track the user's actual keymap. Returns
+  // '' when the action is absent or disabled → attribute omitted.
+  let hotkeys = $derived(settings.config?.hotkeys ?? {})
+  function hk(action: string | undefined): string {
+    return action ? resolveHotkeyDisplay(action, hotkeys) : ''
+  }
+
   function handleKeydown(e: KeyboardEvent): void {
     const btns = toolbarEl?.querySelectorAll<HTMLButtonElement>('[data-tb]')
     if (!btns || btns.length === 0) return
@@ -152,15 +163,16 @@
   onkeydown={handleKeydown}
 >
   {#each ops as op, i (op.id)}
+    {@const hotkey = hk(op.hotkey)}
     <button
       type="button"
       class="tct-btn"
       data-tb
       disabled={!op.can()}
       aria-label={op.label}
-      aria-keyshortcuts={op.shortcut}
+      aria-keyshortcuts={hotkey || undefined}
       tabindex={rovingIdx === i ? 0 : -1}
-      title={op.shortcut ? `${op.label} (${op.shortcut})` : op.label}
+      title={hotkey ? `${op.label} (${hotkey})` : op.label}
       onclick={op.run}
       onfocus={() => (rovingIdx = i)}
     >

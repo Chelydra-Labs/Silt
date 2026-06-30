@@ -5,7 +5,8 @@ import {
   UpdatePluginSetting,
   AppendDismissedTip,
   SetShowFormatToolbar,
-  SetFocusMode
+  SetFocusMode,
+  SetTypewriterMode
 } from '../../wailsjs/go/main/App.js'
 import { EventsOn } from '../../wailsjs/runtime/runtime.js'
 import type { config } from '../../wailsjs/go/models.js'
@@ -220,6 +221,31 @@ export async function toggleFocusMode(): Promise<boolean | null> {
   try {
     await SetFocusMode(next)
     cfg.editor.focus_mode = next
+    return next
+  } catch (e) {
+    settings.error = errMsg(e)
+    return null
+  } finally {
+    settings.saving = false
+  }
+}
+
+/**
+ * Toggle editor.typewriter_mode (#187) via the atomic SetTypewriterMode IPC.
+ * Same single-field-write contract as toggleFocusMode — avoids clobbering an
+ * unsaved Settings draft. Bound to the toggle_typewriter_mode hotkey
+ * (default Ctrl+Shift+Y) in App.svelte.
+ */
+export async function toggleTypewriterMode(): Promise<boolean | null> {
+  const cfg = settings.config
+  if (!cfg) return null
+  if (!cfg.editor) cfg.editor = {} as any
+  const next = !cfg.editor.typewriter_mode
+  settings.saving = true
+  settings.error = ''
+  try {
+    await SetTypewriterMode(next)
+    cfg.editor.typewriter_mode = next
     return next
   } catch (e) {
     settings.error = errMsg(e)

@@ -10,6 +10,21 @@
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
   import { SiltInlineDragHandle } from '../lib/editor/siltInlineDragHandle'
+  import { PlainPaste } from '../lib/editor/plainPaste'
+  import { Search } from '../lib/editor/search/searchExtension'
+  import {
+    Spellcheck,
+    requestSpellcheckRecheck,
+    findMisspellingAt,
+    findMisspellingAtOrAfter
+  } from '../lib/editor/spellcheck/SpellcheckExtension'
+  import {
+    loadDictionary,
+    setCustomWords,
+    resetDictionary
+  } from '../lib/editor/spellcheck/dictionary'
+  import SpellcheckMenu from './editor/SpellcheckMenu.svelte'
+  import { TypewriterMode } from '../lib/editor/typewriter/TypewriterModeExtension'
   import {
     SiltBlockExtensionsWithNodeViews,
     SiltInlineMarkExtensions,
@@ -656,6 +671,19 @@
     SiltInlineDragHandle,
     BlockIndentOnDrop,
     SiltBlockKeymaps,
+    // Ctrl+Shift+V inserts the clipboard as plain text (strips formatting);
+    // Ctrl+V (no shift) falls through to ProseMirror's native rich-HTML paste.
+    PlainPaste,
+    // In-page find (Ctrl+F) — wraps prosemirror-search; decorations + match
+    // navigation. Cheap when the query is empty (FindBar closed).
+    Search,
+    // Inline spellcheck (#196) — wavy underlines on misspellings. The
+    // dictionary loads + the decoration set rebuilds when the spellcheck config
+    // changes (see the $effect below); cheap (no decorations) when disabled.
+    Spellcheck,
+    // Typewriter mode (#187) — keeps the active line centered. Reads config
+    // reactively; no-op (no scroll math) when disabled.
+    TypewriterMode,
     Placeholder.configure({
       placeholder: 'Type / for commands, or start writing…'
     }),
@@ -756,6 +784,99 @@
       onReady?.()
       // Seed the @-mention owner list on mount (#184).
       void loadOwners()
+    }
+  })
+
+  // Spellcheck (#196): load the dictionary + apply the per-vault custom-word
+  // list whenever the spellcheck config changes (enable/disable, language,
+  // custom_dictionary edits). Disabled → no dictionary → checkWord returns
+  // true for everything → no underlines. After load/change, force a recheck so
+  // decorations refresh immediately (no editor reload needed).
+  $effect(() => {
+    const enabled = settings.config?.editor?.spellcheck_enabled !== false
+    const lang = settings.config?.editor?.spellcheck_language || 'en-US'
+    const custom = settings.config?.editor?.custom_dictionary ?? []
+    const editor = editorInstance
+    if (!editor) return
+    // Track the reactive inputs so the effect re-runs on each change.
+    void enabled
+    void lang
+    void custom
+    if (!enabled) {
+      // When disabled, reset the dictionary so checkWord returns true for
+      // everything (no squiggles) AND force a recheck to wipe stale
+      // decorations immediately — the user expects underlines to vanish.
+      resetDictionary()
+      requestSpellcheckRecheck(editor)
+      return
+    }
+    setCustomWords(custom)
+    // Swallow load failures (logged in loadDictionary) — spellcheck degrades
+    // to off when the dictionary can't load (stripped build, test env).
+    void loadDictionary(lang)
+      .then(() => {
+        requestSpellcheckRecheck(editor)
+      })
+      .catch(() => {})
+  })
+
+  // Spellcheck corrections menu (#196). Right-click on a misspelled word opens
+  // the suggestions popover. Disabled when spellcheck is off (no decorations to
+  // click). The menu is also opened by the FormatToolbar spellcheck button via
+  // the `silt:open-spellcheck` window event (finds the misspelling at/after the
+  // cursor) — keeps the toolbar decoupled from the editor internals.
+  let spellMenu = $state<{
+    word: string
+    range: { from: number; to: number }
+    anchor: { x: number; y: number }
+  } | null>(null)
+
+  function openSpellMenuAt(
+    editor: Editor,
+    pos: number,
+    coords: { x: number; y: number },
+    useFallback = false
+  ): void {
+    // Right-click (useFallback=false): only open if the user clicked ON a
+    // misspelled word. Toolbar button (useFallback=true): if the cursor isn't
+    // on a misspelling, jump to the next one so the button isn't a silent no-op.
+    const m =
+      findMisspellingAt(editor, pos) ??
+      (useFallback ? findMisspellingAtOrAfter(editor, pos) : null)
+    if (!m) return
+    spellMenu = {
+      word: m.word,
+      range: { from: m.from, to: m.to },
+      anchor: coords
+    }
+  }
+
+  $effect(() => {
+    const editor = editorInstance
+    if (!editor) return
+    if (settings.config?.editor?.spellcheck_enabled === false) return
+    const dom = editor.view.dom as HTMLElement
+    const onContext = (e: MouseEvent) => {
+      if (settings.config?.editor?.spellcheck_enabled === false) return
+      const pos = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })
+      if (pos == null) return
+      const m = findMisspellingAt(editor, pos.pos)
+      if (!m) return
+      e.preventDefault()
+      openSpellMenuAt(editor, pos.pos, { x: e.clientX, y: e.clientY })
+    }
+    const onOpenBtn = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { x: number; y: number }
+        | undefined
+      const head = editor.state.selection.head
+      openSpellMenuAt(editor, head, detail ?? { x: 100, y: 100 }, true)
+    }
+    dom.addEventListener('contextmenu', onContext)
+    window.addEventListener('silt:open-spellcheck', onOpenBtn)
+    return () => {
+      dom.removeEventListener('contextmenu', onContext)
+      window.removeEventListener('silt:open-spellcheck', onOpenBtn)
     }
   })
 
@@ -1268,6 +1389,15 @@
       {selectionEmpty}
       {selectionCoords}
     />
+    {#if spellMenu && editorInstance}
+      <SpellcheckMenu
+        editor={editorInstance}
+        word={spellMenu.word}
+        range={spellMenu.range}
+        anchor={spellMenu.anchor}
+        onClose={() => (spellMenu = null)}
+      />
+    {/if}
     {#if cursorInTable && editorInstance}
       <TableContextToolbar editor={editorInstance} />
     {/if}

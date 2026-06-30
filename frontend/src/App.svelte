@@ -23,6 +23,7 @@
   import VirtualScrollContainer from './components/VirtualScrollContainer.svelte'
   import TabStrip from './components/TabStrip.svelte'
   import SearchModal from './components/SearchModal.svelte'
+  import GlobalReplaceModal from './components/editor/GlobalReplaceModal.svelte'
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
   import SettingsShell from './components/settings/SettingsShell.svelte'
@@ -33,13 +34,15 @@
     settings,
     type SystemConfig,
     toggleFormatToolbar,
-    toggleFocusMode
+    toggleFocusMode,
+    toggleTypewriterMode
   } from './settings/store.svelte'
   import { initEditorTokens } from './settings/editor-tokens.svelte'
   import { initThemes } from './theme/store.svelte'
   import { initTemplates } from './templates/store.svelte'
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { matchHotkey } from './settings/hotkeys'
+  import { findBarState } from './lib/editor/search/findBarState.svelte'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import PluginModalHost from './components/PluginModalHost.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
@@ -359,6 +362,8 @@
     }
   }
   let showSearch = $state(false)
+  let showGlobalReplace = $state(false)
+  let globalReplaceQuery = $state('')
   let showSettings = $state(false)
   let settingsTab = $state('general')
   let showTemplatePicker = $state(false)
@@ -560,6 +565,18 @@
         e.preventDefault()
         showSearch = !showSearch
       }
+      if (matchHotkey(e, hotkeys.find_in_page)) {
+        e.preventDefault()
+        findBarState.openFind()
+      }
+      if (matchHotkey(e, hotkeys.replace)) {
+        e.preventDefault()
+        findBarState.openReplace()
+      }
+      if (matchHotkey(e, hotkeys.global_replace)) {
+        e.preventDefault()
+        showGlobalReplace = !showGlobalReplace
+      }
       if (matchHotkey(e, hotkeys.toggle_sidebar)) {
         e.preventDefault()
         sidebarCollapsed = !sidebarCollapsed
@@ -591,6 +608,10 @@
       if (matchHotkey(e, hotkeys.toggle_focus_mode)) {
         e.preventDefault()
         void toggleFocusMode()
+      }
+      if (matchHotkey(e, hotkeys.toggle_typewriter_mode)) {
+        e.preventDefault()
+        void toggleTypewriterMode()
       }
       // Tab-strip hotkeys (#142). Ctrl+Tab / Ctrl+Shift+Tab cycle MRU;
       // Ctrl+W closes the active tab. All three are remappable / disable-
@@ -654,20 +675,23 @@
       showTemplatePicker = true
     }
     function handlePageRenamed(e: Event) {
-      const { notebook, section, oldName, newName } = (e as CustomEvent).detail as {
+      const { notebook, section, oldName, newName } = (e as CustomEvent)
+        .detail as {
         notebook: string
         section: string
         oldName: string
         newName: string
       }
       openTabs = openTabs.map((t) =>
-        t.notebook === notebook &&
-        t.section === section &&
-        t.page === oldName
+        t.notebook === notebook && t.section === section && t.page === oldName
           ? { ...t, page: newName }
           : t
       )
-      if (activeNotebook === notebook && activeSection === section && activePage === oldName) {
+      if (
+        activeNotebook === notebook &&
+        activeSection === section &&
+        activePage === oldName
+      ) {
         activePage = newName
       }
     }
@@ -911,14 +935,24 @@
   )
 
   $effect(() => {
-    console.log('[Silt] notesReady:', notesReady,
-      '| activeView:', activeView,
-      '| notebook:', activeNotebook,
-      '| section:', activeSection,
-      '| page:', activePage,
-      '| activeTabId:', activeTabId,
-      '| displayedTabs:', displayedTabs.length,
-      '| openTabs:', openTabs.length)
+    console.log(
+      '[Silt] notesReady:',
+      notesReady,
+      '| activeView:',
+      activeView,
+      '| notebook:',
+      activeNotebook,
+      '| section:',
+      activeSection,
+      '| page:',
+      activePage,
+      '| activeTabId:',
+      activeTabId,
+      '| displayedTabs:',
+      displayedTabs.length,
+      '| openTabs:',
+      openTabs.length
+    )
   })
 
   function openSettings(tab: string = '') {
@@ -926,7 +960,7 @@
     showSettings = true
   }
 
-  // Ordered view cycle for the cycle_view_layout hotkey (default Alt+Tab).
+  // Ordered view cycle for the cycle_view_layout hotkey (default Ctrl+Alt+V).
   // If the current view is not in the list (e.g. a plugin view), jump to
   // 'notes' as the anchor.
   function cycleView() {
@@ -1124,8 +1158,11 @@
       <!-- Content viewport -->
       <div class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-void">
         {#if settings.config?.ui?.open_devtools_on_startup === true}
-          <div class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-[10px] font-mono px-2 py-1 rounded opacity-80 pointer-events-none">
-            view={activeView} nb={activeNotebook || '-'} pg={activePage || '-'} tab={activeTabId || '-'} dt={displayedTabs.length} nr={notesReady}
+          <div
+            class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-[10px] font-mono px-2 py-1 rounded opacity-80 pointer-events-none"
+          >
+            view={activeView} nb={activeNotebook || '-'} pg={activePage || '-'} tab={activeTabId ||
+              '-'} dt={displayedTabs.length} nr={notesReady}
           </div>
         {/if}
         {#if activeView === 'notes'}
@@ -1244,6 +1281,18 @@
     <SearchModal
       onClose={() => (showSearch = false)}
       onJump={handleSearchResultJump}
+      onReplaceInVault={(q) => {
+        globalReplaceQuery = q
+        showSearch = false
+        showGlobalReplace = true
+      }}
+    />
+  {/if}
+
+  {#if showGlobalReplace}
+    <GlobalReplaceModal
+      initialQuery={globalReplaceQuery}
+      onClose={() => (showGlobalReplace = false)}
     />
   {/if}
 

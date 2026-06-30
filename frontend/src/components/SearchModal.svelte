@@ -23,9 +23,10 @@
   interface Props {
     onClose: () => void
     onJump: (res: TaskResult) => void
+    onReplaceInVault?: (query: string) => void
   }
 
-  let { onClose, onJump }: Props = $props()
+  let { onClose, onJump, onReplaceInVault }: Props = $props()
 
   let query = $state('')
   let results = $state<TaskResult[]>([])
@@ -38,10 +39,29 @@
   let offset = $state(0)
   const pageSize = 20
 
-  // Re-run search whenever query text changes (debounced). Resets to the first
-  // page so the modal always shows the top-ranked matches for the current text.
+  // Phase 6 filters (#186 global enhancements): scope (vault vs incl-linked),
+  // category (block type), and sort. Driven by the chips/segmented controls
+  // below the search input; an empty typeFilter = "All types".
+  let scopeVaultOnly = $state(false)
+  let typeFilter = $state('')
+  let sortMode = $state<'relevance' | 'recency'>('relevance')
+
+  const TYPE_CHIPS: { id: string; label: string }[] = [
+    { id: '', label: 'All' },
+    { id: 'TASK', label: 'Tasks' },
+    { id: 'NOTE', label: 'Notes' },
+    { id: 'HEADER', label: 'Headings' }
+  ]
+
+  // Re-run search whenever the query OR a filter changes (debounced). Resets to
+  // the first page so the modal always shows the top-ranked matches for the
+  // current query + filters.
   $effect(() => {
     const trimmed = query.trim()
+    // Track the reactive filters so the effect re-runs on each change.
+    void typeFilter
+    void sortMode
+    void scopeVaultOnly
     if (!trimmed) {
       results = []
       selectedIdx = 0
@@ -61,11 +81,22 @@
   })
 
   async function performSearch(q: string, off: number, replace: boolean) {
+    // Capture the full filter state at call time so a stale response (from a
+    // different query OR a toggled chip/scope/sort) is detected on resolution.
+    const sig = `${q}|${typeFilter}|${sortMode}|${scopeVaultOnly}`
     loading = true
     try {
-      const res: SearchResult = await SearchBlocksPaged(q, off, pageSize)
-      // Guard against a stale response landing after a newer query/offset.
-      if (query.trim() !== q) return
+      const res: SearchResult = await SearchBlocksPaged(q, off, pageSize, {
+        notebook: '',
+        section: '',
+        tag: '',
+        type: typeFilter,
+        sort: sortMode,
+        vaultOnly: scopeVaultOnly
+      })
+      // Guard against a stale response landing after a newer query/filter.
+      if (sig !== `${query.trim()}|${typeFilter}|${sortMode}|${scopeVaultOnly}`)
+        return
       if (replace) {
         results = res.results || []
         selectedIdx = 0
@@ -171,7 +202,7 @@
 
 <!-- Positioning wrapper (scrim + dialog as siblings per SettingsShell pattern) -->
 <div
-  class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[150] flex items-start justify-center pt-28"
+  class="fixed inset-0 bg-black/50 z-[150] flex items-start justify-center pt-28"
 >
   <button
     tabindex="-1"
@@ -186,7 +217,7 @@
     aria-label="Search blocks"
     tabindex="-1"
     class="relative w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 80%, transparent);"
+    style="background: color-mix(in srgb, var(--color-panel) 95%, transparent);"
   >
     <!-- Search Input Area -->
     <div
@@ -211,6 +242,96 @@
         </span>
       {/if}
     </div>
+
+    <!-- Filter controls (#186): scope (vault vs incl-linked) + category chips +
+         sort. Keyboard-reachable via Tab; the chips drive the `type` filter,
+         scope drives VaultOnly, sort drives the SQL ORDER BY. -->
+    <div
+      class="flex items-center gap-2 px-4 py-2 border-b border-border-muted bg-void/20 flex-wrap"
+      role="toolbar"
+      aria-label="Search filters"
+    >
+      <!-- Scope: Vault vs Vault+Linked (segmented). -->
+      <div class="flex rounded-lg overflow-hidden border border-border-muted">
+        <button
+          type="button"
+          class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
+          class:bg-accent-primary-start={scopeVaultOnly}
+          class:text-void={scopeVaultOnly}
+          class:text-text-muted={!scopeVaultOnly}
+          aria-pressed={scopeVaultOnly}
+          onclick={() => (scopeVaultOnly = true)}
+          title="Search in-vault blocks only">Vault</button
+        >
+        <button
+          type="button"
+          class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
+          class:bg-accent-primary-start={!scopeVaultOnly}
+          class:text-void={!scopeVaultOnly}
+          class:text-text-muted={scopeVaultOnly}
+          aria-pressed={!scopeVaultOnly}
+          onclick={() => (scopeVaultOnly = false)}
+          title="Include linked notebooks">+ Linked</button
+        >
+      </div>
+
+      <!-- Category chips: filter by block type (single-select; "" = All). -->
+      <div class="flex items-center gap-1 flex-wrap">
+        {#each TYPE_CHIPS as chip (chip.id)}
+          <button
+            type="button"
+            class="px-2 py-1 rounded-md text-[11px] font-label-sm-bold transition-colors border cursor-pointer"
+            class:bg-accent-primary-start={typeFilter === chip.id}
+            class:text-void={typeFilter === chip.id}
+            class:bg-transparent={typeFilter !== chip.id}
+            class:text-text-muted={typeFilter !== chip.id}
+            class:border-border-muted={typeFilter !== chip.id}
+            aria-pressed={typeFilter === chip.id}
+            onclick={() => (typeFilter = chip.id)}>{chip.label}</button
+          >
+        {/each}
+      </div>
+
+      <!-- Sort: Relevance vs Recent (segmented). -->
+      <div
+        class="ml-auto flex rounded-lg overflow-hidden border border-border-muted"
+      >
+        <button
+          type="button"
+          class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
+          class:bg-accent-primary-start={sortMode === 'relevance'}
+          class:text-void={sortMode === 'relevance'}
+          class:text-text-muted={sortMode !== 'relevance'}
+          aria-pressed={sortMode === 'relevance'}
+          onclick={() => (sortMode = 'relevance')}>Relevance</button
+        >
+        <button
+          type="button"
+          class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
+          class:bg-accent-primary-start={sortMode === 'recency'}
+          class:text-void={sortMode === 'recency'}
+          class:text-text-muted={sortMode !== 'recency'}
+          aria-pressed={sortMode === 'recency'}
+          onclick={() => (sortMode = 'recency')}>Recent</button
+        >
+      </div>
+    </div>
+
+    {#if query.trim() && total > 0}
+      <div
+        class="px-5 py-1 text-[11px] text-text-muted font-body-md flex items-center justify-between"
+      >
+        <span>{total} {total === 1 ? 'result' : 'results'}</span>
+        {#if onReplaceInVault}
+          <button
+            type="button"
+            class="text-accent-primary-start hover:brightness-110 cursor-pointer text-[11px] font-label-sm-bold border-none bg-transparent"
+            onclick={() => onReplaceInVault(query.trim())}
+            >Replace in vault…</button
+          >
+        {/if}
+      </div>
+    {/if}
 
     <!-- Search Results List -->
     <div

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { configKeyToProseMirrorKey, resolveShortcut } from './hotkeys'
+import {
+  configKeyToProseMirrorKey,
+  resolveShortcut,
+  resolveHotkeyDisplay
+} from './hotkeys'
 
 describe('configKeyToProseMirrorKey', () => {
   it('converts Ctrl+Shift+9 → Mod-Shift-9', () => {
@@ -93,5 +97,38 @@ describe('resolveShortcut', () => {
     expect(resolveShortcut('toggle_quote', 'Mod-Shift-9', hotkeys)).toBe(
       'Mod-Shift-9'
     )
+  })
+})
+
+describe('resolveHotkeyDisplay', () => {
+  it('returns the configured binding in display form (no ProseMirror conversion)', () => {
+    const hotkeys = { format_bold: 'Ctrl+B', toggle_quote: 'Ctrl+Shift+9' }
+    expect(resolveHotkeyDisplay('format_bold', hotkeys)).toBe('Ctrl+B')
+    expect(resolveHotkeyDisplay('toggle_quote', hotkeys)).toBe('Ctrl+Shift+9')
+  })
+
+  it('returns the binding verbatim for remapped actions', () => {
+    // User remapped bold to Cmd+B — the display must reflect that, not the
+    // shipped default. (This is the drift bug the refactor fixes.)
+    const hotkeys = { format_bold: 'Cmd+B' }
+    expect(resolveHotkeyDisplay('format_bold', hotkeys)).toBe('Cmd+B')
+  })
+
+  it('returns "" when the action is absent from the map', () => {
+    expect(resolveHotkeyDisplay('format_bold', {})).toBe('')
+    expect(
+      resolveHotkeyDisplay('format_bold', { format_italic: 'Ctrl+I' })
+    ).toBe('')
+  })
+
+  it('returns "" when the action is explicitly disabled (set to "")', () => {
+    const hotkeys = { format_bold: '' }
+    expect(resolveHotkeyDisplay('format_bold', hotkeys)).toBe('')
+  })
+
+  it('handles nullish map defensively', () => {
+    expect(
+      resolveHotkeyDisplay('format_bold', {} as Record<string, string>)
+    ).toBe('')
   })
 })

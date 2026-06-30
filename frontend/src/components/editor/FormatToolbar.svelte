@@ -9,6 +9,8 @@
     insertDetails,
     insertTable
   } from '../../lib/editor'
+  import { settings } from '../../settings/store.svelte'
+  import { resolveHotkeyDisplay } from '../../settings/hotkeys'
 
   interface Props {
     editor: Editor | null
@@ -19,11 +21,22 @@
 
   let { editor, activeMarks, isDark, colorEnabled }: Props = $props()
 
+  // Each toolbar button carries a hotkey ACTION NAME (keyed into
+  // config.hotkeys) — never a binding literal. The display binding is
+  // resolved live so tooltips + aria-keyshortcuts track the user's actual
+  // (possibly remapped or disabled) keymap. Returns '' when the action is
+  // absent or disabled, in which case the attribute is omitted.
+  let hotkeys = $derived(settings.config?.hotkeys ?? {})
+  function hk(action: string): string {
+    return resolveHotkeyDisplay(action, hotkeys)
+  }
+
   interface FormatButton {
     id: string
     label: string
     icon: string
-    shortcut: string
+    /** Config hotkey action name (e.g. 'format_bold'). */
+    hotkey: string
     mark: string
   }
 
@@ -32,56 +45,56 @@
       id: 'bold',
       label: 'Bold',
       icon: 'format_bold',
-      shortcut: 'Ctrl+B',
+      hotkey: 'format_bold',
       mark: 'bold'
     },
     {
       id: 'italic',
       label: 'Italic',
       icon: 'format_italic',
-      shortcut: 'Ctrl+I',
+      hotkey: 'format_italic',
       mark: 'italic'
     },
     {
       id: 'underline',
       label: 'Underline',
       icon: 'format_underlined',
-      shortcut: 'Ctrl+U',
+      hotkey: 'format_underline',
       mark: 'underline'
     },
     {
       id: 'strike',
       label: 'Strikethrough',
       icon: 'format_strikethrough',
-      shortcut: 'Ctrl+Shift+X',
+      hotkey: 'format_strike',
       mark: 'strike'
     },
     {
       id: 'code',
       label: 'Inline code',
       icon: 'code',
-      shortcut: 'Ctrl+E',
+      hotkey: 'format_code',
       mark: 'code'
     },
     {
       id: 'highlight',
       label: 'Highlight',
       icon: 'highlight',
-      shortcut: 'Ctrl+Shift+H',
+      hotkey: 'format_highlight',
       mark: 'highlight'
     },
     {
       id: 'subscript',
       label: 'Subscript',
       icon: 'subscript',
-      shortcut: 'Ctrl,',
+      hotkey: 'format_subscript',
       mark: 'subscript'
     },
     {
       id: 'superscript',
       label: 'Superscript',
       icon: 'superscript',
-      shortcut: 'Ctrl.',
+      hotkey: 'format_superscript',
       mark: 'superscript'
     }
   ]
@@ -91,25 +104,25 @@
       id: 'left',
       label: 'Align left',
       icon: 'format_align_left',
-      shortcut: 'Ctrl+Shift+L'
+      hotkey: 'align_left'
     },
     {
       id: 'center',
       label: 'Align center',
       icon: 'format_align_center',
-      shortcut: 'Ctrl+Shift+E'
+      hotkey: 'align_center'
     },
     {
       id: 'right',
       label: 'Align right',
       icon: 'format_align_right',
-      shortcut: 'Ctrl+Shift+R'
+      hotkey: 'align_right'
     },
     {
       id: 'justify',
       label: 'Align justify',
       icon: 'format_align_justify',
-      shortcut: 'Ctrl+Shift+J'
+      hotkey: 'align_justify'
     }
   ]
 
@@ -200,7 +213,8 @@
   let toolbarEl: HTMLElement | null = $state(null)
 
   const LINK_IDX = BUTTONS.length
-  const ALIGN_START = LINK_IDX + 1
+  const SPELLCHECK_IDX = LINK_IDX + 1
+  const ALIGN_START = SPELLCHECK_IDX + 1
   const INSERT_START = ALIGN_START + ALIGN_BUTTONS.length
   const COLOR_START = INSERT_START + INSERT_BUTTONS.length
   let clearIdx = $derived(COLOR_START + (colorEnabled ? 2 : 0))
@@ -254,12 +268,12 @@
         class:active={isActive(btn.mark)}
         aria-pressed={isActive(btn.mark)}
         aria-label={btn.label}
-        aria-keyshortcuts={btn.shortcut}
+        aria-keyshortcuts={hk(btn.hotkey) || undefined}
         data-tb
         tabindex={rovingIdx === i ? 0 : -1}
         onclick={() => handleClick(btn)}
         onfocus={() => (rovingIdx = i)}
-        title={btn.label}
+        title={hk(btn.hotkey) ? `${btn.label} (${hk(btn.hotkey)})` : btn.label}
       >
         <span class="material-symbols-outlined" aria-hidden="true"
           >{btn.icon}</span
@@ -273,7 +287,7 @@
       class:active={isActive('link')}
       aria-pressed={isActive('link')}
       aria-label="Insert link"
-      aria-keyshortcuts="Ctrl+K"
+      aria-keyshortcuts={hk('format_link') || undefined}
       data-tb
       tabindex={rovingIdx === LINK_IDX ? 0 : -1}
       onclick={handleLink}
@@ -281,6 +295,32 @@
       title="Insert link"
     >
       <span class="material-symbols-outlined" aria-hidden="true">link</span>
+    </button>
+    <button
+      type="button"
+      class="toolbar-btn"
+      aria-label="Check spelling"
+      title="Check spelling (open suggestions for the misspelled word at the cursor)"
+      data-tb
+      tabindex={rovingIdx === SPELLCHECK_IDX ? 0 : -1}
+      onfocus={() => (rovingIdx = SPELLCHECK_IDX)}
+      onclick={() => {
+        const rect = editor?.view.dom.getBoundingClientRect()
+        const sel = editor?.view.coordsAtPos(editor.state.selection.head)
+        window.dispatchEvent(
+          new CustomEvent('silt:open-spellcheck', {
+            detail: sel
+              ? { x: sel.left, y: sel.bottom + 4 }
+              : rect
+                ? { x: rect.left + 40, y: rect.top + 40 }
+                : { x: 100, y: 100 }
+          })
+        )
+      }}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true"
+        >spellcheck</span
+      >
     </button>
   </div>
 
@@ -294,12 +334,12 @@
         class:active={currentAlign() === btn.id}
         aria-pressed={currentAlign() === btn.id}
         aria-label={btn.label}
-        aria-keyshortcuts={btn.shortcut}
+        aria-keyshortcuts={hk(btn.hotkey) || undefined}
         data-tb
         tabindex={rovingIdx === ALIGN_START + i ? 0 : -1}
         onclick={() => handleAlign(btn.id)}
         onfocus={() => (rovingIdx = ALIGN_START + i)}
-        title={btn.label}
+        title={hk(btn.hotkey) ? `${btn.label} (${hk(btn.hotkey)})` : btn.label}
       >
         <span class="material-symbols-outlined" aria-hidden="true"
           >{btn.icon}</span
@@ -342,7 +382,6 @@
       type="button"
       class="toolbar-btn"
       aria-label="Clear formatting"
-      aria-keyshortcuts="Ctrl+\\"
       data-tb
       tabindex={rovingIdx === clearIdx ? 0 : -1}
       onclick={handleClear}

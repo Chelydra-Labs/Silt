@@ -21,7 +21,20 @@ export interface SlashCommand {
   label: string
   description?: string
   icon?: string
-  /** Optional keyboard shortcut hint shown right-aligned (built-ins only). */
+  /**
+   * Hotkey ACTION name (e.g. `'format_bold'`, `'set_h2'`) keyed into
+   * `config.hotkeys`. Resolved to the live display binding at render time via
+   * `resolveHotkeyDisplay`, so the hint always matches the user's actual
+   * (possibly remapped or disabled) binding. NOT a keystring literal — the
+   * binding is read from the config source of truth.
+   */
+  hotkey?: string
+  /**
+   * Non-hotkey hint shown right-aligned — reserved for slash-TRIGGER
+   * characters (`'#'`, `'T'`, `'[]'`, `'D'`, `'E'`) the user can type to
+   * autofill the command. Do NOT put hotkey bindings here; use `hotkey` so
+   * the display tracks config.
+   */
   shortcut?: string
   /** The plugin id that registered this command, or undefined for built-ins. */
   pluginID?: string
@@ -134,76 +147,79 @@ registerSlashCommand({
 
 // --- Inline formatting commands (#168) ------------------------------------
 // Metadata-only built-ins; the editor dispatches them by id via
-// handleSlashSelect. Each toggles its mark on the current selection.
+// handleSlashSelect. Each toggles its mark on the current selection. `hotkey`
+// is the config action name — the display binding is resolved at render time
+// (CommandPalette) so the slash hint always tracks the user's actual keymap.
 registerSlashCommand({
   id: 'bold',
   label: 'Bold',
   description: 'Make the selection bold',
   icon: 'format_bold',
-  shortcut: 'Ctrl+B'
+  hotkey: 'format_bold'
 })
 registerSlashCommand({
   id: 'italic',
   label: 'Italic',
   description: 'Make the selection italic',
   icon: 'format_italic',
-  shortcut: 'Ctrl+I'
+  hotkey: 'format_italic'
 })
 registerSlashCommand({
   id: 'underline',
   label: 'Underline',
   description: 'Underline the selection',
   icon: 'format_underlined',
-  shortcut: 'Ctrl+U'
+  hotkey: 'format_underline'
 })
 registerSlashCommand({
   id: 'strike',
   label: 'Strikethrough',
   description: 'Cross out the selection',
   icon: 'format_strikethrough',
-  shortcut: 'Ctrl+Shift+X'
+  hotkey: 'format_strike'
 })
 registerSlashCommand({
   id: 'code',
   label: 'Inline code',
   description: 'Format as inline code',
   icon: 'code',
-  shortcut: 'Ctrl+E'
+  hotkey: 'format_code'
 })
 registerSlashCommand({
   id: 'highlight',
   label: 'Highlight',
   description: 'Highlight the selection',
   icon: 'highlight',
-  shortcut: 'Ctrl+Shift+H'
+  hotkey: 'format_highlight'
 })
 registerSlashCommand({
   id: 'subscript',
   label: 'Subscript',
   description: 'Lower the selection below the line',
   icon: 'subscript',
-  shortcut: 'Ctrl+,'
+  hotkey: 'format_subscript'
 })
 registerSlashCommand({
   id: 'superscript',
   label: 'Superscript',
   description: 'Raise the selection above the line',
   icon: 'superscript',
-  shortcut: 'Ctrl+.'
+  hotkey: 'format_superscript'
 })
 registerSlashCommand({
   id: 'link',
   label: 'Link',
   description: 'Add a hyperlink to the selection',
   icon: 'link',
-  shortcut: 'Ctrl+K'
+  hotkey: 'format_link'
 })
+// Clear formatting has no config action — the legacy `Ctrl+\` hint was a
+// phantom literal (no keymap registers it). Omit `hotkey` rather than lie.
 registerSlashCommand({
   id: 'clear-formatting',
   label: 'Clear formatting',
   description: 'Remove all formatting from the selection',
-  icon: 'format_clear',
-  shortcut: 'Ctrl+\\'
+  icon: 'format_clear'
 })
 
 // --- Heading / block-type commands (#169) ---------------------------------
@@ -212,28 +228,28 @@ registerSlashCommand({
   label: 'Heading 2',
   description: 'Convert the block to an H2',
   icon: 'format_size',
-  shortcut: 'Ctrl+Alt+2'
+  hotkey: 'set_h2'
 })
 registerSlashCommand({
   id: 'h3',
   label: 'Heading 3',
   description: 'Convert the block to an H3',
   icon: 'format_size',
-  shortcut: 'Ctrl+Alt+3'
+  hotkey: 'set_h3'
 })
 registerSlashCommand({
   id: 'note',
   label: 'Plain note',
   description: 'Convert the block to a plain note (strip header / task)',
   icon: 'notes',
-  shortcut: 'Ctrl+Alt+0'
+  hotkey: 'set_note'
 })
 registerSlashCommand({
   id: 'task',
   label: 'Task',
   description: 'Convert the block to a task',
   icon: 'check_box',
-  shortcut: 'Ctrl+Alt+4'
+  hotkey: 'set_task'
 })
 
 // --- Text alignment commands (#173) ---------------------------------------
@@ -242,28 +258,28 @@ registerSlashCommand({
   label: 'Align left',
   description: 'Align the current block to the left',
   icon: 'format_align_left',
-  shortcut: 'Ctrl+Shift+L'
+  hotkey: 'align_left'
 })
 registerSlashCommand({
   id: 'align-center',
   label: 'Align center',
   description: 'Center the current block',
   icon: 'format_align_center',
-  shortcut: 'Ctrl+Shift+E'
+  hotkey: 'align_center'
 })
 registerSlashCommand({
   id: 'align-right',
   label: 'Align right',
   description: 'Align the current block to the right',
   icon: 'format_align_right',
-  shortcut: 'Ctrl+Shift+R'
+  hotkey: 'align_right'
 })
 registerSlashCommand({
   id: 'align-justify',
   label: 'Align justify',
   description: 'Justify the current block',
   icon: 'format_align_justify',
-  shortcut: 'Ctrl+Shift+J'
+  hotkey: 'align_justify'
 })
 
 // --- Quote / blockquote (#188) --------------------------------------------
@@ -272,7 +288,7 @@ registerSlashCommand({
   label: 'Quote',
   description: 'Toggle a blockquote on the current block',
   icon: 'format_quote',
-  shortcut: 'Ctrl+Shift+9'
+  hotkey: 'toggle_quote'
 })
 
 // --- Callouts / admonitions (#180) ----------------------------------------
@@ -337,12 +353,15 @@ registerSlashCommand({
 })
 
 // --- Foldable details (#183) ----------------------------------------------
+// Note: `toggle_details` config action only opens/closes an EXISTING
+// <details>; this slash command INSERTS a new one. They're different ops,
+// so this entry carries no `hotkey` (the legacy `Ctrl+Shift+.` hint was
+// misleading — that binding toggles open/close, not insert).
 registerSlashCommand({
   id: 'details',
   label: 'Foldable section',
   description: 'Insert a collapsible <details> section',
-  icon: 'unfold_more',
-  shortcut: 'Ctrl+Shift+.'
+  icon: 'unfold_more'
 })
 
 // --- GFM tables (#172) ----------------------------------------------------

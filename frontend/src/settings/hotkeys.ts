@@ -13,9 +13,9 @@ export interface ParsedHotkey {
 
 // Config bindings may use KeyboardEvent.code-style names ("Slash", "Period")
 // whose corresponding KeyboardEvent.key is a different character ("/", ".").
-// Without normalization, "Ctrl+Slash" parses to key "slash" and never matches
-// e.key "/" (the shipped open_command_palette default would silently fail).
-// Map the common named tokens to their KeyboardEvent.key value (lower-cased).
+// Without normalization, a binding like "Ctrl+Slash" would parse to key
+// "slash" and never match e.key "/". Map the common named tokens to their
+// KeyboardEvent.key value (lower-cased) so either spelling works.
 const KEY_ALIASES: Record<string, string> = {
   slash: '/',
   backslash: '\\',
@@ -170,4 +170,22 @@ export function resolveShortcut(
   const configBinding = hotkeys[configKey]
   const converted = configKeyToProseMirrorKey(configBinding)
   return converted || defaultPmKey
+}
+
+/**
+ * Resolve a hotkey's DISPLAY binding (e.g. "Ctrl+Shift+9") for tooltips,
+ * slash-menu hints, and aria-keyshortcuts. Returns the configured binding
+ * straight from the hotkeys map — no ProseMirror conversion — so the display
+ * always matches what the user sees in config.yaml. Returns '' when the
+ * action is absent or explicitly disabled (set to ""), so callers can omit
+ * the hint / aria attribute entirely for unbound actions. Unlike
+ * {@link resolveShortcut} (which returns a ProseMirror keystring for
+ * keymaps), this returns the human-readable config binding.
+ */
+export function resolveHotkeyDisplay(
+  action: string,
+  hotkeys: Record<string, string>
+): string {
+  const binding = hotkeys[action]
+  return binding ?? ''
 }

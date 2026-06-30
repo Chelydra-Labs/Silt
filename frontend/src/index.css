@@ -1029,3 +1029,30 @@ body {
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
 }
+
+/* Sprint 17 — in-page find (#186). prosemirror-search emits these decoration
+ * classes; theme them with cyber-ink tokens so they recolor with the active
+ * theme. The active match (the selection's match) gets a stronger fill so it
+ * stands out from the rest. */
+.ProseMirror-search-match {
+  background-color: var(
+    --color-accent-secondary-start,
+    rgba(255, 235, 59, 0.33)
+  );
+  border-radius: 2px;
+}
+.ProseMirror-active-search-match {
+  background-color: var(--color-accent-primary-start, rgba(16, 185, 129, 0.45));
+  border-radius: 2px;
+}
+
+/* Sprint 17 — inline spellcheck (#196). Wavy underline on misspelled words.
+ * Uses the theme's status-danger token (not raw red) so the signal is
+ * color + shape (WCAG: not color alone) and recolors with the active theme.
+ * skip-ink keeps the wave off descenders; underline-position: under keeps it
+ * below the baseline. A pure view layer — the on-disk file is never modified. */
+.silt-spell-error {
+  text-decoration: underline wavy var(--color-status-danger, #ef4444);
+  text-decoration-skip-ink: auto;
+  text-underline-position: under;
+}
