@@ -396,6 +396,7 @@ func Defaults() SystemConfig {
 			// from "explicitly false" through the Load → normalize path.
 			ShowTabDirtyIndicators: boolPtr(true),
 			DismissedTips:          []string{},
+			OpenDevtoolsOnStartup:  boolPtr(false),
 			Formatting: FormattingConfig{
 				TypographyEnabled: boolPtr(true),
 				ColorEnabled:      boolPtr(true),
@@ -728,6 +729,10 @@ func normalize(cfg SystemConfig) SystemConfig {
 		}
 		sort.Strings(out)
 		cfg.Editor.CustomDictionary = out
+	}
+	// OpenDevtoolsOnStartup: nil → false. Dev Mode is opt-in from About.
+	if cfg.UI.OpenDevtoolsOnStartup == nil {
+		cfg.UI.OpenDevtoolsOnStartup = boolPtr(false)
 	}
 	return cfg
 }
