@@ -11,6 +11,11 @@
     applyReplace,
     type MatcherOptions
   } from '../../lib/editor/search/globalReplaceMatcher'
+  import {
+    getAllEditors,
+    getEditor
+  } from '../../lib/editor/editorRegistry.svelte'
+  import { pushNotification } from '../../notifications/store.svelte'
 
   interface Props {
     onClose: () => void
@@ -152,8 +157,35 @@
       applying = false
       return
     }
+
+    // Flush every mounted editor whose page is a target BEFORE writing, so
+    // the replace reads the real current content (including unsaved edits)
+    // instead of stale disk content. Without this, an editor's pending
+    // autosave would silently clobber the replace — or the reload would
+    // discard the user's unsaved edits (#345).
+    const targetKeys = new Set(
+      groups
+        .filter(
+          (g) => g.source === 'vault' && g.matches.some((m) => m.accepted)
+        )
+        .map((g) => g.key)
+    )
+    const dirtyEditors = getAllEditors().filter(
+      (e) => targetKeys.has(e.key) && e.isDirty()
+    )
+    const unflushable = new Set<string>()
+    if (dirtyEditors.length > 0) {
+      const results = await Promise.all(
+        dirtyEditors.map(async (e) => ({ key: e.key, clean: await e.flush() }))
+      )
+      for (const r of results) {
+        if (!r.clean) unflushable.add(r.key)
+      }
+    }
+
     let pagesChanged = 0
     let replacements = 0
+    let openPagesTouched = 0
     const newLog: BatchEntry[] = []
     try {
       for (const grp of groups) {
@@ -165,6 +197,12 @@
         // touch a read-only external mount.
         if (grp.source !== 'vault') {
           statusMessage = `Skipped linked-notebook page "${grp.page}" — global replace is vault-scoped.`
+          continue
+        }
+        // A dirty editor that couldn't flush (save error) is skipped: writing
+        // it from disk content would silently discard the user's unsaved edits.
+        if (unflushable.has(grp.key)) {
+          statusMessage = `Skipped "${grp.page}" — its unsaved edits couldn't be saved first. Retry after resolving the save error.`
           continue
         }
         // Fetch the page's full block list (the search result is a subset).
@@ -194,6 +232,14 @@
         }
         if (changed) {
           await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
+          // Force any mounted editor for this page to reload the replaced
+          // content instead of holding a stale buffer (#345). Safe because a
+          // dirty editor was flushed above; a clean editor has nothing to lose.
+          const editor = getEditor(grp.key)
+          if (editor) {
+            editor.forceExternalReload()
+            openPagesTouched++
+          }
           // Record the page only after it has persisted, so a mid-batch
           // failure leaves newLog holding exactly the written pages.
           newLog.push({
@@ -208,6 +254,18 @@
       statusMessage = `Replaced ${replacements} across ${pagesChanged} page${
         pagesChanged === 1 ? '' : 's'
       }`
+      // Surface when the replace touched a page the user has open, so the
+      // reload is never a silent surprise (#345).
+      if (openPagesTouched > 0) {
+        pushNotification({
+          kind: 'info',
+          message: `Replaced ${replacements} match${
+            replacements === 1 ? '' : 'es'
+          } in ${openPagesTouched} open page${
+            openPagesTouched === 1 ? '' : 's'
+          }. Your unsaved edits were saved first.`
+        })
+      }
     } catch (e) {
       statusMessage = `Apply failed: ${e}`
     } finally {

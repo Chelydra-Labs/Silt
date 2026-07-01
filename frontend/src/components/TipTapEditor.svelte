@@ -7,6 +7,7 @@
   import { CharacterCount, Focus, TrailingNode } from '@tiptap/extensions'
   import Typography from '@tiptap/extension-typography'
   import { AutosaveManager } from '../lib/editor/useAutosave'
+  import { registerEditor } from '../lib/editor/editorRegistry.svelte'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
   import { SiltInlineDragHandle } from '../lib/editor/siltInlineDragHandle'
@@ -948,13 +949,25 @@
   })
 
   // --- External content sync ------------------------------------------------
+
+  // Set by the editor registry's forceExternalReload() when an out-of-band
+  // writer (global replace) has just persisted this page after flushing the
+  // editor's own buffer. It lets the next external block update bypass the
+  // focused-edit guard below: after a flush the editor has nothing unsaved
+  // to clobber, so the replaced content must be reloaded even while focused
+  // (#345). Consumed once, then cleared.
+  let pendingExternalReload = false
+
   $effect(() => {
     const key = `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
     if (!editorInstance || editorInstance.isDestroyed) return
     if (key === lastSyncedBlocksKey) return
     // Don't clobber the editor's content while the user is actively editing.
-    // The editor is the source of truth until blur; external updates wait.
-    if (isFocused) return
+    // The editor is the source of truth until blur; external updates wait —
+    // unless a flush-then-replace sequence (pendingExternalReload) has made
+    // the in-memory buffer stale and safe to overwrite.
+    if (isFocused && !pendingExternalReload) return
+    pendingExternalReload = false
     lastSyncedBlocksKey = key
 
     suppressUpdate = true
@@ -992,6 +1005,29 @@
   function flushPendingSave(): Promise<void> {
     return autosave.flush()
   }
+
+  // Register with the editor reconciliation registry so out-of-band writers
+  // (global replace) can flush this editor's unsaved buffer before writing
+  // and force a reload after (#345). Re-registers when the page triple
+  // changes (e.g. a rename) without re-subscribing on every dirty toggle
+  // (isDirty reads state lazily inside the closure, not in the effect body).
+  $effect(() => {
+    const nb = notebook,
+      sec = section,
+      pg = page
+    const key = `${nb}\x00${sec}\x00${pg}`
+    return registerEditor({
+      key,
+      isDirty: () => unsavedChanges,
+      flush: async () => {
+        await autosave.flush()
+        return !unsavedChanges
+      },
+      forceExternalReload: () => {
+        pendingExternalReload = true
+      }
+    })
+  })
 
   // --- Slash menu -----------------------------------------------------------
 
