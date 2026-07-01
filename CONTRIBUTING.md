@@ -32,26 +32,31 @@ cd frontend && npm run check && npm run build
 
 ## Release notes
 
-User-visible changes ship with a fresh entry in
-[`docs/releases/unreleased.md`](./docs/releases/unreleased.md) — the staging
-file for the *next* release.
+Silt generates its changelog from **Conventional Commits at tag time using
+[git-cliff](https://git-cliff.org)** (configured in
+[`cliff.toml`](./cliff.toml); the generation step is in
+[`.github/workflows/release.yml`](./.github/workflows/release.yml)). There is
+**no per-PR changelog file** — commit messages are the source.
 
-- **Overwrite the file in full — do not append.** Each PR that lands a
-  user-visible change replaces `unreleased.md` completely with that PR's own
-  notes. Whatever is already in the file belongs to a release that has already
-  shipped and is stale by the time your PR lands; never layer your entry on top
-  of it.
-- Write customer-facing prose (what changed and why it matters to the person
-  using Silt), not implementation detail. Match the existing voice:
-  keep-a-changelog-style sections (`# Fixes`, `# Improvements`, `# Notes`, …)
-  with `- **Lead sentence.** body` bullets.
+- **Write user-facing commit subjects.** Because git-cliff renders the
+  Conventional-Commit subject (the text after `type(scope):`) into the
+  published release notes, each commit's subject line should read like a
+  release bullet — describe what changed for the person using Silt, not the
+  implementation detail. Example: `feat(find): in-page find and replace`.
+- Use the keep-a-changelog-style groups git-cliff maps: `feat:` → Highlights,
+  `fix:` → Fixes, `refactor:` and `chore(deps):` → Improvements. `chore:`
+  (non-deps), `chore(release):`, `docs:`, `test:`, and `ci:` are skipped from
+  the changelog, so routine maintenance never clutters a release.
 - **The published version history lives in the GitHub Releases**, not in the
-  repo — there are no per-version changelog files. `unreleased.md` is only the
-  staging area for the upcoming release; once a version ships, its notes move
-  to that version's GitHub Release and the next PR overwrites the file fresh.
+  repo. The generated notes are a draft that's editable on the GitHub Release
+  before publishing, so a technical subject can be polished into user-facing
+  prose at release time if a commit slipped through with a code-first
+  message.
 
 PRs with no user-visible surface (refactors, test-only changes, internal
-plumbing) can leave `unreleased.md` untouched.
+plumbing) use a skipped prefix (`chore:`, `refactor:` lands in Improvements —
+use `chore:` or `test:` if you want it omitted entirely) and contribute
+nothing to the changelog.
 
 ## Lockfile conflicts
 
