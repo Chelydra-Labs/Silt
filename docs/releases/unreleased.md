@@ -1,6 +1,0 @@
-# Fixes
-
-- **Global replace data-loss fix.** Editing the Find box after previewing no longer lets Apply run against a stale preview — the stale-guard now tracks the find text. A mid-batch save failure in global replace now leaves Undo available for every page that already persisted, instead of leaving changed pages on disk with no in-app revert path.
-- **Typewriter mode recenters after find/replace navigation.** The mouse-scroll suppression flag is now consumed after one update, so programmatic cursor jumps (FindBar, search results) correctly recenter the line instead of being silently skipped after a click.
-- **Visible vault-init errors.** When the vault fails to initialize on launch (unreadable settings, database open failure, network-filesystem vault, watcher error), the error now surfaces as a toast instead of vanishing silently — which had left the app showing an empty frame with no indication of what went wrong. Non-fatal scan warnings (symlink skips, permission errors) are surfaced too.
-- **Calendar sidebar month no longer drifts near month boundaries.** The mini-calendar now anchors to the same local "today" source the smart-list counts use, instead of the JS wall clock, so its visible month stays correct when the host timezone or test harness injects a specific today.

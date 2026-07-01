@@ -11,6 +11,11 @@
     applyReplace,
     type MatcherOptions
   } from '../../lib/editor/search/globalReplaceMatcher'
+  import {
+    getAllEditors,
+    getEditor
+  } from '../../lib/editor/editorRegistry.svelte'
+  import { pushNotification } from '../../notifications/store.svelte'
 
   interface Props {
     onClose: () => void
@@ -35,6 +40,11 @@
     notebook: string
     section: string
     page: string
+    // Block root ('vault' | 'linked:<id>'), threaded from SearchBlocksPaged
+    // (#343). Global replace is vault-scoped; a non-'vault' source here is a
+    // defense-in-depth refusal — the server filter already excludes linked
+    // hits, but this guards against a future filter relaxation.
+    source: string
     matches: Match[]
     accepted: boolean // per-page accept-all toggle
   }
@@ -102,6 +112,7 @@
             notebook: r.notebook,
             section: r.section,
             page: r.page,
+            source: r.source ?? 'vault',
             matches: [],
             accepted: true
           })
@@ -146,13 +157,61 @@
       applying = false
       return
     }
+
+    // Flush every mounted editor whose page is a target BEFORE writing, so
+    // the replace reads the real current content (including unsaved edits)
+    // instead of stale disk content. Without this, an editor's pending
+    // autosave would silently clobber the replace — or the reload would
+    // discard the user's unsaved edits (#345).
+    const targetKeys = new Set(
+      groups
+        .filter(
+          (g) => g.source === 'vault' && g.matches.some((m) => m.accepted)
+        )
+        .map((g) => g.key)
+    )
+    const dirtyEditors = getAllEditors().filter(
+      (e) => targetKeys.has(e.key) && e.isDirty()
+    )
+    const unflushable = new Set<string>()
+    const flushedAny = dirtyEditors.length > 0
+    if (flushedAny) {
+      const results = await Promise.all(
+        dirtyEditors.map(async (e) => ({ key: e.key, clean: await e.flush() }))
+      )
+      for (const r of results) {
+        if (!r.clean) unflushable.add(r.key)
+      }
+    }
+
     let pagesChanged = 0
     let replacements = 0
+    let openPagesTouched = 0
+    // Track skipped pages BY NAME + reason so a multi-skip batch reports every
+    // skip, not just the last one written into statusMessage (#345). Linked
+    // skips are effectively unreachable (the server VaultOnly filter excludes
+    // them) but are tracked for completeness.
+    const skippedUnflushable: string[] = []
+    const skippedLinked: string[] = []
     const newLog: BatchEntry[] = []
     try {
       for (const grp of groups) {
         const acceptedMatches = grp.matches.filter((m) => m.accepted)
         if (acceptedMatches.length === 0) continue
+        // Defense in depth (#343): refuse linked-notebook pages. The server
+        // VaultOnly filter already excludes them from the preview, but this
+        // guarantees a future filter relaxation can't silently let a replace
+        // touch a read-only external mount.
+        if (grp.source !== 'vault') {
+          skippedLinked.push(grp.page)
+          continue
+        }
+        // A dirty editor that couldn't flush (save error) is skipped: writing
+        // it from disk content would silently discard the user's unsaved edits.
+        if (unflushable.has(grp.key)) {
+          skippedUnflushable.push(grp.page)
+          continue
+        }
         // Fetch the page's full block list (the search result is a subset).
         const blocks = await FetchPageBlocks(
           grp.notebook,
@@ -179,6 +238,18 @@
           }
         }
         if (changed) {
+          // Arm the editor's one-shot external-reload flag BEFORE the write.
+          // SaveFileBlocks emits `block:changed` (and returns) before the
+          // frontend reload runs, but the flag must already be set when the
+          // editor's sync $effect fires so it bypasses the focused-edit guard.
+          // Setting it after the await would let the reload consume/clear an
+          // absent flag, then re-arm a flag with no matching reload — leaking
+          // until a LATER unrelated block:changed clobbered the user's edits.
+          const editor = getEditor(grp.key)
+          if (editor) {
+            editor.forceExternalReload()
+            openPagesTouched++
+          }
           await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
           // Record the page only after it has persisted, so a mid-batch
           // failure leaves newLog holding exactly the written pages.
@@ -191,9 +262,46 @@
           pagesChanged++
         }
       }
+      // Compose a single skip clause used by both the status line and the
+      // toast so every skipped page (with its reason) is reported exactly once.
+      const skipParts: string[] = []
+      if (skippedUnflushable.length > 0) {
+        skipParts.push(
+          `"${skippedUnflushable.join('", "')}" (unsaved edits couldn't be saved first)`
+        )
+      }
+      if (skippedLinked.length > 0) {
+        skipParts.push(
+          `"${skippedLinked.join('", "')}" (linked notebook — vault-scoped)`
+        )
+      }
+      const skipClause =
+        skipParts.length > 0 ? `; skipped ${skipParts.join(' and ')}` : ''
+      const totalSkipped = skippedUnflushable.length + skippedLinked.length
+
       statusMessage = `Replaced ${replacements} across ${pagesChanged} page${
         pagesChanged === 1 ? '' : 's'
-      }`
+      }${skipClause}`
+      // Surface when the replace touched a page the user has open, so the
+      // reload is never a silent surprise (#345). Also surface skips here when
+      // nothing was written (otherwise a fully-skipped batch would be silent).
+      if (openPagesTouched > 0 || (totalSkipped > 0 && pagesChanged === 0)) {
+        pushNotification({
+          kind: totalSkipped > 0 && pagesChanged === 0 ? 'error' : 'info',
+          message:
+            (pagesChanged > 0
+              ? `Replaced ${replacements} match${
+                  replacements === 1 ? '' : 'es'
+                } in ${openPagesTouched} open page${openPagesTouched === 1 ? '' : 's'}.`
+              : '') +
+            (flushedAny && pagesChanged > 0
+              ? ' Your unsaved edits were saved first.'
+              : '') +
+            (totalSkipped > 0
+              ? `${pagesChanged > 0 ? ' ' : ''}Skipped ${skipParts.join(' and ')}.`
+              : '')
+        })
+      }
     } catch (e) {
       statusMessage = `Apply failed: ${e}`
     } finally {

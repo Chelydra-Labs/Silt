@@ -12,6 +12,10 @@ import {
   fireEvent,
   waitFor
 } from '@testing-library/svelte'
+import {
+  registerEditor,
+  _resetEditorRegistryForTests
+} from '../../lib/editor/editorRegistry.svelte'
 
 const mocks = vi.hoisted(() => ({
   SearchBlocksPaged: vi.fn(),
@@ -66,6 +70,7 @@ async function renderAndPreview(find: string, replace: string) {
 describe('GlobalReplaceModal apply/undo/stale-guard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    _resetEditorRegistryForTests()
   })
 
   afterEach(() => {
@@ -296,5 +301,148 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       .find((c) => c[2] === 'page1')!
     const restored = undoCall[3] as Array<{ clean_text: string }>
     expect(restored[0].clean_text).toBe('foo bar')
+  })
+
+  it('refuses a linked-notebook page even if it slips into the preview (#343)', async () => {
+    // Defense in depth: the server VaultOnly filter excludes linked hits,
+    // but if one reached the preview it must NOT be written.
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          source: 'linked:abc',
+          notebook: 'External',
+          section: 'notes',
+          page: 'linked-page',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    mocks.FetchPageBlocks.mockResolvedValue([block('b1', 'foo bar')])
+    mocks.SaveFileBlocks.mockResolvedValue(undefined)
+
+    await renderAndPreview('foo', 'qux')
+    await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
+
+    // SaveFileBlocks must never be called for the linked page.
+    await waitFor(
+      () => {
+        expect(mocks.SaveFileBlocks).not.toHaveBeenCalled()
+      },
+      { timeout: 2000 }
+    )
+  })
+
+  it('flushes a dirty open editor before applying, then force-reloads it (#345)', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          source: 'vault',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    mocks.FetchPageBlocks.mockResolvedValue([block('b1', 'foo bar')])
+    mocks.SaveFileBlocks.mockResolvedValue(undefined)
+
+    // Register a fake dirty editor for the target page. Record the call order
+    // across flush / forceExternalReload / SaveFileBlocks to assert the
+    // lifecycle fix (#345): the reload flag must arm BEFORE the write so the
+    // editor's sync $effect consumes it on the block:changed reload rather than
+    // the flag leaking and later clobbering an unrelated edit.
+    const order: string[] = []
+    let dirty = true
+    registerEditor({
+      key: 'vault\x00notes\x00page1',
+      isDirty: () => dirty,
+      flush: async () => {
+        order.push('flush')
+        dirty = false
+        return true
+      },
+      forceExternalReload: () => order.push('forceExternalReload')
+    })
+    mocks.SaveFileBlocks.mockImplementation(async () => {
+      order.push('SaveFileBlocks')
+    })
+
+    await renderAndPreview('foo', 'qux')
+    await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
+
+    await waitFor(
+      () => {
+        expect(order).toContain('SaveFileBlocks')
+      },
+      { timeout: 2000 }
+    )
+    // flush runs first; forceExternalReload must precede SaveFileBlocks.
+    const flushAt = order.indexOf('flush')
+    const reloadAt = order.indexOf('forceExternalReload')
+    const saveAt = order.indexOf('SaveFileBlocks')
+    expect(flushAt).toBeLessThan(reloadAt)
+    expect(reloadAt).toBeLessThan(saveAt)
+  })
+
+  it('skips a page whose dirty editor cannot flush (save error) (#345)', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          source: 'vault',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    mocks.FetchPageBlocks.mockResolvedValue([block('b1', 'foo bar')])
+    mocks.SaveFileBlocks.mockResolvedValue(undefined)
+
+    // Register a dirty editor whose flush fails (stays dirty).
+    registerEditor({
+      key: 'vault\x00notes\x00page1',
+      isDirty: () => true,
+      flush: async () => false,
+      forceExternalReload: vi.fn()
+    })
+
+    await renderAndPreview('foo', 'qux')
+    await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
+
+    // The page must NOT be written: writing from stale disk content would
+    // silently discard the user's unsaved edits.
+    await waitFor(
+      () => {
+        expect(mocks.SaveFileBlocks).not.toHaveBeenCalled()
+      },
+      { timeout: 2000 }
+    )
+    // The skip must be surfaced with the page name + reason, not silently
+    // lost (a fully-skipped batch fires an error toast naming the page).
+    await waitFor(
+      () => {
+        expect(
+          screen.getByText(/page1.*unsaved edits couldn't be saved/)
+        ).toBeInTheDocument()
+      },
+      { timeout: 2000 }
+    )
   })
 })

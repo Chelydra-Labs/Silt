@@ -1,0 +1,57 @@
+# git-cliff configuration — generates Silt's release notes from Conventional
+# Commits at tag time (.github/workflows/release.yml). Silt does NOT use per-PR
+# changelog files; commit messages are the changelog source. The generated
+# draft is editable on the GitHub Release before publishing, so commit
+# subjects should be user-facing prose (e.g. "feat(find): in-page find").
+#
+# Output shape matches the established Silt voice: h1 `# <Group>` section
+# headings (Highlights / Improvements / Fixes) with `- **<Subject>.**`
+# bullets. See CONTRIBUTING.md "Release notes".
+
+[changelog]
+header = ""
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+# {{ group | upper_first }}
+
+{% for commit in commits -%}
+- **{{ commit.message | upper_first }}**
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+footer = ""
+
+[git]
+# Parse Conventional Commits so `commit.message` in the template is the
+# description only (the `type(scope):` prefix is stripped). Unconventional
+# commits are filtered out — every release-relevant commit should be
+# conventional.
+conventional_commits = true
+filter_unconventional = true
+require_conventional = false
+split_commits = false
+
+# Grouping. Order matters: the parser short-circuits on the first match, so
+# the specific chore(deps) / chore(release) rules MUST precede the generic
+# `^chore` rule. `message` regexes match the FULL raw message (including the
+# `type(scope):` prefix), per git-cliff's commit_parsers semantics.
+commit_parsers = [
+  { message = "^feat", group = "Highlights" },
+  { message = "^fix", group = "Fixes" },
+  { message = "^refactor", group = "Improvements" },
+  { message = "^chore\\(deps\\)", group = "Improvements" },
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore", skip = true },
+  { message = "^docs", skip = true },
+  { message = "^test", skip = true },
+  { message = "^ci", skip = true },
+]
+
+# Only emit commits matched by a parser above (drops anything unrecognized
+# rather than dumping it into a default group).
+filter_commits = true
+topo_order_commits = true
+sort_commits = "oldest"
+# Only process annotated/lightweight tags matching the release scheme.
+tag_pattern = "v[0-9].*"

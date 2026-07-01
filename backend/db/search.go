@@ -137,7 +137,7 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 	}
 
 	pageQuery := `
-		SELECT b.id, b.parent_id, b.notebook, b.section, b.page, b.file_date, b.depth,
+		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth,
 		       b.raw_content, b.clean_content, b.line_number,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''),
 		       COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
@@ -163,7 +163,7 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 		var priority int
 		var rank float64
 		if err := rows.Scan(
-			&r.ID, &parentID, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth,
+			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth,
 			&r.RawContent, &r.CleanContent, &r.LineNumber,
 			&status, &owner, &start, &due, &priority,
 			&r.Snippet, &rank,
