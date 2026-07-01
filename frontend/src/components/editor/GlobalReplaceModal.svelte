@@ -56,7 +56,10 @@
   // Full match count when SearchBlocksPaged truncated the preview (0 otherwise).
   let truncatedCount = $state(0)
   // Session revert log: one entry per Apply batch; each batch holds the
-  // original blocks of every page touched in that batch. Undo restores a batch.
+  // original blocks of every page touched in that batch. Undo restores a
+  // batch. The batch is appended to the log on success OR on mid-batch
+  // failure (with whatever pages were already persisted) so a partial
+  // Apply still leaves an undo path for the written pages.
   let revertLog = $state<BatchEntry[][]>([])
 
   /** Preview: search FTS5 for the find term, group matches by page, compute
@@ -176,23 +179,28 @@
           }
         }
         if (changed) {
+          await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
+          // Record the page only after it has persisted, so a mid-batch
+          // failure leaves newLog holding exactly the written pages.
           newLog.push({
             notebook: grp.notebook,
             section: grp.section,
             page: grp.page,
             blocks: originalBlocks
           })
-          await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
           pagesChanged++
         }
       }
-      revertLog = [...revertLog, newLog]
       statusMessage = `Replaced ${replacements} across ${pagesChanged} page${
         pagesChanged === 1 ? '' : 's'
       }`
     } catch (e) {
       statusMessage = `Apply failed: ${e}`
     } finally {
+      // Commit the batch (full or partial) before clearing applying. If
+      // SaveFileBlocks threw mid-loop, newLog already holds the pages that
+      // were persisted — Undo must stay available for them.
+      if (newLog.length > 0) revertLog = [...revertLog, newLog]
       applying = false
     }
   }
@@ -232,9 +240,13 @@
   )
 
   // Invalidate the displayed m.after values when the user edits any input that
-  // the replacements are derived from. groups.length is read untracked so that
-  // populating or clearing the list itself does not flip the stale flag.
+  // the replacements are derived from. findText must be tracked too: Apply
+  // rebuilds the matcher from the live value, so retyping Find without
+  // re-previewing would otherwise write replacements the user never saw.
+  // groups.length is read untracked so that populating or clearing the list
+  // itself does not flip the stale flag.
   $effect(() => {
+    findText
     replaceText
     caseSensitive
     wholeWord

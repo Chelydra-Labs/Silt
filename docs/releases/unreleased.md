@@ -10,6 +10,11 @@
 - **Paste without formatting.** `Ctrl+Shift+V` pastes the clipboard as plain text; `Ctrl+V` still pastes with formatting.
 - **Keyboard shortcuts realigned to familiar conventions.** Global search is now `Ctrl+Shift+F`, the command palette is `Alt+Q`, strikethrough is `Alt+Shift+5`, and the view-layout cycle is `Ctrl+Alt+V` (the old `Alt+Tab` was the OS window-switcher and never reached the app on Windows/Linux).
 
+# Fixes
+
+- **Global replace data-loss fix.** Editing the Find box after previewing no longer lets Apply run against a stale preview — the stale-guard now tracks the find text. A mid-batch save failure in global replace now leaves Undo available for every page that already persisted, instead of leaving changed pages on disk with no in-app revert path.
+- **Typewriter mode recenters after find/replace navigation.** The mouse-scroll suppression flag is now consumed after one update, so programmatic cursor jumps (FindBar, search results) correctly recenter the line instead of being silently skipped after a click.
+
 # Notes
 
 - Markdown files stay fully portable. Silt uses standard GitHub-Flavored Markdown (tables, task lists, code fences) with HTML `<sub>`/`<sup>` for subscript/superscript, so notes render correctly on GitHub, in Obsidian, and in VS Code. The subscript/superscript shortcuts are `Ctrl+,` and `Ctrl+.`.

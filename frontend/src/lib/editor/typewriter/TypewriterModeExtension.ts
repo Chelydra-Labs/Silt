@@ -68,7 +68,15 @@ export const TypewriterMode = Extension.create({
             ) {
               return
             }
-            if (mouseScroll) return
+            if (mouseScroll) {
+              // One-shot: consume the flag so it only suppresses the
+              // immediately-following update. Without this, a click leaves
+              // mouseScroll true until the next keydown, so programmatic
+              // selection jumps (FindBar, search results) would also be
+              // skipped — typewriter mode would silently fail to recenter.
+              mouseScroll = false
+              return
+            }
             const ratio = settings.config?.editor?.typewriter_mode_ratio ?? 0.5
             const container = findScrollContainer(view.dom as HTMLElement)
             if (!container) return
