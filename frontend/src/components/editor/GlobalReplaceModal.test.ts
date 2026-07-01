@@ -434,5 +434,15 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       },
       { timeout: 2000 }
     )
+    // The skip must be surfaced with the page name + reason, not silently
+    // lost (a fully-skipped batch fires an error toast naming the page).
+    await waitFor(
+      () => {
+        expect(
+          screen.getByText(/page1.*unsaved edits couldn't be saved/)
+        ).toBeInTheDocument()
+      },
+      { timeout: 2000 }
+    )
   })
 })
