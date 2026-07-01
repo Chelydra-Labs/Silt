@@ -297,4 +297,38 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     const restored = undoCall[3] as Array<{ clean_text: string }>
     expect(restored[0].clean_text).toBe('foo bar')
   })
+
+  it('refuses a linked-notebook page even if it slips into the preview (#343)', async () => {
+    // Defense in depth: the server VaultOnly filter excludes linked hits,
+    // but if one reached the preview it must NOT be written.
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          source: 'linked:abc',
+          notebook: 'External',
+          section: 'notes',
+          page: 'linked-page',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    mocks.FetchPageBlocks.mockResolvedValue([block('b1', 'foo bar')])
+    mocks.SaveFileBlocks.mockResolvedValue(undefined)
+
+    await renderAndPreview('foo', 'qux')
+    await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
+
+    // SaveFileBlocks must never be called for the linked page.
+    await waitFor(
+      () => {
+        expect(mocks.SaveFileBlocks).not.toHaveBeenCalled()
+      },
+      { timeout: 2000 }
+    )
+  })
 })

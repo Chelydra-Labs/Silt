@@ -1558,6 +1558,41 @@ func TestSearch_FTS5SmokeAndSync(t *testing.T) {
 	}
 }
 
+// TestSearch_ThreadsSource asserts every TaskResult-bearing query path
+// surfaces the block's source so callers (e.g. global replace) can refuse
+// linked-notebook writes without a name→source re-resolution (#343).
+func TestSearch_ThreadsSource(t *testing.T) {
+	dm := indexSearchable(t)
+
+	// SearchBlocksPaged (FTS5 path).
+	sres, err := dm.SearchBlocksPaged("sprint", 0, 10, SearchFilters{})
+	if err != nil {
+		t.Fatalf("SearchBlocksPaged: %v", err)
+	}
+	if len(sres.Results) == 0 {
+		t.Fatal("SearchBlocksPaged returned no results")
+	}
+	for _, r := range sres.Results {
+		if r.Source != "vault" {
+			t.Errorf("SearchBlocksPaged result %s Source = %q, want \"vault\"", r.ID, r.Source)
+		}
+	}
+
+	// QueryTasksWithFilters path.
+	tres, err := dm.QueryTasksWithFilters(parser.TaskQueryFilter{})
+	if err != nil {
+		t.Fatalf("QueryTasksWithFilters: %v", err)
+	}
+	if len(tres) == 0 {
+		t.Fatal("QueryTasksWithFilters returned no results")
+	}
+	for _, r := range tres {
+		if r.Source != "vault" {
+			t.Errorf("QueryTasksWithFilters result %s Source = %q, want \"vault\"", r.ID, r.Source)
+		}
+	}
+}
+
 func TestSearch_RankingPutsMostRelevantFirst(t *testing.T) {
 	dm := indexSearchable(t)
 	res, err := dm.SearchBlocksPaged("sprint planning", 0, 10, SearchFilters{})

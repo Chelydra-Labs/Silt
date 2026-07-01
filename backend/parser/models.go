@@ -70,17 +70,17 @@ const (
 )
 
 type ParsedBlock struct {
-	ID         string    `json:"id"`
-	ParentID   string    `json:"parent_id"`
-	Type       BlockType `json:"type"`
-	Depth      int       `json:"depth"`
-	RawText    string    `json:"raw_text"`
-	CleanText  string    `json:"clean_text"`
-	Status     string    `json:"status,omitempty"`
-	Owner      string    `json:"owner,omitempty"`
-	StartDate  string    `json:"start_date,omitempty"`
-	DueDate    string    `json:"due_date,omitempty"`
-	Priority   int       `json:"priority,omitempty"`
+	ID        string    `json:"id"`
+	ParentID  string    `json:"parent_id"`
+	Type      BlockType `json:"type"`
+	Depth     int       `json:"depth"`
+	RawText   string    `json:"raw_text"`
+	CleanText string    `json:"clean_text"`
+	Status    string    `json:"status,omitempty"`
+	Owner     string    `json:"owner,omitempty"`
+	StartDate string    `json:"start_date,omitempty"`
+	DueDate   string    `json:"due_date,omitempty"`
+	Priority  int       `json:"priority,omitempty"`
 	// Pinned is the user-set "sticky" flag surfaced in the Kanban card
 	// chrome (`[pin:: true]` / `[pinned:: true]` in the markdown inline task
 	// syntax). It is a TRI-STATE pointer so the renderer can distinguish
@@ -103,7 +103,7 @@ type ParsedBlock struct {
 	// `[key:: value]` string as it appeared in the source.
 	ExtraTokens []string `json:"extra_tokens,omitempty"`
 	LineNumber  int      `json:"line_number"`
-	FileDate   string `json:"file_date,omitempty"`
+	FileDate    string   `json:"file_date,omitempty"`
 	// Language is the info string of a fenced code block's opening fence
 	// (BlockCode only, #189). "" for a bare ``` fence. It is the Shiki grammar
 	// identifier and round-trips as the ```{lang} prefix.
@@ -150,15 +150,15 @@ type NavigationSection struct {
 }
 
 type NavigationNotebook struct {
-	Name     string               `json:"name"`
-	Sections []NavigationSection  `json:"sections"`
+	Name     string              `json:"name"`
+	Sections []NavigationSection `json:"sections"`
 	// Source is 'vault' for an in-vault notebook or 'linked:<id>' for an
 	// external/linked notebook (#100). The frontend badges linked notebooks
 	// and the editor passes it back so writes resolve the correct root.
-	Source    string `json:"source,omitempty"`
+	Source string `json:"source,omitempty"`
 	// RootPath is the absolute content root (vault notebook dir or linked
 	// root); surfaced for tooltips. Empty for vault notebooks (derivable).
-	RootPath  string `json:"root_path,omitempty"`
+	RootPath string `json:"root_path,omitempty"`
 	// Disconnected is true when a linked notebook's root could not be read
 	// (offline mount); its last-synced index rows still show. Vault-only.
 	Disconnected bool `json:"disconnected,omitempty"`
@@ -196,29 +196,29 @@ type BlockChangedEvent struct {
 // TagNode is one node of the hierarchical tag tree returned by QueryTagHierarchy.
 type TagNode struct {
 	Name     string    `json:"name"`
-	Path     string    `json:"path"` // full slash path to this node
+	Path     string    `json:"path"`  // full slash path to this node
 	Count    int       `json:"count"` // distinct blocks at or beneath this node
 	Children []TagNode `json:"children"`
 }
 
 // PluginRegistry mirrors the `plugins:` block of .system/config.yaml.
 type PluginRegistry struct {
-	Active   []string                `json:"active"`
-	Disabled []string                `json:"disabled"`
-	Settings map[string]any          `json:"settings"`
+	Active   []string       `json:"active"`
+	Disabled []string       `json:"disabled"`
+	Settings map[string]any `json:"settings"`
 }
 
 // PluginInfo describes a discovered plugin folder under .system/plugins/.
 type PluginInfo struct {
-	ID          string         `json:"id"`
-	HasManifest bool           `json:"has_manifest"`
-	HasIndex    bool           `json:"has_index"`
-	Disabled    bool           `json:"disabled"`
-	Name        string         `json:"name,omitempty"`
-	Version     string         `json:"version,omitempty"`
-	Author      string         `json:"author,omitempty"`
-	Description string         `json:"description,omitempty"`
-	Icon        string         `json:"icon,omitempty"`
+	ID          string `json:"id"`
+	HasManifest bool   `json:"has_manifest"`
+	HasIndex    bool   `json:"has_index"`
+	Disabled    bool   `json:"disabled"`
+	Name        string `json:"name,omitempty"`
+	Version     string `json:"version,omitempty"`
+	Author      string `json:"author,omitempty"`
+	Description string `json:"description,omitempty"`
+	Icon        string `json:"icon,omitempty"`
 	// Capabilities is the v2 SDK capability declaration (#113) read from the
 	// installed plugin.json (capability id → true | scope string). The plugin
 	// manager surfaces requested-vs-granted in Settings → Plugins. Absent for
@@ -240,14 +240,14 @@ type PluginInfo struct {
 // archive (mirrors backend/plugins.Manifest, re-declared here so it crosses
 // the Wails IPC boundary without an import cycle).
 type PluginManifest struct {
-	ID             string         `json:"id"`
-	Name           string         `json:"name"`
-	Version        string         `json:"version"`
-	Author         string         `json:"author,omitempty"`
-	Description    string         `json:"description,omitempty"`
-	Icon           string         `json:"icon,omitempty"`
-	Main           string         `json:"main,omitempty"`
-	MinSiltVersion string         `json:"minSiltVersion,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Version        string `json:"version"`
+	Author         string `json:"author,omitempty"`
+	Description    string `json:"description,omitempty"`
+	Icon           string `json:"icon,omitempty"`
+	Main           string `json:"main,omitempty"`
+	MinSiltVersion string `json:"minSiltVersion,omitempty"`
 	// Capabilities mirrors the v2 SDK capability declaration (#113).
 	Capabilities map[string]any `json:"capabilities,omitempty"`
 	// Settings mirrors the declarative settings schema (#103).
@@ -270,27 +270,32 @@ type PluginValidationResult struct {
 }
 
 type TaskResult struct {
-	ID           string    `json:"id"`
-	ParentID     string    `json:"parent_id"`
-	Notebook     string    `json:"notebook"`
-	Section      string    `json:"section"`
-	Page         string    `json:"page"`
-	FileDate     string    `json:"file_date"`
-	Depth        int       `json:"depth"`
-	RawContent   string    `json:"raw_content"`
-	CleanContent string    `json:"clean_content"`
-	LineNumber   int       `json:"line_number"`
-	Status       string    `json:"status"` // TODO, DOING, DONE
-	Owner        string    `json:"owner,omitempty"`
-	StartDate    string    `json:"start_date,omitempty"`
-	DueDate      string    `json:"due_date,omitempty"`
-	Priority     int       `json:"priority,omitempty"`
+	ID       string `json:"id"`
+	ParentID string `json:"parent_id"`
+	// Source discriminates the root a block belongs to: 'vault' for an
+	// in-vault block, or 'linked:<id>' for a linked-notebook block. Surfaced
+	// so callers (e.g. global replace) can refuse linked-notebook writes
+	// without re-resolving via name. Matches blocks.source (ARCHITECTURE §3.1).
+	Source       string `json:"source"`
+	Notebook     string `json:"notebook"`
+	Section      string `json:"section"`
+	Page         string `json:"page"`
+	FileDate     string `json:"file_date"`
+	Depth        int    `json:"depth"`
+	RawContent   string `json:"raw_content"`
+	CleanContent string `json:"clean_content"`
+	LineNumber   int    `json:"line_number"`
+	Status       string `json:"status"` // TODO, DOING, DONE
+	Owner        string `json:"owner,omitempty"`
+	StartDate    string `json:"start_date,omitempty"`
+	DueDate      string `json:"due_date,omitempty"`
+	Priority     int    `json:"priority,omitempty"`
 	// Pinned + Progress mirror the ParsedBlock fields (see ARCHITECTURE.md
 	// §0 "Storage-of-Truth Tiers" — these are file-resident user intent;
 	// the SQLite index is allowed to cache them, not to own them). Pinned
 	// is a tri-state pointer for parity with ParsedBlock.Pinned (#123).
-	Pinned       *bool    `json:"pinned,omitempty"`
-	Progress     int       `json:"progress,omitempty"`
+	Pinned   *bool `json:"pinned,omitempty"`
+	Progress int   `json:"progress,omitempty"`
 	// CommentsCount is the number of indented child NOTE blocks beneath
 	// this task (the "comments on a task" UX from the Stitch reference).
 	// It is computed at index time from `blocks.parent_id` and cached on
@@ -301,11 +306,11 @@ type TaskResult struct {
 	// cached on the task row; re-derivable from the markdown on every
 	// re-index, so SQLite holding it is consistent with the
 	// "working-memory only" tier rule.
-	LinksCount    int `json:"links_count,omitempty"`
-	Tags          []string `json:"tags,omitempty"`
+	LinksCount int      `json:"links_count,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
 	// Snippet is the FTS5 snippet (with <mark>...</mark> highlights) for
 	// search results; empty for non-search queries.
-	Snippet      string    `json:"snippet,omitempty"`
+	Snippet string `json:"snippet,omitempty"`
 }
 
 // SearchResult is the paginated envelope returned by SearchBlocksPaged: the

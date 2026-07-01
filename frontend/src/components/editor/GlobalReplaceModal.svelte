@@ -35,6 +35,11 @@
     notebook: string
     section: string
     page: string
+    // Block root ('vault' | 'linked:<id>'), threaded from SearchBlocksPaged
+    // (#343). Global replace is vault-scoped; a non-'vault' source here is a
+    // defense-in-depth refusal — the server filter already excludes linked
+    // hits, but this guards against a future filter relaxation.
+    source: string
     matches: Match[]
     accepted: boolean // per-page accept-all toggle
   }
@@ -102,6 +107,7 @@
             notebook: r.notebook,
             section: r.section,
             page: r.page,
+            source: r.source ?? 'vault',
             matches: [],
             accepted: true
           })
@@ -153,6 +159,14 @@
       for (const grp of groups) {
         const acceptedMatches = grp.matches.filter((m) => m.accepted)
         if (acceptedMatches.length === 0) continue
+        // Defense in depth (#343): refuse linked-notebook pages. The server
+        // VaultOnly filter already excludes them from the preview, but this
+        // guarantees a future filter relaxation can't silently let a replace
+        // touch a read-only external mount.
+        if (grp.source !== 'vault') {
+          statusMessage = `Skipped linked-notebook page "${grp.page}" — global replace is vault-scoped.`
+          continue
+        }
         // Fetch the page's full block list (the search result is a subset).
         const blocks = await FetchPageBlocks(
           grp.notebook,
