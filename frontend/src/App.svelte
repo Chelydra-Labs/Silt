@@ -767,6 +767,32 @@
         }
       }
     )
+    // Vault init failed during startup (settings.json unreadable, DB open
+    // failed, network-filesystem vault, watcher start failed, …). Without
+    // this listener the backend error vanishes and every page renders blank
+    // with no clue why — the user sees a dead frame. Surface it as a sticky
+    // error toast so the cause is visible. (Wails delivers OnStartup after
+    // the frontend mounts, so this listener is registered in time.)
+    const offVaultInitError = EventsOn('vault:init-error', (msg: string) => {
+      pushNotification({
+        kind: 'error',
+        message: `Vault failed to initialize: ${msg}`,
+        autoDismissMs: 0
+      })
+    })
+    // Non-fatal init warnings (symlink skips, permission errors during scan).
+    // These don't block usage but explain missing/partial content.
+    const offVaultInitWarnings = EventsOn(
+      'vault:init-warnings',
+      (warnings: string[]) => {
+        if (!warnings?.length) return
+        pushNotification({
+          kind: 'info',
+          message: `Vault initialized with warnings: ${warnings.join('; ')}`,
+          autoDismissMs: 0
+        })
+      }
+    )
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
@@ -786,6 +812,8 @@
       offSettingsMismatch()
       offGrantsMigration()
       offLinkedQuarantined()
+      offVaultInitError()
+      offVaultInitWarnings()
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()
