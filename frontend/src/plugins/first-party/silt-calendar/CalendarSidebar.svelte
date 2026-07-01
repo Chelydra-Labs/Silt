@@ -49,8 +49,18 @@
   let loading = $state(true)
   let errorMsg = $state('')
 
-  // Mini-calendar cursor (independent of the main view's cursor).
-  let miniCursor = $state(new Date())
+  // Mini-calendar cursor (independent of the main view's cursor). Anchored
+  // to ctx.today (the local-day source the rest of this component uses) so
+  // the visible month tracks the same "today" the smart-list counts do —
+  // not the JS engine's wall-clock new Date(), which can disagree near a
+  // month boundary when ctx.today is injected (tests, or a plugin host
+  // running in a different timezone).
+  function miniCursorFromToday(): Date {
+    const iso = ctx.today || localToday()
+    const [y, m, d] = iso.split('-').map(Number)
+    return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1)
+  }
+  let miniCursor = $state(miniCursorFromToday())
 
   // Roving tabindex for the smart-list and mini-cal-day keyboard nav.
   let listFocusIdx = $state(0)
@@ -271,7 +281,7 @@
   // active focus-date so the main view's cursor also jumps to today
   // (#323 polish: matching Calendar.svelte's own Today button).
   function goMiniToday() {
-    miniCursor = new Date()
+    miniCursor = miniCursorFromToday()
     clearFocusDate()
   }
 
