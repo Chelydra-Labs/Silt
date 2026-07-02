@@ -103,7 +103,8 @@
   const views = [
     { id: 'notes', label: 'Notes', icon: 'description' },
     { id: 'tags', label: 'Tags', icon: 'label' },
-    { id: 'calendar', label: 'Calendar', icon: 'calendar_month' }
+    { id: 'calendar', label: 'Calendar', icon: 'calendar_month' },
+    { id: 'kanban', label: 'Kanban', icon: 'view_kanban' }
   ]
   let selectedTag = $state('')
 
