@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"silt/backend/db"
 	"silt/backend/parser"
+	"silt/backend/recurrence"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -158,6 +160,20 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 						return
 					}
 					parsedBlocks[i].Status = newState
+					// Recurring-task auto-recreation (#296): when a task with a
+					// [recur::] token is marked DONE, spawn the next incomplete
+					// instance directly below it in the same parsed slice. The
+					// existing render → write → re-index chain then persists both
+					// the completion and the new instance atomically. The new
+					// block gets a fresh UUID and an advanced [due::] date; the
+					// completed line is left otherwise untouched (it is history).
+					// A malformed recurrence rule is a no-op + log so the DONE
+					// transition never fails because of recurrence (#296 edge).
+					if newState == "DONE" && parsedBlocks[i].Recurrence != "" {
+						if nb, ok := buildNextRecurrence(parsedBlocks[i]); ok {
+							parsedBlocks = insertBlockAfter(parsedBlocks, i, nb)
+						}
+					}
 					found = true
 					break
 				}
@@ -203,6 +219,65 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	}
 	a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, "")
 	return nil
+}
+
+// buildNextRecurrence computes the next instance of a recurring task from the
+// just-completed block (#296). It parses the [recur::] rule, anchors on the
+// block's DueDate (falling back to today when the due date is absent), and
+// advances to the next strictly-future occurrence using skip-missed semantics
+// (PLAN.md §1 — the Todoist default, avoiding catch-up hell). The returned
+// block is a fresh TODO copy with a new UUID and the advanced due date; it
+// carries the same recurrence rule so the cycle continues. A malformed rule
+// or unparseable due date returns ok=false so the caller can no-op + log
+// without blocking the DONE transition.
+func buildNextRecurrence(completed parser.ParsedBlock) (parser.ParsedBlock, bool) {
+	rule, err := recurrence.ParseRule(completed.Recurrence)
+	if err != nil {
+		log.Printf("recurrence: skipping auto-recreation for block %s: %v", completed.ID, err)
+		return parser.ParsedBlock{}, false
+	}
+	base := time.Now()
+	if completed.DueDate != "" {
+		if d, err := time.Parse("2006-01-02", completed.DueDate); err == nil {
+			base = d
+		}
+	}
+	next := rule.NextFutureInstance(base, time.Now())
+	today := time.Now().Format("2006-01-02")
+	return parser.ParsedBlock{
+		ID:         uuid.New().String(),
+		ParentID:   completed.ParentID,
+		Type:       parser.BlockTask,
+		Depth:      completed.Depth,
+		CleanText:  completed.CleanText,
+		Status:     "TODO",
+		Owner:      completed.Owner,
+		StartDate:  completed.StartDate,
+		DueDate:    recurrence.FormatDate(next),
+		Priority:   completed.Priority,
+		Pinned:     completed.Pinned,
+		Progress:   0, // new instance starts fresh
+		Recurrence: completed.Recurrence,
+		LineNumber: completed.LineNumber + 1, // rendered directly below
+		FileDate:   today,
+	}, true
+}
+
+// insertBlockAfter splices nb into blocks immediately after position i and
+// returns the resulting slice. Used by the recurrence hook to land the new
+// task instance on the line directly below the completed block so it renders
+// in the right position via RenderFileContent (which serializes in slice
+// order). Line numbers after the insertion point are bumped by 1 to stay
+// monotonic, matching how ParseFileContent assigns them.
+func insertBlockAfter(blocks []parser.ParsedBlock, i int, nb parser.ParsedBlock) []parser.ParsedBlock {
+	out := make([]parser.ParsedBlock, 0, len(blocks)+1)
+	out = append(out, blocks[:i+1]...)
+	out = append(out, nb)
+	out = append(out, blocks[i+1:]...)
+	for j := i + 2; j < len(out); j++ {
+		out[j].LineNumber++
+	}
+	return out
 }
 
 // QueryTasks retrieves indexed items matching the active filters.
