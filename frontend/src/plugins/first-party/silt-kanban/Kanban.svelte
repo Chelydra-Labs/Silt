@@ -267,6 +267,24 @@
     return off
   })
 
+  // Repaint when any block changes (task created/mutated/rescheduled from any
+  // surface — including the per-column quick-add, #368). Debounced so a burst
+  // of block:changed events (a bulk op) triggers one reload. Bumping
+  // settingsEpoch reuses the existing reload $effect rather than a second path.
+  let blockChangedTimer: ReturnType<typeof setTimeout> | null = null
+  $effect(() => {
+    const off = ctx.on('block:changed', () => {
+      if (blockChangedTimer) clearTimeout(blockChangedTimer)
+      blockChangedTimer = setTimeout(() => {
+        settingsEpoch++
+      }, 80)
+    })
+    return () => {
+      if (blockChangedTimer) clearTimeout(blockChangedTimer)
+      off()
+    }
+  })
+
   // Card selected for the slide-out detail panel (null = closed).
   let selectedCard = $state<KanbanCard | null>(null)
 
