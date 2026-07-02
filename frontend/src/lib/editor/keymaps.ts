@@ -161,21 +161,26 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
 
 /**
  * Resolve the same-parent sibling of the active block in the given direction.
- * Returns the sibling node or `null` when there is none (first/last child, or a
- * nested block whose parent lookup doesn't line up). Only siblings sharing the
- * active block's parent are considered — cross-parent "siblings" are never
- * returned, which is what enforces the AC's depth-boundary rule.
+ * Uses node-boundary positions rather than `ResolvedPos.index()`, which is
+ * off-by-one when the caret sits at the very end of a block's content (it
+ * reports the index of the FOLLOWING sibling). Returns the sibling node or
+ * `null` when there is none (first/last child, or the position falls outside
+ * the current parent — which is what enforces the AC's depth-boundary rule:
+ * `nodeBefore`/`nodeAfter` at a node boundary never cross into a different
+ * parent).
  */
 function getSibling(
   editor: Editor,
-  info: { node: ProseMirrorNode; pos: number; index: number },
+  info: { node: ProseMirrorNode; pos: number },
   direction: 'forward' | 'backward'
 ): ProseMirrorNode | null {
-  const $here = editor.state.doc.resolve(info.pos)
-  const parent = $here.parent
-  const siblingIndex = direction === 'forward' ? info.index + 1 : info.index - 1
-  if (siblingIndex < 0 || siblingIndex >= parent.childCount) return null
-  return parent.child(siblingIndex)
+  const { doc } = editor.state
+  if (direction === 'forward') {
+    // Position immediately after the current block = the next sibling's start
+    // (or the parent's close position if this is the last child).
+    return doc.resolve(info.pos + info.node.nodeSize).nodeAfter
+  }
+  return doc.resolve(info.pos).nodeBefore
 }
 
 /**
@@ -198,11 +203,11 @@ function mergeSiblingBlock(
 ): boolean {
   const info = currentBlockInfo(editor)
   if (!info) return false
-  const { node, pos, index } = info
+  const { node, pos } = info
   // codeBlock has a different content model (text* vs inline*); leave it alone.
   if (node.type.spec.code) return false
 
-  const sibling = getSibling(editor, { node, pos, index }, direction)
+  const sibling = getSibling(editor, { node, pos }, direction)
   if (!sibling) return false
   if (sibling.type.name !== node.type.name) return false
 
@@ -790,7 +795,7 @@ export const SiltBlockKeymaps = Extension.create({
         if (info.node.content.size === 0) {
           const sibling = getSibling(
             this.editor,
-            { node: info.node, pos: info.pos, index: info.index },
+            { node: info.node, pos: info.pos },
             'forward'
           )
           if (!sibling || sibling.type.name !== info.node.type.name) {
@@ -798,12 +803,10 @@ export const SiltBlockKeymaps = Extension.create({
           }
           const from = info.pos
           const to = info.pos + info.node.nodeSize
-          this.editor.view.dispatch(this.editor.state.tr.delete(from, to))
-          this.editor.commands.focus()
           const caret = info.pos + 1
-          const tr = this.editor.state.tr.setSelection(
-            TextSelection.create(this.editor.state.doc, caret, caret)
-          )
+          this.editor.commands.focus()
+          const tr = this.editor.state.tr.delete(from, to)
+          tr.setSelection(TextSelection.create(tr.doc, caret, caret))
           this.editor.view.dispatch(tr)
           return true
         }
