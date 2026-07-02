@@ -1,15 +1,27 @@
 <script lang="ts">
   // QuickAddTask — a compact title-only input that creates a standalone task
-  // via ctx.createTask (#368). Shared by the calendar (day-cell + toolbar),
-  // the kanban (per-column + inbox), and the global Mod+Shift+T overlay.
+  // (#368). Shared by the calendar (day-cell + toolbar), the kanban
+  // (per-column + inbox), and the global Ctrl+Shift+N overlay.
   //
   // Title-only is the v1 surface: sensible defaults (status TODO, no due date
   // unless the surface supplied one) match the issue's acceptance criteria.
   // Rich editing stays on the existing task/note editor.
+  //
+  // A plugin surface passes `ctx` (uses ctx.createTask). The app-shell global
+  // overlay has no plugin ctx, so it passes `createTask` directly — a thin
+  // shim over the app-level CreateStandaloneTask binding. One component, one
+  // source of truth for the Enter/Escape/busy/error behavior.
   import type { PluginContext, TaskStatus } from '../../sdk'
 
   interface Props {
-    ctx: PluginContext
+    /** Plugin context (plugin surfaces). Mutually exclusive with createTask. */
+    ctx?: PluginContext
+    /** App-level create shim (global overlay). Mutually exclusive with ctx. */
+    createTask?: (opts: {
+      title: string
+      dueDate?: string
+      status?: TaskStatus
+    }) => Promise<string>
     /** Prefilled due date (YYYY-MM-DD); undefined = no due date. */
     dueDate?: string
     /** Prefilled status; defaults to TODO. */
@@ -30,6 +42,7 @@
 
   let {
     ctx,
+    createTask,
     dueDate,
     status = 'TODO',
     placeholder = 'Add a task…',
@@ -40,6 +53,7 @@
 
   let title = $state('')
   let busy = $state(false)
+  let errorMsg = $state('')
   let inputEl = $state<HTMLInputElement | null>(null)
 
   // Autofocus on mount so the user can type immediately from any entry point.
@@ -47,12 +61,20 @@
     inputEl?.focus()
   })
 
+  // Resolve the create fn at call time: the explicit app-level shim wins,
+  // else the plugin ctx. Read inside submit (not a top-level const) so Svelte
+  // doesn't flag a stale-capture of the reactive props.
   async function submit() {
     const t = title.trim()
     if (!t || busy) return
     busy = true
+    errorMsg = ''
+    const fn =
+      createTask ??
+      ((opts: { title: string; dueDate?: string; status?: TaskStatus }) =>
+        ctx!.createTask(opts))
     try {
-      const id = await ctx.createTask({
+      const id = await fn({
         title: t,
         dueDate,
         status
@@ -63,9 +85,11 @@
         // block:changed listener on each view repaints; keep focus for rapid entry.
         inputEl?.focus()
       }
-    } catch {
-      // Leave the text in place so the user can retry; the createTask binding
-      // surfaces a structured error the SDK rejects with.
+    } catch (err) {
+      // Surface the failure inline so the user knows the create did not land
+      // (disk full / vault reloading / locked file / canceled session). The
+      // text stays in place for an easy retry.
+      errorMsg = err instanceof Error ? err.message : String(err)
     } finally {
       busy = false
     }
@@ -99,6 +123,12 @@
   onkeydown={onKeydown}
   onblur={onBlur}
   aria-label={placeholder}
+  aria-invalid={!!errorMsg}
   data-testid="quick-add-task-input"
-  class="w-full px-2 py-1 rounded border border-accent-primary-start/40 bg-panel text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[12px]"
+  class="w-full px-2 py-1 rounded border border-accent-primary-start/40 bg-panel text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[12px] disabled:opacity-60"
 />
+{#if errorMsg}
+  <div class="text-error text-[11px] mt-1" role="alert">
+    {errorMsg}
+  </div>
+{/if}

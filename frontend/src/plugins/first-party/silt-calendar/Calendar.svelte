@@ -231,6 +231,12 @@
   // path — the mouse and keyboard flows call one function (#294).
 
   let dragTaskId = $state<string | null>(null)
+  // The dragged card's full item is captured so (a) the mouse-drop path can
+  // skip a no-op drop on the task's own current cell (avoids a wasted atomic
+  // write + re-index + repaint for zero semantic effect), and (b) the
+  // aria-live announcement can include the title for parity with the keyboard
+  // path (#292 AC).
+  let dragTaskItem = $state<CalItem | null>(null)
   let overCellDate = $state<string | null>(null)
   // aria-live announcement of the last reschedule (mouse or keyboard) so
   // screen-reader users hear the result (#292 AC).
@@ -238,6 +244,7 @@
 
   function onCardDragStart(e: DragEvent, item: CalItem) {
     dragTaskId = item.id
+    dragTaskItem = item
     if (e.dataTransfer) {
       e.dataTransfer.setData('text/plain', item.id)
       e.dataTransfer.effectAllowed = 'move'
@@ -245,6 +252,7 @@
   }
   function onCardDragEnd() {
     dragTaskId = null
+    dragTaskItem = null
     overCellDate = null
   }
 
@@ -264,10 +272,20 @@
   async function onCellDrop(e: DragEvent, day: Date) {
     e.preventDefault()
     const id = dragTaskId ?? e.dataTransfer?.getData('text/plain') ?? ''
+    const item = dragTaskItem
     overCellDate = null
     dragTaskId = null
+    dragTaskItem = null
     if (!id) return
-    await reschedule(id, ymd(day))
+    const target = ymd(day)
+    // No-op guard: dropping a card back on its own current due-date cell would
+    // otherwise round-trip through an atomic write + full re-parse + re-index +
+    // repaint for zero semantic effect.
+    if (item && item.due_date === target) {
+      rescheduleAnnouncement = `Already scheduled for ${target}`
+      return
+    }
+    await reschedule(id, target, item?.clean_content)
   }
 
   // reschedule rewrites the due date and announces the result. Shared by the

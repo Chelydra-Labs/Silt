@@ -271,6 +271,50 @@ func TestPluginSetTaskDueDate_RejectsNonTask(t *testing.T) {
 	}
 }
 
+// TestPluginSetTaskDueDate_StandaloneTask verifies the synthetic .silt
+// notebook resolves correctly through the due-date mutation path — the path
+// calendar drag-and-drop uses for a standalone task created from a day cell
+// (#368 + #293). A regression in resolveNotebookDir(".silt", "vault") would
+// otherwise silently break rescheduling every standalone task.
+func TestPluginSetTaskDueDate_StandaloneTask(t *testing.T) {
+	app := newTestApp(t)
+	resetStandaloneTasks(t, app)
+	tok := registerTestSession(t, app, "silt-calendar")
+
+	id, err := app.PluginCreateTask("silt-calendar", tok, "Drag-drop me", "2026-07-10", "TODO")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	ok, err := app.PluginSetTaskDueDate("silt-calendar", tok, id, "2026-08-01")
+	if err != nil || !ok {
+		t.Fatalf("PluginSetTaskDueDate on standalone task: ok=%v err=%v", ok, err)
+	}
+
+	// The on-disk file's [due::] token changed (markdown-source-of-truth).
+	tasksFile := filepath.Join(app.vaultPath, ".silt", "tasks.md")
+	content, err := os.ReadFile(tasksFile)
+	if err != nil {
+		t.Fatalf("read tasks file: %v", err)
+	}
+	if !strings.Contains(string(content), "[due:: 2026-08-01]") {
+		t.Errorf("expected [due:: 2026-08-01] in file, got:\n%s", content)
+	}
+	if strings.Contains(string(content), "[due:: 2026-07-10]") {
+		t.Errorf("stale [due:: 2026-07-10] still in file:\n%s", content)
+	}
+
+	// The index row reflects the new due date.
+	var got sql.NullString
+	if err := app.db.SQLDB().QueryRow(
+		"SELECT due_date FROM tasks WHERE block_id = ?", id,
+	).Scan(&got); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if !got.Valid || got.String != "2026-08-01" {
+		t.Errorf("expected indexed due 2026-08-01, got %+v", got)
+	}
+}
+
 // TestListNavigation_ExcludesStandaloneTasks verifies the .silt synthetic
 // notebook never appears in the page browser (#368 AC).
 func TestListNavigation_ExcludesStandaloneTasks(t *testing.T) {

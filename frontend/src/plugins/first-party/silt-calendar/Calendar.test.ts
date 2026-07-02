@@ -23,6 +23,7 @@ vi.mock('../../../settings/store.svelte', () => ({
 
 import Calendar from './Calendar.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
+import { plusDaysISO } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
 import {
   getFocusState,
@@ -178,12 +179,11 @@ describe('Calendar plugin', () => {
     // First sqliteQuery is the Calendar's windowed due-date query (mode =
     // month default). Return empty so we don't render month tasks. The
     // AgendaList runs its own non-DONE-task query; mock that with two
-    // tasks so all four groups render.
+    // tasks so the Overdue + Today groups render. The AgendaList query is
+    // distinguished by the `status != 'DONE'` filter (it no longer filters
+    // on due_date so undated standalone tasks surface — #368).
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (
-        sql.includes("status != 'DONE'") &&
-        sql.includes('due_date IS NOT NULL')
-      ) {
+      if (sql.includes("status != 'DONE'")) {
         return {
           rows: [
             {
@@ -457,26 +457,28 @@ describe('Calendar plugin', () => {
     const card = screen.getByText('Keyboard task') as HTMLElement
     card.focus()
     const today = ymd(new Date())
-    const tomorrow = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate() + 1).padStart(2, '0')}`
 
     await fireEvent.keyDown(card, { key: 'ArrowRight', altKey: true })
     await flush()
 
     expect(mocks.setTaskDueDate).toHaveBeenCalledTimes(1)
     expect(mocks.setTaskDueDate.mock.calls[0][0]).toBe('drag-1')
-    // New date is today + 1 day.
-    expect(mocks.setTaskDueDate.mock.calls[0][1]).not.toBe(today)
+    // Pin the exact +1 day so a month/year-boundary arithmetic regression
+    // can't slip through a loose "not today" assertion.
+    expect(mocks.setTaskDueDate.mock.calls[0][1]).toBe(plusDaysISO(today, 1))
   })
 
   it('Alt+ArrowUp on a focused card reschedules -7 days (#294)', async () => {
     await renderWithTaskOnToday('Week jump task')
     const card = screen.getByText('Week jump task') as HTMLElement
     card.focus()
+    const today = ymd(new Date())
 
     await fireEvent.keyDown(card, { key: 'ArrowUp', altKey: true })
     await flush()
 
     expect(mocks.setTaskDueDate).toHaveBeenCalledTimes(1)
+    expect(mocks.setTaskDueDate.mock.calls[0][1]).toBe(plusDaysISO(today, -7))
   })
 
   it('arrow keys without Alt do NOT reschedule (cell navigation still works)', async () => {

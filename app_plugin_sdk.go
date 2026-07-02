@@ -448,6 +448,16 @@ func (a *App) PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate stri
 	}
 
 	var writeErr error
+	// emitFileDate captures the changed block's file_date (or falls back to
+	// the loc metadata) so block:changed fires AFTER both locks release —
+	// matching CreateStandaloneTask / UpdateBlockState, and avoiding a
+	// deadlock footgun if EventsEmit ever becomes synchronous. didWrite is
+	// set whenever the file write succeeded: even if the post-write re-parse
+	// fails (so `blocks` is nil and the index stays stale), we still emit so
+	// subscribed views re-query and surface the now-on-disk state instead of
+	// freezing on the pre-drag row.
+	var emitFileDate string
+	didWrite := false
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
 			contentBytes, err := os.ReadFile(filePath)
@@ -489,6 +499,7 @@ func (a *App) PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate stri
 				writeErr = err
 				return
 			}
+			didWrite = true
 
 			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 			if err == nil {
@@ -499,19 +510,24 @@ func (a *App) PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate stri
 				if idxErr != nil {
 					log.Printf("PluginSetTaskDueDate: IndexFileBlocks failed: %v", idxErr)
 				}
+				for _, b := range blocks {
+					if b.ID == blockID {
+						emitFileDate = b.FileDate
+					}
+				}
 			} else {
 				log.Printf("PluginSetTaskDueDate: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
 			}
-
-			for _, b := range blocks {
-				if b.ID == blockID {
-					a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)
-				}
+			if emitFileDate == "" {
+				emitFileDate = fileDate
 			}
 		})
 	}) // LockBlockWrite
 	if writeErr != nil {
 		return false, writeErr
+	}
+	if didWrite {
+		a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, emitFileDate)
 	}
 	return true, nil
 }

@@ -28,6 +28,7 @@
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
   import SettingsShell from './components/settings/SettingsShell.svelte'
+  import QuickAddTask from './plugins/first-party/shared/QuickAddTask.svelte'
   import { loadPlugins } from './plugins/loader'
   import {
     initConfigHotReload,
@@ -370,12 +371,6 @@
   // hotkey (default Ctrl+Shift+N). Creates a task in <vault>/.silt/tasks.md
   // via the app-level CreateStandaloneTask binding (not plugin-gated).
   let showQuickAdd = $state(false)
-  let quickAddError = $state('')
-  let quickAddBusy = $state(false)
-  let globalQuickAddEl = $state<HTMLInputElement | null>(null)
-  $effect(() => {
-    if (showQuickAdd) globalQuickAddEl?.focus()
-  })
   let globalReplaceQuery = $state('')
   let showSettings = $state(false)
   let settingsTab = $state('general')
@@ -610,7 +605,6 @@
       }
       if (matchHotkey(e, hotkeys.new_task)) {
         e.preventDefault()
-        quickAddError = ''
         showQuickAdd = !showQuickAdd
       }
       if (matchHotkey(e, hotkeys.toggle_view_mode)) {
@@ -1347,9 +1341,11 @@
   {/if}
 
   {#if showQuickAdd}
-    <!-- Global standalone-task quick-add overlay (#368). Creates a task in
-         <vault>/.silt/tasks.md via the app-level binding; default TODO, no
-         due date. Click-outside / Escape dismisses. -->
+    <!-- Global standalone-task quick-add overlay (#368). Reuses the shared
+         QuickAddTask component (same Enter/Escape/busy/error behavior as the
+         calendar + kanban surfaces) with an app-level createTask shim over
+         CreateStandaloneTask — App.svelte has no plugin ctx. Default TODO,
+         no due date. Click-outside / Escape dismisses. -->
     <div
       class="fixed inset-0 z-[200] flex items-start justify-center pt-[20vh] bg-void/40"
       role="presentation"
@@ -1369,42 +1365,18 @@
         <h2 class="font-headline-lg text-headline-lg text-text-primary mb-3">
           New task
         </h2>
-        <input
-          bind:this={globalQuickAddEl}
-          type="text"
+        <QuickAddTask
+          createTask={(opts) =>
+            CreateStandaloneTask(
+              opts.title,
+              opts.dueDate ?? '',
+              opts.status ?? 'TODO'
+            )}
           placeholder="Task title — Enter to add, Esc to close"
-          aria-label="Task title"
-          disabled={quickAddBusy}
-          data-testid="global-quick-add-input"
-          class="w-full px-3 py-2 rounded border border-accent-primary-start/40 bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[14px] disabled:opacity-60"
-          onkeydown={(e) => {
-            if (e.key === 'Escape') {
-              e.preventDefault()
-              showQuickAdd = false
-            } else if (e.key === 'Enter') {
-              const v = (e.currentTarget as HTMLInputElement).value.trim()
-              if (!v || quickAddBusy) return
-              quickAddError = ''
-              quickAddBusy = true
-              CreateStandaloneTask(v, '', 'TODO')
-                .then(() => {
-                  showQuickAdd = false
-                })
-                .catch((err: unknown) => {
-                  quickAddError =
-                    err instanceof Error ? err.message : String(err)
-                })
-                .finally(() => {
-                  quickAddBusy = false
-                })
-            }
-          }}
+          keepOpenAfterCreate={false}
+          onCreated={() => (showQuickAdd = false)}
+          onCancel={() => (showQuickAdd = false)}
         />
-        {#if quickAddError}
-          <div class="mt-2 text-[12px] text-error" role="alert">
-            {quickAddError}
-          </div>
-        {/if}
       </div>
     </div>
   {/if}

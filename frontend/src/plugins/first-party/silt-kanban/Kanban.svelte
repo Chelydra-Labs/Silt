@@ -269,20 +269,37 @@
 
   // Repaint when any block changes (task created/mutated/rescheduled from any
   // surface — including the per-column quick-add, #368). Debounced so a burst
-  // of block:changed events (a bulk op) triggers one reload. Bumping
-  // settingsEpoch reuses the existing reload $effect rather than a second path.
+  // of block:changed events (a bulk op) triggers one reload. Uses a DEDICATED
+  // repaintSeq trigger — NOT settingsEpoch — so a block change doesn't fan
+  // out to a getPluginSettings() IPC roundtrip (linked-config resolution),
+  // which only the linked-config:changed path needs.
   let blockChangedTimer: ReturnType<typeof setTimeout> | null = null
+  let repaintSeq = $state(0)
+  // Skip the $effect's initial mount run so it doesn't double-fire reload()
+  // alongside the scope/filters effect on first paint (which would throw off
+  // call-count-sensitive tests + waste an IPC roundtrip). Only actual
+  // block:changed bumps (repaintSeq > 0 after the first tracked change) trigger
+  // a repaint.
+  let repaintMounted = false
   $effect(() => {
     const off = ctx.on('block:changed', () => {
       if (blockChangedTimer) clearTimeout(blockChangedTimer)
       blockChangedTimer = setTimeout(() => {
-        settingsEpoch++
+        repaintSeq++
       }, 80)
     })
     return () => {
       if (blockChangedTimer) clearTimeout(blockChangedTimer)
       off()
     }
+  })
+  $effect(() => {
+    void repaintSeq
+    if (!repaintMounted) {
+      repaintMounted = true
+      return // the scope/filters effect already loads on mount
+    }
+    reload()
   })
 
   // Card selected for the slide-out detail panel (null = closed).

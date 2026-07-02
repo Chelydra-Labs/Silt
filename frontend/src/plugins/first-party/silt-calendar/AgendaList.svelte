@@ -47,7 +47,6 @@
                 b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority
          FROM blocks b JOIN tasks t ON b.id = t.block_id
          WHERE t.status != 'DONE'
-           AND (t.due_date IS NOT NULL AND t.due_date != '')
          ORDER BY t.due_date ASC, t.priority ASC
          LIMIT 500`
       )
@@ -91,12 +90,25 @@
   let tomorrow = $derived(plusDaysISO(today, 1))
   let weekAhead = $derived(plusDaysISO(today, 7))
 
-  let overdue = $derived(items.filter((i) => i.due_date < today))
-  let todayItems = $derived(items.filter((i) => i.due_date === today))
-  let tomorrowItems = $derived(items.filter((i) => i.due_date === tomorrow))
+  // Undated tasks (NULL/'' due_date) surface in their own bucket so a
+  // quick-added standalone task with no due date is visible here — #368's
+  // "the created task appears in the Agenda / un-dated list" AC. The date
+  // comparisons below guard on truthiness so a null/empty due_date never
+  // falls into Overdue (null < today would otherwise be false, but '' sorts
+  // before every dated string and would mis-bucket).
+  let undated = $derived(items.filter((i) => !i.due_date))
+  let overdue = $derived(
+    items.filter((i) => !!i.due_date && i.due_date < today)
+  )
+  let todayItems = $derived(
+    items.filter((i) => !!i.due_date && i.due_date === today)
+  )
+  let tomorrowItems = $derived(
+    items.filter((i) => !!i.due_date && i.due_date === tomorrow)
+  )
   let upcoming = $derived(
     items
-      .filter((i) => i.due_date > tomorrow)
+      .filter((i) => !!i.due_date && i.due_date > tomorrow)
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
   )
 
@@ -278,7 +290,7 @@
         Nothing scheduled. Add a due date to a task to see it here.
       </div>
     {:else}
-      {#each [{ key: 'overdue', label: 'Overdue', list: overdue, tone: 'error', date: '' }, { key: 'today', label: 'Today', list: todayItems, tone: 'primary', date: today }, { key: 'tomorrow', label: 'Tomorrow', list: tomorrowItems, tone: 'secondary', date: tomorrow }, { key: 'upcoming', label: 'Upcoming', list: upcoming, tone: 'muted', date: '' }] as group (group.key)}
+      {#each [{ key: 'overdue', label: 'Overdue', list: overdue, tone: 'error', date: '' }, { key: 'today', label: 'Today', list: todayItems, tone: 'primary', date: today }, { key: 'tomorrow', label: 'Tomorrow', list: tomorrowItems, tone: 'secondary', date: tomorrow }, { key: 'upcoming', label: 'Upcoming', list: upcoming, tone: 'muted', date: '' }, { key: 'undated', label: 'Undated', list: undated, tone: 'muted', date: '' }] as group (group.key)}
         {#if group.list.length > 0}
           <section
             data-group={group.key}
@@ -337,10 +349,12 @@
                       >[{item.owner}]</span
                     >
                   {/if}
-                  <span
-                    class="text-[10px] text-text-muted font-label-sm flex-shrink-0"
-                    >{item.due_date}</span
-                  >
+                  {#if item.due_date}
+                    <span
+                      class="text-[10px] text-text-muted font-label-sm flex-shrink-0"
+                      >{item.due_date}</span
+                    >
+                  {/if}
                 </div>
               {/each}
             </div>
