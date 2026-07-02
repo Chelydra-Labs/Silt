@@ -6,6 +6,7 @@ import {
   PluginUpdateBlockState,
   PluginUpdateTaskMeta,
   PluginSetTaskDueDate,
+  PluginSetTaskRecurrence,
   PluginCreateTask,
   GetPluginSettingsForNotebook,
   UpdatePluginSetting,
@@ -165,6 +166,10 @@ export function makePluginContext(
     // The mutation surface behind calendar drag-and-drop rescheduling.
     setTaskDueDate: (id, dueDate) =>
       PluginSetTaskDueDate(pluginID, sessionToken ?? '', id, dueDate),
+    // Rewrite a task's [recur:: RULE] token (#296). Empty string clears it
+    // (stop recurring). Validated server-side for grammar + due-date anchor.
+    setTaskRecurrence: (id, recurrence) =>
+      PluginSetTaskRecurrence(pluginID, sessionToken ?? '', id, recurrence),
     // Create a standalone task in <vault>/.silt/tasks.md (#368). title required;
     // dueDate/status optional with TODO + no-due defaults.
     createTask: (opts) =>
