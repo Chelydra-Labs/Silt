@@ -26,12 +26,7 @@ describe('sortByName', () => {
   })
 
   it('sorts by custom order, then alphabetical for unlisted items', () => {
-    const items = [
-      { name: 'C' },
-      { name: 'A' },
-      { name: 'B' },
-      { name: 'D' }
-    ]
+    const items = [{ name: 'C' }, { name: 'A' }, { name: 'B' }, { name: 'D' }]
     const result = sortByName(items, ['B', 'A'])
     expect(result.map((i) => i.name)).toEqual(['B', 'A', 'C', 'D'])
   })
@@ -104,6 +99,25 @@ describe('NavOrderManager', () => {
       '2026-06-22'
     ])
     expect(SetNavOrder).toHaveBeenCalled()
+  })
+
+  it('persists root-level page order through the empty-section key (#369)', async () => {
+    const { SetNavOrder } = await import('../../../wailsjs/go/main/App.js')
+    const manager = new NavOrderManager({ onStateChange: () => {} })
+
+    await manager.load()
+    // The root-section sentinel is the empty trailing segment in the key
+    // (`<notebook>/`), matching SPECS.md's `nav_order` schema and Go's
+    // updateNavOrderForMove (app_rename.go:317-318). Drag-and-drop root-
+    // page reorders must round-trip through this key (#369).
+    await manager.persistPageOrder('Work/', ['README', 'Inbox'])
+
+    expect(manager.current.pages['Work/']).toEqual(['README', 'Inbox'])
+    expect(SetNavOrder).toHaveBeenCalledTimes(1)
+    const callArg = vi.mocked(SetNavOrder).mock.calls[0][0] as {
+      pages: Record<string, string[]>
+    }
+    expect(callArg.pages['Work/']).toEqual(['README', 'Inbox'])
   })
 
   it('load() is a no-op on IPC failure', async () => {

@@ -137,6 +137,70 @@ describe('DragDropManager', () => {
     expect(SetNavOrder).toHaveBeenCalled()
   })
 
+  it('handleDrop reorders root-level pages via persistPageOrder (#369)', async () => {
+    const { SetNavOrder } = await import('../../../wailsjs/go/main/App.js')
+    // Synthetic root section (name === '') supplies the section-less page
+    // list the sidebar renders at Sidebar.svelte:866.
+    const rootPages: NavSection[] = [
+      {
+        name: '',
+        pages: [
+          { name: 'Inbox', count: 0 },
+          { name: 'README', count: 0 }
+        ]
+      },
+      ...makeSections()
+    ]
+    const deps = makeDeps({
+      getActiveNotebookSections: () => rootPages
+    })
+    const dnd = new DragDropManager(deps)
+    const e = makeDragEvent()
+
+    // Drag the first root page down onto the second.
+    dnd.handleDragStart(e, 'page', 'Inbox', '')
+    dnd.handleDragOver(e, 'page', 'README')
+    await dnd.handleDrop(e, 'page', 'README', 'Work', '')
+
+    // The reorder must persist via persistPageOrder using the
+    // empty-section key `<notebook>/` — matching SPECS.md 'nav_order'
+    // and Go's updateNavOrderForMove (app_rename.go:317-318). Before
+    // the fix, the branch was guarded by `&& section`, which short-
+    // circuited on the '' sentinel and silently no-op'd.
+    expect(SetNavOrder).toHaveBeenCalledTimes(1)
+    const callArg = vi.mocked(SetNavOrder).mock.calls[0][0] as {
+      pages: Record<string, string[]>
+    }
+    expect(callArg.pages['Work/']).toEqual(['README', 'Inbox'])
+    expect(deps.navOrder.current.pages['Work/']).toEqual(['README', 'Inbox'])
+  })
+
+  it('handleDrop root-page drop on itself is a no-op (#369)', async () => {
+    const deps = makeDeps({
+      getActiveNotebookSections: () => [
+        {
+          name: '',
+          pages: [
+            { name: 'Inbox', count: 0 },
+            { name: 'README', count: 0 }
+          ]
+        },
+        ...makeSections()
+      ]
+    })
+    const dnd = new DragDropManager(deps)
+    const e = makeDragEvent()
+
+    dnd.handleDragStart(e, 'page', 'Inbox', '')
+    // Drop on the same page you started dragging — the
+    // `dragItem.name === targetName` guard (useDragDrop.ts) short-
+    // circuits before any NavOrder write.
+    await dnd.handleDrop(e, 'page', 'Inbox', 'Work', '')
+
+    expect(deps.onMoved).not.toHaveBeenCalled()
+    expect(deps.navOrder.current.pages['Work/']).toBeUndefined()
+  })
+
   it('handleDrop page→section calls MovePage', async () => {
     const { MovePage } = await import('../../../wailsjs/go/main/App.js')
     const deps = makeDeps()
