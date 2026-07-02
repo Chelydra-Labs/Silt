@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   configKeyToProseMirrorKey,
   resolveShortcut,
-  resolveHotkeyDisplay
+  resolveHotkeyDisplay,
+  matchHotkey
 } from './hotkeys'
 
 describe('configKeyToProseMirrorKey', () => {
@@ -130,5 +131,46 @@ describe('resolveHotkeyDisplay', () => {
     expect(
       resolveHotkeyDisplay('format_bold', {} as Record<string, string>)
     ).toBe('')
+  })
+})
+
+// The global quick-add overlay (#368) is dispatched by the App.svelte keydown
+// handler via matchHotkey(e, hotkeys.new_task). The default binding is
+// Ctrl+Shift+N — chosen because Ctrl+Shift+T is already open_template_picker.
+// These tests pin the dispatch logic so a regression (e.g. reverting to the
+// colliding Ctrl+Shift+T) is caught at the config layer.
+describe('new_task hotkey dispatch (#368)', () => {
+  const newTask = 'Ctrl+Shift+N'
+  const templatePicker = 'Ctrl+Shift+T'
+
+  function keyEvent(key: string, opts: KeyboardEventInit): KeyboardEvent {
+    return new KeyboardEvent('keydown', { key, ...opts })
+  }
+
+  it('matches the default Ctrl+Shift+N binding', () => {
+    expect(
+      matchHotkey(keyEvent('n', { ctrlKey: true, shiftKey: true }), newTask)
+    ).toBe(true)
+  })
+
+  it('does NOT match Ctrl+Shift+T (the template-picker binding)', () => {
+    expect(
+      matchHotkey(keyEvent('t', { ctrlKey: true, shiftKey: true }), newTask)
+    ).toBe(false)
+  })
+
+  it('the template-picker binding still matches Ctrl+Shift+T (no collision)', () => {
+    expect(
+      matchHotkey(
+        keyEvent('t', { ctrlKey: true, shiftKey: true }),
+        templatePicker
+      )
+    ).toBe(true)
+  })
+
+  it('rejects when the action is disabled (empty binding)', () => {
+    expect(
+      matchHotkey(keyEvent('n', { ctrlKey: true, shiftKey: true }), '')
+    ).toBe(false)
   })
 })

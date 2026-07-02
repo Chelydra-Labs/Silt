@@ -371,6 +371,7 @@
   // via the app-level CreateStandaloneTask binding (not plugin-gated).
   let showQuickAdd = $state(false)
   let quickAddError = $state('')
+  let quickAddBusy = $state(false)
   let globalQuickAddEl = $state<HTMLInputElement | null>(null)
   $effect(() => {
     if (showQuickAdd) globalQuickAddEl?.focus()
@@ -1373,16 +1374,18 @@
           type="text"
           placeholder="Task title — Enter to add, Esc to close"
           aria-label="Task title"
+          disabled={quickAddBusy}
           data-testid="global-quick-add-input"
-          class="w-full px-3 py-2 rounded border border-accent-primary-start/40 bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[14px]"
+          class="w-full px-3 py-2 rounded border border-accent-primary-start/40 bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[14px] disabled:opacity-60"
           onkeydown={(e) => {
             if (e.key === 'Escape') {
               e.preventDefault()
               showQuickAdd = false
             } else if (e.key === 'Enter') {
               const v = (e.currentTarget as HTMLInputElement).value.trim()
-              if (!v) return
+              if (!v || quickAddBusy) return
               quickAddError = ''
+              quickAddBusy = true
               CreateStandaloneTask(v, '', 'TODO')
                 .then(() => {
                   showQuickAdd = false
@@ -1390,6 +1393,9 @@
                 .catch((err: unknown) => {
                   quickAddError =
                     err instanceof Error ? err.message : String(err)
+                })
+                .finally(() => {
+                  quickAddBusy = false
                 })
             }
           }}

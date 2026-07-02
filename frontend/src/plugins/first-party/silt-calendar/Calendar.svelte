@@ -272,13 +272,17 @@
 
   // reschedule rewrites the due date and announces the result. Shared by the
   // mouse drop path and the keyboard Alt+Arrow path so there is one source
-  // of truth for the mutation + announcement.
-  async function reschedule(blockId: string, newDate: string) {
+  // of truth for the mutation + announcement. title is optional — the
+  // keyboard path has the card's item; the mouse-drop path knows only the id,
+  // so the announcement degrades gracefully to a date-only message.
+  async function reschedule(blockId: string, newDate: string, title?: string) {
     try {
       await ctx.setTaskDueDate(blockId, newDate)
       // The grid repaints via the block:changed listener; the announcement
       // gives immediate non-visual feedback.
-      rescheduleAnnouncement = `Rescheduled to ${newDate}`
+      rescheduleAnnouncement = title
+        ? `Rescheduled "${title}" to ${newDate}`
+        : `Rescheduled to ${newDate}`
     } catch (e) {
       rescheduleAnnouncement =
         e instanceof Error ? e.message : 'Reschedule failed'
@@ -301,7 +305,7 @@
     e.preventDefault()
     e.stopPropagation()
     const base = item.due_date || ymd(new Date())
-    void reschedule(item.id, plusDaysISO(base, delta))
+    void reschedule(item.id, plusDaysISO(base, delta), item.clean_content)
   }
 
   // --- Quick-add standalone tasks (#368) ------------------------------------
@@ -568,7 +572,7 @@
         <QuickAddTask
           {ctx}
           placeholder="New task (no due date) — Enter to add, Esc to close"
-          keepOpenAfterCreate={true}
+          keepOpenAfterCreate={false}
           onCreated={closeQuickAdd}
           onCancel={closeQuickAdd}
         />

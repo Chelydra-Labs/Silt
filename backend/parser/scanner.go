@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -169,7 +170,13 @@ const StandaloneTasksNotebook = ".silt"
 func ScanStandaloneTasks(vaultPath string, spacesPerTab int) []ScanResult {
 	tasksFile := filepath.Join(vaultPath, StandaloneTasksNotebook, "tasks.md")
 	if _, err := os.Stat(tasksFile); err != nil {
-		return nil // absent — no standalone tasks created yet
+		if !os.IsNotExist(err) {
+			// A non-absent stat error (locked, permission denied, corrupted)
+			// would otherwise silently drop all standalone tasks from the
+			// index until next launch. Surface it so the gap is diagnosable.
+			log.Printf("ScanStandaloneTasks: stat %s failed: %v", tasksFile, err)
+		}
+		return nil // absent or unreadable — no standalone tasks indexed this pass
 	}
 	res := parseSingleFile(tasksFile, vaultPath, spacesPerTab)
 	return []ScanResult{res}
