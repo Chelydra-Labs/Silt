@@ -72,12 +72,12 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    dnd.handleDragStart(e, 'section', 'Journal')
+    dnd.handleDragStart(e, 'section', 'Journal', '')
 
     expect(deps.onDragItemChange).toHaveBeenCalledWith({
       level: 'section',
       name: 'Journal',
-      section: undefined
+      section: ''
     })
     expect(e.dataTransfer!.effectAllowed).toBe('move')
     expect(e.dataTransfer!.setData).toHaveBeenCalledWith(
@@ -91,7 +91,7 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    dnd.handleDragStart(e, 'section', 'Journal')
+    dnd.handleDragStart(e, 'section', 'Journal', '')
     dnd.handleDragOver(e, 'section', 'Projects')
 
     expect(deps.onDropTargetChange).toHaveBeenCalledWith(
@@ -104,7 +104,7 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    dnd.handleDragStart(e, 'section', 'Journal')
+    dnd.handleDragStart(e, 'section', 'Journal', '')
     dnd.handleDragOver(e, 'page', '2026-06-22')
 
     // Should not call preventDefault for invalid cross-level.
@@ -128,10 +128,10 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    dnd.handleDragStart(e, 'section', 'Journal')
+    dnd.handleDragStart(e, 'section', 'Journal', '')
     // Set dropTarget before handleDrop.
     dnd.handleDragOver(e, 'section', 'Projects')
-    await dnd.handleDrop(e, 'section', 'Projects', 'Work')
+    await dnd.handleDrop(e, 'section', 'Projects', 'Work', '')
 
     // Section reorder persists via navOrder, not onMoved.
     expect(SetNavOrder).toHaveBeenCalled()
@@ -212,7 +212,7 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    dnd.handleDragStart(e, 'section', 'Journal')
+    dnd.handleDragStart(e, 'section', 'Journal', '')
     dnd.handleDragEnd()
 
     expect(deps.onDragItemChange).toHaveBeenCalledWith(null)
@@ -224,7 +224,7 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    await dnd.handleDrop(e, 'section', 'Projects', 'Work')
+    await dnd.handleDrop(e, 'section', 'Projects', 'Work', '')
 
     expect(deps.onMoved).not.toHaveBeenCalled()
   })

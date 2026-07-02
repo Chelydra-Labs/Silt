@@ -163,7 +163,7 @@
   let dragItem = $state<{
     level: string
     name: string
-    section?: string
+    section: string
   } | null>(null)
   let dropTarget = $state<{
     level: string

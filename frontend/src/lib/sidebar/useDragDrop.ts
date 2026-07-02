@@ -2,10 +2,16 @@ import { MovePage } from '../../../wailsjs/go/main/App.js'
 import { sortByName, type NavOrderManager } from './navOrder'
 import type { NavSection } from './types'
 
+// `section` is always passed explicitly by callers (`Sidebar.svelte` and
+// `SidebarSection.svelte`). The empty string `''` is the sentinel for the
+// notebook-root / section-less page group — it is a real, valid value, not
+// "missing". Distinguishing it from `undefined` at the type level lets the
+// drop handler branch on "section was passed" without conflating absent
+// with empty (#369).
 export interface DragItem {
   level: string
   name: string
-  section?: string
+  section: string
 }
 
 export interface DropTarget {
@@ -45,7 +51,7 @@ export class DragDropManager {
     this.deps = deps
   }
 
-  handleDragStart(e: DragEvent, level: string, name: string, section?: string) {
+  handleDragStart(e: DragEvent, level: string, name: string, section: string = '') {
     this.dragItem = { level, name, section }
     this.deps.onDragItemChange(this.dragItem)
     if (e.dataTransfer) {
@@ -81,8 +87,8 @@ export class DragDropManager {
     e: DragEvent,
     level: string,
     targetName: string,
-    notebook?: string,
-    section?: string
+    notebook: string = '',
+    section: string = ''
   ) {
     e.preventDefault()
     e.stopPropagation()
@@ -178,7 +184,16 @@ export class DragDropManager {
         : names.indexOf(targetName) + 1
       names.splice(insertAt, 0, this.dragItem.name)
       await this.deps.navOrder.persistSectionOrder(notebook, names)
-    } else if (level === 'page' && section) {
+    } else if (level === 'page' && section !== undefined) {
+      // Reorder among pages within a section. The `section` parameter is
+      // `''` for the notebook-root / section-less page group, which is a
+      // real value: it maps to the synthetic section whose `name === ''`
+      // supplies the root-page list (rendered at Sidebar.svelte:866) and
+      // whose persisted key is `${notebook}/` — matching Go's
+      // updateNavOrderForMove (app_rename.go:316-318). Use a strict
+      // `section !== undefined` check so the falsy `''` is not mistaken
+      // for "missing", which used to short-circuit this branch and silently
+      // no-op root-page reorders (#369).
       const sec = this.deps
         .getActiveNotebookSections()
         .find((s) => s.name === section)
