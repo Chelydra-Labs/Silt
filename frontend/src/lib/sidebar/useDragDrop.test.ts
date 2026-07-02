@@ -72,12 +72,12 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    dnd.handleDragStart(e, 'section', 'Journal')
+    dnd.handleDragStart(e, 'section', 'Journal', '')
 
     expect(deps.onDragItemChange).toHaveBeenCalledWith({
       level: 'section',
       name: 'Journal',
-      section: undefined
+      section: ''
     })
     expect(e.dataTransfer!.effectAllowed).toBe('move')
     expect(e.dataTransfer!.setData).toHaveBeenCalledWith(
@@ -91,7 +91,7 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    dnd.handleDragStart(e, 'section', 'Journal')
+    dnd.handleDragStart(e, 'section', 'Journal', '')
     dnd.handleDragOver(e, 'section', 'Projects')
 
     expect(deps.onDropTargetChange).toHaveBeenCalledWith(
@@ -104,7 +104,7 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    dnd.handleDragStart(e, 'section', 'Journal')
+    dnd.handleDragStart(e, 'section', 'Journal', '')
     dnd.handleDragOver(e, 'page', '2026-06-22')
 
     // Should not call preventDefault for invalid cross-level.
@@ -128,13 +128,77 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    dnd.handleDragStart(e, 'section', 'Journal')
+    dnd.handleDragStart(e, 'section', 'Journal', '')
     // Set dropTarget before handleDrop.
     dnd.handleDragOver(e, 'section', 'Projects')
-    await dnd.handleDrop(e, 'section', 'Projects', 'Work')
+    await dnd.handleDrop(e, 'section', 'Projects', 'Work', '')
 
     // Section reorder persists via navOrder, not onMoved.
     expect(SetNavOrder).toHaveBeenCalled()
+  })
+
+  it('handleDrop reorders root-level pages via persistPageOrder (#369)', async () => {
+    const { SetNavOrder } = await import('../../../wailsjs/go/main/App.js')
+    // Synthetic root section (name === '') supplies the section-less page
+    // list the sidebar renders at Sidebar.svelte:866.
+    const rootPages: NavSection[] = [
+      {
+        name: '',
+        pages: [
+          { name: 'Inbox', count: 0 },
+          { name: 'README', count: 0 }
+        ]
+      },
+      ...makeSections()
+    ]
+    const deps = makeDeps({
+      getActiveNotebookSections: () => rootPages
+    })
+    const dnd = new DragDropManager(deps)
+    const e = makeDragEvent()
+
+    // Drag the first root page down onto the second.
+    dnd.handleDragStart(e, 'page', 'Inbox', '')
+    dnd.handleDragOver(e, 'page', 'README')
+    await dnd.handleDrop(e, 'page', 'README', 'Work', '')
+
+    // The reorder must persist via persistPageOrder using the
+    // empty-section key `<notebook>/` — matching SPECS.md 'nav_order'
+    // and Go's updateNavOrderForMove (app_rename.go:317-318). Before
+    // the fix, the branch was guarded by `&& section`, which short-
+    // circuited on the '' sentinel and silently no-op'd.
+    expect(SetNavOrder).toHaveBeenCalledTimes(1)
+    const callArg = vi.mocked(SetNavOrder).mock.calls[0][0] as {
+      pages: Record<string, string[]>
+    }
+    expect(callArg.pages['Work/']).toEqual(['README', 'Inbox'])
+    expect(deps.navOrder.current.pages['Work/']).toEqual(['README', 'Inbox'])
+  })
+
+  it('handleDrop root-page drop on itself is a no-op (#369)', async () => {
+    const deps = makeDeps({
+      getActiveNotebookSections: () => [
+        {
+          name: '',
+          pages: [
+            { name: 'Inbox', count: 0 },
+            { name: 'README', count: 0 }
+          ]
+        },
+        ...makeSections()
+      ]
+    })
+    const dnd = new DragDropManager(deps)
+    const e = makeDragEvent()
+
+    dnd.handleDragStart(e, 'page', 'Inbox', '')
+    // Drop on the same page you started dragging — the
+    // `dragItem.name === targetName` guard (useDragDrop.ts) short-
+    // circuits before any NavOrder write.
+    await dnd.handleDrop(e, 'page', 'Inbox', 'Work', '')
+
+    expect(deps.onMoved).not.toHaveBeenCalled()
+    expect(deps.navOrder.current.pages['Work/']).toBeUndefined()
   })
 
   it('handleDrop page→section calls MovePage', async () => {
@@ -212,7 +276,7 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    dnd.handleDragStart(e, 'section', 'Journal')
+    dnd.handleDragStart(e, 'section', 'Journal', '')
     dnd.handleDragEnd()
 
     expect(deps.onDragItemChange).toHaveBeenCalledWith(null)
@@ -224,7 +288,7 @@ describe('DragDropManager', () => {
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
 
-    await dnd.handleDrop(e, 'section', 'Projects', 'Work')
+    await dnd.handleDrop(e, 'section', 'Projects', 'Work', '')
 
     expect(deps.onMoved).not.toHaveBeenCalled()
   })
