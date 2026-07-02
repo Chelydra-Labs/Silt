@@ -378,6 +378,14 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+          # Full history is required for the git-cliff step below: `--latest`
+          # enumerates commits between this tag and the previous one, which
+          # needs both tag commits reachable. The default (fetch-depth: 1)
+          # yields a shallow clone that produces EMPTY release notes — the bug
+          # that caused every release since the git-cliff switch to ship blank.
+          # (An earlier fix added fetch-depth: 0 to the `build` job's checkout
+          # by mistake; this is the job that actually runs git-cliff.)
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v8
