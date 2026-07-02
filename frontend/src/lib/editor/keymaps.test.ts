@@ -598,19 +598,16 @@ describe('Backspace handler — backward merge (#364)', () => {
     editor.destroy()
   })
 
-  it('does not merge across depth (different parent) boundaries', () => {
-    // Cross-parent merges are blocked structurally: getSibling only looks
-    // within the active block's own parent, so a block with no same-parent
-    // sibling (an only-child nested block, or a top-level block whose
-    // neighbor is a different parent entirely) gets null and falls through.
-    // The first/last-block tests below exercise the same null-sibling path;
-    // this test makes the only-child case explicit. A single noteBlock has no
-    // sibling either direction, so neither Delete nor Backspace merges it.
+  it('is a no-op on a single-block doc (no sibling either direction)', () => {
+    // getSibling returns null when the active block has no same-parent
+    // sibling — the same code path that blocks a genuine cross-parent merge
+    // (nodeBefore/nodeAfter at a node boundary never cross parents). This
+    // test exercises that null-sibling fall-through directly: a lone block
+    // has no sibling above or below, so neither boundary key merges it. A
+    // real nested cross-parent case would need calloutBlock registered in
+    // the test editor (out of scope); the structural guarantee is the same
+    // null-return reached here.
     const editor = makeEditorWithKeymaps()
-    editor.commands.setContent(twoNoteBlocks('solo', ''))
-    // Backspace at start of the empty second block: the only sibling above is
-    // same-type, so this WOULD merge — instead isolate by testing Backspace on
-    // a single-block doc directly.
     const single: DocJSON = {
       type: 'doc',
       content: [
