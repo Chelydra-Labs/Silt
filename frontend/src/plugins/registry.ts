@@ -33,7 +33,8 @@ registerPlugin({
     author: 'Silt',
     description:
       'Month, week, and agenda layouts of tasks by due date. Smart-list sidebar (#322).',
-    icon: 'calendar_month'
+    icon: 'calendar_month',
+    capabilities: { 'content-mutate': true }
   },
   component: Calendar,
   sidebarComponent: CalendarSidebar,
@@ -47,6 +48,7 @@ registerPlugin({
     author: 'Silt',
     description: 'Drag-and-drop task board (TODO / DOING / DONE).',
     icon: 'view_kanban',
+    capabilities: { 'content-mutate': true },
     settings: [
       {
         key: 'default_col',

@@ -8,6 +8,7 @@
   import { EventsOn } from '../../../../wailsjs/runtime/runtime.js'
   import FilterBar from './FilterBar.svelte'
   import CardDetailPanel from './CardDetailPanel.svelte'
+  import QuickAddTask from '../shared/QuickAddTask.svelte'
   import type { KanbanCard, KanbanFilters, Scope } from './types'
   import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
   import { buildQuery } from './query'
@@ -266,6 +267,41 @@
     return off
   })
 
+  // Repaint when any block changes (task created/mutated/rescheduled from any
+  // surface — including the per-column quick-add, #368). Debounced so a burst
+  // of block:changed events (a bulk op) triggers one reload. Uses a DEDICATED
+  // repaintSeq trigger — NOT settingsEpoch — so a block change doesn't fan
+  // out to a getPluginSettings() IPC roundtrip (linked-config resolution),
+  // which only the linked-config:changed path needs.
+  let blockChangedTimer: ReturnType<typeof setTimeout> | null = null
+  let repaintSeq = $state(0)
+  // Skip the $effect's initial mount run so it doesn't double-fire reload()
+  // alongside the scope/filters effect on first paint (which would throw off
+  // call-count-sensitive tests + waste an IPC roundtrip). Only actual
+  // block:changed bumps (repaintSeq > 0 after the first tracked change) trigger
+  // a repaint.
+  let repaintMounted = false
+  $effect(() => {
+    const off = ctx.on('block:changed', () => {
+      if (blockChangedTimer) clearTimeout(blockChangedTimer)
+      blockChangedTimer = setTimeout(() => {
+        repaintSeq++
+      }, 80)
+    })
+    return () => {
+      if (blockChangedTimer) clearTimeout(blockChangedTimer)
+      off()
+    }
+  })
+  $effect(() => {
+    void repaintSeq
+    if (!repaintMounted) {
+      repaintMounted = true
+      return // the scope/filters effect already loads on mount
+    }
+    reload()
+  })
+
   // Card selected for the slide-out detail panel (null = closed).
   let selectedCard = $state<KanbanCard | null>(null)
 
@@ -439,6 +475,11 @@
   // --- Column management ---
   let menuCol = $state<string | null>(null)
   let renamingCol = $state<string | null>(null)
+  // Per-column quick-add (#368): the column name whose quick-add input is
+  // open, or null. Only the three real status columns (TODO/DOING/DONE) get a
+  // "+" — custom columns have no backing TaskStatus so a created card could
+  // never land in them. The TODO column doubles as the inbox.
+  let quickAddCol = $state<string | null>(null)
   let renameValue = $state('')
   let colDragIndex = $state<number | null>(null)
 
@@ -878,7 +919,7 @@
                   >{laneCards.length}</span
                 >
               </div>
-              <div class="relative shrink-0">
+              <div class="relative shrink-0 flex items-center">
                 <button
                   type="button"
                   onclick={() => toggleColMenu(col)}
@@ -1039,6 +1080,40 @@
                 </div>
               {/if}
             </div>
+            <!-- Pinned column footer (#368): the add affordance lives BELOW the
+                 scrollable card list so it stays visible no matter how many
+                 cards fill the column (the Trello/Linear convention). Only the
+                 three real status columns get a "+" — custom columns have no
+                 backing TaskStatus, so a created card could never land in them;
+                 the TODO column doubles as the inbox. -->
+            {#if ALL_STATUSES.includes(col as TaskStatus)}
+              <div class="shrink-0 px-2 py-1.5 border-t border-border-muted">
+                {#if quickAddCol === col}
+                  <QuickAddTask
+                    {ctx}
+                    status={col as TaskStatus}
+                    placeholder={`Add to ${laneLabel(col)}…`}
+                    keepOpenAfterCreate={true}
+                    onCancel={() => {
+                      if (quickAddCol === col) quickAddCol = null
+                    }}
+                  />
+                {:else}
+                  <button
+                    type="button"
+                    onclick={() => (quickAddCol = col)}
+                    aria-label={`Add task to ${laneLabel(col)}`}
+                    data-testid={`kanban-add-${col}`}
+                    class="w-full flex items-center justify-end gap-1 py-1 text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer"
+                  >
+                    <span class="material-symbols-outlined text-[15px]"
+                      >add</span
+                    >
+                    Add
+                  </button>
+                {/if}
+              </div>
+            {/if}
           </section>
         {/each}
       </div>

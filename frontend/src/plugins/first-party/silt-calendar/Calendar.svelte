@@ -5,6 +5,7 @@
   import { settings, updatePluginSetting } from '../../../settings/store.svelte'
   import { getFocusState } from './focusState.svelte'
   import AgendaList from './AgendaList.svelte'
+  import QuickAddTask from '../shared/QuickAddTask.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -46,14 +47,29 @@
   // mounted past midnight (ticks every 60s; only re-evaluates isToday).
   let nowTick = $state(0)
   let nowInterval: ReturnType<typeof setInterval> | undefined
+  // Repaint the grid when any block changes (task created/mutated/rescheduled
+  // from any surface). The calendar's sidebar + agenda sub-views already
+  // subscribe; the main grid now does too so quick-add and drag-and-drop
+  // reschedule land immediately. Debounced so a burst of block:changed events
+  // (e.g. a bulk op) triggers one reload.
+  let blockChangedTimer: ReturnType<typeof setTimeout> | null = null
+  let unsubBlockChanged: (() => void) | null = null
+
   onMount(() => {
     reload()
     nowInterval = setInterval(() => {
       nowTick++
     }, 60_000)
+    unsubBlockChanged = ctx.on('block:changed', () => {
+      if (mode === 'agenda') return // AgendaList handles its own refresh
+      if (blockChangedTimer) clearTimeout(blockChangedTimer)
+      blockChangedTimer = setTimeout(() => void reload(), 80)
+    })
   })
   onDestroy(() => {
     if (nowInterval) clearInterval(nowInterval)
+    if (blockChangedTimer) clearTimeout(blockChangedTimer)
+    unsubBlockChanged?.()
   })
 
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -206,9 +222,133 @@
     )
   }
 
+  // --- Drag-and-drop task rescheduling (#292/#293/#294) --------------------
+  // A task card is draggable onto any day cell (month or week). On drop the
+  // [due:: YYYY-MM-DD] token is rewritten on disk via ctx.setTaskDueDate
+  // (#293), the block:changed listener (subscribed in onMount) repaints the
+  // grid. HTML5 DnD has no keyboard semantics, so a focused card also
+  // responds to Alt+Arrows (±1 day / ±7 days) through the SAME reschedule
+  // path — the mouse and keyboard flows call one function (#294).
+
+  let dragTaskId = $state<string | null>(null)
+  // The dragged card's full item is captured so (a) the mouse-drop path can
+  // skip a no-op drop on the task's own current cell (avoids a wasted atomic
+  // write + re-index + repaint for zero semantic effect), and (b) the
+  // aria-live announcement can include the title for parity with the keyboard
+  // path (#292 AC).
+  let dragTaskItem = $state<CalItem | null>(null)
+  let overCellDate = $state<string | null>(null)
+  // aria-live announcement of the last reschedule (mouse or keyboard) so
+  // screen-reader users hear the result (#292 AC).
+  let rescheduleAnnouncement = $state('')
+
+  function onCardDragStart(e: DragEvent, item: CalItem) {
+    dragTaskId = item.id
+    dragTaskItem = item
+    if (e.dataTransfer) {
+      e.dataTransfer.setData('text/plain', item.id)
+      e.dataTransfer.effectAllowed = 'move'
+    }
+  }
+  function onCardDragEnd() {
+    dragTaskId = null
+    dragTaskItem = null
+    overCellDate = null
+  }
+
+  function onCellDragOver(e: DragEvent, day: Date) {
+    // preventDefault is required for a cell to accept a drop.
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    const key = ymd(day)
+    if (overCellDate !== key) overCellDate = key
+  }
+  function onCellDragLeave(e: DragEvent, day: Date) {
+    // Only clear when truly leaving this cell (not entering a child element).
+    const rt = e.relatedTarget as Node | null
+    if (rt && (e.currentTarget as HTMLElement).contains(rt)) return
+    if (overCellDate === ymd(day)) overCellDate = null
+  }
+  async function onCellDrop(e: DragEvent, day: Date) {
+    e.preventDefault()
+    const id = dragTaskId ?? e.dataTransfer?.getData('text/plain') ?? ''
+    const item = dragTaskItem
+    overCellDate = null
+    dragTaskId = null
+    dragTaskItem = null
+    if (!id) return
+    const target = ymd(day)
+    // No-op guard: dropping a card back on its own current due-date cell would
+    // otherwise round-trip through an atomic write + full re-parse + re-index +
+    // repaint for zero semantic effect.
+    if (item && item.due_date === target) {
+      rescheduleAnnouncement = `Already scheduled for ${target}`
+      return
+    }
+    await reschedule(id, target, item?.clean_content)
+  }
+
+  // reschedule rewrites the due date and announces the result. Shared by the
+  // mouse drop path and the keyboard Alt+Arrow path so there is one source
+  // of truth for the mutation + announcement. title is optional — the
+  // keyboard path has the card's item; the mouse-drop path knows only the id,
+  // so the announcement degrades gracefully to a date-only message.
+  async function reschedule(blockId: string, newDate: string, title?: string) {
+    try {
+      await ctx.setTaskDueDate(blockId, newDate)
+      // The grid repaints via the block:changed listener; the announcement
+      // gives immediate non-visual feedback.
+      rescheduleAnnouncement = title
+        ? `Rescheduled "${title}" to ${newDate}`
+        : `Rescheduled to ${newDate}`
+    } catch (e) {
+      rescheduleAnnouncement =
+        e instanceof Error ? e.message : 'Reschedule failed'
+    }
+  }
+
+  // Keyboard reschedule on a focused task card (#294): Alt+ArrowLeft/Right
+  // shifts ±1 day, Alt+ArrowUp/Down shifts ±7 days. The cell's own arrow
+  // handler ignores Alt-modified keys so the two don't collide.
+  function onCardKeydown(e: KeyboardEvent, item: CalItem) {
+    if (!e.altKey) return
+    const map: Record<string, number> = {
+      ArrowLeft: -1,
+      ArrowRight: 1,
+      ArrowUp: -7,
+      ArrowDown: 7
+    }
+    const delta = map[e.key]
+    if (delta === undefined) return
+    e.preventDefault()
+    e.stopPropagation()
+    const base = item.due_date || ymd(new Date())
+    void reschedule(item.id, plusDaysISO(base, delta), item.clean_content)
+  }
+
+  // --- Quick-add standalone tasks (#368) ------------------------------------
+  // Two surfaces: (1) clicking the empty area of a day cell opens an inline
+  // quick-add prefilled with that day's date; (2) the "New task" toolbar
+  // button opens one with no due date (the task lands in Agenda / un-dated).
+  // Both route through ctx.createTask; the block:changed listener repaints.
+  let quickAddDate = $state<string | null>(null) // null = closed; a date = open
+
+  function openQuickAddForDay(day: Date) {
+    quickAddDate = ymd(day)
+  }
+  function openQuickAddUndated() {
+    quickAddDate = '' // empty string = open, undated
+  }
+  function closeQuickAdd() {
+    quickAddDate = null
+  }
+
   // Keyboard navigation across month cells: arrows move focus by day (clamping
   // to the grid), Enter opens the focused day's first task.
   function onCellKeydown(e: KeyboardEvent, day: Date) {
+    // Alt-modified arrows are handled by the focused task card's reschedule
+    // handler (#294); let them through.
+    if (e.altKey) return
     const map: Record<string, number> = {
       ArrowRight: 1,
       ArrowLeft: -1,
@@ -376,6 +516,14 @@
         class:text-text-muted={mode !== 'agenda'}>Agenda</button
       >
     </div>
+    <button
+      type="button"
+      onclick={openQuickAddUndated}
+      data-testid="calendar-new-task-btn"
+      class="flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
+    >
+      <span class="material-symbols-outlined text-[16px]">add</span>New task
+    </button>
   </header>
 
   {#if getFocusState().activeFilter !== 'all' && mode !== 'agenda'}
@@ -427,6 +575,29 @@
     </div>
   {/if}
 
+  {#if mode !== 'agenda'}
+    <!-- Screen-reader announcement of drag/keyboard reschedules (#292 AC). -->
+    <div class="sr-only" role="status" aria-live="polite">
+      {rescheduleAnnouncement}
+    </div>
+  {/if}
+
+  {#if quickAddDate === ''}
+    <!-- Toolbar "New task" quick-add: undated. The created task lands in the
+         Agenda / un-dated list (#368). -->
+    <div class="px-6 py-2 border-b border-border-muted bg-panel">
+      <div class="max-w-md">
+        <QuickAddTask
+          {ctx}
+          placeholder="New task (no due date) — Enter to add, Esc to close"
+          keepOpenAfterCreate={false}
+          onCreated={closeQuickAdd}
+          onCancel={closeQuickAdd}
+        />
+      </div>
+    </div>
+  {/if}
+
   {#if mode === 'agenda'}
     <!-- Agenda mode renders the extracted grouped-list component. The
          shared focusState drives its scroll-to-group and dim behaviour. -->
@@ -457,17 +628,33 @@
                 tabindex="0"
                 data-celldate={ymd(day)}
                 aria-label={`${day.toDateString()}${items.length ? ', ' + items.length + ' task' + (items.length === 1 ? '' : 's') : ''}`}
+                aria-dropeffect="move"
                 onkeydown={(e) => {
-                  if (e.key === 'Enter' && items[0]) {
+                  if (e.key === 'Enter') {
                     e.preventDefault()
-                    openItem(items[0])
+                    if (items[0]) openItem(items[0])
+                    else openQuickAddForDay(day)
                   } else {
                     onCellKeydown(e, day)
                   }
                 }}
-                class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {inMonth
-                  ? 'border-border-muted bg-panel'
-                  : 'border-border-muted/30 bg-transparent'}"
+                ondragover={(e) => onCellDragOver(e, day)}
+                ondragleave={(e) => onCellDragLeave(e, day)}
+                ondrop={(e) => onCellDrop(e, day)}
+                onclick={(e) => {
+                  // Open quick-add when clicking the cell OR a non-interactive
+                  // child (the date number / header label), but not when the
+                  // click lands on a task card button or the quick-add input.
+                  const t = e.target as HTMLElement
+                  if (t.closest('button,input')) return
+                  openQuickAddForDay(day)
+                }}
+                class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 transition-all focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {overCellDate ===
+                ymd(day)
+                  ? 'border-accent-primary-glow ring-2 ring-accent-primary-glow/40'
+                  : inMonth
+                    ? 'border-border-muted bg-panel'
+                    : 'border-border-muted/30 bg-transparent'}"
               >
                 <span
                   class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
@@ -479,8 +666,16 @@
                 >
                 {#each items.slice(0, 3) as item (item.id)}
                   <button
+                    draggable="true"
+                    aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                    ondragstart={(e) => onCardDragStart(e, item)}
+                    ondragend={onCardDragEnd}
+                    onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => openItem(item)}
-                    class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer"
+                    class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
+                    item.id
+                      ? 'opacity-40'
+                      : ''}"
                     class:opacity-30={!itemMatchesFilter(item)}
                     title={item.clean_content}>{item.clean_content}</button
                   >
@@ -489,6 +684,15 @@
                   <span class="text-[9px] text-text-muted px-1"
                     >+{items.length - 3} more</span
                   >
+                {/if}
+                {#if quickAddDate === ymd(day)}
+                  <QuickAddTask
+                    {ctx}
+                    dueDate={ymd(day)}
+                    keepOpenAfterCreate={false}
+                    onCreated={closeQuickAdd}
+                    onCancel={closeQuickAdd}
+                  />
                 {/if}
               </div>
             {/each}
@@ -500,7 +704,33 @@
           {#each weekDays as day}
             {@const isToday = ymd(day) === todayKey}
             {@const items = byDate[ymd(day)] ?? []}
-            <div class="flex flex-col gap-1.5">
+            <div
+              class="flex flex-col gap-1.5 min-h-[120px]"
+              role="gridcell"
+              tabindex="0"
+              data-celldate={ymd(day)}
+              aria-label={`${day.toDateString()}${items.length ? ', ' + items.length + ' task' + (items.length === 1 ? '' : 's') : ''}`}
+              aria-dropeffect="move"
+              ondragover={(e) => onCellDragOver(e, day)}
+              ondragleave={(e) => onCellDragLeave(e, day)}
+              ondrop={(e) => onCellDrop(e, day)}
+              onclick={(e) => {
+                const t = e.target as HTMLElement
+                if (t.closest('button,input')) return
+                openQuickAddForDay(day)
+              }}
+              onkeydown={(e) => {
+                // Enter on an empty focused cell opens quick-add (keyboard
+                // parity with the click affordance); arrow keys move focus.
+                if (e.key === 'Enter' && e.target === e.currentTarget) {
+                  e.preventDefault()
+                  openQuickAddForDay(day)
+                }
+              }}
+              class:ring-2={overCellDate === ymd(day)}
+              class:ring-accent-primary-glow={overCellDate === ymd(day)}
+              class:rounded-lg={overCellDate === ymd(day)}
+            >
               <div class="text-center pb-2 border-b border-border-muted">
                 <div
                   class="text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted"
@@ -516,12 +746,29 @@
               </div>
               {#each items as item (item.id)}
                 <button
+                  draggable="true"
+                  aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                  ondragstart={(e) => onCardDragStart(e, item)}
+                  ondragend={onCardDragEnd}
+                  onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => openItem(item)}
-                  class="text-left text-[12px] px-2 py-1.5 rounded bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer"
+                  class="text-left text-[12px] px-2 py-1.5 rounded bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer {dragTaskId ===
+                  item.id
+                    ? 'opacity-40'
+                    : ''}"
                   class:opacity-30={!itemMatchesFilter(item)}
                   title={item.clean_content}>{item.clean_content}</button
                 >
               {/each}
+              {#if quickAddDate === ymd(day)}
+                <QuickAddTask
+                  {ctx}
+                  dueDate={ymd(day)}
+                  keepOpenAfterCreate={false}
+                  onCreated={closeQuickAdd}
+                  onCancel={closeQuickAdd}
+                />
+              {/if}
             </div>
           {/each}
         </div>
@@ -529,3 +776,17 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>

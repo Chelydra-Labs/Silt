@@ -212,4 +212,48 @@ describe('AgendaList markDoneError UI', () => {
     expect(screen.queryByLabelText('Today')).toBeNull()
     expect(screen.queryByLabelText('Overdue')).toBeNull()
   })
+
+  // --- Undated bucket (#368): a quick-added standalone task with no due
+  // date must surface in the Agenda so the toolbar/global create paths
+  // (which promise "lands in the Agenda / un-dated list") are honest.
+  it('renders an Undated group for tasks with no due_date', async () => {
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'u1',
+          notebook: '.silt',
+          section: '',
+          page: 'tasks',
+          file_date: '2026-06-16',
+          clean_content: 'Standalone undated task',
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: '', // undated
+          priority: 0
+        },
+        {
+          id: 'u2',
+          notebook: '.silt',
+          section: '',
+          page: 'tasks',
+          file_date: '2026-06-16',
+          clean_content: 'Another undated',
+          status: 'TODO',
+          owner: '',
+          start_date: '',
+          due_date: null, // NULL due_date also undated
+          priority: 0
+        }
+      ],
+      truncated: false
+    })
+    render(AgendaList, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const undatedGroup = screen.getByLabelText('Undated')
+    expect(undatedGroup).toBeInTheDocument()
+    // Both undated rows render inside it.
+    expect(undatedGroup.textContent).toContain('Standalone undated task')
+    expect(undatedGroup.textContent).toContain('Another undated')
+  })
 })

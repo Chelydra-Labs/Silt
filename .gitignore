@@ -98,6 +98,7 @@ $RECYCLE.BIN/
 .git_commit_msg.txt
 pr_body.md
 .issue*.md
+.github/draft-issue.md
 
 # Wails package-hash cache (regenerated locally on build; do not version)
 frontend/package.json.md5

@@ -75,6 +75,25 @@ This is the local-first contract: the user's files on disk *are* the
 product. The Svelte UI, the Go backend, and the SQLite index are all
 projections of those files, not the other way around.
 
+**Standalone tasks (#368).** Tasks created from a quick-add surface
+(calendar day cell, calendar toolbar, kanban column footer, or the global
+`Mod+Shift+N` shortcut) that are not associated with a note live as
+ordinary GFM checkboxes in a single dedicated non-note markdown file at
+`<vault>/.silt/tasks.md`. They are indexed under a synthetic notebook
+named `.silt` (section `""`, page `tasks`). The dot-prefix means the file
+is auto-excluded from the page browser (`ListNavigation` skips
+dot-prefixed notebook names) and `WalkMarkdown`'s general dot-directory
+skip stays intact for everything else; `ScanStandaloneTasks` is the
+targeted read that feeds this one well-known file into the normal
+parse→index pipeline. There is no new SQL table and no nullable
+`block_id` — the markdown-source-of-truth invariant is preserved, and
+standalone tasks survive a full re-index (delete `.system/index.sqlite*`
+and relaunch). The three quick-add entry points: plugin-gated
+`PluginCreateTask` (calendar/kanban), app-level `CreateStandaloneTask`
+(the global overlay is an app-shell action, not a plugin action), and
+`PluginSetTaskDueDate` rewrites the `[due::]` token for drag-and-drop
+rescheduling.
+
 ---
 
 1. System Topology & Process Boundaries

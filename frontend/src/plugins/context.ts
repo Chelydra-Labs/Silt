@@ -5,6 +5,8 @@ import {
   PluginMutateBlock,
   PluginUpdateBlockState,
   PluginUpdateTaskMeta,
+  PluginSetTaskDueDate,
+  PluginCreateTask,
   GetPluginSettingsForNotebook,
   UpdatePluginSetting,
   PluginCreateBlock,
@@ -158,6 +160,20 @@ export function makePluginContext(
               ? 1
               : 0,
         meta.progress === undefined ? -1 : meta.progress
+      ),
+    // Rewrite a task's [due:: YYYY-MM-DD] token (#293). Empty string clears it.
+    // The mutation surface behind calendar drag-and-drop rescheduling.
+    setTaskDueDate: (id, dueDate) =>
+      PluginSetTaskDueDate(pluginID, sessionToken ?? '', id, dueDate),
+    // Create a standalone task in <vault>/.silt/tasks.md (#368). title required;
+    // dueDate/status optional with TODO + no-due defaults.
+    createTask: (opts) =>
+      PluginCreateTask(
+        pluginID,
+        sessionToken ?? '',
+        opts.title,
+        opts.dueDate ?? '',
+        opts.status ?? ''
       ),
     // Per-active-notebook settings resolution (#133). pluginID is captured
     // at context construction; the live activeNotebook is read at call time

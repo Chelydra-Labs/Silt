@@ -73,6 +73,7 @@ const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updateBlockState: vi.fn(),
   updateTaskMeta: vi.fn(),
+  createTask: vi.fn().mockResolvedValue('new-standalone-task'),
   saveConfig: vi.fn().mockResolvedValue(true),
   updatePluginSetting: vi.fn().mockResolvedValue(true)
 }))
@@ -119,6 +120,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     getPluginSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
     on: () => () => {},
     ...v2CtxStubs,
+    createTask: mocks.createTask,
     ...overrides
   }
 }
@@ -203,6 +205,7 @@ describe('Kanban plugin (#19)', () => {
     }
     mocks.sqliteQuery.mockReset()
     mocks.updateBlockState.mockReset()
+    mocks.createTask.mockReset().mockResolvedValue('new-standalone-task')
     // PluginContext.sqliteQuery now returns {rows, truncated} (the SDK
     // shape mirroring Go's PluginRawQueryResult). Tests that don't care
     // about truncation can pass the rows straight through.
@@ -1207,6 +1210,68 @@ describe('Kanban plugin (#19)', () => {
         ([, key]) => key === 'scope'
       )
       expect(scopeCall).toBeUndefined()
+    })
+  })
+
+  // --- Per-column quick-add (#368) -----------------------------------------
+
+  describe('per-column quick-add', () => {
+    it('shows an "Add" button in the TODO column footer', async () => {
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await tick()
+      await new Promise((r) => setTimeout(r, 0))
+      const btn = screen.getByTestId('kanban-add-TODO')
+      expect(btn).toBeInTheDocument()
+      expect(btn.textContent).toMatch(/Add/)
+    })
+
+    it('clicking Add opens the quick-add input scoped to the column status', async () => {
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await tick()
+      await new Promise((r) => setTimeout(r, 0))
+      const btn = screen.getByTestId('kanban-add-DOING')
+      await fireEvent.click(btn)
+      const input = await screen.findByTestId('quick-add-task-input')
+      expect(input).toBeInTheDocument()
+    })
+
+    it('submitting the quick-add calls ctx.createTask with the column status', async () => {
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await tick()
+      await new Promise((r) => setTimeout(r, 0))
+      await fireEvent.click(screen.getByTestId('kanban-add-DONE'))
+      const input = await screen.findByTestId('quick-add-task-input')
+      await fireEvent.input(input, { target: { value: 'Ship it' } })
+      await fireEvent.keyDown(input, { key: 'Enter' })
+      await tick()
+      expect(mocks.createTask).toHaveBeenCalledTimes(1)
+      const call = mocks.createTask.mock.calls[0][0]
+      expect(call.title).toBe('Ship it')
+      expect(call.status).toBe('DONE')
+    })
+
+    it('Escape cancels the quick-add input', async () => {
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await tick()
+      await new Promise((r) => setTimeout(r, 0))
+      await fireEvent.click(screen.getByTestId('kanban-add-TODO'))
+      const input = await screen.findByTestId('quick-add-task-input')
+      await fireEvent.keyDown(input, { key: 'Escape' })
+      await tick()
+      expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
+    })
+
+    it('custom (non-status) columns do NOT show an Add button', async () => {
+      mocks.settings.config.plugins.plugin_settings['silt-kanban'] = {
+        default_col: 'TODO',
+        columns: ['TODO', 'Backlog', 'DONE']
+      }
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await tick()
+      await new Promise((r) => setTimeout(r, 0))
+      // TODO + DONE get an Add; the custom "Backlog" column does not.
+      expect(screen.getByTestId('kanban-add-TODO')).toBeInTheDocument()
+      expect(screen.queryByTestId('kanban-add-Backlog')).toBeNull()
     })
   })
 })

@@ -4,6 +4,8 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
+  setTaskDueDate: vi.fn().mockResolvedValue(true),
+  createTask: vi.fn().mockResolvedValue('new-task-id'),
   // Mocked settings store so we can flip updatePluginSetting's return
   // value to force the persistence-failure banner path.
   updatePluginSetting: vi.fn().mockResolvedValue(true)
@@ -21,6 +23,7 @@ vi.mock('../../../settings/store.svelte', () => ({
 
 import Calendar from './Calendar.svelte'
 import type { PluginContext, PluginManifest } from '../../sdk'
+import { plusDaysISO } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
 import {
   getFocusState,
@@ -41,7 +44,9 @@ function makeCtx(): PluginContext {
     updateTaskMeta: vi.fn(),
     getPluginSettings: vi.fn(() => Promise.resolve({})),
     on: () => () => {},
-    ...v2CtxStubs
+    ...v2CtxStubs,
+    setTaskDueDate: mocks.setTaskDueDate,
+    createTask: mocks.createTask
   }
 }
 
@@ -59,6 +64,8 @@ async function flush() {
 describe('Calendar plugin', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset()
+    mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
     resetFocusState()
   })
 
@@ -172,12 +179,11 @@ describe('Calendar plugin', () => {
     // First sqliteQuery is the Calendar's windowed due-date query (mode =
     // month default). Return empty so we don't render month tasks. The
     // AgendaList runs its own non-DONE-task query; mock that with two
-    // tasks so all four groups render.
+    // tasks so the Overdue + Today groups render. The AgendaList query is
+    // distinguished by the `status != 'DONE'` filter (it no longer filters
+    // on due_date so undated standalone tasks surface — #368).
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (
-        sql.includes("status != 'DONE'") &&
-        sql.includes('due_date IS NOT NULL')
-      ) {
+      if (sql.includes("status != 'DONE'")) {
         return {
           rows: [
             {
@@ -374,5 +380,195 @@ describe('Calendar plugin', () => {
     const doneBtn = screen.getByText('Finished task')
     expect(todoBtn.className).toMatch(/opacity-30/)
     expect(doneBtn.className).not.toMatch(/opacity-30/)
+  })
+
+  // --- Drag-and-drop rescheduling (#292/#293/#294) -------------------------
+
+  function ymd(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  async function renderWithTaskOnToday(label: string) {
+    const today = ymd(new Date())
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'drag-1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: today,
+          clean_content: label,
+          status: 'TODO',
+          due_date: today
+        }
+      ],
+      truncated: false
+    })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+  }
+
+  it('task card is draggable and sets the drag payload (#292)', async () => {
+    await renderWithTaskOnToday('Draggable task')
+    const card = screen.getByText('Draggable task')
+    expect(card.getAttribute('draggable')).toBe('true')
+    expect(card.getAttribute('aria-keyshortcuts')).toContain('Alt+Arrow')
+  })
+
+  it('dropping a card on a day cell calls setTaskDueDate with that date (#293)', async () => {
+    await renderWithTaskOnToday('Drop me')
+    const card = screen.getByText('Drop me')
+    // Start the drag so the component tracks dragTaskId.
+    await fireEvent.dragStart(card)
+
+    // Find a different day cell in the month grid (the 15th).
+    const now = new Date()
+    const target = new Date(now.getFullYear(), now.getMonth(), 15)
+    const targetKey = ymd(target)
+    const cell = document.querySelector(`[data-celldate="${targetKey}"]`)
+    expect(cell).toBeTruthy()
+    await fireEvent.dragOver(cell!)
+    await fireEvent.drop(cell!)
+
+    await flush()
+    expect(mocks.setTaskDueDate).toHaveBeenCalledWith('drag-1', targetKey)
+  })
+
+  it('dragover toggles the drop-target highlight (#292)', async () => {
+    await renderWithTaskOnToday('Highlight me')
+    const card = screen.getByText('Highlight me')
+    await fireEvent.dragStart(card)
+
+    const now = new Date()
+    const target = new Date(now.getFullYear(), now.getMonth(), 20)
+    const targetKey = ymd(target)
+    const cell = document.querySelector(`[data-celldate="${targetKey}"]`)!
+    await fireEvent.dragOver(cell)
+    await flush()
+    expect(cell.className).toMatch(/ring-accent-primary-glow/)
+    await fireEvent.dragLeave(cell)
+    await flush()
+    expect(cell.className).not.toMatch(/ring-accent-primary-glow/)
+  })
+
+  it('Alt+ArrowRight on a focused card reschedules +1 day via keyboard (#294)', async () => {
+    await renderWithTaskOnToday('Keyboard task')
+    const card = screen.getByText('Keyboard task') as HTMLElement
+    card.focus()
+    const today = ymd(new Date())
+
+    await fireEvent.keyDown(card, { key: 'ArrowRight', altKey: true })
+    await flush()
+
+    expect(mocks.setTaskDueDate).toHaveBeenCalledTimes(1)
+    expect(mocks.setTaskDueDate.mock.calls[0][0]).toBe('drag-1')
+    // Pin the exact +1 day so a month/year-boundary arithmetic regression
+    // can't slip through a loose "not today" assertion.
+    expect(mocks.setTaskDueDate.mock.calls[0][1]).toBe(plusDaysISO(today, 1))
+  })
+
+  it('Alt+ArrowUp on a focused card reschedules -7 days (#294)', async () => {
+    await renderWithTaskOnToday('Week jump task')
+    const card = screen.getByText('Week jump task') as HTMLElement
+    card.focus()
+    const today = ymd(new Date())
+
+    await fireEvent.keyDown(card, { key: 'ArrowUp', altKey: true })
+    await flush()
+
+    expect(mocks.setTaskDueDate).toHaveBeenCalledTimes(1)
+    expect(mocks.setTaskDueDate.mock.calls[0][1]).toBe(plusDaysISO(today, -7))
+  })
+
+  it('arrow keys without Alt do NOT reschedule (cell navigation still works)', async () => {
+    await renderWithTaskOnToday('No alt task')
+    const card = screen.getByText('No alt task') as HTMLElement
+    card.focus()
+    await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    await flush()
+    expect(mocks.setTaskDueDate).not.toHaveBeenCalled()
+  })
+
+  it('aria-live region announces a successful reschedule (#292 AC)', async () => {
+    await renderWithTaskOnToday('Announce me')
+    const card = screen.getByText('Announce me')
+    await fireEvent.dragStart(card)
+    const now = new Date()
+    const target = new Date(now.getFullYear(), now.getMonth(), 18)
+    const cell = document.querySelector(`[data-celldate="${ymd(target)}"]`)!
+    await fireEvent.dragOver(cell)
+    await fireEvent.drop(cell!)
+    await flush()
+
+    const live = screen.getByRole('status')
+    expect(live.getAttribute('aria-live')).toBe('polite')
+    expect(live.textContent).toContain(ymd(target))
+  })
+
+  // --- Quick-add standalone tasks (#368) -----------------------------------
+
+  it('toolbar "New task" button opens an undated quick-add (#368)', async () => {
+    await renderWithTaskOnToday('Anything')
+    const btn = screen.getByTestId('calendar-new-task-btn')
+    await fireEvent.click(btn)
+    const input = await screen.findByTestId('quick-add-task-input')
+    expect(input).toBeInTheDocument()
+  })
+
+  it('submitting the toolbar quick-add calls createTask with no due date', async () => {
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('calendar-new-task-btn'))
+    const input = await screen.findByTestId('quick-add-task-input')
+    await fireEvent.input(input, { target: { value: 'Plan sprint' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+    expect(mocks.createTask).toHaveBeenCalledTimes(1)
+    const call = mocks.createTask.mock.calls[0][0]
+    expect(call.title).toBe('Plan sprint')
+    expect(call.dueDate).toBeUndefined()
+  })
+
+  it('Escape cancels the quick-add input', async () => {
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('calendar-new-task-btn'))
+    const input = await screen.findByTestId('quick-add-task-input')
+    await fireEvent.keyDown(input, { key: 'Escape' })
+    await flush()
+    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
+  })
+
+  // --- Review-pass refinements ---------------------------------------------
+
+  it('week-view: clicking the date header opens quick-add (not just the bare cell)', async () => {
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByRole('button', { name: 'Week' }))
+    await flush()
+    // The week view renders day-of-week labels (Sun..Sat). Clicking one of
+    // those header children now opens quick-add too — previously only the
+    // bare cell gap did, making the obvious click target a no-op.
+    const label = screen.getByText('Mon')
+    await fireEvent.click(label)
+    const input = await screen.findByTestId('quick-add-task-input')
+    expect(input).toBeInTheDocument()
+  })
+
+  it('dropping a card on its own current cell is a no-op (no setTaskDueDate)', async () => {
+    await renderWithTaskOnToday('Self drop')
+    const card = screen.getByText('Self drop')
+    await fireEvent.dragStart(card)
+    // Drop on today's cell (the task already lives there).
+    const todayKey = ymd(new Date())
+    const cell = document.querySelector(`[data-celldate="${todayKey}"]`)!
+    await fireEvent.dragOver(cell)
+    await fireEvent.drop(cell!)
+    await flush()
+    expect(mocks.setTaskDueDate).not.toHaveBeenCalled()
   })
 })

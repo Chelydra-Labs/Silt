@@ -483,6 +483,13 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		return fmt.Errorf("failed to scan workspace: %w", err)
 	}
 
+	// Append the standalone-tasks file (<vault>/.silt/tasks.md) if it exists.
+	// WalkMarkdown skips dot-directories so this targeted read is the only
+	// way the file enters the index (#368). parseSingleFile derives
+	// notebook=".silt" from the path; ListNavigation hides dot-prefixed
+	// notebooks so it never surfaces in the page browser.
+	results = append(results, parser.ScanStandaloneTasks(vaultPath, a.spacesPerTab)...)
+
 	// Incremental re-index: keep only files whose mtime+size differ from the
 	// last recorded index (or that were never indexed). On a cold start (no
 	// index file yet) every file is "changed" and gets a full index. Pruning

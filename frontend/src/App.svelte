@@ -13,7 +13,8 @@
     DeclineGrantsMigration,
     ResolveQuarantinedLinks,
     PickLinkedNotebook,
-    UnlinkNotebook
+    UnlinkNotebook,
+    CreateStandaloneTask
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import type { config } from '../wailsjs/go/models.js'
@@ -27,6 +28,7 @@
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
   import SettingsShell from './components/settings/SettingsShell.svelte'
+  import QuickAddTask from './plugins/first-party/shared/QuickAddTask.svelte'
   import { loadPlugins } from './plugins/loader'
   import {
     initConfigHotReload,
@@ -365,6 +367,10 @@
   }
   let showSearch = $state(false)
   let showGlobalReplace = $state(false)
+  // Global standalone-task quick-add overlay (#368). Opened by the new_task
+  // hotkey (default Ctrl+Shift+N). Creates a task in <vault>/.silt/tasks.md
+  // via the app-level CreateStandaloneTask binding (not plugin-gated).
+  let showQuickAdd = $state(false)
   let globalReplaceQuery = $state('')
   let showSettings = $state(false)
   let settingsTab = $state('general')
@@ -596,6 +602,10 @@
         e.preventDefault()
         templatePickerMode = 'new-page'
         showTemplatePicker = !showTemplatePicker
+      }
+      if (matchHotkey(e, hotkeys.new_task)) {
+        e.preventDefault()
+        showQuickAdd = !showQuickAdd
       }
       if (matchHotkey(e, hotkeys.toggle_view_mode)) {
         e.preventDefault()
@@ -1328,6 +1338,47 @@
       initialQuery={globalReplaceQuery}
       onClose={() => (showGlobalReplace = false)}
     />
+  {/if}
+
+  {#if showQuickAdd}
+    <!-- Global standalone-task quick-add overlay (#368). Reuses the shared
+         QuickAddTask component (same Enter/Escape/busy/error behavior as the
+         calendar + kanban surfaces) with an app-level createTask shim over
+         CreateStandaloneTask — App.svelte has no plugin ctx. Default TODO,
+         no due date. Click-outside / Escape dismisses. -->
+    <div
+      class="fixed inset-0 z-[200] flex items-start justify-center pt-[20vh] bg-void/40"
+      role="presentation"
+      onclick={(e) => {
+        // Click on the backdrop itself (not a descendant) dismisses.
+        if (e.target === e.currentTarget) showQuickAdd = false
+      }}
+    >
+      <div
+        class="w-full max-w-md bg-panel border border-border-muted rounded-lg shadow-2xl p-4"
+        transition:fade={{ duration: 120 }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="New task"
+        tabindex="-1"
+      >
+        <h2 class="font-headline-lg text-headline-lg text-text-primary mb-3">
+          New task
+        </h2>
+        <QuickAddTask
+          createTask={(opts) =>
+            CreateStandaloneTask(
+              opts.title,
+              opts.dueDate ?? '',
+              opts.status ?? 'TODO'
+            )}
+          placeholder="Task title — Enter to add, Esc to close"
+          keepOpenAfterCreate={false}
+          onCreated={() => (showQuickAdd = false)}
+          onCancel={() => (showQuickAdd = false)}
+        />
+      </div>
+    </div>
   {/if}
 
   {#if showSettings}
