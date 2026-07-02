@@ -30,6 +30,7 @@
     start_date: string
     due_date: string
     priority: number
+    recurrence?: string
   }
 
   let items = $state<AgendaItem[]>([])
@@ -44,7 +45,7 @@
     try {
       const { rows } = await ctx.sqliteQuery(
         `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
-                b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority
+                b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority, t.recur AS recurrence
          FROM blocks b JOIN tasks t ON b.id = t.block_id
          WHERE t.status != 'DONE'
          ORDER BY (t.due_date IS NULL OR t.due_date = '') ASC,
@@ -355,6 +356,16 @@
                       class="text-[10px] text-text-muted font-label-sm flex-shrink-0"
                       >{item.due_date}</span
                     >
+                  {/if}
+                  {#if item.recurrence}
+                    <span
+                      class="text-accent-secondary-start flex-shrink-0"
+                      title="Recurring: {item.recurrence}"
+                    >
+                      <span class="material-symbols-outlined text-[12px]"
+                        >event_repeat</span
+                      >
+                    </span>
                   {/if}
                 </div>
               {/each}

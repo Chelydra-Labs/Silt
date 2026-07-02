@@ -46,7 +46,7 @@ export function buildQuery(
 ): { sql: string; params: unknown[] } {
   const baseSelect = `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
            b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
-           t.pinned, t.progress, t.comments_count, t.links_count,
+           t.pinned, t.progress, t.recur AS recurrence, t.comments_count, t.links_count,
            (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags
     FROM blocks b JOIN tasks t ON b.id = t.block_id`
   const orderBy = ` ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`

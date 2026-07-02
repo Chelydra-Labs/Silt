@@ -33,6 +33,7 @@
   // reason in an aria-live region instead of silently drifting.
   let pinState = $state(false)
   let progressState = $state(0)
+  let recurrenceState = $state('')
   let metaError = $state('')
   // Pending flags disable the control while an IPC write is in-flight.
   // This serializes user interactions so two rapid pin toggles (or slider
@@ -42,14 +43,33 @@
   // (last writer) out of sync with the optimistic UI state.
   let pinPending = $state(false)
   let progressPending = $state(false)
+  let recurrencePending = $state(false)
+  let recurrenceOpen = $state(false)
+  let recurrenceFocusIdx = $state(-1)
+
+  // Common recurrence presets offered in the autocomplete dropdown. The
+  // backend validates grammar server-side; these are the curated set from
+  // the UX research (Todoist/Things/Obsidian Tasks sweet spot).
+  const RECURRENCE_PRESETS: string[] = [
+    'every day',
+    'every weekday',
+    'every week',
+    'every 2 weeks',
+    'every month',
+    'every 3 months',
+    'every year'
+  ]
+
   $effect(() => {
     // Read the individual fields so Svelte 5's fine-grained reactivity
     // tracks them as deps — if the parent ever mutates card.pinned or
     // card.progress on the same object identity, the effect re-runs.
     void card?.pinned
     void card?.progress
+    void card?.recurrence
     pinState = card?.pinned ?? false
     progressState = card?.progress ?? 0
+    recurrenceState = card?.recurrence ?? ''
     metaError = ''
   })
 
@@ -111,6 +131,44 @@
     )
   }
 
+  async function commitRecurrence(value: string) {
+    if (!card || recurrencePending) return
+    const prev = recurrenceState
+    recurrenceState = value
+    recurrenceOpen = false
+    recurrencePending = true
+    metaError = ''
+    try {
+      await ctx.setTaskRecurrence(card.id, value)
+      onMetaChanged?.()
+    } catch (e) {
+      recurrenceState = prev
+      metaError = e instanceof Error ? e.message : String(e)
+    } finally {
+      recurrencePending = false
+    }
+  }
+
+  function onRecurrenceKeydown(e: KeyboardEvent) {
+    if (!recurrenceOpen) return
+    const options = [...RECURRENCE_PRESETS]
+    if (recurrenceState) options.push('') // "Stop recurring"
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      recurrenceFocusIdx = Math.min(recurrenceFocusIdx + 1, options.length - 1)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      recurrenceFocusIdx = Math.max(recurrenceFocusIdx - 1, 0)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const selected = options[recurrenceFocusIdx]
+      if (selected !== undefined) void commitRecurrence(selected)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      recurrenceOpen = false
+    }
+  }
+
   function onWindowKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && card) {
       e.preventDefault()
@@ -161,6 +219,12 @@
           id="card-detail-title"
           class="font-headline-md text-headline-md text-text-primary break-words"
         >
+          {#if card.recurrence}
+            <span
+              class="material-symbols-outlined text-[16px] text-accent-secondary-start align-middle mr-1"
+              aria-label="Recurring task">event_repeat</span
+            >
+          {/if}
           {card.clean_content}
         </h2>
       </div>
@@ -228,6 +292,10 @@
           <div class="flex items-center justify-between">
             <dt class="text-text-muted">Due date</dt>
             <dd class="text-text-primary">{card.due_date || '—'}</dd>
+          </div>
+          <div class="flex items-center justify-between">
+            <dt class="text-text-muted">Recurrence</dt>
+            <dd class="text-text-primary">{card.recurrence || '—'}</dd>
           </div>
           <div class="flex items-center justify-between">
             <dt class="text-text-muted">Start date</dt>
@@ -309,6 +377,100 @@
             style="width: {progressState}%"
           ></div>
         </div>
+      </section>
+
+      <!-- Recurrence editor -->
+      <section>
+        <h3
+          class="font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted mb-2"
+        >
+          Recurrence
+        </h3>
+        {#if card.due_date}
+          <div class="relative">
+            <button
+              type="button"
+              onclick={() => {
+                recurrenceOpen = !recurrenceOpen
+                recurrenceFocusIdx = 0
+              }}
+              disabled={recurrencePending}
+              aria-haspopup="listbox"
+              aria-expanded={recurrenceOpen}
+              class="w-full flex items-center justify-between px-3 py-2 rounded border border-border-muted bg-surface hover:bg-hover transition-colors disabled:opacity-50 text-[12px] font-label-sm text-text-primary"
+            >
+              <span class="flex items-center gap-2">
+                <span
+                  class="material-symbols-outlined text-[16px] {recurrenceState
+                    ? 'text-accent-secondary-start'
+                    : 'text-text-muted'}">event_repeat</span
+                >
+                {recurrenceState || 'Set recurrence…'}
+              </span>
+              <span
+                class="material-symbols-outlined text-[14px] text-text-muted"
+                >expand_more</span
+              >
+            </button>
+            {#if recurrenceOpen}
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+              <div
+                class="fixed inset-0 z-10"
+                onclick={() => (recurrenceOpen = false)}
+                aria-hidden="true"
+              ></div>
+              <div
+                transition:fly={{ y: -4, duration: 100 }}
+                class="absolute left-0 right-0 mt-1 z-20 rounded border border-border-muted bg-panel shadow-lg overflow-hidden"
+                role="listbox"
+                tabindex="-1"
+                aria-label="Recurrence options"
+                onkeydown={onRecurrenceKeydown}
+              >
+                {#each RECURRENCE_PRESETS as preset, i (preset)}
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={recurrenceState === preset}
+                    tabindex={recurrenceFocusIdx === i ? 0 : -1}
+                    class="w-full text-left px-3 py-1.5 text-[12px] font-label-sm hover:bg-hover transition-colors {recurrenceState ===
+                    preset
+                      ? 'text-accent-primary-start font-label-sm-bold'
+                      : 'text-text-primary'} {recurrenceFocusIdx === i
+                      ? 'bg-hover'
+                      : ''}"
+                    onclick={() => void commitRecurrence(preset)}
+                  >
+                    {preset}
+                  </button>
+                {/each}
+                {#if recurrenceState}
+                  <div class="border-t border-border-muted">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={false}
+                      tabindex={recurrenceFocusIdx === RECURRENCE_PRESETS.length
+                        ? 0
+                        : -1}
+                      class="w-full text-left px-3 py-1.5 text-[12px] font-label-sm text-text-muted hover:bg-hover transition-colors {recurrenceFocusIdx ===
+                      RECURRENCE_PRESETS.length
+                        ? 'bg-hover'
+                        : ''}"
+                      onclick={() => void commitRecurrence('')}
+                    >
+                      Stop recurring
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <p class="text-[11px] font-label-sm text-text-muted italic">
+            Set a due date first to configure recurrence.
+          </p>
+        {/if}
       </section>
 
       <!-- Counts -->

@@ -43,7 +43,16 @@ export const META_KEYS: readonly MetaKey[] = [
     description: 'Priority (1=critical, 2=normal, 3=low)'
   },
   { key: 'pin', label: 'pin', description: 'Pinned task' },
-  { key: 'progress', label: 'progress', description: 'Progress (0-100)' }
+  {
+    key: 'progress',
+    label: 'progress',
+    description: 'Progress (0-100)'
+  },
+  {
+    key: 'recur',
+    label: 'recur',
+    description: 'Recurrence rule (e.g. every week)'
+  }
 ]
 
 // Filter the catalog by a prefix query (case-insensitive). An empty query
