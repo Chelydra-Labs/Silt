@@ -995,6 +995,11 @@ func BenchmarkScanWorkspace_1000Files(b *testing.B) {
 // above measures the same workload but only runs under -bench; this test
 // runs under the normal -race CI gate so a regression is caught immediately.
 // Skipped under -short for quick test runs.
+//
+// The best of N runs is taken (not the mean or a single shot) so transient
+// contention on a shared GitHub Actions runner — which can inflate a single
+// measurement by tens of percent — does not flake the gate. A real
+// regression is consistent across runs, so it still trips.
 func TestScanWorkspace_BudgetRegression(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping budget regression in short mode")
@@ -1002,24 +1007,35 @@ func TestScanWorkspace_BudgetRegression(t *testing.T) {
 	dir := t.TempDir()
 	writeBenchVault(t, dir, 1000)
 
-	start := time.Now()
-	_, _, err := ScanWorkspace(dir, 4)
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("ScanWorkspace: %v", err)
+	const runs = 3
+	var best time.Duration
+	for i := range runs {
+		start := time.Now()
+		_, _, err := ScanWorkspace(dir, 4)
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("ScanWorkspace: %v", err)
+		}
+		t.Logf("ScanWorkspace 1k files run %d: %v", i+1, elapsed)
+		if best == 0 || elapsed < best {
+			best = elapsed
+		}
 	}
+
 	// Budget: <450ms for 1,000 files (baseline ~280ms on Ryzen AI MAX+ /
 	// Go 1.25 / Windows per TESTING.md; 450ms allows headroom for slower
 	// CI runners and the race detector). Under -race the detector adds
 	// ~2x overhead to the I/O+parse workload, so scanBudgetRegressionLimit
 	// returns a scaled threshold (900ms) via a build tag — the test still
 	// runs in the normal `go test -race ./...` CI gate and stays sensitive
-	// to a real regression in both modes.
+	// to a real regression in both modes. The best-of-N sampling lets this
+	// threshold stay tight (a real 2x regression lands ~1.1s under race,
+	// well above it) without flaking on a momentarily-contended runner.
 	limit := scanBudgetRegressionLimit()
-	if elapsed > limit {
-		t.Fatalf("ScanWorkspace regressed: %v > %v/1k files", elapsed, limit)
+	if best > limit {
+		t.Fatalf("ScanWorkspace regressed: best-of-%d %v > %v/1k files", runs, best, limit)
 	}
-	t.Logf("ScanWorkspace 1k files: %v (budget %v)", elapsed, limit)
+	t.Logf("ScanWorkspace 1k files best-of-%d: %v (budget %v)", runs, best, limit)
 }
 
 // Helper shared by the benchmark — writes N small daily-note files under
