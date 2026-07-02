@@ -727,6 +727,27 @@ func (a *App) SetFocusMode(value bool) error {
 	return config.Save(a.vaultPath, a.cfg)
 }
 
+// SetOpenDevtoolsOnStartup atomically writes the Dev Mode (open DevTools on
+// startup) flag. The About → Developer toggle routes through here instead of
+// the full-config saveConfig path because that path clones a Svelte 5 $state
+// proxy via structuredClone (throws DataCloneError in the webview, silently
+// swallowed) and would clobber an unsaved EditorTab draft. Mirrors
+// SetShowFormatToolbar.
+func (a *App) SetOpenDevtoolsOnStartup(value bool) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	a.cfg.UI.OpenDevtoolsOnStartup = &value
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	return config.Save(a.vaultPath, a.cfg)
+}
+
 // GetPluginSettingsForNotebook resolves a plugin's settings map for the
 // ACTIVE notebook, applying the co-located per-notebook override layer (#133).
 //
