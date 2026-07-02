@@ -4,6 +4,8 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
+  setTaskDueDate: vi.fn().mockResolvedValue(true),
+  createTask: vi.fn().mockResolvedValue('new-task-id'),
   // Mocked settings store so we can flip updatePluginSetting's return
   // value to force the persistence-failure banner path.
   updatePluginSetting: vi.fn().mockResolvedValue(true)
@@ -41,7 +43,9 @@ function makeCtx(): PluginContext {
     updateTaskMeta: vi.fn(),
     getPluginSettings: vi.fn(() => Promise.resolve({})),
     on: () => () => {},
-    ...v2CtxStubs
+    ...v2CtxStubs,
+    setTaskDueDate: mocks.setTaskDueDate,
+    createTask: mocks.createTask
   }
 }
 
@@ -59,6 +63,8 @@ async function flush() {
 describe('Calendar plugin', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset()
+    mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
     resetFocusState()
   })
 
@@ -374,5 +380,127 @@ describe('Calendar plugin', () => {
     const doneBtn = screen.getByText('Finished task')
     expect(todoBtn.className).toMatch(/opacity-30/)
     expect(doneBtn.className).not.toMatch(/opacity-30/)
+  })
+
+  // --- Drag-and-drop rescheduling (#292/#293/#294) -------------------------
+
+  function ymd(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  async function renderWithTaskOnToday(label: string) {
+    const today = ymd(new Date())
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [
+        {
+          id: 'drag-1',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          file_date: today,
+          clean_content: label,
+          status: 'TODO',
+          due_date: today
+        }
+      ],
+      truncated: false
+    })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+  }
+
+  it('task card is draggable and sets the drag payload (#292)', async () => {
+    await renderWithTaskOnToday('Draggable task')
+    const card = screen.getByText('Draggable task')
+    expect(card.getAttribute('draggable')).toBe('true')
+    expect(card.getAttribute('aria-keyshortcuts')).toContain('Alt+Arrow')
+  })
+
+  it('dropping a card on a day cell calls setTaskDueDate with that date (#293)', async () => {
+    await renderWithTaskOnToday('Drop me')
+    const card = screen.getByText('Drop me')
+    // Start the drag so the component tracks dragTaskId.
+    await fireEvent.dragStart(card)
+
+    // Find a different day cell in the month grid (the 15th).
+    const now = new Date()
+    const target = new Date(now.getFullYear(), now.getMonth(), 15)
+    const targetKey = ymd(target)
+    const cell = document.querySelector(`[data-celldate="${targetKey}"]`)
+    expect(cell).toBeTruthy()
+    await fireEvent.dragOver(cell!)
+    await fireEvent.drop(cell!)
+
+    await flush()
+    expect(mocks.setTaskDueDate).toHaveBeenCalledWith('drag-1', targetKey)
+  })
+
+  it('dragover toggles the drop-target highlight (#292)', async () => {
+    await renderWithTaskOnToday('Highlight me')
+    const card = screen.getByText('Highlight me')
+    await fireEvent.dragStart(card)
+
+    const now = new Date()
+    const target = new Date(now.getFullYear(), now.getMonth(), 20)
+    const targetKey = ymd(target)
+    const cell = document.querySelector(`[data-celldate="${targetKey}"]`)!
+    await fireEvent.dragOver(cell)
+    await flush()
+    expect(cell.className).toMatch(/ring-accent-primary-glow/)
+    await fireEvent.dragLeave(cell)
+    await flush()
+    expect(cell.className).not.toMatch(/ring-accent-primary-glow/)
+  })
+
+  it('Alt+ArrowRight on a focused card reschedules +1 day via keyboard (#294)', async () => {
+    await renderWithTaskOnToday('Keyboard task')
+    const card = screen.getByText('Keyboard task') as HTMLElement
+    card.focus()
+    const today = ymd(new Date())
+    const tomorrow = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate() + 1).padStart(2, '0')}`
+
+    await fireEvent.keyDown(card, { key: 'ArrowRight', altKey: true })
+    await flush()
+
+    expect(mocks.setTaskDueDate).toHaveBeenCalledTimes(1)
+    expect(mocks.setTaskDueDate.mock.calls[0][0]).toBe('drag-1')
+    // New date is today + 1 day.
+    expect(mocks.setTaskDueDate.mock.calls[0][1]).not.toBe(today)
+  })
+
+  it('Alt+ArrowUp on a focused card reschedules -7 days (#294)', async () => {
+    await renderWithTaskOnToday('Week jump task')
+    const card = screen.getByText('Week jump task') as HTMLElement
+    card.focus()
+
+    await fireEvent.keyDown(card, { key: 'ArrowUp', altKey: true })
+    await flush()
+
+    expect(mocks.setTaskDueDate).toHaveBeenCalledTimes(1)
+  })
+
+  it('arrow keys without Alt do NOT reschedule (cell navigation still works)', async () => {
+    await renderWithTaskOnToday('No alt task')
+    const card = screen.getByText('No alt task') as HTMLElement
+    card.focus()
+    await fireEvent.keyDown(card, { key: 'ArrowRight' })
+    await flush()
+    expect(mocks.setTaskDueDate).not.toHaveBeenCalled()
+  })
+
+  it('aria-live region announces a successful reschedule (#292 AC)', async () => {
+    await renderWithTaskOnToday('Announce me')
+    const card = screen.getByText('Announce me')
+    await fireEvent.dragStart(card)
+    const now = new Date()
+    const target = new Date(now.getFullYear(), now.getMonth(), 18)
+    const cell = document.querySelector(`[data-celldate="${ymd(target)}"]`)!
+    await fireEvent.dragOver(cell)
+    await fireEvent.drop(cell!)
+    await flush()
+
+    const live = screen.getByRole('status')
+    expect(live.getAttribute('aria-live')).toBe('polite')
+    expect(live.textContent).toContain(ymd(target))
   })
 })

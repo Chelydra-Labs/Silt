@@ -221,9 +221,94 @@
     )
   }
 
+  // --- Drag-and-drop task rescheduling (#292/#293/#294) --------------------
+  // A task card is draggable onto any day cell (month or week). On drop the
+  // [due:: YYYY-MM-DD] token is rewritten on disk via ctx.setTaskDueDate
+  // (#293), the block:changed listener (subscribed in onMount) repaints the
+  // grid. HTML5 DnD has no keyboard semantics, so a focused card also
+  // responds to Alt+Arrows (±1 day / ±7 days) through the SAME reschedule
+  // path — the mouse and keyboard flows call one function (#294).
+
+  let dragTaskId = $state<string | null>(null)
+  let overCellDate = $state<string | null>(null)
+  // aria-live announcement of the last reschedule (mouse or keyboard) so
+  // screen-reader users hear the result (#292 AC).
+  let rescheduleAnnouncement = $state('')
+
+  function onCardDragStart(e: DragEvent, item: CalItem) {
+    dragTaskId = item.id
+    if (e.dataTransfer) {
+      e.dataTransfer.setData('text/plain', item.id)
+      e.dataTransfer.effectAllowed = 'move'
+    }
+  }
+  function onCardDragEnd() {
+    dragTaskId = null
+    overCellDate = null
+  }
+
+  function onCellDragOver(e: DragEvent, day: Date) {
+    // preventDefault is required for a cell to accept a drop.
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    const key = ymd(day)
+    if (overCellDate !== key) overCellDate = key
+  }
+  function onCellDragLeave(e: DragEvent, day: Date) {
+    // Only clear when truly leaving this cell (not entering a child element).
+    const rt = e.relatedTarget as Node | null
+    if (rt && (e.currentTarget as HTMLElement).contains(rt)) return
+    if (overCellDate === ymd(day)) overCellDate = null
+  }
+  async function onCellDrop(e: DragEvent, day: Date) {
+    e.preventDefault()
+    const id = dragTaskId ?? e.dataTransfer?.getData('text/plain') ?? ''
+    overCellDate = null
+    dragTaskId = null
+    if (!id) return
+    await reschedule(id, ymd(day))
+  }
+
+  // reschedule rewrites the due date and announces the result. Shared by the
+  // mouse drop path and the keyboard Alt+Arrow path so there is one source
+  // of truth for the mutation + announcement.
+  async function reschedule(blockId: string, newDate: string) {
+    try {
+      await ctx.setTaskDueDate(blockId, newDate)
+      // The grid repaints via the block:changed listener; the announcement
+      // gives immediate non-visual feedback.
+      rescheduleAnnouncement = `Rescheduled to ${newDate}`
+    } catch (e) {
+      rescheduleAnnouncement =
+        e instanceof Error ? e.message : 'Reschedule failed'
+    }
+  }
+
+  // Keyboard reschedule on a focused task card (#294): Alt+ArrowLeft/Right
+  // shifts ±1 day, Alt+ArrowUp/Down shifts ±7 days. The cell's own arrow
+  // handler ignores Alt-modified keys so the two don't collide.
+  function onCardKeydown(e: KeyboardEvent, item: CalItem) {
+    if (!e.altKey) return
+    const map: Record<string, number> = {
+      ArrowLeft: -1,
+      ArrowRight: 1,
+      ArrowUp: -7,
+      ArrowDown: 7
+    }
+    const delta = map[e.key]
+    if (delta === undefined) return
+    e.preventDefault()
+    e.stopPropagation()
+    const base = item.due_date || ymd(new Date())
+    void reschedule(item.id, plusDaysISO(base, delta))
+  }
+
   // Keyboard navigation across month cells: arrows move focus by day (clamping
   // to the grid), Enter opens the focused day's first task.
   function onCellKeydown(e: KeyboardEvent, day: Date) {
+    // Alt-modified arrows are handled by the focused task card's reschedule
+    // handler (#294); let them through.
+    if (e.altKey) return
     const map: Record<string, number> = {
       ArrowRight: 1,
       ArrowLeft: -1,
@@ -442,6 +527,13 @@
     </div>
   {/if}
 
+  {#if mode !== 'agenda'}
+    <!-- Screen-reader announcement of drag/keyboard reschedules (#292 AC). -->
+    <div class="sr-only" role="status" aria-live="polite">
+      {rescheduleAnnouncement}
+    </div>
+  {/if}
+
   {#if mode === 'agenda'}
     <!-- Agenda mode renders the extracted grouped-list component. The
          shared focusState drives its scroll-to-group and dim behaviour. -->
@@ -472,6 +564,7 @@
                 tabindex="0"
                 data-celldate={ymd(day)}
                 aria-label={`${day.toDateString()}${items.length ? ', ' + items.length + ' task' + (items.length === 1 ? '' : 's') : ''}`}
+                aria-dropeffect="move"
                 onkeydown={(e) => {
                   if (e.key === 'Enter' && items[0]) {
                     e.preventDefault()
@@ -480,9 +573,15 @@
                     onCellKeydown(e, day)
                   }
                 }}
-                class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {inMonth
-                  ? 'border-border-muted bg-panel'
-                  : 'border-border-muted/30 bg-transparent'}"
+                ondragover={(e) => onCellDragOver(e, day)}
+                ondragleave={(e) => onCellDragLeave(e, day)}
+                ondrop={(e) => onCellDrop(e, day)}
+                class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 transition-all focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {overCellDate ===
+                ymd(day)
+                  ? 'border-accent-primary-glow ring-2 ring-accent-primary-glow/40'
+                  : inMonth
+                    ? 'border-border-muted bg-panel'
+                    : 'border-border-muted/30 bg-transparent'}"
               >
                 <span
                   class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
@@ -494,8 +593,16 @@
                 >
                 {#each items.slice(0, 3) as item (item.id)}
                   <button
+                    draggable="true"
+                    aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                    ondragstart={(e) => onCardDragStart(e, item)}
+                    ondragend={onCardDragEnd}
+                    onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => openItem(item)}
-                    class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer"
+                    class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
+                    item.id
+                      ? 'opacity-40'
+                      : ''}"
                     class:opacity-30={!itemMatchesFilter(item)}
                     title={item.clean_content}>{item.clean_content}</button
                   >
@@ -515,7 +622,20 @@
           {#each weekDays as day}
             {@const isToday = ymd(day) === todayKey}
             {@const items = byDate[ymd(day)] ?? []}
-            <div class="flex flex-col gap-1.5">
+            <div
+              class="flex flex-col gap-1.5 min-h-[120px]"
+              role="gridcell"
+              tabindex="0"
+              data-celldate={ymd(day)}
+              aria-label={`${day.toDateString()}${items.length ? ', ' + items.length + ' task' + (items.length === 1 ? '' : 's') : ''}`}
+              aria-dropeffect="move"
+              ondragover={(e) => onCellDragOver(e, day)}
+              ondragleave={(e) => onCellDragLeave(e, day)}
+              ondrop={(e) => onCellDrop(e, day)}
+              class:ring-2={overCellDate === ymd(day)}
+              class:ring-accent-primary-glow={overCellDate === ymd(day)}
+              class:rounded-lg={overCellDate === ymd(day)}
+            >
               <div class="text-center pb-2 border-b border-border-muted">
                 <div
                   class="text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted"
@@ -531,8 +651,16 @@
               </div>
               {#each items as item (item.id)}
                 <button
+                  draggable="true"
+                  aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                  ondragstart={(e) => onCardDragStart(e, item)}
+                  ondragend={onCardDragEnd}
+                  onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => openItem(item)}
-                  class="text-left text-[12px] px-2 py-1.5 rounded bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer"
+                  class="text-left text-[12px] px-2 py-1.5 rounded bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer {dragTaskId ===
+                  item.id
+                    ? 'opacity-40'
+                    : ''}"
                   class:opacity-30={!itemMatchesFilter(item)}
                   title={item.clean_content}>{item.clean_content}</button
                 >
@@ -544,3 +672,17 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>
