@@ -10,8 +10,7 @@
     downloadAndInstall,
     setAutoCheck
   } from '../../updates/store.svelte'
-  import { settings, saveConfig } from '../../settings/store.svelte'
-  import type { config } from '../../../wailsjs/go/models.js'
+  import { settings, toggleDevMode } from '../../settings/store.svelte'
 
   let version = $state('…')
 
@@ -273,13 +272,9 @@
         role="switch"
         aria-label="Dev Mode"
         aria-checked={settings.config?.ui?.open_devtools_on_startup === true}
-        onclick={async () => {
-          const next = !(settings.config?.ui?.open_devtools_on_startup === true)
-          const draft = structuredClone(settings.config!)
-          if (!draft.ui) draft.ui = {} as config.UIConfig
-          draft.ui.open_devtools_on_startup = next
-          await saveConfig(draft)
-        }}
+        aria-disabled={settings.saving}
+        disabled={settings.saving}
+        onclick={() => void toggleDevMode()}
         class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer border-none focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/40"
         class:bg-accent-primary-start={settings.config?.ui
           ?.open_devtools_on_startup === true}
@@ -302,6 +297,14 @@
       >
         Enables the Dev tab in Settings with diagnostic tools.
       </p>
+      {#if settings.error}
+        <p
+          role="alert"
+          class="text-status-danger text-[11px] font-body-md leading-relaxed pl-1"
+        >
+          {settings.error}
+        </p>
+      {/if}
     </div>
   </section>
 

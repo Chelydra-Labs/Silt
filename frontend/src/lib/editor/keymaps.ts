@@ -11,8 +11,11 @@ import { settings } from '../../settings/store.svelte'
 // Ports the keydown logic from the legacy BlockRenderer.svelte (lines 280-398)
 // to TipTap keyboard shortcuts / ProseMirror keymap bindings:
 //   - Enter: create a new NoteBlock at the same depth below the cursor.
-//   - Backspace at start of empty block: unindent first, then delete+focus-prev.
-//   - Tab / Shift+Tab (config-driven): indent / unindent (bounded by previous
+//   - Backspace at start: merge into a same-type sibling above; else clear
+//     bullet, unindent, then delete+focus-prev.
+//   - Delete at end: merge a same-type sibling below into this block (or drop
+//     this block if it's empty and a same-type sibling follows).
+//   - Tab / Shift-Tab (config-driven): indent / unindent (bounded by previous
 //     sibling's depth + 1, matching the legacy outliner constraints).
 //   - ArrowUp / ArrowDown at block boundary: move focus to the previous/next block.
 //
@@ -154,6 +157,85 @@ function focusBlockAt(editor: Editor, blockIndex: number): void {
     TextSelection.create(editor.state.doc, endPos, endPos)
   )
   editor.view.dispatch(tr)
+}
+
+/**
+ * Resolve the same-parent sibling of the active block in the given direction.
+ * Returns the sibling node or `null` when there is none (first/last child, or a
+ * nested block whose parent lookup doesn't line up). Only siblings sharing the
+ * active block's parent are considered — cross-parent "siblings" are never
+ * returned, which is what enforces the AC's depth-boundary rule.
+ */
+function getSibling(
+  editor: Editor,
+  info: { node: ProseMirrorNode; pos: number; index: number },
+  direction: 'forward' | 'backward'
+): ProseMirrorNode | null {
+  const $here = editor.state.doc.resolve(info.pos)
+  const parent = $here.parent
+  const siblingIndex = direction === 'forward' ? info.index + 1 : info.index - 1
+  if (siblingIndex < 0 || siblingIndex >= parent.childCount) return null
+  return parent.child(siblingIndex)
+}
+
+/**
+ * Merge the active block with a same-type same-parent sibling, in a single
+ * ProseMirror transaction (#364). The survivor keeps its `id` (so the
+ * uniqueIdPlugin does NOT remint), the other block's inline content is appended
+ * onto the survivor (marks ride along on the text nodes), the emptied block is
+ * removed, and the caret lands at the join boundary. `codeBlock` is excluded
+ * (its `text*` content model differs); cross-type and cross-parent cases return
+ * false so the caller can fall through to the per-type default. Built at the PM
+ * level — no docToBlocks round-trip — so a single autosave fires.
+ *
+ * `direction` is 'forward' for Delete-at-end (merge the next sibling into the
+ * current block) and 'backward' for Backspace-at-start (merge the current block
+ * into the previous sibling).
+ */
+function mergeSiblingBlock(
+  editor: Editor,
+  direction: 'forward' | 'backward'
+): boolean {
+  const info = currentBlockInfo(editor)
+  if (!info) return false
+  const { node, pos, index } = info
+  // codeBlock has a different content model (text* vs inline*); leave it alone.
+  if (node.type.spec.code) return false
+
+  const sibling = getSibling(editor, { node, pos, index }, direction)
+  if (!sibling) return false
+  if (sibling.type.name !== node.type.name) return false
+
+  let merged: ProseMirrorNode
+  let from: number
+  let to: number
+  let caretPos: number
+  if (direction === 'forward') {
+    // Delete at end of current: append sibling's content into the current
+    // block; the current block survives with its own id.
+    const mergedContent = node.content.append(sibling.content)
+    merged = node.type.create(node.attrs, mergedContent)
+    from = pos
+    to = pos + node.nodeSize + sibling.nodeSize
+    // Caret at the boundary between the two original contents.
+    caretPos = pos + 1 + node.content.size
+  } else {
+    // Backspace at start of current: append the current block's content into
+    // the previous sibling; the previous block survives with its own id.
+    const prevPos = pos - sibling.nodeSize
+    const mergedContent = sibling.content.append(node.content)
+    merged = sibling.type.create(sibling.attrs, mergedContent)
+    from = prevPos
+    to = pos + node.nodeSize
+    // Caret at the end of the previous block's original content (the join
+    // boundary), which is the standard text-editor join position.
+    caretPos = prevPos + 1 + sibling.content.size
+  }
+
+  const tr = editor.state.tr.replaceWith(from, to, merged)
+  tr.setSelection(TextSelection.create(tr.doc, caretPos))
+  editor.view.dispatch(tr)
+  return true
 }
 
 // Move the active top-level block up (-1) or down (+1), swapping it with its
@@ -647,10 +729,15 @@ export const SiltBlockKeymaps = Extension.create({
           return true
         }
 
-        // Only act on truly empty blocks (no text content).
+        // Non-empty block at start: try to merge its content into the same-type
+        // sibling above. Same-type-sibling merge takes precedence over the
+        // empty-block unindent/delete path below (#364). If no same-type sibling
+        // exists (cross-type, cross-parent, or first child), fall through.
         const isEmpty =
           info.node.content.size === 0 || info.node.textContent.trim() === ''
-        if (!isEmpty) return false
+        if (!isEmpty) {
+          return mergeSiblingBlock(this.editor, 'backward')
+        }
 
         if (info.depth > 0) {
           // Unindent first.
@@ -680,6 +767,48 @@ export const SiltBlockKeymaps = Extension.create({
         this.editor.view.dispatch(this.editor.state.tr.delete(from, to))
         focusBlockAt(this.editor, blockIndex - 1)
         return true
+      },
+
+      Delete: () => {
+        const info = currentBlockInfo(this.editor)
+        if (!info) return false
+
+        const { selection } = this.editor.state
+        // Only act when the caret is collapsed at the end of the block's
+        // inline content. ProseMirror's default Delete is a no-op at the end of
+        // an isolating block, so this is the only path that joins the block
+        // below (#364).
+        const isAtEnd =
+          selection.from === selection.to &&
+          selection.$from.parentOffset === info.node.content.size
+        if (!isAtEnd) return false
+
+        // Empty current block + same-type sibling below: drop the empty block
+        // so the sibling takes its place. The sibling keeps its own id (no
+        // merge — the empty block contributes no content). Caret lands at the
+        // start of the promoted sibling's content.
+        if (info.node.content.size === 0) {
+          const sibling = getSibling(
+            this.editor,
+            { node: info.node, pos: info.pos, index: info.index },
+            'forward'
+          )
+          if (!sibling || sibling.type.name !== info.node.type.name) {
+            return false
+          }
+          const from = info.pos
+          const to = info.pos + info.node.nodeSize
+          this.editor.view.dispatch(this.editor.state.tr.delete(from, to))
+          this.editor.commands.focus()
+          const caret = info.pos + 1
+          const tr = this.editor.state.tr.setSelection(
+            TextSelection.create(this.editor.state.doc, caret, caret)
+          )
+          this.editor.view.dispatch(tr)
+          return true
+        }
+
+        return mergeSiblingBlock(this.editor, 'forward')
       },
 
       Tab: () => {
