@@ -57,12 +57,20 @@ func (a *App) openPluginDB(pluginID string) (*sql.DB, error) {
 	if !isPathWithinRoot(dataDir, a.vaultPath) {
 		return nil, fmt.Errorf("plugin data dir escapes vault root")
 	}
+	dataDirCreated := false
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create plugin data dir: %w", err)
 	}
+	dataDirCreated = true
 	dbPath := filepath.Join(dataDir, "plugin.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
+		// Clean up the data dir we just created so a failing open doesn't
+		// litter empty dirs (a hostile plugin could trigger this repeatedly).
+		if dataDirCreated {
+			_ = os.Remove(filepath.Join(dataDir, "plugin.db"))
+			_ = os.Remove(dataDir)
+		}
 		return nil, fmt.Errorf("open plugin db for %s: %w", pluginID, err)
 	}
 	db.SetMaxOpenConns(1)
@@ -129,9 +137,8 @@ var pluginDBAllowedPragmas = map[string]bool{
 // the core index and ATTACH of the core path is structurally separate).
 func containsBlockedStatement(sqlText string) (blocked string, found bool) {
 	upper := strings.ToUpper(sqlText)
-	// Tokenize-ish: look for ATTACH / DETACH as standalone statement keywords.
-	// They only appear at statement start; we scan the whole (comment-stripped)
-	// text because a stacked query could embed one after a semicolon.
+	// ATTACH / DETACH as standalone statement keywords. stmtContainsKeyword
+	// loops over every occurrence (catches stacked-query escapes).
 	if stmtContainsKeyword(upper, "ATTACH") {
 		return "ATTACH", true
 	}
@@ -141,10 +148,39 @@ func containsBlockedStatement(sqlText string) (blocked string, found bool) {
 	// PRAGMA: allow only user_version (used internally by migrate). Any other
 	// PRAGMA is rejected — a plugin has no legitimate need to reconfigure its
 	// connection pragmas, and several (query_only, etc.) would undermine the
-	// contract.
-	if idx := strings.Index(upper, "PRAGMA"); idx >= 0 {
-		rest := strings.TrimSpace(sqlText[idx+6:])
-		// Strip to the pragma name (up to '=' or space or ';').
+	// contract. Loop over EVERY PRAGMA occurrence so a stacked-query payload
+	// like "PRAGMA user_version=1; PRAGMA query_only=OFF" is caught (the
+	// second PRAGMA must also be allowed, not just the first).
+	searchUpper := upper
+	searchOriginal := sqlText
+	for {
+		idx := strings.Index(searchUpper, "PRAGMA")
+		if idx < 0 {
+			break
+		}
+		// Verify token boundary before.
+		if idx > 0 {
+			c := searchUpper[idx-1]
+			if (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+				searchUpper = searchUpper[idx+6:]
+				searchOriginal = searchOriginal[idx+6:]
+				continue
+			}
+		}
+		// Verify token boundary after.
+		afterIdx := idx + 6
+		afterOK := afterIdx >= len(searchUpper)
+		if !afterOK {
+			c := searchUpper[afterIdx]
+			afterOK = !((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_')
+		}
+		if !afterOK {
+			searchUpper = searchUpper[afterIdx:]
+			searchOriginal = searchOriginal[afterIdx:]
+			continue
+		}
+		// Extract the pragma name from the original (non-uppercased) text.
+		rest := strings.TrimSpace(searchOriginal[afterIdx:])
 		nameEnd := len(rest)
 		for i, c := range rest {
 			if c == '=' || c == ' ' || c == ';' || c == '\n' || c == '\t' {
@@ -156,8 +192,35 @@ func containsBlockedStatement(sqlText string) (blocked string, found bool) {
 		if !pluginDBAllowedPragmas[name] {
 			return "PRAGMA " + name, true
 		}
+		// Advance past this occurrence.
+		searchUpper = searchUpper[afterIdx:]
+		searchOriginal = searchOriginal[afterIdx:]
 	}
 	return "", false
+}
+
+// containsUnquotedSemicolon reports whether sqlText contains a ';' outside a
+// single-quoted string literal. This prevents stacked queries in Exec/Query:
+// (1) the modernc driver only binds params to the first statement, so a stacked
+// query silently drops params for subsequent statements; (2) a second statement
+// could be attacker-controlled text. The migrate path (no params, inside a tx)
+// is exempt — it splits and applies each statement individually.
+func containsUnquotedSemicolon(sqlText string) bool {
+	inString := false
+	for i := 0; i < len(sqlText); i++ {
+		c := sqlText[i]
+		if c == '\'' {
+			// SQL escapes a single quote inside a string as '' (doubled).
+			if inString && i+1 < len(sqlText) && sqlText[i+1] == '\'' {
+				i++ // skip the escaped quote
+				continue
+			}
+			inString = !inString
+		} else if c == ';' && !inString {
+			return true
+		}
+	}
+	return false
 }
 
 // stmtContainsKeyword reports whether upper (an UPPERCASE sql string) contains
@@ -195,8 +258,8 @@ func stmtContainsKeyword(upper, keyword string) bool {
 // PluginDBExec executes a write (DDL or DML) against the plugin's own SQLite
 // store. Session-token verified; capability-gated. ATTACH/DETACH and
 // non-user_version PRAGMAs are rejected so the plugin cannot escape its file.
-// Multiple statements may be passed (semicolon-separated); they execute in a
-// single transaction via Exec.
+// Single-statement only (no stacked queries) so params bind correctly — call
+// exec multiple times for multi-statement DDL. (Migrate is the exempt path.)
 func (a *App) PluginDBExec(pluginID, sessionToken, sqlText string, params []any) error {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return err
@@ -215,6 +278,13 @@ func (a *App) PluginDBExec(pluginID, sessionToken, sqlText string, params []any)
 	}
 	if blocked, found := containsBlockedStatement(trimmed); found {
 		return fmt.Errorf("PluginDBExec blocks %s statements", blocked)
+	}
+	// Reject stacked queries: the driver only binds params to the first
+	// statement, so a semicolon-separated payload would silently drop params
+	// for subsequent statements (and the second statement could be hostile
+	// text). A plugin with multi-statement DDL should call exec per statement.
+	if containsUnquotedSemicolon(trimmed) {
+		return fmt.Errorf("PluginDBExec does not permit stacked queries (multiple semicolon-separated statements); call exec once per statement")
 	}
 	db, err := a.openPluginDB(pluginID)
 	if err != nil {
@@ -248,6 +318,12 @@ func (a *App) PluginDBQuery(pluginID, sessionToken, sqlText string, params []any
 	upper := strings.ToUpper(trimmed)
 	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
 		return PluginRawQueryResult{}, fmt.Errorf("PluginDBQuery permits only SELECT/WITH statements")
+	}
+	// Reject stacked queries: the driver only binds params to the first
+	// statement; a "SELECT 1; INSERT ..." payload would silently execute the
+	// write against the plugin's own DB.
+	if containsUnquotedSemicolon(trimmed) {
+		return PluginRawQueryResult{}, fmt.Errorf("PluginDBQuery does not permit stacked queries")
 	}
 	db, err := a.openPluginDB(pluginID)
 	if err != nil {

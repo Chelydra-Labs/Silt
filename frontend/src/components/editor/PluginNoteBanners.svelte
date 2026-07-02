@@ -27,18 +27,42 @@
   // responsibility (recommended: updatePluginSetting('<id>', 'dismissed_notes',
   // [...])). The close button's accessible name is derived from the banner
   // label so a screen reader announces "Dismiss Summary" etc.
-  function dismiss(surface: PluginSurface) {
+  //
+  // Focus management (#215 a11y): the close button lives inside the banner, so
+  // removing the banner destroys the focused element. Before removal, move
+  // focus to the next banner's close button (or, if none, to the container so
+  // focus doesn't fall to <body>).
+  function dismiss(surface: PluginSurface, closeBtn: HTMLButtonElement) {
+    const idx = surfaces.findIndex((s) => s.id === surface.id)
+    const next = surfaces[idx + 1]
     unregisterSurface(surface.id)
+    // Defer so the DOM updates before we focus.
+    queueMicrotask(() => {
+      if (next) {
+        const nextBtn = document.querySelector<HTMLButtonElement>(
+          `[data-banner-close="${next.id}"]`
+        )
+        nextBtn?.focus()
+      } else {
+        // No more banners — return focus to the container (Tab will move into
+        // the editor on the next press).
+        containerEl?.focus()
+      }
+    })
   }
+
+  let containerEl: HTMLDivElement | null = $state(null)
 </script>
 
 {#if surfaces.length > 0}
   <!-- Stacking: predictable order (registration order), max-height + overflow
        so several banners coexist without pushing the editor out of view. -->
   <div
+    bind:this={containerEl}
     class="plugin-note-banners"
     role="region"
     aria-label="Plugin banners"
+    tabindex="-1"
     style="max-height: 30vh; overflow-y: auto;"
   >
     {#each surfaces as surface (surface.id)}
@@ -60,9 +84,10 @@
         <button
           type="button"
           class="banner-dismiss"
-          onclick={() => dismiss(surface)}
+          data-banner-close={surface.id}
+          onclick={(e) => dismiss(surface, e.currentTarget)}
           aria-label="Dismiss {surface.label}"
-          title="Dismiss"
+          title="Dismiss {surface.label}"
         >
           <span class="material-symbols-outlined" aria-hidden="true">close</span
           >

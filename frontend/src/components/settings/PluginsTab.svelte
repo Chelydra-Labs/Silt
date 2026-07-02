@@ -28,8 +28,10 @@
     activeNotebook: string
     activeSection: string
     activePage: string
+    onSwitchTab?: (tabId: string) => void
   }
-  let { activeNotebook, activeSection, activePage }: Props = $props()
+  let { activeNotebook, activeSection, activePage, onSwitchTab }: Props =
+    $props()
 
   interface Card {
     id: string
@@ -593,17 +595,27 @@
 
               {#if hasBespokeSettings(card.id)}
                 <!-- #214: this plugin renders settings via a dedicated tab;
-                     show a redirect note instead of the generic form. -->
+                     offer a one-click switch instead of dead text. -->
                 <div>
                   <div
                     class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
                   >
                     Plugin settings
                   </div>
-                  <p class="text-[12px] text-text-muted font-body-md">
-                    This plugin has a dedicated settings page — see the
-                    <strong>{card.name}</strong> tab in the sidebar.
-                  </p>
+                  {#if onSwitchTab}
+                    <button
+                      type="button"
+                      class="text-[12px] text-accent-primary-start hover:underline bg-transparent border-none cursor-pointer p-0 font-body-md"
+                      onclick={() => onSwitchTab(`plugin:${card.id}`)}
+                    >
+                      Open the {card.name} settings tab
+                    </button>
+                  {:else}
+                    <p class="text-[12px] text-text-muted font-body-md">
+                      This plugin has a dedicated settings page — open the
+                      <strong>{card.name}</strong> tab on the left.
+                    </p>
+                  {/if}
                 </div>
               {:else if card.settingsSchema && card.settingsSchema.length > 0}
                 <div>

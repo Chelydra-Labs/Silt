@@ -193,6 +193,18 @@
       activeTab = 'workspace'
     }
   })
+
+  // #214: if the active plugin tab disappears (plugin disabled/uninstalled/
+  // surface unregistered while its settings tab is open), reset to the
+  // Plugins tab so the panel is never blank with an orphaned activeTab id.
+  $effect(() => {
+    if (
+      activeTab.startsWith('plugin:') &&
+      !tabs.some((t) => t.id === activeTab)
+    ) {
+      activeTab = 'plugins'
+    }
+  })
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -304,7 +316,12 @@
         {:else if activeTab === 'hotkeys'}
           <HotkeysTab />
         {:else if activeTab === 'plugins'}
-          <PluginsTab {activeNotebook} {activeSection} {activePage} />
+          <PluginsTab
+            {activeNotebook}
+            {activeSection}
+            {activePage}
+            onSwitchTab={(id) => selectTab(id)}
+          />
         {:else if activeTab.startsWith('plugin:')}
           {@const pluginTab = pluginSettingsTabs.find(
             (t) => t.id === activeTab

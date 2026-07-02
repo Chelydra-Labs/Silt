@@ -238,3 +238,93 @@ func TestPluginDB_SessionTokenVerified(t *testing.T) {
 		t.Fatal("expected session-token rejection, got nil")
 	}
 }
+
+// --- Hardened paths (audit follow-up) ---------------------------------------
+
+func TestPluginDB_PragmaMultiStatementBypass(t *testing.T) {
+	app, token := pluginDBTestApp(t)
+	// H1: a stacked-query PRAGMA payload like
+	// "PRAGMA user_version=1; PRAGMA query_only=OFF" must be caught. The
+	// semicolon check now rejects stacked queries entirely, so this fails at
+	// the semicolon gate. Verify the non-semicolon stacked variant is also
+	// caught by the looping PRAGMA scanner would require a real stacked
+	// execution path (none exists now), so this test asserts the semicolon
+	// gate fires.
+	err := app.PluginDBExec("test-plugin", token,
+		"PRAGMA user_version=1; PRAGMA query_only=OFF", nil)
+	if err == nil {
+		t.Fatal("expected stacked-query PRAGMA bypass to be blocked")
+	}
+}
+
+func TestPluginDB_ExecRejectsStackedQueries(t *testing.T) {
+	app, token := pluginDBTestApp(t)
+	if err := app.PluginDBExec("test-plugin", token, "CREATE TABLE t (x INTEGER)", nil); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	// Stacked query rejected (params would silently bind to first statement only).
+	err := app.PluginDBExec("test-plugin", token, "INSERT INTO t VALUES (1); INSERT INTO t VALUES (2)", nil)
+	if err == nil {
+		t.Fatal("expected stacked-query rejection in Exec")
+	}
+}
+
+func TestPluginDB_QueryRejectsStackedQueries(t *testing.T) {
+	app, token := pluginDBTestApp(t)
+	if err := app.PluginDBExec("test-plugin", token, "CREATE TABLE t (x INTEGER)", nil); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	_, err := app.PluginDBQuery("test-plugin", token, "SELECT 1; INSERT INTO t VALUES (1)", nil)
+	if err == nil {
+		t.Fatal("expected stacked-query rejection in Query")
+	}
+}
+
+func TestPluginDB_ExecAllowsSemicolonInStringLiteral(t *testing.T) {
+	app, token := pluginDBTestApp(t)
+	if err := app.PluginDBExec("test-plugin", token, "CREATE TABLE t (x TEXT)", nil); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	// A semicolon inside a single-quoted string literal is legitimate and must
+	// NOT be rejected by the stacked-query guard.
+	err := app.PluginDBExec("test-plugin", token, "INSERT INTO t VALUES ('hello; world')", nil)
+	if err != nil {
+		t.Fatalf("semicolon in string literal should be allowed: %v", err)
+	}
+}
+
+func TestPluginDB_QueryTruncatedFlag(t *testing.T) {
+	app, token := pluginDBTestApp(t)
+	if err := app.PluginDBExec("test-plugin", token, "CREATE TABLE t (x INTEGER)", nil); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	// Insert more rows than a low cap.
+	for i := 0; i < 5; i++ {
+		if err := app.PluginDBExec("test-plugin", token, "INSERT INTO t VALUES (?)", []any{i}); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+	// Temporarily lower the cap so we don't need 5000+ rows.
+	old := maxPluginQueryRows
+	maxPluginQueryRows = 3
+	defer func() { maxPluginQueryRows = old }()
+	res, err := app.PluginDBQuery("test-plugin", token, "SELECT x FROM t", nil)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatal("expected Truncated=true when result exceeds row cap")
+	}
+	if len(res.Rows) != 3 {
+		t.Fatalf("expected 3 rows (capped), got %d", len(res.Rows))
+	}
+}
+
+func TestPluginDB_MigrateRejectsBlockedStatements(t *testing.T) {
+	app, token := pluginDBTestApp(t)
+	// A migration body smuggling a PRAGMA that undermines the contract.
+	err := app.PluginDBMigrate("test-plugin", token, 1, "CREATE TABLE t (x INTEGER); PRAGMA query_only = ON")
+	if err == nil {
+		t.Fatal("expected migration with smuggled PRAGMA to be blocked")
+	}
+}
