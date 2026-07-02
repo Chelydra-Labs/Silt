@@ -94,6 +94,26 @@ and relaunch). The three quick-add entry points: plugin-gated
 `PluginSetTaskDueDate` rewrites the `[due::]` token for drag-and-drop
 rescheduling.
 
+**Recurring tasks (#296).** A task carrying a `[recur:: RULE]` token (e.g.
+`every week`, `every 2 months`) is a recurring task. The `[recur::]` token
+is parsed by `scanTaskTokens` alongside the other six Dataview tokens and
+cached in the `tasks.recur` column for query/filter speed; the markdown file
+is the source of truth. When a recurring task transitions to DONE via
+`UpdateBlockState`, a pure Go resolver (`backend/recurrence`) computes the
+next due date from the rule and the current `[due::]` anchor (or today if
+absent), using **skip-missed advancement** — the next instance lands on the
+first strictly-future occurrence, never backfilling missed intervals. A new
+TODO block with a fresh UUID and the advanced `[due::]` date is spliced
+directly below the completed line in the parsed slice, so the existing
+render→write→re-index chain persists both the completion and the next
+instance in one atomic write. The `[recur::]` token is the rule: editing it
+(via `SetTaskRecurrence` / `PluginSetTaskRecurrence`) applies to future
+completions only; clearing it (empty string) stops recurrence. Recurrence
+requires a `[due::]` anchor — the resolver anchors on it, so
+`SetTaskRecurrence` rejects a rule set without one. The grammar is
+`every day|weekday|week|month|year` and `every N days|weeks|months|years`,
+with end-of-month clamping (Jan 31 + 1 month → Feb 28).
+
 ---
 
 1. System Topology & Process Boundaries
@@ -197,7 +217,7 @@ import "regexp"
 var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
 
 // TaskTokenRegex scans the checkbox remainder for `[key:: value]` Dataview
-// tokens (due, start, owner, priority, pin, progress). Order-independent
+// tokens (due, start, owner, priority, pin, progress, recur). Order-independent
 // and extensible via a one-line addition to the scanTaskTokens dispatch.
 var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
 
@@ -403,6 +423,7 @@ CREATE TABLE tasks (
     priority INTEGER,        -- 1, 2, 3
     pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache (#135): NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
     progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token
+    recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks (#296); cached from [recur:: RULE] token
     comments_count INTEGER DEFAULT 0, -- derived: child NOTE blocks
     links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE

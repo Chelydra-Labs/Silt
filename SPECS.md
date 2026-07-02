@@ -286,6 +286,18 @@ Metadata Tokens (Dataview `[key:: value]` format):
 | `priority` | `[p:: N]` | `[priority:: N]` (1=critical, 2=normal, 3=low) | `[priority:: 1]` |
 | `pin` | `[pinned:: true]` | `[pin:: true]` (boolean) | `[pin:: true]` |
 | `progress` | `[prog:: N]` | `[progress:: N]` (0-100) | `[progress:: 50]` |
+| `recur` | `[recurrence:: RULE]` | `[recur:: RULE]` (natural language) | `[recur:: every week]` |
+
+Recurrence rules (#296): The `recur` token carries a natural-language
+repeat rule. Supported grammar: `every day`, `every weekday` (Mon–Fri),
+`every week`, `every N days`, `every N weeks`, `every N months`,
+`every year`. When a recurring task is marked DONE, the next instance is
+generated automatically: a new TODO block with a fresh UUID and an advanced
+`[due::]` date is written directly below the completed line. The next date
+is computed from the current due date + interval, using skip-missed
+advancement (the first strictly-future occurrence, never backfilling).
+Setting a recurrence rule requires a `[due::]` anchor; clearing the token
+(empty string) stops recurrence.
 
 Tags: Standard markdown hashtags (`#work/project/milestone-one`) —
 unaffected by the metadata token system.
