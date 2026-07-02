@@ -154,6 +154,7 @@ func TestParseLine(t *testing.T) {
 //
 // Syntax convention (matches the renderer output):
 //   - [x] description [priority:: N] [start:: DATE] [due:: DATE] [owner:: name] [pin:: true] [progress:: N]
+//
 // Metadata tokens follow the description in Dataview [key:: value] format.
 func TestParseLine_PinAndProgress(t *testing.T) {
 	// pinState collapses a *bool into a comparable label for assertions.
@@ -348,6 +349,89 @@ func TestParseLine_PinAndProgress(t *testing.T) {
 		final, _, _ := ParseLine(renderedOff, 1, 4)
 		if got := pinState(final.Pinned); got != "false" {
 			t.Errorf("after pin OFF re-parse: expected false, got %s", got)
+		}
+	})
+}
+
+// TestParseLine_Recurrence covers the [recur::] token (#295): detection,
+// empty-value handling, whitespace/case normalization, round-trip through
+// render, coexistence with [due::], and that a known recur token is NOT
+// duplicated into ExtraTokens (it is a first-class field).
+func TestParseLine_Recurrence(t *testing.T) {
+	t.Run("recurrence parsed from [recur:: every week]", func(t *testing.T) {
+		line := "- [ ] Water plants [due:: 2026-07-15] [recur:: every week] <!-- id: 11111111-1111-1111-1111-111111111111 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Recurrence != "every week" {
+			t.Errorf("expected Recurrence='every week', got %q", block.Recurrence)
+		}
+		if block.DueDate != "2026-07-15" {
+			t.Errorf("expected DueDate=2026-07-15, got %q", block.DueDate)
+		}
+		if block.CleanText != "Water plants" {
+			t.Errorf("expected CleanText='Water plants', got %q", block.CleanText)
+		}
+	})
+	t.Run("alias [recurrence::] maps to Recurrence", func(t *testing.T) {
+		line := "- [ ] Standup [recurrence:: every weekday] <!-- id: 22222222-2222-2222-2222-222222222222 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Recurrence != "every weekday" {
+			t.Errorf("expected Recurrence='every weekday' from alias, got %q", block.Recurrence)
+		}
+	})
+	t.Run("whitespace and case normalized", func(t *testing.T) {
+		line := "- [ ] Review PRs [Recur::  Every  WEEK ] <!-- id: 33333333-3333-3333-3333-333333333333 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Recurrence != "every week" {
+			t.Errorf("expected normalized 'every week', got %q", block.Recurrence)
+		}
+	})
+	t.Run("empty [recur::] yields empty string, not duplicated to ExtraTokens", func(t *testing.T) {
+		// An empty recurrence value is meaningless but must round-trip
+		// without polluting ExtraTokens (recur is a first-class field,
+		// not an unknown token).
+		line := "- [ ] Task [recur:: ] <!-- id: 44444444-4444-4444-4444-444444444444 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Recurrence != "" {
+			t.Errorf("expected empty Recurrence, got %q", block.Recurrence)
+		}
+		if len(block.ExtraTokens) != 0 {
+			t.Errorf("expected no ExtraTokens (recur is first-class), got %v", block.ExtraTokens)
+		}
+	})
+	t.Run("recur token not duplicated into ExtraTokens", func(t *testing.T) {
+		// Defensive: even with a value present, the recur token must be
+		// consumed by the dispatch, not echoed into ExtraTokens.
+		line := "- [ ] Task [recur:: every 2 weeks] [due:: 2026-07-15] <!-- id: 55555555-5555-5555-5555-555555555555 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Recurrence != "every 2 weeks" {
+			t.Errorf("expected Recurrence='every 2 weeks', got %q", block.Recurrence)
+		}
+		for _, tok := range block.ExtraTokens {
+			if strings.Contains(strings.ToLower(tok), "recur") {
+				t.Errorf("recur token must not appear in ExtraTokens, found %q", tok)
+			}
+		}
+	})
+	t.Run("round-trips through RenderFileContent", func(t *testing.T) {
+		content := "---\nnotebook: \"work\"\nsection: \"\"\npage: \"plan\"\ndate: \"2026-07-15\"\ntags: []\n---\n- [ ] Pay rent [due:: 2026-08-01] [recur:: every month] <!-- id: 66666666-6666-6666-6666-666666666666 -->\n"
+		blocks, meta, _, _, err := ParseFileContent(content, "work", "", "plan", "2026-07-15", 4)
+		if err != nil {
+			t.Fatalf("ParseFileContent failed: %v", err)
+		}
+		if len(blocks) != 1 || blocks[0].Recurrence != "every month" {
+			t.Fatalf("expected 1 block with recurrence 'every month', got %+v", blocks)
+		}
+		fm, body := SplitFrontmatter(content)
+		rendered := RenderFileContent(blocks, body, fm, 4)
+		blocks2, _, _, _, err := ParseFileContent(rendered, meta.Notebook, meta.Section, meta.Page, meta.Date, 4)
+		if err != nil {
+			t.Fatalf("re-parse of rendered content failed: %v", err)
+		}
+		if len(blocks2) != 1 || blocks2[0].Recurrence != "every month" {
+			t.Errorf("recurrence did not round-trip, got %+v", blocks2)
+		}
+		if !strings.Contains(rendered, "[recur:: every month]") {
+			t.Errorf("rendered output missing [recur:: every month]:\n%s", rendered)
 		}
 	})
 }

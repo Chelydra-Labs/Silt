@@ -36,14 +36,16 @@ var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
 // text — no other markdown syntax uses `::`.
 //
 // Supported keys (see scanTaskTokens for the dispatch table):
-//   [due:: DATE]       — due date (YYYY-MM-DD)
-//   [start:: DATE]     — start date (YYYY-MM-DD)
-//   [owner:: name]     — owner/assignee
-//   [priority:: N]     — priority (1=critical, 2=normal, 3=low)
-//   [p:: N]            — priority shorthand (alias for [priority:: N])
-//   [pin:: true]       — pinned (boolean; presence also implies true)
-//   [progress:: N]     — progress (0-100)
-//   [prog:: N]         — progress shorthand
+//
+//	[due:: DATE]       — due date (YYYY-MM-DD)
+//	[start:: DATE]     — start date (YYYY-MM-DD)
+//	[owner:: name]     — owner/assignee
+//	[priority:: N]     — priority (1=critical, 2=normal, 3=low)
+//	[p:: N]            — priority shorthand (alias for [priority:: N])
+//	[pin:: true]       — pinned (boolean; presence also implies true)
+//	[progress:: N]     — progress (0-100)
+//	[prog:: N]         — progress shorthand
+//	[recur:: RULE]     — recurrence rule (e.g. `every week`, `every 2 months`)
 //
 // The scanner is the single source of truth for token → ParsedBlock
 // field mapping; adding a new metadata type is a one-line addition to
@@ -56,9 +58,13 @@ var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
 var whitespaceRun = regexp.MustCompile(`\s+`)
 
 // IDRegex captures the trailing block-identity comment. The format is:
-//   <!-- id: uuid -->
+//
+//	<!-- id: uuid -->
+//
 // or (with per-block file_date, post per-day-file-model removal):
-//   <!-- id: uuid @ YYYY-MM-DD -->
+//
+//	<!-- id: uuid @ YYYY-MM-DD -->
+//
 // The date suffix is optional for backward compatibility with notes created
 // under the old per-day-file model (it is assigned during migration).
 var IDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36})(?:\s*@\s*(\d{4}-\d{2}-\d{2}))?\s*-->\s*$`)
@@ -80,10 +86,11 @@ func generateUUIDv4() string {
 
 // EnsureBlockID extracts (or assigns) the block identity — both the UUID and
 // the per-block file_date — from the trailing comment. Returns:
-//   id        — the UUID ("" for empty lines)
-//   fileDate  — the date from the comment, or "" if none was embedded
-//   newLine   — the line with the comment preserved/assigned
-//   modified  — true if a new comment was injected (caller should rewrite)
+//
+//	id        — the UUID ("" for empty lines)
+//	fileDate  — the date from the comment, or "" if none was embedded
+//	newLine   — the line with the comment preserved/assigned
+//	modified  — true if a new comment was injected (caller should rewrite)
 func EnsureBlockID(line string) (id, fileDate, newLine string, modified bool) {
 	clean := strings.TrimSpace(line)
 	if clean == "" {
@@ -189,7 +196,7 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 // Adding a new metadata type is a one-line addition to the switch below.
 // Unknown keys are preserved in extraTokens so the file round-trips
 // without data loss.
-func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, description string, extraTokens []string) {
+func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, extraTokens []string) {
 	priority = 3 // default; 0 from the regex means "not set"
 	progress = 0
 	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
@@ -237,6 +244,15 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 					progress = 100
 				}
 			}
+		case "recur", "recurrence":
+			// Normalize: collapse internal whitespace runs and lowercase
+			// so `[Recur::  Every  WEEK ]` and `[recur:: every week]`
+			// parse identically and round-trip to a canonical form. The
+			// grammar (`every <unit>` / `every N <units>`) is validated
+			// by the resolver (backend/recurrence), not here — the parser
+			// stores the token verbatim-ish so an unsupported rule still
+			// round-trips instead of being silently dropped.
+			recurrence = whitespaceRun.ReplaceAllString(strings.ToLower(val), " ")
 		default:
 			// Unrecognised key — preserve the full [key:: value] token
 			// verbatim so it survives the parse → render round-trip.
@@ -279,26 +295,27 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		}
 
 		// Scan for [key:: value] metadata tokens in the remainder.
-		owner, startDate, dueDate, priority, pinned, progress, description, extraTokens := scanTaskTokens(remainder)
+		owner, startDate, dueDate, priority, pinned, progress, recurrence, description, extraTokens := scanTaskTokens(remainder)
 
 		depth := parseLeadingIndent(indent, spacesPerTab)
 
 		return ParsedBlock{
-			ID:         blockID,
-			Type:       BlockTask,
-			Depth:      depth,
-			RawText:    newLine,
-			CleanText:  description,
-			Status:     status,
-			Owner:      owner,
-			StartDate:  startDate,
-			DueDate:    dueDate,
-			Priority:   priority,
+			ID:          blockID,
+			Type:        BlockTask,
+			Depth:       depth,
+			RawText:     newLine,
+			CleanText:   description,
+			Status:      status,
+			Owner:       owner,
+			StartDate:   startDate,
+			DueDate:     dueDate,
+			Priority:    priority,
 			Pinned:      pinned,
 			Progress:    progress,
+			Recurrence:  recurrence,
 			ExtraTokens: extraTokens,
 			LineNumber:  lineNumber,
-			FileDate:   blockFileDate,
+			FileDate:    blockFileDate,
 		}, newLine, modified
 	}
 
@@ -390,7 +407,7 @@ func isClosingFence(trimmed string, openerLen int) bool {
 var gfmRowRe = regexp.MustCompile(`^\|.*\|$`)
 var gfmSepRe = regexp.MustCompile(`^\|[\s:|-]+\|$`)
 
-func isGfmRow(s string) bool { return gfmRowRe.MatchString(stripInlineID(s)) }
+func isGfmRow(s string) bool       { return gfmRowRe.MatchString(stripInlineID(s)) }
 func isGfmSeparator(s string) bool { return gfmSepRe.MatchString(stripInlineID(s)) }
 
 // isGfmTableStart reports whether lines[idx] starts a GFM table run: a pipe
@@ -1070,6 +1087,9 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		if block.DueDate != "" {
 			tokens = append(tokens, fmt.Sprintf("[due:: %s]", block.DueDate))
 		}
+		if block.Recurrence != "" {
+			tokens = append(tokens, fmt.Sprintf("[recur:: %s]", block.Recurrence))
+		}
 		if block.Owner != "" {
 			tokens = append(tokens, fmt.Sprintf("[owner:: %s]", block.Owner))
 		}
@@ -1126,4 +1146,3 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 			strings.ReplaceAll(block.CleanText, "\n", " "), idSuffix)
 	}
 }
-
