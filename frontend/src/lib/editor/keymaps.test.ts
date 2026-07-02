@@ -402,43 +402,40 @@ describe('Delete handler — forward merge (#364)', () => {
     editor.destroy()
   })
 
-  ;(it('does not merge a codeBlock (different content model)', () => {
-    // codeBlock is excluded structurally: findActiveBlock only recognizes
-    // BLOCK_TYPES (noteBlock/taskBlock/headerBlock/calloutBlock), so a
-    // codeBlock cursor yields no active block and the handler returns false
-    // before any merge logic runs. mergeSiblingBlock additionally guards on
-    // node.type.spec.code as defense-in-depth. The real codeBlock lives
-    // outside SiltBlockExtensions (not registered in the test editor), so
-    // this is a structural guarantee rather than an integration test; the
-    // cross-type no-op test above covers the same fall-through code path.
-    expect(true).toBe(true)
-  }),
-    it('merges taskBlock pairs (helper is type-agnostic)', () => {
-      const editor = makeEditorWithKeymaps()
-      const doc: DocJSON = {
-        type: 'doc',
-        content: [
-          {
-            type: 'taskBlock',
-            attrs: { id: 't1', depth: 0, status: 'TODO' },
-            content: [{ type: 'text', text: 'foo' }]
-          },
-          {
-            type: 'taskBlock',
-            attrs: { id: 't2', depth: 0, status: 'TODO' },
-            content: [{ type: 'text', text: 'bar' }]
-          }
-        ]
-      }
-      editor.commands.setContent(doc)
-      // taskBlock 'foo' nodeSize 5; end of content = pos 4.
-      editor.commands.setTextSelection(4)
-      expect(pressKey(editor, 'Delete')).toBe(true)
-      expect(editor.state.doc.childCount).toBe(1)
-      expect(editor.state.doc.child(0).textContent).toBe('foobar')
-      expect(editor.state.doc.child(0).attrs.id).toBe('t1')
-      editor.destroy()
-    }))
+  // codeBlock exclusion (AC): not asserted here as an integration test because
+  // codeBlock lives outside SiltBlockExtensions (not registered in the test
+  // editor) and findActiveBlock only recognizes BLOCK_TYPES, which omits it —
+  // so a codeBlock cursor yields no active block and the handler returns false
+  // before any merge logic runs. The cross-type no-op test above covers the
+  // same fall-through path; the node.type.spec.code guard in mergeSiblingBlock
+  // is defense-in-depth (documented in BLOCK_TYPES' comment).
+
+  it('merges taskBlock pairs (helper is type-agnostic)', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'taskBlock',
+          attrs: { id: 't1', depth: 0, status: 'TODO' },
+          content: [{ type: 'text', text: 'foo' }]
+        },
+        {
+          type: 'taskBlock',
+          attrs: { id: 't2', depth: 0, status: 'TODO' },
+          content: [{ type: 'text', text: 'bar' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // taskBlock 'foo' nodeSize 5; end of content = pos 4.
+    editor.commands.setTextSelection(4)
+    expect(pressKey(editor, 'Delete')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).textContent).toBe('foobar')
+    expect(editor.state.doc.child(0).attrs.id).toBe('t1')
+    editor.destroy()
+  })
 })
 
 describe('Backspace handler — backward merge (#364)', () => {
@@ -568,6 +565,36 @@ describe('Backspace handler — backward merge (#364)', () => {
     const kids = docChildren(editor)[0].content ?? []
     const marked = kids.find((n) => n.text === 'bold')
     expect(marked?.marks?.some((m) => m.type === 'highlight')).toBe(true)
+    editor.destroy()
+  })
+
+  it('merges into an empty previous sibling (survivor keeps its id)', () => {
+    const editor = makeEditorWithKeymaps()
+    // Previous block empty (no content array), current block carries the text.
+    // Backspace at start of current: content moves into the empty previous
+    // block; the previous block survives with its own id, current is removed.
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'empty-prev', depth: 0, bullet: '' }
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'curr', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'moved' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // Empty prev nodeSize 2; current starts at pos 2, content at pos 3.
+    editor.commands.setTextSelection(3)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    const only = editor.state.doc.child(0)
+    expect(only.textContent).toBe('moved')
+    expect(only.attrs.id).toBe('empty-prev')
     editor.destroy()
   })
 

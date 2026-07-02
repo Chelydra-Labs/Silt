@@ -22,7 +22,14 @@ import { settings } from '../../settings/store.svelte'
 // The extension reads the indent/unindent hotkeys live from the settings store
 // so users can remap or disable them from Settings → General.
 
-/** The Silt block node types, in canonical order. NoteBlock is first (default). */
+/**
+ * The Silt block node types the keymaps operate on, in canonical order.
+ * NoteBlock is first (default). `codeBlock` is intentionally absent: its
+ * `text*` content model differs from the prose blocks' `inline*`, so it is
+ * excluded from merging (and from `findActiveBlock` entirely). The
+ * `node.type.spec.code` guard inside `mergeSiblingBlock` is defense-in-depth
+ * in case a future change admits codeBlock here.
+ */
 export const BLOCK_TYPES = [
   'noteBlock',
   'taskBlock',
@@ -134,6 +141,17 @@ function currentBlockInfo(editor: Editor) {
   }
 }
 
+/**
+ * A block is "empty" when it carries no editable content — either no inline
+ * children, or only whitespace. Whitespace-only blocks behave as empty for
+ * BOTH the Backspace unindent/delete path and the Delete drop-empty path so
+ * the two boundary keys stay symmetric (otherwise a spaces-only block would
+ * unindent on Backspace but merge on Delete).
+ */
+function isBlockEmpty(node: ProseMirrorNode): boolean {
+  return node.content.size === 0 || node.textContent.trim() === ''
+}
+
 function setBlockDepth(
   editor: Editor,
   nodePos: number,
@@ -211,36 +229,50 @@ function mergeSiblingBlock(
   if (!sibling) return false
   if (sibling.type.name !== node.type.name) return false
 
-  let merged: ProseMirrorNode
-  let from: number
-  let to: number
-  let caretPos: number
-  if (direction === 'forward') {
-    // Delete at end of current: append sibling's content into the current
-    // block; the current block survives with its own id.
-    const mergedContent = node.content.append(sibling.content)
-    merged = node.type.create(node.attrs, mergedContent)
-    from = pos
-    to = pos + node.nodeSize + sibling.nodeSize
-    // Caret at the boundary between the two original contents.
-    caretPos = pos + 1 + node.content.size
-  } else {
-    // Backspace at start of current: append the current block's content into
-    // the previous sibling; the previous block survives with its own id.
-    const prevPos = pos - sibling.nodeSize
-    const mergedContent = sibling.content.append(node.content)
-    merged = sibling.type.create(sibling.attrs, mergedContent)
-    from = prevPos
-    to = pos + node.nodeSize
-    // Caret at the end of the previous block's original content (the join
-    // boundary), which is the standard text-editor join position.
-    caretPos = prevPos + 1 + sibling.content.size
-  }
+  // create + replaceWith can throw if a future schema change makes the merged
+  // content invalid for the block's content model; a keypress must never
+  // propagate an uncaught throw out of the keymap, so the whole build+dispatch
+  // is guarded — fail closed (no merge) and surface the cause for diagnostics.
+  try {
+    let merged: ProseMirrorNode
+    let from: number
+    let to: number
+    let caretPos: number
+    if (direction === 'forward') {
+      // Delete at end of current: append sibling's content into the current
+      // block; the current block survives with its own id.
+      const mergedContent = node.content.append(sibling.content)
+      merged = node.type.create(node.attrs, mergedContent)
+      from = pos
+      to = pos + node.nodeSize + sibling.nodeSize
+      // Caret at the boundary between the two original contents.
+      caretPos = pos + 1 + node.content.size
+    } else {
+      // Backspace at start of current: append the current block's content
+      // into the previous sibling; the previous block survives with its id.
+      const prevPos = pos - sibling.nodeSize
+      const mergedContent = sibling.content.append(node.content)
+      merged = sibling.type.create(sibling.attrs, mergedContent)
+      from = prevPos
+      to = pos + node.nodeSize
+      // Caret at the end of the previous block's original content (the join
+      // boundary), which is the standard text-editor join position.
+      caretPos = prevPos + 1 + sibling.content.size
+    }
 
-  const tr = editor.state.tr.replaceWith(from, to, merged)
-  tr.setSelection(TextSelection.create(tr.doc, caretPos))
-  editor.view.dispatch(tr)
-  return true
+    const tr = editor.state.tr.replaceWith(from, to, merged)
+    tr.setSelection(TextSelection.create(tr.doc, caretPos))
+    // No editor.commands.focus() here, deliberately: the editor already holds
+    // focus during typing, and an extra focus() dispatch would split the merge
+    // into two transactions, breaking atomic undo and the single-autosave
+    // contract. Enter/focusBlockAt call focus() because they move focus into a
+    // different block; a same-block merge does not.
+    editor.view.dispatch(tr)
+    return true
+  } catch (e) {
+    console.error('mergeSiblingBlock: merge dispatch failed', e)
+    return false
+  }
 }
 
 // Move the active top-level block up (-1) or down (+1), swapping it with its
@@ -738,9 +770,7 @@ export const SiltBlockKeymaps = Extension.create({
         // sibling above. Same-type-sibling merge takes precedence over the
         // empty-block unindent/delete path below (#364). If no same-type sibling
         // exists (cross-type, cross-parent, or first child), fall through.
-        const isEmpty =
-          info.node.content.size === 0 || info.node.textContent.trim() === ''
-        if (!isEmpty) {
+        if (!isBlockEmpty(info.node)) {
           return mergeSiblingBlock(this.editor, 'backward')
         }
 
@@ -791,8 +821,10 @@ export const SiltBlockKeymaps = Extension.create({
         // Empty current block + same-type sibling below: drop the empty block
         // so the sibling takes its place. The sibling keeps its own id (no
         // merge — the empty block contributes no content). Caret lands at the
-        // start of the promoted sibling's content.
-        if (info.node.content.size === 0) {
+        // start of the promoted sibling's content. Whitespace-only counts as
+        // empty here (isBlockEmpty) so Delete and Backspace treat blank lines
+        // symmetrically.
+        if (isBlockEmpty(info.node)) {
           const sibling = getSibling(
             this.editor,
             { node: info.node, pos: info.pos },
