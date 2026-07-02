@@ -7,8 +7,12 @@
   import AboutTab from './AboutTab.svelte'
   import PluginsTab from './PluginsTab.svelte'
   import DevTab from './DevTab.svelte'
+  import PluginSettingsPanel from './PluginSettingsPanel.svelte'
   import { loadConfig, settings } from '../../settings/store.svelte'
   import { loadPlugins } from '../../plugins/loader'
+  import { loadedPlugins } from '../../plugins/store.svelte'
+  import { getSurfaces, onSurfacesChanged } from '../../plugins/surfaces'
+  import type { RegisteredPlugin } from '../../plugins/sdk'
 
   interface Props {
     activeTab?: string
@@ -26,9 +30,56 @@
     activePage
   }: Props = $props()
 
-  let devMode = $derived(
-    settings.config?.ui?.open_devtools_on_startup === true
-  )
+  let devMode = $derived(settings.config?.ui?.open_devtools_on_startup === true)
+
+  // #214: plugin-contributed settings tabs. A plugin contributes a tab when it
+  // has a bespoke settings page — either a first-party settingsPageComponent
+  // (compiled Svelte) or a registered 'settings-panel' iframe surface
+  // (third-party). Disabled plugins are excluded: they are not in
+  // loadedPlugins.plugins and their surfaces are not registered.
+  let settingsPanelSurfaces = $state(getSurfaces('settings-panel'))
+  onSurfacesChanged((all) => {
+    settingsPanelSurfaces = all.filter((s) => s.kind === 'settings-panel')
+  })
+
+  // Plugins with a bespoke settings page (first-party via component, third-party
+  // via surface). Tab id is `plugin:<id>` so it never collides with core tabs.
+  let pluginSettingsTabs = $derived.by(() => {
+    const tabs: {
+      id: string
+      label: string
+      icon: string
+      plugin: RegisteredPlugin
+    }[] = []
+    // First-party: compiled Svelte component.
+    for (const plugin of loadedPlugins.plugins.values()) {
+      if (plugin.settingsPageComponent) {
+        tabs.push({
+          id: `plugin:${plugin.manifest.id}`,
+          label: plugin.manifest.name,
+          icon: plugin.manifest.icon ?? 'tune',
+          plugin
+        })
+      }
+    }
+    // Third-party: 'settings-panel' iframe surface. Group by pluginID; a plugin
+    // may register one settings surface.
+    const seen = new Set(tabs.map((t) => t.plugin.manifest.id))
+    for (const surface of settingsPanelSurfaces) {
+      if (seen.has(surface.pluginID)) continue
+      const plugin = loadedPlugins.plugins.get(surface.pluginID)
+      if (plugin) {
+        tabs.push({
+          id: `plugin:${surface.pluginID}`,
+          label: plugin.manifest.name,
+          icon: plugin.manifest.icon ?? 'tune',
+          plugin
+        })
+        seen.add(surface.pluginID)
+      }
+    }
+    return tabs
+  })
 
   const tabs = $derived([
     { id: 'workspace', label: 'Workspace', icon: 'folder' },
@@ -36,6 +87,11 @@
     { id: 'appearance', label: 'Appearance', icon: 'palette' },
     { id: 'hotkeys', label: 'Hotkeys', icon: 'keyboard' },
     { id: 'plugins', label: 'Plugins', icon: 'extension' },
+    ...pluginSettingsTabs.map((t) => ({
+      id: t.id,
+      label: t.label,
+      icon: t.icon
+    })),
     ...(devMode ? [{ id: 'dev' as const, label: 'Dev', icon: 'code' }] : []),
     { id: 'about', label: 'About', icon: 'info' }
   ])
@@ -216,10 +272,10 @@
         class="flex-1 min-h-0"
         class:overflow-y-auto={['appearance', 'plugins', 'about'].includes(
           activeTab
-        )}
+        ) || activeTab.startsWith('plugin:')}
         class:custom-scrollbar={['appearance', 'plugins', 'about'].includes(
           activeTab
-        )}
+        ) || activeTab.startsWith('plugin:')}
         class:flex={['workspace', 'editor', 'hotkeys'].includes(activeTab)}
         class:flex-col={['workspace', 'editor', 'hotkeys'].includes(activeTab)}
         class:overflow-hidden={['workspace', 'editor', 'hotkeys'].includes(
@@ -249,6 +305,18 @@
           <HotkeysTab />
         {:else if activeTab === 'plugins'}
           <PluginsTab {activeNotebook} {activeSection} {activePage} />
+        {:else if activeTab.startsWith('plugin:')}
+          {@const pluginTab = pluginSettingsTabs.find(
+            (t) => t.id === activeTab
+          )}
+          {#if pluginTab}
+            <PluginSettingsPanel
+              plugin={pluginTab.plugin}
+              {activeNotebook}
+              {activeSection}
+              {activePage}
+            />
+          {/if}
         {:else if activeTab === 'dev'}
           <DevTab />
         {:else if activeTab === 'about'}

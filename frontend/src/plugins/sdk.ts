@@ -530,6 +530,21 @@ export interface RegisteredPlugin {
    * way to render untrusted code in the host webview today.
    */
   sidebarComponent?: any
+  /**
+   * Optional bespoke Settings page component (#214). When present, the plugin
+   * contributes a dedicated tab to the Settings shell rendered from this
+   * compiled Svelte component (instead of the generic SettingSchema[] form).
+   * The component receives `{ ctx, manifest }` as props, the same as
+   * sidebarComponent.
+   *
+   * A plugin declares EITHER settingsPageComponent OR manifest.settings
+   * (the generic schema), NOT both — registering both is a configuration
+   * error rejected by the registry. Third-party plugins render a bespoke
+   * page via the existing `settings-panel` iframe surface
+   * (registerSurface({ kind: 'settings-panel', ... })); they do not use
+   * this field.
+   */
+  settingsPageComponent?: any
   /** Optional init hook invoked with the live PluginContext. */
   init?: (ctx: PluginContext) => void
   /** v2 lifecycle hooks (#106) — invoked by the host loader. */

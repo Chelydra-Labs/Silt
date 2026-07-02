@@ -18,6 +18,7 @@
   import { loadPlugins, teardownPlugin } from '../../plugins/loader'
   import { firstPartyPlugins } from '../../plugins/registry'
   import { loadedPlugins } from '../../plugins/store.svelte'
+  import { getSurfaces } from '../../plugins/surfaces'
   import { settings, saveConfig } from '../../settings/store.svelte'
   import SettingsForm from './SettingsForm.svelte'
   import NetworkAuditViewer from './NetworkAuditViewer.svelte'
@@ -309,6 +310,18 @@
     return settings.config?.plugins.plugin_settings?.[id]
   }
 
+  // #214: hasBespokeSettings reports whether a plugin renders its settings via a
+  // dedicated tab (first-party settingsPageComponent or a registered
+  // 'settings-panel' surface) rather than the generic schema form. When true,
+  // the card shows a redirect note instead of the generic form (either/or).
+  function hasBespokeSettings(id: string): boolean {
+    const reg = loadedPlugins.plugins.get(id)
+    if (reg?.settingsPageComponent) return true
+    if (getSurfaces('settings-panel').some((s) => s.pluginID === id))
+      return true
+    return false
+  }
+
   function openPluginView(id: string) {
     // First-party view ids map to activeView (silt-agenda → agenda, etc.).
     const viewId = id.replace(/^silt-/, '')
@@ -578,7 +591,21 @@
                 </dd>
               </dl>
 
-              {#if card.settingsSchema && card.settingsSchema.length > 0}
+              {#if hasBespokeSettings(card.id)}
+                <!-- #214: this plugin renders settings via a dedicated tab;
+                     show a redirect note instead of the generic form. -->
+                <div>
+                  <div
+                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                  >
+                    Plugin settings
+                  </div>
+                  <p class="text-[12px] text-text-muted font-body-md">
+                    This plugin has a dedicated settings page — see the
+                    <strong>{card.name}</strong> tab in the sidebar.
+                  </p>
+                </div>
+              {:else if card.settingsSchema && card.settingsSchema.length > 0}
                 <div>
                   <div
                     class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"

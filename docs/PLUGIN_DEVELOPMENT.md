@@ -646,8 +646,56 @@ existing `plugin_settings.<id>.*` keys remain valid and are read through the
 same `getPluginSettings` / `updatePluginSetting` plumbing (no new storage
 path).
 
-> Full registration example and the "when to prefer the generic form"
-> guidance land with the Sprint 19 implementation of #214.
+**First-party (compiled Svelte).** Register a `settingsPageComponent` on the
+`RegisteredPlugin` (parallel to `sidebarComponent`). The component receives
+`{ ctx, manifest }` props:
+
+```ts
+// registry.ts
+import MyPluginSettings from './first-party/my-plugin/Settings.svelte'
+registerPlugin({
+  manifest: { id: 'my-plugin', name: 'My Plugin', version: '1.0.0' },
+  component: MyPlugin,
+  settingsPageComponent: MyPluginSettings,
+  source: 'first-party'
+})
+```
+
+```svelte
+<!-- Settings.svelte -->
+<script lang="ts">
+  import type { PluginContext, PluginManifest } from '../../sdk'
+  interface Props { ctx: PluginContext; manifest?: PluginManifest }
+  let { ctx, manifest }: Props = $props()
+  let endpoint = $state('')
+  // Load existing setting on mount.
+  $effect(() => { ctx.getPluginSettings().then(s => { endpoint = s.endpoint ?? '' }) })
+  function save() { ctx.updateSetting('endpoint', endpoint) }
+</script>
+<label for="ep">Provider endpoint</label>
+<input id="ep" bind:value={endpoint} />
+<button onclick={save}>Save</button>
+```
+
+**Third-party (iframe surface).** Register a `settings-panel` surface; the
+Settings shell renders it in the sandboxed iframe via `PluginSurfaceFrame`:
+
+```ts
+ctx.registerSurface({
+  id: 'settings',
+  kind: 'settings-panel',
+  label: 'My Plugin Settings',
+  html: '<div id="app">...</div>'
+})
+```
+
+**When to prefer the generic form.** Use the generic `SettingSchema[]` form
+when your settings are flat key/value pairs (strings, bools, selects, colors,
+keymaps, lists). It is less code, automatically a11y-compliant, and renders
+consistently with the rest of Settings. Reserve the bespoke page for rich UI
+that the generic form cannot express: connection-test buttons, multi-step
+wizards, prompt editors, action catalogs. The AI Provider page (Sprint 20)
+and each AI plugin's page (Sprints 21–23) are the first consumers.
 
 ### 8.13 Surfaces: `note-banner` (#215)
 
