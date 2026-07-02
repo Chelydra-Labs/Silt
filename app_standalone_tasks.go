@@ -151,13 +151,29 @@ func (a *App) CreateStandaloneTask(title, dueDate, status string) (string, error
 
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
-		blocks, err2 := a.FetchPageBlocks(standaloneTasksNotebook, standaloneTasksSection, standaloneTasksPage)
-		if err2 != nil {
-			writeErr = fmt.Errorf("read standalone tasks: %w", err2)
+		// Read existing blocks from the file DIRECTLY rather than via
+		// FetchPageBlocks: FetchPageBlocks re-acquires vaultMu.RLock, and this
+		// caller already holds it — Go's RWMutex is not reentrant, so under
+		// writer contention (vault reload, linked-config change) the inner
+		// RLock would wait on a writer that is itself waiting on this outer
+		// read lock → self-deadlock. The canonical writers
+		// (PluginUpdateTaskMeta, writePageFileLocked) read the file inside the
+		// lock for the same reason; this path now matches them. ensureFile
+		// guaranteed the file exists, so a missing file is an unexpected error.
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			writeErr = fmt.Errorf("read standalone tasks: %w", err)
 			return
 		}
-		blocks = append(blocks, newBlock)
-		writeErr = a.writePageFileLocked(filePath, source, standaloneTasksNotebook, standaloneTasksSection, standaloneTasksPage, blocks)
+		existing, _, _, _, perr := parser.ParseFileContent(string(content),
+			standaloneTasksNotebook, standaloneTasksSection, standaloneTasksPage,
+			fileOrDefaultDate(filePath), a.spacesPerTab)
+		if perr != nil {
+			writeErr = fmt.Errorf("parse standalone tasks: %w", perr)
+			return
+		}
+		existing = append(existing, newBlock)
+		writeErr = a.writePageFileLocked(filePath, source, standaloneTasksNotebook, standaloneTasksSection, standaloneTasksPage, existing)
 	})
 	if writeErr != nil {
 		return "", writeErr

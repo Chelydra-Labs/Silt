@@ -642,9 +642,12 @@
                 ondragleave={(e) => onCellDragLeave(e, day)}
                 ondrop={(e) => onCellDrop(e, day)}
                 onclick={(e) => {
-                  // Open quick-add only when the empty cell area itself is
-                  // clicked (not a task card button inside it).
-                  if (e.target === e.currentTarget) openQuickAddForDay(day)
+                  // Open quick-add when clicking the cell OR a non-interactive
+                  // child (the date number / header label), but not when the
+                  // click lands on a task card button or the quick-add input.
+                  const t = e.target as HTMLElement
+                  if (t.closest('button,input')) return
+                  openQuickAddForDay(day)
                 }}
                 class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 transition-all focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {overCellDate ===
                 ymd(day)
@@ -712,7 +715,9 @@
               ondragleave={(e) => onCellDragLeave(e, day)}
               ondrop={(e) => onCellDrop(e, day)}
               onclick={(e) => {
-                if (e.target === e.currentTarget) openQuickAddForDay(day)
+                const t = e.target as HTMLElement
+                if (t.closest('button,input')) return
+                openQuickAddForDay(day)
               }}
               onkeydown={(e) => {
                 // Enter on an empty focused cell opens quick-add (keyboard

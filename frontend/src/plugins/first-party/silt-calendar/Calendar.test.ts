@@ -541,4 +541,34 @@ describe('Calendar plugin', () => {
     await flush()
     expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
   })
+
+  // --- Review-pass refinements ---------------------------------------------
+
+  it('week-view: clicking the date header opens quick-add (not just the bare cell)', async () => {
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByRole('button', { name: 'Week' }))
+    await flush()
+    // The week view renders day-of-week labels (Sun..Sat). Clicking one of
+    // those header children now opens quick-add too — previously only the
+    // bare cell gap did, making the obvious click target a no-op.
+    const label = screen.getByText('Mon')
+    await fireEvent.click(label)
+    const input = await screen.findByTestId('quick-add-task-input')
+    expect(input).toBeInTheDocument()
+  })
+
+  it('dropping a card on its own current cell is a no-op (no setTaskDueDate)', async () => {
+    await renderWithTaskOnToday('Self drop')
+    const card = screen.getByText('Self drop')
+    await fireEvent.dragStart(card)
+    // Drop on today's cell (the task already lives there).
+    const todayKey = ymd(new Date())
+    const cell = document.querySelector(`[data-celldate="${todayKey}"]`)!
+    await fireEvent.dragOver(cell)
+    await fireEvent.drop(cell!)
+    await flush()
+    expect(mocks.setTaskDueDate).not.toHaveBeenCalled()
+  })
 })

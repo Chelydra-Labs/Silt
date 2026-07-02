@@ -47,8 +47,9 @@
                 b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority
          FROM blocks b JOIN tasks t ON b.id = t.block_id
          WHERE t.status != 'DONE'
-         ORDER BY t.due_date ASC, t.priority ASC
-         LIMIT 500`
+         ORDER BY (t.due_date IS NULL OR t.due_date = '') ASC,
+                  t.due_date ASC, t.priority ASC
+         LIMIT 1000`
       )
       items = (rows as unknown as AgendaItem[]) ?? []
     } catch (e) {
