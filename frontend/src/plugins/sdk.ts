@@ -334,6 +334,7 @@ export interface PluginContext {
       | 'status-bar-item'
       | 'command-palette-entry'
       | 'settings-panel'
+      | 'note-banner'
     label: string
     icon?: string
     html: string

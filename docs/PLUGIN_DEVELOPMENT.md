@@ -729,7 +729,11 @@ if (!dismissed.includes(noteId)) {
 Banners are transient chrome: they do not capture editor focus on mount and
 are removed cleanly on `teardownPlugin`.
 
-> Full a11y contract (labelled `role="region"`, `aria-live` for dynamic
-> content, accessible close button) lands with the Sprint 19 implementation
-> of #215.
+**a11y contract.** The banner host (`PluginNoteBanners.svelte`) wraps banners
+in a labelled `role="region" aria-label="Plugin banners"`; each banner is a
+`role="status"` element with `aria-live="polite"` so dynamic content updates
+are announced; the close button has an accessible name derived from the banner
+label (`aria-label="Dismiss <label>"`). Banner content that is an alert rather
+than a status should set `role="alert"` inside the surface HTML for an
+assertive announcement.
 
