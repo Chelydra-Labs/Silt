@@ -13,7 +13,8 @@
     DeclineGrantsMigration,
     ResolveQuarantinedLinks,
     PickLinkedNotebook,
-    UnlinkNotebook
+    UnlinkNotebook,
+    CreateStandaloneTask
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime.js'
   import type { config } from '../wailsjs/go/models.js'
@@ -365,6 +366,15 @@
   }
   let showSearch = $state(false)
   let showGlobalReplace = $state(false)
+  // Global standalone-task quick-add overlay (#368). Opened by the new_task
+  // hotkey (default Ctrl+Shift+N). Creates a task in <vault>/.silt/tasks.md
+  // via the app-level CreateStandaloneTask binding (not plugin-gated).
+  let showQuickAdd = $state(false)
+  let quickAddError = $state('')
+  let globalQuickAddEl = $state<HTMLInputElement | null>(null)
+  $effect(() => {
+    if (showQuickAdd) globalQuickAddEl?.focus()
+  })
   let globalReplaceQuery = $state('')
   let showSettings = $state(false)
   let settingsTab = $state('general')
@@ -596,6 +606,11 @@
         e.preventDefault()
         templatePickerMode = 'new-page'
         showTemplatePicker = !showTemplatePicker
+      }
+      if (matchHotkey(e, hotkeys.new_task)) {
+        e.preventDefault()
+        quickAddError = ''
+        showQuickAdd = !showQuickAdd
       }
       if (matchHotkey(e, hotkeys.toggle_view_mode)) {
         e.preventDefault()
@@ -1328,6 +1343,64 @@
       initialQuery={globalReplaceQuery}
       onClose={() => (showGlobalReplace = false)}
     />
+  {/if}
+
+  {#if showQuickAdd}
+    <!-- Global standalone-task quick-add overlay (#368). Creates a task in
+         <vault>/.silt/tasks.md via the app-level binding; default TODO, no
+         due date. Click-outside / Escape dismisses. -->
+    <div
+      class="fixed inset-0 z-[200] flex items-start justify-center pt-[20vh] bg-void/40"
+      role="presentation"
+      onclick={(e) => {
+        // Click on the backdrop itself (not a descendant) dismisses.
+        if (e.target === e.currentTarget) showQuickAdd = false
+      }}
+    >
+      <div
+        class="w-full max-w-md bg-panel border border-border-muted rounded-lg shadow-2xl p-4"
+        transition:fade={{ duration: 120 }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="New task"
+        tabindex="-1"
+      >
+        <h2 class="font-headline-lg text-headline-lg text-text-primary mb-3">
+          New task
+        </h2>
+        <input
+          bind:this={globalQuickAddEl}
+          type="text"
+          placeholder="Task title — Enter to add, Esc to close"
+          aria-label="Task title"
+          data-testid="global-quick-add-input"
+          class="w-full px-3 py-2 rounded border border-accent-primary-start/40 bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[14px]"
+          onkeydown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              showQuickAdd = false
+            } else if (e.key === 'Enter') {
+              const v = (e.currentTarget as HTMLInputElement).value.trim()
+              if (!v) return
+              quickAddError = ''
+              CreateStandaloneTask(v, '', 'TODO')
+                .then(() => {
+                  showQuickAdd = false
+                })
+                .catch((err: unknown) => {
+                  quickAddError =
+                    err instanceof Error ? err.message : String(err)
+                })
+            }
+          }}
+        />
+        {#if quickAddError}
+          <div class="mt-2 text-[12px] text-error" role="alert">
+            {quickAddError}
+          </div>
+        {/if}
+      </div>
+    </div>
   {/if}
 
   {#if showSettings}

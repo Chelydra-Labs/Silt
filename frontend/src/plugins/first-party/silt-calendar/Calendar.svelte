@@ -5,6 +5,7 @@
   import { settings, updatePluginSetting } from '../../../settings/store.svelte'
   import { getFocusState } from './focusState.svelte'
   import AgendaList from './AgendaList.svelte'
+  import QuickAddTask from '../shared/QuickAddTask.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -303,6 +304,23 @@
     void reschedule(item.id, plusDaysISO(base, delta))
   }
 
+  // --- Quick-add standalone tasks (#368) ------------------------------------
+  // Two surfaces: (1) clicking the empty area of a day cell opens an inline
+  // quick-add prefilled with that day's date; (2) the "New task" toolbar
+  // button opens one with no due date (the task lands in Agenda / un-dated).
+  // Both route through ctx.createTask; the block:changed listener repaints.
+  let quickAddDate = $state<string | null>(null) // null = closed; a date = open
+
+  function openQuickAddForDay(day: Date) {
+    quickAddDate = ymd(day)
+  }
+  function openQuickAddUndated() {
+    quickAddDate = '' // empty string = open, undated
+  }
+  function closeQuickAdd() {
+    quickAddDate = null
+  }
+
   // Keyboard navigation across month cells: arrows move focus by day (clamping
   // to the grid), Enter opens the focused day's first task.
   function onCellKeydown(e: KeyboardEvent, day: Date) {
@@ -476,6 +494,14 @@
         class:text-text-muted={mode !== 'agenda'}>Agenda</button
       >
     </div>
+    <button
+      type="button"
+      onclick={openQuickAddUndated}
+      data-testid="calendar-new-task-btn"
+      class="flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
+    >
+      <span class="material-symbols-outlined text-[16px]">add</span>New task
+    </button>
   </header>
 
   {#if getFocusState().activeFilter !== 'all' && mode !== 'agenda'}
@@ -534,6 +560,22 @@
     </div>
   {/if}
 
+  {#if quickAddDate === ''}
+    <!-- Toolbar "New task" quick-add: undated. The created task lands in the
+         Agenda / un-dated list (#368). -->
+    <div class="px-6 py-2 border-b border-border-muted bg-panel">
+      <div class="max-w-md">
+        <QuickAddTask
+          {ctx}
+          placeholder="New task (no due date) — Enter to add, Esc to close"
+          keepOpenAfterCreate={true}
+          onCreated={closeQuickAdd}
+          onCancel={closeQuickAdd}
+        />
+      </div>
+    </div>
+  {/if}
+
   {#if mode === 'agenda'}
     <!-- Agenda mode renders the extracted grouped-list component. The
          shared focusState drives its scroll-to-group and dim behaviour. -->
@@ -566,9 +608,10 @@
                 aria-label={`${day.toDateString()}${items.length ? ', ' + items.length + ' task' + (items.length === 1 ? '' : 's') : ''}`}
                 aria-dropeffect="move"
                 onkeydown={(e) => {
-                  if (e.key === 'Enter' && items[0]) {
+                  if (e.key === 'Enter') {
                     e.preventDefault()
-                    openItem(items[0])
+                    if (items[0]) openItem(items[0])
+                    else openQuickAddForDay(day)
                   } else {
                     onCellKeydown(e, day)
                   }
@@ -576,6 +619,11 @@
                 ondragover={(e) => onCellDragOver(e, day)}
                 ondragleave={(e) => onCellDragLeave(e, day)}
                 ondrop={(e) => onCellDrop(e, day)}
+                onclick={(e) => {
+                  // Open quick-add only when the empty cell area itself is
+                  // clicked (not a task card button inside it).
+                  if (e.target === e.currentTarget) openQuickAddForDay(day)
+                }}
                 class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 transition-all focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {overCellDate ===
                 ymd(day)
                   ? 'border-accent-primary-glow ring-2 ring-accent-primary-glow/40'
@@ -612,6 +660,15 @@
                     >+{items.length - 3} more</span
                   >
                 {/if}
+                {#if quickAddDate === ymd(day)}
+                  <QuickAddTask
+                    {ctx}
+                    dueDate={ymd(day)}
+                    keepOpenAfterCreate={false}
+                    onCreated={closeQuickAdd}
+                    onCancel={closeQuickAdd}
+                  />
+                {/if}
               </div>
             {/each}
           {/each}
@@ -632,6 +689,17 @@
               ondragover={(e) => onCellDragOver(e, day)}
               ondragleave={(e) => onCellDragLeave(e, day)}
               ondrop={(e) => onCellDrop(e, day)}
+              onclick={(e) => {
+                if (e.target === e.currentTarget) openQuickAddForDay(day)
+              }}
+              onkeydown={(e) => {
+                // Enter on an empty focused cell opens quick-add (keyboard
+                // parity with the click affordance); arrow keys move focus.
+                if (e.key === 'Enter' && e.target === e.currentTarget) {
+                  e.preventDefault()
+                  openQuickAddForDay(day)
+                }
+              }}
               class:ring-2={overCellDate === ymd(day)}
               class:ring-accent-primary-glow={overCellDate === ymd(day)}
               class:rounded-lg={overCellDate === ymd(day)}
@@ -665,6 +733,15 @@
                   title={item.clean_content}>{item.clean_content}</button
                 >
               {/each}
+              {#if quickAddDate === ymd(day)}
+                <QuickAddTask
+                  {ctx}
+                  dueDate={ymd(day)}
+                  keepOpenAfterCreate={false}
+                  onCreated={closeQuickAdd}
+                  onCancel={closeQuickAdd}
+                />
+              {/if}
             </div>
           {/each}
         </div>

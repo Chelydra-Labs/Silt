@@ -8,6 +8,7 @@
   import { EventsOn } from '../../../../wailsjs/runtime/runtime.js'
   import FilterBar from './FilterBar.svelte'
   import CardDetailPanel from './CardDetailPanel.svelte'
+  import QuickAddTask from '../shared/QuickAddTask.svelte'
   import type { KanbanCard, KanbanFilters, Scope } from './types'
   import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
   import { buildQuery } from './query'
@@ -439,6 +440,11 @@
   // --- Column management ---
   let menuCol = $state<string | null>(null)
   let renamingCol = $state<string | null>(null)
+  // Per-column quick-add (#368): the column name whose quick-add input is
+  // open, or null. Only the three real status columns (TODO/DOING/DONE) get a
+  // "+" — custom columns have no backing TaskStatus so a created card could
+  // never land in them. The TODO column doubles as the inbox.
+  let quickAddCol = $state<string | null>(null)
   let renameValue = $state('')
   let colDragIndex = $state<number | null>(null)
 
@@ -878,7 +884,7 @@
                   >{laneCards.length}</span
                 >
               </div>
-              <div class="relative shrink-0">
+              <div class="relative shrink-0 flex items-center">
                 <button
                   type="button"
                   onclick={() => toggleColMenu(col)}
@@ -1039,6 +1045,40 @@
                 </div>
               {/if}
             </div>
+            <!-- Pinned column footer (#368): the add affordance lives BELOW the
+                 scrollable card list so it stays visible no matter how many
+                 cards fill the column (the Trello/Linear convention). Only the
+                 three real status columns get a "+" — custom columns have no
+                 backing TaskStatus, so a created card could never land in them;
+                 the TODO column doubles as the inbox. -->
+            {#if ALL_STATUSES.includes(col as TaskStatus)}
+              <div class="shrink-0 px-2 py-1.5 border-t border-border-muted">
+                {#if quickAddCol === col}
+                  <QuickAddTask
+                    {ctx}
+                    status={col as TaskStatus}
+                    placeholder={`Add to ${laneLabel(col)}…`}
+                    keepOpenAfterCreate={true}
+                    onCancel={() => {
+                      if (quickAddCol === col) quickAddCol = null
+                    }}
+                  />
+                {:else}
+                  <button
+                    type="button"
+                    onclick={() => (quickAddCol = col)}
+                    aria-label={`Add task to ${laneLabel(col)}`}
+                    data-testid={`kanban-add-${col}`}
+                    class="w-full flex items-center justify-end gap-1 py-1 text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer"
+                  >
+                    <span class="material-symbols-outlined text-[15px]"
+                      >add</span
+                    >
+                    Add
+                  </button>
+                {/if}
+              </div>
+            {/if}
           </section>
         {/each}
       </div>

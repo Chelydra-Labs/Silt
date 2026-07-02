@@ -503,4 +503,40 @@ describe('Calendar plugin', () => {
     expect(live.getAttribute('aria-live')).toBe('polite')
     expect(live.textContent).toContain(ymd(target))
   })
+
+  // --- Quick-add standalone tasks (#368) -----------------------------------
+
+  it('toolbar "New task" button opens an undated quick-add (#368)', async () => {
+    await renderWithTaskOnToday('Anything')
+    const btn = screen.getByTestId('calendar-new-task-btn')
+    await fireEvent.click(btn)
+    const input = await screen.findByTestId('quick-add-task-input')
+    expect(input).toBeInTheDocument()
+  })
+
+  it('submitting the toolbar quick-add calls createTask with no due date', async () => {
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('calendar-new-task-btn'))
+    const input = await screen.findByTestId('quick-add-task-input')
+    await fireEvent.input(input, { target: { value: 'Plan sprint' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+    expect(mocks.createTask).toHaveBeenCalledTimes(1)
+    const call = mocks.createTask.mock.calls[0][0]
+    expect(call.title).toBe('Plan sprint')
+    expect(call.dueDate).toBeUndefined()
+  })
+
+  it('Escape cancels the quick-add input', async () => {
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('calendar-new-task-btn'))
+    const input = await screen.findByTestId('quick-add-task-input')
+    await fireEvent.keyDown(input, { key: 'Escape' })
+    await flush()
+    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
+  })
 })

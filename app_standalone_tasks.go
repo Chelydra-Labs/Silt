@@ -85,7 +85,8 @@ func (a *App) ensureStandaloneTasksFile() (string, error) {
 // optional ("YYYY-MM-DD" or "" for no due date). status defaults to TODO;
 // accepted values are TODO / DOING / DONE.
 //
-// Gated by content-mutate (#156). Session-token verified (#236).
+// Gated by content-mutate (#156). Session-token verified (#236). The global
+// quick-add shortcut uses the ungated CreateStandaloneTask core method.
 func (a *App) PluginCreateTask(pluginID, sessionToken, title, dueDate, status string) (string, error) {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return "", err
@@ -93,6 +94,15 @@ func (a *App) PluginCreateTask(pluginID, sessionToken, title, dueDate, status st
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return "", err
 	}
+	return a.CreateStandaloneTask(title, dueDate, status)
+}
+
+// CreateStandaloneTask is the app-level (non-plugin) entry point for creating
+// a standalone task. It powers the global Mod+Shift+N quick-add overlay, which
+// is an app shell affordance (not a plugin action), so it is not session-gated
+// — just as CreatePage / CreateNotebook are not. Same write path as
+// PluginCreateTask.
+func (a *App) CreateStandaloneTask(title, dueDate, status string) (string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -112,8 +122,6 @@ func (a *App) PluginCreateTask(pluginID, sessionToken, title, dueDate, status st
 	default:
 		return "", fmt.Errorf("invalid status %q (want TODO, DOING, or DONE)", status)
 	}
-	// dueDate is optional; "" means no due-date token. A non-empty value is
-	// validated as YYYY-MM-DD so a malformed date can never land on disk.
 	if dueDate != "" {
 		if _, derr := time.Parse("2006-01-02", dueDate); derr != nil {
 			return "", fmt.Errorf("invalid dueDate %q (want YYYY-MM-DD)", dueDate)
@@ -143,7 +151,6 @@ func (a *App) PluginCreateTask(pluginID, sessionToken, title, dueDate, status st
 
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
-		// Read existing blocks (empty on first creation) and append.
 		blocks, err2 := a.FetchPageBlocks(standaloneTasksNotebook, standaloneTasksSection, standaloneTasksPage)
 		if err2 != nil {
 			writeErr = fmt.Errorf("read standalone tasks: %w", err2)

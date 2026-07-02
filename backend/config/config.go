@@ -297,6 +297,11 @@ func Defaults() SystemConfig {
 			"indent_block":         "Tab",
 			"unindent_block":       "Shift+Tab",
 			"open_template_picker": "Ctrl+Shift+T",
+			// Global standalone-task quick-add (#368). Opens an app-level
+			// overlay (not a plugin action) that creates a task in
+			// <vault>/.silt/tasks.md. "N" for New; Shift+T was taken by the
+			// template picker.
+			"new_task": "Ctrl+Shift+N",
 			// Tab strip hotkeys (#142). `tab` and `w` already parse cleanly
 			// via the frontend parseHotkey layer (KEY_ALIASES in
 			// frontend/src/settings/hotkeys.ts). Each may be remapped or
