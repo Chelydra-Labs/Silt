@@ -150,6 +150,31 @@ func ScanWorkspace(vaultPath string, spacesPerTab int) (results []ScanResult, wa
 	return collected, walkWarnings, nil
 }
 
+// StandaloneTasksNotebook is the synthetic notebook name under which the
+// standalone-tasks file (<vault>/.silt/tasks.md) is indexed. Dot-prefixed so
+// ListNavigation auto-excludes it from the page browser and WalkMarkdown's
+// general dot-directory skip still applies to everything else under .silt/.
+// Kept in the parser package so the scan path and any caller share one name.
+const StandaloneTasksNotebook = ".silt"
+
+// ScanStandaloneTasks parses <vault>/.silt/tasks.md (the dedicated non-note
+// markdown file for standalone tasks, #368) if it exists. WalkMarkdown skips
+// dot-directories, so this targeted read is the only path by which the file
+// enters the index. It reuses parseSingleFile, which derives
+// notebook=".silt", section="", page="tasks" from the path — no parser
+// special-casing. Returns an empty slice when the file is absent (nothing
+// created yet). The caller appends these results to the vault scan results
+// before the incremental-reindex dedupe so the file gets a normal files-row
+// and survives warm restarts unchanged.
+func ScanStandaloneTasks(vaultPath string, spacesPerTab int) []ScanResult {
+	tasksFile := filepath.Join(vaultPath, StandaloneTasksNotebook, "tasks.md")
+	if _, err := os.Stat(tasksFile); err != nil {
+		return nil // absent — no standalone tasks created yet
+	}
+	res := parseSingleFile(tasksFile, vaultPath, spacesPerTab)
+	return []ScanResult{res}
+}
+
 func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult {
 	res := ScanResult{Path: path}
 

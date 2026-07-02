@@ -103,6 +103,28 @@ export interface PluginContext {
     meta: { pinned?: boolean | null; progress?: number }
   ) => Promise<boolean>
   /**
+   * Rewrite a task's `[due:: YYYY-MM-DD]` inline token on disk atomically
+   * (#293). Pass an empty string to clear the due date. This is the mutation
+   * surface behind calendar drag-and-drop rescheduling: drop a task card on a
+   * day cell → set the due date to that day. Round-trips through the markdown
+   * file (source of truth), re-indexes, and emits `block:changed`.
+   * Gated by content-mutate.
+   */
+  setTaskDueDate: (id: string, dueDate: string) => Promise<boolean>
+  /**
+   * Create a standalone task (a GFM checkbox) in the dedicated non-note
+   * markdown file `<vault>/.silt/tasks.md` (#368). The task is queryable via
+   * sqliteQuery / QueryTasks immediately and survives a full re-index because
+   * it round-trips through the markdown-source-of-truth. title is required;
+   * dueDate (YYYY-MM-DD) and status default to no due date / TODO. Returns the
+   * new block's UUID. Gated by content-mutate.
+   */
+  createTask: (opts: {
+    title: string
+    dueDate?: string
+    status?: TaskStatus
+  }) => Promise<string>
+  /**
    * Resolve this plugin's settings map for the ACTIVE notebook, applying the
    * co-located per-notebook override layer (#133). For a vault notebook (or
    * no active notebook), returns the vault-scoped config.yaml entry for this

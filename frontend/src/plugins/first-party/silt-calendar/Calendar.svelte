@@ -46,14 +46,29 @@
   // mounted past midnight (ticks every 60s; only re-evaluates isToday).
   let nowTick = $state(0)
   let nowInterval: ReturnType<typeof setInterval> | undefined
+  // Repaint the grid when any block changes (task created/mutated/rescheduled
+  // from any surface). The calendar's sidebar + agenda sub-views already
+  // subscribe; the main grid now does too so quick-add and drag-and-drop
+  // reschedule land immediately. Debounced so a burst of block:changed events
+  // (e.g. a bulk op) triggers one reload.
+  let blockChangedTimer: ReturnType<typeof setTimeout> | null = null
+  let unsubBlockChanged: (() => void) | null = null
+
   onMount(() => {
     reload()
     nowInterval = setInterval(() => {
       nowTick++
     }, 60_000)
+    unsubBlockChanged = ctx.on('block:changed', () => {
+      if (mode === 'agenda') return // AgendaList handles its own refresh
+      if (blockChangedTimer) clearTimeout(blockChangedTimer)
+      blockChangedTimer = setTimeout(() => void reload(), 80)
+    })
   })
   onDestroy(() => {
     if (nowInterval) clearInterval(nowInterval)
+    if (blockChangedTimer) clearTimeout(blockChangedTimer)
+    unsubBlockChanged?.()
   })
 
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']

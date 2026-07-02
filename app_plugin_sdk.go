@@ -14,6 +14,7 @@ import (
 	"silt/backend/vault"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -371,6 +372,135 @@ func (a *App) PluginUpdateTaskMeta(pluginID, sessionToken, blockID string, pin i
 				// This should never happen (the content was just rendered from
 				// successfully-parsed blocks) but log it so the gap is observable.
 				log.Printf("PluginUpdateTaskMeta: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
+			}
+
+			for _, b := range blocks {
+				if b.ID == blockID {
+					a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)
+				}
+			}
+		})
+	}) // LockBlockWrite
+	if writeErr != nil {
+		return false, writeErr
+	}
+	return true, nil
+}
+
+// PluginSetTaskDueDate rewrites a task's [due:: YYYY-MM-DD] inline token on
+// disk atomically (#293). Pass the empty string to clear the due date. This
+// is the mutation surface behind calendar drag-and-drop rescheduling: drop a
+// task card on a day cell → set due date to that day. It reuses the same
+// LockBlockWrite + LockFileWrite + WriteFileAtomic + re-index + emit chain
+// as every other writer, so there is one on-disk format definition.
+//
+// Gated by content-mutate (#156). Session-token verified (#236).
+func (a *App) PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate string) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	// "" clears the token; a non-empty value must be a valid YYYY-MM-DD so a
+	// malformed date can never reach disk.
+	if dueDate != "" {
+		if _, derr := time.Parse("2006-01-02", dueDate); derr != nil {
+			return false, fmt.Errorf("invalid dueDate %q (want YYYY-MM-DD or empty to clear)", dueDate)
+		}
+	}
+	if a.db == nil {
+		return false, fmt.Errorf("vault database not loaded")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var loc db.BlockLocation
+	err := a.coordinator.WithDBReadResult(func() error {
+		var e error
+		loc, e = a.db.GetBlockLocation(blockID)
+		return e
+	})
+	if err != nil {
+		return false, fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
+	}
+	notebook, section, page, blockType := loc.Notebook, loc.Section, loc.Page, loc.BlockType
+	if blockType != string(parser.BlockTask) {
+		return false, fmt.Errorf("block %s is not a task", blockID)
+	}
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return false, fmt.Errorf("invalid file metadata for block %s", blockID)
+	}
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
+	if err != nil {
+		return false, fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return false, fmt.Errorf("resolved file path escapes notebook root")
+	}
+
+	var writeErr error
+	a.coordinator.LockBlockWrite(blockID, func() {
+		a.coordinator.LockFileWrite(filePath, func() {
+			contentBytes, err := os.ReadFile(filePath)
+			if err != nil {
+				writeErr = err
+				return
+			}
+			fileDate := fileOrDefaultDate(filePath)
+			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
+			if parseErr != nil {
+				writeErr = fmt.Errorf("failed to parse file for due-date update: %w", parseErr)
+				return
+			}
+			found := false
+			for i := range parsedBlocks {
+				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
+					parsedBlocks[i].DueDate = dueDate
+					found = true
+					break
+				}
+			}
+			if !found {
+				writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
+				return
+			}
+
+			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
+			if frontmatter == "" {
+				fmDate := meta.Date
+				if fmDate == "" {
+					fmDate = fileDate
+				}
+				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
+				body = string(contentBytes)
+			}
+			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
+			a.tracker.RegisterWrite(filePath)
+			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+				writeErr = err
+				return
+			}
+
+			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
+			if err == nil {
+				var idxErr error
+				a.coordinator.WithDBWrite(func() {
+					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
+				})
+				if idxErr != nil {
+					log.Printf("PluginSetTaskDueDate: IndexFileBlocks failed: %v", idxErr)
+				}
+			} else {
+				log.Printf("PluginSetTaskDueDate: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
 			}
 
 			for _, b := range blocks {
