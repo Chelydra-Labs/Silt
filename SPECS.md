@@ -846,7 +846,10 @@ no owner token is written).
 **Block drag handle — #181, #330.** A drag grip reorders top-level blocks by
 direct manipulation; dropping further to the right indents the block deeper
 (Notion-style), and a drop-zone indicator previews the target depth.
-`Alt+ArrowUp/Down` moves the active block by keyboard.
+`Alt+ArrowUp/Down` moves the active block by keyboard. `Delete` at the end of
+a block and `Backspace` at the start merge the adjacent same-type same-parent
+sibling into one block (survivor keeps its UUID); cross-type, cross-parent,
+and code-block boundaries fall through to the per-type default (#364).
 
 ### Block types (#188, #180, #189, #183, #172, #310, #308)
 

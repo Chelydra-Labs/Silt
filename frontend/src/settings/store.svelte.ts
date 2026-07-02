@@ -6,7 +6,8 @@ import {
   AppendDismissedTip,
   SetShowFormatToolbar,
   SetFocusMode,
-  SetTypewriterMode
+  SetTypewriterMode,
+  SetOpenDevtoolsOnStartup
 } from '../../wailsjs/go/main/App.js'
 import { EventsOn } from '../../wailsjs/runtime/runtime.js'
 import type { config } from '../../wailsjs/go/models.js'
@@ -246,6 +247,35 @@ export async function toggleTypewriterMode(): Promise<boolean | null> {
   try {
     await SetTypewriterMode(next)
     cfg.editor.typewriter_mode = next
+    return next
+  } catch (e) {
+    settings.error = errMsg(e)
+    return null
+  } finally {
+    settings.saving = false
+  }
+}
+
+/**
+ * Toggle the Dev Mode (open DevTools on startup) flag from Settings → About →
+ * Developer. Routes through the atomic SetOpenDevtoolsOnStartup IPC rather than
+ * the full-config saveConfig path: saveConfig clones the config via
+ * structuredClone, which throws DataCloneError on a Svelte 5 $state proxy in
+ * the webview (silently swallowed), so the toggle never flips. Same
+ * single-field-write contract as toggleFormatToolbar — avoids clobbering an
+ * unsaved EditorTab draft (the duplicate DevTools checkbox there re-hydrates
+ * from this same field). Returns the new effective value, or null on error.
+ */
+export async function toggleDevMode(): Promise<boolean | null> {
+  const cfg = settings.config
+  if (!cfg) return null
+  if (!cfg.ui) cfg.ui = {} as any
+  const next = cfg.ui.open_devtools_on_startup !== true
+  settings.saving = true
+  settings.error = ''
+  try {
+    await SetOpenDevtoolsOnStartup(next)
+    cfg.ui.open_devtools_on_startup = next
     return next
   } catch (e) {
     settings.error = errMsg(e)
