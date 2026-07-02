@@ -294,6 +294,20 @@ Persistent Identifier comment: A hidden HTML comment
 `<!-- id: UUIDv4 @ YYYY-MM-DD -->` automatically generated and appended
 to the block by the parser if one is missing.
 
+Standalone tasks (#368): Tasks created from a quick-add surface (calendar
+day cell, calendar toolbar, kanban column footer, or the global
+`Mod+Shift+N` shortcut) that are not associated with a note persist as
+ordinary GFM checkboxes in a single dedicated non-note markdown file at
+`<vault>/.silt/tasks.md`. The file is indexed under a synthetic notebook
+named `.silt` (section `""`, page `tasks`); the dot-prefix means it is
+auto-excluded from the page browser and `WalkMarkdown`'s general
+dot-directory skip stays intact. `ScanStandaloneTasks` is the targeted
+read that feeds the file into the normal parse→index pipeline. There is
+no new SQL table and no nullable `block_id` — the markdown-source-of-
+truth invariant is preserved: standalone tasks round-trip through the
+same `[key:: value]` token syntax and survive a full re-index (deleting
+`.system/index.sqlite*` and relaunching restores them from the file).
+
 4.2 Editor Input Paths
 
 Three input paths produce the same Dataview `[key:: value]` storage
