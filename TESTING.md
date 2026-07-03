@@ -51,19 +51,20 @@ this matrix records the intent of each area's coverage.
 
 | Area | Covers |
 |---|---|
-| App bindings (root `*_test.go`) | the Wails-bound IPC surface — block mutation/state, navigation CRUD, vault lifecycle (move/copy/switch), archive export/import, plugin install/capabilities, recurrence, standalone tasks, templates, themes, spellcheck, updates, lock-order invariants |
+| App bindings (root `*_test.go`) | the Wails-bound IPC surface — block mutation/state, navigation CRUD, vault lifecycle (move/copy/switch), archive export/import, plugin install/capabilities, recurrence, task dependencies (cycle prevention, DONE fan-out), subtree fetch/splice, standalone tasks, templates, themes, spellcheck, updates, lock-order invariants |
 | `backend/config` | config schema, load-over-defaults, atomic save, hot-reload |
 | `backend/core` | `ExecutionCoordinator` — DB write serialization, read concurrency, per-file lock isolation |
-| `backend/db` | `DatabaseManager` — block insertion/cascade, re-index, FTS5 (ranking/snippets/grouping/pagination), files-table incremental diff, WAL recovery, tag hydration |
+| `backend/db` | `DatabaseManager` — block insertion/cascade, re-index, FTS5 (ranking/snippets/grouping/pagination), files-table incremental diff, WAL recovery, tag hydration, task_dependencies projection + cascade |
+| `backend/dependencies` | task-dependency ref extraction/formatting, DFS cycle detection (WouldCreateCycle, DetectsCycle) |
 | `backend/monitor` | `DirectoryWatcher` / `WriteTracker` — self-write suppression, focus leases + sweeper, symlink-loop handling |
-| `backend/parser` | the AST parser — ID injection, date normalization, line/region parsing, single-serializer round-trip identity |
+| `backend/parser` | the AST parser — ID injection, date normalization, line/region parsing, single-serializer round-trip identity, `blocked_by` token round-trip |
 | `backend/plugins` | `.silt-plugin` validate/install/uninstall/enable, zip-slip + traversal guards, rate limiting, network safety (SSRF), capability grants |
 | `backend/recurrence` | recurrence rule resolution, skip-missed advancement, end-of-month clamping |
 | `backend/templates` | template validate/render/load/store/watcher, placeholder substitution, smart-graph passthrough |
 | `backend/themes` | canonical schema, embed fallback, loader, validator (color/font sandbox) |
 | `backend/updates` | update check, semver compare, download + SHA-256 verify |
 | `backend/vault` | settings durability & theme persistence, vault move/copy/verify, archive manifest |
-| Frontend (Vitest) | editor smoke + converter/schema round-trip identity, sidebar/tabs/titlebar, theme store, plugin surfaces, standalone-tasks router, a11y |
+| Frontend (Vitest) | editor smoke + converter/schema round-trip identity, sidebar/tabs/titlebar, theme store, plugin surfaces, standalone-tasks router, Kanban blocked-badge + DONE guard, Agenda blocked-badge + guard, DependencyPicker, Task Sub-Editor Modal, a11y |
 
 ## Benchmarks & budgets
 
@@ -133,6 +134,13 @@ manually against `wails dev`. Grouped by surface; each item is pass/fail.
 - [ ] Quick-add (`Mod+Shift+N`) creates a standalone task; the Tasks view
       lists it (including the No Date group).
 - [ ] Kanban scope switch (vault/notebook/section/page); drag changes status.
+- [ ] Task dependencies: add/remove via the CardDetailPanel picker; the lock
+      badge renders on blocked cards in Kanban + Agenda; completing a blocker
+      clears the dependent's badge; completing a blocked task prompts for
+      confirmation; a circular dependency is rejected inline.
+- [ ] Task Sub-Editor: double-click a Kanban card opens the modal; nested
+      notes/sub-tasks edit and save back to the parent file; surrounding
+      content is untouched; Esc restores focus to the card.
 
 **Themes & templates**
 - [ ] Theme picker: switch, mode toggle (Dark/Light/System), import a JSON

@@ -180,7 +180,7 @@ within a 300 ms cooldown of our own atomic write. See
 
 Every file ingested is scanned line-by-line using a customized Markdown AST engine built on top of yuin/goldmark (`backend/parser`).
 
-**Block model.** A GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`) is a task; the remainder of any line is scanned for Dataview-style `[key:: value]` metadata tokens (due, start, owner, priority, pin, progress, recur) — order-independent and extensible via the `scanTaskTokens` dispatch. Each parsed line becomes a `ParsedBlock` typed as one of three prose types (`TASK`, `NOTE`, `HEADER`) or one of four multi-line region types (`CODE`, `TABLE`, `DETAILS`, `CALLOUT`).
+**Block model.** A GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`) is a task; the remainder of any line is scanned for Dataview-style `[key:: value]` metadata tokens (due, start, owner, priority, pin, progress, recur, blocked_by) — order-independent and extensible via the `scanTaskTokens` dispatch. Each parsed line becomes a `ParsedBlock` typed as one of three prose types (`TASK`, `NOTE`, `HEADER`) or one of four multi-line region types (`CODE`, `TABLE`, `DETAILS`, `CALLOUT`).
 
 **Multi-line region blocks.** The parser's `accumulateRegion` detects four region shapes — fenced code, GFM table runs (header + separator), `<details>` HTML (depth-counted), and Obsidian callouts (`> [!variant]` + consecutive `>` lines) — and collapses each into one managed `ParsedBlock` (one `blocks`-table row, one UUID, one FTS5 document). The block-identity comment lives on its own dedicated trailing line after the region so the on-disk format stays strictly GFM/HTML/Obsidian syntax (byte-exact interop with Obsidian/GitHub/VS Code). `ParseFileContent` and `RenderFileContent` share the region-boundary helpers (`detectRegionKind` / `findRegionCloser` / `skipManagedRegion`) so both paths agree. Legacy files with per-line id comments are detected (id comments stripped before matching), migrated to the trailing-id format on first parse, and `((uuid))` references to vanished per-line ids are remapped to the region block's id.
 
@@ -258,6 +258,20 @@ CREATE TABLE tags (
     PRIMARY KEY(block_id, raw_path),
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 );
+
+-- Task Dependencies (#301): the [blocked_by:: ((uuid))] edge graph. Each row
+-- means "block_id is blocked by blocked_by_id". Both FKs cascade so a deleted
+-- block cleans up its edges as a dependent and as a blocker. Re-derivable
+-- from markdown (rule 4); the reverse-lookup index on blocked_by_id serves
+-- the DONE-branch fan-out and the Kanban/Agenda "blocked" badge.
+CREATE TABLE task_dependencies (
+    block_id      TEXT NOT NULL,
+    blocked_by_id TEXT NOT NULL,
+    PRIMARY KEY(block_id, blocked_by_id),
+    FOREIGN KEY(block_id)      REFERENCES blocks(id) ON DELETE CASCADE,
+    FOREIGN KEY(blocked_by_id) REFERENCES blocks(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_task_deps_blocked_by ON task_dependencies(blocked_by_id);
 
 -- File-stats cache for incremental re-indexing. Keyed by absolute path;
 -- a renamed file is a new path, with the stale old row pruned by the next
@@ -411,7 +425,12 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
 - **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `UpdateBlockState`
   (task-checkbox transition + atomic file rewrite + re-index),
-  `MutateBlock`, `QueryTasks` (dashboard filter query).
+  `MutateBlock`, `QueryTasks` (dashboard filter query). **Task dependencies**
+  (#301): `SetTaskBlockedBy` / `PluginSetTaskBlockedBy` (cycle-checked
+  `[blocked_by::]` token rewrite) and `GetTaskBlockers` (open-prerequisite
+  read for the DONE-confirm guard). **Sub-editor** (#305): `FetchSubtree`
+  (read-only child sub-tree extraction) and `SaveSubtreeBlocks` (atomic
+  sub-tree splice through the canonical write chain).
 - **Navigation CRUD** — `CreateNotebook` / `OpenNotebook` /
   `PickNotebookFolder`, `CreateSection`, `CreatePage` / `MovePage`
   (cross-section; `section` may be `""`). Silt starts blank — the user opens
@@ -879,7 +898,7 @@ PluginContext is a thin frontend wrapper over four Wails bindings on App:
 
 7.5 Smart Graph Events
 
-Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, Notebook, Section, Page, FileDate}) so live embeds (`{{embed:uuid}}`) and references (`((uuid))`) refresh in real time. Emitted from MutateBlock, UpdateBlockState, and the post-write path of SaveFileBlocks; emission no-ops when ctx is nil (tests). The frontend EmbedPortal subscribes via EventsOn and re-fetches its source block when the event matches its uuid (a module-scoped render-stack guard stops recursive embed loops).
+Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, Notebook, Section, Page, FileDate}) so live embeds (`{{embed:uuid}}`) and references (`((uuid))`) refresh in real time. Emitted from MutateBlock, UpdateBlockState, and the post-write path of SaveFileBlocks; emission no-ops when ctx is nil (tests). The frontend EmbedPortal subscribes via EventsOn and re-fetches its source block when the event matches its uuid (a module-scoped render-stack guard stops recursive embed loops). When a block transitions to DONE, `UpdateBlockState` also fans the event out to every dependent task (those `[blocked_by::]` the just-completed block) so the Kanban/Agenda "blocked" badge and the DONE-confirm guard re-evaluate (#301).
 
 ---
 

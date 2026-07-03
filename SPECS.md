@@ -325,6 +325,17 @@ Metadata Tokens (Dataview `[key:: value]` format):
 | `pin` | `[pinned:: true]` | `[pin:: true]` (boolean) | `[pin:: true]` |
 | `progress` | `[prog:: N]` | `[progress:: N]` (0-100) | `[progress:: 50]` |
 | `recur` | `[recurrence:: RULE]` | `[recur:: RULE]` (natural language) | `[recur:: every week]` |
+| `blocked_by` | — | `[blocked_by:: ((uuid)) …]` (one or more block refs) | `[blocked_by:: ((a)) ((b))]` |
+
+Task dependencies: the `blocked_by` token lists this task's prerequisites as
+space-separated `((uuid))` block references (#301). The Kanban/Agenda boards
+render a lock badge while any prerequisite is unfinished and prompt for
+confirmation before completing a still-blocked task (#302). Cycles are
+prevented at write time — adding an edge that would close a loop (A→B→A) is
+rejected. Completing a blocker broadcasts `block:changed` to every dependent
+so its derived "blocked" state refreshes. The `links_count` derived cache
+counts `((uuid))` references in `raw_content`, which includes dependency
+refs (a task carrying `[blocked_by:: ((a))]` reports `links_count` ≥ 1).
 
 Recurrence rules: The `recur` token carries a natural-language
 repeat rule. Supported grammar: `every day`, `every weekday` (Mon–Fri),
