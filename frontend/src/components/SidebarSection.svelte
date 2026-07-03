@@ -149,14 +149,7 @@
     >
       chevron_right
     </span>
-    <span
-      class="material-symbols-outlined text-text-muted/70 text-[16px] flex-shrink-0"
-    >
-      {isExpanded ? 'folder_open' : 'folder'}
-    </span>
-    <span
-      class="font-label-sm-bold text-label-sm-bold uppercase tracking-wider text-text-primary truncate flex-1"
-    >
+    <span class="font-semibold text-[13px] text-text-primary truncate flex-1">
       {section.name ? section.name : 'Pages (no section)'}
     </span>
     {#if totalCount > 0}
@@ -210,7 +203,7 @@
             ondrop={(e) =>
               onDrop(e, 'page', pg.name, activeNotebook, sectionKey)}
             ondragend={onDragEnd}
-            class="relative w-full text-left pl-3 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
+            class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
             class:bg-hover={isActive}
             class:text-accent-primary-start={isActive}
             class:text-text-muted={!isActive}
@@ -230,10 +223,6 @@
                 class="absolute left-0 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
               ></span>
             {/if}
-            <span
-              class="material-symbols-outlined text-[16px] flex-shrink-0 opacity-70"
-              >description</span
-            >
             <span class="truncate flex-1" title={pg.name}>{pg.name}</span>
           </button>
         {/each}
