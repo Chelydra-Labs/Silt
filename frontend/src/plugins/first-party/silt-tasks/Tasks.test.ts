@@ -292,7 +292,7 @@ describe('Tasks view', () => {
 
     expect(document.querySelector('[data-block-id="m1"]')).toBeInTheDocument()
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Mark done' }))
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Mark done' }))
     await flush()
 
     expect(mocks.updateBlockState).toHaveBeenCalledWith('m1', 'DONE')
@@ -441,7 +441,7 @@ describe('Tasks view', () => {
     expect(sql).toMatch(/status != 'DONE'/)
   })
 
-  it('Upcoming group is capped at today+7 (#370 open question #3)', async () => {
+  it('Upcoming group is capped at today+7; beyond-week lands in Later (#370 open question #3 + review)', async () => {
     const today = todayStr()
     const today8 = dateOffsetStr(8)
     const today3 = dateOffsetStr(3)
@@ -467,9 +467,14 @@ describe('Tasks view', () => {
       insideWeek?.closest('[data-group]')?.getAttribute('data-group')
     ).toBe('upcoming')
 
-    // beyond-week is filtered out by the WHERE due_date <= weekAhead
-    // bucket → no DOM element with that block id.
-    expect(document.querySelector('[data-block-id="in8"]')).toBeNull()
+    // Tasks due beyond the 7-day Upcoming window used to vanish into
+    // no group (silently dropped from the UI while still inflating
+    // the header count). They now render in their own "Later" group.
+    const beyondWeek = document.querySelector('[data-block-id="in8"]')
+    expect(beyondWeek).toBeInTheDocument()
+    expect(
+      beyondWeek?.closest('[data-group]')?.getAttribute('data-group')
+    ).toBe('later')
   })
 
   it('Upcoming includes tasks due exactly tomorrow (boundary regression — review off-by-one)', async () => {
@@ -511,6 +516,33 @@ describe('Tasks view', () => {
     const todayRow = document.querySelector('[data-block-id="td"]')
     expect(todayRow?.closest('[data-group]')?.getAttribute('data-group')).toBe(
       'today'
+    )
+  })
+
+  it('tasks due beyond 7 days render in the Later group (review fix — no-longer-vanishing gap)', async () => {
+    // The SQL has no upper date bound; without the Later bucket,
+    // a due_date > today+7 row matched every filter (overdue,
+    // today, upcoming, undated) as false → dropped from the UI
+    // entirely while still inflating the header's openItems count.
+    // This locks the gap closed.
+    const today30 = dateOffsetStr(30)
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [task('far', 'plan next month', { due_date: today30 })],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const farRow = document.querySelector('[data-block-id="far"]')
+    expect(farRow).toBeInTheDocument()
+    expect(farRow?.closest('[data-group]')?.getAttribute('data-group')).toBe(
+      'later'
     )
   })
 })

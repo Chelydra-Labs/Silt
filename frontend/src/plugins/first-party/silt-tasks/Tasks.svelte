@@ -158,6 +158,14 @@
       )
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
   )
+  // Beyond the 7-day Upcoming window. Tasks here were previously
+  // fetched by the SQL (which has no upper bound) but rendered in no
+  // group, inflating the header count while the row was invisible.
+  let later = $derived(
+    openItems
+      .filter((i) => !!i.due_date && i.due_date > weekAhead)
+      .sort((a, b) => a.due_date.localeCompare(b.due_date))
+  )
   let undated = $derived(openItems.filter((i) => !i.due_date))
 
   async function markDone(item: TaskItem) {
@@ -323,7 +331,7 @@
         No tasks yet. Use <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
       </div>
     {:else}
-      {#each [{ key: 'overdue', label: 'Overdue', list: overdue, tone: 'error' }, { key: 'today', label: 'Today', list: todayItems, tone: 'primary' }, { key: 'upcoming', label: 'Upcoming', list: upcoming, tone: 'muted' }, { key: 'undated', label: 'No Date', list: undated, tone: 'muted' }] as group (group.key)}
+      {#each [{ key: 'overdue', label: 'Overdue', list: overdue, tone: 'error' }, { key: 'today', label: 'Today', list: todayItems, tone: 'primary' }, { key: 'upcoming', label: 'Upcoming', list: upcoming, tone: 'muted' }, { key: 'later', label: 'Later', list: later, tone: 'muted' }, { key: 'undated', label: 'No Date', list: undated, tone: 'muted' }] as group (group.key)}
         {#if group.list.length > 0}
           <section aria-label={group.label} data-group={group.key}>
             <h2
@@ -361,6 +369,8 @@
                     }}
                     title="Mark done"
                     class="w-5 h-5 rounded todo-check flex-shrink-0 cursor-pointer hover:border-accent-primary-start"
+                    role="checkbox"
+                    aria-checked="false"
                     aria-label="Mark done"
                   ></button>
                   <button
