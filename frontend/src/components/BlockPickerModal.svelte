@@ -103,9 +103,23 @@
         placeholder="Search blocks to embed…"
         class="bg-transparent border-none outline-none text-text-primary text-[15px] font-body-md w-full focus:ring-0 placeholder:text-text-muted"
       />
+      {#if query}
+        <button
+          type="button"
+          aria-label="Clear search"
+          onclick={() => {
+            query = ''
+            results = []
+            inputEl?.focus()
+          }}
+          class="p-1 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none flex-shrink-0"
+        >
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      {/if}
       {#if loading}
         <span
-          class="material-symbols-outlined text-accent-primary-start animate-spin text-[20px]"
+          class="material-symbols-outlined text-accent-primary-start animate-spin text-[20px] flex-shrink-0"
           >sync</span
         >
       {/if}
@@ -123,7 +137,7 @@
         {#each results as res, idx (res.id)}
           <button
             onclick={() => pick(res)}
-            class="w-full px-5 py-3 border-none flex flex-col gap-1 text-left cursor-pointer transition-colors focus:outline-none"
+            class="w-full px-5 py-3 border-none flex flex-col gap-1 text-left cursor-pointer transition-colors focus:outline-none hover:bg-hover/50"
             class:bg-accent-primary-glow={idx === selectedIdx}
           >
             <div

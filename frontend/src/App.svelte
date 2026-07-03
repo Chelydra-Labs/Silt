@@ -1452,7 +1452,7 @@
          CreateStandaloneTask — App.svelte has no plugin ctx. Default TODO,
          no due date. Click-outside / Escape dismisses. -->
     <div
-      class="fixed inset-0 z-[200] flex items-start justify-center pt-[20vh] bg-void/40"
+      class="fixed inset-0 z-[200] flex items-start justify-center pt-[20vh] bg-black/40 backdrop-blur-[2px]"
       role="presentation"
       onclick={(e) => {
         // Click on the backdrop itself (not a descendant) dismisses.
@@ -1460,7 +1460,8 @@
       }}
     >
       <div
-        class="w-full max-w-md bg-panel border border-border-muted rounded-lg shadow-2xl p-4"
+        class="w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl p-5"
+        style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 90%, transparent);"
         transition:fade={{ duration: 120 }}
         role="dialog"
         aria-modal="true"
@@ -1695,30 +1696,31 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(2px);
   }
 
   .settings-mismatch-modal {
     max-width: 460px;
     padding: 28px 32px;
     border-radius: 12px;
-    background: var(--color-surface, #1a1a1e);
-    border: 1px solid var(--color-border-muted, rgba(255, 255, 255, 0.1));
+    background: color-mix(in srgb, var(--color-panel) 90%, transparent);
+    backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid var(--color-border-zinc, #27272a);
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
   }
 
   .settings-mismatch-modal h2 {
     margin: 0 0 12px;
     font-size: 1.15rem;
-    color: var(--color-text-primary, #e0e0e0);
+    color: var(--color-text-primary, #dee3e6);
   }
 
   .settings-mismatch-modal p {
     margin: 0 0 20px;
     font-size: 0.9rem;
     line-height: 1.5;
-    color: var(--color-text-muted, #999);
+    color: var(--color-text-muted, #8b8b94);
   }
 
   .settings-mismatch-modal code {
@@ -1741,22 +1743,34 @@
     border-radius: 8px;
     font-size: 0.875rem;
     cursor: pointer;
-    transition: opacity 0.15s;
+    transition: all 150ms var(--transition-standard);
   }
 
-  .settings-mismatch-actions button:hover {
-    opacity: 0.85;
+  .settings-mismatch-actions button:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 2px;
   }
 
   .settings-mismatch-actions .secondary {
     background: transparent;
-    color: var(--color-text-muted, #999);
+    color: var(--color-text-muted, #8b8b94);
     border: 1px solid var(--color-border-muted, rgba(255, 255, 255, 0.15));
+  }
+
+  .settings-mismatch-actions .secondary:hover {
+    background: var(--color-hover);
+    color: var(--color-text-primary);
+    border-color: var(--color-border-active);
   }
 
   .settings-mismatch-actions .primary {
     background: var(--color-accent-primary-start, #4a9eff);
-    color: #fff;
+    color: var(--color-void, #0c0c0e);
     font-weight: 600;
+  }
+
+  .settings-mismatch-actions .primary:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 0 12px var(--color-accent-primary-glow);
   }
 </style>

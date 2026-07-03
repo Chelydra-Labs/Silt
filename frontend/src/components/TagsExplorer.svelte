@@ -73,8 +73,14 @@
       </div>
     {:else}
       {#if loadingResults}
-        <div class="text-text-muted text-center py-10 animate-pulse">
-          Loading…
+        <div class="skeleton-container px-6 py-4">
+          {#each Array(3) as _}
+            <div class="skeleton-row px-0">
+              <div class="skeleton-circle"></div>
+              <div class="skeleton-text title"></div>
+              <div class="skeleton-badge"></div>
+            </div>
+          {/each}
         </div>
       {:else}
         {#if results.length === 0}

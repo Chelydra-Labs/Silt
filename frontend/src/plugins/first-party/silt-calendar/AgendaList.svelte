@@ -277,7 +277,15 @@
     class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-6 max-w-4xl w-full"
   >
     {#if loading}
-      <div class="text-text-muted animate-pulse">Loading agenda…</div>
+      <div class="skeleton-container">
+        {#each Array(3) as _}
+          <div class="skeleton-row px-0">
+            <div class="skeleton-circle"></div>
+            <div class="skeleton-text title"></div>
+            <div class="skeleton-badge"></div>
+          </div>
+        {/each}
+      </div>
     {:else if errorMsg}
       <div class="text-error">Failed to load: {errorMsg}</div>
     {:else if activeFilter === 'completed'}

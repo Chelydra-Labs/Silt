@@ -316,8 +316,14 @@
     class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-6 max-w-4xl w-full"
   >
     {#if loading}
-      <div class="text-text-muted animate-pulse" data-testid="tasks-loading">
-        Loading tasks…
+      <div class="skeleton-container" data-testid="tasks-loading">
+        {#each Array(4) as _}
+          <div class="skeleton-row px-0">
+            <div class="skeleton-circle"></div>
+            <div class="skeleton-text title"></div>
+            <div class="skeleton-badge"></div>
+          </div>
+        {/each}
       </div>
     {:else if errorMsg}
       <div class="text-error" data-testid="tasks-error">
