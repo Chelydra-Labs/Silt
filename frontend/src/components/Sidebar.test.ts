@@ -25,7 +25,7 @@ const mockPlugins = vi.hoisted(() => ({
 }))
 const mockGetSessionToken = vi.hoisted(() => vi.fn(() => 'tok-test'))
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../wailsjs/go/main/App.js', () => ({
   ListNavigation: mocks.listNavigation,
   CreateNotebook: mocks.createNotebook,
   CreateSection: mocks.createSection,
@@ -140,6 +140,7 @@ describe('Sidebar', () => {
     // It now follows --color-text-primary so each theme's body-text hue shows up in
     // the sidebar. The "No Notebook" fallback only appears in this label, so
     // getByText uniquely targets it (independent of the nav tree load).
+    mocks.listNavigation.mockResolvedValueOnce({ notebooks: [] })
     render(Sidebar, {
       props: {
         activeNotebook: '',
@@ -391,5 +392,75 @@ describe('Sidebar', () => {
     expect((globalThis as any).__lastStubSidebarProps).toBeUndefined()
     // Critically, getSessionToken was NOT called (ctx construction skipped).
     expect(mockGetSessionToken).not.toHaveBeenCalled()
+  })
+
+  // --- create-page-inline window-event bridge ---------------------------
+  // App.svelte's empty-state CTA dispatches 'create-page-inline' on window;
+  // Sidebar registers a listener in onMount that forwards to its existing
+  // handleCreatePageInline (the same path the inline Create-Page button and
+  // SidebarSection use). A regression that dropped the listener or leaked it
+  // across remounts would silently break the CTA, so we pin the wiring.
+
+  it('create-page-inline event triggers CreatePage with the section payload', async () => {
+    mocks.createPage.mockResolvedValue('page-id')
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    window.dispatchEvent(
+      new CustomEvent('create-page-inline', {
+        detail: { sectionName: 'Journal' }
+      })
+    )
+    await flush()
+
+    expect(mocks.createPage).toHaveBeenCalledTimes(1)
+    expect(mocks.createPage).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      expect.any(String),
+      ''
+    )
+  })
+
+  it('create-page-inline listener is removed on unmount (no leak)', async () => {
+    mocks.createPage.mockResolvedValue('page-id')
+    const { unmount } = render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    unmount()
+    window.dispatchEvent(
+      new CustomEvent('create-page-inline', {
+        detail: { sectionName: 'Journal' }
+      })
+    )
+    await flush()
+
+    expect(mocks.createPage).not.toHaveBeenCalled()
   })
 })

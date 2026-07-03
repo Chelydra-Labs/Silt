@@ -316,8 +316,14 @@
     class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-6 max-w-4xl w-full"
   >
     {#if loading}
-      <div class="text-text-muted animate-pulse" data-testid="tasks-loading">
-        Loading tasks…
+      <div class="skeleton-container" data-testid="tasks-loading">
+        {#each Array(4) as _}
+          <div class="skeleton-row">
+            <div class="skeleton-circle"></div>
+            <div class="skeleton-text title"></div>
+            <div class="skeleton-badge"></div>
+          </div>
+        {/each}
       </div>
     {:else if errorMsg}
       <div class="text-error" data-testid="tasks-error">
@@ -331,6 +337,27 @@
         No tasks yet. Use <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
       </div>
     {:else}
+      {#if openItems.length === 0}
+        <div
+          class="text-center py-12 px-4 rounded-xl border border-dashed border-border-muted bg-surface/10 max-w-md mx-auto my-8 select-none"
+        >
+          <span
+            class="material-symbols-outlined text-accent-primary-start text-5xl mb-2"
+            aria-hidden="true">celebrate</span
+          >
+          <h3 class="font-headline-md text-text-primary mb-1">
+            All caught up!
+          </h3>
+          <p class="text-text-muted text-[13px] font-body-md">
+            You have no active tasks. Restore any completed task below to
+            active, or use <kbd
+              class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-border-zinc font-mono text-[11px]"
+              >Ctrl+Shift+N</kbd
+            > to capture a new task.
+          </p>
+        </div>
+      {/if}
+
       {#each [{ key: 'overdue', label: 'Overdue', list: overdue, tone: 'error' }, { key: 'today', label: 'Today', list: todayItems, tone: 'primary' }, { key: 'upcoming', label: 'Upcoming', list: upcoming, tone: 'muted' }, { key: 'later', label: 'Later', list: later, tone: 'muted' }, { key: 'undated', label: 'No Date', list: undated, tone: 'muted' }] as group (group.key)}
         {#if group.list.length > 0}
           <section aria-label={group.label} data-group={group.key}>

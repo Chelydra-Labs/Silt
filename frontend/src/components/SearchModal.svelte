@@ -203,7 +203,7 @@
 
 <!-- Positioning wrapper (scrim + dialog as siblings per SettingsShell pattern) -->
 <div
-  class="fixed inset-0 bg-black/50 z-[150] flex items-start justify-center pt-28"
+  class="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[150] flex items-start justify-center pt-28"
 >
   <button
     tabindex="-1"
@@ -217,8 +217,7 @@
     aria-modal="true"
     aria-label="Search blocks"
     tabindex="-1"
-    class="relative w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
-    style="background: color-mix(in srgb, var(--color-panel) 95%, transparent);"
+    class="relative w-full max-w-2xl glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
   >
     <!-- Search Input Area -->
     <div
@@ -235,9 +234,22 @@
         placeholder="Search notebooks, sections, or task content..."
         class="bg-transparent border-none outline-none text-text-primary text-[15px] font-body-md w-full focus:ring-0 placeholder:text-text-muted"
       />
+      {#if query}
+        <button
+          type="button"
+          aria-label="Clear search"
+          onclick={() => {
+            query = ''
+            inputEl?.focus()
+          }}
+          class="p-1 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none flex-shrink-0"
+        >
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      {/if}
       {#if loading}
         <span
-          class="material-symbols-outlined text-accent-primary-start animate-spin text-[20px] select-none"
+          class="material-symbols-outlined text-accent-primary-start animate-spin text-[20px] select-none flex-shrink-0"
         >
           sync
         </span>
@@ -353,7 +365,7 @@
           <button
             data-idx={idx}
             onclick={() => selectResult(res)}
-            class="w-full px-5 py-3 border-none flex flex-col gap-1 text-left cursor-pointer transition-colors focus:outline-none"
+            class="w-full px-5 py-3 border-none flex flex-col gap-1 text-left cursor-pointer transition-colors focus:outline-none hover:bg-hover/50"
             class:bg-accent-primary-glow={idx === selectedIdx}
             class:border-l-2={idx === selectedIdx}
             class:border-accent-primary-start={idx === selectedIdx}

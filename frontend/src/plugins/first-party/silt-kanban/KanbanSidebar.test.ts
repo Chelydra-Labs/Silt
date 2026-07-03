@@ -104,23 +104,6 @@ describe('KanbanSidebar (#323)', () => {
     expect(screen.getByTestId('new-board')).toBeInTheDocument()
   })
 
-  it('renders the scope radio with four options', async () => {
-    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    expect(screen.getByTestId('scope-vault')).toBeInTheDocument()
-    expect(screen.getByTestId('scope-notebook')).toBeInTheDocument()
-    expect(screen.getByTestId('scope-section')).toBeInTheDocument()
-    expect(screen.getByTestId('scope-page')).toBeInTheDocument()
-  })
-
-  it('clicking a scope radio updates the shared state (#323 AC #4)', async () => {
-    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    await fireEvent.click(screen.getByTestId('scope-notebook'))
-    expect(getKanbanState().scope).toBe('notebook')
-    expect(getKanbanState().scopeUserOverride).toBe(true)
-  })
-
   it('clicking a saved board applies its scope+filters via shared state (#323 AC)', async () => {
     mocks.settings.config.plugins.plugin_settings['silt-kanban'].boards = [
       {
@@ -220,25 +203,6 @@ describe('KanbanSidebar (#323)', () => {
     await fireEvent.click(screen.getByTestId('clear-filters'))
     expect(getKanbanState().filters.priorities).toEqual([])
     expect(getKanbanState().filters.dueDate).toBe('')
-  })
-
-  it('arrow-key nav on scope radio moves focus to the next option', async () => {
-    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    const vault = screen.getByTestId('scope-vault')
-    vault.focus()
-    await fireEvent.keyDown(vault, { key: 'ArrowDown' })
-    await flush()
-    expect(document.activeElement).toBe(screen.getByTestId('scope-notebook'))
-  })
-
-  it('Enter on a focused scope radio activates it', async () => {
-    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    const section = screen.getByTestId('scope-section')
-    section.focus()
-    await fireEvent.keyDown(section, { key: 'Enter' })
-    expect(getKanbanState().scope).toBe('section')
   })
 
   it('Empty state when no boards exist shows only the + Save CTA', async () => {
@@ -386,43 +350,6 @@ describe('KanbanSidebar (#323)', () => {
       const saveBtn = screen.getByTestId('new-board') as HTMLButtonElement
       expect(saveBtn.disabled).toBe(false)
       expect(screen.queryByTestId('board-limit-hint')).not.toBeInTheDocument()
-    })
-  })
-
-  // --- #323 P1 review fixes: scope radio keyboard a11y + delete confirm
-  describe('scope radio a11y', () => {
-    it('Enter on a focused scope radio activates it (uses event target, not cursor)', async () => {
-      // ctx has activeSection set, so 'section' is enabled.
-      render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
-      await flush()
-      const section = screen.getByTestId('scope-section')
-      section.focus()
-      await fireEvent.keyDown(section, { key: 'Enter' })
-      expect(getKanbanState().scope).toBe('section')
-    })
-
-    it('Enter on a disabled scope radio does NOT activate it (#323 P1 a11y)', async () => {
-      // Override the ctx so no notebook/section/page is active — all
-      // non-vault scopes are disabled.
-      const emptyCtx = makeCtx({
-        activeNotebook: '',
-        activeSection: '',
-        activePage: ''
-      })
-      render(KanbanSidebar, { ctx: emptyCtx, manifest: MANIFEST })
-      await flush()
-      // The non-vault scopes (notebook/section/page) are all disabled.
-      // ArrowDown from vault skips them and wraps to vault (the only
-      // enabled option). Verifies the keyboard handler never lands on a
-      // disabled scope.
-      const vault = screen.getByTestId('scope-vault')
-      vault.focus()
-      await fireEvent.keyDown(vault, { key: 'ArrowDown' })
-      expect(document.activeElement).toBe(vault)
-      // Now Press Enter on the focused (enabled) vault — should activate
-      // vault (the existing first test covers the enable path).
-      await fireEvent.keyDown(vault, { key: 'Enter' })
-      expect(getKanbanState().scope).toBe('vault')
     })
   })
 

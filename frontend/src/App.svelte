@@ -1194,16 +1194,16 @@
                 }
               }}
               class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
-              class:text-accent-primary-start={activeView === v.id &&
-                !sidebarCollapsed}
-              class:text-text-muted={activeView !== v.id || sidebarCollapsed}
+              class:text-accent-primary-start={activeView === v.id}
+              class:text-text-muted={activeView !== v.id}
               aria-label={v.label}
               aria-pressed={activeView === v.id}
               title={v.label}
             >
-              {#if activeView === v.id && !sidebarCollapsed}
+              {#if activeView === v.id}
                 <div
                   class="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-primary-start rounded-full shadow-[0_0_8px_var(--color-accent-primary-start)]"
+                  style:opacity={sidebarCollapsed ? '0.5' : '1'}
                 ></div>
               {/if}
               <span class="material-symbols-outlined text-[20px]">{v.icon}</span
@@ -1389,7 +1389,7 @@
                   Select or create a page
                 {/if}
               </h2>
-              <p class="text-text-muted font-body-md max-w-md">
+              <p class="text-text-muted font-body-md max-w-md mb-5">
                 {#if openTabs.length === 0}
                   Click a page in the sidebar to open it in a tab. Single-click
                   opens a preview; double-click opens a pinned tab.
@@ -1399,6 +1399,39 @@
                   section and a page to start writing.
                 {/if}
               </p>
+              {#if activeNotebook && openTabs.length === 0}
+                <div class="flex items-center gap-3">
+                  <button
+                    onclick={() => {
+                      window.dispatchEvent(
+                        new CustomEvent('create-page-inline', {
+                          detail: { sectionName: activeSection || '' }
+                        })
+                      )
+                    }}
+                    class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-void font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
+                  >
+                    <span
+                      class="material-symbols-outlined text-[18px]"
+                      aria-hidden="true">note_add</span
+                    >
+                    Create Page
+                  </button>
+                  <button
+                    onclick={() => {
+                      templatePickerMode = 'new-page'
+                      showTemplatePicker = true
+                    }}
+                    class="px-4 py-2 rounded-lg bg-transparent border border-border-zinc text-text-primary font-label-sm-bold hover:bg-hover transition-all cursor-pointer flex items-center gap-2"
+                  >
+                    <span
+                      class="material-symbols-outlined text-[18px]"
+                      aria-hidden="true">article</span
+                    >
+                    New from Template
+                  </button>
+                </div>
+              {/if}
             </div>
           {/if}
         {:else if activeView === 'tags'}
@@ -1452,7 +1485,7 @@
          CreateStandaloneTask — App.svelte has no plugin ctx. Default TODO,
          no due date. Click-outside / Escape dismisses. -->
     <div
-      class="fixed inset-0 z-[200] flex items-start justify-center pt-[20vh] bg-void/40"
+      class="fixed inset-0 z-[200] flex items-start justify-center pt-[20vh] bg-black/40 backdrop-blur-[2px]"
       role="presentation"
       onclick={(e) => {
         // Click on the backdrop itself (not a descendant) dismisses.
@@ -1460,7 +1493,7 @@
       }}
     >
       <div
-        class="w-full max-w-md bg-panel border border-border-muted rounded-lg shadow-2xl p-4"
+        class="w-full max-w-md glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl p-5"
         transition:fade={{ duration: 120 }}
         role="dialog"
         aria-modal="true"
@@ -1527,7 +1560,7 @@
       }}
       transition:fade={{ duration: 150 }}
     >
-      <div class="settings-mismatch-modal">
+      <div class="settings-mismatch-modal glass-palette-strong">
         <h2 id="settings-mismatch-title">Settings changed</h2>
         <p id="settings-mismatch-desc">
           Silt's vault path or trusted-publishers list has changed since the
@@ -1578,7 +1611,7 @@
       }}
       transition:fade={{ duration: 150 }}
     >
-      <div class="settings-mismatch-modal">
+      <div class="settings-mismatch-modal glass-palette-strong">
         <h2 id="grants-migration-title">Move plugin permissions</h2>
         <p id="grants-migration-desc">
           Silt is moving plugin permissions to per-host storage so they no
@@ -1631,7 +1664,7 @@
       }}
       transition:fade={{ duration: 150 }}
     >
-      <div class="settings-mismatch-modal">
+      <div class="settings-mismatch-modal glass-palette-strong">
         <h2 id="quarantine-title">Linked notebook moved or tampered</h2>
         <p id="quarantine-desc">
           {#each quarantinedLinks as q (q.id)}
@@ -1695,30 +1728,29 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(2px);
   }
 
   .settings-mismatch-modal {
     max-width: 460px;
     padding: 28px 32px;
     border-radius: 12px;
-    background: var(--color-surface, #1a1a1e);
-    border: 1px solid var(--color-border-muted, rgba(255, 255, 255, 0.1));
+    border: 1px solid var(--color-border-zinc, #27272a);
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
   }
 
   .settings-mismatch-modal h2 {
     margin: 0 0 12px;
     font-size: 1.15rem;
-    color: var(--color-text-primary, #e0e0e0);
+    color: var(--color-text-primary, #dee3e6);
   }
 
   .settings-mismatch-modal p {
     margin: 0 0 20px;
     font-size: 0.9rem;
     line-height: 1.5;
-    color: var(--color-text-muted, #999);
+    color: var(--color-text-muted, #8b8b94);
   }
 
   .settings-mismatch-modal code {
@@ -1741,22 +1773,34 @@
     border-radius: 8px;
     font-size: 0.875rem;
     cursor: pointer;
-    transition: opacity 0.15s;
+    transition: all 150ms var(--transition-standard);
   }
 
-  .settings-mismatch-actions button:hover {
-    opacity: 0.85;
+  .settings-mismatch-actions button:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 2px;
   }
 
   .settings-mismatch-actions .secondary {
     background: transparent;
-    color: var(--color-text-muted, #999);
+    color: var(--color-text-muted, #8b8b94);
     border: 1px solid var(--color-border-muted, rgba(255, 255, 255, 0.15));
+  }
+
+  .settings-mismatch-actions .secondary:hover {
+    background: var(--color-hover);
+    color: var(--color-text-primary);
+    border-color: var(--color-border-active);
   }
 
   .settings-mismatch-actions .primary {
     background: var(--color-accent-primary-start, #4a9eff);
-    color: #fff;
+    color: var(--color-void, #0c0c0e);
     font-weight: 600;
+  }
+
+  .settings-mismatch-actions .primary:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 0 12px var(--color-accent-primary-glow);
   }
 </style>

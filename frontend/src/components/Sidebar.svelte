@@ -451,7 +451,16 @@
           if (activePage === renameCtx.page) {
             activePage = trimmed
           }
-          window.dispatchEvent(new CustomEvent('page-renamed', { detail: { notebook: renameCtx.notebook, section: renameCtx.section, oldName: renameCtx.page, newName: trimmed } }))
+          window.dispatchEvent(
+            new CustomEvent('page-renamed', {
+              detail: {
+                notebook: renameCtx.notebook,
+                section: renameCtx.section,
+                oldName: renameCtx.page,
+                newName: trimmed
+              }
+            })
+          )
         }
       } else if (createMode === 'notebook') {
         await CreateNotebook(trimmed)
@@ -601,9 +610,19 @@
       loadNavigation()
       loadNavOrder()
     }
+    const handleCreatePageInlineEvent = (e: Event) => {
+      const sectionName =
+        (e as CustomEvent).detail?.sectionName ?? activeSection ?? ''
+      void handleCreatePageInline(sectionName)
+    }
     window.addEventListener('refresh-navigation', handleRefresh)
+    window.addEventListener('create-page-inline', handleCreatePageInlineEvent)
     return () => {
       window.removeEventListener('refresh-navigation', handleRefresh)
+      window.removeEventListener(
+        'create-page-inline',
+        handleCreatePageInlineEvent
+      )
       if (dndErrorTimer) clearTimeout(dndErrorTimer)
     }
   })
@@ -639,7 +658,8 @@
               showNotebookDropdown = !showNotebookDropdown
             }
           }}
-          class="flex items-center gap-2 cursor-pointer group py-1.5 rounded hover:bg-hover transition-colors"
+          class="flex items-center gap-2 cursor-pointer group px-2 py-1.5 rounded hover:bg-hover transition-all duration-150"
+          class:bg-hover={showNotebookDropdown}
           role="button"
           tabindex="0"
         >
@@ -865,12 +885,7 @@
           <!-- Section-less root pages -->
           {#each sortedSections.filter((s) => s.name === '') as rootSec}
             {#if rootSec.pages.length > 0}
-              <div class="h-px bg-border-muted my-2 mx-1 opacity-60"></div>
-              <div
-                class="px-2 py-1 text-[9px] uppercase tracking-wider text-text-muted/40 font-label-sm-bold"
-              >
-                Root Pages
-              </div>
+              <div class="h-px bg-border-muted my-3 mx-1.5 opacity-50"></div>
               {#each sortByName(rootSec.pages, navOrder.pages[`${activeNotebook}/`] ?? []) as pg (pg.name)}
                 {@const isActive =
                   activeSection === '' && activePage === pg.name}
@@ -986,8 +1001,7 @@
           ? `Rename ${createMode}`
           : `New ${createMode}`}
         tabindex="-1"
-        class="relative w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
-        style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 90%, transparent);"
+        class="relative w-full max-w-md glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
       >
         <div class="px-5 py-4 border-b border-border-muted">
           <h2 class="font-headline-md text-headline-md text-text-primary">
@@ -1132,8 +1146,7 @@
       aria-modal="true"
       aria-label="Confirm delete"
       tabindex="-1"
-      class="relative w-full max-w-sm glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
-      style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 90%, transparent);"
+      class="relative w-full max-w-sm glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
     >
       <div class="px-5 py-4 border-b border-border-muted">
         <h2 class="font-headline-md text-headline-md text-text-primary">

@@ -458,11 +458,25 @@
             Add
           </button>
         </div>
-        <input
-          bind:value={customDictionary.filter}
-          placeholder="Filter words…"
-          class="w-full px-2.5 py-1.5 rounded-lg bg-void border border-border-muted text-text-primary text-[13px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
-        />
+        <div class="relative w-full">
+          <input
+            bind:value={customDictionary.filter}
+            placeholder="Filter words…"
+            class="w-full pl-2.5 pr-8 py-1.5 rounded-lg bg-void border border-border-muted text-text-primary text-[13px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+          />
+          {#if customDictionary.filter}
+            <button
+              type="button"
+              aria-label="Clear filter"
+              onclick={() => {
+                customDictionary.filter = ''
+              }}
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
+            >
+              <span class="material-symbols-outlined text-[16px]">close</span>
+            </button>
+          {/if}
+        </div>
         {#if customDictionary.error}
           <p class="text-error text-[12px] font-body-md">
             {customDictionary.error}

@@ -92,12 +92,26 @@
       >
       <h2 class="font-headline-md text-headline-md text-text-primary">Tags</h2>
     </div>
-    <input
-      bind:value={query}
-      type="text"
-      placeholder="Filter tags…"
-      class="w-full bg-surface border border-border-zinc rounded-lg px-3 py-1.5 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
-    />
+    <div class="relative w-full">
+      <input
+        bind:value={query}
+        type="text"
+        placeholder="Filter tags…"
+        class="w-full bg-surface border border-border-zinc rounded-lg pl-3 pr-8 py-1.5 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+      />
+      {#if query}
+        <button
+          type="button"
+          aria-label="Clear filter"
+          onclick={() => {
+            query = ''
+          }}
+          class="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
+        >
+          <span class="material-symbols-outlined text-[16px]">close</span>
+        </button>
+      {/if}
+    </div>
   </div>
   <div class="flex-grow overflow-y-auto custom-scrollbar p-2">
     {#if filteredTree.length === 0}

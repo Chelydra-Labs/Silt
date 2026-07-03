@@ -277,7 +277,15 @@
     class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-6 max-w-4xl w-full"
   >
     {#if loading}
-      <div class="text-text-muted animate-pulse">Loading agenda…</div>
+      <div class="skeleton-container">
+        {#each Array(3) as _}
+          <div class="skeleton-row">
+            <div class="skeleton-circle"></div>
+            <div class="skeleton-text title"></div>
+            <div class="skeleton-badge"></div>
+          </div>
+        {/each}
+      </div>
     {:else if errorMsg}
       <div class="text-error">Failed to load: {errorMsg}</div>
     {:else if activeFilter === 'completed'}
@@ -288,8 +296,16 @@
         completed tasks.
       </div>
     {:else if items.length === 0}
-      <div class="text-text-muted py-10 text-center font-body-md">
-        Nothing scheduled. Add a due date to a task to see it here.
+      <div class="text-center py-16 px-4 max-w-sm mx-auto select-none">
+        <span
+          class="material-symbols-outlined text-text-muted/40 text-[48px] mb-3"
+          aria-hidden="true">calendar_today</span
+        >
+        <h3 class="font-headline-md text-text-primary mb-1">Clear agenda</h3>
+        <p class="text-text-muted text-[13px] font-body-md">
+          Nothing scheduled. Add a due date to any task in your notes to see it
+          here, or use the Calendar to schedule items.
+        </p>
       </div>
     {:else}
       {#each [{ key: 'overdue', label: 'Overdue', list: overdue, tone: 'error', date: '' }, { key: 'today', label: 'Today', list: todayItems, tone: 'primary', date: today }, { key: 'tomorrow', label: 'Tomorrow', list: tomorrowItems, tone: 'secondary', date: tomorrow }, { key: 'upcoming', label: 'Upcoming', list: upcoming, tone: 'muted', date: '' }, { key: 'undated', label: 'Undated', list: undated, tone: 'muted', date: '' }] as group (group.key)}

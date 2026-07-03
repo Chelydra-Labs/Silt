@@ -289,6 +289,16 @@ body {
   background: color-mix(in srgb, var(--color-panel) 75%, transparent);
 }
 
+/* Stronger frosted glass for modal dialogs (denser panel tint + heavier
+   blur). Kept as a sibling of .glass-palette because .glass-palette is also
+   used as a click-outside guard selector (see CommandPalette.test.ts) and
+   cannot be merged. Sites that previously inlined this exact recipe
+   (blur(16px) saturate(140%) + 90% panel) should use this class instead. */
+.glass-palette-strong {
+  backdrop-filter: blur(16px) saturate(140%);
+  background: color-mix(in srgb, var(--color-panel) 90%, transparent);
+}
+
 /* Custom checkbox states */
 .todo-check {
   border: 1px solid var(--color-border-zinc);
@@ -1061,4 +1071,87 @@ body {
   text-decoration: underline wavy var(--color-status-danger, #ef4444);
   text-decoration-skip-ink: auto;
   text-underline-position: under;
+}
+
+/* Premium skeleton loading states */
+.skeleton-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* Horizontal padding is controlled by the padded container (e.g. px-6 py-4);
+     a horizontal value here would silently override the dead px-0 utility
+     because Tailwind v4 utilities live in a cascade layer below this rule. */
+  padding: 8px 0;
+  width: 100%;
+}
+
+.skeleton-circle {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-border-muted);
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.skeleton-text {
+  height: 12px;
+  border-radius: 4px;
+  background: var(--color-border-muted);
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-text.title {
+  width: 55%;
+}
+
+.skeleton-text.subtitle {
+  width: 25%;
+  height: 8px;
+}
+
+.skeleton-badge {
+  width: 60px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--color-border-muted);
+  position: relative;
+  overflow: hidden;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.skeleton-circle::after,
+.skeleton-text::after,
+.skeleton-badge::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.04) 20%,
+    rgba(255, 255, 255, 0.08) 60%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: shimmer 1.8s infinite linear;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
 }
