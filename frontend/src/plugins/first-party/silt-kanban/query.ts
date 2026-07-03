@@ -47,7 +47,13 @@ export function buildQuery(
   const baseSelect = `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
            b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
            t.pinned, t.progress, t.recur AS recurrence, t.comments_count, t.links_count,
-           (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags
+           (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags,
+           (SELECT GROUP_CONCAT(blocked_by_id, '|') FROM task_dependencies WHERE block_id = b.id) AS blocked_by,
+           EXISTS (
+             SELECT 1 FROM task_dependencies d
+             JOIN tasks bt ON bt.block_id = d.blocked_by_id
+             WHERE d.block_id = b.id AND bt.status != 'DONE'
+           ) AS is_blocked
     FROM blocks b JOIN tasks t ON b.id = t.block_id`
   const orderBy = ` ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`
   const where: string[] = []

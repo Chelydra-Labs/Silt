@@ -31,6 +31,8 @@
     due_date: string
     priority: number
     recurrence?: string
+    /** 1 when the task has an open prerequisite (#301/#302). */
+    is_blocked?: number
   }
 
   let items = $state<AgendaItem[]>([])
@@ -45,7 +47,13 @@
     try {
       const { rows } = await ctx.sqliteQuery(
         `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
-                b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority, t.recur AS recurrence
+                b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
+                t.recur AS recurrence,
+                EXISTS (
+                  SELECT 1 FROM task_dependencies d
+                  JOIN tasks bt ON bt.block_id = d.blocked_by_id
+                  WHERE d.block_id = b.id AND bt.status != 'DONE'
+                ) AS is_blocked
          FROM blocks b JOIN tasks t ON b.id = t.block_id
          WHERE t.status != 'DONE'
          ORDER BY (t.due_date IS NULL OR t.due_date = '') ASC,
@@ -117,6 +125,22 @@
   async function markDone(item: AgendaItem) {
     markDoneError = ''
     if (markDoneTimer) clearTimeout(markDoneTimer)
+    // DONE-on-blocked guard (#302): if the task carries open prerequisites,
+    // confirm before persisting. The native confirm() is accessible
+    // (keyboard-operable, screen-reader announced) and avoids coupling this
+    // list view to a full glassy modal per row.
+    if (item.is_blocked) {
+      const blockers = await ctx.getTaskBlockers(item.id)
+      if (blockers.length > 0) {
+        const names = blockers
+          .map((b) => `“${b.clean_content ?? 'untitled'}”`)
+          .join(', ')
+        const ok = window.confirm(
+          `This task is blocked by ${blockers.length} unfinished task(s): ${names}.\n\nComplete anyway?`
+        )
+        if (!ok) return
+      }
+    }
     try {
       await ctx.updateBlockState(item.id, 'DONE')
       // Only remove from the list once the backend confirmed the change;
@@ -381,6 +405,18 @@
                       <span
                         class="material-symbols-outlined text-[12px]"
                         aria-hidden="true">event_repeat</span
+                      >
+                    </span>
+                  {/if}
+                  {#if item.is_blocked}
+                    <span
+                      class="text-status-warn flex-shrink-0"
+                      title="Blocked by unfinished prerequisite task(s)"
+                      aria-label="Blocked by unfinished prerequisite task(s)"
+                    >
+                      <span
+                        class="material-symbols-outlined text-[12px]"
+                        aria-hidden="true">lock</span
                       >
                     </span>
                   {/if}

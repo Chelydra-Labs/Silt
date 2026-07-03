@@ -1274,4 +1274,167 @@ describe('Kanban plugin (#19)', () => {
       expect(screen.queryByTestId('kanban-add-Backlog')).toBeNull()
     })
   })
+
+  describe('blocked-task badge + DONE guard (#302)', () => {
+    const blockedRow = {
+      ...SAMPLE_ROWS[0],
+      id: 't-blocked',
+      clean_content: 'Blocked task',
+      status: 'TODO',
+      is_blocked: 1
+    }
+    const openRow = { ...SAMPLE_ROWS[0], id: 't-open', is_blocked: 0 }
+
+    it('renders a lock badge with aria-label when a task is blocked', async () => {
+      mocks.sqliteQuery.mockImplementation(async () => ({
+        rows: [blockedRow],
+        truncated: false
+      }))
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+
+      const badge = screen.getByLabelText(
+        'Blocked by unfinished prerequisite task(s)'
+      )
+      expect(badge).toBeInTheDocument()
+    })
+
+    it('does not render a lock badge when a task is not blocked', async () => {
+      mocks.sqliteQuery.mockImplementation(async () => ({
+        rows: [openRow],
+        truncated: false
+      }))
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+
+      expect(
+        screen.queryByLabelText('Blocked by unfinished prerequisite task(s)')
+      ).toBeNull()
+    })
+
+    it('includes blocked state in the card aria-label for screen readers', async () => {
+      mocks.sqliteQuery.mockImplementation(async () => ({
+        rows: [blockedRow],
+        truncated: false
+      }))
+      render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+      await flush()
+
+      const card = document.querySelector('[data-card]')
+      expect(card?.getAttribute('aria-label')).toContain(
+        'blocked by unfinished prerequisite'
+      )
+    })
+
+    // Helper: drive a card from a source lane into the DONE lane via two
+    // ArrowRight keydowns. The card is re-queried + re-focused between moves
+    // because the optimistic first move re-parents it under a new lane and
+    // Svelte may not preserve focus across the re-render.
+    async function moveCardToDoneViaKeyboard() {
+      let card = document.querySelector('[data-card]') as HTMLElement
+      card.focus()
+      await fireEvent.keyDown(card, { key: 'ArrowRight' }) // TODO -> DOING
+      await flush()
+      card = document.querySelector('[data-card]') as HTMLElement
+      card.focus()
+      await fireEvent.keyDown(card, { key: 'ArrowRight' }) // DOING -> DONE
+    }
+
+    it('moving a blocked card to DONE opens a confirm dialog instead of persisting', async () => {
+      mocks.sqliteQuery.mockImplementation(async () => ({
+        rows: [blockedRow],
+        truncated: false
+      }))
+      const getTaskBlockers = vi.fn().mockResolvedValue([
+        {
+          id: 't1',
+          clean_content: 'Prerequisite task',
+          owner: '',
+          due_date: '',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily'
+        }
+      ])
+      render(Kanban, { ctx: makeCtx({ getTaskBlockers }), manifest: MANIFEST })
+      await flush()
+
+      await moveCardToDoneViaKeyboard()
+      // The guard awaits getTaskBlockers before opening the dialog, so wait
+      // for the async resolution + re-render with findByRole.
+      await screen.findByRole('alertdialog', { name: 'Complete blocked task?' })
+
+      // The first ArrowRight (TODO->DOING) legitimately called
+      // updateBlockState; the DONE transition must NOT have reached it
+      // (it pauses for the confirm). Assert no DONE-targeted call.
+      const doneCalls = mocks.updateBlockState.mock.calls.filter(
+        (c) => c[1] === 'DONE'
+      )
+      expect(doneCalls).toHaveLength(0)
+      expect(getTaskBlockers).toHaveBeenCalledWith('t-blocked')
+    })
+
+    it('confirming the dialog persists the DONE transition', async () => {
+      mocks.sqliteQuery.mockImplementation(async () => ({
+        rows: [blockedRow],
+        truncated: false
+      }))
+      const getTaskBlockers = vi
+        .fn()
+        .mockResolvedValue([{ id: 't1', clean_content: 'Prereq' }])
+      render(Kanban, { ctx: makeCtx({ getTaskBlockers }), manifest: MANIFEST })
+      await flush()
+
+      await moveCardToDoneViaKeyboard()
+      await screen.findByRole('alertdialog', { name: 'Complete blocked task?' })
+
+      mocks.updateBlockState.mockClear()
+      await fireEvent.click(screen.getByText('Complete anyway'))
+      await flush()
+
+      expect(mocks.updateBlockState).toHaveBeenCalledWith('t-blocked', 'DONE')
+    })
+
+    it('cancelling the dialog reverts the card to its source lane', async () => {
+      mocks.sqliteQuery.mockImplementation(async () => ({
+        rows: [blockedRow],
+        truncated: false
+      }))
+      const getTaskBlockers = vi
+        .fn()
+        .mockResolvedValue([{ id: 't1', clean_content: 'Prereq' }])
+      render(Kanban, { ctx: makeCtx({ getTaskBlockers }), manifest: MANIFEST })
+      await flush()
+
+      await moveCardToDoneViaKeyboard()
+      await screen.findByRole('alertdialog', { name: 'Complete blocked task?' })
+
+      mocks.updateBlockState.mockClear()
+      await fireEvent.click(screen.getByText('Cancel'))
+      await flush()
+
+      // No DONE write happened.
+      expect(mocks.updateBlockState).not.toHaveBeenCalled()
+      // The card reverts to the DOING lane (the lane it was dragged from into
+      // DONE — it had already moved TODO->DOING on the first ArrowRight).
+      const doingLane = screen.getByRole('group', { name: 'In Progress' })
+      expect(doingLane.querySelector('[data-card]')).toBeTruthy()
+    })
+
+    it('an unblocked task moves to DONE without a dialog', async () => {
+      mocks.sqliteQuery.mockImplementation(async () => ({
+        rows: [openRow],
+        truncated: false
+      }))
+      const getTaskBlockers = vi.fn()
+      render(Kanban, { ctx: makeCtx({ getTaskBlockers }), manifest: MANIFEST })
+      await flush()
+
+      await moveCardToDoneViaKeyboard()
+      await flush()
+
+      expect(getTaskBlockers).not.toHaveBeenCalled()
+      expect(mocks.updateBlockState).toHaveBeenCalled()
+    })
+  })
 })

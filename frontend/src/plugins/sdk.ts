@@ -62,6 +62,23 @@ export interface SqliteQueryResult {
   truncated: boolean
 }
 
+/**
+ * A task prerequisite returned by `getTaskBlockers` (#302). Carries the
+ * breadcrumb + display fields the DONE-confirm dialog lists so the user can
+ * see *which* tasks are blocking completion. Mirrors the relevant subset of
+ * the backend TaskResult projection; display fields are optional to match
+ * the Go struct's omitempty json tags.
+ */
+export interface BlockerTask {
+  id: string
+  clean_content?: string
+  owner?: string
+  due_date?: string
+  notebook?: string
+  section?: string
+  page?: string
+}
+
 export interface PluginContext {
   /**
    * The active notebook. This is a LIVE reactive getter (#69): reading it
@@ -121,6 +138,20 @@ export interface PluginContext {
    * file, re-indexes, and emits `block:changed`. Gated by content-mutate.
    */
   setTaskRecurrence: (id: string, recurrence: string) => Promise<boolean>
+  /**
+   * Rewrite a task's `[blocked_by:: ((uuid))...]` inline token on disk
+   * atomically (#301/#303). Pass an empty array to clear all dependencies.
+   * Cycle prevention runs server-side: adding an edge that would close a
+   * loop is rejected (the promise rejects). Round-trips through the markdown
+   * file, re-indexes, and emits block:changed. Gated by content-mutate.
+   */
+  setTaskBlockedBy: (id: string, depIDs: string[]) => Promise<boolean>
+  /**
+   * Return the open (non-DONE) prerequisites of a task (#302), each with full
+   * metadata (owner, due date, breadcrumb) for the DONE-transition confirm
+   * dialog. Empty array = the task is actionable.
+   */
+  getTaskBlockers: (id: string) => Promise<BlockerTask[]>
   /**
    * Create a standalone task (a GFM checkbox) in the dedicated non-note
    * markdown file `<vault>/.silt/tasks.md` (#368). The task is queryable via

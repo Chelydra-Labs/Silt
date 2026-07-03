@@ -7,6 +7,8 @@ import {
   PluginUpdateTaskMeta,
   PluginSetTaskDueDate,
   PluginSetTaskRecurrence,
+  PluginSetTaskBlockedBy,
+  GetTaskBlockers,
   PluginCreateTask,
   GetPluginSettingsForNotebook,
   UpdatePluginSetting,
@@ -170,6 +172,12 @@ export function makePluginContext(
     // (stop recurring). Validated server-side for grammar + due-date anchor.
     setTaskRecurrence: (id, recurrence) =>
       PluginSetTaskRecurrence(pluginID, sessionToken ?? '', id, recurrence),
+    // Rewrite a task's [blocked_by:: ((uuid))...] token (#301/#303). Empty
+    // array clears all deps. Cycle prevention is enforced server-side.
+    setTaskBlockedBy: (id, depIDs) =>
+      PluginSetTaskBlockedBy(pluginID, sessionToken ?? '', id, depIDs),
+    // Open (non-DONE) prerequisites for the DONE-confirm dialog (#302).
+    getTaskBlockers: (id) => GetTaskBlockers(id),
     // Create a standalone task in <vault>/.silt/tasks.md (#368). title required;
     // dueDate/status optional with TODO + no-due defaults.
     createTask: (opts) =>

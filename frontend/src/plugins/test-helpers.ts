@@ -21,6 +21,8 @@ export const v2CtxStubs: Pick<
   | 'createTask'
   | 'setTaskDueDate'
   | 'setTaskRecurrence'
+  | 'setTaskBlockedBy'
+  | 'getTaskBlockers'
   | 'deleteBlock'
   | 'moveBlock'
   | 'applyBlocks'
@@ -66,6 +68,8 @@ export const v2CtxStubs: Pick<
   createTask: () => Promise.resolve(''),
   setTaskDueDate: () => Promise.resolve(true),
   setTaskRecurrence: () => Promise.resolve(true),
+  setTaskBlockedBy: () => Promise.resolve(true),
+  getTaskBlockers: () => Promise.resolve([]),
   deleteBlock: () => Promise.resolve(true),
   moveBlock: () => Promise.resolve(true),
   applyBlocks: () => Promise.resolve(true),
