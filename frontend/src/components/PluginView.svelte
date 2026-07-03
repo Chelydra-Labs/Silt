@@ -8,9 +8,23 @@
     activeNotebook: string
     activeSection: string
     activePage: string
+    /**
+     * Optional focus target forwarded to plugin components that recognize
+     * it (#370 / #374 — silt-tasks uses this to scroll-and-highlight the
+     * targeted block row when a search/tag/backlink jump lands on a
+     * standalone task). Plugins that don't declare a `focusBlockId` prop
+     * receive `undefined` and ignore it.
+     */
+    focusBlockId?: string
   }
 
-  let { pluginId, activeNotebook, activeSection, activePage }: Props = $props()
+  let {
+    pluginId,
+    activeNotebook,
+    activeSection,
+    activePage,
+    focusBlockId
+  }: Props = $props()
 
   let plugin = $derived(loadedPlugins.plugins.get(pluginId))
   let loadError = $derived(loadedPlugins.errors.find((e) => e.id === pluginId))
@@ -70,5 +84,5 @@
   </div>
 {:else if ctx}
   {@const Plugin = plugin.component}
-  <Plugin {ctx} manifest={plugin.manifest} />
+  <Plugin {ctx} manifest={plugin.manifest} {focusBlockId} />
 {/if}

@@ -106,6 +106,7 @@
     { id: 'notes', label: 'Notes', icon: 'description' },
     { id: 'tags', label: 'Tags', icon: 'label' },
     { id: 'calendar', label: 'Calendar', icon: 'calendar_month' },
+    { id: 'tasks', label: 'Tasks', icon: 'checklist' },
     { id: 'kanban', label: 'Kanban', icon: 'view_kanban' }
   ]
   let selectedTag = $state('')
@@ -1300,7 +1301,7 @@
           {/if}
         {:else if activeView === 'tags'}
           <TagsExplorer {selectedTag} />
-        {:else if activeView === 'agenda' || activeView === 'calendar' || activeView === 'kanban'}
+        {:else if activeView === 'agenda' || activeView === 'calendar' || activeView === 'tasks' || activeView === 'kanban'}
           <PluginView
             pluginId={'silt-' + activeView}
             {activeNotebook}
