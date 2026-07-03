@@ -2,6 +2,33 @@ Design Specification: Silt
 
 Core Design System, Component Tokens, & Interaction Specification
 
+**How to use this document.** The visual design system — the Cyber-Ink
+language, the token schema, component visual specs, and interaction models.
+
+- **Authoritative for:** design tokens (color/typography/spacing/shape),
+  component visual specifications, motion & interaction specs, the visual
+  accessibility targets.
+
+**Principles**
+- The token tables here are the contract shared by the Go theme loader, the
+  runtime CSS injector, and the theme JSON — all three follow them.
+- Read on-disk theme files as the editable source; this doc defines the
+  schema and the canonical defaults, not individual user themes.
+
+**Rules**
+- When a token changes, update the loader, the injector, and the theme JSON
+  in the same change as this doc.
+- In a component spec, reference semantic accent tokens
+  (`--accent-primary-*`), not a concrete hue.
+
+**Best practices**
+- Prefer a cross-reference to ARCHITECTURE §4.4 / SPECS §6.4 over restating
+  the theme-engine plumbing here.
+
+**Not for**
+- The theme-engine plumbing (ARCHITECTURE.md §4.4), the theme file-format
+  spec (SPECS.md §6.4), or implementation detail.
+
 1. Design Vision: Refined Cyber-Ink
 
 Most digital workspace applications fall into one of two visual extremes: flat, sterile minimalism that feels clinical (e.g., default note-taking apps) or over-saturated, high-contrast neon layouts that induce cognitive fatigue during multi-hour reading/writing sessions.
@@ -120,7 +147,7 @@ The split matters because three first-class themes share **cool** accents
 (Cyber Forest teal, Graphite blue, Linen slate-blue) — if a prominent label
 like the wordmark or the active-notebook header is bound to the accent token,
 switching between those themes barely shifts its hue and the theme change reads
-as inert even though the palette swapped correctly (#138). Binding such
+as inert even though the palette swapped correctly. Binding such
 elements to `--color-text-primary` surfaces each theme's distinct body-text color
 (neutral white / warm oatmeal / cool blue-gray) in the most eye-catching chrome.
 The brand `<img>` logo (not the wordmark text) carries the brand identity; the
@@ -376,11 +403,11 @@ To support user-defined styling, Silt implements a runtime CSS Custom Property i
 
 A canonical default theme (cyber_forest) is embedded in the Go binary so the app always renders correctly before a vault exists or when the themes directory is wiped. The native webview BackgroundColour is resolved at launch from that embedded theme's `bg.void`, eliminating any pre-CSS flash that matches no token.
 
-Custom Theme Import (Sprint 6, #48): users can import a theme JSON via the Settings → Appearance "Import" button or by dragging a `.json` onto the tab (Wails `OnFileDrop`). The backend validates against the canonical schema using the same `themes.ParseAndValidate` the loader uses, namespaces the id (`user-` prefix on a built-in id, counter suffix on repeat), and writes the file atomically. `themes.ValidationErrors` propagate over IPC so the UI names the offending token and the expected format. On success the backend emits the Wails event `themes:changed` (distinct from the active-theme event `theme:changed`); the frontend `themesState` listing re-fetches and the new theme appears in the picker without a restart. Sandbox by schema: the canonical schema accepts only color values (hex / rgb / rgba) at every token slot, so embedded `<script>`, `url()`, `expression()`, and named colors are rejected structurally before they reach disk.
+Custom Theme Import: users can import a theme JSON via the Settings → Appearance "Import" button or by dragging a `.json` onto the tab (Wails `OnFileDrop`). The backend validates against the canonical schema using the same `themes.ParseAndValidate` the loader uses, namespaces the id (`user-` prefix on a built-in id, counter suffix on repeat), and writes the file atomically. `themes.ValidationErrors` propagate over IPC so the UI names the offending token and the expected format. On success the backend emits the Wails event `themes:changed` (distinct from the active-theme event `theme:changed`); the frontend `themesState` listing re-fetches and the new theme appears in the picker without a restart. Sandbox by schema: the canonical schema accepts only color values (hex / rgb / rgba) at every token slot, so embedded `<script>`, `url()`, `expression()`, and named colors are rejected structurally before they reach disk.
 
-User Theme Engine UX (Sprint 6, #47): Settings → Appearance is the single surface for theme selection. Mode is a `role="radiogroup"` of Dark / Light / System (changing mode never changes the active theme). Themes are a `role="listbox"` of `role="option"` rows with roving tabindex, Arrow/Home/End navigation, Enter/Space commit, and Esc to cancel any live preview. Swatches are data-driven from `ThemeInfo.Swatches` (no per-theme code branches). The picker renders a live preview on hover/focus by injecting the preview theme's tokens via the existing `injectTokens` path — restoring the active theme on `mouseleave`/`blur`/`Esc`. Errors and status updates flow through a `role="status" aria-live="polite"` region (escalating to `role="alert" aria-live="assertive"` for errors). The active id and mode persist across restarts via `AppSettings` (Sprint 5).
+User Theme Engine UX: Settings → Appearance is the single surface for theme selection. Mode is a `role="radiogroup"` of Dark / Light / System (changing mode never changes the active theme). Themes are a `role="listbox"` of `role="option"` rows with roving tabindex, Arrow/Home/End navigation, Enter/Space commit, and Esc to cancel any live preview. Swatches are data-driven from `ThemeInfo.Swatches` (no per-theme code branches). The picker renders a live preview on hover/focus by injecting the preview theme's tokens via the existing `injectTokens` path — restoring the active theme on `mouseleave`/`blur`/`Esc`. Errors and status updates flow through a `role="status" aria-live="polite"` region (escalating to `role="alert" aria-live="assertive"` for errors). The active id and mode persist across restarts via `AppSettings`.
 
-Page Template Picker (Sprint 9, #55): the template picker reuses the same modal chrome, Refined Cyber-Ink token system, and iconography rules as the theme picker. Iconography follows the Material Symbols convention; the `icon` frontmatter field is a Material Symbols name rendered at 18–20px. No emojis are used in first-class template icons — they are abstract, CSS-friendly glyphs. The picker is a centered overlay (`role="dialog"`, `aria-modal="true"`) with a category-grouped `role="listbox"`, roving tabindex (Arrow/Home/End/Enter), a live preview pane, a dynamic placeholder form, and a Tab focus trap. Entry points: the sidebar `content_copy` button + `Ctrl+Shift+T` (new page mode) and the `/template` slash command (insert mode).
+Page Template Picker: the template picker reuses the same modal chrome, Refined Cyber-Ink token system, and iconography rules as the theme picker. Iconography follows the Material Symbols convention; the `icon` frontmatter field is a Material Symbols name rendered at 18–20px. No emojis are used in first-class template icons — they are abstract, CSS-friendly glyphs. The picker is a centered overlay (`role="dialog"`, `aria-modal="true"`) with a category-grouped `role="listbox"`, roving tabindex (Arrow/Home/End/Enter), a live preview pane, a dynamic placeholder form, and a Tab focus trap. Entry points: the sidebar `content_copy` button + `Ctrl+Shift+T` (new page mode) and the `/template` slash command (insert mode).
 
 
 8. Accessibility (A11Y) & Keyboard Navigation Compliance

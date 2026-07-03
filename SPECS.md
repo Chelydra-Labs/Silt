@@ -2,6 +2,49 @@ Technical Specification: Silt
 
 A Local-First, High-Performance Hybrid Note & Task Management Lifecycle Architecture
 
+**How to use this document.** This is the product *north star*: the
+intended functionality and requirements Silt is built toward, expressed as
+the best long-term solution — not a snapshot of any single sprint.
+
+- **Authoritative for:** product behavior, file formats, the AST/grammar,
+  the plugin SDK contract, the config schema, and non-functional targets.
+
+**Principles**
+- This is the *north star*: the intended functionality expressed as the
+  best long-term solution, not a snapshot of any single sprint.
+- Kept in sync with reality — when an implementation takes a better
+  direction than an earlier plan, this spec is updated to reflect it. It is
+  neither a frozen original spec nor a changelog.
+- Describe **what the product must do and why** — the requirements — not how
+  it is built. SPECS stands on its own as the north star: it may cover the
+  same ground as ARCHITECTURE, but expressed at the requirements level.
+
+**Rules**
+- Describe the destination, not the progress.
+- Rejected-alternative reasoning goes to ADRs; keep a one-line pointer here
+  only when it is load-bearing.
+- No implementation identifiers (Go package paths, IPC binding names,
+  internal function names, Wails event names, frontend file paths) unless
+  they *are* the contract — e.g. the plugin SDK interface.
+
+**Best practices**
+- Prefer a cross-reference (an ADR, an ARCHITECTURE section) to an inline
+  `(#123)` tag.
+- When the spec and the code diverge, decide which is the better long-term
+  direction and update the lagging one deliberately.
+
+**Not for**
+- **Implementation detail** — how it's built (package paths, binding/function
+  names, internal mechanisms, event names). That lives in ARCHITECTURE and
+  the code; SPECS describes the requirement, not the mechanism.
+- **Implementation status** — "done in sprint N," "not yet built,"
+  "% complete."
+- **Rejected-alternative essays** — "we considered X and rejected it."
+- **Changelog / issue archaeology** — sprint numbers and `(#123)` tags.
+
+ARCHITECTURE.md describes the system as built today; this spec describes
+where it is going.
+
 1. Executive Summary & Philosophy
 
 1.1 Problem Statement
@@ -123,9 +166,9 @@ Path resolution: the **notebook** is the top folder under the vault; the **page*
 
 Silt starts blank — no default notebook or section is created. The user creates or opens their first notebook from the sidebar's notebook selector.
 
-**Moving pages across sections (#177).** A page can be dragged from one section to another, or from a section into the notebook root (section-less), via sidebar drag-and-drop. The `MovePage` IPC renames the `.md` file on disk, rewrites its `section:` frontmatter, rebuilds the block index at the new path, and updates `nav_order` for both the source and target section keys. **Name collisions are rejected** (not auto-suffixed) — if a page with the same name already exists in the target section, the move fails with a user-visible error. This matches `RenamePage` semantics and prevents silent data loss.
+**Moving pages across sections.** A page can be dragged from one section to another, or from a section into the notebook root (section-less), via sidebar drag-and-drop. The `MovePage` IPC renames the `.md` file on disk, rewrites its `section:` frontmatter, rebuilds the block index at the new path, and updates `nav_order` for both the source and target section keys. **Name collisions are rejected** (not auto-suffixed) — if a page with the same name already exists in the target section, the move fails with a user-visible error. This matches `RenamePage` semantics and prevents silent data loss.
 
-**Linked / external notebooks (#100).** A notebook root does not have to live
+**Linked / external notebooks.** A notebook root does not have to live
 inside the vault. The user can LINK an external folder (e.g. a synced
 SharePoint/OneDrive mount) as a notebook from the sidebar ("Link External
 Folder…"); it is browsed/searched/edited in place and is NEVER copied into the
@@ -139,7 +182,7 @@ indexing it and leaves its files completely untouched (vs. deleting a vault
 notebook, which trashes it). See ARCHITECTURE.md §3.1 for the full model
 (identity, path resolution, multi-root watcher, failure modes).
 
-**Relocating / duplicating a vault (#141).** The vault path set during
+**Relocating / duplicating a vault.** The vault path set during
 onboarding is not permanent: Settings → General exposes a "Move vault…" /
 "Copy vault…" action on the workspace row. Both copy the entire tree (notes +
 `.system/` — config, themes, templates, plugins, trash) to a destination
@@ -155,7 +198,7 @@ The destination must be an empty, local folder (a network mount is refused —
 WAL requires shared memory). Linked notebooks are external folders and are
 never moved or rewritten by a vault relocation.
 
-**Portable archive / backup (#143).** The same Settings → General workspace
+**Portable archive / backup.** The same Settings → General workspace
 kebab also exposes **"Export vault…"** and **"Import vault…"** for backup and
 machine-to-machine migration. Export bundles the entire vault tree (notes +
 `.system/` — config, themes, templates, plugins) into a single self-contained
@@ -164,7 +207,7 @@ machine-to-machine migration. Export bundles the entire vault tree (notes +
 excluded (rebuilt on import, same §0 rule 4 contract as Move/Copy). Import
 validates the manifest + checksums and rejects zip-slip / absolute paths / a
 missing manifest before extracting into a user-chosen empty local folder, then
-opens it via the #141 `SwitchVault` path. See §3.4 for the format.
+opens it via the `SwitchVault` path. See §3.4 for the format.
 
 
 3.3 File Boundary Specification & Frontmatter Standard
@@ -190,7 +233,7 @@ tags: [systems/specs, wails/go]
 
 A `.silt-vault` archive is the portable, self-contained form of a vault,
 produced by **Export** and consumed by **Import** (Settings → General →
-workspace kebab, #143). It is the local-first contract (§0) made portable: a
+workspace kebab). It is the local-first contract (§0) made portable: a
 single file that carries the entire vault tree and is checksummed so
 tampering/corruption is detectable before a single byte is extracted.
 
@@ -203,7 +246,7 @@ are computed over a stable byte stream; compression is a documented future
 enhancement.
 
 **Exclusion.** The reproducible SQLite index (`.system/index.sqlite*`) is NEVER
-archived — identical to Move/Copy (#141) and for the same reason (§0 rule 4):
+archived — identical to Move/Copy and for the same reason (§0 rule 4):
 it is reproducible working memory, rebuilt from markdown when the imported
 vault is first opened. Linked notebooks are external folders and are never
 included in the archive.
@@ -236,7 +279,7 @@ the `.silt-plugin` installer posture (§8.4):
 
 Only after every entry verifies is the temp dir atomically renamed into the
 user-chosen empty destination folder; a corrupt or hostile archive leaves the
-destination untouched. Import then opens the vault via `SwitchVault` (#141),
+destination untouched. Import then opens the vault via `SwitchVault`,
 which rebuilds the index from markdown and emits `vault:moved`.
 
 **Safety guards (defense in depth, shared with §8.4).** Rejects zip-slip
@@ -245,12 +288,7 @@ and per-entry size (zip-bomb defense via `io.LimitReader` over the declared
 size), and runs a final containment check on each joined extraction path.
 Hostile archives never write outside the staging directory.
 
-**IPC surface.** `App.PickVaultExportPath` / `App.ExportVault` (export, native
-save-file picker, active vault read-only) and `App.PickVaultArchive` /
-`App.ImportVault` (import, native open-file picker + empty-destination picker).
-Both stream determinate progress via the `vault:archive:progress` Wails event
-(`{phase: "export"|"extract", current, total}`) so the UI renders a progress
-bar for large vaults. See ARCHITECTURE.md §4.3.
+**Export & import.** Export writes the active vault (read-only) to a user-chosen `.silt-vault` path via a native save-file picker; Import opens a `.silt-vault` via a native open-file picker and an empty-destination picker. Both stream determinate progress (`phase: "export"|"extract"`, current, total) so the UI renders a progress bar for large vaults.
 
 
 4. Custom AST Parser & Task Shorthand Grammar
@@ -288,7 +326,7 @@ Metadata Tokens (Dataview `[key:: value]` format):
 | `progress` | `[prog:: N]` | `[progress:: N]` (0-100) | `[progress:: 50]` |
 | `recur` | `[recurrence:: RULE]` | `[recur:: RULE]` (natural language) | `[recur:: every week]` |
 
-Recurrence rules (#296): The `recur` token carries a natural-language
+Recurrence rules: The `recur` token carries a natural-language
 repeat rule. Supported grammar: `every day`, `every weekday` (Mon–Fri),
 `every week`, `every N days`, `every N weeks`, `every N months`,
 `every year`. When a recurring task is marked DONE, the next instance is
@@ -306,75 +344,11 @@ Persistent Identifier comment: A hidden HTML comment
 `<!-- id: UUIDv4 @ YYYY-MM-DD -->` automatically generated and appended
 to the block by the parser if one is missing.
 
-Standalone tasks (#368): Tasks created from a quick-add surface (calendar
-day cell, calendar toolbar, kanban column footer, or the global
-`Mod+Shift+N` shortcut) that are not associated with a note persist as
-ordinary GFM checkboxes in a single dedicated non-note markdown file at
-`<vault>/.silt/tasks.md`. The file is indexed under a synthetic notebook
-named `.silt` (section `""`, page `tasks`); the dot-prefix means it is
-auto-excluded from the page browser and `WalkMarkdown`'s general
-dot-directory skip stays intact. `ScanStandaloneTasks` is the targeted
-read that feeds the file into the normal parse→index pipeline. There is
-no new SQL table and no nullable `block_id` — the markdown-source-of-
-truth invariant is preserved: standalone tasks round-trip through the
-same `[key:: value]` token syntax and survive a full re-index (deleting
-`.system/index.sqlite*` and relaunching restores them from the file).
+**Standalone tasks.** Tasks created from a quick-add surface (a calendar day cell, the calendar toolbar, a Kanban column footer, or the global `Mod+Shift+N` shortcut) that are not attached to a note persist as ordinary GFM checkboxes in a single dedicated file at `<vault>/.silt/tasks.md`. They are indexed under a synthetic, hidden `.silt` notebook and round-trip through the same `[key:: value]` token syntax as any other task — the markdown-source-of-truth invariant is preserved, with no new SQL table. The dot-prefixed notebook is excluded from the page browser; the only user-facing surface for these tasks is the **Tasks view**.
 
-Standalone-tasks navigation router (#374): The `.silt` synthetic
-notebook is hidden from the sidebar and the page browser by design,
-so the only way a user can land on a standalone-task block is via
-search, tag-explorer click, backlink follow, or some other code-level
-call into `openPage`. To keep the synthetic notebook name from leaking
-into the tab header and breadcrumbs, every navigation entry point
-funnels through `routeJumpTarget()` (in
-`frontend/src/lib/standaloneTasksNav.ts`) which detects
-`notebook === '.silt'` and re-routes to the **Tasks view** (#370)
-instead of opening a `.silt / tasks` editor tab. A targeted block
-id is forwarded as `focusBlockId` so the Tasks view scrolls the row
-into view and applies a transient 3-second highlight. The routing
-policy is testable as a pure reducer; App.svelte's three funnel
-points (`openPage`, `handleSearchJump`, the `navigate-to-block`
-window listener) all delegate to it.
+**Tasks view.** A first-party plugin that lists every active task across the vault, grouped into **Overdue / Today / Upcoming (next 7 days) / No Date / Completed**. The "No Date" bucket gives undated tasks (the natural output of the quick-add, which intentionally produces them without a default due date) a first-class surface that the date-scoped Agenda and Calendar views do not provide — without it, a quick-added undated task is invisible. The Completed group is collapsed by default and ordered by completion recency.
 
-Tasks view (#370): A first-party plugin
-(`frontend/src/plugins/first-party/silt-tasks/`) that lists every
-active task across the vault grouped into **Overdue / Today /
-Upcoming (next 7 days) / No Date / Completed**. The "No Date"
-bucket gives undated tasks (the natural output of the global
-quick-add, which intentionally produces them without a default due
-date) a first-class surface; the existing date-scoped agenda
-(AgendaList.svelte inside Calendar's Agenda mode and the
-silt-agenda plugin) excludes undated tasks by SQL design, so
-without the Tasks view a quick-added undated task is invisible
-to every UI surface. The Completed group is collapsed by default
-and ordered by `file_date DESC` as the best-available completion-
-recency proxy; a dedicated `completed_at` column on the `tasks`
-table would be cleaner and is tracked as a follow-up. Built
-exclusively on the PluginContext SDK (`sqliteQuery`,
-`updateBlockState`, `on('block:changed')`) — no new SQL, no new
-Go binding, no new capability. Registered in the plugin
-registry, mounted via `PluginView` alongside Calendar and Kanban,
-and reachable via the activity bar + the `cycle_view_layout`
-hotkey (Calendar → Tasks → Kanban).
-
-Standalone-tasks incremental reindex (#372): The fsnotify
-watcher's `AddRecursive` skips dot-prefixed directories by
-design — that's what keeps `.system/`, `.silt/`, and user dot-
-folders out of the watch set. The standalone-tasks file lives in
-that skipped directory, so `DirectoryWatcher.Start()` adds
-`<vault>/.silt` to the fsnotify watch set after the main
-`AddRecursive` returns. The dot-prefix skip is otherwise
-untouched (generalizing it into an allowlist risks reintroducing
-the `.system` index feedback loop the skip was added to
-prevent). The existing listen loop's `.md` filter, focus-lock
-check, `WriteTracker` self-write suppression, and `reindexFile`
-path are reused unchanged — `reindexFile`'s `resolveFileMetadata`
-already derives the `notebook=".silt", section="", page="tasks"`
-tuple for that path. In-app writes (`CreateStandaloneTask`'s
-atomic-writer path) still no-op the watcher via
-`tracker.RegisterWrite`, so the carve-out observability is
-purely for external tools (sync conflicts, manual edits, non-
-Silt editors).
+Because the `.silt` notebook is hidden, any navigation that would open a `.silt/tasks` tab (search jump, tag click, backlink) routes to the Tasks view instead, scrolling the target task into view.
 
 4.2 Editor Input Paths
 
@@ -424,20 +398,23 @@ but every SQLite row is re-derivable from the markdown.
 
 5.1 Hierarchical Smart Tag Namespaces
 
-Tags in Silt leverage a slash-delimited taxonomy (#work/project/milestone-one) to allow for structured, recursive querying without rigid metadata forms.
+Tags in Silt leverage a slash-delimited taxonomy (`#work/project/milestone-one`) to allow for structured, recursive querying without rigid metadata forms.
 
-When a tag is processed, the parser splits it by depth levels and indexes it into a hierarchical table:
+When a tag is processed, the parser splits it by depth levels and indexes it into a hierarchical table. The full slash-path is stored verbatim so any depth can be queried by exact match or prefix, while the first three levels are broken out into indexed columns for the common drill-down patterns:
 
+```sql
 CREATE TABLE tags (
     block_id TEXT NOT NULL,
-    raw_tag TEXT NOT NULL,       -- "work/project/milestone-one"
-    root_node TEXT NOT NULL,     -- "work"
-    sub_node TEXT,               -- "project"
-    leaf_node TEXT               -- "milestone-one"
+    raw_path TEXT NOT NULL,   -- "work/project/milestone-one" (any depth)
+    level_0 TEXT NOT NULL,    -- "work"
+    level_1 TEXT,             -- "project"
+    level_2 TEXT,             -- "milestone-one"
+    PRIMARY KEY(block_id, raw_path),
+    FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 );
+```
 
-
-This design allows you to view an aggregated chronological timeline of all activities tagged under #work at a high level, or drill down specifically to items tagged with #milestone-one.
+`raw_path` carries the whole tag (arbitrary depth, prefix-queryable); `level_0`–`level_2` are the indexed denormalizations that power the typical three-deep browse. This lets you view an aggregated chronological timeline of everything under `#work` at a high level, or drill straight down to items tagged `#work/project/milestone-one` — and a tag deeper than three levels is still fully addressable via its `raw_path`.
 
 5.2 Global Block-References & Embeds
 
@@ -445,7 +422,7 @@ Every line block is given a unique identifier appended as a comment suffix: <!--
 
 Block Reference ((uuid)): Inline placeholder text that renders as an interactive, clickable link. Hovering over the link reveals the original block content. Clicking it centers the view directly on the source file location.
 
-Block Embed {{embed:uuid}}: Renders a live, interactive portal displaying the source block inline. Svelte coordinates a dual-binding listener on the embedded portal: any text changes made in the embed are piped back to update the source file, and any changes in the source file are immediately updated in the embed. In the TipTap editor surface (#85), both `((uuid))` and `{{embed:uuid}}` render as live ProseMirror NodeViews (`BlockReferenceNode` inline atom and `EmbedNode` block atom respectively) via `SvelteNodeViewRenderer`, reusing the same read-mode components (`BlockReferenceChip.svelte`, `EmbedPortal.svelte`). The editor's converters tokenize `clean_text` to emit these node types and reconstruct the textual tokens on save, so the on-disk file is round-trip identical.
+Block Embed `{{embed:uuid}}`: Renders a live, interactive portal displaying the source block inline. Edits made in the embed write back to the source block, and edits to the source block update every embed of it in real time. In the editor both `((uuid))` and `{{embed:uuid}}` render as live, interactive elements; the on-disk tokens are preserved verbatim on save so the file stays round-trip identical with any plain-Markdown tool.
 
 6. User Interface Specification
 
@@ -507,15 +484,15 @@ Transforms the active block into a first-level markdown header (# ).
 
 To prevent styling stagnation, Silt provides a built-in user theme engine mapping to CSS Custom Properties.
 
-Theme Files: Parsed dynamically from canonical modes-based JSON files inside `<vault>/.system/themes/`. Each theme carries a `schema_version`, `id`, `name`, an optional `typography` section, and a `modes.dark` / `modes.light` token set (bg, border, text, accent.primary / accent.secondary × start/end/glow, status). Accent tokens are hue-agnostic and semantic: components reference only `--accent-primary-*` / `--accent-secondary-*`, and each theme maps its concrete hues onto them. The optional `typography` section (theme-level, not per-mode) defines font-family choices (`font_family`, `mono_font_family`, `headline_font`) that are injected as `--font-body`, `--font-mono`, `--font-headline` CSS custom properties; the CSS classes use fallback chains (`var(--font-body, var(--editor-font-family), <hardcoded>)`) so themes without typography inherit the config-driven fonts. Typography values are validated via `isValidFontFamily` which rejects CSS-breaking characters as a sandbox defense.
+**Theme files** live as canonical modes-based JSON in `<vault>/.system/themes/`. Each theme carries a `schema_version`, `id`, `name`, an optional `typography` section, and a `modes.dark` / `modes.light` token set (bg, border, text, accent.primary / accent.secondary × start/end/glow, status). Accent tokens are hue-agnostic and **semantic**: components reference only `--accent-primary-*` (the "go / done" hue) and `--accent-secondary-*` (the "in progress" hue), and each theme maps its concrete hues onto them. The optional `typography` section (theme-level, not per-mode) defines font-family choices (`font_family`, `mono_font_family`, `headline_font`) emitted as `--font-body`, `--font-mono`, `--font-headline`; themes without a typography section inherit the config-driven fonts via CSS fallback chains.
 
-Default Theme: A canonical default theme (`cyber_forest`) is embedded in the Go binary (`backend/themes`, via `embed.FS`) so the app always has a guaranteed-correct fallback — it works before a vault exists, when the themes directory is empty/wiped, and when the active theme id is missing or invalid. Since Sprint 8, the full **first-class set** is embedded (`themes/*.json`: Cyber Forest, Terra Noir, Linen, Stark, Graphite); `ListThemes` appends every embedded first-class theme (deduped — on-disk wins), and `ScaffoldVault` writes editable on-disk copies of all of them. `ResolveActive` / `CachedThemeByID` resolve a first-class id from the embed even when it is not on disk, so a non-default active theme no longer flashes the default palette on a wiped/existing vault.
+**Default & first-class themes.** The app embeds a guaranteed-correct default (`cyber_forest`) plus a first-class set (Cyber Forest, Terra Noir, Linen, Stark, Graphite) so it always has a fallback — before a vault exists, when the themes directory is empty/wiped, and when the active id is missing or invalid. The full first-class roster is always selectable (on-disk copies win on id collisions), and a non-default active theme is resolved from the embedded set even when it is not on disk, so it never flashes the default palette.
 
-Mechanism: On startup the Go backend reads the active theme + mode from `AppSettings`, resolves the theme file (falling back to the embedded default), and exposes it over the Wails IPC bridge (`ListThemes` / `GetActiveTheme` / `ApplyTheme` / `ImportTheme` / `ExportActiveTheme` / `PickThemeFile`). A Svelte theme store receives the flattened token map and injects every token as a CSS custom property on `document.documentElement` by rewriting a single generated `:root { … }` style block — one DOM write, one recalc, same-tick repaint, no flicker. The `index.css :root` values are retained as startup fallbacks only, overridden once the IPC round-trip completes. The native webview `BackgroundColour` is resolved at launch from a process-local, mtime-aware theme cache (`themes.CachedThemeByID` in `backend/themes/cache.go`) so a non-default active theme's `bg.void` is used for the pre-CSS paint (#73); the cache falls back to the embedded default when no settings exist or the active id is invalid.
+**Mode & switching.** Each theme carries both dark and light token sets; the user picks Dark, Light, or System (System follows the OS preference, resolved locally). Switching applies live with no restart and no flicker, and the pre-CSS paint already uses the active theme's background colour so there is no first-paint flash of the wrong palette. The active theme id + mode persist across restarts in user-global settings — they must be known before any vault is open.
 
-Import + Validation (Sprint 6, #48): `App.ImportTheme` calls `themes.ImportThemeFromPath` which reuses `ParseAndValidate` (the same call the loader uses, so a successfully imported theme is exactly the kind of object `ListThemes` enumerates). The id is sanitized to `[a-z0-9_-]` (preserving underscores so the existing `cyber_forest` built-in stays canonical) and namespaced (`user-` prefix on a built-in id, counter suffix on repeat). Atomic write via `parser.WriteFileAtomic`. Sandbox by schema: `isValidColor` accepts only hex / rgb() / rgba() values at every token slot, so embedded `<script>`, `url()`, `expression()`, and named colors are rejected structurally before reaching disk. `themes.ValidationErrors` propagate over IPC so the UI can name the offending token and the expected format. On success the Wails event `themes:changed` is emitted so the picker re-fetches `ListThemes` and the new theme appears without a restart. Export is the inverse: `App.ExportActiveTheme` writes the active theme verbatim to a user-chosen path for round-trip editing.
+**Import & export.** Users can import a theme from a JSON file (file picker or drag-and-drop) and export the active theme for round-trip editing. Imported themes are validated against the canonical schema: only `#hex` / `rgb()` / `rgba()` color values are accepted at every token slot (named colors, `hsl()`, `url()`, `<script>`, `expression()` are rejected before the file is written), and font-family values reject CSS-breaking characters. Imported ids are sanitized and namespaced so they cannot collide with built-ins. Validation errors surface per-field so the UI can name the offending token and the expected format. A successfully imported theme is immediately selectable without a restart.
 
-Settings → Appearance (Sprint 6, #47): a fully accessible picker + mode toggle + import button + drop zone + export button. Zero per-theme code branches — every row is built from `ThemeInfo` + `ThemeInfo.Swatches`. Mode is a `role="radiogroup"` of Dark / Light / System; themes are a `role="listbox"` of `role="option"` rows with roving tabindex, Arrow/Home/End navigation, Enter/Space commit, Esc to cancel any live preview. Status and errors render in a `role="status" aria-live="polite"` region (escalating to `role="alert"` for errors). The `Settings → Appearance` tab is the single surface for theme selection; the same theme engine is also what the custom titlebar (Sprint 3, #41) and the rest of the shell inherit through the same CSS custom-property pipeline.
+**Settings → Appearance** is the single surface for theme selection — an accessible picker plus the mode toggle, import, and export. Mode is a `radiogroup` of Dark / Light / System; themes are a `listbox` of `option` rows with roving tabindex, Arrow/Home/End navigation, Enter/Space to commit, and Esc to cancel a live preview. Status and errors render in an `aria-live` region (escalating to `alert` on errors). The same theme engine drives the whole shell, including the custom titlebar.
 
 Schema Example (cyber_forest.json, dark mode shown):
 
@@ -554,13 +531,13 @@ Template Files: Parsed dynamically from Markdown files inside `<vault>/.system/t
 
 Smart Graph Compatibility: the placeholder grammar (`^[a-z][a-z0-9_]*$`) structurally excludes Smart Graph syntax — `{{embed:uuid}}` (colon) and `((uuid))` (parentheses) pass through the renderer byte-for-byte, so templates can contain embeds and references that resolve normally on load (§5.2).
 
-Default Library: the full first-class set is embedded in the Go binary (`backend/templates`, via `embed.FS`) so templates are always available — they work before a vault exists, when the templates directory is empty, and on existing vaults. Built-ins are read-only (`builtin://` namespace); user templates are writable (`<vault>/.system/templates/<id>.md`). On-disk templates win the dedup if they share an id with a built-in.
+**Default library.** The full first-class set is embedded so templates are always available — before a vault exists, when the templates directory is empty, and on existing vaults. Built-ins are read-only; user templates are writable (`<vault>/.system/templates/<id>.md`). On-disk templates win on id collisions with a built-in.
 
-Mechanism: the Go backend resolves templates (on-disk + embedded, deduped, sorted by Category then Title) and exposes them over the Wails IPC bridge (`ListTemplates` / `GetTemplate` / `RenderTemplate` / `RenderTemplateBlocks` / `SaveUserTemplate` / `DeleteUserTemplate` / `ReloadTemplates` / `CreatePageFromTemplate`). A Svelte template store receives the listing and drives the picker modal; the backend emits a `templates:changed` event so the picker re-lists on add/edit/delete. A file watcher on `.system/templates/` hot-reloads external changes. Inserted templates produce real Silt blocks — tasks (`- [ ] TODO TASK …`) flow into Kanban/Agenda/Calendar, embeds/references resolve, and blocks get fresh UUIDs via the standard pipeline (§4, §5.2). No SQLite schema change, no file-write-lock change, no settings.json change — templates are vault-scoped Markdown, read-mostly, on the existing atomic-write path.
+**Resolution & insertion.** Templates are resolved from on-disk + embedded (deduped, sorted by Category then Title) and presented in a picker. External edits to the templates directory hot-reload. Inserting a template produces real Silt blocks — tasks (`- [ ] TODO TASK …`) flow into Kanban/Agenda/Calendar, embeds/references resolve, and blocks get fresh UUIDs. Templates are vault-scoped Markdown, read-mostly.
 
-Forward Compatibility: `schema_version` is informational (a forward-versioned template keeps loading); the `Source` field supports three tiers — `builtin` (embedded, read-only), `disk` (user-authored, writable), and `plugin` (runtime-registered by a plugin, #96); categories are additive (unknown categories warn, never reject); and new built-ins land as a single `.md` file + embed with no engine change.
+**Forward compatibility.** `schema_version` is informational (a forward-versioned template keeps loading); the `Source` field has three tiers — `builtin` (embedded, read-only), `disk` (user-authored, writable), and `plugin` (runtime-registered by a plugin); categories are additive (unknown categories warn, never reject); and new built-ins land as a single `.md` file with no engine change.
 
-Plugin Templates (#96): plugins register templates at runtime via the `RegisterPluginTemplates(pluginID, []*Template)` IPC method. Plugin templates carry `Source = "plugin"` and a `PluginID` field (both `yaml:"-"` so disk frontmatter can never claim a plugin provenance). The canonical URI for a plugin template is `plugin://<plugin-id>/<template-id>`, resolved by `GetTemplate` directly to the in-memory registry. The picker groups plugin templates under a `Plugins / <plugin-id>` header. Plugin templates are deduped last (on-disk > embedded > plugin) so a plugin can't shadow a first-class or user template. The registry is capped at 100 templates per plugin.
+**Plugin templates.** Plugins may register templates at runtime. Plugin templates are grouped under a `Plugins / <plugin-id>` header and deduped last (on-disk > embedded > plugin), so a plugin cannot shadow a first-class or user template. A plugin may register up to 100 templates.
 
 
 7. Reliability, Protection, & Performance Targets
@@ -632,17 +609,17 @@ export interface PluginContext {
   activeNotebook: string;
   activeSection: string;
   activePage: string;
-  /** Today's date in the user's LOCAL timezone as YYYY-MM-DD (#118). */
+  /** Today's date in the user's LOCAL timezone as YYYY-MM-DD. */
   today: string;
   // Read-only SQL against the in-memory index (SELECT / WITH only).
   sqliteQuery: (sql: string, params?: unknown[]) => Promise<Record<string, unknown>[]>;
   mutateBlock: (id: string, text: string) => Promise<boolean>;
   updateBlockState: (id: string, status: 'TODO' | 'DOING' | 'DONE') => Promise<boolean>;
-  /** Update per-task metadata (pin, progress) — file-resident user intent (#123). */
+  /** Update per-task metadata (pin, progress) — file-resident user intent. */
   updateTaskMeta: (id: string, meta: { pinned?: boolean | null; progress?: number }) => Promise<boolean>;
   /**
    * Resolve this plugin's settings for the ACTIVE notebook, applying the
-   * co-located per-notebook override layer (#133). Vault → vault settings;
+    * co-located per-notebook override layer. Vault → vault settings;
    * linked → deep-merge of vault defaults with the linked notebook's
    * co-located config (linked wins per-key). Re-read on every call.
    */
@@ -657,24 +634,13 @@ export interface SiltPlugin {
 
 The active `notebook/section/page` from the navigator is bound into the context as LIVE reactive getters; reading them inside a Svelte reactive context (template, `$derived`, `$effect`) tracks navigation changes automatically. `sqliteQuery` is read-only (anything other than SELECT/WITH is rejected). `getPluginSettings` resolves per-active-notebook so a plugin rendering for a linked notebook sees the co-located overrides; writes still persist to the vault config via `updatePluginSetting`. See `docs/PLUGIN_DEVELOPMENT.md` for the full author guide.
 
-**v2 SDK (milestone #11).** The PluginContext was expanded with: a capability/permission model (`capabilities` in the manifest, per-vault grants in `config.yaml`); lifecycle hooks (`onVaultOpen`/`onVaultClose`/`onShutdown`); a typed event bus (`ctx.on`); content CRUD (`createBlock`/`deleteBlock`/`moveBlock` + page/section/notebook CRUD); file I/O (`readFile`/`writeFile`/`deleteFile`/`listDir` + scratch space); OS integration (`openInNativeHandler`/`openUrl`/pickers/clipboard/notify); network/fetch (Go-side proxy, `network` capability-gated); editor extension points (slash-command registry + generic `embedBlock` node); rendered UI surfaces (sandboxed iframe + postMessage bridge); and a declarative settings schema (`settings` in the manifest, generated UI). Every privileged binding is gated server-side by `requireGrant`; `exec` is deferred. See `docs/PLUGIN_DEVELOPMENT.md` §8 for the full surface.
+**v2 SDK.** The PluginContext was expanded with: a capability/permission model (`capabilities` in the manifest, per-vault grants in `config.yaml`); lifecycle hooks (`onVaultOpen`/`onVaultClose`/`onShutdown`); a typed event bus (`ctx.on`); content CRUD (`createBlock`/`deleteBlock`/`moveBlock` + page/section/notebook CRUD); file I/O (`readFile`/`writeFile`/`deleteFile`/`listDir` + scratch space); OS integration (`openInNativeHandler`/`openUrl`/pickers/clipboard/notify); network/fetch (Go-side proxy, `network` capability-gated); editor extension points (slash-command registry + generic `embedBlock` node); rendered UI surfaces (sandboxed iframe + postMessage bridge); and a declarative settings schema (`settings` in the manifest, generated UI). Every privileged binding is gated server-side by `requireGrant`; `exec` is deferred. See `docs/PLUGIN_DEVELOPMENT.md` §8 for the full surface.
 
 8.3 Core Feature Decoupling
 
-**Content mutation is gated by `content-mutate` (#156).** PluginCreateBlock,
-PluginDeleteBlock, PluginMoveBlock, and PluginApplyBlocks call
-`requireGrant(pluginID, content-mutate)` before proceeding. First-party plugins
-inherit the grant implicitly; third-party plugins must declare it in their
-manifest (`"capabilities": {"content-mutate": true}`). Page/section/notebook
-CRUD (PluginCreatePage, PluginCreateSection, etc.) remains ungated — those are
-structural operations, not content mutations. The capability model gates
-I/O-bound operations (files, network, OS, clipboard) and now content block CRUD,
-that have cross-process or cross-host impact.
+**Content mutation is capability-gated.** Block-level content mutation (creating, deleting, or moving blocks) requires the `content-mutate` capability. First-party plugins are implicitly granted; third-party plugins must declare it in their manifest. Structural operations (page/section/notebook CRUD) are not gated — they are structural, not content changes. I/O-bound operations (files, network, OS, clipboard) are likewise capability-gated.
 
-**Plugin network fetch is rate-limited (#153).** Each network-granted plugin's
-`PluginFetch` calls are throttled by a per-plugin token-bucket rate limiter
-(default 1 rps, burst 10). A plugin can request a higher limit via the optional
-manifest field:
+**Plugin network fetch is rate-limited.** A network-capable plugin's fetches are throttled per plugin (default 1 request/sec, burst 10). A plugin may request a higher limit via a manifest field:
 
 ```json
 {
@@ -682,28 +648,13 @@ manifest field:
 }
 ```
 
-Values are validated at install (`rps` must be > 0 and <= 10; `burst` must be
-> 0 and <= 100). Out-of-range values are rejected. The host clamps hand-edited
-manifests at runtime (defense in depth).
+`rps` must be > 0 and ≤ 10; `burst` must be > 0 and ≤ 100. Out-of-range values are rejected at install; hand-edited manifests are clamped at runtime as defense in depth.
 
-To enforce architectural parity, the user interface contains no custom code for the default Calendar, Kanban, or Agenda dashboards. They use the exact same SDK constraints as any third-party developer plugin:
+**The first-party dashboards are plugins.** The Calendar, Kanban, and Agenda dashboards use the exact same SDK as any third-party plugin — the UI contains no privileged custom code for them:
 
-Kanban Plugin: Uses the sqliteQuery context hook to pull records scoped to the active navigation level (vault / notebook / section / page). The user selects the scope via a segmented control in the board header. The WHERE clause is built per scope:
-
-```sql
--- vault scope (all notebooks)
-SELECT * FROM tasks INNER JOIN blocks ON tasks.block_id = blocks.id WHERE 1=1
-
--- section scope
-SELECT * FROM tasks INNER JOIN blocks ON tasks.block_id = blocks.id
-WHERE blocks.notebook = ? AND blocks.section = ?
-```
-
-Status changes are committed via updateBlockState, which writes the new checkbox state to the source markdown file and re-indexes the block.
-
-Calendar Plugin: Pulls dates using range constraints and exposes interactive timeline components.
-
-Agenda Plugin: Filters overdue, current-day, and upcoming milestones, rolling unfinished tasks into the active day view dynamically.
+- **Kanban** — queries tasks scoped to the active navigation level (vault / notebook / section / page), selectable from the board header. A status change writes the new checkbox state to the source markdown and re-indexes the block.
+- **Calendar** — shows tasks by start/due date with interactive timeline components.
+- **Agenda** — rolls overdue, today, and upcoming tasks, carrying unfinished tasks into the current day.
 
 8.4 Plugin Packaging & Distribution (.silt-plugin)
 
@@ -715,23 +666,23 @@ index.js      native ESM exporting { manifest, init(ctx) }
 ```
 
 - **Validation:** on install, the manifest schema is checked (`id` must match `^[a-z0-9-]+$`, required name/version, entry module present); absolute paths, `..`, and zip-slip entries are rejected.
-- **Install:** atomic extract into `.system/plugins/<id>/` (staged in a temp sibling dir, then renamed); refuses to overwrite an existing id. Emits `plugins:changed` so the loader re-runs.
+- **Install:** atomic extract into `.system/plugins/<id>/` (staged in a temp sibling dir, then renamed); refuses to overwrite an existing id. A newly installed plugin is immediately available without a restart.
 - **Enable/Disable:** a `.disabled` sentinel file inside the plugin folder (the loader skips disabled plugins) — avoids fragile config.yaml edits. Discovery is folder-based, so install "just works" without editing config.
 - **Uninstall:** removes the plugin folder (id sanitized + within-vault check).
 - The in-app **Plugin Manager** (titlebar extension icon) drives validate → preview → install, plus per-plugin enable/disable and uninstall.
 - First-party plugins (Agenda, Calendar) are always available (bundled) regardless of `.system/plugins/` contents.
 
-8.5 Attachments Plugin Convention (#101)
+8.5 Attachments Plugin Convention
 
 The `silt-attachments` plugin lets users attach arbitrary files to notes.
 
-- **File placement:** Files are copied into `<notebook>/attachments/` (visible placement, per the #100 data-scoping principle). The `attachments/` directory is excluded from the scanner (`WalkMarkdown`), the sidebar navigator (`ListNavigation`), and the fsnotify watcher, so it never appears as an empty section and binary files are never indexed.
+- **File placement:** Files are copied into `<notebook>/attachments/` (visible placement, per the data-scoping principle). The `attachments/` directory is excluded from the scanner (`WalkMarkdown`), the sidebar navigator (`ListNavigation`), and the fsnotify watcher, so it never appears as an empty section and binary files are never indexed.
 - **Markdown convention:** Images use standard `![alt](attachments/foo.png)` syntax (rendered as `embedBlock` type `image`). Non-image files use the generic `embedBlock` node serialized via an HTML-comment marker `<!-- silt-embed: {"embedType":"attachment","src":"attachments/foo.pdf",...} -->`. The marker is preserved verbatim by the Go parser as the NOTE block's `clean_text` (the parser does not need to recognize the marker — the frontend converter detects it on load and emits it on save, so the round-trip is byte-identical). This is a deliberate design choice: parser-level recognition would require a new `ParsedBlock` field + renderer + indexer changes for no functional benefit over the converter-level approach.
-- **Open in native handler:** Activating an attachment embed block opens the file in the OS default handler (Preview / Adobe / `xdg-open` / etc.), not in-app. The path is resolved against the notebook's actual root (#100, in-vault or linked).
+- **Open in native handler:** Activating an attachment embed block opens the file in the OS default handler (Preview / Adobe / `xdg-open` / etc.), not in-app. The path is resolved against the notebook's actual root (in-vault or linked).
 - **Kanban travel:** An attachment embedBlock inserted as a CHILD of a task block (indented under it) automatically travels with its parent when the task is reordered. This is inherent to the block hierarchy — no explicit association model is needed.
 - **Copy-in semantics:** The source file is copied (not linked/moved) into `attachments/`. Filename collisions are resolved with a counter suffix (`report-1.pdf`, `report-2.pdf`). A 100 MB size limit and an executable filetype blocklist (`.exe`, `.bat`, `.sh`, etc.) prevent the attachment folder from becoming an unbounded executable drop zone.
 
-8.6 Per-plugin SQLite Store (#213)
+8.6 Per-plugin SQLite Store
 
 Each plugin MAY carry its own SQLite file at
 `<vault>/.system/plugins/<id>/data/plugin.db`, opened lazily on a **distinct**
@@ -743,7 +694,7 @@ durability semantics — working memory *or* durable storage at its discretion.
   `query` / `migrate`); first-use prompted like the other v2 capabilities.
 - **sqlite-vec:** the connection has `sqlite-vec` registered, exposing `vec0`
   virtual tables and `vec_distance_cosine` / `vec_distance_L2`. Used by the AI
-  Q&A plugin (Sprint 21) for vector indexes and by the summary plugin for
+  Q&A plugin for vector indexes and by the summary plugin for
   content-hash caches.
 - **Boundary with core:** the plugin DB is never `ATTACH`-able to the core
   index (and vice-versa). Cardinal rule #4 (SQLite is working-memory-only)
@@ -758,10 +709,10 @@ durability semantics — working memory *or* durable storage at its discretion.
 - See ARCHITECTURE.md §0 (rule 4 plugin carve-out) and ADR
   `docs/decisions/0001-plugin-storage-tier.md`.
 
-8.7 Bespoke Plugin Settings Pages (#214)
+8.7 Bespoke Plugin Settings Pages
 
 A plugin with non-trivial configuration may declare a **bespoke Settings page**
-instead of the generic `SettingSchema[]` form (#103).
+instead of the generic `SettingSchema[]` form.
 
 - **Manifest:** a plugin declares *either* a bespoke settings page *or* the
   generic `settings` schema — not both (single source of truth per plugin).
@@ -774,7 +725,7 @@ instead of the generic `SettingSchema[]` form (#103).
 - **Persistence:** bespoke pages call the existing `updatePluginSetting` /
   `getPluginSettings` plumbing — no new storage path.
 
-8.8 `note-banner` Plugin Surface (#215)
+8.8 `note-banner` Plugin Surface
 
 A new `SurfaceKind = 'note-banner'` — a dismissible highlight region mounted at
 the top of the note view (above the TipTap editor content).
@@ -788,13 +739,11 @@ the top of the note view (above the TipTap editor content).
   `updatePluginSetting` is proxied through the surface bridge). The host
   removes the surface after a short grace window regardless of plugin
   response. When more than two banners stack, they collapse into a single
-  expandable summary (#358).
+  expandable summary.
 - **Transient chrome:** banners do not capture editor focus on mount and are
   removed cleanly on `teardownPlugin`.
 
-9. System Configuration Engine
-
-Global settings are managed locally in a human-readable file located at Notebooks/.system/config.yaml. The schema defines global application defaults, plugin configurations, hotkeys, and parsing logic.
+9. Editor Format & Grammar
 
 ## Markdown Dialect
 
@@ -824,14 +773,14 @@ The `Ctrl+,` / `Ctrl+.` editor hotkeys toggle the existing HTML marks.
 
 **Future Pandoc-native authoring** (Pandoc dialect mode + an in-app `pandoc`
 export pipeline) is deferred to a future plugin — the "Obsidian route": the base
-stays GFM, a plugin opts in per file/notebook. Tracked in issue #335. Revisit
+stays GFM, a plugin opts in per file/notebook. Revisit
 when ~15–30% of users are active academic publishers (citations + footnotes +
 multi-line math + LaTeX/PDF export). The governing tiebreaker for future format
 questions is "what does GFM do?"; the council's reversibility analysis
 (GFM→Pandoc is additive, Pandoc→GFM is destructive) means GFM is strictly the
 more recoverable base if ever wrong.
 
-## Inline Formatting (#168, #169, #170, #171, #173)
+## Inline Formatting
 
 Silt supports nine inline marks, block-level alignment, text/background color,
 and a source/edit view toggle. All formatting is additive to `clean_text` —
@@ -853,13 +802,13 @@ the Go parser treats formatted text as opaque.
 
 Marks nest freely. Code shields its content from further parsing.
 
-### Block-level alignment (#173)
+### Block-level alignment
 
 NOTE and HEADER blocks support `left` (default), `center`, `right`, `justify`.
 Alignment is persisted as a trailing HTML comment: `text <!-- silt-align: center -->`.
 TASK blocks do not support alignment.
 
-### Text/background color (#170)
+### Text/background color
 
 Text color: `<span style="color: #hex">text</span>`
 Background color: `<span style="background-color: #hex">text</span>`
@@ -867,34 +816,34 @@ Background color: `<span style="background-color: #hex">text</span>`
 Both are inline marks that nest with other marks. A 12-color theme-aware
 palette is available via the format toolbar.
 
-### Heading levels (#169)
+### Heading levels
 
 `# H1`, `## H2`, `### H3`. Convert blocks via Mod-Alt-1/2/3/0/4 or slash
 commands `/h1` `/h2` `/h3` `/note` `/task`.
 
-### View mode toggle (#171, #194, #195)
+### View mode toggle
 
 Per-page Edit (WYSIWYG) ↔ Source (raw markdown) toggle. The toggle is a
 floating icon button in the editor's action bar (announced via `aria-pressed`
 + `aria-keyshortcuts`) plus the `toggle_view_mode` hotkey (default
 `Ctrl+Shift+V`, remappable per-vault). Source view is read-only and renders
 the raw on-disk markdown with **Shiki syntax highlighting** driven by the
-active theme's color tokens (#194); it falls back to plain text until the
+active theme's color tokens; it falls back to plain text until the
 highlighter resolves and on any error.
 
-The mode is **per-tab** (`TabEntry.viewMode`, #195): each tab keeps its own
+The mode is **per-tab**: each tab keeps its own
 mode, sticky within a session and **persisted across restarts** on
 `TabRef.view_mode` in the vault `config.yaml` (only `source` is written;
 absence means the Edit default). A freshly-opened tab starts in
 `editor.default_view_mode`. Switching a tab to Source **unmounts its
 TipTapEditor** (the editor is destroyed and rebuilt from the on-disk file on
-return to Edit), so a tab held in Source view pays no editor memory cost
-(#178); the Edit scroll offset is restored across the round-trip (#319),
-cursor position is a tracked follow-up.
+return to Edit), so a tab held in Source view pays no editor memory cost;
+the Edit scroll offset is restored across the round-trip.
+Cursor-position restore is not yet specified.
 
-### Rich blocks & editor interactions (#190, #191, #184, #181, #319)
+### Rich blocks & editor interactions
 
-**Inline math (`$...$`) and block math (`$$...$$`) — #191, #328.** LaTeX rendered
+**Inline math (`$...$`) and block math (`$$...$$`).** LaTeX rendered
 with **KaTeX**. Inline math is an atomic inline node; a block equation is a
 NOTE whose entire body is `$$...$$` (rendered centered). Both round-trip the
 raw LaTeX verbatim. A balanced inline `$…$` pair at a word boundary with no
@@ -907,13 +856,13 @@ node, or `/math`, opens an in-app LaTeX popover with a live preview (commit
 `window.prompt`. A per-vault `ui.formatting.math_enabled` toggle (default true)
 controls the `/math` slash command; existing math in files always renders.
 
-**Mermaid diagrams — #190.** A fenced code block whose info string is
+**Mermaid diagrams.** A fenced code block whose info string is
 `mermaid` renders a live SVG diagram (```mermaid) instead of syntax-highlighted
 text. The raw source is preserved verbatim; only the view differs. Invalid
 source shows a readable inline error (never a blank box). Edit-source /
 show-diagram toggle; copy button.
 
-**@-mention (`@[name]`) — #184, #329, #332.** Typing `@` opens a typeahead of
+**@-mention (`@[name]`).** Typing `@` opens a typeahead of
 known task owners (the distinct-owner set from the index). Selecting one
 inserts an atomic mention chip. The `@[name]` token round-trips through
 `clean_text`; the suggestion source is a read-only projection — no mention
@@ -925,15 +874,15 @@ over IPC. Confirming a mention inside a task line also writes `[owner:: name]`
 in the same transaction (outside a task, the mention is just a reference and
 no owner token is written).
 
-**Block drag handle — #181, #330.** A drag grip reorders top-level blocks by
+**Block drag handle.** A drag grip reorders top-level blocks by
 direct manipulation; dropping further to the right indents the block deeper
 (Notion-style), and a drop-zone indicator previews the target depth.
 `Alt+ArrowUp/Down` moves the active block by keyboard. `Delete` at the end of
 a block and `Backspace` at the start merge the adjacent same-type same-parent
 sibling into one block (survivor keeps its UUID); cross-type, cross-parent,
-and code-block boundaries fall through to the per-type default (#364).
+and code-block boundaries fall through to the per-type default.
 
-### Block types (#188, #180, #189, #183, #172, #310, #308)
+### Block types
 
 Silt round-trips the standard markdown block-level vocabulary. Each block type
 is a first-class editor node, so the outliner's block operations (delete,
@@ -942,15 +891,15 @@ are standard syntax, interchangeable with Obsidian / Joplin / GitHub / VS Code.
 
 | Block | On-disk syntax | Notes |
 |---|---|---|
-| Quote / blockquote (#188) | `> quoted text` | A `>` prefix is a note marker (parallel to `- `). Nested `>> ` quotes render deeper borders. `/quote` or Ctrl+Shift+9 toggles. |
-| Callout (#180/#308/#290) | `> [!variant] message` + `>` body lines | Obsidian admonition syntax. Seven variants with material icon + accent. The body is `block+`: consecutive `>` lines form one managed `CALLOUT` block, and each body line may carry a block construct (task list, fenced code, GFM table, nested callout) — every body line is `>`-prefixed on disk, so multi-line children get `>` on each line and nested callouts become `>>`. Bare `>` is a paragraph break. `/callout` family. |
-| Code block (#189) | ` ```lang … ``` ` (GFM fence) | Multi-line; internal newlines are preserved (a managed `CODE` block). Shiki syntax highlighting (theme-aware), language selector, copy button. `/code-block`. |
-| Foldable details (#183/#310) | `<details><summary>…</summary>…</details>` | Native HTML `<details>`; one managed `DETAILS` block. Collapse state is ephemeral. `/details` or Ctrl+Shift+. toggles. |
-| GFM table (#172/#310) | `| a | b |` pipe syntax | Editable grid with Tab/arrow nav, column resize, zebra + hover theming, and a 6-operation contextual toolbar (merge is omitted — GFM can't represent spans). One managed `TABLE` block — the block identity is on a trailing line after the last row. |
+| Quote / blockquote | `> quoted text` | A `>` prefix is a note marker (parallel to `- `). Nested `>> ` quotes render deeper borders. `/quote` or Ctrl+Shift+9 toggles. |
+| Callout | `> [!variant] message` + `>` body lines | Obsidian admonition syntax. Seven variants with material icon + accent. The body is `block+`: consecutive `>` lines form one managed `CALLOUT` block, and each body line may carry a block construct (task list, fenced code, GFM table, nested callout) — every body line is `>`-prefixed on disk, so multi-line children get `>` on each line and nested callouts become `>>`. Bare `>` is a paragraph break. `/callout` family. |
+| Code block | ` ```lang … ``` ` (GFM fence) | Multi-line; internal newlines are preserved (a managed `CODE` block). Shiki syntax highlighting (theme-aware), language selector, copy button. `/code-block`. |
+| Foldable details | `<details><summary>…</summary>…</details>` | Native HTML `<details>`; one managed `DETAILS` block. Collapse state is ephemeral. `/details` or Ctrl+Shift+. toggles. |
+| GFM table | `| a | b |` pipe syntax | Editable grid with Tab/arrow nav, column resize, zebra + hover theming, and a 6-operation contextual toolbar (merge is omitted — GFM can't represent spans). One managed `TABLE` block — the block identity is on a trailing line after the last row. |
 
 **Multi-line blocks.** The Go parser reads files line-by-line and `renderBlock`
 collapses `\n`→space for prose blocks (TASK/NOTE/HEADER). All multi-line block
-types use the **unified region-block model** (#310): each multi-line region —
+types use the **unified region-block model**: each multi-line region —
 fenced code (`CODE`), GFM table (`TABLE`), `<details>` HTML (`DETAILS`), and
 Obsidian callout (`CALLOUT`) — is accumulated into ONE managed `ParsedBlock`
 whose `clean_text` retains internal newlines. The block identity comment lives
@@ -959,7 +908,11 @@ format stays strictly GFM/HTML/Obsidian syntax (interoperable with Obsidian,
 GitHub, VS Code). The frontend converter is a clean 1:1 map — no regrouping.
 Literal pipes in table cells are escaped as `\|`.
 
-9.1 Configuration Schema (config.yaml)
+10. System Configuration Engine
+
+Global settings are managed locally in a human-readable file located at Notebooks/.system/config.yaml. The schema defines global application defaults, plugin configurations, hotkeys, and parsing logic.
+
+10.1 Configuration Schema (config.yaml)
 
 # Silt Global System Settings Configuration
 
@@ -977,30 +930,27 @@ editor:
   tab_indent_spaces: 4
   auto_save_delay_ms: 500
   focus_highlight_ancestors: true
-  # Phase 3 enhancements (#168).
   show_word_count: false      # opt-in word count in editor status
   focus_mode: false           # dim non-active paragraphs
-  default_view_mode: "edit"   # "edit" or "source" (#171)
-  # Sprint 17 — Search, Find/Replace & Writing Aids (#186, #185, #196, #187).
-  # Inline spellcheck (#196): typo-js + a ProseMirror decoration layer. Default
-  # on; purists disable. v1 ships en-US only — multi-language packs, domain
-  # word lists, and custom-dictionary import/export are Sprint 34 (#336–#338).
+  default_view_mode: "edit"   # "edit" or "source"
+  # Inline spellcheck (on by default; en-US only — multi-language packs,
+  # domain word lists, and custom-dictionary import/export are future work).
   spellcheck_enabled: true
   spellcheck_language: "en-US"
-  # Typewriter mode (#187): keeps the active line at a fixed viewport ratio.
-  # Default off; ratio clamped to [0.1, 0.9].
+  # Typewriter mode keeps the active line at a fixed viewport ratio
+  # (default off; ratio clamped to [0.1, 0.9]).
   typewriter_mode: false
   typewriter_mode_ratio: 0.5
-  # Per-vault custom spellcheck words (rule 2: per-vault UI prefs in YAML, NOT
-  # a new file tier). De-duped + trimmed + lowercased + sorted on normalize. A
-  # linked notebook may carry its own co-located override (arrays replace, §3.1).
+  # Per-vault custom spellcheck words (a per-vault UI pref, so it lives here
+  # in YAML). A linked notebook may carry its own co-located override
+  # (arrays replace; §3.1).
   custom_dictionary: []
 
 # Task Parse Rules
-# The task checkbox/metadata regexes are fixed in the binary (parser package)
-# and are intentionally NOT user-editable: a user-supplied regex on a synced
-# vault is a catastrophic-backtracking DoS vector against the indexer (F11).
-# Only non-regex parse knobs are configurable here.
+# The task checkbox/metadata grammar is fixed and intentionally NOT
+# user-editable: a user-supplied regex on a synced vault is a
+# catastrophic-backtracking DoS vector against the indexer. Only the
+# non-regex parse knobs below are configurable.
 parsing:
   auto_inject_uuid: true
   default_task_priority: 3
@@ -1010,16 +960,14 @@ parsing:
 # over code editors for shared actions; VS Code/Sublime/Notepad++ fill gaps
 # where Office/Docs have no opinion. Windows/Linux only (Ctrl everywhere).
 # Spellcheck deliberately has NO hotkey (wavy underline + right-click + a
-# FormatToolbar button). Paste is not listed: Ctrl+V = rich (ProseMirror
-# native), Ctrl+Shift+V = plain (PlainPaste extension strips formatting).
+# toolbar button). Paste is not listed: Ctrl+V = rich, Ctrl+Shift+V = plain.
 hotkeys:
-  # Sprint 17 realignment. open_search → Ctrl+Shift+F (the cross-file search
-  # convention; Office/Docs are single-document). Frees Ctrl+P for future Print.
+  # open_search → Ctrl+Shift+F (the cross-file search convention;
+  # Office/Docs are single-document). Frees Ctrl+P for future Print.
   open_search: "Ctrl+Shift+F"
-  # open_command_palette → Alt+Q (Office "Tell Me" / search-the-app convention).
+  # open_command_palette → Alt+Q (the "search the app" convention).
   open_command_palette: "Alt+Q"
-  # cycle_view_layout → Ctrl+Alt+V (Alt+Tab is the OS window-switcher and never
-  # reached the app on Windows/Linux).
+  # cycle_view_layout → Ctrl+Alt+V (Alt+Tab is the OS window-switcher).
   cycle_view_layout: "Ctrl+Alt+V"
   indent_block: "Tab"
   unindent_block: "Shift+Tab"
@@ -1027,15 +975,14 @@ hotkeys:
   next_tab: "Ctrl+Tab"
   prev_tab: "Ctrl+Shift+Tab"
   close_tab: "Ctrl+W"
-  # Sidebar hotkeys. Ctrl+B toggles visibility; focus_sidebar (#326 item 8)
-  # moves keyboard focus into the active sidebar's first control (the page
-  # tree, a smart-list, or a scope picker). When the editor is focused Ctrl+B
-  # resolves to format_bold (#168 below); toggle_sidebar / focus_sidebar fire
-  # only outside the editor. If the sidebar is collapsed, focus_sidebar
-  # expands it first, then focuses.
+  # Sidebar hotkeys. Ctrl+B toggles visibility; focus_sidebar moves keyboard
+  # focus into the active sidebar's first control. When the editor is focused
+  # Ctrl+B resolves to format_bold; toggle_sidebar / focus_sidebar fire only
+  # outside the editor. If the sidebar is collapsed, focus_sidebar expands it
+  # first, then focuses.
   toggle_sidebar: "Ctrl+B"
   focus_sidebar: "Ctrl+Shift+B"
-  # Inline formatting hotkeys (#168).
+  # Inline formatting hotkeys.
   format_bold: "Ctrl+B"
   format_italic: "Ctrl+I"
   format_underline: "Ctrl+U"
@@ -1045,88 +992,82 @@ hotkeys:
   format_highlight: "Ctrl+Shift+H"
   format_subscript: "Ctrl+,"
   format_superscript: "Ctrl+."
-  # Heading level hotkeys (#169).
+  # Heading level hotkeys.
   set_h1: "Ctrl+Alt+1"
   set_h2: "Ctrl+Alt+2"
   set_h3: "Ctrl+Alt+3"
   set_note: "Ctrl+Alt+0"
   set_task: "Ctrl+Alt+4"
-  # Text alignment hotkeys (#173).
+  # Text alignment hotkeys.
   align_left: "Ctrl+Shift+L"
   align_center: "Ctrl+Shift+E"
   align_right: "Ctrl+Shift+R"
   align_justify: "Ctrl+Shift+J"
-  # Blockquote toggle (#188).
+  # Blockquote toggle.
   toggle_quote: "Ctrl+Shift+9"
-  # Foldable details toggle (#183). Ctrl+Shift+. (Ctrl+. is taken by superscript).
+  # Foldable details toggle. Ctrl+Shift+. (Ctrl+. is taken by superscript).
   toggle_details: "Ctrl+Shift+."
-  # Table row/column insert hotkeys (#172). Deletion + merge are toolbar-only.
+  # Table row/column insert hotkeys. Deletion + merge are toolbar-only.
   table_insert_row_above: "Ctrl+Shift+Up"
   table_insert_row_below: "Ctrl+Shift+Down"
   table_insert_col_left: "Ctrl+Shift+Left"
   table_insert_col_right: "Ctrl+Shift+Right"
-  # View mode toggle (#171).
+  # View mode toggle.
   toggle_view_mode: "Ctrl+Shift+V"
-  # toggle_format_toolbar → Ctrl+F1 (Office "toggle ribbon" convention); frees
-  # Ctrl+Shift+F for global search (open_search above). focus_mode (#168) dims
-  # non-active paragraphs.
+  # toggle_format_toolbar → Ctrl+F1 (the "toggle ribbon" convention); frees
+  # Ctrl+Shift+F for global search. focus_mode dims non-active paragraphs.
   toggle_format_toolbar: "Ctrl+F1"
   toggle_focus_mode: "Ctrl+Shift+D"
-  # Sprint 17 — Search, Find/Replace & Writing Aids. find_in_page (Ctrl+F) and
-  # replace (Ctrl+H) are the universal in-editor bindings; global_replace
-  # (Ctrl+Shift+G) escalates replace across the vault; toggle_typewriter_mode
-  # (Ctrl+Shift+Y) pairs with toggle_focus_mode (Ctrl+Shift+D).
+  # Search, find/replace & writing aids. find_in_page (Ctrl+F) and replace
+  # (Ctrl+H) are the in-editor bindings; global_replace (Ctrl+Shift+G)
+  # escalates replace across the vault; toggle_typewriter_mode (Ctrl+Shift+Y)
+  # pairs with toggle_focus_mode (Ctrl+Shift+D).
   find_in_page: "Ctrl+F"
   replace: "Ctrl+H"
   global_replace: "Ctrl+Shift+G"
   toggle_typewriter_mode: "Ctrl+Shift+Y"
 # Editor-scoped shortcuts (heading, alignment, quote, details, table, format
-# marks) are config-driven at editor-creation time (#311). Remap them here;
-# the editor honors the remapped binding on the next page load (live remap
-# without page navigation is a follow-up — the ProseMirror keymap is immutable
-# at schema build time).
+# marks) are remappable here; the remapped binding takes effect on the next
+# page load.
 
-# Global Search Filters (#186) — the SearchBlocksPaged IPC takes a SearchFilters
-# object alongside the query/offset/limit. Empty fields = no filter on that
-# dimension (reproduces the original unfiltered whole-vault+linked search).
+# Global Search accepts a filter object alongside the query:
 #   type: TASK / NOTE / HEADER / CODE / TABLE / DETAILS / CALLOUT
-#   sort: "" | "relevance" (bm25, default) | "recency" (file_date DESC)
-#   vaultOnly: exclude linked-notebook sources (scope = in-vault only)
-# Tag matches the exact tag OR a hierarchical descendant ("work" → "work/*").
-# All user input is parameterized; a synced vault's tag/notebook name can't
-# inject SQL. The SearchModal drives these via a scope segmented control
-# (Vault | +Linked), category filter chips, and a sort toggle.
+#   sort: "" | "relevance" (default) | "recency"
+#   vaultOnly: exclude linked-notebook sources (in-vault only)
+# Empty fields mean "no filter on that dimension". Tag matches the exact tag
+# OR a hierarchical descendant ("work" → "work/*"). All user input is
+# parameterized (a synced vault's tag/notebook name can't inject SQL).
 #
-# Global Replace (#185) — the GlobalReplaceModal (Ctrl+Shift+H) previews FTS5
-# matches grouped by page (before→after), applies approved replacements per
-# page via the atomic SaveFileBlocks path, and keeps a session revert log.
-# Applies to in-vault pages; linked notebooks are read-only (non-goal).
+# Global Replace previews matches grouped by page (before→after) with
+# per-match and per-page accept, then applies approved replacements and keeps
+# a session revert log. It applies to in-vault pages; linked notebooks are
+# read-only.
 
 # UI Preferences (per-vault)
 ui:
   sidebar_width: 256
   enable_preview_tabs: true
   max_open_tabs: 8
-  # Format toolbar visibility (#168). Default true; hide for outliner density.
+  # Format toolbar visibility. Default true; hide for outliner density.
   show_format_toolbar: true
-  # Per-tab dirty/save-failed glyph on the tab header (#167). Default true;
-  # auto-save means most dirty state is sub-second, so users who find the
-  # visual churn noisy can disable. The in-editor indicator is unaffected.
+  # Per-tab dirty/save-failed glyph on the tab header. Default true; auto-save
+  # means most dirty state is sub-second, so users who find the visual churn
+  # noisy can disable it. The in-editor indicator is unaffected.
   show_tab_dirty_indicators: true
-  # Open-tab persistence (#142). Pinned tabs only; preview tabs are ephemeral.
-  open_tabs: []        # list of {notebook, section, page, view_mode?} (#195)
+  # Open-tab persistence. Pinned tabs only; preview tabs are ephemeral.
+  open_tabs: []        # list of {notebook, section, page, view_mode?}
   active_tab: null     # {notebook, section, page, view_mode?} or null
-  # One-time tip dismissals (#168).
+  # One-time tip dismissals.
   dismissed_tips: []
-  # Inline formatting toggles (#168, #170).
+  # Inline formatting toggles.
   formatting:
     typography_enabled: true   # smart quotes, em-dashes
     color_enabled: true        # text/background color pickers
-    math_enabled: true         # LaTeX math ($...$ / $$...$$) + /math command (#191)
+    math_enabled: true         # LaTeX math ($...$ / $$...$$) + /math command
 
-# Explicit navigation ordering for drag-to-reorder (#68, #177). Section/page
-# keys use the format `${notebook}/${section}` (empty section for root pages).
-# Items absent from the map fall back to alphabetical sort.
+# Explicit navigation ordering for drag-to-reorder. Section/page keys use the
+# format `${notebook}/${section}` (empty section for root pages). Items absent
+# from the map fall back to alphabetical sort.
 nav_order:
   notebooks: []                    # ordered notebook names
   sections: {}                     # notebook name → [section names]
@@ -1145,6 +1086,6 @@ plugins:
       columns: ["TODO", "DOING", "DONE"]
 
 
-9.2 Hot Reloading Logic
+10.2 Hot Reloading Logic
 
 The Go file-system monitor sets a high-priority watch handler on .system/config.yaml. If settings are modified internally or externally, Go parses the file, updates the system memory state instantly, and triggers a style or action event over the Wails IPC bridge, bypassing the need for a full application reboot.

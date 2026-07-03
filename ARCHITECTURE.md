@@ -1,6 +1,40 @@
 Engineering Architecture: Silt
 
-This document details the low-level system design, state machines, data pipelines, and performance constraints of Silt. It acts as the direct engineering blueprint for developers implementing the Go core and Svelte interface layers.
+**How to use this document.** This is the engineering blueprint of the
+system *as it exists today*: process topology, storage tiers, the data
+contract, the IPC surface, the concurrency model, and performance budgets.
+It captures **what the system is and why it is shaped that way** — not how
+every function is implemented.
+
+- **Authoritative for:** contracts, boundaries, and invariants — topology,
+  storage tiers, the schema, the IPC surface, the concurrency model,
+  performance budgets.
+
+**Principles**
+- Describe what the system *is* and *why it is shaped that way*, not how
+  every function is implemented.
+- The code is the source of truth for implementation detail; this file
+  points to the package rather than reproducing it.
+
+**Rules**
+- Never paste source code into this file (it drifts); point to the code.
+- Update a contract here whenever the code's contract changes.
+
+**Best practices**
+- Prefer a cross-reference (`docs/decisions/`, a spec section) to an inline
+  `(#123)` tag.
+- When a contract is non-obvious, link the ADR that explains *why*.
+- If a section reads like a code tour, the detail belongs in code.
+
+**Not for**
+- **Implementation detail** — struct fields, regexes, PRAGMA values,
+  per-file behavior.
+- **Status or changelog content** — sprint numbers, "replaced the former
+  X," "was removed," "shipped in #N," roadmap/follow-up notes.
+- **Issue archaeology** — `(#123)` tags and rejected-alternative essays.
+
+Companion documents: **SPECS.md** is the forward-looking product north star;
+**DESIGN.md** is the visual system; `docs/decisions/` holds ADRs.
 
 ## Storage-of-Truth Tiers (Read First)
 
@@ -13,10 +47,10 @@ correctness regression, not a style choice.
 |---|---|---|---|---|
 | **Content** | Markdown (`.md`) | Vault root + per-page files | Block bodies, task markers, per-task metadata, block identity (`<!-- id: uuid @ YYYY-MM-DD -->`) | `[/] DOING TASK [Alice] (2026-06-15) #2 !pin [p:50] Implement search <!-- id: 7c2a… @ 2026-06-15 -->` |
 | **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Kanban columns, Kanban filter state, hotkey bindings, editor font sizes, theme typography overrides | `plugins.plugin_settings.silt-kanban.columns: [Backlog, In Progress, Review, Done]` |
-| **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook (#133). Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-kanban.columns: [Backlog, Done]` |
+| **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook. Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-kanban.columns: [Backlog, Done]` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
 | **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
-| **Plugin-owned storage** | SQLite (WAL) | `<vault>/.system/plugins/<id>/data/plugin.db` | Per-plugin private data the plugin owns the schema for: working memory OR durable storage at the plugin's discretion (embeddings, content-hash caches, agent memory). The plugin decides durability semantics; data that must survive uninstall or be portable MUST round-trip through markdown (#213). | A plugin's `vec0` vector index, a content-hash cache table |
+| **Plugin-owned storage** | SQLite (WAL) | `<vault>/.system/plugins/<id>/data/plugin.db` | Per-plugin private data the plugin owns the schema for: working memory OR durable storage at the plugin's discretion (embeddings, content-hash caches, agent memory). The plugin decides durability semantics; data that must survive uninstall or be portable MUST round-trip through markdown. | A plugin's `vec0` vector index, a content-hash cache table |
 
 **The cardinal rules:**
 
@@ -39,33 +73,28 @@ correctness regression, not a style choice.
 
 4. **SQLite is working memory, not a system of record.** Every row in the
    **core index** (`<vault>/.system/index.sqlite*`) MUST be reproducible from
-   the markdown + YAML above. The recovery path for any core-index SQLite
-   corruption is *delete the index file and relaunch* — that is the
-   documented, supported operation. SQLite is allowed to hold the
-   block↔location projection, FTS5, file mtime/size caches, and re-derived
-   per-task caches (comments/links counts, pin, progress — re-derived from
-   markdown `[pin:: true]` / `[progress:: N]` tokens on every re-index,
-   exactly like the counts). It is **forbidden** to hold user intent *as the
-   source of truth*: pin state, progress, custom column names, filter state,
-   theme id, hotkey bindings must round-trip through the markdown inline task
-   syntax (per-block) or YAML/JSON (per-vault/per-user). The cached
-   pin/progress columns in the `tasks` table are projections for query
-   speed, not authoritative — delete the index and they rebuild from
-   markdown.
+   the markdown + YAML above. The recovery path for any core-index corruption
+   is *delete the index file and relaunch* — the documented, supported
+   operation. The core index holds the block↔location projection, FTS5, file
+   mtime/size caches, and re-derived per-task caches (comments/links counts,
+   pin, progress — re-derived from markdown `[pin:: true]` / `[progress:: N]`
+   tokens on every re-index). It is **forbidden** to hold user intent *as the
+   source of truth* there: pin state, progress, custom column names, filter
+   state, theme id, and hotkey bindings must round-trip through the markdown
+   inline syntax (per-block) or YAML/JSON (per-vault/per-user). The cached
+   pin/progress columns in the `tasks` table are query-speed projections, not
+   authority — delete the index and they rebuild from markdown.
 
-   **Plugin-owned storage carve-out (#213).** Cardinal rule #4 governs the
-   **core index only**. Each plugin MAY carry its own separate SQLite file at
+   **Plugin-owned storage carve-out.** Cardinal rule #4 governs the **core
+   index only**. Each plugin MAY carry a separate SQLite file at
    `<vault>/.system/plugins/<id>/data/plugin.db`, opened on a **distinct**
-   connection that is never addressable from the core index (no `ATTACH`
-   between them). The plugin owns its schema and chooses durability
-   semantics — it may use the file for working memory *or* durable storage
-   (vector indexes, content-hash caches, agent memory). The boundary:
-   data that must survive uninstall or be portable across vaults MUST still
-   round-trip through markdown; plugin-private caches are free to live only
-   in the plugin DB. The plugin DB is deleted on uninstall (see ADR
-   `docs/decisions/0001-plugin-storage-tier.md`). This does not weaken the
-   local-first contract for core — it adds a separate, plugin-isolated tier
-   for the durable substrate the AI sprints build on.
+   connection that is never `ATTACH`-able to the core index. The plugin owns
+   its schema and chooses durability semantics (working memory *or* durable
+   storage — vector indexes, content-hash caches, agent memory). The boundary:
+   data that must survive uninstall or be portable across vaults MUST
+   round-trip through markdown; plugin-private caches need not. The plugin DB
+   is deleted on uninstall (see ADR
+   `docs/decisions/0001-plugin-storage-tier.md`).
 
 5. **Settings can be stored in JSON** (the pre-vault / user-global
    tier), but only when the data must be available before a vault is
@@ -75,93 +104,21 @@ This is the local-first contract: the user's files on disk *are* the
 product. The Svelte UI, the Go backend, and the SQLite index are all
 projections of those files, not the other way around.
 
-**Standalone tasks (#368).** Tasks created from a quick-add surface
-(calendar day cell, calendar toolbar, kanban column footer, or the global
-`Mod+Shift+N` shortcut) that are not associated with a note live as
-ordinary GFM checkboxes in a single dedicated non-note markdown file at
-`<vault>/.silt/tasks.md`. They are indexed under a synthetic notebook
-named `.silt` (section `""`, page `tasks`). The dot-prefix means the file
-is auto-excluded from the page browser (`ListNavigation` skips
-dot-prefixed notebook names) and `WalkMarkdown`'s general dot-directory
-skip stays intact for everything else; `ScanStandaloneTasks` is the
-targeted read that feeds this one well-known file into the normal
-parse→index pipeline. There is no new SQL table and no nullable
-`block_id` — the markdown-source-of-truth invariant is preserved, and
-standalone tasks survive a full re-index (delete `.system/index.sqlite*`
-and relaunch). The three quick-add entry points: plugin-gated
-`PluginCreateTask` (calendar/kanban), app-level `CreateStandaloneTask`
-(the global overlay is an app-shell action, not a plugin action), and
-`PluginSetTaskDueDate` rewrites the `[due::]` token for drag-and-drop
-rescheduling.
+**Non-note data.** Two categories of block content live outside the normal
+Notebook › Section › Page tree, both still plain markdown so the
+source-of-truth invariant holds:
 
-**Recurring tasks (#296).** A task carrying a `[recur:: RULE]` token (e.g.
-`every week`, `every 2 months`) is a recurring task. The `[recur::]` token
-is parsed by `scanTaskTokens` alongside the other six Dataview tokens and
-cached in the `tasks.recur` column for query/filter speed; the markdown file
-is the source of truth. When a recurring task transitions to DONE via
-`UpdateBlockState`, a pure Go resolver (`backend/recurrence`) computes the
-next due date from the rule and the current `[due::]` anchor (or today if
-absent), using **skip-missed advancement** — the next instance lands on the
-first strictly-future occurrence, never backfilling missed intervals. A new
-TODO block with a fresh UUID and the advanced `[due::]` date is spliced
-directly below the completed line in the parsed slice, so the existing
-render→write→re-index chain persists both the completion and the next
-instance in one atomic write. The `[recur::]` token is the rule: editing it
-(via `SetTaskRecurrence` / `PluginSetTaskRecurrence`) applies to future
-completions only; clearing it (empty string) stops recurrence. Recurrence
-requires a `[due::]` anchor — the resolver anchors on it, so
-`SetTaskRecurrence` rejects a rule set without one. The grammar is
-`every day|weekday|week|month|year` and `every N days|weeks|months|years`,
-with end-of-month clamping (Jan 31 + 1 month → Feb 28).
-
-**Standalone-tasks navigation router (#374).** Because the `.silt`
-notebook is synthetic and hidden, every navigation funnel that would
-otherwise open a `.silt / tasks` tab (search jump, tag-explorer click,
-backlink follow, sidebar) is rewritten to a single shared constant
-`STANDALONE_TASKS_NOTEBOOK = '.silt'` and routed to the Tasks view
-instead. The Tasks view (#370) is the only user-facing surface for
-standalone tasks; the raw `.md` page is never reachable from any UI
-path. The router lives in `frontend/src/lib/standaloneTasksNav.ts` and
-is the single source of truth for the routing policy — App.svelte's
-three funnel points (`openPage`, `handleSearchJump`, and the
-`navigate-to-block` window listener) all delegate to
-`routeJumpTarget`. The pure reducer returns a discriminated union
-(`tasks-view` | `open-page`) and the calling site pattern-matches on
-`kind`. A fail-loud `$effect` in App.svelte also drops any stray
-`.silt` entry that ever slips into `openTabs` and warns in the
-console, then persists the cleaned state.
-
-**Tasks view (#370).** A new first-party plugin
-(`frontend/src/plugins/first-party/silt-tasks/`) that lists every
-active task across the vault grouped into **Overdue / Today / Upcoming
-(next 7 days, matching the Things 3 default) / No Date / Completed**.
-The "No Date" group gives undated tasks (the natural output of the
-global quick-add) a first-class surface that the existing date-
-scoped agenda surfaces do not — it's a sibling to Calendar's agenda
-mode, not a replacement. The Completed group is collapsed by default
-and ordered by file_date DESC as the best-available completion-
-recency proxy; a dedicated `completed_at` column on the `tasks`
-table is a deliberate follow-up (issue's "tradeoff noted"). Built
-exclusively on the PluginContext SDK (`sqliteQuery`,
-`updateBlockState`, `on('block:changed')`) — no new SQL, no new Go
-binding, no new capabilities.
-
-**Standalone-tasks incremental reindex (#372).** `AddRecursive` in
-the directory watcher (`backend/monitor/watcher.go`) skips dot-prefixed
-directories by design — that's what keeps `.system/`, `.silt/`, and
-user dot-folders out of the watch set (and out of the index). The
-standalone-tasks file lives in that skipped directory, so a focused
-carve-out in `DirectoryWatcher.Start()` adds `<vault>/.silt` to the
-fsnotify watch set after the main `AddRecursive` returns. The dot-
-prefix skip stays untouched (generalizing it into an allowlist risks
-reintroducing the `.system` index feedback loop the skip was added to
-prevent). The existing listen loop's `.md` filter, focus-lock check,
-`WriteTracker` self-write suppression, and `reindexFile` path are
-reused unchanged — `reindexFile`'s `resolveFileMetadata` already
-derives `notebook=".silt", section="", page="tasks"` for that path.
-In-app writes (`CreateStandaloneTask` via the atomic-writer path)
-still no-op the watcher via `tracker.RegisterWrite`, so the carve-
-out observability is purely for external tools.
+- **Standalone tasks** — tasks created from a quick-add surface (calendar
+  cell, kanban footer, global `Mod+Shift+N`) that aren't attached to a note
+  live as GFM checkboxes in `<vault>/.silt/tasks.md`, indexed under a
+  synthetic hidden `.silt` notebook (no new SQL table, no nullable
+  `block_id`). The Tasks first-party plugin is the only user-facing surface
+  for them; every navigation funnel re-routes `.silt` jumps to it. See
+  SPECS §4.1 for the feature design.
+- **Recurring tasks** — a `[recur:: RULE]` token is cached in `tasks.recur`
+  for query/filter speed; on DONE a pure resolver advances the `[due::]`
+  anchor with skip-missed semantics and splices a fresh TODO block below the
+  completed line in one atomic write. See SPECS §4.1 for the rule grammar.
 
 ---
 
@@ -211,206 +168,31 @@ The Go runtime orchestrates system access, monitors local storage directories, p
 
 To allow interoperability with external plain-text editors (e.g. an external editor), the Go backend implements an active directory watcher using github.com/fsnotify/fsnotify.
 
-The Feedback Loop Prevention Strategy
-
-When Silt writes to disk, the fsnotify engine intercepts the write event, which could trigger an accidental infinite parsing loop. To prevent this, the file writer implements an execution flag cache:
-
-package monitor
-
-import (
-	"sync"
-	"time"
-)
-
-type WriteTracker struct {
-	mu           sync.Mutex
-	activeWrites map[string]time.Time
-}
-
-func (wt *WriteTracker) RegisterWrite(filepath string) {
-	wt.mu.Lock()
-	defer wt.mu.Unlock()
-	wt.activeWrites[filepath] = time.Now()
-}
-
-func (wt *WriteTracker) IsSelfGenerated(filepath string) bool {
-	wt.mu.Lock()
-	defer wt.mu.Unlock()
-	t, exists := wt.activeWrites[filepath]
-	if !exists {
-		return false
-	}
-	// If write event fired within 300ms of our atomic write, ignore it
-	if time.Since(t) < 300*time.Millisecond {
-		delete(wt.activeWrites, filepath)
-		return true
-	}
-	return false
-}
+**Feedback-loop prevention.** When Silt writes to disk, fsnotify intercepts
+the write event, which could re-trigger parsing and loop. The writer
+therefore registers every self-write (`WriteTracker.RegisterWrite`); the
+watcher's `IsSelfGenerated` check suppresses any fsnotify event for a path
+within a 300 ms cooldown of our own atomic write. See
+`backend/monitor/watcher.go`.
 
 
 2.2 Custom AST Parser Engine
 
-Every file ingested is scanned line-by-line using a customized Markdown AST engine built on top of yuin/goldmark.
+Every file ingested is scanned line-by-line using a customized Markdown AST engine built on top of yuin/goldmark (`backend/parser`).
 
-Line Parser Interface
+**Block model.** A GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`) is a task; the remainder of any line is scanned for Dataview-style `[key:: value]` metadata tokens (due, start, owner, priority, pin, progress, recur) — order-independent and extensible via the `scanTaskTokens` dispatch. Each parsed line becomes a `ParsedBlock` typed as one of three prose types (`TASK`, `NOTE`, `HEADER`) or one of four multi-line region types (`CODE`, `TABLE`, `DETAILS`, `CALLOUT`).
 
-package parser
+**Multi-line region blocks.** The parser's `accumulateRegion` detects four region shapes — fenced code, GFM table runs (header + separator), `<details>` HTML (depth-counted), and Obsidian callouts (`> [!variant]` + consecutive `>` lines) — and collapses each into one managed `ParsedBlock` (one `blocks`-table row, one UUID, one FTS5 document). The block-identity comment lives on its own dedicated trailing line after the region so the on-disk format stays strictly GFM/HTML/Obsidian syntax (byte-exact interop with Obsidian/GitHub/VS Code). `ParseFileContent` and `RenderFileContent` share the region-boundary helpers (`detectRegionKind` / `findRegionCloser` / `skipManagedRegion`) so both paths agree. Legacy files with per-line id comments are detected (id comments stripped before matching), migrated to the trailing-id format on first parse, and `((uuid))` references to vanished per-line ids are remapped to the region block's id.
 
-import "regexp"
-
-// TaskCheckboxRegex matches a GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`)
-// plus the remainder of the line. Any checkbox item is a task — the legacy
-// TASK keyword was dropped in favour of the Dataview inline-metadata
-// standard (SPECS.md §4.1).
-var TaskCheckboxRegex = regexp.MustCompile(`^([\s]*)-\s\[([ x/])\]\s+(.*)$`)
-
-// TaskTokenRegex scans the checkbox remainder for `[key:: value]` Dataview
-// tokens (due, start, owner, priority, pin, progress, recur). Order-independent
-// and extensible via a one-line addition to the scanTaskTokens dispatch.
-var TaskTokenRegex = regexp.MustCompile(`\[([\w]+)::\s*([^\]]*)\]`)
-
-type BlockType string
-
-const (
-	BlockTask   BlockType = "TASK"
-	BlockNote   BlockType = "NOTE"
-	BlockHeader BlockType = "HEADER"
-	BlockCode   BlockType = "CODE"     // managed fenced code (#189)
-	BlockTable  BlockType = "TABLE"    // managed GFM table (#310)
-	BlockDetails BlockType = "DETAILS" // managed <details> HTML (#310)
-	BlockCallout BlockType = "CALLOUT" // managed Obsidian callout (#308)
-)
-
-type ParsedBlock struct {
-	ID         string    `json:"id"`
-	ParentID   string    `json:"parent_id"`
-	Type       BlockType `json:"type"`
-	Depth      int       `json:"depth"`
-	RawText    string    `json:"raw_text"`
-	CleanText  string    `json:"clean_text"`
-	Owner      string    `json:"owner,omitempty"`
-	StartDate  string    `json:"start_date,omitempty"`
-	DueDate    string    `json:"due_date,omitempty"`
-	Priority   int       `json:"priority,omitempty"`
-	Pinned     *bool     `json:"pinned,omitempty"`
-	Progress   int       `json:"progress,omitempty"`
-	ExtraTokens []string  `json:"extra_tokens,omitempty"`
-	Language   string    `json:"language,omitempty"`
-	LineNumber int       `json:"line_number"`
-	FileDate   string    `json:"file_date,omitempty"`
-}
-
-
-Unified Region Accumulator (#189/#310/#308)
-
-The parser's `accumulateRegion` detects four multi-line region shapes and
-collapses each into ONE managed `ParsedBlock`: fenced code (``` fence),
-GFM table runs (header + separator), `<details>` HTML (depth-counted), and
-Obsidian callouts (`> [!variant]` + consecutive `>` lines). Each becomes
-one `blocks`-table row, one UUID, one FTS5 document. The block identity
-comment lives on its own dedicated trailing line after the region content
-so the on-disk format stays strictly GFM/HTML/Obsidian syntax. The
-`detectRegionKind` / `findRegionCloser` / `skipManagedRegion` helpers are
-shared by `ParseFileContent` and `RenderFileContent` so both paths agree
-on region boundaries. Old-format files with inline id comments on each
-line are detected (id comments stripped before matching), migrated to the
-trailing-id-line format on first parse, and `((uuid))` references to
-vanished per-line ids are remapped to the typed block's id.
-
-
-Unique Block ID Injection (UUIDv4)
-
-If a parsed line block does not terminate with an identifier HTML comment (<!-- id: <uuid> -->), the Go backend dynamically assigns a UUID, updates the text line, and flags the file for atomic rewrite:
-
-func EnsureBlockID(line string) (string, string, bool) {
-	idRegex := regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->$`)
-	matches := idRegex.FindStringSubmatch(line)
-	if len(matches) > 1 {
-		return matches[1], line, false
-	}
-	
-	newID := generateUUIDv4()
-	cleanLine := strings.TrimRight(line, "\r\n")
-	newLine := fmt.Sprintf("%s <!-- id: %s -->", cleanLine, newID)
-	return newID, newLine, true
-}
+**Block identity.** If a block lacks an `<!-- id: UUIDv4 @ YYYY-MM-DD -->` trailing comment, the parser mints one, rewrites the line, and flags the file for atomic rewrite. The id is the only identifier stored in the file; everything else (status, position, metadata) is derived from the line.
 
 
 3. SQLite Schema & Query Optimization Layer
 
-**Storage-of-truth principle.** Silt's persistent storage is layered with
-deliberate, non-overlapping responsibilities:
-
-- **Markdown files** (`.md` in the vault) are the **source of truth for
-  content**. Every block, every task marker, every per-task flag (status,
-  owner, priority, dates, pin, progress) round-trips through the markdown
-  inline syntax. The block identity comment (`<!-- id: uuid @ YYYY-MM-DD -->`)
-  is the only identifier stored in the file; everything else is derived
-  from the line's position in the file.
-- **YAML** (`<vault>/.system/config.yaml`) is the **source of truth for
-  per-user, per-vault, per-plugin UI preferences**: active plugin list,
-  disabled plugin list, per-plugin settings (e.g. Kanban column list,
-  Kanban filter state, theme typography overrides, hotkey bindings,
-  editor font sizes).
-- **JSON** is the **source of truth for user-global, pre-vault settings**:
-  `settings.json` (the active theme + mode) lives at
-  `<config>/silt/settings.json` and is the only disk write in the theme
-  pipeline, because the active theme must be known *before* a vault is
-  open. It is also where non-vault, non-theme user preferences go (font
-  pickers, etc.).
-- **SQLite** (`<vault>/.system/index.sqlite*`) is **working memory only**:
-  a derived, re-derivable cache. It is not a system of record. Any data
-  in SQLite must be reproducible from the markdown + YAML above; deleting
-  the index file is the documented recovery path. SQLite is *allowed* to
-  hold:
-  - The block ↔ file-location projection (notebook/section/page/line/file_date),
-    so the editor can jump-to-source by block id in O(1).
-  - Denormalized per-task caches that are expensive to recompute on
-    every query (e.g. `comments_count` = number of child NOTE blocks,
-    `links_count` = number of `((uuid))` references in the block body,
-    `pinned`/`progress` projected from the `[pin:: true]` /
-    `[progress:: N]` markdown tokens). These are **derived** from
-    markdown structure (parent_id, raw_content, inline metadata) and
-    re-derived on every re-index; they live in SQLite for query speed,
-    not because they are user state.
-  - The FTS5 full-text index over `clean_content` for `SearchBlocks`.
-  - The `files` table (path → mtime/size) that powers incremental re-index.
-
-**It is not allowed to store user intent as the source of truth in SQLite.**
-Pin, progress, custom column names, filter state, theme id, hotkey
-bindings — these are all user intent and must live in the markdown inline
-syntax (for per-block metadata) or in YAML/JSON (for per-vault / per-user
-preferences). The `pinned`/`progress` columns in the `tasks` table are the
-exception that proves the rule: they are re-derived projections cached for
-the Kanban query, rebuilt from markdown on every re-index, and never
-written to by user action directly. `pinned` is a **tri-state cache
-(`NULL`/`0`/`1` for `[pin:: absent|false|true]`, #135)** so the projection
-preserves the explicit-unpinned state the parser/renderer round-trip
-(#123); `progress` is a plain `0-100` projection. New features that need
-persistent per-task state must extend the markdown inline task syntax
-(`[pin:: true]`, `[progress:: N]`, etc.) and round-trip through the parser
-+ renderer; if the data is per-user/per-vault, it goes in YAML config.
-This is what "local-first" means: the user's files on disk *are* the
-product.
-
-**Plugin-owned storage tier (#213).** The working-memory-only rule above
-governs the **core index** (`<vault>/.system/index.sqlite*`). Each plugin
-MAY carry a separate SQLite file at
-`<vault>/.system/plugins/<id>/data/plugin.db`, opened lazily on a
-**distinct** connection (`App.pluginDBs`, one `*sql.DB` per plugin) that
-is never `ATTACH`-able to the core index. The plugin owns its schema and
-chooses durability semantics (working memory *or* durable storage) — the
-"re-derivable from markdown" requirement is core-only and does not apply
-to the plugin DB. Boundaries: data that must survive uninstall or be
-portable across vaults round-trips through markdown; plugin-private caches
-(embeddings, content-hash caches, agent memory) may live only in the
-plugin DB. The plugin DB connection is closed on `teardownPlugin(id)` and
-on vault close, and the file is deleted on uninstall (the whole
-`.system/plugins/<id>/` folder is removed). Deleting the core
-`index.sqlite*` files remains the documented core recovery path; plugin
-DBs are a separate, plugin-owned tier, deleted separately. See ADR
-`docs/decisions/0001-plugin-storage-tier.md`.
+The storage-of-truth contract — what each tier holds, and the rule that the
+core index is reproducible working memory rather than a system of record —
+lives in §0 above. This section covers the core index's on-disk mechanics
+(WAL, incremental re-index) and the concrete schema.
 
 The on-disk SQLite lives in WAL mode at `<vault>/.system/index.sqlite`
 (+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose
@@ -423,22 +205,9 @@ markdown + YAML on the next launch. This durable, incremental model is
 what lets Silt scale to dozens of notebooks and thousands of pages
 without rebuilding the whole index on every launch.
 
-The connection is opened by `db.NewDatabaseManager(dbPath)` (pass `""` for an ephemeral in-memory shared-cache DB, used in tests and before a vault is open). The pragmas below run on every open. `journal_mode=WAL` is persistent in the file header, so once the first on-disk open creates a WAL-mode file, every later connection — including the plugin SDK's read-only handle — inherits it without re-running the pragma.
+Connections are opened by `db.NewDatabaseManager(dbPath)` (pass `""` for an ephemeral in-memory shared-cache DB, used in tests and before a vault is open). The DB runs in **WAL mode** — persistent in the file header, so every later connection (including the plugin SDK's read-only handle) inherits it without re-running the pragma. Per-connection pragmas set `synchronous = NORMAL` (safe under WAL — the WAL itself survives app crashes), memory temp store, a 256 MiB mmap threshold, a 64 MiB page cache, a 5 s `busy_timeout`, and `foreign_keys = ON`; see `backend/db/schema.go` for the values.
 
-```sql
--- WAL: persistent in the DB file header (set once, inherited by all connections).
--- On an in-memory DB SQLite silently keeps "memory" — the call is a safe no-op.
-PRAGMA journal_mode = WAL;
--- Per-connection (re-applied on every open):
-PRAGMA synchronous  = NORMAL;   -- safe under WAL; the WAL itself survives app crashes
-PRAGMA temp_store   = MEMORY;
-PRAGMA mmap_size    = 268435456; -- 256 MiB mmap threshold for faster reads on large indexes
-PRAGMA cache_size   = -64000;    -- 64 MiB per-connection page cache (negative = KB)
-PRAGMA busy_timeout = 5000;      -- contended writes wait rather than failing instantly
-PRAGMA foreign_keys = ON;
-```
-
-Concurrency: WAL allows unlimited readers alongside a single writer; readers never block writers and the writer never blocks readers. The Go-level `core.ExecutionCoordinator` still serializes all access (`SetMaxOpenConns(1)` retained) so the locking story stays simple; relaxing reads to a second pool is an optional follow-up, not required for correctness. Clean shutdown runs `PRAGMA wal_checkpoint(TRUNCATE)` (in `DatabaseManager.Close` and after each startup re-index pass) so the WAL does not grow unbounded across sessions; on a crash, SQLite auto-recovery replays the WAL on the next open.
+Concurrency: WAL allows unlimited readers alongside a single writer; readers never block writers and the writer never blocks readers. The Go-level `core.ExecutionCoordinator` serializes all access (`SetMaxOpenConns(1)`) so the locking story stays simple. Clean shutdown runs `PRAGMA wal_checkpoint(TRUNCATE)` (in `DatabaseManager.Close` and after each startup re-index pass) so the WAL does not grow unbounded across sessions; on a crash, SQLite auto-recovery replays the WAL on the next open.
 
 Caveat: WAL relies on shared memory and therefore does **not** work on network filesystems (NFS/SMB). Local-first single-user desktop is the supported deployment; a vault on a network mount will fail to open the index with a clear error rather than silently corrupt.
 
@@ -449,7 +218,7 @@ Caveat: WAL relies on shared memory and therefore does **not** work on network f
 CREATE TABLE blocks (
     id TEXT PRIMARY KEY,
     parent_id TEXT,
-    source TEXT NOT NULL DEFAULT 'vault',  -- 'vault' | 'linked:<id>' (#100)
+    source TEXT NOT NULL DEFAULT 'vault',  -- 'vault' | 'linked:<id>'
     notebook TEXT NOT NULL,
     section TEXT NOT NULL,
     page TEXT NOT NULL,       -- Page (streaming unit) inside the Section
@@ -470,9 +239,9 @@ CREATE TABLE tasks (
     start_date TEXT,         -- YYYY-MM-DD or NULL
     due_date TEXT,           -- YYYY-MM-DD or NULL
     priority INTEGER,        -- 1, 2, 3
-    pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache (#135): NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
+    pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache: NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
     progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token
-    recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks (#296); cached from [recur:: RULE] token
+    recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks; cached from [recur:: RULE] token
     comments_count INTEGER DEFAULT 0, -- derived: child NOTE blocks
     links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
@@ -489,10 +258,10 @@ CREATE TABLE tags (
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 );
 
--- File-stats cache (incremental re-indexing, #29). Keyed by absolute path;
+-- File-stats cache for incremental re-indexing. Keyed by absolute path;
 -- a renamed file is a new path, with the stale old row pruned by the next
--- startup scan. Persists in the same on-disk DB so a warm restart skips
--- re-parsing any file whose mtime+size match the last successful index.
+-- startup scan. A warm restart skips re-parsing any file whose mtime+size
+-- match the last successful index.
 CREATE TABLE files (
     path       TEXT PRIMARY KEY,
     mtime      INTEGER NOT NULL, -- Unix nanoseconds
@@ -500,15 +269,15 @@ CREATE TABLE files (
     indexed_at INTEGER NOT NULL  -- Unix nanoseconds
 );
 
--- Create covered indexes for dynamic query performance
--- idx_blocks_src_file is source-aware (#100): source leads so same-named
--- notebooks across roots don't collide; replaces the pre-source idx_blocks_file.
+-- Covered indexes for query performance.
+-- idx_blocks_src_file is source-aware (source leads) so same-named notebooks
+-- across roots don't collide.
 CREATE INDEX idx_blocks_src_file ON blocks(source, notebook, section, page, file_date);
 CREATE INDEX idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;
 CREATE INDEX idx_tags_lookup ON tags(level_0, level_1, level_2);
 
 
-3.1 External / Linked Notebooks (#100)
+3.1 External / Linked Notebooks
 
 A vault is the default home for notebooks, but it is not the only one. A user
 can LINK an external folder (e.g. a synced SharePoint/OneDrive/Dropbox mount)
@@ -560,7 +329,7 @@ DisplayName` so an external file's frontmatter can't drift it out of the nav).
 The batched path threads `source` through `IndexScanResults` (the same
 function the vault startup scan uses) and does the `files`-table
 (`MarkFileIndexed`) pass after the index commit, so a large synced mount
-indexes without per-file WAL-checkpoint thrash (#134). `UnlinkNotebook(id)` stops watching,
+indexes without per-file WAL-checkpoint thrash. `UnlinkNotebook(id)` stops watching,
 drops the source's index rows (`ClearSourceBlocks`), and leaves the external
 files COMPLETELY UNTOUCHED (safe default). `PickLinkedNotebook()` drives the
 native folder picker. Deleting a linked notebook from the sidebar UNLINKS it
@@ -584,7 +353,7 @@ by the existing diff/lease machinery once both sides land. A vault index must
 stay on a local disk regardless (WAL does not work on NFS/SMB — §3), so only
 the markdown crosses the mount.
 
-Co-located per-notebook config (#133). Per the storage-of-truth model, data
+Co-located per-notebook config. Per the storage-of-truth model, data
 attached to a notebook travels with the notebook. For a linked (external)
 notebook, per-notebook plugin overrides live at
 `<linkedRoot>/.system/config.yaml`, so an external notebook on SharePoint
@@ -634,145 +403,45 @@ type TaskQueryFilter struct {
 }
 
 
-4.3 Exposed Go Services Methods (App.go)
+4.3 IPC Service Surface
 
-type App struct {
-	ctx context.Context
-	db  *sql.DB
-}
+All bindings hang off the single Wails-bound `App` (`Bind: { app }`) and are
+auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
-// FetchPageBlocks returns a flat list of all blocks for a page (single file),
-// ordered by line_number. Each block carries its own file_date.
-func (a *App) FetchPageBlocks(notebook, section, page string) ([]ParsedBlock, error)
+- **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `UpdateBlockState`
+  (task-checkbox transition + atomic file rewrite + re-index),
+  `MutateBlock`, `QueryTasks` (dashboard filter query).
+- **Navigation CRUD** — `CreateNotebook` / `OpenNotebook` /
+  `PickNotebookFolder`, `CreateSection`, `CreatePage` / `MovePage`
+  (cross-section; `section` may be `""`). Silt starts blank — the user opens
+  or creates the first notebook from the sidebar.
+- **Vault lifecycle** — `CopyVault` / `MoveVault` / `SwitchVault`. The
+  SQLite index is never copied: it is reproducible working memory (§0 rule
+  4) and rebuilds from markdown at the destination, which sidesteps stale
+  absolute-path concerns. `MoveVault`/`SwitchVault` emit `vault:moved`.
+- **Portable archive** — `ExportVault` / `ImportVault` (`.silt-vault`:
+  validate-before-extract, SHA-256 manifest, zip-slip guarded; format in
+  SPECS §3.4). Streams `vault:archive:progress`.
+- **Navigation tree** — `ListNavigation` (Notebook › Section › Page tree
+  from on-disk folders, block counts merged from the index).
+- **Configuration** — `GetSystemConfig` / `SaveSystemConfig` (§8);
+  `GetAppVersion`.
+- **Per-plugin settings** — `UpdatePluginSetting` (atomic read-modify-write
+  in vault `config.yaml`); `GetPluginSettingsForNotebook` resolves a
+  plugin's settings for the active notebook, applying the co-located
+  per-notebook override layer (linked wins per-key; emits
+  `linked-config:changed`).
+- **Self-update** — `CheckForUpdates` / `DownloadUpdate` / `InstallUpdate`
+  / `GetUpdateSettings` / `SetUpdateSettings`. GitHub release fetch,
+  SHA-256-verified before use; the auto-check toggle persists to
+  user-global `settings.json`. `InstallUpdate` returns `WillQuit` so the
+  frontend quits via the graceful shutdown path (vault + WAL flush).
+- **UI persistence** — `GetOpenTabs` / `SetOpenTabs` (pinned tabs only,
+  pruned against `ListNavigation`); `GetNavOrder` / `SetNavOrder`;
+  `GetSidebarWidth` / `SetSidebarWidth`.
 
-// UpdateBlockState transitions task checkbox and updates raw plaintext files atomically
-func (a *App) UpdateBlockState(blockID string, newState string) error
-
-// QueryTasks retrieves indexed items matching the active dashboard layout filters
-func (a *App) QueryTasks(filter TaskQueryFilter) ([]TaskResult, error)
-
-// Notebook/Section/Page lifecycle. Silt starts blank; the user opens an
-// existing notebook folder or creates one from the sidebar selector. The
-// Section layer is optional — a page may live directly under a notebook.
-func (a *App) CreateNotebook(name string) error
-func (a *App) OpenNotebook(folderPath string) (string, error)
-func (a *App) PickNotebookFolder() (string, error)
-func (a *App) CreateSection(notebook, section string) error
-func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error) // section may be ""
-func (a *App) MovePage(notebook, fromSection, toSection, page string) error     // #177 cross-section / root move
-
-// Vault relocation (#141). The active vault can be moved or duplicated to a
-// new folder from Settings → General. CopyVaultTree + verifyCopy (in
-// backend/vault/mover.go) are the shared core; the SQLite index is NEVER
-// copied — it is reproducible working memory (§0 rule 4) and is rebuilt from
-// markdown when the destination is first opened, which sidesteps every stale
-// absolute-path concern a move would otherwise raise.
-//   - CopyVault duplicates the tree; the active vault stays live (no settings
-//     change, no event).
-//   - MoveVault = copy + verify → cutover: teardownVaultServices → patch the
-//     dest config.yaml notebooks.path → persist settings.json (theme/mode
-//     preserved) → initializeVaultServices at the new path, with a verbatim
-//     rollback to the original path if reinit fails. removeOld deletes the
-//     original folder AFTER a successful cutover (non-fatal on failure).
-//   - SwitchVault points Silt at an existing vault folder with no picker or
-//     scaffold (the Copy flow's "Switch to this vault" affordance).
-// Both MoveVault and SwitchVault emit `vault:moved` ({from, to}) so the
-// frontend resets navigation and reloads its stores. Linked notebooks are
-// external folders and are never moved by any of these.
-func (a *App) PickVaultDestination() (string, error)
-func (a *App) CopyVault(destPath string) (vault.CopyResult, error)
-func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult, error)
-func (a *App) SwitchVault(path string) error
-
-// Portable vault archive / backup (#143). Export bundles the active vault
-// tree (notes + .system/, EXCLUDING the reproducible .system/index.sqlite*)
-// into a single .silt-vault archive (ZIP + custom extension) carrying a
-// manifest.json with per-entry + whole-archive-root SHA-256 digests. Import
-// validates-before-extract (mirrors the .silt-plugin installer, SPECS §8.4:
-// manifest self-consistency + per-entry checksum verification + zip-slip /
-// absolute / size-cap guards), streams into a sibling temp dir, atomically
-// renames into the empty destination, then calls SwitchVault to open it
-// (rebuilding the index from markdown). Both stream determinate progress via
-// the vault:archive:progress event ({phase: "export"|"extract", current,
-// total}) so the UI renders a progress bar for large vaults. Format detail:
-// SPECS §3.4.
-func (a *App) PickVaultExportPath(defaultFilename string) (string, error)   // *.silt-vault save dialog
-func (a *App) ExportVault(destPath string) (vault.ExportResult, error)      // active vault read-only
-func (a *App) PickVaultArchive() (string, error)                            // *.silt-vault open dialog
-func (a *App) ImportVault(archivePath, destPath string) (vault.ImportResult, error) // validate → extract → SwitchVault
-
-
-// ListNavigation returns the Notebook > Section > Page tree for the sidebar,
-// enumerated from the on-disk folder structure (source of truth) with block
-// counts merged from the index. Section-less pages group under section "".
-func (a *App) ListNavigation() (NavigationTree, error)
-
-// System configuration (see §8). GetSystemConfig returns the parsed
-// .system/config.yaml; SaveSystemConfig validates + atomically persists +
-// applies live knobs (editor.tab_indent_spaces drives parsing) and emits
-// config:changed. GetAppVersion returns the embedded VERSION.
-func (a *App) GetSystemConfig() (config.SystemConfig, error)
-func (a *App) SaveSystemConfig(cfg config.SystemConfig) error
-
-// Per-plugin settings — UpdatePluginSetting is the atomic read-modify-write
-// for a single key in the vault-scoped config.yaml (#120).
-// GetPluginSettingsForNotebook resolves a plugin's settings for the ACTIVE
-// notebook, applying the co-located per-notebook override layer (#133): vault
-// notebooks return the vault-scoped entry; linked notebooks return the deep-
-// merge of vault defaults with the co-located <root>/.system/config.yaml
-// (linked wins per-key). Emits linked-config:changed on external edit of a
-// co-located file so reactive consumers (e.g. Kanban) refresh.
-func (a *App) UpdatePluginSetting(pluginID, key string, value any) error
-func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[string]any, error)
-func (a *App) GetAppVersion() string
-
-
-// In-app update check + self-upgrade (#312). backend/updates owns the HTTP,
-// semver, download, and SHA256 logic; these are thin Wails-bound wrappers.
-// CheckForUpdates issues one unauthenticated GET to GitHub's
-// /releases/latest (no token embedded — AC7), semver-compares (the leading
-// `v` is stripped; backend/semver is the single source of truth shared with
-// plugin min-version enforcement), and stamps settings.json LastUpdateCheck.
-// DownloadUpdate re-fetches the release, downloads the platform asset
-// (streaming update:download:progress events), and verifies it against the
-// published SHA256SUMS before returning the local path — it NEVER returns a
-// path for an unverified asset, and a URL not in the release's asset list is
-// rejected (defense against a stale/coerced frontend). InstallUpdate launches
-// the verified installer and returns WillQuit so the frontend quits via the
-// graceful JS runtime.Quit() (OnShutdown flushes the vault + WAL). Get/SetUpdateSettings
-// persist the auto-check toggle in user-global settings.json (AutoCheckUpdates
-// *bool, default-on; LastUpdateCheck RFC3339) — NOT SQLite (not reproducible)
-// and NOT vault config.yaml (must be known before a vault opens).
-func (a *App) CheckForUpdates() (updates.UpdateInfo, error)
-func (a *App) DownloadUpdate(assetURL string) (string, error)
-// InstallUpdate launches the verified installer/relaunch (Windows NSIS
-// detached; Linux AppImage $APPIMAGE in-place swap + relaunch) and returns
-// InstallUpdateResult{WillQuit}. WillQuit is true when a self-replacing
-// installer was launched: the FRONTEND then calls the JS runtime.Quit() so the
-// app exits via the graceful OnShutdown path (vault + WAL flush) and the
-// installer can replace the locked binary. WillQuit is false for the Linux
-// xdg-open hand-off (package-managed install), where the app stays running.
-func (a *App) InstallUpdate(localPath string) (InstallUpdateResult, error)
-func (a *App) GetUpdateSettings() (UpdateSettingsResult, error)
-func (a *App) SetUpdateSettings(autoCheck bool) error
-
-
-// Open-tab persistence (#142). GetOpenTabs returns the persisted pinned-tab
-// set + active tab, pruned against ListNavigation (stale tabs for deleted
-// pages are silently dropped). SetOpenTabs atomically persists the pinned set
-// + active via configMu + RegisterSelfWrite + config.Save. Only pinned tabs
-// are persisted (preview tabs are ephemeral — industry-standard parity).
-func (a *App) GetOpenTabs() (OpenTabsResult, error)
-func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) error
-
-// Nav-order persistence (#68, #177). GetNavOrder returns the explicit
-// ordering for notebooks/sections/pages; SetNavOrder persists it atomically.
-// MovePage updates NavOrder.Pages for both the source and target
-// sectionKeys on a cross-section move (RenamePage omits this step).
-func (a *App) GetNavOrder() (config.NavOrder, error)
-func (a *App) SetNavOrder(order config.NavOrder) error
-func (a *App) GetSidebarWidth() (int, error)
-func (a *App) SetSidebarWidth(width int) error
+Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`
+files; this list is the contract surface, not the source.
 
 
 4.4 Theme Engine IPC & Pipeline
@@ -817,30 +486,15 @@ Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
           │  ApplyTheme persists here (the only disk write in the engine)
 ```
 
-Storage layout: theme files live in `<vault>/.system/themes/*.json` (see SPECS §3.2). The **first-class set** (the canonical default `cyber_forest.json` plus Terra Noir, Linen, Stark, and Graphite) is embedded in the binary via `//go:embed themes/*.json` (default.go, an `embed.FS`) and is also what `ScaffoldVault` writes when bootstrapping a vault, so there is a single source of truth for each first-class theme's content. Since Sprint 8, `ListThemes` appends every embedded first-class theme (deduped — an on-disk copy of the same id wins), so the full first-party roster is always selectable even on an empty/wiped vault or an existing vault scaffolded before a theme shipped; `ResolveActive` / `CachedThemeByID` resolve a first-class id from the embed when it is not on disk (removing the non-default first-paint-flashes-default regression). Settings persistence (the active id + mode) is the user-global `settings.json`, not the vault config — it must be known before any vault is open, and it is the only disk write in the entire theme pipeline.
+**Storage layout.** Theme files live in `<vault>/.system/themes/*.json` (SPECS §3.2). The **first-class set** (`cyber_forest` plus Terra Noir, Linen, Stark, Graphite) is embedded via `//go:embed themes/*.json` and is what `ScaffoldVault` writes, so each first-class theme has one source of truth. `ListThemes` appends every embedded first-class theme (deduped — on-disk wins), so the full roster is always selectable even on an empty or wiped vault; `ResolveActive` / `CachedThemeByID` resolve a first-class id from the embed when it is not on disk, so a non-default active theme no longer flashes the default palette. The active id + mode persist to user-global `settings.json` — the only disk write in the engine.
 
-backend/themes package:
-- theme.go — Go structs mirroring the canonical modes-based schema; Theme.Flatten(mode) -> map[string]string of CSS custom-property names (--color-void, --color-accent-primary-start, ...) for one mode. The --color-* keys are the SINGLE namespace: Tailwind v4's @theme block declares them (generating utilities like text-accent-primary-start), and the runtime injector overrides them on :root so the whole shell repaints on theme switch (#146 — no bridge/alias layer). HexToRGB converts bg.void to a native RGBA for the webview background. An optional theme-level Typography struct (font_family, mono_font_family, headline_font) emits --font-body, --font-mono, --font-headline when present — these override the config-provided --editor-* variables via CSS fallback chains in index.css.
-- validate.go — Validate(*Theme) returns structured per-field ValidationErrors (missing tokens, malformed colors). schema_version is informational (forward compatible). isValidColor narrows the accepted color grammar to #hex / rgb() / rgba() — anything else (named colors, hsl(), url(), <script>, expression()) is rejected at validation time, which is the sandbox for user-imported themes. isValidFontFamily validates optional typography fields by rejecting CSS-breaking characters (;, {, }, <, >) — the same sandbox-by-validation approach used for colors.
-- loader.go — LoadTheme, ListThemes (on-disk *.json + the embedded default, deduped by id, per-file load errors collected), ResolveActive (active id -> theme, falling back to the embedded default). LoadByID is a single os.ReadDir + parse that ApplyTheme uses to drop the previous double-scan (#76). ListThemesResult additionally carries a `flat_tokens` map keyed by ThemeInfo.ID so the picker can render hover previews without a second IPC call.
-- importer.go (Sprint 6) — ImportThemeFromPath validates a user-supplied JSON, namespaces its id to avoid collisions with built-ins (`user-` prefix on a built-in id; counter suffix on repeat), and writes the on-disk file atomically via parser.WriteFileAtomic. ExportThemeToPath resolves the active id (or the embedded default) and writes the canonical JSON for round-trip editing. Both functions share the loader's ParseAndValidate, so an imported theme is exactly the same object ListThemes enumerates.
-- cache.go (Sprint 6) — process-local, mtime-aware cache of parsed themes; CachedThemeByID serves the embedded default directly, on-disk themes from the cache (refreshing on mtime change). InvalidateThemeCache is called by App.ImportTheme so a freshly imported theme is picked up on the next launch-resolution call. The cache replaces Sprint 5's embedded-only path so a non-default active theme no longer shows the default's bg.void as a pre-CSS flash (#73).
-- default.go — the embedded first-class theme set (`//go:embed themes/*.json`, an embed.FS): the canonical default (cyber_forest.json) plus Terra Noir, Linen, Stark, and Graphite. `DefaultThemeJSON()` / `ParseDefault()` serve the primary default; `EmbeddedThemes()` enumerates the parsed set (used by ListThemes), `ParseEmbeddedByID(id)` resolves a single first-class id (used by ResolveActive / CachedThemeByID for the off-disk case), and `EmbeddedThemeFiles()` returns filename→raw bytes (used by ScaffoldVault). The app always has a guaranteed-correct fallback (works before a vault exists / when the themes dir is wiped / when the active id is invalid). ScaffoldVault writes every embedded first-class theme idempotently.
+**backend/themes** validates the canonical schema (colors narrowed to `#hex`/`rgb()`/`rgba()` — the import sandbox), loads on-disk + embedded themes (deduped by id), imports/exports atomically, and serves a process-local mtime-aware cache. See the package for per-file responsibilities.
 
-Wails-bound App methods (all auto-exposed via the single `Bind: { app }`):
-- ListThemes() -> ListThemesResult { themes: []ThemeInfo, errors: []ThemeLoadError, flat_tokens: {id: {dark, light}} }. Used by the picker for the listing + live previews.
-- GetActiveTheme() -> ActiveThemeResult { id, name, mode, tokens, dark_tokens, light_tokens, bg_void }. Reads AppSettings, resolves the theme (default fallback), returns BOTH dark+light maps so the frontend resolves "system" locally without a second round-trip. Works before a vault is open (serves the embedded default).
-- ApplyTheme(id, mode) -> ActiveThemeResult. Validates id+mode, persists atomically to settings.json, emits a `theme:changed` Wails event, returns the new maps. Unknown id / invalid mode -> structured error, not persisted. Uses themes.LoadByID for a single directory scan (the previous implementation called ListThemes + ResolveActive, doubling the I/O for every switch).
-- PickThemeFile() -> string. Native *.json file picker; empty string on cancel.
-- ImportTheme(srcPath) -> ImportResult { info, renamed, renamed_from_id, warnings }. Validates, namespaces, writes atomically, emits `themes:changed` (NOT `theme:changed` — that event is for active-theme changes; the picker subscribes to the listing event so the new theme appears immediately without an IPC round-trip from the frontend). ValidationErrors propagate verbatim so the UI can name the offending token and the expected format.
-- ExportActiveTheme(dstPath) -> error. Resolves the active id from AppSettings and writes the canonical JSON to the chosen path.
+**IPC.** `ListThemes`, `GetActiveTheme`, `ApplyTheme`, `ImportTheme`, `ExportActiveTheme`, `PickThemeFile`. `ApplyTheme` persists to `settings.json` and emits `theme:changed`; `ImportTheme` emits `themes:changed` (the listing event — distinct from the active-theme event). `GetActiveTheme` returns both dark + light maps so the frontend resolves "system" locally without a second round-trip.
 
-Frontend (frontend/src/theme):
-- store.svelte.ts — two reactive stores: `themeState` (active id/name/mode + dark/light token maps) and `themesState` (listing + flat tokens, populated by ListThemes). Subscribes to the `theme:changed` event for the active theme and to the `themes:changed` event for the listing. Exposes applyTheme, pickAndImportTheme, importThemeFromPath, exportActiveTheme, setStatus/clearStatus. The `themeStatus` proxy is rendered in a `role="status" aria-live="polite"` region by the picker (role="alert" on errors).
-- inject.ts — injectTokens rewrites a single generated `<style id="silt-theme">:root{...}</style>` element (one DOM write -> one recalc -> same-tick repaint, no flicker/reload/remount). index.css :root values are startup fallbacks only.
-- AppearanceTab.svelte (Sprint 6) — live, accessible picker + Dark/Light/System toggle + import button + drop zone (Wails OnFileDrop) + export button. Data-driven from themesState; roving tabindex with Arrow/Home/End, Enter/Space to commit, Esc to cancel preview. Zero per-theme code branches — every row is built from ThemeInfo + ThemeInfo.Swatches.
+**Frontend** (`frontend/src/theme`): `store.svelte.ts` holds `themeState` (active id/name/mode + token maps) and `themesState` (listing + flat tokens for previews); `inject.ts` rewrites a single `<style id="silt-theme">:root{…}</style>` (one DOM write → one recalc → same-tick repaint); `AppearanceTab.svelte` is the accessible picker.
 
-Launch background: main.go resolves BackgroundColour from the in-process theme cache (CachedThemeByID) so a non-default active theme's bg.void is used for the pre-CSS paint, removing the first-paint flash that matched no token (#73). The cache falls back to the embedded default when no settings exist or the active id is invalid.
+**Launch background.** `main.go` resolves the webview `BackgroundColour` from the in-process theme cache so a non-default active theme's `bg.void` is used for the pre-CSS paint; it falls back to the embedded default when no settings exist or the active id is invalid.
 
 
 4.5 Template Engine IPC & Pipeline
@@ -869,7 +523,7 @@ Pipeline (single source of truth shared with SPECS.md §6.5 / docs/TEMPLATES.md)
           │   ListTemplates / GetTemplate / RenderTemplate
           │   RenderTemplateBlocks / SaveUserTemplate
           │   DeleteUserTemplate / ReloadTemplates
-          │   RegisterPluginTemplates / UnregisterPluginTemplates (#96)
+          │   RegisterPluginTemplates / UnregisterPluginTemplates
           │   CreatePageFromTemplate
           │   events: templates:changed
           ▼
@@ -885,36 +539,18 @@ Pipeline (single source of truth shared with SPECS.md §6.5 / docs/TEMPLATES.md)
                          new-page | insert-at-cursor)
 ```
 
-backend/templates package:
-- template.go — Template struct (SchemaVersion, ID, Title, Description, Category, Icon, Placeholders, Body, Source, PluginID). Source is "builtin" (embedded, read-only), "disk" (user-authored, writable), or "plugin" (runtime-registered by a plugin, #96). PluginID is non-empty only when Source == "plugin"; both Source and PluginID are `yaml:"-"` so disk frontmatter can never claim a plugin provenance. SupportedSchemaVersion = "1.0.0" (informational/forward-compatible).
-- render.go — Render(t, vars, opts) → (string, warnings). A ~30-line substitution renderer (NOT Go text/template). The placeholder grammar `{{[a-z][a-z0-9_]*}}` structurally excludes Smart Graph syntax: `{{embed:uuid}}` (colon) and `((uuid))` (parentheses) never match the regex, so they pass through byte-for-byte. Built-in defaults (date/time/iso_date/weekday) resolve from RenderOptions.Now in RenderOptions.Timezone. Declared-but-unprovided placeholders stay literal (no warning); truly-unknown tokens stay literal + warn (forward-compat).
-- validate.go — Validate(*Template) returns structured ValidationErrors (id grammar `^[a-z0-9_-]+$`, non-empty body/title/schema_version/category, placeholder-name grammar `^[a-z][a-z0-9_]*$`, no duplicate placeholder names, semver schema_version). Categories are additive: an unknown-but-non-empty category is valid (the loader emits a forward-compat warning); only an empty category is rejected.
-- default.go — `//go:embed builtin/*.md` (embed.FS). EmbeddedTemplates() / ParseEmbeddedByID(id) / BuiltinIDs() (filename==id convention) / IsBuiltinID(id) (the write-path read-only guard). Fail-loud: an invalid embedded template is a release-blocking authoring bug.
-- loader.go — ListTemplates(templatesDir) → on-disk `*.md` (dedup by id, on-disk wins) + every embedded built-in not already on disk; sorted by (Category, Title); per-file load errors + forward-compat warnings collected (never abort). GetTemplate(templatesDir, id) → on-disk then embedded; ErrTemplateNotFound sentinel. ParseTemplateBytes splits YAML frontmatter from body, defaults omitted metadata, validates.
-- store.go — SaveTemplate (validate → builtin guard → parser.WriteFileAtomic → canonical re-serialize). DeleteTemplate (builtin guard → os.Remove, idempotent). SerializeTemplate re-emits canonical frontmatter + body (yaml:"-" on Body/Source).
-- cache.go — process-local, mtime-aware cache (CachedGetTemplate / InvalidateTemplateCache / ResetCacheForTests). Embedded builtins served from embed (never cached); on-disk templates cached with mtime + TTL freshness.
-- watcher.go — TemplateWatcher (fsnotify on .system/templates/). Self-write suppression window (RegisterSelfWrite, called by App before SaveTemplate). Debounced onChange callback (App → InvalidateTemplateCache + templates:changed event). Watches the .system parent when templates/ doesn't exist yet (detects creation).
+**backend/templates** validates (id grammar, placeholder grammar, semver schema; categories are additive), renders via a small `{{name}}` substitution — *not* Go `text/template`; the grammar structurally excludes Smart Graph `{{embed:uuid}}` and `((uuid))`, which pass through byte-for-byte — loads on-disk + embedded built-ins (deduped, on-disk wins), saves/deletes user templates atomically, caches (mtime-aware), and watches `.system/templates/` for external edits. See the package for per-file responsibilities.
 
-Wails-bound App methods (all auto-exposed via the single Bind: { app }):
-- ListTemplates() → ListTemplatesResult { templates: []TemplateSummary, errors: []TemplateLoadError, warnings: []TemplateLoadError }. Works pre-vault (returns just the embedded set).
-- GetTemplate(id) → Template (full, incl. Body). Via the mtime cache.
-- RenderTemplate(id, vars) → string. Defaults + vars substituted; warnings logged.
-- RenderTemplateBlocks(id, vars) → []ParsedBlock. Rendered + parsed for the insert-at-cursor flow (fresh UUIDs each call).
-- SaveUserTemplate(t) → void. Validate + builtin guard + atomic write + RegisterSelfWrite + cache invalidate + templates:changed.
-- DeleteUserTemplate(id) → void. Builtin guard + idempotent remove + cache invalidate + templates:changed.
-- ReloadTemplates() → void. Cache flush + templates:changed.
-- CreatePageFromTemplate(notebook, section, page, dateStr, templateID, vars) → string (the resolved date). Renders the template, prepends the standard frontmatter (§3.3), writes atomically under LockFileWrite + tracker.RegisterWrite (§7.1), indexes via ParseFileContent so tasks/embeds/tags are picked up immediately. Composes with the existing CreatePage path.
+**IPC.** `ListTemplates`, `GetTemplate`, `RenderTemplate`, `RenderTemplateBlocks`, `SaveUserTemplate`, `DeleteUserTemplate`, `ReloadTemplates`, `RegisterPluginTemplates`/`UnregisterPluginTemplates` (plugin-provided templates, deduped last), `CreatePageFromTemplate`. Emits `templates:changed`. `CreatePageFromTemplate` renders + prepends standard frontmatter + writes atomically + indexes, composing with the `CreatePage` path.
 
-Frontend (frontend/src/templates):
-- store.svelte.ts — templatesState (listing: TemplateSummary[], loading, loadError) + templateStatus (live-region). loadTemplates() calls ListTemplates. initTemplates() wires the initial load + the templates:changed event subscription (debounced 100ms). _resetForTests() for vitest.
-- TemplatePicker.svelte — modal overlay: search box, category-grouped list (role="listbox"/"option", roving tabindex, ↑/↓/Home/End/Enter/Esc), live preview pane (lazy GetTemplate + RenderTemplate), dynamic placeholder form (from Placeholders[]), page-name field (new-page mode). Two entry points: New Page → From Template (sidebar content_copy button + Ctrl+Shift+T hotkey) and /template slash command (TipTapEditor). Cyber-Ink tokens only.
+**Frontend** (`frontend/src/templates`): `store.svelte.ts` (`templatesState` listing + `templates:changed` subscription); `TemplatePicker.svelte` (modal: search, category groups, live preview, placeholder form; new-page or insert-at-cursor). Entry points: New Page → From Template (`Ctrl+Shift+T`) and the `/template` slash command.
 
 
 5. Svelte 5 Frontend Architecture
 
-The frontend uses Svelte 5's fine-grained compiler. The editor surface is built on TipTap v3 (ProseMirror engine) via the `svelte-tiptap` adapter, replacing the former per-block contenteditable. The TipTap editor provides native cross-block selection (the core capability the per-block approach could not support), eliminates the text-duplication bug, and delegates IME/selection edge cases to the framework.
+The frontend uses Svelte 5's fine-grained compiler. The editor surface is built on TipTap v3 (ProseMirror engine) via the `svelte-tiptap` adapter. TipTap provides native cross-block selection and delegates IME/selection edge cases to the framework.
 
-5.1 TipTap Editor Surface (one editor per open tab, #142)
+5.1 TipTap Editor Surface (one editor per open tab)
 
 Each **open tab** renders a single TipTap editor instance
 (`TipTapEditor.svelte`) containing all of that page's blocks. The tab strip
@@ -940,12 +576,12 @@ displayed tab set.
 The editor's transaction lifecycle is wired to the Go backend:
 - **Load:** `FetchPageBlocks(notebook, section, page)` returns a flat `[]ParsedBlock`; `blocksToDoc(blocks)` converts to ProseMirror doc JSON; `editor.commands.setContent(doc)` populates the editor.
 - **Save:** `editor.on('update')` (debounced via `editor.auto_save_delay_ms`) → `docToBlocks(editor.getJSON())` → `SaveFileBlocks(notebook, section, page, blocks)`. Go's `RenderFileContent` remains the single on-disk serializer.
-- **Focus lock (#38):** the editor's `onFocus`/`onBlur` events drive `Acquire/ReleaseFocusLock`; a 20s heartbeat (`RefreshFocusLock`) keeps the lease alive while focused.
-- **Per-tab save-state (#167):** `TipTapEditor` exposes `onSaveStateChange({ dirty, error })` on dirty/error/clean transitions. The callback threads through `VirtualScrollContainer` → `App.svelte`, which writes `TabEntry.dirty` / `TabEntry.saveError`. The tab strip renders a dirty glyph (`circle` icon in `--color-text-muted`) or error glyph (`error` icon in `--color-status-danger`) before the page name, visible from any tab — not just the active one. Controlled by `ui.show_tab_dirty_indicators` (default true). The in-editor footer indicator remains the authoritative surface; the tab glyph is a secondary always-visible hint.
+- **Focus lock:** the editor's `onFocus`/`onBlur` events drive `Acquire/ReleaseFocusLock`; a 20s heartbeat (`RefreshFocusLock`) keeps the lease alive while focused.
+- **Per-tab save-state:** `TipTapEditor` exposes `onSaveStateChange({ dirty, error })` on dirty/error/clean transitions. The callback threads through `VirtualScrollContainer` → `App.svelte`, which writes `TabEntry.dirty` / `TabEntry.saveError`. The tab strip renders a dirty glyph (`circle` icon in `--color-text-muted`) or error glyph (`error` icon in `--color-status-danger`) before the page name, visible from any tab — not just the active one. Controlled by `ui.show_tab_dirty_indicators` (default true). The in-editor footer indicator remains the authoritative surface; the tab glyph is a secondary always-visible hint.
 
 The ProseMirror schema defines block node types that map to `parser.ParsedBlock`:
 the three prose types (`taskBlock`, `noteBlock`, `headerBlock`) map 1:1, plus
-the Sprint 14 block primitives — `calloutBlock` (Obsidian `> [!variant]`),
+the additional block primitives — `calloutBlock` (Obsidian `> [!variant]`),
 `codeBlock` (managed multi-line fenced code), the TipTap `details`/`detailsSummary`/
 `detailsContent` family (foldable sections), and the TipTap `table`/`tableRow`/
 `tableCell`/`tableHeader` family (GFM tables). `noteBlock` additionally carries a
@@ -959,7 +595,7 @@ converter serializer has an explicit branch for every allowed block type — a
 plain `>` body line parses back to a paragraph so legacy multi-paragraph
 callouts round-trip byte-for-byte.
 
-**Multi-line block model (unified, #310/#308).** The Go parser reads files
+**Multi-line block model.** The Go parser reads files
 line-by-line and `renderBlock` collapses `\n`→space for the prose types
 (TASK/NOTE/HEADER). All multi-line block types use ONE unified strategy: the
 parser's `accumulateRegion` detects region openers — fenced code (```),
@@ -977,28 +613,28 @@ searchable FTS5 document, and one SDK mutation target.
 
 NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render the Svelte UI for each block type — checkbox cycle for tasks, drag handles, meta badges. The slash menu (`/` at block start) surfaces commands to change block types.
 
-**Smart Graph NodeViews (#85).** Two additional schema nodes render Smart Graph syntax as live, interactive elements inside the editor. The converter layer (`frontend/src/lib/editor/converters.ts`) tokenizes `clean_text` and emits the corresponding node types inline within the parent `noteBlock`; on save, the textual tokens are reconstructed byte-for-byte so the on-disk file is round-trip identical.
+**Smart Graph NodeViews.** Two additional schema nodes render Smart Graph syntax as live, interactive elements inside the editor. The converter layer (`frontend/src/lib/editor/converters.ts`) tokenizes `clean_text` and emits the corresponding node types inline within the parent `noteBlock`; on save, the textual tokens are reconstructed byte-for-byte so the on-disk file is round-trip identical.
 
 - `embedNode` (block-level, atomic) — `{{embed:uuid}}` becomes a live `EmbedPortal` NodeView. The portal fetches the referenced block via `ResolveBlockReference` and renders it as a nested live view.
 - `blockReferenceNode` (inline, atomic) — `((uuid))` becomes a clickable `BlockReferenceChip` NodeView that navigates to the referenced block via the `navigate-to-block` DOM event.
 
 The NodeView wrappers (`frontend/src/components/editor/EmbedNodeView.svelte`, `BlockReferenceNodeView.svelte`) re-use the existing read-mode `EmbedPortal.svelte` and `BlockReferenceChip.svelte` components — the same rendering pipeline serves both the read-mode (search snippets, standalone embeds) and the NodeView contexts.
 
-5.2 View Mode — Edit ↔ Source toggle (#171, #194, #195, #178)
+5.2 View Mode — Edit ↔ Source toggle
 
 Each tab carries a `viewMode: 'edit' | 'source'` on its `TabEntry` (`frontend/src/lib/tabs.ts`) — the single source of truth for which projection a tab shows. `App.svelte` owns the value; the toggle is the floating icon button in `VirtualScrollContainer`'s action bar (`aria-pressed` + `aria-keyshortcuts`) and the `toggle_view_mode` hotkey (default `Ctrl+Shift+V`, per-vault), both routed through `handleToggleViewMode(tabId)` → the pure `setTabViewMode` state-machine action. The hotkey fires regardless of editor focus (there is no editor-internal keymap for it).
 
-**Persistence (#195).** `viewMode` seeds from the per-vault `editor.default_view_mode` when a tab is created, survives navigation within a session, and persists across restarts on `TabRef.view_mode` in the vault `config.yaml` (the per-vault UI tier — never SQLite; §0 rule 4). Only `"source"` is written (absence = Edit); `normalize()` collapses any other value to `""`. `GetOpenTabs`/`SetOpenTabs` round-trip it as part of the existing `TabRef`.
+**Persistence.** `viewMode` seeds from the per-vault `editor.default_view_mode` when a tab is created, survives navigation within a session, and persists across restarts on `TabRef.view_mode` in the vault `config.yaml` (the per-vault UI tier — never SQLite; §0 rule 4). Only `"source"` is written (absence = Edit); `normalize()` collapses any other value to `""`. `GetOpenTabs`/`SetOpenTabs` round-trip it as part of the existing `TabRef`.
 
-**Source view.** `MarkdownSourceViewer.svelte` renders the reconstructed raw markdown as a read-only `role="document"` `<pre>` with a line-number gutter and "Copy as Markdown". Syntax is highlighted by **Shiki** (#194) via `useMarkdownHighlighter.ts`: a lazy singleton over the markdown grammar, fed by `tokensToShikiTheme` — the single place Shiki meets the Silt theme, mapping the effective `--color-*` token map to a Shiki custom theme. The viewer re-highlights on source / theme-token / mode change (race-guarded async `$effect`) and falls back to plain text until the highlighter resolves and on any error.
+**Source view.** `MarkdownSourceViewer.svelte` renders the reconstructed raw markdown as a read-only `role="document"` `<pre>` with a line-number gutter and "Copy as Markdown". Syntax is highlighted by **Shiki** via `useMarkdownHighlighter.ts`: a lazy singleton over the markdown grammar, fed by `tokensToShikiTheme` — the single place Shiki meets the Silt theme, mapping the effective `--color-*` token map to a Shiki custom theme. The viewer re-highlights on source / theme-token / mode change (race-guarded async `$effect`) and falls back to plain text until the highlighter resolves and on any error.
 
-**Editor teardown in Source view (#178).** The Edit/Source switch lives in `VirtualScrollContainer`: Source mode renders only `MarkdownSourceViewer` and does **not** mount `TipTapEditor`, so a tab held in Source view pays no editor memory cost (Svelte destroys the ProseMirror editor + NodeViews + listeners on the switch; it rebuilds from `blocks` on return to Edit, since content is on disk via auto-save). Lifecycle safety: `TipTapEditor.onDestroy` flushes the pending save and releases the focus lease, and `hasFirstEdit` is container-scoped so edit-to-pin can't double-fire across a remount. See `docs/editor-memory-profiling.md` for the cost model and the data-gated recommendation.
+**Editor teardown in Source view.** The Edit/Source switch lives in `VirtualScrollContainer`: Source mode renders only `MarkdownSourceViewer` and does **not** mount `TipTapEditor`, so a tab held in Source view pays no editor memory cost (Svelte destroys the ProseMirror editor + NodeViews + listeners on the switch; it rebuilds from `blocks` on return to Edit, since content is on disk via auto-save). Lifecycle safety: `TipTapEditor.onDestroy` flushes the pending save and releases the focus lease, and `hasFirstEdit` is container-scoped so edit-to-pin can't double-fire across a remount. See `docs/editor-memory-profiling.md` for the cost model and the data-gated recommendation.
 
-**Scroll preservation across the round-trip (#319).** Because the teardown discards the editor, the Edit→Source→Edit round-trip used to reset the scroll position. `VirtualScrollContainer` now captures `containerEl.scrollTop` in a `$effect.pre` the instant a tab leaves Edit (before the editor unmounts and the container height collapses) and restores it after the remounted editor signals readiness — `TipTapEditor` surfaces its internal `editorReady` state to the parent via an `onReady` callback fired in `onCreate`. Restore waits one tick + animation frame (so remounted NodeViews have measured) and clamps to the current scroll height (a doc may have shortened via autosave/fsnotify while the tab was in Source). Cursor-position restore across the round-trip is a tracked follow-up (needs an editor-readiness/async-timing path that the jsdom test layer can't drive — per AGENTS.md no webview e2e).
+**Scroll preservation across the round-trip.** Because the teardown discards the editor, the Edit→Source→Edit round-trip used to reset the scroll position. `VirtualScrollContainer` now captures `containerEl.scrollTop` in a `$effect.pre` the instant a tab leaves Edit (before the editor unmounts and the container height collapses) and restores it after the remounted editor signals readiness — `TipTapEditor` surfaces its internal `editorReady` state to the parent via an `onReady` callback fired in `onCreate`. Restore waits one tick + animation frame (so remounted NodeViews have measured) and clamps to the current scroll height (a doc may have shortened via autosave/fsnotify while the tab was in Source). Cursor-position restore across the round-trip is not yet implemented; it requires an editor-readiness/async-timing path the jsdom test layer cannot drive.
 
-**Rich inline & block content (#190, #191, #184).** Three more atomic node types render inside the editor and round-trip their source verbatim through `clean_text`, exactly like the Smart Graph tokens above. **Math (#191, #328)** is KaTeX: inline `$...$` is an inline atomic `InlineMathNode`, and a NOTE whose entire body is `$$...$$` becomes a top-level `BlockMathNode` (the sole-content-NOTE path mirrors `embedNode` — block math is never emitted inside inline content, which would violate the schema). A function-based InputRule auto-triggers the inline node on a balanced `$…$` pair (currency-safe: the finder rejects a `$` preceded by `$` and any pair containing internal whitespace, so `5$ cash` / `$5` stay literal). `MathNodeView.svelte` renders KaTeX (`output: 'htmlAndMathml'` for screen readers, `throwOnError: false` so a bad equation shows inline in error color); the `/math` slash command and click-to-edit on an existing node open an in-app LaTeX popover (`MathLatexPopover.svelte`) with a live preview, replacing the native `window.prompt`. The popover is raised by a `silt:edit-math` window event so the editor and the NodeView stay decoupled (the NodeView is non-editable; it carries the latex as an attr). `Ctrl/Cmd+Enter` commits, `Esc` cancels, and an empty equation is rejected; `@tiptap/extension-mathematics` was evaluated and rejected — Silt's own converter/NodeView pipeline makes a custom node the cleaner fit. **Mermaid (#190)** is a render branch on the existing `codeBlock`: a block whose `language` is `mermaid` renders an SVG via a lazy-loaded `mermaid.js` singleton (`useMermaid.ts`, dynamic import, ~200KB gzipped kept out of the main bundle, `securityLevel: 'strict'`, parse-guarded so invalid source shows a readable error) instead of the Shiki dual-layer; the ```mermaid fence round-trips via the existing `codeBlock.language` attr (Mermaid is a pure view). **@-mention (#184, #329, #332)** is an inline atomic `MentionNode` (`@[name]` token, like `((uuid))`); its suggestion list is a **read-only** `SELECT DISTINCT owner FROM tasks` projection surfaced via the `DistinctOwners(prefix)` IPC — SQLite stays working memory, no mention state is stored (§0 rule 4). `DistinctOwners` narrows server-side (`LIKE 'prefix%'`) so a vault with thousands of owners never ships the full list, and the editor caches the unfiltered set on mount with a short TTL plus a 120ms debounce on the prefix-refine path instead of re-fetching on every focus. Confirming a mention inside a `taskBlock` also stamps `[owner:: name]` in the same transaction (single source of truth for the token format via `buildMetaToken`); in a regular paragraph the chip is inserted with no owner write-back. The mention typeahead is a self-contained `Extension.create` mirroring `taskMetaSuggest` (no `@tiptap/suggestion` dependency — the in-repo convention that keeps the suggest logic jsdom-pure).
+**Rich inline & block content.** Three more atomic node types render inside the editor and round-trip their source verbatim through `clean_text`, exactly like the Smart Graph tokens above. **Math** is KaTeX: inline `$...$` is an inline atomic `InlineMathNode`, and a NOTE whose entire body is `$$...$$` becomes a top-level `BlockMathNode` (the sole-content-NOTE path mirrors `embedNode` — block math is never emitted inside inline content, which would violate the schema). A function-based InputRule auto-triggers the inline node on a balanced `$…$` pair (currency-safe: the finder rejects a `$` preceded by `$` and any pair containing internal whitespace, so `5$ cash` / `$5` stay literal). `MathNodeView.svelte` renders KaTeX (`output: 'htmlAndMathml'` for screen readers, `throwOnError: false` so a bad equation shows inline in error color); the `/math` slash command and click-to-edit on an existing node open an in-app LaTeX popover (`MathLatexPopover.svelte`) with a live preview, replacing the native `window.prompt`. The popover is raised by a `silt:edit-math` window event so the editor and the NodeView stay decoupled (the NodeView is non-editable; it carries the latex as an attr). `Ctrl/Cmd+Enter` commits, `Esc` cancels, and an empty equation is rejected; math is implemented as a custom node rather than `@tiptap/extension-mathematics`, so it composes cleanly with Silt's converter/NodeView pipeline. **Mermaid** is a render branch on the existing `codeBlock`: a block whose `language` is `mermaid` renders an SVG via a lazy-loaded `mermaid.js` singleton (`useMermaid.ts`, dynamic import, ~200KB gzipped kept out of the main bundle, `securityLevel: 'strict'`, parse-guarded so invalid source shows a readable error) instead of the Shiki dual-layer; the ```mermaid fence round-trips via the existing `codeBlock.language` attr (Mermaid is a pure view). **@-mention** is an inline atomic `MentionNode` (`@[name]` token, like `((uuid))`); its suggestion list is a **read-only** `SELECT DISTINCT owner FROM tasks` projection surfaced via the `DistinctOwners(prefix)` IPC — SQLite stays working memory, no mention state is stored (§0 rule 4). `DistinctOwners` narrows server-side (`LIKE 'prefix%'`) so a vault with thousands of owners never ships the full list, and the editor caches the unfiltered set on mount with a short TTL plus a 120ms debounce on the prefix-refine path instead of re-fetching on every focus. Confirming a mention inside a `taskBlock` also stamps `[owner:: name]` in the same transaction (single source of truth for the token format via `buildMetaToken`); in a regular paragraph the chip is inserted with no owner write-back. The mention typeahead is a self-contained `Extension.create` mirroring `taskMetaSuggest` (no `@tiptap/suggestion` dependency — the in-repo convention that keeps the suggest logic jsdom-pure).
 
-**Block drag handle (#181, #330, #339).** A Notion-style drag grip is rendered inline inside every block-level NodeView (`NoteBlockView`, `TaskBlockView`, `HeaderBlockView`, `EmbedBlockNodeView`) as a `<span data-drag-handle draggable="true">` — a fixed-column affordance with no layout jitter. The `SiltInlineDragHandle` extension (`frontend/src/lib/editor/siltInlineDragHandle.ts`, replacing the upstream `@tiptap/extension-drag-handle` extension retired in #339 because it always created its own DOM, producing two stacked grip icons on every hovered block) listens for `dragstart` on these spans, resolves the top-level block via the wrapper's `data-id`, and populates `view.dragging = { slice, move: true, node: NodeSelection }` so native ProseMirror drop reorders whole blocks (direct manipulation) and `BlockIndentOnDrop` can read `.node.from` for depth-on-drop and the depth-guide overlay. `Alt+ArrowUp/Down` is the keyboard complement (`moveActiveBlock` in `keymaps.ts`, no-`Mod` prefix so it never collides with the `Mod-Shift-Arrow` table bindings). `Delete` at the end of a block and `Backspace` at the start merge the adjacent same-type same-parent sibling's inline content into one block in a single ProseMirror transaction (`mergeSiblingBlock`), preserving the survivor's UUID; cross-type, cross-parent, and `codeBlock` boundaries fall through to the per-type default (#364). Dropping sets the block's indent from the horizontal drop position (drop further right → deeper nesting), reusing the flat `depth` attr the renderer already pads via `[data-depth='N']` — no schema change, no new on-disk field. The depth math (`resolveDropDepth` in `dragIndentDrop.ts`) snaps to a 24px grid matching `--indent-unit` and is extracted as a pure helper so it is jsdom-testable.
+**Block drag handle.** A Notion-style drag grip is rendered inline inside every block-level NodeView (`NoteBlockView`, `TaskBlockView`, `HeaderBlockView`, `EmbedBlockNodeView`) as a `<span data-drag-handle draggable="true">` — a fixed-column affordance with no layout jitter. The `SiltInlineDragHandle` extension (`frontend/src/lib/editor/siltInlineDragHandle.ts`) listens for `dragstart` on these spans, resolves the top-level block via the wrapper's `data-id`, and populates `view.dragging = { slice, move: true, node: NodeSelection }` so native ProseMirror drop reorders whole blocks (direct manipulation) and `BlockIndentOnDrop` can read `.node.from` for depth-on-drop and the depth-guide overlay. `Alt+ArrowUp/Down` is the keyboard complement (`moveActiveBlock` in `keymaps.ts`, no-`Mod` prefix so it never collides with the `Mod-Shift-Arrow` table bindings). `Delete` at the end of a block and `Backspace` at the start merge the adjacent same-type same-parent sibling's inline content into one block in a single ProseMirror transaction (`mergeSiblingBlock`), preserving the survivor's UUID; cross-type, cross-parent, and `codeBlock` boundaries fall through to the per-type default. Dropping sets the block's indent from the horizontal drop position (drop further right → deeper nesting), reusing the flat `depth` attr the renderer already pads via `[data-depth='N']` — no schema change, no new on-disk field. The depth math (`resolveDropDepth` in `dragIndentDrop.ts`) snaps to a 24px grid matching `--indent-unit` and is extracted as a pure helper so it is jsdom-testable.
 
 The `handleDrop` ProseMirror plugin is deliberately conservative: it returns `true` (and dispatches the indent-aware transaction) only when it can prove the dragged identity, the drop target, and the resolved depth are all unambiguous; on any uncertainty it returns `false` and hands control back to ProseMirror's native reorder-only drop. The identity check is `$old.nodeAfter.eq(draggedNode)` against the drag source's `NodeSelection`, so a stale drag position (e.g. an editor re-render mid-drag) can never delete or indent the wrong block — a false `true` here is document-mutating. The interactive HTML5 drag pipeline has no jsdom equivalent (no real `DataTransfer` / layout-driven `posAtCoords`), so the end-to-end path is gated on the TESTING.md manual matrix.
 
@@ -1008,7 +644,7 @@ The Kanban board is a first-party plugin (`silt-kanban`, `frontend/src/plugins/f
 
 Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` and animated with Svelte's native `svelte/animate/flip` (200ms cubic-out, per DESIGN.md §6). HTML5 drag-and-drop drives the data; the FLIP animation repositions remaining cards in the same paint frame. Keyboard users change status with ArrowLeft/ArrowRight directly; Enter/click navigates to the source block. The board supports multi-level scope (vault / notebook / section / page) via a segmented control, with the SQL `WHERE` clause built per scope level.
 
-5.4 Search & Writing Aids (Sprint 17 — #186, #185, #196, #187)
+5.4 Search & Writing Aids
 
 Four editor/search features sharing a common substrate (ProseMirror decorations
 + transactions for in-editor work; the existing FTS5 index + atomic
@@ -1017,7 +653,7 @@ per-vault, hot-reloadable, and add zero SQLite schema, zero new write
 primitive, and zero new file tier (the per-vault custom dictionary lives in
 `editor.custom_dictionary` in `config.yaml` — the YAML tier, §0 rule 2).
 
-**In-page find (Ctrl+F, #186)** — `frontend/src/lib/editor/search/searchExtension.ts`
+**In-page find (Ctrl+F)** — `frontend/src/lib/editor/search/searchExtension.ts`
 wraps the official `prosemirror-search` plugin (MIT, by the ProseMirror author).
 A `SearchQuery` carries the term + case/whole-word/regex + a scope `filter`
 that rejects matches inside fenced `codeBlock`s, the inline `code` mark, and
@@ -1028,12 +664,12 @@ transaction). `FindBar.svelte` is a `role="toolbar"` overlay with a `1 of N`
 counter (aria-live), prev/next, toggles, Esc-to-close. `getMatchCount` /
 `getActiveMatchIndex` read the decoration set for the counter.
 
-**In-page find & replace (Ctrl+H, #185)** — extends FindBar with a replace row.
+**In-page find & replace (Ctrl+H)** — extends FindBar with a replace row.
 `replaceNextInPage` / `replaceAllInPage` proxy to `prosemirror-search`'s
 commands; Replace All iterates matches in reverse in ONE transaction (one undo
 step). Regex capture-group substitution (`$1`/`$&`) works in-page.
 
-**Global search enhancements (Ctrl+Shift+F, #186 global half)** —
+**Global search enhancements (Ctrl+Shift+F)** —
 `SearchBlocksPaged(query, offset, limit, SearchFilters)` adds parameterized
 WHERE (notebook/section/tag/type/scope) + sort (relevance=bm25 |
 recency=file_date DESC) + a 20-token snippet window. Tag matches the exact tag
@@ -1044,15 +680,15 @@ count — chips over tabbed categories (the Teams anti-pattern: tabs force a
 type-guess + hide cross-type results). Markdown dialect is GFM (§"Markdown
 Dialect" in SPECS.md); sub/super are `<sub>`/`<sup>` HTML.
 
-**Global replace (Ctrl+Shift+G, #185 global half)** — `GlobalReplaceModal`
+**Global replace (Ctrl+Shift+G)** — `GlobalReplaceModal`
 previews FTS5 matches grouped by page (before→after), with per-match + per-page
 accept. Apply iterates accepted pages: `FetchPageBlocks` → replace in
 `clean_text`/`raw_text` → `SaveFileBlocks` (atomic, self-write-tracked,
 re-indexes). A session revert log records the original blocks per page;
 "Undo last" restores. Applies to in-vault pages; linked notebooks are
-read-only (#185 non-goal).
+Applies to in-vault pages; linked notebooks are read-only by design.
 
-**Inline spellcheck (#196)** — `frontend/src/lib/editor/spellcheck/`:
+**Inline spellcheck** — `frontend/src/lib/editor/spellcheck/`:
 `dictionary.ts` wraps `typo-js` (pure-JS Hunspell, BSD) loading the bundled
 `en-US` dictionary from `frontend/public/dictionaries/en-US/` via `fetch`
 (fully local — no network). A per-vault custom-word Set (from
@@ -1071,9 +707,9 @@ dictionary via the atomic `AddCustomDictionaryWord` IPC + Ignore); right-click
 over a misspelled word opens it, and a FormatToolbar spellcheck button opens it
 for the cursor's word. No hotkey by design (wavy underline + right-click +
 toolbar button). Multi-language packs, domain word lists, and custom-dictionary
-import/export are Sprint 34 (#336–#338).
+import/export are future work.
 
-**Typewriter mode (#187)** — `frontend/src/lib/editor/typewriter/TypewriterModeExtension.ts`
+**Typewriter mode** — `frontend/src/lib/editor/typewriter/TypewriterModeExtension.ts`
 is a ProseMirror PluginView.update that, on a keyboard-driven selection/doc
 change, sets the scroll container's scrollTop so the cursor lands at
 `editor.typewriter_mode_ratio` (default 0.5). Reads config live (toggle applies
@@ -1090,33 +726,7 @@ Running a local-first system that allows concurrent UI actions and external file
 
 6.1 Multi-Thread Access Locking (Go Mutex Pools)
 
-Because SQLite runs in memory, concurrent reads/writes from the Svelte UI and the fsnotify file monitor must be strictly controlled to prevent database locked exceptions. The engine routes all file writing and database tasks through an app-wide synchronization coordinator:
-
-package core
-
-import (
-	"database/sql"
-	"sync"
-)
-
-type ExecutionCoordinator struct {
-	dbMu sync.RWMutex
-	ioMu sync.Map // Map of filepath -> *sync.Mutex
-	DB   *sql.DB
-}
-
-func (ec *ExecutionCoordinator) GetFileMutex(filepath string) *sync.Mutex {
-	mu, _ := ec.ioMu.LoadOrStore(filepath, &sync.Mutex{})
-	return mu.(*sync.Mutex)
-}
-
-func (ec *ExecutionCoordinator) LockFileWrite(filepath string, task func()) {
-	fMu := ec.GetFileMutex(filepath)
-	fMu.Lock()
-	defer fMu.Unlock()
-	
-	task()
-}
+Because SQLite runs in memory, concurrent reads/writes from the Svelte UI and the fsnotify file monitor must be strictly controlled to prevent database-locked exceptions. The engine routes all file writing and database tasks through an app-wide `core.ExecutionCoordinator`: a per-file `sync.Mutex` map (`LockFileWrite(path, fn)` serializes all writes to a given path, so writes to *different* files don't block each other) plus the DB connection. DB access is serialized via `SetMaxOpenConns(1)`; WAL still allows unlimited concurrent readers (§3). See `backend/core`.
 
 
 6.2 Viewport Sync Conflict Mitigation
@@ -1125,7 +735,7 @@ If you edit a markdown file in an external editor while the Silt dashboard is op
 
 Mitigation Plan:
 
-Focus Locking (TTL leases): While the TipTap editor has focus on a page, the backend monitor holds a time-limited lease on that page's file and pauses external sync operations for it. The editor acquires the lease on focus (`AcquireFocusLock`), refreshes it on a 20s heartbeat while focused (`RefreshFocusLock`), and releases on blur (`ReleaseFocusLock`). One editor per page = one lease per file. The Go side runs a background sweeper (`monitor.DirectoryWatcher.startLeaseSweeper`) that drops expired leases every `TTL/2` (default TTL 60s), so if a component unmounts without releasing — route change, crash, hot-reload — fsnotify suppression self-heals within a minute instead of leaking forever (#38). `RefreshFocusLock` is a no-op on an already-expired lease (the editor must re-acquire), so a stale heartbeat can't resurrect suppression. On shutdown / `CloseVault`, `ReleaseAllFocus` clears every outstanding lease so a clean exit can't strand a file. The `WriteTracker` self-write cooldown is unaffected.
+Focus Locking (TTL leases): While the TipTap editor has focus on a page, the backend monitor holds a time-limited lease on that page's file and pauses external sync operations for it. The editor acquires the lease on focus (`AcquireFocusLock`), refreshes it on a 20s heartbeat while focused (`RefreshFocusLock`), and releases on blur (`ReleaseFocusLock`). One editor per page = one lease per file. The Go side runs a background sweeper (`monitor.DirectoryWatcher.startLeaseSweeper`) that drops expired leases every `TTL/2` (default TTL 60s), so if a component unmounts without releasing — route change, crash, hot-reload — fsnotify suppression self-heals within a minute instead of leaking forever. `RefreshFocusLock` is a no-op on an already-expired lease (the editor must re-acquire), so a stale heartbeat can't resurrect suppression. On shutdown / `CloseVault`, `ReleaseAllFocus` clears every outstanding lease so a clean exit can't strand a file. The `WriteTracker` self-write cooldown is unaffected.
 
 Deterministic Diff Verification: Instead of overwriting entire files when external changes occur, Go computes a diff patch based on block IDs to preserve uncommitted cursor inputs.
 
@@ -1150,16 +760,16 @@ resolve each id:
 plugin.init(ctx: PluginContext)   ←   sqliteQuery (SELECT/WITH-only),
                                       mutateBlock, updateBlockState,
                                       updateTaskMeta, ctx.on (typed event bus)
-plugin.onVaultOpen(ctx)             ←   v2 lifecycle hook (#106)
+plugin.onVaultOpen(ctx)             ←   v2 lifecycle hook
          │
          ▼
 App view router renders plugin:<id> via PluginView (or Agenda/Calendar slots)
 
 Per-plugin load failures are collected and surfaced (PluginView shows a load-error notice) without aborting boot. The `plugins:changed` Wails event (emitted after install/uninstall/enable/disable) re-runs discovery.
 
-**Vault-switch lifecycle (#326 items 1, 5).** The Go `vault:closing` event fires before teardown so the loader can run every plugin's `onVaultClose`/`onShutdown` hook and clear the session registry; it also resets the first-party shared-state module globals (`resetKanbanState` / `resetFocusState`) so a switched vault doesn't inherit the previous scope, board owners/tags, filters, or `focusDate`. A `loadedPlugins.loadersReady` flag gates `PluginContext` construction in `Sidebar.svelte` and `PluginView.svelte`: the flag flips to `false` at the start of teardown and back to `true` once the next `loadPlugins` completes, so a sidebar that remounts during the clear→re-register window never captures a stale/empty session token (and `makePluginContext` is simply not called against a half-torn-down registry). The derived context re-runs on the flag, so the moment the new vault's plugins resolve the sidebar re-binds cleanly.
+**Vault-switch lifecycle.** The Go `vault:closing` event fires before teardown so the loader can run every plugin's `onVaultClose`/`onShutdown` hook and clear the session registry; it also resets the first-party shared-state module globals (`resetKanbanState` / `resetFocusState`) so a switched vault doesn't inherit the previous scope, board owners/tags, filters, or `focusDate`. A `loadedPlugins.loadersReady` flag gates `PluginContext` construction in `Sidebar.svelte` and `PluginView.svelte`: the flag flips to `false` at the start of teardown and back to `true` once the next `loadPlugins` completes, so a sidebar that remounts during the clear→re-register window never captures a stale/empty session token (and `makePluginContext` is simply not called against a half-torn-down registry). The derived context re-runs on the flag, so the moment the new vault's plugins resolve the sidebar re-binds cleanly.
 
-7.2 v2 SDK Capability & Permission Model (#113)
+7.2 v2 SDK Capability & Permission Model
 
 Every privileged v2 SDK binding (file I/O, network, OS integration, editor
 schema, rendered UI, content mutation) is gated server-side by
@@ -1167,69 +777,69 @@ schema, rendered UI, content mutation) is gated server-side by
 `config.yaml` under `plugins.grants` (pluginID → capability → qualifier).
 First-use prompts the user (contextual, low-fatigue); Settings → Plugins shows
 requested vs. granted with revoke. First-party plugins are implicitly granted.
-`exec` is deferred until the trust/signing model matures.
+`exec` is not exposed — it is gated behind the trust/signing model.
 
 Capabilities: `read-files`, `write-files`, `network`, `os-open`,
 `os-clipboard`, `os-notify`, `ui-surface`, `editor-schema`,
-`content-mutate` (#156 — gates block CRUD), `plugin-db` (#213 — gates the
-per-plugin SQLite store: `ctx.pluginDb.exec` / `query` / `migrate`).
+`content-mutate` (gates block CRUD), `plugin-db` (gates the per-plugin
+SQLite store: `ctx.pluginDb.exec` / `query` / `migrate`).
 
-**Binding identity (#151).** High-risk bindings (fetch, file write/delete,
+**Binding identity.** High-risk bindings (fetch, file write/delete,
 block CRUD) also validate a session token: the loader calls
 `RegisterPluginSession(pluginID)` at load time and the SDK closures capture the
 token. The Go side verifies `token ↔ pluginID` before `requireGrant` so a
 plugin cannot impersonate another by calling a raw binding with a different
-pluginID. This is a stepping stone; the full fix requires per-plugin isolated
-webviews (#152, deferred).
+pluginID. Full plugin isolation via per-plugin webviews is the planned end
+state; the session token is the current enforcement layer until then.
 
-**Registry-internal gates (#158).** The three frontend registries
+**Registry-internal gates.** The three frontend registries
 (slash-registry, surfaces, decorations) check `isGranted(pluginID, cap)` from a
 Go-provided grant cache — NOT from the plugin's self-declared manifest. A
 plugin importing `registerSlashCommand` directly still hits the gate.
 
-**Iframe CSP (#149).** Plugin UI surfaces (iframe srcdoc) carry a restrictive
+**Iframe CSP.** Plugin UI surfaces (iframe srcdoc) carry a restrictive
 CSP: `connect-src 'none'` blocks direct fetch/XHR/WebSocket from inside the
 iframe. All network traffic routes through the postMessage bridge → `ctx.fetch`
 (SSRF-defended + audit-logged).
 
-**Rate limiting (#153).** `PluginFetch` is throttled by a per-plugin token-
+**Rate limiting.** `PluginFetch` is throttled by a per-plugin token-
 bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
 Buckets are evicted on uninstall.
 
-**Network audit log (#157).** `auditNetwork` appends to the in-memory log
+**Network audit log.** `auditNetwork` appends to the in-memory log
 (capped 500 entries) under `networkAuditMu`, then enqueues a disk-write op
 onto a buffered channel. A single background goroutine (`startNetworkAuditWriter`,
 started in `initializeVaultServices`, stopped first in `teardownVaultServices`)
 drains the channel and writes to the per-plugin `network.log` WITHOUT holding
-the lock, so concurrent `PluginFetch` calls don't serialize on file I/O
-(#235). On vault open, `seedNetworkAuditFromDisk` reads the on-disk logs to
-seed the in-memory log (before the writer starts). No SQLite table (audit data
-is not reproducible from markdown; ARCHITECTURE §0 rule 4).
+the lock, so concurrent `PluginFetch` calls don't serialize on file I/O.
+On vault open, `seedNetworkAuditFromDisk` reads the on-disk logs to seed the
+in-memory log (before the writer starts). No SQLite table (audit data is not
+reproducible from markdown; §0 rule 4).
 
-**Runtime integrity (#161).** `Install` computes `sha256(index.js)` and writes
+**Runtime integrity.** `Install` computes `sha256(index.js)` and writes
 it into `plugin.json` as `contentSha256`. The frontend loader verifies the hash
 via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
 
 7.3 v2 SDK Extended APIs
 
-- Content API (#104): query helpers (queryByTag/queryByDateRange/
+- Content API: query helpers (queryByTag/queryByDateRange/
   fullTextSearch/getBacklinks/getEmbeds) + block CRUD (createBlock/
   deleteBlock/moveBlock) + page/section/notebook CRUD + bulk ops.
-- File I/O (#108): readFile/writeFile/deleteFile/listDir (notebook-scoped,
+- File I/O: readFile/writeFile/deleteFile/listDir (notebook-scoped,
   traversal-guarded, atomic-write path); scratch space at
   <notebook>/.system/plugins/<id>/data/.
-- OS integration (#114): openInNativeHandler, openUrl (scheme-restricted),
+- OS integration: openInNativeHandler, openUrl (scheme-restricted),
   pickers, clipboard, notify — all capability-gated.
-- Network/fetch (#115): ctx.fetch via Go net/http proxy (timeout/size/
+- Network/fetch: ctx.fetch via Go net/http proxy (timeout/size/
   redirect caps); SSRF defense at URL validation, redirect re-validation, AND
   dial-time — the custom `DialContext` re-runs `isInternalIP` on every resolved
   IP (DNS-rebinding guard) and fails closed on lookup error so the OS resolver
-  cannot bypass the check (#234); audit-logged.
-- Editor extension points (#110): slash-command registry; generic embedBlock
+  cannot bypass the check; audit-logged.
+- Editor extension points: slash-command registry; generic embedBlock
   node (round-trips through <!-- silt-embed: {json} --> markers).
-- Rendered UI surfaces (#117): sandboxed <iframe srcdoc> + postMessage bridge;
+- Rendered UI surfaces: sandboxed <iframe srcdoc> + postMessage bridge;
   sidebar panel / modal / status-bar / `note-banner` surfaces; theme tokens
-  injected. The `note-banner` kind (#215) mounts a dismissible banner host at
+  injected. The `note-banner` kind mounts a dismissible banner host at
   the top of the note view (above the TipTap editor); first-party banners
   render a compiled Svelte component, third-party via the iframe bridge. The
   bridge is bidirectional: iframe→host requests (PluginContext proxy) AND
@@ -1238,18 +848,18 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
   'dismissed_notes', [...])`) — `updatePluginSetting` is in the bridge's
   `allowedMethods` so the documented pattern is reachable from a sandboxed
   banner. When more than two banners stack, the host collapses them into a
-  single expandable summary (#358). Bespoke plugin settings pages (#214)
+  single expandable summary. Bespoke plugin settings pages
   mount inside a `<svelte:boundary>` so a component that throws on render
-  cannot crash the focus-trapped Settings dialog (#357).
-- Settings schema (#103): declarative `SettingSchema[]` on the manifest;
+  cannot crash the focus-trapped Settings dialog.
+- Settings schema: declarative `SettingSchema[]` on the manifest;
   generic form renderer is the default. A plugin may instead declare a
-  **bespoke settings page** (#214) — first-party as a compiled Svelte
+  **bespoke settings page** — first-party as a compiled Svelte
   component, third-party via the `settings-panel` iframe surface — rendered
   as a dynamic tab in the Settings shell. A plugin declares *either* the
   bespoke page *or* the generic schema form, not both; bespoke pages persist
   through the same `updatePluginSetting` / `getPluginSettings` plumbing (no
   new storage path).
-- Per-plugin SQLite store (#213): `plugin-db` capability gates
+- Per-plugin SQLite store: `plugin-db` capability gates
   `ctx.pluginDb.exec` / `query` / `migrate` against
   `<vault>/.system/plugins/<id>/data/plugin.db` — a distinct connection from
   the core index (never `ATTACH`-able). `sqlite-vec` is registered on every
@@ -1261,7 +871,7 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
 See `frontend/src/plugins/sdk.ts` for the full typed contract and
 `docs/PLUGIN_DEVELOPMENT.md` §8 for the author guide.
 
-7.2 PluginContext → Go Bindings
+7.4 PluginContext → Go Bindings
 
 PluginContext is a thin frontend wrapper over four Wails bindings on App:
 
@@ -1270,24 +880,27 @@ PluginContext is a thin frontend wrapper over four Wails bindings on App:
 - GetPluginRegistry() / ListPlugins() / ReadPluginSource(id) — discovery.
 - ValidatePluginArchive / PickPluginArchive / InstallPlugin / UninstallPlugin / EnablePlugin / DisablePlugin — `.silt-plugin` distribution (see backend/plugins package; zip-slip + traversal guarded, atomic extract).
 
-7.3 Smart Graph Events
+7.5 Smart Graph Events
 
 Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, Notebook, Section, Page, FileDate}) so live embeds (`{{embed:uuid}}`) and references (`((uuid))`) refresh in real time. Emitted from MutateBlock, UpdateBlockState, and the post-write path of SaveFileBlocks; emission no-ops when ctx is nil (tests). The frontend EmbedPortal subscribes via EventsOn and re-fetches its source block when the event matches its uuid (a module-scoped render-stack guard stops recursive embed loops).
+
+---
+
 8. System Configuration Engine (config.yaml)
 
 Global settings — editor defaults, parsing rules, hotkeys, and the plugin registry — live in <vault>/.system/config.yaml, the single source of truth for everything except the vault path (which stays in OS-config settings.json because it must be known before any vault can be opened).
 
 8.1 Parser (backend/config)
 
-config.SystemConfig mirrors the SPECS §9.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui). The `ui.*` block holds per-vault UI preferences: `sidebar_width`, `nav_order` (explicit section/page ordering for drag-to-reorder, #68/#177), `open_tabs` / `active_tab` (pinned-tab persistence, #142 — preview tabs are ephemeral), `enable_preview_tabs`, `max_open_tabs`, `show_format_toolbar` (#168), `show_tab_dirty_indicators` (#167, default true), `dismissed_tips`, and `formatting.*` toggles. Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
+config.SystemConfig mirrors the SPECS §10.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui). The `ui.*` block holds per-vault UI preferences: `sidebar_width`, `nav_order` (explicit section/page ordering for drag-to-reorder), `open_tabs` / `active_tab` (pinned-tab persistence — preview tabs are ephemeral), `enable_preview_tabs`, `max_open_tabs`, `show_format_toolbar`, `show_tab_dirty_indicators` (default true), `dismissed_tips`, and `formatting.*` toggles. Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
 
 8.2 Hot-Reload (backend/config.ConfigWatcher)
 
-A dedicated fsnotify watcher observes the .system parent directory (not the file alone) so a delete+recreate of config.yaml is still observed. Self-loop prevention is a local time-window in ConfigWatcher: SaveSystemConfig calls RegisterSelfWrite() before the atomic write, and the watcher ignores every config.yaml event until a 500ms window elapses — a single logical save can emit several fsnotify events (atomic temp+rename, or truncate+write), so the window suppresses all of them, not just the first. External edits re-parse and invoke onChange → App.applyConfig (updates live knobs + emits config:changed); a parse failure invokes onError → config:error (last-good config retained). This implements SPECS §9.2 without an application restart.
+A dedicated fsnotify watcher observes the .system parent directory (not the file alone) so a delete+recreate of config.yaml is still observed. Self-loop prevention is a local time-window in ConfigWatcher: SaveSystemConfig calls RegisterSelfWrite() before the atomic write, and the watcher ignores every config.yaml event until a 500ms window elapses — a single logical save can emit several fsnotify events (atomic temp+rename, or truncate+write), so the window suppresses all of them, not just the first. External edits re-parse and invoke onChange → App.applyConfig (updates live knobs + emits config:changed); a parse failure invokes onError → config:error (last-good config retained). This implements SPECS §10.2 without an application restart.
 
 8.3 Settings Menu (frontend)
 
-The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. The SettingsShell is a full-screen frosted overlay with a left tab rail (General / Appearance / Plugins / About), roving keyboard navigation (Arrow/Home/End, Esc to close), and ARIA tablist semantics. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab (#65) is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable (all plugins — first-party via config.yaml `plugins.disabled` list, third-party via `.disabled` sentinel), uninstall (third-party only), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The standalone PluginManagerModal was removed in favour of this tab; the titlebar extension icon opens Settings → Plugins.
+The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. The SettingsShell is a full-screen frosted overlay with a left tab rail (General / Appearance / Plugins / About), roving keyboard navigation (Arrow/Home/End, Esc to close), and ARIA tablist semantics. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable (all plugins — first-party via config.yaml `plugins.disabled` list, third-party via `.disabled` sentinel), uninstall (third-party only), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The titlebar extension icon opens Settings → Plugins.
 
 8.4 Editor Config Consumer (frontend)
 
@@ -1302,22 +915,22 @@ CharacterCount display; focus_mode dims non-active paragraphs; and
 indent_block / unindent_block hotkeys are matched via matchHotkey
 (settings/hotkeys.ts). The cycle_view_layout hotkey is wired in App.svelte's
 global keydown handler alongside open_search, toggle_sidebar, and
-toggle_view_mode. Inline formatting marks (#168), block alignment (#173),
-text/background color (#170), and the source/edit view toggle (#171) are all
+toggle_view_mode. Inline formatting marks, block alignment,
+text/background color, and the source/edit view toggle are all
 additive to clean_text — the Go parser sees formatted text as opaque and
 requires zero parser changes.
 
-**Markdown dialect (Sprint 17).** Silt's on-disk base dialect is **GFM
+**Markdown dialect.** Silt's on-disk base dialect is **GFM
 (CommonMark + GFM)** with a documented set of Silt-specific extensions layered
 on top (Obsidian callouts, Dataview `[key:: value]` metadata, Smart Graph
 `((uuid))`/`{{embed:uuid}}` refs, block-identity comments, `<sub>`/`<sup>`
 HTML for sub/super, `$math$`, `[^footnotes]`). Pandoc is a downstream
 converter (`pandoc -f gfm`), not a dialect; Pandoc-native authoring is a
-future plugin (#335). See SPECS.md "Markdown Dialect" for the full rationale
+future plugin. See SPECS.md "Markdown Dialect" for the full rationale
 and the reversibility analysis. Sub/super use `<sub>`/`<sup>` HTML (not
 Pandoc's `~x~`/`^x^`, which render as literal text on GitHub).
 
-**Hotkey scheme (Sprint 17 realignment).** Hotkey defaults live in one place —
+**Hotkey scheme.** Hotkey defaults live in one place —
 `config.go` `Defaults()` — and every display surface (slash-registry hints,
 FormatToolbar/TableContextToolbar tooltips, `aria-keyshortcuts`) derives from
 `settings.config.hotkeys` via `resolveHotkeyDisplay` (settings/hotkeys.ts), so
@@ -1349,4 +962,4 @@ frontend/src/lib/perf/frame-budget.ts provides `measureFrameBudget(label, fn)` �
 
 9.4 System Tray (Deferred)
 
-Wails v2.12 has an internal `menu.TrayMenu` struct but does NOT expose a public runtime API to register tray menus from application code. The system tray icon + minimize-to-tray feature is blocked by this API gap and will be revisited when Wails v3 (which has full tray support) is adopted. The production build pipeline (`wails build --clean`), memory budget (<65MB idle), and cross-platform artifacts (Windows NSIS + portable zip, Linux AppImage + .deb) are the deliverables for issue #23.
+Wails v2 has an internal tray-menu struct but does not expose a public runtime API to register tray menus from application code. The system-tray / minimize-to-tray feature is therefore not yet available; it will be revisited when Wails v3 (full tray support) is adopted. The production build pipeline (`wails build --clean`), the idle-memory budget (<65 MB), and the cross-platform artifacts (Windows NSIS + portable zip, Linux AppImage + .deb) are otherwise complete.
