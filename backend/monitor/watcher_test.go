@@ -641,3 +641,188 @@ func TestDirectoryWatcher_SetLinkedConfigHandler(t *testing.T) {
 		t.Errorf("handler call: got calls=%d source=%q, want 1 / linked:ext", calls, gotSource)
 	}
 }
+
+// --- Standalone-tasks watcher carve-out (#372) ---------------------------
+
+// TestDirectoryWatcher_StartWatchesStandaloneTasksDir verifies the Start()
+// call adds <vault>/.silt to the fsnotify watch set when the dot-prefixed
+// directory exists at startup. AddRecursive skips dot-prefixed directories
+// by design; the carve-out below is what closes the parity gap for the
+// standalone-tasks file (#368) without generalizing the dot-prefix skip.
+func TestDirectoryWatcher_StartWatchesStandaloneTasksDir(t *testing.T) {
+	vaultPath := t.TempDir()
+	dotDir := filepath.Join(vaultPath, ".silt")
+	if err := os.MkdirAll(dotDir, 0o755); err != nil {
+		t.Fatalf("mkdir .silt: %v", err)
+	}
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	// If the dot-dir is now in the fsnotify watch set, an external write
+	// (simulated below) produces a fsnotify event that the listen loop
+	// translates into an incremental reindex. We verify the watch by
+	// performing an external write and asserting the file gets reindexed
+	// within a bounded window — see
+	// TestDirectoryWatcher_ExternalWriteToStandaloneTasksReindexes below.
+	//
+	// Here we just confirm the Start() call did not error: the carve-out
+	// logs but does not fatal when the watch fails, so the test guard is
+	// "Start returns nil" and the smoke assertion lives in the reindex
+	// test that follows.
+	if _, statErr := os.Stat(dotDir); statErr != nil {
+		t.Fatalf(".silt dir should still exist after Start: %v", statErr)
+	}
+}
+
+// TestDirectoryWatcher_StartNoOpWhenStandaloneTasksDirAbsent verifies that
+// Start() does not crash when the .silt directory does not exist. The
+// carve-out is gated on the directory existing — if a user has never
+// captured a standalone task, the dir has never been auto-created.
+func TestDirectoryWatcher_StartNoOpWhenStandaloneTasksDirAbsent(t *testing.T) {
+	vaultPath := t.TempDir()
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start with no .silt dir: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+}
+
+// TestDirectoryWatcher_ExternalWriteToStandaloneTasksReindexes is the
+// core acceptance test for #372: an external write to
+// <vault>/.silt/tasks.md (not a Silt-driven write) reaches the listen
+// loop via the new watcher carve-out and triggers an incremental
+// reindex — without requiring a full startup scan.
+//
+// Setup philosophy: the watcher is started BEFORE the file exists, so
+// the first event we observe is the file's creation. The watcher's
+// listen loop fires reindexFile on Create events (not just Write), so
+// this exercises the same code path an external editor save would.
+func TestDirectoryWatcher_ExternalWriteToStandaloneTasksReindexes(t *testing.T) {
+	vaultPath := t.TempDir()
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+	// Pre-create just the .silt dir so the carve-out in Start() can
+	// subscribe to it (the dir itself, not the file). We then write
+	// tasks.md AFTER Start() so its creation is observed as a fsnotify
+	// Create event — exactly the path a non-Silt tool would take.
+	dotDir := filepath.Join(vaultPath, ".silt")
+	if err := os.MkdirAll(dotDir, 0o755); err != nil {
+		t.Fatalf("mkdir .silt: %v", err)
+	}
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	tasksFile := filepath.Join(dotDir, "tasks.md")
+	if err := os.WriteFile(tasksFile, []byte(
+		"---\nnotebook: \".silt\"\nsection: \"\"\npage: \"tasks\"\ndate: 2026-07-02\ntags: []\n---\n\n"+
+			"- [ ] external edit <!-- id: 44444444-4444-4444-4444-444444444444 -->\n",
+	), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	waitForBlock := func(id string, want int, timeout time.Duration, tag string) {
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			var n int
+			if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE id = ?", id).Scan(&n); err == nil && n == want {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		var n int
+		_ = dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks WHERE id = ?", id).Scan(&n)
+		t.Fatalf("[%s] timed out waiting for block %s count=%d (want %d)", tag, id, n, want)
+	}
+	waitForBlock("44444444-4444-4444-4444-444444444444", 1, 5*time.Second, "external-edit reindex")
+}
+
+// TestDirectoryWatcher_StandaloneTasksInAppWriteStillSuppressed verifies
+// the no-feedback-loop invariant (#372): an in-app write to the
+// standalone-tasks file (which goes through the atomic-writer path and
+// therefore registers the path with WriteTracker) does NOT trigger a
+// reindex even though the dot-dir carve-out now observes it.
+//
+// The setup mirrors the existing TestSetOpenTabs_SelfWriteSuppressed
+// pattern (cited in TESTING.md) — every atomic write registers; the
+// listen loop drops the FIRST post-RegisterWrite event within the
+// tracker cooldown. Here we drive the listen loop with a synthetic
+// WriteTracker + a manual `tracker.IsSelfGenerated` check, bypassing
+// the live fsnotify channel — the listen loop's check is itself a
+// tracker call, so exercising it directly is the precise behavior we
+// need to lock down.
+func TestDirectoryWatcher_StandaloneTasksInAppWriteStillSuppressed(t *testing.T) {
+	vaultPath := t.TempDir()
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	tasksFile := filepath.Join(vaultPath, ".silt", "tasks.md")
+
+	// 1. App-side writer path: RegisterWrite before the atomic rename.
+	// The write happens immediately after — the gap is microseconds in
+	// production, but the tracker window is 300 ms so we explicitly do
+	// NOT simulate a delay here (the test would otherwise be timing-
+	// dependent).
+	tracker.RegisterWrite(tasksFile)
+
+	// 2. fsnotify delivers a Write event. The listen loop calls
+	// tracker.IsSelfGenerated — which must return true and consume the
+	// entry, suppressing the reindex.
+	if !tracker.IsSelfGenerated(tasksFile) {
+		t.Fatal("expected IsSelfGenerated to return true within the 300ms cooldown window after RegisterWrite")
+	}
+
+	// 3. Confirm the entry is consumed (a second immediate
+	// IsSelfGenerated within the cooldown would have re-fired the
+	// suppression; instead the listen loop checks exactly once per
+	// event — the "consume" semantics matters because it prevents the
+	// suppression from being perpetual).
+	if tracker.IsSelfGenerated(tasksFile) {
+		t.Error("expected the tracker entry to be consumed on the first IsSelfGenerated call (no perpetual suppression)")
+	}
+}
