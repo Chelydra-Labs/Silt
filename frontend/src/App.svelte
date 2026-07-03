@@ -1194,16 +1194,16 @@
                 }
               }}
               class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
-              class:text-accent-primary-start={activeView === v.id &&
-                !sidebarCollapsed}
-              class:text-text-muted={activeView !== v.id || sidebarCollapsed}
+              class:text-accent-primary-start={activeView === v.id}
+              class:text-text-muted={activeView !== v.id}
               aria-label={v.label}
               aria-pressed={activeView === v.id}
               title={v.label}
             >
-              {#if activeView === v.id && !sidebarCollapsed}
+              {#if activeView === v.id}
                 <div
                   class="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-primary-start rounded-full shadow-[0_0_8px_var(--color-accent-primary-start)]"
+                  style:opacity={sidebarCollapsed ? '0.5' : '1'}
                 ></div>
               {/if}
               <span class="material-symbols-outlined text-[20px]">{v.icon}</span

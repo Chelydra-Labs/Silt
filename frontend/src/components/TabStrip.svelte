@@ -201,6 +201,9 @@
           onauxclick={(e) => handleAuxClick(e, tab)}
           ondblclick={() => handleDblClick(tab)}
         >
+          {#if tab.id === activeTabId}
+            <div class="active-tab-indicator"></div>
+          {/if}
           <span class="tab-label" class:italic={tab.preview}>{tab.page}</span>
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -480,5 +483,19 @@
 
   .tab-save-state.error {
     color: var(--color-status-danger, #f43f5e);
+  }
+
+  .active-tab-indicator {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      var(--color-accent-primary-start),
+      var(--color-accent-primary-end)
+    );
+    border-radius: 6px 6px 0 0;
   }
 </style>

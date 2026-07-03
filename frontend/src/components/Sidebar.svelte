@@ -658,7 +658,8 @@
               showNotebookDropdown = !showNotebookDropdown
             }
           }}
-          class="flex items-center gap-2 cursor-pointer group py-1.5 rounded hover:bg-hover transition-colors"
+          class="flex items-center gap-2 cursor-pointer group px-2 py-1.5 rounded hover:bg-hover transition-all duration-150"
+          class:bg-hover={showNotebookDropdown}
           role="button"
           tabindex="0"
         >
