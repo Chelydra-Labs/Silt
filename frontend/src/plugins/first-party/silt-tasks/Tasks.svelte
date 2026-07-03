@@ -28,6 +28,7 @@
   import { onMount, onDestroy } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import { plusDaysISO } from '../../sdk'
+  import { STANDALONE_TASKS_NOTEBOOK } from '../../../lib/standaloneTasksNav'
 
   interface Props {
     ctx: PluginContext
@@ -325,20 +326,16 @@
             </h2>
             <div class="space-y-1">
               {#each group.list as item (item.id)}
+                <!-- Open-row: split into two explicit buttons so the
+                     row isn't a role="button" containing a nested
+                     <button> (nested-interactive anti-pattern; SR may
+                     double-announce, tab order is ambiguous). The
+                     "Open" button covers the content area; "Mark
+                     done" stays as its own control. (#370 review) -->
                 <div
-                  class="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-hover transition-colors cursor-pointer ring-0"
+                  class="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-hover transition-colors"
                   class:tasks-focused={focusedRowId === item.id}
                   data-block-id={item.id}
-                  onclick={() => openItem(item)}
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      openItem(item)
-                    }
-                  }}
-                  role="button"
-                  tabindex="0"
-                  aria-label={`${item.clean_content}${item.due_date ? `, due ${item.due_date}` : ', no due date'}`}
                 >
                   <button
                     onclick={(e) => {
@@ -349,7 +346,11 @@
                     class="w-5 h-5 rounded todo-check flex-shrink-0 cursor-pointer hover:border-accent-primary-start"
                     aria-label="Mark done"
                   ></button>
-                  <div class="flex-1 min-w-0">
+                  <button
+                    onclick={() => openItem(item)}
+                    class="flex-1 min-w-0 text-left bg-transparent border-none p-0 cursor-pointer"
+                    aria-label={`Open ${item.clean_content}${item.due_date ? `, due ${item.due_date}` : ', no due date'}`}
+                  >
                     <div
                       class="text-text-primary text-sm font-body-md truncate"
                       data-testid="tasks-row-content"
@@ -359,13 +360,13 @@
                     <div
                       class="text-[10px] text-text-muted uppercase tracking-widest font-label-sm"
                     >
-                      {#if item.notebook === '.silt'}
+                      {#if item.notebook === STANDALONE_TASKS_NOTEBOOK}
                         Standalone task
                       {:else}
                         {item.notebook} › {item.section} › {item.page}
                       {/if}
                     </div>
-                  </div>
+                  </button>
                   {#if item.owner}
                     <span
                       class="text-[10px] text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded px-1.5 py-0.5"
@@ -423,12 +424,12 @@
               data-testid="tasks-completed-list"
             >
               {#each doneItems as item (item.id)}
+                <!-- Completed rows are display-only; the previous
+                     role="button" / tabindex="0" without an onclick
+                     was a stranded a11y declaration. -->
                 <div
                   class="flex items-center gap-3 px-3 py-2 rounded-lg"
                   data-block-id={item.id}
-                  role="button"
-                  tabindex="0"
-                  aria-label={`${item.clean_content}, completed`}
                 >
                   <span
                     class="w-5 h-5 rounded todo-check-done flex-shrink-0"
@@ -443,7 +444,7 @@
                     <div
                       class="text-[10px] text-text-muted uppercase tracking-widest font-label-sm"
                     >
-                      {#if item.notebook === '.silt'}
+                      {#if item.notebook === STANDALONE_TASKS_NOTEBOOK}
                         Standalone task
                       {:else}
                         {item.notebook} › {item.section} › {item.page}

@@ -326,12 +326,12 @@ so the only way a user can land on a standalone-task block is via
 search, tag-explorer click, backlink follow, or some other code-level
 call into `openPage`. To keep the synthetic notebook name from leaking
 into the tab header and breadcrumbs, every navigation entry point
-funnels through `routeJumpTarget()` (in
-`frontend/src/lib/standaloneTasksNav.ts`) which detects
-`notebook === '.silt'` and re-routes to the **Tasks view** (#370)
-instead of opening a `.silt / tasks` editor tab. A targeted block
-id is forwarded as `focusBlockId` so the Tasks view scrolls the row
-into view and applies a transient 3-second highlight. The routing
+checks `isStandaloneTaskRef(notebook)` (in
+`frontend/src/lib/standaloneTasksNav.ts`) and re-routes to the **Tasks
+view** (#370) instead of opening a `.silt / tasks` editor tab. A
+targeted block id is forwarded as `focusBlockId` so the Tasks view
+scrolls the row into view and applies a transient 3-second highlight.
+The routing
 policy is testable as a pure reducer; App.svelte's three funnel
 points (`openPage`, `handleSearchJump`, the `navigate-to-block`
 window listener) all delegate to it.

@@ -314,7 +314,13 @@ describe('Tasks view', () => {
 
     const row = document.querySelector('[data-block-id="nav1"]')
     expect(row).toBeInTheDocument()
-    await fireEvent.click(row!)
+    // The row is now a non-interactive container; the click handler
+    // lives on the inner "Open" button. Targeting the button (not
+    // the row div) matches what a keyboard or screen-reader user
+    // would do.
+    const openButton = row?.querySelector('button[aria-label^="Open "]')
+    expect(openButton).toBeInTheDocument()
+    await fireEvent.click(openButton as HTMLElement)
 
     expect(handler).toHaveBeenCalledTimes(1)
     const detail = (handler.mock.calls[0][0] as CustomEvent).detail
@@ -363,6 +369,58 @@ describe('Tasks view', () => {
       ) as HTMLElement | null
       expect(row).toBeTruthy()
       expect(row?.classList.contains('tasks-focused')).toBe(true)
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalQuery
+    }
+  })
+
+  it('focusKey re-fires the focus effect on re-navigation to the same block (#374 review regression)', async () => {
+    // Locks the PluginView forwarding contract: if focusKey isn't
+    // forwarded, the second click on the same search result silently
+    // does nothing because focusBlockId never changed and the effect
+    // wouldn't re-fire. Drive the case by mounting once, mounting again
+    // with a bumped focusKey, and asserting scrollIntoView fires twice.
+    const targetId = 'repeat-target'
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return { rows: [task(targetId, 'click me twice')], truncated: false }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    const scrollIntoViewSpy = vi.fn()
+    const originalQuery = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollIntoView = scrollIntoViewSpy
+
+    try {
+      // First navigation — focusKey = '1'
+      render(Tasks, {
+        ctx: makeCtx(),
+        manifest: MANIFEST,
+        focusBlockId: targetId,
+        focusKey: '1'
+      })
+      await flush()
+      await new Promise((r) => setTimeout(r, 10))
+      await flush()
+
+      expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1)
+
+      // Second navigation — same focusBlockId, bumped focusKey.
+      // Without focusKey forwarding the effect wouldn't re-fire; with
+      // it, scrollIntoView is called again.
+      cleanup()
+      render(Tasks, {
+        ctx: makeCtx(),
+        manifest: MANIFEST,
+        focusBlockId: targetId,
+        focusKey: '2'
+      })
+      await flush()
+      await new Promise((r) => setTimeout(r, 10))
+      await flush()
+
+      expect(scrollIntoViewSpy.mock.calls.length).toBeGreaterThanOrEqual(2)
     } finally {
       HTMLElement.prototype.scrollIntoView = originalQuery
     }

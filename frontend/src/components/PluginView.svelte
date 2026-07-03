@@ -93,5 +93,5 @@
   </div>
 {:else if ctx}
   {@const Plugin = plugin.component}
-  <Plugin {ctx} manifest={plugin.manifest} {focusBlockId} />
+  <Plugin {ctx} manifest={plugin.manifest} {focusBlockId} {focusKey} />
 {/if}
