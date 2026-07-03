@@ -3,12 +3,19 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"silt/backend/parser"
 )
+
+// dueDateRe extracts the YYYY-MM-DD value from a [due:: DATE] token in a
+// rendered task line. Used by integration tests that assert structural
+// properties (valid future date) without hardcoding absolute dates that
+// would rot when the real clock advances past them.
+var dueDateRe = regexp.MustCompile(`\[due::\s*(\d{4}-\d{2}-\d{2})\]`)
 
 // indexTestFile is a shared helper for the recurrence integration tests: it
 // writes content to a vault page file, parses + indexes it so the DB has the
@@ -58,14 +65,17 @@ func TestUpdateBlockState_RecurrenceSpawnsNextInstance(t *testing.T) {
 		t.Fatalf("completed line missing/incorrect:\n%s", updatedStr)
 	}
 
-	// A new TODO instance must appear directly below it with the advanced due
-	// date (2026-07-01 + 1 week = 2026-07-08) and the same recurrence rule.
-	// The new block gets its own UUID (not the original).
+	// A new TODO instance must appear directly below the completed line with
+	// an advanced [due::] date and the same recurrence rule. The exact date
+	// depends on time.Now() (skip-missed), so we assert structural properties
+	// rather than a hardcoded date — exact-date correctness is covered by the
+	// resolver unit tests (recurrence_test.go) with injected clocks.
 	lines := strings.Split(updatedStr, "\n")
 	var spawned string
 	var spawnedIdx int
+	todayStr := time.Now().Format("2006-01-02")
 	for i, ln := range lines {
-		if strings.Contains(ln, "- [ ] Water plants [due:: 2026-07-08] [recur:: every week]") {
+		if strings.Contains(ln, "- [ ] Water plants") && strings.Contains(ln, "[recur:: every week]") && strings.Contains(ln, "[due::") {
 			spawned = ln
 			spawnedIdx = i
 			break
@@ -73,6 +83,18 @@ func TestUpdateBlockState_RecurrenceSpawnsNextInstance(t *testing.T) {
 	}
 	if spawned == "" {
 		t.Fatalf("next instance not found in:\n%s", updatedStr)
+	}
+	// The spawned due date must be a valid YYYY-MM-DD strictly after today.
+	dueMatch := dueDateRe.FindString(spawned)
+	if dueMatch == "" {
+		t.Fatalf("spawned line has no [due:: YYYY-MM-DD] token:\n%s", spawned)
+	}
+	spawnedDue := dueDateRe.FindStringSubmatch(spawned)[1]
+	if _, err := time.Parse("2006-01-02", spawnedDue); err != nil {
+		t.Errorf("spawned due date %q is not valid YYYY-MM-DD: %v", spawnedDue, err)
+	}
+	if spawnedDue <= todayStr {
+		t.Errorf("spawned due date %s must be strictly after today (%s)", spawnedDue, todayStr)
 	}
 	// The spawned line must have a NEW uuid (different from taskID).
 	if strings.Contains(spawned, taskID) {

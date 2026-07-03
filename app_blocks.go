@@ -274,11 +274,6 @@ func buildNextRecurrence(completed parser.ParsedBlock) (parser.ParsedBlock, bool
 // returns the resulting slice. Used by the recurrence hook to land the new
 // task instance on the line directly below the completed block so it renders
 // in the right position via RenderFileContent (which serializes in slice
-// order). Line numbers after the insertion point are bumped by 1 to stay
-// insertBlockAfter splices nb into blocks immediately after position i and
-// returns the resulting slice. Used by the recurrence hook to land the new
-// task instance on the line directly below the completed block so it renders
-// in the right position via RenderFileContent (which serializes in slice
 // order). Line numbers are assigned by the subsequent re-parse, so no manual
 // bumping is needed here.
 func insertBlockAfter(blocks []parser.ParsedBlock, i int, nb parser.ParsedBlock) []parser.ParsedBlock {

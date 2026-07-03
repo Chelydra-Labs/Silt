@@ -196,17 +196,23 @@
   // Computed next-occurrence preview for the metadata section: shows the
   // user what date the next instance will land on if they complete the task
   // today. Client-side only — the authoritative computation is server-side
-  // at completion time, but this catches most misconfigurations.
+  // at completion time. When the task is overdue, we omit the preview
+  // rather than show a misleading date (the skip-missed logic depends on
+  // the server's clock, not the client's, so a client-side guess for
+  // non-day rules would be wrong).
   let nextOccurrence = $derived.by(() => {
     if (!card?.recurrence || !card?.due_date) return ''
     const due = new Date(card.due_date + 'T00:00:00')
     if (isNaN(due.getTime())) return ''
-    // Rough preview: advance by the rule's interval. Not a full resolver —
-    // just enough to show "next ~date" for common intervals.
-    const rule = card.recurrence.toLowerCase()
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    let step = due
+    // Overdue: the server-side skip-missed resolver will advance, but the
+    // exact landing date depends on the server's clock and the rule unit.
+    // Showing a wrong guess is worse than showing nothing.
+    if (due <= today) return ''
+    // Not overdue: one interval forward from the due date is deterministic.
+    const rule = card.recurrence.toLowerCase()
+    let step: Date
     if (rule.includes('day') && !rule.includes('weekday')) {
       const n = parseInt(rule.match(/(\d+)\s*day/)?.[1] ?? '1')
       step = new Date(due.getTime() + n * 86400000)
@@ -223,12 +229,8 @@
     } else if (rule.includes('year')) {
       const n = parseInt(rule.match(/(\d+)\s*year/)?.[1] ?? '1')
       step = new Date(due.getFullYear() + n, due.getMonth(), due.getDate())
-    }
-    // Skip-missed: advance until future.
-    let guard = 0
-    while (step <= today && guard < 365) {
-      step = new Date(step.getTime() + 86400000)
-      guard++
+    } else {
+      return ''
     }
     return step.toISOString().slice(0, 10)
   })
@@ -368,6 +370,15 @@
             <div class="flex items-center justify-between">
               <dt class="text-text-muted">Next occurrence</dt>
               <dd class="text-accent-secondary-start">{nextOccurrence}</dd>
+            </div>
+          {:else if card.recurrence && card.due_date}
+            <!-- Overdue recurring task: the next date depends on the server's
+            skip-missed resolver at completion time. -->
+            <div class="flex items-center justify-between">
+              <dt class="text-text-muted">Next occurrence</dt>
+              <dd class="text-text-muted italic text-[11px]">
+                Computed on completion
+              </dd>
             </div>
           {/if}
           <div class="flex items-center justify-between">
