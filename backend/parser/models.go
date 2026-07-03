@@ -104,6 +104,11 @@ type ParsedBlock struct {
 	// string = one-off task (renderer omits the token). File-resident
 	// user intent; SQLite caches the string for query/filter speed.
 	Recurrence string `json:"recurrence,omitempty"`
+	// BlockedBy lists the UUIDs this task is blocked by, parsed from the
+	// [blocked_by:: ((uuid)) ...] token (#301). Each entry is a bare UUID
+	// (no ((...)) wrapper). Empty = no prerequisites. File-resident user
+	// intent; SQLite caches the graph in task_dependencies for query speed.
+	BlockedBy []string `json:"blocked_by,omitempty"`
 	// ExtraTokens preserves unknown [key:: value] Dataview tokens that the
 	// parser doesn't recognise (e.g. `[project:: alpha]`, `[estimate:: 3h]`).
 	// These round-trip through parse → render so files stay interoperable
@@ -309,6 +314,11 @@ type TaskResult struct {
 	// task row so the Kanban/Agenda queries can surface the repeat badge
 	// and the resolver can read the rule without re-parsing markdown.
 	Recurrence string `json:"recurrence,omitempty"`
+	// BlockedBy mirrors ParsedBlock.BlockedBy (#301): the UUIDs this task is
+	// blocked by, hydrated from the task_dependencies join table at query
+	// time so the Kanban/Agenda badge and the dependency picker can render
+	// the prerequisite list without re-parsing markdown.
+	BlockedBy []string `json:"blocked_by,omitempty"`
 	// CommentsCount is the number of indented child NOTE blocks beneath
 	// this task (the "comments on a task" UX from the Stitch reference).
 	// It is computed at index time from `blocks.parent_id` and cached on

@@ -211,6 +211,159 @@ func TestIndexScanResults_PinnedProjection(t *testing.T) {
 	}
 }
 
+// TestIndexFileBlocks_BlockedByProjection verifies the [blocked_by:: ((uuid))]
+// token edges are cached into the task_dependencies join table (#301): one row
+// per ref, re-index replaces the edge set, and a cleared token drops all edges.
+func TestIndexFileBlocks_BlockedByProjection(t *testing.T) {
+	dm := newTestDB(t)
+
+	depA := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	depB := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	subject := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+
+	// First index: subject is blocked by depA and depB.
+	blocks := []parser.ParsedBlock{
+		sampleTaskBlock(depA, 1),
+		sampleTaskBlock(depB, 2),
+		func() parser.ParsedBlock {
+			b := sampleTaskBlock(subject, 3)
+			b.BlockedBy = []string{depA, depB}
+			return b
+		}(),
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks failed: %v", err)
+	}
+
+	edgesFor := func(id string) []string {
+		rows, err := dm.db.Query("SELECT blocked_by_id FROM task_dependencies WHERE block_id = ? ORDER BY blocked_by_id", id)
+		if err != nil {
+			t.Fatalf("select deps for %s: %v", id, err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			out = append(out, s)
+		}
+		return out
+	}
+
+	got := edgesFor(subject)
+	want := []string{depA, depB}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("after first index: expected edges %v, got %v", want, got)
+	}
+
+	// Re-index with a changed edge set: drop depB, keep depA. Confirms the
+	// per-block clear (cascade on block-id delete) replaces rather than unions.
+	blocks2 := []parser.ParsedBlock{
+		sampleTaskBlock(depA, 1),
+		sampleTaskBlock(depB, 2),
+		func() parser.ParsedBlock {
+			b := sampleTaskBlock(subject, 3)
+			b.BlockedBy = []string{depA}
+			return b
+		}(),
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks2, nil); err != nil {
+		t.Fatalf("re-index failed: %v", err)
+	}
+	got = edgesFor(subject)
+	if len(got) != 1 || got[0] != depA {
+		t.Fatalf("after re-index: expected edges [%s], got %v", depA, got)
+	}
+
+	// Re-index with no BlockedBy: all subject edges cleared.
+	blocks3 := []parser.ParsedBlock{
+		sampleTaskBlock(depA, 1),
+		sampleTaskBlock(depB, 2),
+		sampleTaskBlock(subject, 3),
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks3, nil); err != nil {
+		t.Fatalf("clear re-index failed: %v", err)
+	}
+	if got := edgesFor(subject); len(got) != 0 {
+		t.Fatalf("after clear: expected no edges, got %v", got)
+	}
+}
+
+// TestIndexScanResults_BlockedByProjection mirrors the above for the batched
+// vault-startup indexer, confirming both entry points populate the join table
+// consistently.
+func TestIndexScanResults_BlockedByProjection(t *testing.T) {
+	dm := newTestDB(t)
+
+	dep := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	subject := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	mkBlocked := func(id string, ln int, deps []string) parser.ParsedBlock {
+		b := sampleTaskBlock(id, ln)
+		b.BlockedBy = deps
+		return b
+	}
+	results := []parser.ScanResult{{
+		Notebook: "Work",
+		Section:  "Journal",
+		Page:     "Daily",
+		Blocks: []parser.ParsedBlock{
+			mkBlocked(dep, 1, nil),
+			mkBlocked(subject, 2, []string{dep}),
+		},
+	}}
+	count, _, err := dm.IndexScanResults(results)
+	if err != nil {
+		t.Fatalf("IndexScanResults: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 file indexed, got %d", count)
+	}
+	var got string
+	if err := dm.db.QueryRow("SELECT blocked_by_id FROM task_dependencies WHERE block_id = ?", subject).Scan(&got); err != nil {
+		t.Fatalf("select dep for %s: %v", subject, err)
+	}
+	if got != dep {
+		t.Errorf("expected blocked_by_id=%s, got %s", dep, got)
+	}
+}
+
+// TestTaskDependencies_CascadeDelete confirms the ON DELETE CASCADE foreign
+// keys clean up edges when a block is removed — both as a dependent (block_id)
+// and as a blocker (blocked_by_id).
+func TestTaskDependencies_CascadeDelete(t *testing.T) {
+	dm := newTestDB(t)
+
+	blocker := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	dependent := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	blocks := []parser.ParsedBlock{
+		sampleTaskBlock(blocker, 1),
+		func() parser.ParsedBlock {
+			b := sampleTaskBlock(dependent, 2)
+			b.BlockedBy = []string{blocker}
+			return b
+		}(),
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	// Re-index without the blocker: cascade should drop its edge as a blocker.
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", []parser.ParsedBlock{sampleTaskBlock(dependent, 1)}, nil); err != nil {
+		t.Fatalf("re-index without blocker: %v", err)
+	}
+	var n int
+	if err := dm.db.QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	// dependent's edge referenced blocker; on re-index dependent has no
+	// BlockedBy so no edges remain.
+	if n != 0 {
+		t.Errorf("expected 0 edges after blocker removed + dependent cleared, got %d", n)
+	}
+}
+
 // TestQueryTasksWithFilters_HydratesPinnedTriState verifies the reader
 // hydrates the tri-state cache back into TaskResult.Pinned *bool: NULL→nil,
 // 0→&false, 1→&true (#135). Closes the lossy-projection gap left by the #123

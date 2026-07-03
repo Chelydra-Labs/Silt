@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
+
+	"silt/backend/dependencies"
 )
 
 // TaskCheckboxRegex matches the GFM task list prefix: optional
@@ -196,7 +198,7 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 // Adding a new metadata type is a one-line addition to the switch below.
 // Unknown keys are preserved in extraTokens so the file round-trips
 // without data loss.
-func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, extraTokens []string) {
+func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, blockedBy []string, extraTokens []string) {
 	priority = 3 // default; 0 from the regex means "not set"
 	progress = 0
 	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
@@ -253,6 +255,14 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 			// stores the token verbatim-ish so an unsupported rule still
 			// round-trips instead of being silently dropped.
 			recurrence = whitespaceRun.ReplaceAllString(strings.ToLower(val), " ")
+		case "blocked_by":
+			// Task dependency graph (#301): the value is one or more
+			// space-separated ((uuid)) block references naming this
+			// task's prerequisites. ExtractRefs de-duplicates and
+			// tolerates stray prose so a hand-edited token still indexes.
+			// Cycles are prevented at write time by the IPC setter; the
+			// parser only round-trips what's on disk.
+			blockedBy = dependencies.ExtractRefs(val)
 		default:
 			// Unrecognised key — preserve the full [key:: value] token
 			// verbatim so it survives the parse → render round-trip.
@@ -295,7 +305,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		}
 
 		// Scan for [key:: value] metadata tokens in the remainder.
-		owner, startDate, dueDate, priority, pinned, progress, recurrence, description, extraTokens := scanTaskTokens(remainder)
+		owner, startDate, dueDate, priority, pinned, progress, recurrence, description, blockedBy, extraTokens := scanTaskTokens(remainder)
 
 		depth := parseLeadingIndent(indent, spacesPerTab)
 
@@ -313,6 +323,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 			Pinned:      pinned,
 			Progress:    progress,
 			Recurrence:  recurrence,
+			BlockedBy:   blockedBy,
 			ExtraTokens: extraTokens,
 			LineNumber:  lineNumber,
 			FileDate:    blockFileDate,
@@ -1102,6 +1113,9 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		}
 		if block.Progress > 0 {
 			tokens = append(tokens, fmt.Sprintf("[progress:: %d]", block.Progress))
+		}
+		if refStr := dependencies.FormatRefs(block.BlockedBy); refStr != "" {
+			tokens = append(tokens, fmt.Sprintf("[blocked_by:: %s]", refStr))
 		}
 		// Append unknown Dataview tokens verbatim so they survive the
 		// round-trip (Dataview-compatible interop — SPECS.md §4.1).

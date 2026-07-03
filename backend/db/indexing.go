@@ -274,6 +274,15 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer stmtTask.Close()
 
+	// task_dependencies edges: one row per [blocked_by:: ((uuid))] ref on a
+	// task line. The cascade clear above already removed the block's prior
+	// edges (both FKs ON DELETE CASCADE), so each insert here is additive.
+	stmtTaskDep, err := tx.Prepare("INSERT OR IGNORE INTO task_dependencies (block_id, blocked_by_id) VALUES (?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmtTaskDep.Close()
+
 	stmtTag, err := tx.Prepare("INSERT INTO tags (block_id, raw_path, level_0, level_1, level_2) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
@@ -340,6 +349,14 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 			_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, childNotesByParent[block.ID], linksCount)
 			if err != nil {
 				return fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
+			}
+			// Cache the [blocked_by:: ((uuid))] edges parsed from the task
+			// line (#301). INSERT OR IGNORE keeps the (block_id, blocked_by_id)
+			// PRIMARY KEY unique even if the parser handed back a duplicate.
+			for _, depID := range block.BlockedBy {
+				if _, err := stmtTaskDep.Exec(block.ID, depID); err != nil {
+					return fmt.Errorf("failed to insert task_dependency for block %s: %w", block.ID, err)
+				}
 			}
 		}
 
@@ -415,6 +432,13 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		return 0, nil, err
 	}
 	defer stmtTask.Close()
+
+	// task_dependencies edges — mirror IndexFileBlocks (see comment there).
+	stmtTaskDep, err := tx.Prepare("INSERT OR IGNORE INTO task_dependencies (block_id, blocked_by_id) VALUES (?, ?)")
+	if err != nil {
+		return 0, nil, err
+	}
+	defer stmtTaskDep.Close()
 
 	stmtTag, err := tx.Prepare("INSERT INTO tags (block_id, raw_path, level_0, level_1, level_2) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
@@ -527,6 +551,12 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, commentsCount, linksCount)
 				if err != nil {
 					return 0, skipped, fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
+				}
+				// Cache [blocked_by:: ((uuid))] edges — mirror IndexFileBlocks.
+				for _, depID := range block.BlockedBy {
+					if _, err := stmtTaskDep.Exec(block.ID, depID); err != nil {
+						return 0, skipped, fmt.Errorf("failed to insert task_dependency for block %s: %w", block.ID, err)
+					}
 				}
 			}
 
