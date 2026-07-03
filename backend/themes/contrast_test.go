@@ -267,6 +267,41 @@ func TestWCAG_FirstClassThemes_AllMeetsTargets(t *testing.T) {
 			}
 		}
 		assertWCAG(t, th)
+		// Chrome WCAG: when a theme defines a chrome block in any mode,
+		// the chrome text must meet the same AAA/AA thresholds against
+		// chrome backgrounds. A no-op for themes without chrome.
+		assertChromeWCAG(t, th)
+	}
+}
+
+// assertChromeWCAG runs the primary/muted text matrix for the chrome surfaces
+// when a theme defines Chrome blocks. Chrome text.primary must pass AAA
+// (≥7:1) on all chrome backgrounds; chrome text.muted must pass AA (≥4.5:1).
+// This is the dual-surface analog of assertWCAG: the page/content surfaces
+// are tested by assertWCAG above; this covers the app skeleton separately.
+func assertChromeWCAG(t *testing.T, th *Theme) {
+	t.Helper()
+	for _, mode := range []string{"dark", "light"} {
+		var c *Chrome
+		if mode == "dark" {
+			c = th.Modes.Dark.Chrome
+		} else {
+			c = th.Modes.Light.Chrome
+		}
+		if c == nil {
+			continue
+		}
+		chromeBGs := []string{c.BG.Void, c.BG.Surface, c.BG.Panel, c.BG.Hover, c.BG.Active}
+		for _, bg := range chromeBGs {
+			if r := approxRatio(t, c.Text.Primary, bg); r < 7.0 {
+				t.Errorf("%s [%s chrome]: text.primary %s on bg %s = %.2f:1, want >= 7.1 (AAA)",
+					th.ID, mode, c.Text.Primary, bg, r)
+			}
+			if r := approxRatio(t, c.Text.Muted, bg); r < 4.5 {
+				t.Errorf("%s [%s chrome]: text.muted %s on bg %s = %.2f:1, want >= 4.5 (AA)",
+					th.ID, mode, c.Text.Muted, bg, r)
+			}
+		}
 	}
 }
 

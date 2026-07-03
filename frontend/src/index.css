@@ -112,6 +112,28 @@
   --editor-line-height: 1.6;
 }
 
+/* Dual-surface chrome scoping class. When applied to the sidebar, titlebar,
+   or tab strip, the standard --color-* tokens resolve to the --color-chrome-*
+   palette instead. The theme engine always emits --color-chrome-* on :root
+   (concrete values when a theme defines a chrome block, var(--color-*)
+   fallbacks when it doesn't), so this class works with zero component
+   utility-class changes — bg-void, text-text-primary, etc. inside a
+   .silt-chrome element transparently use the chrome palette. */
+.silt-chrome {
+  --color-void: var(--color-chrome-void);
+  --color-surface: var(--color-chrome-surface);
+  --color-panel: var(--color-chrome-panel);
+  --color-hover: var(--color-chrome-hover);
+  --color-active: var(--color-chrome-active);
+  --color-border-muted: var(--color-chrome-border-muted);
+  --color-border-zinc: var(--color-chrome-border-zinc);
+  --color-border-active: var(--color-chrome-border-active);
+  --color-border-focus: var(--color-chrome-border-focus);
+  --color-text-primary: var(--color-chrome-text-primary);
+  --color-text-muted: var(--color-chrome-text-muted);
+  --color-text-disabled: var(--color-chrome-text-disabled);
+}
+
 html,
 body {
   background-color: var(--color-void);

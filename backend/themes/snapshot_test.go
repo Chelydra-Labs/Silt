@@ -45,6 +45,19 @@ var goldenDefaultDark = map[string]string{
 	"--font-body":             "'Plus Jakarta Sans', sans-serif",
 	"--font-mono":             "'JetBrains Mono', monospace",
 	"--font-headline":         "'Hanken Grotesk', sans-serif",
+	// Chrome fallbacks (no chrome block → var(--color-*) references)
+	"--color-chrome-void":          "var(--color-void)",
+	"--color-chrome-surface":       "var(--color-surface)",
+	"--color-chrome-panel":         "var(--color-panel)",
+	"--color-chrome-hover":         "var(--color-hover)",
+	"--color-chrome-active":        "var(--color-active)",
+	"--color-chrome-border-muted":  "var(--color-border-muted)",
+	"--color-chrome-border-zinc":   "var(--color-border-zinc)",
+	"--color-chrome-border-active": "var(--color-border-active)",
+	"--color-chrome-border-focus":  "var(--color-border-focus)",
+	"--color-chrome-text-primary":  "var(--color-text-primary)",
+	"--color-chrome-text-muted":    "var(--color-text-muted)",
+	"--color-chrome-text-disabled": "var(--color-text-disabled)",
 }
 
 var goldenDefaultLight = map[string]string{
@@ -72,6 +85,19 @@ var goldenDefaultLight = map[string]string{
 	"--font-body":             "'Plus Jakarta Sans', sans-serif",
 	"--font-mono":             "'JetBrains Mono', monospace",
 	"--font-headline":         "'Hanken Grotesk', sans-serif",
+	// Chrome fallbacks (no chrome block → var(--color-*) references)
+	"--color-chrome-void":          "var(--color-void)",
+	"--color-chrome-surface":       "var(--color-surface)",
+	"--color-chrome-panel":         "var(--color-panel)",
+	"--color-chrome-hover":         "var(--color-hover)",
+	"--color-chrome-active":        "var(--color-active)",
+	"--color-chrome-border-muted":  "var(--color-border-muted)",
+	"--color-chrome-border-zinc":   "var(--color-border-zinc)",
+	"--color-chrome-border-active": "var(--color-border-active)",
+	"--color-chrome-border-focus":  "var(--color-border-focus)",
+	"--color-chrome-text-primary":  "var(--color-text-primary)",
+	"--color-chrome-text-muted":    "var(--color-text-muted)",
+	"--color-chrome-text-disabled": "var(--color-text-disabled)",
 }
 
 // TestDefaultTheme_GoldenSnapshot asserts the embedded default theme's
@@ -201,6 +227,22 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 		"--silt-texture-opacity": true,
 		"--silt-texture-blend":   true,
 	}
+	// Chrome dual-surface keys (superset; always emitted by Flatten as either
+	// concrete values or var(--color-*) fallbacks).
+	chromeKeys := map[string]bool{
+		"--color-chrome-void":          true,
+		"--color-chrome-surface":       true,
+		"--color-chrome-panel":         true,
+		"--color-chrome-hover":         true,
+		"--color-chrome-active":        true,
+		"--color-chrome-border-muted":  true,
+		"--color-chrome-border-zinc":   true,
+		"--color-chrome-border-active": true,
+		"--color-chrome-border-focus":  true,
+		"--color-chrome-text-primary":  true,
+		"--color-chrome-text-muted":    true,
+		"--color-chrome-text-disabled": true,
+	}
 	for _, th := range all {
 		if th.ID == DefaultThemeID {
 			continue
@@ -216,10 +258,11 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 					t.Errorf("%s [%s]: missing token %s", th.ID, mode, k)
 				}
 			}
-			// Any extra key must be the opt-in texture overlay, not a stray token.
+			// Any extra key must be the opt-in texture overlay or the
+			// always-present chrome dual-surface keys, not a stray token.
 			for k := range flat {
-				if !slices.Contains(expectedFlattenKeys, k) && !textureKeys[k] {
-					t.Errorf("%s [%s]: unexpected token %s (only --silt-texture-* overlays are allowed)",
+				if !slices.Contains(expectedFlattenKeys, k) && !textureKeys[k] && !chromeKeys[k] {
+					t.Errorf("%s [%s]: unexpected token %s (only --silt-texture-* and --color-chrome-* are allowed)",
 						th.ID, mode, k)
 				}
 			}

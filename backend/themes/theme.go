@@ -42,12 +42,29 @@ type Modes struct {
 
 // Mode is one appearance (dark or light) of a theme.
 type Mode struct {
-	BG      BG      `json:"bg"`
-	Border  Border  `json:"border"`
-	Text    Text    `json:"text"`
-	Accent  Accent  `json:"accent"`
-	Status  Status  `json:"status"`
+	BG      BG       `json:"bg"`
+	Border  Border   `json:"border"`
+	Text    Text     `json:"text"`
+	Accent  Accent   `json:"accent"`
+	Status  Status   `json:"status"`
 	Texture *Texture `json:"texture,omitempty"`
+	Chrome  *Chrome  `json:"chrome,omitempty"`
+}
+
+// Chrome is an optional per-mode palette for the app skeleton (sidebar,
+// titlebar, tab strip). When present, Flatten emits --color-chrome-* CSS
+// custom properties that a single .silt-chrome scoping class applies to
+// chrome surfaces — allowing the app skeleton to use a completely different
+// bg/border/text palette from the content area (e.g. dark navy chrome +
+// warm off-white page). Accent and Status are NOT in chrome: they are
+// semantic and shared across all surfaces. Texture is NOT in chrome: it is
+// scoped to the page writing surface only. When absent, Flatten emits
+// --color-chrome-* fallbacks that reference the standard --color-* tokens,
+// so themes without a chrome block are completely unaffected.
+type Chrome struct {
+	BG     BG     `json:"bg"`
+	Border Border `json:"border"`
+	Text   Text   `json:"text"`
 }
 
 // Texture is an optional per-mode decorative surface overlay (e.g. the woven
@@ -194,7 +211,49 @@ func (t *Theme) Flatten(mode string) map[string]string {
 		}
 	}
 
+	// Chrome tokens (optional dual-surface palette). When the mode defines a
+	// chrome block, emit concrete --color-chrome-* values. When absent, emit
+	// var(--color-*) fallbacks so the .silt-chrome CSS scoping class always
+	// resolves to the standard tokens — themes without chrome are unaffected.
+	flattenChrome(out, m)
+
 	return out
+}
+
+// flattenChrome emits the --color-chrome-* token set for a mode. When the
+// mode defines a Chrome block, concrete values are written. When absent,
+// each --color-chrome-* is set to var(--color-*) so the .silt-chrome class
+// (which reassigns --color-* from --color-chrome-*) transparently falls
+// through to the standard palette. The fallback uses var() references rather
+// than concrete values so a theme switch updates both surfaces in one paint.
+func flattenChrome(out map[string]string, m Mode) {
+	if m.Chrome != nil {
+		out["--color-chrome-void"] = m.Chrome.BG.Void
+		out["--color-chrome-surface"] = m.Chrome.BG.Surface
+		out["--color-chrome-panel"] = m.Chrome.BG.Panel
+		out["--color-chrome-hover"] = m.Chrome.BG.Hover
+		out["--color-chrome-active"] = m.Chrome.BG.Active
+		out["--color-chrome-border-muted"] = m.Chrome.Border.Muted
+		out["--color-chrome-border-zinc"] = m.Chrome.Border.Zinc
+		out["--color-chrome-border-active"] = m.Chrome.Border.Active
+		out["--color-chrome-border-focus"] = m.Chrome.Border.Focus
+		out["--color-chrome-text-primary"] = m.Chrome.Text.Primary
+		out["--color-chrome-text-muted"] = m.Chrome.Text.Muted
+		out["--color-chrome-text-disabled"] = m.Chrome.Text.Disabled
+	} else {
+		out["--color-chrome-void"] = "var(--color-void)"
+		out["--color-chrome-surface"] = "var(--color-surface)"
+		out["--color-chrome-panel"] = "var(--color-panel)"
+		out["--color-chrome-hover"] = "var(--color-hover)"
+		out["--color-chrome-active"] = "var(--color-active)"
+		out["--color-chrome-border-muted"] = "var(--color-border-muted)"
+		out["--color-chrome-border-zinc"] = "var(--color-border-zinc)"
+		out["--color-chrome-border-active"] = "var(--color-border-active)"
+		out["--color-chrome-border-focus"] = "var(--color-border-focus)"
+		out["--color-chrome-text-primary"] = "var(--color-text-primary)"
+		out["--color-chrome-text-muted"] = "var(--color-text-muted)"
+		out["--color-chrome-text-disabled"] = "var(--color-text-disabled)"
+	}
 }
 
 // BGVoid returns the resolved bg.void for the given mode, used to set the
