@@ -25,7 +25,7 @@ const mockPlugins = vi.hoisted(() => ({
 }))
 const mockGetSessionToken = vi.hoisted(() => vi.fn(() => 'tok-test'))
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../wailsjs/go/main/App.js', () => ({
   ListNavigation: mocks.listNavigation,
   CreateNotebook: mocks.createNotebook,
   CreateSection: mocks.createSection,
@@ -140,6 +140,7 @@ describe('Sidebar', () => {
     // It now follows --color-text-primary so each theme's body-text hue shows up in
     // the sidebar. The "No Notebook" fallback only appears in this label, so
     // getByText uniquely targets it (independent of the nav tree load).
+    mocks.listNavigation.mockResolvedValueOnce({ notebooks: [] })
     render(Sidebar, {
       props: {
         activeNotebook: '',
