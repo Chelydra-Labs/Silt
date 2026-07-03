@@ -225,6 +225,10 @@
                 class="absolute left-0 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
               ></span>
             {/if}
+            <span
+              class="material-symbols-outlined text-[16px] flex-shrink-0 opacity-70"
+              >description</span
+            >
             <span class="truncate flex-1" title={pg.name}>{pg.name}</span>
           </button>
         {/each}
