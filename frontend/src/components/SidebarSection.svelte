@@ -150,6 +150,11 @@
       chevron_right
     </span>
     <span
+      class="material-symbols-outlined text-text-muted/70 text-[16px] flex-shrink-0"
+    >
+      {isExpanded ? 'folder_open' : 'folder'}
+    </span>
+    <span
       class="font-label-sm-bold text-label-sm-bold uppercase tracking-wider text-text-primary truncate flex-1"
     >
       {section.name ? section.name : 'Pages (no section)'}
@@ -168,7 +173,7 @@
         onCreatePageInline(sectionKey)
       }}
       title="New page in this section"
-      class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
+      class="opacity-30 group-hover:opacity-100 text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
     >
       <span class="material-symbols-outlined text-[16px]">add</span>
     </button>
@@ -205,7 +210,7 @@
             ondrop={(e) =>
               onDrop(e, 'page', pg.name, activeNotebook, sectionKey)}
             ondragend={onDragEnd}
-            class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
+            class="relative w-full text-left pl-3 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
             class:bg-hover={isActive}
             class:text-accent-primary-start={isActive}
             class:text-text-muted={!isActive}
