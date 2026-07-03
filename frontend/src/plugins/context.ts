@@ -1,4 +1,9 @@
-import type { PluginContext, SqliteQueryResult, TaskStatus } from './sdk'
+import type {
+  PluginContext,
+  SqliteQueryResult,
+  SubtreeBlock,
+  TaskStatus
+} from './sdk'
 import { localToday } from './sdk'
 import {
   PluginRawQuery,
@@ -9,6 +14,8 @@ import {
   PluginSetTaskRecurrence,
   PluginSetTaskBlockedBy,
   GetTaskBlockers,
+  FetchSubtree,
+  SaveSubtreeBlocks,
   PluginCreateTask,
   GetPluginSettingsForNotebook,
   UpdatePluginSetting,
@@ -178,6 +185,15 @@ export function makePluginContext(
       PluginSetTaskBlockedBy(pluginID, sessionToken ?? '', id, depIDs),
     // Open (non-DONE) prerequisites for the DONE-confirm dialog (#302).
     getTaskBlockers: (id) => GetTaskBlockers(id),
+    // Child sub-tree fetch/splice for the Task Sub-Editor Modal (#305). The
+    // bindings exchange the Wails ParsedBlock; cast to the SDK's SubtreeBlock
+    // shape (a structural subset) so the modal and editor work in one type.
+    fetchSubtree: (blockId) => FetchSubtree(blockId) as Promise<SubtreeBlock[]>,
+    saveSubtreeBlocks: (blockId, children) =>
+      SaveSubtreeBlocks(
+        blockId,
+        children as unknown as Parameters<typeof SaveSubtreeBlocks>[1]
+      ),
     // Create a standalone task in <vault>/.silt/tasks.md (#368). title required;
     // dueDate/status optional with TODO + no-due defaults.
     createTask: (opts) =>

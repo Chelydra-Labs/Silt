@@ -79,6 +79,30 @@ export interface BlockerTask {
   page?: string
 }
 
+/**
+ * A block in a task's child sub-tree (#305). Mirrors the editor's ParsedBlock
+ * shape (the JSON that crosses the Wails IPC boundary in FetchPageBlocks /
+ * SaveFileBlocks). The focused Task Sub-Editor Modal seeds its TipTap instance
+ * from a fetched SubtreeBlock[] and serializes edits back via saveSubtreeBlocks.
+ */
+export interface SubtreeBlock {
+  id: string
+  parent_id?: string
+  type: string
+  depth: number
+  raw_text: string
+  clean_text: string
+  status?: string
+  owner?: string
+  start_date?: string
+  due_date?: string
+  recurrence?: string
+  priority?: number
+  line_number: number
+  file_date?: string
+  language?: string
+}
+
 export interface PluginContext {
   /**
    * The active notebook. This is a LIVE reactive getter (#69): reading it
@@ -152,6 +176,24 @@ export interface PluginContext {
    * dialog. Empty array = the task is actionable.
    */
   getTaskBlockers: (id: string) => Promise<BlockerTask[]>
+  /**
+   * Fetch a task block's child sub-tree — the indented blocks beneath it
+   * (#305). Used to seed the focused Task Sub-Editor Modal. Returns an empty
+   * array when the task has no children. Read-only; no IPC write. The block
+   * shape mirrors the editor's ParsedBlock; see SubtreeBlock.
+   */
+  fetchSubtree: (blockId: string) => Promise<SubtreeBlock[]>
+  /**
+   * Splice an edited child sub-tree back into the parent task's block,
+   * atomically re-rendering the whole page through the canonical write chain
+   * (#305). The parent task block and all surrounding content are preserved
+   * verbatim; only the contiguous child range (depth > parent depth) is
+   * replaced. Emits block:changed for the parent so views refresh.
+   */
+  saveSubtreeBlocks: (
+    blockId: string,
+    children: SubtreeBlock[]
+  ) => Promise<boolean>
   /**
    * Create a standalone task (a GFM checkbox) in the dedicated non-note
    * markdown file `<vault>/.silt/tasks.md` (#368). The task is queryable via

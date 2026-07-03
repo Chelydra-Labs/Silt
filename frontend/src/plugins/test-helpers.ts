@@ -23,6 +23,8 @@ export const v2CtxStubs: Pick<
   | 'setTaskRecurrence'
   | 'setTaskBlockedBy'
   | 'getTaskBlockers'
+  | 'fetchSubtree'
+  | 'saveSubtreeBlocks'
   | 'deleteBlock'
   | 'moveBlock'
   | 'applyBlocks'
@@ -70,6 +72,8 @@ export const v2CtxStubs: Pick<
   setTaskRecurrence: () => Promise.resolve(true),
   setTaskBlockedBy: () => Promise.resolve(true),
   getTaskBlockers: () => Promise.resolve([]),
+  fetchSubtree: () => Promise.resolve([]),
+  saveSubtreeBlocks: () => Promise.resolve(true),
   deleteBlock: () => Promise.resolve(true),
   moveBlock: () => Promise.resolve(true),
   applyBlocks: () => Promise.resolve(true),

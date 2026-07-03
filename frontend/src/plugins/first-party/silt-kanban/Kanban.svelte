@@ -9,6 +9,7 @@
   import FilterBar from './FilterBar.svelte'
   import CardDetailPanel from './CardDetailPanel.svelte'
   import BlockedDoneDialog from './BlockedDoneDialog.svelte'
+  import TaskSubEditorModal from './TaskSubEditorModal.svelte'
   import QuickAddTask from '../shared/QuickAddTask.svelte'
   import type { KanbanCard, KanbanFilters, Scope } from './types'
   import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
@@ -305,6 +306,11 @@
 
   // Card selected for the slide-out detail panel (null = closed).
   let selectedCard = $state<KanbanCard | null>(null)
+
+  // Card opened in the focused Task Sub-Editor Modal (#304). Null = closed.
+  // Set by double-clicking a card; single-click still opens the slide-out
+  // detail panel so both affordances coexist on the same card.
+  let subEditorCard = $state<KanbanCard | null>(null)
 
   // DONE-on-blocked confirm (#302): when a blocked card is dragged or keyed
   // into the DONE lane, we pause the optimistic move and ask the user. The
@@ -1056,6 +1062,10 @@
                   ondragend={cleanupDrag}
                   onkeydown={(e) => onCardKeydown(e, card, col as TaskStatus)}
                   onclick={() => (selectedCard = card)}
+                  ondblclick={(e) => {
+                    e.stopPropagation()
+                    subEditorCard = card
+                  }}
                 >
                   {#if card.pinned}
                     <span
@@ -1239,6 +1249,22 @@
     blockers={pendingBlockedDone.blockers}
     onConfirm={confirmBlockedDone}
     onCancel={cancelBlockedDone}
+  />
+{/if}
+
+{#if subEditorCard}
+  <TaskSubEditorModal
+    blockId={subEditorCard.id}
+    notebook={subEditorCard.notebook}
+    section={subEditorCard.section}
+    page={subEditorCard.page}
+    parentTaskText={subEditorCard.clean_content}
+    {ctx}
+    onClose={() => {
+      // Reload so the board reflects any sub-tree edits the modal persisted.
+      reload()
+      subEditorCard = null
+    }}
   />
 {/if}
 
