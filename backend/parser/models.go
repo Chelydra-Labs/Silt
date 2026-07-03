@@ -143,6 +143,10 @@ type TaskQueryFilter struct {
 	Tags      []string `json:"tags"`
 	StartDate string   `json:"start_date"`
 	EndDate   string   `json:"end_date"`
+	// BlockIDs bounds a query to an explicit ID set (used by GetTaskBlockers
+	// to fetch full TaskResult metadata for a task's prerequisites, #302).
+	// Empty = no ID constraint (the historical behavior).
+	BlockIDs []string `json:"block_ids,omitempty"`
 }
 
 // NavigationTree describes the Notebook > Section > Page hierarchy for the

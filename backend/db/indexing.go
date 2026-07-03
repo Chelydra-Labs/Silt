@@ -350,14 +350,6 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 			if err != nil {
 				return fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 			}
-			// Cache the [blocked_by:: ((uuid))] edges parsed from the task
-			// line (#301). INSERT OR IGNORE keeps the (block_id, blocked_by_id)
-			// PRIMARY KEY unique even if the parser handed back a duplicate.
-			for _, depID := range block.BlockedBy {
-				if _, err := stmtTaskDep.Exec(block.ID, depID); err != nil {
-					return fmt.Errorf("failed to insert task_dependency for block %s: %w", block.ID, err)
-				}
-			}
 		}
 
 		// 3. Extract and insert tags for this block
@@ -402,6 +394,25 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 				// change, for example) is still visible during dev.
 				log.Printf("db.IndexFileBlocks: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
 				continue
+			}
+		}
+	}
+
+	// Cache [blocked_by:: ((uuid))] edges in a second pass, AFTER every block
+	// row is inserted (#301). A task may reference a block that appears later
+	// in the file, so edges can't be inserted inline during the first pass
+	// without tripping the blocks(id) foreign key. The per-block clear at the
+	// top of this function (cascade on block-id delete) already removed the
+	// prior edge set, so each insert here is additive. INSERT OR IGNORE keeps
+	// the (block_id, blocked_by_id) PRIMARY KEY unique even if the parser
+	// handed back a duplicate.
+	for _, block := range blocks {
+		if block.Type != parser.BlockTask {
+			continue
+		}
+		for _, depID := range block.BlockedBy {
+			if _, err := stmtTaskDep.Exec(block.ID, depID); err != nil {
+				return fmt.Errorf("failed to insert task_dependency for block %s: %w", block.ID, err)
 			}
 		}
 	}
@@ -552,12 +563,6 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if err != nil {
 					return 0, skipped, fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 				}
-				// Cache [blocked_by:: ((uuid))] edges — mirror IndexFileBlocks.
-				for _, depID := range block.BlockedBy {
-					if _, err := stmtTaskDep.Exec(block.ID, depID); err != nil {
-						return 0, skipped, fmt.Errorf("failed to insert task_dependency for block %s: %w", block.ID, err)
-					}
-				}
 			}
 
 			tags := ExtractTags(block.RawText)
@@ -600,7 +605,25 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 			}
 		}
 
-		indexedCount++
+			indexedCount++
+	}
+
+	// Cache [blocked_by:: ((uuid))] edges in a second pass over every indexed
+	// file's blocks, AFTER all block rows are inserted (#301). Edges may cross
+	// file boundaries (a task blocked-by a task in a different page), so this
+	// pass runs after the whole results loop, not per-file. Mirrors the
+	// IndexFileBlocks second pass; see comment there.
+	for _, res := range results {
+		for _, block := range res.Blocks {
+			if block.Type != parser.BlockTask {
+				continue
+			}
+			for _, depID := range block.BlockedBy {
+				if _, err := stmtTaskDep.Exec(block.ID, depID); err != nil {
+					return 0, skipped, fmt.Errorf("failed to insert task_dependency for block %s: %w", block.ID, err)
+				}
+			}
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

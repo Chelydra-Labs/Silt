@@ -223,6 +223,37 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		return writeErr
 	}
 	a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, "")
+
+	// Task dependency fan-out (#301): when a block transitions to DONE, every
+	// task blocked-by it may flip its derived "blocked" state (the Kanban/Agenda
+	// badge and the DONE-guard consult the live blocker statuses). Re-broadcast
+	// block:changed for each dependent so their views re-query. No file write
+	// happens for the dependents — only their cached derived state changes,
+	// which the badge recomputes at query time. Only a DONE transition can
+	// unblock a dependent; TODO/DOING transitions can't clear a blocker, so we
+	// skip the fan-out for them.
+	if newState == "DONE" {
+		var dependents []string
+		a.coordinator.WithDBRead(func() {
+			dependents, _ = a.db.DependentsOf(blockID)
+		})
+		// Look up each dependent's location once so the event carries the
+		// breadcrumb the frontend expects. A missing location (block deleted
+		// between the write and this lookup) is silently skipped — the next
+		// re-index reconciles.
+		for _, depID := range dependents {
+			if depID == blockID {
+				continue
+			}
+			var depLoc db.BlockLocation
+			a.coordinator.WithDBReadResult(func() error {
+				var e error
+				depLoc, e = a.db.GetBlockLocation(depID)
+				return e
+			})
+			a.emitBlockChanged(depID, sanitizePathSegment(depLoc.Notebook), sanitizePathSegment(depLoc.Section), sanitizePathSegment(depLoc.Page), "")
+		}
+	}
 	return nil
 }
 
