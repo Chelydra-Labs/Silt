@@ -320,6 +320,62 @@ truth invariant is preserved: standalone tasks round-trip through the
 same `[key:: value]` token syntax and survive a full re-index (deleting
 `.system/index.sqlite*` and relaunching restores them from the file).
 
+Standalone-tasks navigation router (#374): The `.silt` synthetic
+notebook is hidden from the sidebar and the page browser by design,
+so the only way a user can land on a standalone-task block is via
+search, tag-explorer click, backlink follow, or some other code-level
+call into `openPage`. To keep the synthetic notebook name from leaking
+into the tab header and breadcrumbs, every navigation entry point
+funnels through `routeJumpTarget()` (in
+`frontend/src/lib/standaloneTasksNav.ts`) which detects
+`notebook === '.silt'` and re-routes to the **Tasks view** (#370)
+instead of opening a `.silt / tasks` editor tab. A targeted block
+id is forwarded as `focusBlockId` so the Tasks view scrolls the row
+into view and applies a transient 3-second highlight. The routing
+policy is testable as a pure reducer; App.svelte's three funnel
+points (`openPage`, `handleSearchJump`, the `navigate-to-block`
+window listener) all delegate to it.
+
+Tasks view (#370): A first-party plugin
+(`frontend/src/plugins/first-party/silt-tasks/`) that lists every
+active task across the vault grouped into **Overdue / Today /
+Upcoming (next 7 days) / No Date / Completed**. The "No Date"
+bucket gives undated tasks (the natural output of the global
+quick-add, which intentionally produces them without a default due
+date) a first-class surface; the existing date-scoped agenda
+(AgendaList.svelte inside Calendar's Agenda mode and the
+silt-agenda plugin) excludes undated tasks by SQL design, so
+without the Tasks view a quick-added undated task is invisible
+to every UI surface. The Completed group is collapsed by default
+and ordered by `file_date DESC` as the best-available completion-
+recency proxy; a dedicated `completed_at` column on the `tasks`
+table would be cleaner and is tracked as a follow-up. Built
+exclusively on the PluginContext SDK (`sqliteQuery`,
+`updateBlockState`, `on('block:changed')`) — no new SQL, no new
+Go binding, no new capability. Registered in the plugin
+registry, mounted via `PluginView` alongside Calendar and Kanban,
+and reachable via the activity bar + the `cycle_view_layout`
+hotkey (Calendar → Tasks → Kanban).
+
+Standalone-tasks incremental reindex (#372): The fsnotify
+watcher's `AddRecursive` skips dot-prefixed directories by
+design — that's what keeps `.system/`, `.silt/`, and user dot-
+folders out of the watch set. The standalone-tasks file lives in
+that skipped directory, so `DirectoryWatcher.Start()` adds
+`<vault>/.silt` to the fsnotify watch set after the main
+`AddRecursive` returns. The dot-prefix skip is otherwise
+untouched (generalizing it into an allowlist risks reintroducing
+the `.system` index feedback loop the skip was added to
+prevent). The existing listen loop's `.md` filter, focus-lock
+check, `WriteTracker` self-write suppression, and `reindexFile`
+path are reused unchanged — `reindexFile`'s `resolveFileMetadata`
+already derives the `notebook=".silt", section="", page="tasks"`
+tuple for that path. In-app writes (`CreateStandaloneTask`'s
+atomic-writer path) still no-op the watcher via
+`tracker.RegisterWrite`, so the carve-out observability is
+purely for external tools (sync conflicts, manual edits, non-
+Silt editors).
+
 4.2 Editor Input Paths
 
 Three input paths produce the same Dataview `[key:: value]` storage

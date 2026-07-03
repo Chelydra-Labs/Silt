@@ -114,6 +114,51 @@ requires a `[due::]` anchor — the resolver anchors on it, so
 `every day|weekday|week|month|year` and `every N days|weeks|months|years`,
 with end-of-month clamping (Jan 31 + 1 month → Feb 28).
 
+**Standalone-tasks navigation router (#374).** Because the `.silt`
+notebook is synthetic and hidden, every navigation funnel that would
+otherwise open a `.silt / tasks` tab (search jump, tag-explorer click,
+backlink follow, sidebar) is rewritten to a single shared constant
+`STANDALONE_TASKS_NOTEBOOK = '.silt'` and routed to the Tasks view
+instead. The Tasks view (#370) is the only user-facing surface for
+standalone tasks; the raw `.md` page is never reachable from any UI
+path. The router lives in `frontend/src/lib/standaloneTasksNav.ts` and
+is the single source of truth for the routing policy — App.svelte's
+three funnel points (`openPage`, `handleSearchJump`, and the
+`navigate-to-block` window listener) all delegate to
+`routeJumpTarget`.
+
+**Tasks view (#370).** A new first-party plugin
+(`frontend/src/plugins/first-party/silt-tasks/`) that lists every
+active task across the vault grouped into **Overdue / Today / Upcoming
+(next 7 days, matching the Things 3 default) / No Date / Completed**.
+The "No Date" group gives undated tasks (the natural output of the
+global quick-add) a first-class surface that the existing date-
+scoped agenda surfaces do not — it's a sibling to Calendar's agenda
+mode, not a replacement. The Completed group is collapsed by default
+and ordered by file_date DESC as the best-available completion-
+recency proxy; a dedicated `completed_at` column on the `tasks`
+table is a deliberate follow-up (issue's "tradeoff noted"). Built
+exclusively on the PluginContext SDK (`sqliteQuery`,
+`updateBlockState`, `on('block:changed')`) — no new SQL, no new Go
+binding, no new capabilities.
+
+**Standalone-tasks incremental reindex (#372).** `AddRecursive` in
+the directory watcher (`backend/monitor/watcher.go`) skips dot-prefixed
+directories by design — that's what keeps `.system/`, `.silt/`, and
+user dot-folders out of the watch set (and out of the index). The
+standalone-tasks file lives in that skipped directory, so a focused
+carve-out in `DirectoryWatcher.Start()` adds `<vault>/.silt` to the
+fsnotify watch set after the main `AddRecursive` returns. The dot-
+prefix skip stays untouched (generalizing it into an allowlist risks
+reintroducing the `.system` index feedback loop the skip was added to
+prevent). The existing listen loop's `.md` filter, focus-lock check,
+`WriteTracker` self-write suppression, and `reindexFile` path are
+reused unchanged — `reindexFile`'s `resolveFileMetadata` already
+derives `notebook=".silt", section="", page="tasks"` for that path.
+In-app writes (`CreateStandaloneTask` via the atomic-writer path)
+still no-op the watcher via `tracker.RegisterWrite`, so the carve-
+out observability is purely for external tools.
+
 ---
 
 1. System Topology & Process Boundaries
