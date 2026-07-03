@@ -885,12 +885,6 @@
           <!-- Section-less root pages -->
           {#each sortedSections.filter((s) => s.name === '') as rootSec}
             {#if rootSec.pages.length > 0}
-              <div class="h-px bg-border-muted my-2 mx-1 opacity-60"></div>
-              <div
-                class="px-2 py-1 text-[9px] uppercase tracking-wider text-text-muted/40 font-label-sm-bold"
-              >
-                Root Pages
-              </div>
               {#each sortByName(rootSec.pages, navOrder.pages[`${activeNotebook}/`] ?? []) as pg (pg.name)}
                 {@const isActive =
                   activeSection === '' && activePage === pg.name}
