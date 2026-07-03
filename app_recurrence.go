@@ -10,6 +10,7 @@ import (
 	"silt/backend/plugins"
 	"silt/backend/recurrence"
 	"strconv"
+	"time"
 )
 
 // SetTaskRecurrence rewrites the [recur::] token on a task block (#297).
@@ -119,6 +120,15 @@ func (a *App) setTaskRecurrence(blockID, recurrenceRule string) error {
 					if recurrenceRule != "" && parsedBlocks[i].DueDate == "" {
 						writeErr = fmt.Errorf("cannot set recurrence on block %s: task has no [due::] date (set a due date first)", blockID)
 						return
+					}
+					// Defense-in-depth: reject a recurrence set on a task with
+					// an unparseable due date (shouldn't happen — normalizeDate
+					// cleans it — but guards against direct markdown edits).
+					if recurrenceRule != "" && parsedBlocks[i].DueDate != "" {
+						if _, derr := time.Parse("2006-01-02", parsedBlocks[i].DueDate); derr != nil {
+							writeErr = fmt.Errorf("cannot set recurrence on block %s: due date %q is not a valid YYYY-MM-DD", blockID, parsedBlocks[i].DueDate)
+							return
+						}
 					}
 					parsedBlocks[i].Recurrence = recurrenceRule
 					found = true

@@ -159,18 +159,23 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 						writeErr = fmt.Errorf("block %s is not a task", blockID)
 						return
 					}
+					wasDone := parsedBlocks[i].Status == "DONE"
 					parsedBlocks[i].Status = newState
 					// Recurring-task auto-recreation (#296): when a task with a
-					// [recur::] token is marked DONE, spawn the next incomplete
-					// instance directly below it in the same parsed slice. The
-					// existing render → write → re-index chain then persists both
-					// the completion and the new instance atomically. The new
-					// block gets a fresh UUID and an advanced [due::] date; the
-					// completed line is left otherwise untouched (it is history).
+					// [recur::] token transitions TO DONE (not already DONE),
+					// spawn the next incomplete instance directly below it in
+					// the same parsed slice. The existing render → write →
+					// re-index chain then persists both the completion and the
+					// new instance atomically. The new block gets a fresh UUID
+					// and an advanced [due::] date. The completed line's recur
+					// token is stripped so: (a) re-marking DONE is idempotent,
+					// (b) the badge doesn't render on completed history items,
+					// and (c) the forward rule lives only on the active TODO.
 					// A malformed recurrence rule is a no-op + log so the DONE
-					// transition never fails because of recurrence (#296 edge).
-					if newState == "DONE" && parsedBlocks[i].Recurrence != "" {
+					// transition never fails because of recurrence.
+					if newState == "DONE" && !wasDone && parsedBlocks[i].Recurrence != "" {
 						if nb, ok := buildNextRecurrence(parsedBlocks[i]); ok {
+							parsedBlocks[i].Recurrence = ""
 							parsedBlocks = insertBlockAfter(parsedBlocks, i, nb)
 						}
 					}
@@ -240,6 +245,8 @@ func buildNextRecurrence(completed parser.ParsedBlock) (parser.ParsedBlock, bool
 	if completed.DueDate != "" {
 		if d, err := time.Parse("2006-01-02", completed.DueDate); err == nil {
 			base = d
+		} else {
+			log.Printf("recurrence: unparseable due date %q on block %s, falling back to today", completed.DueDate, completed.ID)
 		}
 	}
 	next := rule.NextFutureInstance(base, time.Now())
@@ -268,15 +275,17 @@ func buildNextRecurrence(completed parser.ParsedBlock) (parser.ParsedBlock, bool
 // task instance on the line directly below the completed block so it renders
 // in the right position via RenderFileContent (which serializes in slice
 // order). Line numbers after the insertion point are bumped by 1 to stay
-// monotonic, matching how ParseFileContent assigns them.
+// insertBlockAfter splices nb into blocks immediately after position i and
+// returns the resulting slice. Used by the recurrence hook to land the new
+// task instance on the line directly below the completed block so it renders
+// in the right position via RenderFileContent (which serializes in slice
+// order). Line numbers are assigned by the subsequent re-parse, so no manual
+// bumping is needed here.
 func insertBlockAfter(blocks []parser.ParsedBlock, i int, nb parser.ParsedBlock) []parser.ParsedBlock {
 	out := make([]parser.ParsedBlock, 0, len(blocks)+1)
 	out = append(out, blocks[:i+1]...)
 	out = append(out, nb)
 	out = append(out, blocks[i+1:]...)
-	for j := i + 2; j < len(out); j++ {
-		out[j].LineNumber++
-	}
 	return out
 }
 

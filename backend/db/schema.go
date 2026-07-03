@@ -125,7 +125,7 @@ func (dm *DatabaseManager) initSchema() error {
 	for _, col := range []struct{ name, defn string }{
 		{"pinned", "INTEGER DEFAULT 0"},
 		{"progress", "INTEGER DEFAULT 0"},
-		{"recur", "TEXT"},
+		{"recur", "TEXT"}, // nullable, no default — NULL for one-off tasks
 		{"comments_count", "INTEGER DEFAULT 0"},
 		{"links_count", "INTEGER DEFAULT 0"},
 	} {

@@ -290,6 +290,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
           owner: block.owner || '',
           start_date: block.start_date || '',
           due_date: block.due_date || '',
+          recurrence: block.recurrence || '',
           priority: block.priority || 3,
           file_date: block.file_date || ''
         },
@@ -1270,6 +1271,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       block.owner = attrs.owner || ''
       block.start_date = attrs.start_date || ''
       block.due_date = attrs.due_date || ''
+      block.recurrence = attrs.recurrence || ''
       block.priority = Number(attrs.priority ?? 3)
       block.raw_text = `- [${block.status === 'DOING' ? '/' : block.status === 'DONE' ? 'x' : ' '}] ${block.status} TASK ${cleanText}`
     } else if (type === 'NOTE') {

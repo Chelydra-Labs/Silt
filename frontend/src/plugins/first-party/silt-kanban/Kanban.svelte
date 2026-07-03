@@ -1073,8 +1073,9 @@
                           class="text-accent-secondary-start flex items-center"
                           title="Recurring: {card.recurrence}"
                         >
-                          <span class="material-symbols-outlined text-[12px]"
-                            >event_repeat</span
+                          <span
+                            class="material-symbols-outlined text-[12px]"
+                            aria-hidden="true">event_repeat</span
                           >
                         </span>
                       {/if}

@@ -203,3 +203,30 @@ func TestNextFutureInstance_WeekdaySkipsMissedWeekends(t *testing.T) {
 		t.Errorf("weekday skip-missed: got %s, want 2026-06-30 (Tue)", gotStr)
 	}
 }
+
+func TestNextFutureInstance_MonthEndAnchorSkipMissed(t *testing.T) {
+	// A monthly task on Jan 31 that's 3 months overdue: skip-missed should
+	// land on the next future occurrence, retaining the 31st anchor.
+	jan31 := mustDate(t, "2026-01-31")
+	now := mustDate(t, "2026-04-15")
+	r := Rule{UnitMonth, 1}
+	got := FormatDate(r.NextFutureInstance(jan31, now))
+	// Jan 31 + 4 months = Apr 30 (clamped from 31). Apr 30 > Apr 15 = future.
+	if got != "2026-04-30" {
+		t.Errorf("month-end skip-missed: got %s, want 2026-04-30 (anchor 31 retained, clamped to Apr 30)", got)
+	}
+}
+
+func TestNextFutureInstance_CapFallback(t *testing.T) {
+	// A daily task anchored centuries in the past hits the iteration cap.
+	// The result must still be deterministic (the furthest computed date).
+	base := mustDate(t, "1800-01-01")
+	now := mustDate(t, "2026-07-02")
+	r := Rule{UnitDay, 1}
+	got := r.NextFutureInstance(base, now)
+	// Should land roughly maxSkipIterations days after base — not necessarily
+	// in the future, but deterministic and non-panicking.
+	if got.Before(base) {
+		t.Errorf("cap fallback returned a date before base: %s", FormatDate(got))
+	}
+}

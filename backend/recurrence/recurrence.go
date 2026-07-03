@@ -156,35 +156,40 @@ func lastDayOfMonth(year int, month time.Month) int {
 	return firstOfNext.AddDate(0, 0, -1).Day()
 }
 
-// advanceOnce moves `from` forward by exactly one interval of the rule. It is
-// the single primitive both NextInstance and NextFutureInstance build on.
-func (r Rule) advanceOnce(from time.Time) time.Time {
+// advanceFromAnchor computes the n-th interval step from anchor, always
+// re-deriving from the original base date so month-end anchors (Jan 31) are
+// retained across multiple hops. Chaining advanceOnce would drift: Jan 31 →
+// Feb 28 → Mar 28 (wrong). Re-deriving gives Jan 31 → Feb 28 → Mar 31 (right)
+// because addMonths always clamps from the original day-of-month.
+func (r Rule) advanceFromAnchor(anchor time.Time, n int) time.Time {
 	switch r.Unit {
 	case UnitDay:
-		return from.AddDate(0, 0, r.Interval)
+		return anchor.AddDate(0, 0, r.Interval*n)
 	case UnitWeek:
-		return from.AddDate(0, 0, 7*r.Interval)
+		return anchor.AddDate(0, 0, 7*r.Interval*n)
 	case UnitMonth:
-		return addMonths(from, r.Interval)
+		return addMonths(anchor, r.Interval*n)
 	case UnitYear:
-		// Years are 12 months; reuse the clamping logic so Feb 29 → Feb 28
-		// in non-leap target years.
-		return addMonths(from, 12*r.Interval)
+		return addMonths(anchor, 12*r.Interval*n)
 	case UnitWeekday:
-		// Advance by the interval in days, then skip forward over any
-		// weekend days that land on. `every weekday` = Mon–Fri.
-		next := from.AddDate(0, 0, r.Interval)
-		for {
-			wd := next.Weekday()
-			if wd != time.Saturday && wd != time.Sunday {
-				break
+		// Sequential: advance one weekday at a time. Weekday rules have no
+		// clamping issue, so chaining is safe. Interval is always 1 today
+		// (the grammar accepts only singular `every weekday`); a future
+		// plural `every N weekdays` would need N-step-per-cycle semantics.
+		next := anchor
+		for j := 0; j < n; j++ {
+			next = next.AddDate(0, 0, r.Interval)
+			for {
+				wd := next.Weekday()
+				if wd != time.Saturday && wd != time.Sunday {
+					break
+				}
+				next = next.AddDate(0, 0, 1)
 			}
-			next = next.AddDate(0, 0, 1)
 		}
 		return next
 	default:
-		// Unreachable from ParseRule; guard against a hand-built Rule.
-		return from
+		return anchor
 	}
 }
 
@@ -192,7 +197,7 @@ func (r Rule) advanceOnce(from time.Time) time.Time {
 // the raw interval step — it does NOT skip past dates. Callers that need the
 // "next strictly-future occurrence" behaviour should use NextFutureInstance.
 func (r Rule) NextInstance(from time.Time) time.Time {
-	return r.advanceOnce(from)
+	return r.advanceFromAnchor(from, 1)
 }
 
 // NextFutureInstance returns the next due date that is strictly after `now`,
@@ -201,19 +206,30 @@ func (r Rule) NextInstance(from time.Time) time.Time {
 // skips missed instances (Todoist "skip-missed" model) until it lands on a
 // future date, bounded by maxSkipIterations to prevent a pathological loop.
 //
+// Each step re-derives from the original base (not the previous result) so
+// month-end anchors are retained: Jan 31 + 2 months = Mar 31, not Mar 28.
+//
+// Both base and now are normalised to local midnight (using now's timezone)
+// so the "future" boundary matches the user's local calendar, not UTC.
 // `base` is the anchor: typically the task's due date. `now` is the reference
 // for "future" — pass time.Now() in production and a fixed clock in tests.
 func (r Rule) NextFutureInstance(base, now time.Time) time.Time {
-	// Normalise to midnight UTC so day/weekday math is not perturbed by the
-	// clock time component of base (due dates are YYYY-MM-DD only).
-	base = time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, time.UTC)
-	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	// Normalise to midnight in now's local timezone so day math is not
+	// perturbed by clock time and the "today" boundary matches the user's
+	// calendar (not UTC midnight, which disagrees near local midnight).
+	loc := now.Location()
+	base = time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, loc)
+	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 
-	next := r.advanceOnce(base)
-	for i := 0; i < maxSkipIterations && !next.After(now); i++ {
-		next = r.advanceOnce(next)
+	for i := 1; i <= maxSkipIterations; i++ {
+		next := r.advanceFromAnchor(base, i)
+		if next.After(now) {
+			return next
+		}
 	}
-	return next
+	// Cap hit: return the furthest computed date as a best-effort fallback.
+	// This only happens for pathological cases (base centuries in the past).
+	return r.advanceFromAnchor(base, maxSkipIterations)
 }
 
 // FormatDate renders a time.Time as the YYYY-MM-DD string used by the

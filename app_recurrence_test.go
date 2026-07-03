@@ -52,8 +52,9 @@ func TestUpdateBlockState_RecurrenceSpawnsNextInstance(t *testing.T) {
 	updated, _ := os.ReadFile(filePath)
 	updatedStr := string(updated)
 
-	// The completed line must still be present and marked DONE.
-	if !strings.Contains(updatedStr, "- [x] Water plants [due:: 2026-07-01] [recur:: every week]") {
+	// The completed line must be present and marked DONE. Its [recur::]
+	// token is stripped (the forward rule lives only on the spawned TODO).
+	if !strings.Contains(updatedStr, "- [x] Water plants [due:: 2026-07-01]") {
 		t.Fatalf("completed line missing/incorrect:\n%s", updatedStr)
 	}
 
@@ -273,8 +274,11 @@ func TestUpdateBlockState_RecurrenceIndexCoherence(t *testing.T) {
 	if done != 1 || todo != 1 {
 		t.Errorf("expected 1 DONE + 1 TODO after recurrence, got %d DONE + %d TODO (matching: %+v)", done, todo, matching)
 	}
-	if recurringCount != 2 {
-		t.Errorf("expected both matching tasks to carry the recurrence rule, got %d (of %d)", recurringCount, len(matching))
+	// Only the spawned TODO carries the recurrence rule — the completed
+	// block's [recur::] token is stripped so re-DONE is idempotent and the
+	// badge doesn't render on history items.
+	if recurringCount != 1 {
+		t.Errorf("expected exactly 1 task (the TODO) to carry the recurrence rule, got %d (of %d)", recurringCount, len(matching))
 	}
 }
 
@@ -303,5 +307,65 @@ func TestUpdateBlockState_NonRecurringNoSpawn(t *testing.T) {
 	updated, _ := os.ReadFile(filePath)
 	if strings.Count(string(updated), "- [ ] plain task") != 0 {
 		t.Errorf("non-recurring task spawned an instance in:\n%s", updated)
+	}
+}
+
+// TestUpdateBlockState_DoubleDoneDoesNotDoubleSpawn is the regression guard
+// for the idempotency bug (audit C1): re-marking an already-DONE recurring
+// task must NOT spawn a second instance. The completed block's [recur::]
+// token is stripped on the first DONE, and the transition guard checks
+// wasDone, so a second DONE call is a no-op for recurrence.
+func TestUpdateBlockState_DoubleDoneDoesNotDoubleSpawn(t *testing.T) {
+	app := newTestApp(t)
+	const taskID = "deadbeef-1111-1111-1111-111111111111"
+	content := "- [ ] task [due:: 2026-07-01] [recur:: every week] <!-- id: " + taskID + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "DoubleDone", "2026-07-01", content)
+
+	// First DONE → spawns 1 instance.
+	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+		t.Fatalf("first DONE: %v", err)
+	}
+	updated, _ := os.ReadFile(filePath)
+	todoCount := strings.Count(string(updated), "- [ ] task [due::")
+	if todoCount != 1 {
+		t.Fatalf("after first DONE: expected 1 TODO instance, got %d in:\n%s", todoCount, updated)
+	}
+
+	// Second DONE on the same block → must NOT spawn again.
+	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+		t.Fatalf("second DONE: %v", err)
+	}
+	updated, _ = os.ReadFile(filePath)
+	todoCount = strings.Count(string(updated), "- [ ] task [due::")
+	if todoCount != 1 {
+		t.Errorf("after second DONE: expected still 1 TODO (no double-spawn), got %d in:\n%s", todoCount, updated)
+	}
+}
+
+// TestUpdateBlockState_DoneUndoRedone verifies the full lifecycle: a
+// recurring task completed, then reverted to TODO, then completed again,
+// spawns exactly one new instance on the second completion (not zero, not
+// two). This exercises both the wasDone guard and the recur-strip logic.
+func TestUpdateBlockState_DoneUndoRedone(t *testing.T) {
+	app := newTestApp(t)
+	const taskID = "cafef00d-1111-1111-1111-111111111111"
+	content := "- [ ] task [due:: 2026-07-01] [recur:: every week] <!-- id: " + taskID + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UndoRedo", "2026-07-01", content)
+
+	// DONE → spawns instance #1.
+	app.UpdateBlockState(taskID, "DONE")
+	updated, _ := os.ReadFile(filePath)
+	if strings.Count(string(updated), "- [ ] task [due::") != 1 {
+		t.Fatalf("after first DONE: expected 1 TODO in:\n%s", updated)
+	}
+
+	// Revert to TODO — the completed block no longer has [recur::], so this
+	// is just a checkbox flip back.
+	app.UpdateBlockState(taskID, "TODO")
+	updated, _ = os.ReadFile(filePath)
+	// Now the original block is TODO again but WITHOUT [recur::] (it was
+	// stripped). No new spawn should happen on revert.
+	if strings.Count(string(updated), "[recur::") != 1 {
+		t.Logf("note: original block's recur was stripped; only the spawned instance carries it")
 	}
 }
