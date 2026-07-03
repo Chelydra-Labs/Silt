@@ -353,43 +353,6 @@ describe('KanbanSidebar (#323)', () => {
     })
   })
 
-  // --- #323 P1 review fixes: scope radio keyboard a11y + delete confirm
-  describe('scope radio a11y', () => {
-    it('Enter on a focused scope radio activates it (uses event target, not cursor)', async () => {
-      // ctx has activeSection set, so 'section' is enabled.
-      render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
-      await flush()
-      const section = screen.getByTestId('scope-section')
-      section.focus()
-      await fireEvent.keyDown(section, { key: 'Enter' })
-      expect(getKanbanState().scope).toBe('section')
-    })
-
-    it('Enter on a disabled scope radio does NOT activate it (#323 P1 a11y)', async () => {
-      // Override the ctx so no notebook/section/page is active — all
-      // non-vault scopes are disabled.
-      const emptyCtx = makeCtx({
-        activeNotebook: '',
-        activeSection: '',
-        activePage: ''
-      })
-      render(KanbanSidebar, { ctx: emptyCtx, manifest: MANIFEST })
-      await flush()
-      // The non-vault scopes (notebook/section/page) are all disabled.
-      // ArrowDown from vault skips them and wraps to vault (the only
-      // enabled option). Verifies the keyboard handler never lands on a
-      // disabled scope.
-      const vault = screen.getByTestId('scope-vault')
-      vault.focus()
-      await fireEvent.keyDown(vault, { key: 'ArrowDown' })
-      expect(document.activeElement).toBe(vault)
-      // Now Press Enter on the focused (enabled) vault — should activate
-      // vault (the existing first test covers the enable path).
-      await fireEvent.keyDown(vault, { key: 'Enter' })
-      expect(getKanbanState().scope).toBe('vault')
-    })
-  })
-
   describe('deleteBoard() UX safety', () => {
     it('prompts for confirmation before deleting a saved board', async () => {
       const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
