@@ -451,7 +451,16 @@
           if (activePage === renameCtx.page) {
             activePage = trimmed
           }
-          window.dispatchEvent(new CustomEvent('page-renamed', { detail: { notebook: renameCtx.notebook, section: renameCtx.section, oldName: renameCtx.page, newName: trimmed } }))
+          window.dispatchEvent(
+            new CustomEvent('page-renamed', {
+              detail: {
+                notebook: renameCtx.notebook,
+                section: renameCtx.section,
+                oldName: renameCtx.page,
+                newName: trimmed
+              }
+            })
+          )
         }
       } else if (createMode === 'notebook') {
         await CreateNotebook(trimmed)
@@ -601,9 +610,19 @@
       loadNavigation()
       loadNavOrder()
     }
+    const handleCreatePageInlineEvent = (e: Event) => {
+      const sectionName =
+        (e as CustomEvent).detail?.sectionName ?? activeSection ?? ''
+      void handleCreatePageInline(sectionName)
+    }
     window.addEventListener('refresh-navigation', handleRefresh)
+    window.addEventListener('create-page-inline', handleCreatePageInlineEvent)
     return () => {
       window.removeEventListener('refresh-navigation', handleRefresh)
+      window.removeEventListener(
+        'create-page-inline',
+        handleCreatePageInlineEvent
+      )
       if (dndErrorTimer) clearTimeout(dndErrorTimer)
     }
   })

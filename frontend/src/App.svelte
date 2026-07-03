@@ -1389,7 +1389,7 @@
                   Select or create a page
                 {/if}
               </h2>
-              <p class="text-text-muted font-body-md max-w-md">
+              <p class="text-text-muted font-body-md max-w-md mb-5">
                 {#if openTabs.length === 0}
                   Click a page in the sidebar to open it in a tab. Single-click
                   opens a preview; double-click opens a pinned tab.
@@ -1399,6 +1399,37 @@
                   section and a page to start writing.
                 {/if}
               </p>
+              {#if activeNotebook && openTabs.length === 0}
+                <div class="flex items-center gap-3">
+                  <button
+                    onclick={() => {
+                      window.dispatchEvent(
+                        new CustomEvent('create-page-inline', {
+                          detail: { sectionName: activeSection || '' }
+                        })
+                      )
+                    }}
+                    class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-void font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
+                  >
+                    <span class="material-symbols-outlined text-[18px]"
+                      >note_add</span
+                    >
+                    Create Page
+                  </button>
+                  <button
+                    onclick={() => {
+                      templatePickerMode = 'new-page'
+                      showTemplatePicker = true
+                    }}
+                    class="px-4 py-2 rounded-lg bg-transparent border border-border-zinc text-text-primary font-label-sm-bold hover:bg-hover transition-all cursor-pointer flex items-center gap-2"
+                  >
+                    <span class="material-symbols-outlined text-[18px]"
+                      >article</span
+                    >
+                    New from Template
+                  </button>
+                </div>
+              {/if}
             </div>
           {/if}
         {:else if activeView === 'tags'}
