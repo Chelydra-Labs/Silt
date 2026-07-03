@@ -39,9 +39,16 @@
      * lands focused on the exact row rather than at the top of the list.
      */
     focusBlockId?: string
+    /**
+     * Monotonic counter (typically a timestamp string). Bumping this value
+     * re-fires the focus $effect even when `focusBlockId` is unchanged —
+     * so a second jump to the same task reflows the transient highlight.
+     * Mirrors `searchTargetKey` for normal page jumps (App.svelte).
+     */
+    focusKey?: string
   }
 
-  let { ctx, manifest, focusBlockId = '' }: Props = $props()
+  let { ctx, manifest, focusBlockId = '', focusKey = '' }: Props = $props()
 
   interface TaskItem {
     id: string
@@ -188,6 +195,9 @@
   let focusedRowId = $state('')
 
   $effect(() => {
+    // Track focusKey so a re-fire triggers the effect even when
+    // focusBlockId is unchanged.
+    void focusKey
     const target = focusBlockId
     if (!target) return
     if (loading) return

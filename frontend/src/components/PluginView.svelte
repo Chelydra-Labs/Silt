@@ -16,6 +16,14 @@
      * receive `undefined` and ignore it.
      */
     focusBlockId?: string
+    /**
+     * Monotonic counter (typically a timestamp) that bumps every time the
+     * focus should be re-applied — even if `focusBlockId` is the same as
+     * a previous focus. Mirrors the `searchTargetKey` pattern for normal
+     * page jumps so the Tasks view's `$effect` re-fires on each
+     * navigation. Empty string disables re-focus.
+     */
+    focusKey?: string
   }
 
   let {
@@ -23,7 +31,8 @@
     activeNotebook,
     activeSection,
     activePage,
-    focusBlockId
+    focusBlockId,
+    focusKey
   }: Props = $props()
 
   let plugin = $derived(loadedPlugins.plugins.get(pluginId))
