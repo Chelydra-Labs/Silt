@@ -17,6 +17,7 @@ import {
   type TabsState,
   type ViewMode
 } from './tabs'
+import { routeJumpTarget, isStandaloneTaskRef } from './standaloneTasksNav'
 
 // Helpers -------------------------------------------------------------
 
@@ -718,5 +719,70 @@ describe('view mode (#195 — viewMode on TabEntry)', () => {
     expect(second.tabs).toHaveLength(1)
     expect(second.tabs[0].page).toBe(PAGE_B.page)
     expect(second.tabs[0].viewMode).toBe('edit')
+  })
+})
+
+// --- #374: standalone-task routing invariant -------------------------
+//
+// Documents the openTabs contract: under no circumstance should a
+// `.silt` page locator ever produce an openTabs entry. The guard
+// lives in App.svelte (not tabs.ts) and routes through
+// `routeJumpTarget` — these tests pin the reducer end of the
+// contract so future refactors can't quietly regress it.
+
+const SILT_REF: PageRef = {
+  notebook: '.silt',
+  section: '',
+  page: 'tasks'
+}
+
+describe('#374: standalone-task routing contract', () => {
+  it('isStandaloneTaskRef identifies the synthetic .silt notebook', () => {
+    expect(isStandaloneTaskRef('.silt')).toBe(true)
+    expect(isStandaloneTaskRef('Work')).toBe(false)
+    expect(isStandaloneTaskRef('.silt-other')).toBe(false)
+  })
+
+  it('routeJumpTarget returns tasks-view (no open-page path) for .silt', () => {
+    const target = routeJumpTarget({
+      notebook: SILT_REF.notebook,
+      section: SILT_REF.section,
+      page: SILT_REF.page,
+      blockTarget: { blockId: 'task-uuid-1' }
+    })
+    expect(target.kind).toBe('tasks-view')
+    if (target.kind === 'tasks-view') {
+      expect(target.blockTarget?.blockId).toBe('task-uuid-1')
+    }
+  })
+
+  it('the routing helper never returns open-page for any .silt ref shape', () => {
+    const refs = [
+      SILT_REF,
+      { ...SILT_REF, section: 'anything' },
+      { ...SILT_REF, page: 'anything' },
+      {
+        notebook: '.silt',
+        section: 'A',
+        page: 'B',
+        blockTarget: { blockId: 'x' }
+      }
+    ]
+    for (const ref of refs) {
+      expect(routeJumpTarget(ref).kind).toBe('tasks-view')
+    }
+  })
+
+  it('the openTabs contract: openPage(state, .silt, preview) is NOT a tab-creation path under the routing guard', () => {
+    // Drive the App.svelte-level wrap as a pure function:
+    // routeJumpTarget() decides the branch, App.svelte applies it.
+    // A `.silt` ref → `kind: 'tasks-view'` means openPage is never
+    // called; therefore openTabs is unchanged.
+    const target = routeJumpTarget(SILT_REF)
+    expect(target).toEqual({
+      kind: 'tasks-view',
+      notebook: '.silt',
+      blockTarget: undefined
+    })
   })
 })

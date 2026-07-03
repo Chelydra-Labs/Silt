@@ -121,13 +121,15 @@ backlink follow, sidebar) is rewritten to a single shared constant
 `STANDALONE_TASKS_NOTEBOOK = '.silt'` and routed to the Tasks view
 instead. The Tasks view (#370) is the only user-facing surface for
 standalone tasks; the raw `.md` page is never reachable from any UI
-path. The routing guard lives in `frontend/src/lib/standaloneTasksNav.ts`
-and is the single source of truth for the routing policy — App.svelte's
+path. The router lives in `frontend/src/lib/standaloneTasksNav.ts` and
+is the single source of truth for the routing policy — App.svelte's
 three funnel points (`openPage`, `handleSearchJump`, and the
-`navigate-to-block` window listener) call `isStandaloneTaskRef(notebook)`
-and hand off to `openTasksView(blockId)` instead of opening a page tab. A
-fail-loud `$effect` in App.svelte also drops any stray `.silt` entry that
-ever slips into `openTabs` and warns in the console.
+`navigate-to-block` window listener) all delegate to
+`routeJumpTarget`. The pure reducer returns a discriminated union
+(`tasks-view` | `open-page`) and the calling site pattern-matches on
+`kind`. A fail-loud `$effect` in App.svelte also drops any stray
+`.silt` entry that ever slips into `openTabs` and warns in the
+console, then persists the cleaned state.
 
 **Tasks view (#370).** A new first-party plugin
 (`frontend/src/plugins/first-party/silt-tasks/`) that lists every

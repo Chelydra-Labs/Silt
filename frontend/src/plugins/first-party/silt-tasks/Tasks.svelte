@@ -191,12 +191,24 @@
 
   // Subscribe to `block:changed` so a task marked done (or a task whose
   // due date was just set) reflows into the right group without a manual
-  // reload — mirrors AgendaList.svelte:154-164.
-  let offBlockChanged: (() => void) | undefined
+  // reload. Mirrors Kanban.svelte's debounced pattern (80ms trailing):
+  // a burst of edits (bulk task completion, sync conflict rewriting
+  // many lines) collapses into a single reload. Cleanup is returned
+  // from the $effect so a ctx swap during hot-reload (PluginView's
+  // $derived.by re-mounts the inner ctx) doesn't leak a stale
+  // subscriber.
+  let blockChangedTimer: ReturnType<typeof setTimeout> | null = null
   $effect(() => {
-    offBlockChanged = ctx.on('block:changed', () => {
-      void reload()
+    const off = ctx.on('block:changed', () => {
+      if (blockChangedTimer) clearTimeout(blockChangedTimer)
+      blockChangedTimer = setTimeout(() => {
+        void reload()
+      }, 80)
     })
+    return () => {
+      if (blockChangedTimer) clearTimeout(blockChangedTimer)
+      off()
+    }
   })
 
   // Focus the targeted row once the list is rendered (#374 AC4). The
@@ -224,7 +236,11 @@
       const el = document.querySelector(
         `[data-group]:not([data-group="completed"]) [data-block-id="${CSS.escape(target)}"]`
       ) as HTMLElement | null
-      el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      // Missing-target case (task was marked done between dispatch and
+      // effect run, malformed id, etc.) — skip both the highlight and
+      // the 3s timer so we don't fake-succeed.
+      if (!el) return
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
       focusedRowId = target
       if (highlightTimer) clearTimeout(highlightTimer)
       highlightTimer = setTimeout(() => {
@@ -234,12 +250,13 @@
     })
   })
 
-  // Cleanup the highlight + interval + subscription timers on unmount.
+  // Cleanup the highlight + interval timers on unmount. The
+  // block:changed subscriber is released by the $effect's return
+  // cleanup above.
   onDestroy(() => {
     if (nowInterval) clearInterval(nowInterval)
     if (markDoneTimer) clearTimeout(markDoneTimer)
     if (highlightTimer) clearTimeout(highlightTimer)
-    offBlockChanged?.()
   })
 </script>
 
@@ -469,8 +486,9 @@
           data-testid="tasks-truncated-notice"
         >
           Showing the first
-          {openItems.length + doneItems.length} tasks — refine with a tag or notebook
-          filter to see the rest.
+          {openItems.length + doneItems.length}
+          tasks — there are more below the display limit. Complete or reschedule some
+          to surface them.
         </p>
       {/if}
     {/if}
