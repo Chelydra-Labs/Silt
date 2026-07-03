@@ -144,8 +144,10 @@
     aria-selected={activeSection === sectionKey}
   >
     <span
-      class="material-symbols-outlined text-text-muted text-[16px] transition-transform"
+      class="material-symbols-outlined text-[16px] transition-transform"
       class:rotate-90={isExpanded}
+      class:text-accent-primary-start={activeSection === sectionKey}
+      class:text-text-muted={activeSection !== sectionKey}
     >
       chevron_right
     </span>
@@ -173,7 +175,12 @@
   </div>
 
   {#if isExpanded}
-    <div class="ml-4 border-l border-border-muted pl-1 mt-0.5 mb-1.5">
+    <div
+      class="ml-4 border-l pl-1 mt-0.5 mb-1.5 transition-colors duration-200 {activeSection ===
+      sectionKey
+        ? 'border-accent-primary-start/30'
+        : 'border-border-muted'}"
+    >
       {#if section.pages.length === 0 && (!section.children || section.children.length === 0)}
         <div
           class="text-text-muted text-[11px] font-body-md py-1.5 px-2 italic"
