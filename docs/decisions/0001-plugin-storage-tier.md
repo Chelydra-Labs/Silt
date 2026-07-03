@@ -2,7 +2,6 @@
 
 Date: 2026-07-01
 Status: Accepted
-Sprint: 19 (#212, #213)
 
 ## Context
 

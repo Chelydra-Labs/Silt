@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { SearchBlocksPaged } from '../../wailsjs/go/main/App.js'
+  import { STANDALONE_TASKS_NOTEBOOK } from '../lib/standaloneTasksNav'
 
   interface TaskResult {
     id: string
@@ -357,19 +358,30 @@
             class:border-l-2={idx === selectedIdx}
             class:border-accent-primary-start={idx === selectedIdx}
           >
-            <!-- Breadcrumb metadata -->
+            <!-- Breadcrumb metadata. For `.silt` standalone-task results, the
+                 synthetic notebook name is hidden (the routing guard sends
+                 the click to the Tasks view); we render a friendlier
+                 "Standalone task › tasks" instead. (#374) -->
             <div
               class="flex items-center gap-1.5 text-[10px] text-text-muted uppercase tracking-widest font-label-sm-bold"
             >
-              <span>{res.notebook}</span>
-              <span class="material-symbols-outlined text-[10px]"
-                >chevron_right</span
-              >
-              <span>{res.section}</span>
-              <span class="material-symbols-outlined text-[10px]"
-                >chevron_right</span
-              >
-              <span>{res.page}</span>
+              {#if res.notebook === STANDALONE_TASKS_NOTEBOOK}
+                <span>Standalone task</span>
+                <span class="material-symbols-outlined text-[10px]"
+                  >chevron_right</span
+                >
+                <span>{res.page}</span>
+              {:else}
+                <span>{res.notebook}</span>
+                <span class="material-symbols-outlined text-[10px]"
+                  >chevron_right</span
+                >
+                <span>{res.section}</span>
+                <span class="material-symbols-outlined text-[10px]"
+                  >chevron_right</span
+                >
+                <span>{res.page}</span>
+              {/if}
               <span class="material-symbols-outlined text-[10px]"
                 >chevron_right</span
               >

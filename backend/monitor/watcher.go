@@ -252,6 +252,49 @@ func (dw *DirectoryWatcher) Start() error {
 		return err
 	}
 
+	// Standalone-tasks watcher carve-out (#372).
+	//
+	// AddRecursive skips dot-prefixed directories by design — that's what
+	// keeps `.system/`, `.silt/`, and user dot-folders out of the watcher
+	// (and out of the index — see also WalkMarkdown's matching skip in
+	// backend/parser/scanner.go:75). But the standalone-tasks file
+	// (#368) lives at <vault>/.silt/tasks.md, a single well-known file
+	// inside that skipped directory. Without targeted observation an
+	// external edit (sync conflict, manual edit, non-Silt editor) to that
+	// file is invisible until the next cold start. Recovery still
+	// round-trips through markdown so this is a parity gap, not a data-
+	// loss bug — but every other `.md` file in the vault gets
+	// incremental re-index on external change, and a focused watch on
+	// the parent `.silt/` directory closes the gap without generalizing
+	// the dot-prefix skip (which risks reintroducing the .system index
+	// feedback loop the skip was added to prevent).
+	//
+	// Strategy: watch `<vault>/.silt/` so any Create/Write/Remove on
+	// `.silt/tasks.md` arrives via the existing listen loop. The loop's
+	// `.md` filter, focus-lock check, WriteTracker self-write
+	// suppression, and `reindexFile` path are reused verbatim — none of
+	// them need to know about the synthetic notebook. `resolveFileMetadata`
+	// already derives notebook=".silt", section="", page="tasks" from
+	// the path (same path ScanStandaloneTasks uses on cold start), so
+	// the indexer needs no changes either.
+	//
+	// Guarded on `.silt/` existing at start time. If the directory is
+	// created mid-session by a non-Silt tool, the cold-start
+	// ScanStandaloneTasks on the next launch picks it up. The watcher
+	// on the dot-prefix-skip-path is a parity improvement, not a new
+	// discovery path.
+	dotDir := filepath.Join(dw.vaultPath, parser.StandaloneTasksNotebook)
+	if info, statErr := os.Stat(dotDir); statErr == nil && info.IsDir() {
+		if addErr := dw.watcher.Add(dotDir); addErr != nil {
+			// Don't fail Start() over the carve-out — the rest of the
+			// watcher is up, and the next cold start will re-index the
+			// standalone-tasks file via ScanStandaloneTasks. Log so a
+			// human can diagnose if the failure pattern matters.
+			log.Printf("DirectoryWatcher: failed to watch standalone-tasks dir %s: %v",
+				dotDir, addErr)
+		}
+	}
+
 	go dw.listenLoop()
 	dw.startLeaseSweeper()
 	return nil
@@ -456,7 +499,21 @@ func (dw *DirectoryWatcher) listenLoop() {
 
 			if isDir {
 				if event.Has(fsnotify.Create) {
-					if err := dw.AddRecursive(path); err != nil {
+					// Deferred registration for the standalone-tasks parent
+					// directory (#372 hardening). AddRecursive skips dot-
+					// prefix dirs by design, so a `.silt/` that didn't
+					// exist at Start() time wouldn't be added by the
+					// normal recursive walk. Watch it directly here:
+					// subsequent events on `.silt/tasks.md` then flow
+					// through the standard `.md` filter + tracker +
+					// reindexFile path. Idempotent — re-Add'ing an
+					// already-watched path is a fsnotify no-op.
+					if path == filepath.Join(dw.vaultPath, parser.StandaloneTasksNotebook) {
+						if addErr := dw.watcher.Add(path); addErr != nil {
+							log.Printf("DirectoryWatcher: failed to watch standalone-tasks dir %s: %v",
+								path, addErr)
+						}
+					} else if err := dw.AddRecursive(path); err != nil {
 						log.Printf("DirectoryWatcher: failed to watch new directory %s: %v", path, err)
 					}
 				}

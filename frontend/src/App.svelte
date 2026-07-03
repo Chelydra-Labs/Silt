@@ -72,6 +72,10 @@
     type ViewMode
   } from './lib/tabs'
   import { nextView } from './lib/viewCycle'
+  import {
+    isStandaloneTaskRef,
+    routeJumpTarget
+  } from './lib/standaloneTasksNav'
 
   let isInitialized = $state(false)
   let loading = $state(true)
@@ -85,6 +89,38 @@
   // change).
   let openTabs = $state<TabEntry[]>([])
   let activeTabId = $state<string>('')
+
+  // Fail-loud guard (#374 hardening): the `.silt` synthetic notebook is
+  // hidden by design — under no circumstance should it ever materialize
+  // as a tab in `openTabs`. The routing guard in `openPage` /
+  // `handleSearchJump` / `handleNavigateToBlock` covers every funnel in
+  // this file today, but future call sites could forget. This effect
+  // runs every time `openTabs` mutates; if any entry's notebook is
+  // `.silt` we log a loud warning (so the regression is visible in the
+  // console) and drop the entry from the in-memory state. We
+  // intentionally do not auto-remove silently — the warning is the
+  // point — but the removal prevents a leaked `.silt` tab from
+  // surviving into the next renderer pass.
+  $effect(() => {
+    const stray = openTabs.find((t) => isStandaloneTaskRef(t.notebook))
+    if (stray) {
+      console.warn(
+        '[silt] routing invariant violated: a .silt tab was added to openTabs. ',
+        'Removing it. This should be impossible — please file a bug with the stack trace.',
+        stray
+      )
+      openTabs = openTabs.filter((t) => t.id !== stray.id)
+      // If that stray tab happened to be active, clear the active id
+      // too — `syncActiveFromTab` will pick a sane replacement off the
+      // MRU head.
+      if (activeTabId === stray.id) activeTabId = ''
+      // Persist the cleanup so config.yaml's open_tabs stops re-emitting
+      // the stray entry on every launch. Without this, an upgrade-time
+      // user would see a console.warn loop on every restart until they
+      // manually edit their config.
+      schedulePersistTabs()
+    }
+  })
 
   // Per-notebook tab scoping: the tab strip and editor surface only show
   // tabs for the active notebook. The full openTabs array (all notebooks)
@@ -106,6 +142,7 @@
     { id: 'notes', label: 'Notes', icon: 'description' },
     { id: 'tags', label: 'Tags', icon: 'label' },
     { id: 'calendar', label: 'Calendar', icon: 'calendar_month' },
+    { id: 'tasks', label: 'Tasks', icon: 'checklist' },
     { id: 'kanban', label: 'Kanban', icon: 'view_kanban' }
   ]
   let selectedTag = $state('')
@@ -142,6 +179,16 @@
     mode: OpenPageMode,
     blockTarget: { fileDate?: string; blockId?: string } | undefined = undefined
   ): void {
+    // Standalone-task navigation router (#374). A `.silt` page locator
+    // is a synthetic notebook whose only purpose is the standalone-tasks
+    // file (#368). Routing through the editor's open-page funnel would
+    // open a raw `.silt / tasks` tab and leak the synthetic notebook name
+    // into the tab header. Delegate to openTasksView instead.
+    const target = routeJumpTarget({ ...ref, blockTarget })
+    if (target.kind === 'tasks-view') {
+      openTasksView(target.blockTarget?.blockId)
+      return
+    }
     const enablePreviewTabs = settings.config?.ui?.enable_preview_tabs !== false
     const maxOpenTabs = settings.config?.ui?.max_open_tabs ?? 8
     const result = openPageState(
@@ -397,6 +444,33 @@
   let searchTargetDate = $state('')
   let searchTargetBlockId = $state('')
   let searchTargetKey = $state('')
+  // Tasks view focus target (#374) — set by openTasksView when a
+  // navigation resolves to a `.silt` block. PluginView passes these
+  // straight through to the Tasks component as `focusBlockId` /
+  // `focusKey`, mirroring the searchTarget* pair above.
+  let tasksFocusBlockId = $state('')
+  let tasksFocusKey = $state('')
+
+  // Standalone-task navigation router (#374). Switches the active view
+  // to Tasks and primes the focus target so the targeted row scrolls
+  // into view and gets a transient highlight. No `.silt` page tab is
+  // ever created — the Tasks view is a single-mount surface (the
+  // activity-bar entry is the single source of view identity for it).
+  function openTasksView(blockId: string | undefined): void {
+    activeView = 'tasks'
+    tasksFocusBlockId = blockId ?? ''
+    // Monotonic key so the Tasks view's focus effect re-fires on each
+    // navigation, matching the searchTargetKey pattern for normal jumps.
+    tasksFocusKey = `${blockId ?? ''}:${Date.now()}`
+    // Expand the sidebar on *initial* routing into Tasks so the
+    // activity-bar entry is the source of the view identity and the
+    // user gets the full canvas. Respect a user who has subsequently
+    // collapsed the sidebar via the toggle or Ctrl+B — re-popping it
+    // on every subsequent navigation is a UX wisp.
+    if (!manuallyCollapsed) {
+      sidebarCollapsed = false
+    }
+  }
 
   onMount(() => {
     async function checkInit() {
@@ -653,6 +727,19 @@
     function handleNavigateToBlock(e: Event) {
       const d = (e as CustomEvent).detail
       if (d) {
+        // Standalone-task routing guard (#374). A `.silt` notebook ref
+        // routes to the Tasks view instead of a raw page tab. The Tasks
+        // view's `focusBlockId` prop handles scroll+highlight on mount.
+        const target = routeJumpTarget({
+          notebook: d.notebook,
+          section: d.section,
+          page: d.page,
+          blockTarget: d.blockId ? { blockId: d.blockId } : undefined
+        })
+        if (target.kind === 'tasks-view') {
+          openTasksView(target.blockTarget?.blockId)
+          return
+        }
         handleSearchJump(d.notebook, d.section, d.page, d.date, d.blockId)
       }
     }
@@ -898,6 +985,22 @@
     date: string,
     blockId: string
   ) {
+    // Standalone-task routing guard (#374). A `.silt` notebook ref from
+    // the search modal routes to the Tasks view; we deliberately do NOT
+    // set `activeView = 'notes'` (which would jump the user out of the
+    // Tasks view after the search dialog closes) and we do NOT add a
+    // `.silt` page tab. The Tasks view's focusBlockId prop handles the
+    // scroll+highlight on mount.
+    const target = routeJumpTarget({
+      notebook,
+      section,
+      page,
+      blockTarget: blockId ? { blockId } : undefined
+    })
+    if (target.kind === 'tasks-view') {
+      openTasksView(target.blockTarget?.blockId)
+      return
+    }
     // Route through openPage (preview-tab semantics, #142).
     // Use activate-only when the target IS the active page so block
     // navigation does not re-bump the MRU timestamp (the state machine's
@@ -1067,7 +1170,7 @@
         <div
           class="flex items-center px-4 py-1 text-text-muted text-[11px] uppercase tracking-widest font-label-sm-bold"
         >
-          {activeView}
+          {views.find((v) => v.id === activeView)?.label ?? activeView}
         </div>
       {/if}
     </TitleBar>
@@ -1300,12 +1403,14 @@
           {/if}
         {:else if activeView === 'tags'}
           <TagsExplorer {selectedTag} />
-        {:else if activeView === 'agenda' || activeView === 'calendar' || activeView === 'kanban'}
+        {:else if activeView === 'agenda' || activeView === 'calendar' || activeView === 'tasks' || activeView === 'kanban'}
           <PluginView
             pluginId={'silt-' + activeView}
             {activeNotebook}
             {activeSection}
             {activePage}
+            focusBlockId={tasksFocusBlockId}
+            focusKey={tasksFocusKey}
           />
         {:else}
           <!-- Unknown view -->
@@ -1366,12 +1471,20 @@
           New task
         </h2>
         <QuickAddTask
-          createTask={(opts) =>
-            CreateStandaloneTask(
+          createTask={async (opts) => {
+            const id = await CreateStandaloneTask(
               opts.title,
               opts.dueDate ?? '',
               opts.status ?? 'TODO'
-            )}
+            )
+            // Hand the user off to the Tasks view + focus the new row,
+            // so the success of Ctrl+Shift+N is visible without manual
+            // navigation. The Tasks view's focusBlockId handles
+            // scroll+highlight.
+            showQuickAdd = false
+            openTasksView(id)
+            return id
+          }}
           placeholder="Task title — Enter to add, Esc to close"
           keepOpenAfterCreate={false}
           onCreated={() => (showQuickAdd = false)}

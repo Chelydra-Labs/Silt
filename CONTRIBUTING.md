@@ -5,6 +5,32 @@ disk, a real-time SQLite index in memory (persisted on disk in WAL mode), and a
 Svelte 5 frontend over a Wails Go core. This guide covers the workflow that
 keeps the Go, frontend, and IPC-binding layers in sync.
 
+**How to use this document.** The contributor workflow — branching, commits,
+the pre-push hook, and how release notes are generated.
+
+- **Authoritative for:** dev/build/test commands, branching & commit
+  conventions, the PR merge policy, the release-notes pipeline.
+
+**Principles**
+- This is the workflow as the tooling enforces it — when the tooling
+  changes, update it here in the same change.
+- Commit subjects feed the published changelog, so the commit guidance here
+  is load-bearing, not stylistic.
+
+**Rules**
+- Keep every command and hook reference current with the repo's actual
+  scripts (`.githooks`, `package.json`, workflows).
+- Don't restate material that lives in SPECS, ARCHITECTURE, or TESTING —
+  link to it instead.
+
+**Best practices**
+- Link to the script or workflow file rather than inlining a command that
+  can drift.
+
+**Not for**
+- Product behavior (SPECS.md), system design (ARCHITECTURE.md), or test
+  inventories (TESTING.md).
+
 ## Quick start
 
 ```sh

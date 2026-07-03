@@ -4,6 +4,7 @@ import Calendar from './first-party/silt-calendar/Calendar.svelte'
 import CalendarSidebar from './first-party/silt-calendar/CalendarSidebar.svelte'
 import Kanban from './first-party/silt-kanban/Kanban.svelte'
 import KanbanSidebar from './first-party/silt-kanban/KanbanSidebar.svelte'
+import Tasks from './first-party/silt-tasks/Tasks.svelte'
 import AttachmentsPlugin from './first-party/silt-attachments'
 
 // First-party plugin registry: bundled Svelte components that ship with the
@@ -71,6 +72,26 @@ registerPlugin({
   manifest: AttachmentsPlugin.manifest,
   component: AttachmentsPlugin.component,
   onVaultOpen: AttachmentsPlugin.onVaultOpen,
+  source: 'first-party'
+})
+// silt-tasks (#370): vault-scoped Tasks view — every active task (dated
+// and undated) grouped by Overdue / Today / Upcoming / No Date / Completed.
+// Sibling surface to the Calendar's date-scoped agenda; exists so undated
+// tasks (the natural output of the global quick-add) are visible. Built on
+// the same PluginContext SDK surface as AgendaList; no capabilities
+// (read-only — task mutations go through ctx.updateBlockState which the
+// spec surfaces as a no-grant primitive for first-party plugins).
+registerPlugin({
+  manifest: {
+    id: 'silt-tasks',
+    name: 'Tasks',
+    version: '1.0.0',
+    author: 'Silt',
+    description:
+      'Vault-scoped view of every active task grouped by Overdue, Today, Upcoming, No Date, and Completed.',
+    icon: 'checklist'
+  },
+  component: Tasks,
   source: 'first-party'
 })
 
