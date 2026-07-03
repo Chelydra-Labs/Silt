@@ -413,6 +413,48 @@ describe('Tasks view', () => {
     // bucket → no DOM element with that block id.
     expect(document.querySelector('[data-block-id="in8"]')).toBeNull()
   })
+
+  it('Upcoming includes tasks due exactly tomorrow (boundary regression — review off-by-one)', async () => {
+    // Boundary case: due_date === today + 1 (tomorrow). The earlier
+    // filter `i.due_date > tomorrow` strictly excluded this row, so
+    // tasks due tomorrow disappeared from the UI entirely (no group
+    // matched). The fix is inclusive on both ends, matching
+    // README.md AC3: tomorrow <= due_date <= today + 7 days.
+    const today = todayStr()
+    const tomorrow = dateOffsetStr(1)
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [task('tm1', 'due tomorrow', { due_date: tomorrow })],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const tomorrowRow = document.querySelector('[data-block-id="tm1"]')
+    expect(tomorrowRow).toBeInTheDocument()
+    expect(
+      tomorrowRow?.closest('[data-group]')?.getAttribute('data-group')
+    ).toBe('upcoming')
+
+    // Sanity: today (the boundary below tomorrow) still routes to its
+    // own group, not Upcoming — fixes the off-by-one on the other side.
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [task('td', 'due today', { due_date: today })],
+      truncated: false
+    })
+    cleanup()
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const todayRow = document.querySelector('[data-block-id="td"]')
+    expect(todayRow?.closest('[data-group]')?.getAttribute('data-group')).toBe(
+      'today'
+    )
+  })
 })
 
 describe('Tasks view — truncated footer (#372 hardening)', () => {

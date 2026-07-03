@@ -150,7 +150,10 @@
   let upcoming = $derived(
     openItems
       .filter(
-        (i) => !!i.due_date && i.due_date > tomorrow && i.due_date <= weekAhead
+        // tomorrow..weekAhead inclusive on both ends (README §AC3).
+        // The boundary test was > tomorrow — off-by-one that swallowed
+        // tasks due exactly on tomorrow into no group at all.
+        (i) => !!i.due_date && i.due_date >= tomorrow && i.due_date <= weekAhead
       )
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
   )
