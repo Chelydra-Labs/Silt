@@ -499,7 +499,21 @@ func (dw *DirectoryWatcher) listenLoop() {
 
 			if isDir {
 				if event.Has(fsnotify.Create) {
-					if err := dw.AddRecursive(path); err != nil {
+					// Deferred registration for the standalone-tasks parent
+					// directory (#372 hardening). AddRecursive skips dot-
+					// prefix dirs by design, so a `.silt/` that didn't
+					// exist at Start() time wouldn't be added by the
+					// normal recursive walk. Watch it directly here:
+					// subsequent events on `.silt/tasks.md` then flow
+					// through the standard `.md` filter + tracker +
+					// reindexFile path. Idempotent — re-Add'ing an
+					// already-watched path is a fsnotify no-op.
+					if path == filepath.Join(dw.vaultPath, parser.StandaloneTasksNotebook) {
+						if addErr := dw.watcher.Add(path); addErr != nil {
+							log.Printf("DirectoryWatcher: failed to watch standalone-tasks dir %s: %v",
+								path, addErr)
+						}
+					} else if err := dw.AddRecursive(path); err != nil {
 						log.Printf("DirectoryWatcher: failed to watch new directory %s: %v", path, err)
 					}
 				}

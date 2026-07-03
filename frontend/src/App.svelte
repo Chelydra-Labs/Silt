@@ -87,6 +87,33 @@
   let openTabs = $state<TabEntry[]>([])
   let activeTabId = $state<string>('')
 
+  // Fail-loud guard (#374 hardening): the `.silt` synthetic notebook is
+  // hidden by design — under no circumstance should it ever materialize
+  // as a tab in `openTabs`. The routing guard in `openPage` /
+  // `handleSearchJump` / `handleNavigateToBlock` covers every funnel in
+  // this file today, but future call sites could forget. This effect
+  // runs every time `openTabs` mutates; if any entry's notebook is
+  // `.silt` we log a loud warning (so the regression is visible in the
+  // console) and drop the entry from the in-memory state. We
+  // intentionally do not auto-remove silently — the warning is the
+  // point — but the removal prevents a leaked `.silt` tab from
+  // surviving into the next renderer pass.
+  $effect(() => {
+    const stray = openTabs.find((t) => isStandaloneTaskRef(t.notebook))
+    if (stray) {
+      console.warn(
+        '[silt] routing invariant violated: a .silt tab was added to openTabs. ',
+        'Removing it. This should be impossible — please file a bug with the stack trace.',
+        stray
+      )
+      openTabs = openTabs.filter((t) => t.id !== stray.id)
+      // If that stray tab happened to be active, clear the active id
+      // too — `syncActiveFromTab` will pick a sane replacement off the
+      // MRU head.
+      if (activeTabId === stray.id) activeTabId = ''
+    }
+  })
+
   // Per-notebook tab scoping: the tab strip and editor surface only show
   // tabs for the active notebook. The full openTabs array (all notebooks)
   // persists to config.yaml so switching notebooks preserves each
@@ -426,10 +453,14 @@
     // Monotonic key so the Tasks view's focus effect re-fires on each
     // navigation, matching the searchTargetKey pattern for normal jumps.
     tasksFocusKey = `${blockId ?? ''}:${Date.now()}`
-    // Collapse the sidebar so the Tasks view gets the full canvas —
-    // mirrors the activity-bar single-click affordance.
-    sidebarCollapsed = false
-    manuallyCollapsed = false
+    // Expand the sidebar on *initial* routing into Tasks so the
+    // activity-bar entry is the source of the view identity and the
+    // user gets the full canvas. Respect a user who has subsequently
+    // collapsed the sidebar via the toggle or Ctrl+B — re-popping it
+    // on every subsequent navigation is a UX wisp.
+    if (!manuallyCollapsed) {
+      sidebarCollapsed = false
+    }
   }
 
   onMount(() => {

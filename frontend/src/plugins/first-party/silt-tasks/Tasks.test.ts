@@ -414,3 +414,33 @@ describe('Tasks view', () => {
     expect(document.querySelector('[data-block-id="in8"]')).toBeNull()
   })
 })
+
+describe('Tasks view — truncated footer (#372 hardening)', () => {
+  it('renders the truncated footer when the SQLite cap truncated results', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        // 500-row cap (defensive memory safeguard) hit — surface the
+        // notice so the user knows there are hidden rows below.
+        return { rows: [task('one', 'only rendered task')], truncated: true }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(screen.getByTestId('tasks-truncated-notice')).toBeInTheDocument()
+  })
+
+  it('does not render the truncated footer when results fit the cap', async () => {
+    mocks.sqliteQuery.mockResolvedValue({
+      rows: [task('one', 'visible task')],
+      truncated: false
+    })
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(screen.queryByTestId('tasks-truncated-notice')).toBeNull()
+  })
+})

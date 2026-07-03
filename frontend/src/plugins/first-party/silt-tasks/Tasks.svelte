@@ -72,6 +72,13 @@
   let errorMsg = $state('')
   let markDoneError = $state('')
   let markDoneTimer: ReturnType<typeof setTimeout> | null = null
+  // The SQLite query SDK returns `truncated: true` when the result
+  // hits the Go-side row cap (defense-in-depth memory safeguard — see
+  // sdk.ts SqliteQueryResult). Surface the truncation state here so a
+  // user with thousands of open or completed tasks sees a footer
+  // message instead of silently losing rows below the cap.
+  let openTruncated = $state(false)
+  let doneTruncated = $state(false)
 
   // The completed group is collapsed by default (AC4). Toggled via the
   // header button; state is runtime-only (not persisted — v1; a future
@@ -104,6 +111,8 @@
       ])
       openItems = (openRes.rows as unknown as TaskItem[]) ?? []
       doneItems = (doneRes.rows as unknown as TaskItem[]) ?? []
+      openTruncated = openRes.truncated
+      doneTruncated = doneRes.truncated
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e)
     } finally {
@@ -203,8 +212,13 @@
     if (loading) return
     // Allow the DOM to settle before scrolling.
     queueMicrotask(() => {
+      // Scope to open rows only — the SQL guarantees disjoint open and
+      // completed id sets today, but scoping the selector to
+      // :not([data-group="completed"]) keeps the highlight correct if
+      // a future schema change ever lets the same id appear in both
+      // lists (#370 follow-up — completed_at column).
       const el = document.querySelector(
-        `[data-block-id="${CSS.escape(target)}"]`
+        `[data-group]:not([data-group="completed"]) [data-block-id="${CSS.escape(target)}"]`
       ) as HTMLElement | null
       el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
       focusedRowId = target
@@ -302,7 +316,6 @@
                 class="text-text-muted/60"
                 aria-live="polite"
                 data-testid="tasks-group-count"
-                data-group-key={group.key}
               >
                 {group.list.length}
               </span>
@@ -392,7 +405,10 @@
                 >
               {/if}
               Completed
-              <span class="text-text-muted/60" aria-live="polite"
+              <!-- sr-only label so screen readers don't double-announce
+                   both the visible count and a separate live-region update —
+                   the count is part of the toggle's accessible name. -->
+              <span class="text-text-muted/60" aria-hidden="true"
                 >{doneItems.length}</span
               >
             </button>
@@ -441,6 +457,18 @@
           {/if}
         </section>
       {/if}
+      {#if openTruncated || doneTruncated}
+        <p
+          class="text-text-muted text-[12px] font-body-md border-t border-border-muted pt-3 mt-6"
+          role="status"
+          aria-live="polite"
+          data-testid="tasks-truncated-notice"
+        >
+          Showing the first
+          {openItems.length + doneItems.length} tasks — refine with a tag or notebook
+          filter to see the rest.
+        </p>
+      {/if}
     {/if}
   </div>
 </div>
@@ -459,6 +487,14 @@
     transition:
       background 600ms ease-out,
       box-shadow 600ms ease-out;
+  }
+  /* Keyboard focus indicator on the per-row Mark-done checkbox. The
+     row itself is keyboard-operable via tabindex=0 + Enter/Space;
+     this rule gives the inner checkbox a visible outline when focused
+     via tab navigation so the focus position is never ambiguous. */
+  .todo-check:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 2px;
   }
   /* The visual "done" mark — small filled square with a checkmark. */
   .todo-check-done {

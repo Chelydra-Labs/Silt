@@ -3,6 +3,7 @@ package monitor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -675,19 +676,24 @@ func TestDirectoryWatcher_StartWatchesStandaloneTasksDir(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = dw.Close() })
 
-	// If the dot-dir is now in the fsnotify watch set, an external write
-	// (simulated below) produces a fsnotify event that the listen loop
-	// translates into an incremental reindex. We verify the watch by
-	// performing an external write and asserting the file gets reindexed
-	// within a bounded window — see
-	// TestDirectoryWatcher_ExternalWriteToStandaloneTasksReindexes below.
-	//
-	// Here we just confirm the Start() call did not error: the carve-out
-	// logs but does not fatal when the watch fails, so the test guard is
-	// "Start returns nil" and the smoke assertion lives in the reindex
-	// test that follows.
-	if _, statErr := os.Stat(dotDir); statErr != nil {
-		t.Fatalf(".silt dir should still exist after Start: %v", statErr)
+	// Strong assertion (#372 hardening): the carve-out's purpose is to
+	// add `<vault>/.silt` to the fsnotify watch set. The smoke-only
+	// check below (stat the directory) doesn't catch a typo'd carve-out
+	// that simply doesn't run. fsnotify exposes WatchList so we can
+	// read it directly. On Windows the path separator in the returned
+	// list is backslash; normalize for the comparison.
+	watches := dw.watcher.WatchList()
+	want := filepath.Clean(dotDir)
+	found := false
+	for _, w := range watches {
+		if filepath.Clean(w) == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected <vault>/.silt (%s) to be in fsnotify WatchList; got %v",
+			want, watches)
 	}
 }
 
@@ -824,5 +830,78 @@ func TestDirectoryWatcher_StandaloneTasksInAppWriteStillSuppressed(t *testing.T)
 	// suppression from being perpetual).
 	if tracker.IsSelfGenerated(tasksFile) {
 		t.Error("expected the tracker entry to be consumed on the first IsSelfGenerated call (no perpetual suppression)")
+	}
+}
+
+// TestDirectoryWatcher_DeferredRegistrationOnDotDirCreate covers the
+// mid-session case (#372 PLAN §7.2): the `.silt/` directory does not
+// exist at Start() time, so the initial carve-out skips it; a non-Silt
+// tool then creates the directory mid-session; the listen loop catches
+// the Create event and adds the dot-dir to the fsnotify watch set so
+// subsequent edits to `.silt/tasks.md` are observed.
+func TestDirectoryWatcher_DeferredRegistrationOnDotDirCreate(t *testing.T) {
+	vaultPath := t.TempDir()
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+	// Start WITHOUT a .silt dir; the carve-out in Start() should
+	// silently skip.
+	if err := dw.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = dw.Close() })
+
+	// Sanity: the watch list should NOT contain .silt/ — the dir does
+	// not exist.
+	for _, w := range dw.watcher.WatchList() {
+		cleaned := filepath.Clean(w)
+		if strings.HasSuffix(cleaned, string(filepath.Separator)+".silt") ||
+			strings.HasSuffix(cleaned, ".silt") {
+			t.Fatalf(".silt should not yet be watched; got %v", dw.watcher.WatchList())
+		}
+	}
+
+	// Create the directory mid-session. The vault root is watched
+	// (AddRecursive of vaultPath), so the listen loop receives a
+	// Create event for `<vault>/.silt`. The deferred-registration
+	// path should fire and add the dot-dir to the fsnotify watch set.
+	dotDir := filepath.Join(vaultPath, ".silt")
+	if err := os.MkdirAll(dotDir, 0o755); err != nil {
+		t.Fatalf("mkdir .silt: %v", err)
+	}
+
+	// Wait up to 3 s for the deferred-registration to land. fsnotify
+	// events are OS-paced; on slow / network filesystems a single
+	// 50 ms tick is not enough.
+	deadline := time.Now().Add(3 * time.Second)
+	want := filepath.Clean(dotDir)
+	found := false
+	for time.Now().Before(deadline) {
+		for _, w := range dw.watcher.WatchList() {
+			if filepath.Clean(w) == want {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !found {
+		t.Fatalf(".silt should be watched after deferred registration; got %v",
+			dw.watcher.WatchList())
 	}
 }
