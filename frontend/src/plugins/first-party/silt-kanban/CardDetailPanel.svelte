@@ -3,6 +3,7 @@
   import type { PluginContext, TaskStatus } from '../../sdk'
   import type { KanbanCard } from './types'
   import { PRIORITY_LABELS, laneLabel } from './types'
+  import DependencyPicker from './DependencyPicker.svelte'
 
   interface Props {
     card: KanbanCard | null
@@ -24,6 +25,12 @@
   }
 
   let tagList = $derived(card?.tags ? card.tags.split('|').filter(Boolean) : [])
+
+  // The blocked_by edge list is pipe-delimited in the Kanban SQL projection
+  // (#301); split it into the uuid array the DependencyPicker consumes.
+  let blockedByList = $derived(
+    card?.blocked_by ? card.blocked_by.split('|').filter(Boolean) : []
+  )
 
   // Local optimistic mirrors for the two mutable metadata fields (pin +
   // progress). The panel is the only writer for these while open, so an
@@ -606,6 +613,15 @@
           <span class="text-[10px] font-label-sm text-text-muted">links</span>
         </div>
       </section>
+
+      {#if card}
+        <DependencyPicker
+          cardId={card.id}
+          blockedBy={blockedByList}
+          {ctx}
+          {onMetaChanged}
+        />
+      {/if}
 
       <!-- Open in editor -->
       <section>

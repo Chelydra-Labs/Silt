@@ -52,6 +52,11 @@ export const META_KEYS: readonly MetaKey[] = [
     key: 'recur',
     label: 'recur',
     description: 'Recurrence rule (e.g. every week)'
+  },
+  {
+    key: 'blocked_by',
+    label: 'blocked_by',
+    description: 'Blocked by task(s) — uses ((uuid)) refs'
   }
 ]
 
