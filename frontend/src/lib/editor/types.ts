@@ -18,6 +18,7 @@ export interface ParsedBlock {
   owner?: string
   start_date?: string
   due_date?: string
+  recurrence?: string
   priority?: number
   line_number: number
   file_date?: string

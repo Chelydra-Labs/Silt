@@ -20,6 +20,7 @@ export const v2CtxStubs: Pick<
   | 'createBlock'
   | 'createTask'
   | 'setTaskDueDate'
+  | 'setTaskRecurrence'
   | 'deleteBlock'
   | 'moveBlock'
   | 'applyBlocks'
@@ -64,6 +65,7 @@ export const v2CtxStubs: Pick<
   createBlock: () => Promise.resolve(''),
   createTask: () => Promise.resolve(''),
   setTaskDueDate: () => Promise.resolve(true),
+  setTaskRecurrence: () => Promise.resolve(true),
   deleteBlock: () => Promise.resolve(true),
   moveBlock: () => Promise.resolve(true),
   applyBlocks: () => Promise.resolve(true),

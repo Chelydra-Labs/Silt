@@ -90,7 +90,7 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) ([]parser.TaskResult, error) {
 	baseQuery := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
-		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned
+		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned, t.recur
 		FROM blocks b
 		INNER JOIN tasks t ON b.id = t.block_id
 		WHERE 1=1
@@ -145,13 +145,13 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	for rows.Next() {
 		var r parser.TaskResult
 		var parentID sql.NullString
-		var status, owner, start, due interface{}
+		var status, owner, start, due, recur interface{}
 		var priority int
 		var pinned sql.NullInt64
 
 		err := rows.Scan(
 			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
-			&status, &owner, &start, &due, &priority, &pinned,
+			&status, &owner, &start, &due, &priority, &pinned, &recur,
 		)
 		if err != nil {
 			return nil, err
@@ -179,6 +179,9 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		if pinned.Valid {
 			b := pinned.Int64 != 0
 			r.Pinned = &b
+		}
+		if recurStr, ok := recur.(string); ok {
+			r.Recurrence = recurStr
 		}
 
 		results = append(results, r)

@@ -96,6 +96,14 @@ type ParsedBlock struct {
 	// (renderer omits the marker). Lives only in the file; SQLite caches
 	// for query speed.
 	Progress int `json:"progress,omitempty"`
+	// Recurrence is the natural-language repeat rule on a task line
+	// (`[recur:: every week]`). When non-empty, completing the task
+	// (checkbox → [x]) triggers the recurrence resolver to spawn the next
+	// instance with an advanced due date one block below. The grammar is
+	// `every <day|weekday|week|month|year>` and `every N <units>`. Empty
+	// string = one-off task (renderer omits the token). File-resident
+	// user intent; SQLite caches the string for query/filter speed.
+	Recurrence string `json:"recurrence,omitempty"`
 	// ExtraTokens preserves unknown [key:: value] Dataview tokens that the
 	// parser doesn't recognise (e.g. `[project:: alpha]`, `[estimate:: 3h]`).
 	// These round-trip through parse → render so files stay interoperable
@@ -296,6 +304,11 @@ type TaskResult struct {
 	// is a tri-state pointer for parity with ParsedBlock.Pinned (#123).
 	Pinned   *bool `json:"pinned,omitempty"`
 	Progress int   `json:"progress,omitempty"`
+	// Recurrence mirrors ParsedBlock.Recurrence (#296): the
+	// natural-language repeat rule (`every week` etc.) cached on the
+	// task row so the Kanban/Agenda queries can surface the repeat badge
+	// and the resolver can read the rule without re-parsing markdown.
+	Recurrence string `json:"recurrence,omitempty"`
 	// CommentsCount is the number of indented child NOTE blocks beneath
 	// this task (the "comments on a task" UX from the Stitch reference).
 	// It is computed at index time from `blocks.parent_id` and cached on

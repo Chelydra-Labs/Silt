@@ -165,6 +165,12 @@ export const TaskBlock = Node.create({
         renderHTML: (attrs) =>
           attrs.due_date ? { 'data-due-date': attrs.due_date } : {}
       },
+      recurrence: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-recurrence') || '',
+        renderHTML: (attrs) =>
+          attrs.recurrence ? { 'data-recurrence': attrs.recurrence } : {}
+      },
       priority: {
         default: 3,
         parseHTML: (el) => Number(el.getAttribute('data-priority') || 3),
@@ -224,6 +230,7 @@ export const TaskBlock = Node.create({
             owner: '',
             start_date: '',
             due_date: '',
+            recurrence: '',
             priority: 3,
             file_date: node.attrs.file_date || ''
           })
@@ -418,13 +425,7 @@ export const SiltBlockExtensions = [NoteBlock, TaskBlock, HeaderBlock]
 // parser sees the line as an opaque NOTE whose clean_text starts with
 // `> [!variant]`, exactly like a quote — no parser change.
 export type CalloutVariant =
-  | 'note'
-  | 'info'
-  | 'tip'
-  | 'warning'
-  | 'danger'
-  | 'success'
-  | 'quote'
+  'note' | 'info' | 'tip' | 'warning' | 'danger' | 'success' | 'quote'
 
 export const CALLOUT_VARIANTS: Record<
   CalloutVariant,

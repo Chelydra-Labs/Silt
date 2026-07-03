@@ -973,7 +973,7 @@
                   role="button"
                   tabindex="0"
                   aria-grabbed={draggingId === card.id ? 'true' : 'false'}
-                  aria-label={`${card.clean_content}, ${laneLabel(col)}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}. Arrow keys change status.`}
+                  aria-label={`${card.clean_content}, ${laneLabel(col)}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}. Arrow keys change status.`}
                   draggable="true"
                   animate:flip={{ duration: 200, easing: cubicOut }}
                   class="group relative bg-panel border border-border-muted rounded-lg p-3 cursor-grab transition-all duration-200 hover:bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {card.status ===
@@ -1066,6 +1066,17 @@
                             >schedule</span
                           >
                           {card.due_date}
+                        </span>
+                      {/if}
+                      {#if card.recurrence}
+                        <span
+                          class="text-accent-secondary-start flex items-center"
+                          title="Recurring: {card.recurrence}"
+                        >
+                          <span
+                            class="material-symbols-outlined text-[12px]"
+                            aria-hidden="true">event_repeat</span
+                          >
                         </span>
                       {/if}
                     </div>

@@ -107,6 +107,7 @@ func (dm *DatabaseManager) initSchema() error {
 		priority INTEGER,        -- 1, 2, 3
 		pinned INTEGER DEFAULT 0,           -- NULL/0/1 tri-state cache: NULL=absent, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown on re-index (#135)
 		progress INTEGER DEFAULT 0,         -- 0-100; file-resident user intent (cached for query speed)
+		recur TEXT,                         -- recurrence rule (e.g. 'every week'); NULL for one-off tasks (#296)
 		comments_count INTEGER DEFAULT 0,   -- count of child NOTE blocks (derived cache)
 		links_count INTEGER DEFAULT 0,      -- count of ((uuid)) refs in raw_content (derived cache)
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
@@ -124,6 +125,7 @@ func (dm *DatabaseManager) initSchema() error {
 	for _, col := range []struct{ name, defn string }{
 		{"pinned", "INTEGER DEFAULT 0"},
 		{"progress", "INTEGER DEFAULT 0"},
+		{"recur", "TEXT"}, // nullable, no default — NULL for one-off tasks
 		{"comments_count", "INTEGER DEFAULT 0"},
 		{"links_count", "INTEGER DEFAULT 0"},
 	} {

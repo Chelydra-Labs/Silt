@@ -22,6 +22,10 @@ export interface KanbanCard {
   priority: number
   pinned: boolean
   progress: number
+  // Natural-language recurrence rule from [recur:: RULE] (#296). Empty/null
+  // for one-off tasks; e.g. 'every week'. The Kanban SQL aliases t.recur to
+  // this field (query.ts).
+  recurrence: string
   comments_count: number
   links_count: number
   // Pipe-delimited raw tag paths from a GROUP_CONCAT subquery; absent

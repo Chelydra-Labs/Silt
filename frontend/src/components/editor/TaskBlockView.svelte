@@ -98,6 +98,17 @@
           {node.attrs.due_date}
         </span>
       {/if}
+      {#if node.attrs.recurrence}
+        <span
+          class="bg-accent-secondary-glow border border-accent-secondary-start/30 text-accent-secondary-start px-2 py-0.5 rounded text-[11px] font-label-sm select-none flex items-center gap-1"
+          title="Recurring: {node.attrs.recurrence}"
+        >
+          <span class="material-symbols-outlined text-[11px]" aria-hidden="true"
+            >event_repeat</span
+          >
+          {node.attrs.recurrence}
+        </span>
+      {/if}
       {#if priorityLabel(node.attrs.priority)}
         <span
           class="bg-error-bg border border-error-border text-error px-2 py-0.5 rounded text-[11px] font-label-sm select-none"

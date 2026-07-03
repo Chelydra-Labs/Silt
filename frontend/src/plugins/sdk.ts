@@ -112,6 +112,16 @@ export interface PluginContext {
    */
   setTaskDueDate: (id: string, dueDate: string) => Promise<boolean>
   /**
+   * Rewrite a task's `[recur:: RULE]` inline token on disk atomically (#296).
+   * Pass an empty string to clear the recurrence (the "stop recurring" path).
+   * A non-empty rule must be valid recurrence grammar (`every day|weekday|
+   * week|month|year` or `every N days|weeks|months|years`) AND the task must
+   * already carry a `[due::]` date — the resolver anchors on the due date, so
+   * recurrence without an anchor is rejected. Round-trips through the markdown
+   * file, re-indexes, and emits `block:changed`. Gated by content-mutate.
+   */
+  setTaskRecurrence: (id: string, recurrence: string) => Promise<boolean>
+  /**
    * Create a standalone task (a GFM checkbox) in the dedicated non-note
    * markdown file `<vault>/.silt/tasks.md` (#368). The task is queryable via
    * sqliteQuery / QueryTasks immediately and survives a full re-index because
