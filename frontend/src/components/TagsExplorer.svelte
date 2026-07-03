@@ -75,7 +75,7 @@
       {#if loadingResults}
         <div class="skeleton-container px-6 py-4">
           {#each Array(3) as _}
-            <div class="skeleton-row px-0">
+            <div class="skeleton-row">
               <div class="skeleton-circle"></div>
               <div class="skeleton-text title"></div>
               <div class="skeleton-badge"></div>

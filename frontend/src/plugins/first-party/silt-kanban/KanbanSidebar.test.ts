@@ -104,23 +104,6 @@ describe('KanbanSidebar (#323)', () => {
     expect(screen.getByTestId('new-board')).toBeInTheDocument()
   })
 
-  it('renders the scope radio with four options', async () => {
-    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    expect(screen.getByTestId('scope-vault')).toBeInTheDocument()
-    expect(screen.getByTestId('scope-notebook')).toBeInTheDocument()
-    expect(screen.getByTestId('scope-section')).toBeInTheDocument()
-    expect(screen.getByTestId('scope-page')).toBeInTheDocument()
-  })
-
-  it('clicking a scope radio updates the shared state (#323 AC #4)', async () => {
-    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    await fireEvent.click(screen.getByTestId('scope-notebook'))
-    expect(getKanbanState().scope).toBe('notebook')
-    expect(getKanbanState().scopeUserOverride).toBe(true)
-  })
-
   it('clicking a saved board applies its scope+filters via shared state (#323 AC)', async () => {
     mocks.settings.config.plugins.plugin_settings['silt-kanban'].boards = [
       {
@@ -220,25 +203,6 @@ describe('KanbanSidebar (#323)', () => {
     await fireEvent.click(screen.getByTestId('clear-filters'))
     expect(getKanbanState().filters.priorities).toEqual([])
     expect(getKanbanState().filters.dueDate).toBe('')
-  })
-
-  it('arrow-key nav on scope radio moves focus to the next option', async () => {
-    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    const vault = screen.getByTestId('scope-vault')
-    vault.focus()
-    await fireEvent.keyDown(vault, { key: 'ArrowDown' })
-    await flush()
-    expect(document.activeElement).toBe(screen.getByTestId('scope-notebook'))
-  })
-
-  it('Enter on a focused scope radio activates it', async () => {
-    render(KanbanSidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    const section = screen.getByTestId('scope-section')
-    section.focus()
-    await fireEvent.keyDown(section, { key: 'Enter' })
-    expect(getKanbanState().scope).toBe('section')
   })
 
   it('Empty state when no boards exist shows only the + Save CTA', async () => {

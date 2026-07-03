@@ -279,7 +279,7 @@
     {#if loading}
       <div class="skeleton-container">
         {#each Array(3) as _}
-          <div class="skeleton-row px-0">
+          <div class="skeleton-row">
             <div class="skeleton-circle"></div>
             <div class="skeleton-text title"></div>
             <div class="skeleton-badge"></div>
@@ -299,7 +299,7 @@
       <div class="text-center py-16 px-4 max-w-sm mx-auto select-none">
         <span
           class="material-symbols-outlined text-text-muted/40 text-[48px] mb-3"
-          >calendar_today</span
+          aria-hidden="true">calendar_today</span
         >
         <h3 class="font-headline-md text-text-primary mb-1">Clear agenda</h3>
         <p class="text-text-muted text-[13px] font-body-md">

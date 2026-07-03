@@ -1001,8 +1001,7 @@
           ? `Rename ${createMode}`
           : `New ${createMode}`}
         tabindex="-1"
-        class="relative w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
-        style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 90%, transparent);"
+        class="relative w-full max-w-md glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
       >
         <div class="px-5 py-4 border-b border-border-muted">
           <h2 class="font-headline-md text-headline-md text-text-primary">
@@ -1147,8 +1146,7 @@
       aria-modal="true"
       aria-label="Confirm delete"
       tabindex="-1"
-      class="relative w-full max-w-sm glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
-      style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 90%, transparent);"
+      class="relative w-full max-w-sm glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
     >
       <div class="px-5 py-4 border-b border-border-muted">
         <h2 class="font-headline-md text-headline-md text-text-primary">

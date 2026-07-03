@@ -289,6 +289,16 @@ body {
   background: color-mix(in srgb, var(--color-panel) 75%, transparent);
 }
 
+/* Stronger frosted glass for modal dialogs (denser panel tint + heavier
+   blur). Kept as a sibling of .glass-palette because .glass-palette is also
+   used as a click-outside guard selector (see CommandPalette.test.ts) and
+   cannot be merged. Sites that previously inlined this exact recipe
+   (blur(16px) saturate(140%) + 90% panel) should use this class instead. */
+.glass-palette-strong {
+  backdrop-filter: blur(16px) saturate(140%);
+  background: color-mix(in srgb, var(--color-panel) 90%, transparent);
+}
+
 /* Custom checkbox states */
 .todo-check {
   border: 1px solid var(--color-border-zinc);
@@ -1075,7 +1085,10 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 12px;
+  /* Horizontal padding is controlled by the padded container (e.g. px-6 py-4);
+     a horizontal value here would silently override the dead px-0 utility
+     because Tailwind v4 utilities live in a cascade layer below this rule. */
+  padding: 8px 0;
   width: 100%;
 }
 

@@ -318,7 +318,7 @@
     {#if loading}
       <div class="skeleton-container" data-testid="tasks-loading">
         {#each Array(4) as _}
-          <div class="skeleton-row px-0">
+          <div class="skeleton-row">
             <div class="skeleton-circle"></div>
             <div class="skeleton-text title"></div>
             <div class="skeleton-badge"></div>
@@ -343,7 +343,7 @@
         >
           <span
             class="material-symbols-outlined text-accent-primary-start text-5xl mb-2"
-            >celebrate</span
+            aria-hidden="true">celebrate</span
           >
           <h3 class="font-headline-md text-text-primary mb-1">
             All caught up!

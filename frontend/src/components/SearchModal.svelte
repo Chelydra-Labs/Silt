@@ -217,8 +217,7 @@
     aria-modal="true"
     aria-label="Search blocks"
     tabindex="-1"
-    class="relative w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 90%, transparent);"
+    class="relative w-full max-w-2xl glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
   >
     <!-- Search Input Area -->
     <div

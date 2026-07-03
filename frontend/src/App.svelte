@@ -1411,8 +1411,9 @@
                     }}
                     class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-void font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
                   >
-                    <span class="material-symbols-outlined text-[18px]"
-                      >note_add</span
+                    <span
+                      class="material-symbols-outlined text-[18px]"
+                      aria-hidden="true">note_add</span
                     >
                     Create Page
                   </button>
@@ -1423,8 +1424,9 @@
                     }}
                     class="px-4 py-2 rounded-lg bg-transparent border border-border-zinc text-text-primary font-label-sm-bold hover:bg-hover transition-all cursor-pointer flex items-center gap-2"
                   >
-                    <span class="material-symbols-outlined text-[18px]"
-                      >article</span
+                    <span
+                      class="material-symbols-outlined text-[18px]"
+                      aria-hidden="true">article</span
                     >
                     New from Template
                   </button>
@@ -1491,8 +1493,7 @@
       }}
     >
       <div
-        class="w-full max-w-md glass-palette border border-border-zinc rounded-xl shadow-2xl p-5"
-        style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 90%, transparent);"
+        class="w-full max-w-md glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl p-5"
         transition:fade={{ duration: 120 }}
         role="dialog"
         aria-modal="true"
@@ -1559,7 +1560,7 @@
       }}
       transition:fade={{ duration: 150 }}
     >
-      <div class="settings-mismatch-modal">
+      <div class="settings-mismatch-modal glass-palette-strong">
         <h2 id="settings-mismatch-title">Settings changed</h2>
         <p id="settings-mismatch-desc">
           Silt's vault path or trusted-publishers list has changed since the
@@ -1610,7 +1611,7 @@
       }}
       transition:fade={{ duration: 150 }}
     >
-      <div class="settings-mismatch-modal">
+      <div class="settings-mismatch-modal glass-palette-strong">
         <h2 id="grants-migration-title">Move plugin permissions</h2>
         <p id="grants-migration-desc">
           Silt is moving plugin permissions to per-host storage so they no
@@ -1663,7 +1664,7 @@
       }}
       transition:fade={{ duration: 150 }}
     >
-      <div class="settings-mismatch-modal">
+      <div class="settings-mismatch-modal glass-palette-strong">
         <h2 id="quarantine-title">Linked notebook moved or tampered</h2>
         <p id="quarantine-desc">
           {#each quarantinedLinks as q (q.id)}
@@ -1735,8 +1736,6 @@
     max-width: 460px;
     padding: 28px 32px;
     border-radius: 12px;
-    background: color-mix(in srgb, var(--color-panel) 90%, transparent);
-    backdrop-filter: blur(16px) saturate(140%);
     border: 1px solid var(--color-border-zinc, #27272a);
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
   }

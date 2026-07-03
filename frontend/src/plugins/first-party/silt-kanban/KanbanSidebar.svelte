@@ -21,7 +21,6 @@
   import type { SavedBoard, Scope, KanbanFilters } from './types'
   import {
     getKanbanState,
-    setScope,
     setFilters,
     clearFilters,
     applySavedBoard
@@ -184,102 +183,6 @@
     await persistBoards(next)
   }
 
-  // --- Scope radio + filter quick-toggles -------------------------------
-
-  const SCOPES: Scope[] = ['vault', 'notebook', 'section', 'page']
-
-  // Roving tabindex cursor for the scope radiogroup. Reactive on
-  // liveScope so external writes (e.g. Kanban.svelte's resetScopeToContext
-  // → clearScopeOverride + setScopeShared) keep the focus cursor in sync
-  // with the displayed selected radio. Without this, the user clicks
-  // "Follow" in the board header → scope jumps to 'vault' visually but
-  // the sidebar's Tab focus still lands on the previously-focused
-  // (wrong) radio.
-  let scopeFocusIdx = $derived(SCOPES.indexOf(liveScope))
-
-  function isScopeDisabled(s: Scope): boolean {
-    return s !== 'vault' && !ctx.activeNotebook
-  }
-
-  // Advance to the next enabled scope in the given direction. Skips
-  // disabled scopes so the cursor never lands on an unreachable option
-  // (e.g. when no notebook/section/page is active, 'notebook',
-  // 'section', 'page' are all dimmed).
-  function nextEnabledIdx(from: number, dir: 1 | -1): number {
-    let i = from
-    for (let n = 0; n < SCOPES.length; n++) {
-      i = (i + dir + SCOPES.length) % SCOPES.length
-      if (!isScopeDisabled(SCOPES[i] as Scope)) return i
-    }
-    return from // all disabled (shouldn't happen — vault is always enabled)
-  }
-
-  function onScopeKeydown(e: KeyboardEvent) {
-    if (
-      e.key === 'ArrowDown' ||
-      e.key === 'ArrowRight' ||
-      e.key === 'ArrowUp' ||
-      e.key === 'ArrowLeft'
-    ) {
-      e.preventDefault()
-      const dir: 1 | -1 =
-        e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1
-      const next = nextEnabledIdx(scopeFocusIdx, dir)
-      const nextScope = SCOPES[next]
-      if (nextScope)
-        document
-          .querySelector<HTMLElement>(`[data-scope-radio="${nextScope}"]`)
-          ?.focus()
-      return
-    }
-    if (e.key === 'Home') {
-      e.preventDefault()
-      const first = SCOPES.findIndex((s) => !isScopeDisabled(s))
-      if (first >= 0)
-        document
-          .querySelector<HTMLElement>(`[data-scope-radio="${SCOPES[first]}"]`)
-          ?.focus()
-      return
-    }
-    if (e.key === 'End') {
-      e.preventDefault()
-      let last = -1
-      for (let i = SCOPES.length - 1; i >= 0; i--) {
-        if (!isScopeDisabled(SCOPES[i] as Scope)) {
-          last = i
-          break
-        }
-      }
-      if (last >= 0)
-        document
-          .querySelector<HTMLElement>(`[data-scope-radio="${SCOPES[last]}"]`)
-          ?.focus()
-      return
-    }
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      // Activate the scope corresponding to the focused element (the
-      // event's currentTarget), NOT the roving cursor. The cursor and
-      // focus are normally in sync, but focus follows the cursor rather
-      // than vice versa — and reading the event target is robust against
-      // any cursor drift. Per WAI-ARIA APG radiogroup guidance, a
-      // disabled radio must NOT respond to activation.
-      const target = e.currentTarget as HTMLElement | null
-      const targetScope = target?.getAttribute(
-        'data-scope-radio'
-      ) as Scope | null
-      if (targetScope && !isScopeDisabled(targetScope)) setScope(targetScope)
-      return
-    }
-  }
-
-  function pickScope(s: Scope) {
-    // pickScope is only called from the click handler, which is itself
-    // guarded against disabled scopes. The internal call is therefore
-    // safe without re-checking.
-    setScope(s)
-  }
-
   // Filter quick-toggles: each chip mirrors one entry in liveFilters.
   // Writes go through setFilters so the FilterBar updates.
   function toggleOwner(o: string) {
@@ -319,8 +222,7 @@
   // Columns footer — read-only column summary from the user's config.
   let columns = $derived(
     (settings.config?.plugins?.plugin_settings?.['silt-kanban']?.columns as
-      | string[]
-      | undefined) ?? ['TODO', 'DOING', 'DONE']
+      string[] | undefined) ?? ['TODO', 'DOING', 'DONE']
   )
 
   // Live-aria region announces filter changes (mirrors CalendarSidebar's
@@ -464,62 +366,6 @@
         {saveError}
       </p>
     {/if}
-  </section>
-
-  <!-- SCOPE (#323 AC: scope mirror stays in sync with header) -->
-  <section aria-labelledby="kanban-scope-heading">
-    <h3
-      id="kanban-scope-heading"
-      class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
-    >
-      Scope
-    </h3>
-    <ul role="radiogroup" aria-label="Board scope" class="mt-1 space-y-0.5">
-      {#each SCOPES as s, i (s)}
-        {@const selected = liveScope === s}
-        {@const disabled = !ctx.activeNotebook && s !== 'vault'}
-        <li>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            aria-disabled={disabled}
-            tabindex={i === scopeFocusIdx && !disabled ? 0 : -1}
-            data-scope-radio={s}
-            data-testid={`scope-${s}`}
-            onclick={() => !disabled && pickScope(s)}
-            onkeydown={onScopeKeydown}
-            class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[12px] font-body-md cursor-pointer border-none bg-transparent transition-colors
-              {selected
-              ? 'bg-accent-primary-glow text-accent-primary-start'
-              : 'text-text-primary hover:bg-hover'}
-              {disabled ? 'opacity-40 cursor-not-allowed' : ''}"
-          >
-            <span
-              class="w-2 h-2 rounded-full"
-              class:bg-accent-primary-start={selected}
-              class:bg-text-muted={!selected}
-            ></span>
-            <span class="flex-1 capitalize">
-              {s === 'vault'
-                ? 'Vault'
-                : s === 'notebook'
-                  ? 'Notebook'
-                  : s === 'section'
-                    ? 'Section'
-                    : 'Page'}
-            </span>
-            {#if selected && liveOverride}
-              <span
-                class="material-symbols-outlined text-[12px] text-accent-primary-start"
-                title="Manual override — click Follow in the board header to track navigation"
-                aria-label="Manual scope override">push_pin</span
-              >
-            {/if}
-          </button>
-        </li>
-      {/each}
-    </ul>
   </section>
 
   <!-- ACTIVE FILTERS (#323 AC: bidirectional sync with FilterBar) -->
