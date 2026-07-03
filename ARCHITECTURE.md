@@ -205,7 +205,8 @@ markdown + YAML on the next launch. This durable, incremental model is
 what lets Silt scale to dozens of notebooks and thousands of pages
 without rebuilding the whole index on every launch.
 
-Connections are opened by `db.NewDatabaseManager(dbPath)` (pass `""` for an ephemeral in-memory shared-cache DB, used in tests and before a vault is open). The DB runs in **WAL mode** — persistent in the file header, so every later connection (including the plugin SDK's read-only handle) inherits it without re-running the pragma. Per-connection pragmas set `synchronous = NORMAL` (safe under WAL — the WAL itself survives app crashes), memory temp store, a 256 MiB mmap threshold, a 64 MiB page cache, a 5 s `busy_timeout`, and `foreign_keys = ON`; see `backend/db/schema.go` for the values.
+Connections are opened by `db.NewDatabaseManager(dbPath)` (pass `""` for an ephemeral in-memory shared-cache DB, used in tests and before a vault is open). The DB runs in **WAL mode** — persistent in the file header, so every later connection (including the plugin SDK's read-only handle) inherits it without re-running the pragma. Per-connection pragmas are configured for WAL safety and performance; see
+`backend/db/schema.go` for the values.
 
 Concurrency: WAL allows unlimited readers alongside a single writer; readers never block writers and the writer never blocks readers. The Go-level `core.ExecutionCoordinator` serializes all access (`SetMaxOpenConns(1)`) so the locking story stays simple. Clean shutdown runs `PRAGMA wal_checkpoint(TRUNCATE)` (in `DatabaseManager.Close` and after each startup re-index pass) so the WAL does not grow unbounded across sessions; on a crash, SQLite auto-recovery replays the WAL on the next open.
 
@@ -486,7 +487,7 @@ Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
           │  ApplyTheme persists here (the only disk write in the engine)
 ```
 
-**Storage layout.** Theme files live in `<vault>/.system/themes/*.json` (SPECS §3.2). The **first-class set** (`cyber_forest` plus Terra Noir, Linen, Stark, Graphite) is embedded via `//go:embed themes/*.json` and is what `ScaffoldVault` writes, so each first-class theme has one source of truth. `ListThemes` appends every embedded first-class theme (deduped — on-disk wins), so the full roster is always selectable even on an empty or wiped vault; `ResolveActive` / `CachedThemeByID` resolve a first-class id from the embed when it is not on disk, so a non-default active theme no longer flashes the default palette. The active id + mode persist to user-global `settings.json` — the only disk write in the engine.
+**Storage layout.** Theme files live in `<vault>/.system/themes/*.json` (SPECS §3.2). The **first-class set** (`cyber_forest` plus Terra Noir, Linen, Stark, Graphite) is embedded via `//go:embed themes/*.json` and is what `ScaffoldVault` writes, so each first-class theme has one source of truth. `ListThemes` appends every embedded first-class theme (deduped — on-disk wins), so the full roster is always selectable even on an empty or wiped vault; `ResolveActive` / `CachedThemeByID` resolve a first-class id from the embed when it is not on disk, so a non-default active theme always resolves its palette from the embed, so the default palette never appears. The active id + mode persist to user-global `settings.json` — the only disk write in the engine.
 
 **backend/themes** validates the canonical schema (colors narrowed to `#hex`/`rgb()`/`rgba()` — the import sandbox), loads on-disk + embedded themes (deduped by id), imports/exports atomically, and serves a process-local mtime-aware cache. See the package for per-file responsibilities.
 
@@ -606,9 +607,7 @@ internal newlines. `renderBlock` emits them verbatim (no `\n`→space collapse)
 with the block identity comment on its own dedicated trailing line, so the
 on-disk format stays strictly GFM/HTML/Obsidian syntax (byte-exact interop
 with Obsidian / GitHub / VS Code). The frontend converter (`blocksToDoc`) is
-a clean 1:1 map (`blocks.map(blockToNode)`) — the multi-block regrouping layer
-that previously faked single-entity semantics for tables/details/callouts is
-deleted. Each multi-line block is one `blocks`-table row, one UUID, one
+a clean 1:1 map (`blocks.map(blockToNode)`). Each multi-line block is one `blocks`-table row, one UUID, one
 searchable FTS5 document, and one SDK mutation target.
 
 NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render the Svelte UI for each block type — checkbox cycle for tasks, drag handles, meta badges. The slash menu (`/` at block start) surfaces commands to change block types.
@@ -630,7 +629,7 @@ Each tab carries a `viewMode: 'edit' | 'source'` on its `TabEntry` (`frontend/sr
 
 **Editor teardown in Source view.** The Edit/Source switch lives in `VirtualScrollContainer`: Source mode renders only `MarkdownSourceViewer` and does **not** mount `TipTapEditor`, so a tab held in Source view pays no editor memory cost (Svelte destroys the ProseMirror editor + NodeViews + listeners on the switch; it rebuilds from `blocks` on return to Edit, since content is on disk via auto-save). Lifecycle safety: `TipTapEditor.onDestroy` flushes the pending save and releases the focus lease, and `hasFirstEdit` is container-scoped so edit-to-pin can't double-fire across a remount. See `docs/editor-memory-profiling.md` for the cost model and the data-gated recommendation.
 
-**Scroll preservation across the round-trip.** Because the teardown discards the editor, the Edit→Source→Edit round-trip used to reset the scroll position. `VirtualScrollContainer` now captures `containerEl.scrollTop` in a `$effect.pre` the instant a tab leaves Edit (before the editor unmounts and the container height collapses) and restores it after the remounted editor signals readiness — `TipTapEditor` surfaces its internal `editorReady` state to the parent via an `onReady` callback fired in `onCreate`. Restore waits one tick + animation frame (so remounted NodeViews have measured) and clamps to the current scroll height (a doc may have shortened via autosave/fsnotify while the tab was in Source). Cursor-position restore across the round-trip is not yet implemented; it requires an editor-readiness/async-timing path the jsdom test layer cannot drive.
+**Scroll preservation across the round-trip.** `VirtualScrollContainer` captures `containerEl.scrollTop` in a `$effect.pre` the instant a tab leaves Edit (before the editor unmounts and the container height collapses) and restores it after the remounted editor signals readiness — `TipTapEditor` surfaces its internal `editorReady` state to the parent via an `onReady` callback fired in `onCreate`. Restore waits one tick + animation frame (so remounted NodeViews have measured) and clamps to the current scroll height (a doc may have shortened via autosave/fsnotify while the tab was in Source).
 
 **Rich inline & block content.** Three more atomic node types render inside the editor and round-trip their source verbatim through `clean_text`, exactly like the Smart Graph tokens above. **Math** is KaTeX: inline `$...$` is an inline atomic `InlineMathNode`, and a NOTE whose entire body is `$$...$$` becomes a top-level `BlockMathNode` (the sole-content-NOTE path mirrors `embedNode` — block math is never emitted inside inline content, which would violate the schema). A function-based InputRule auto-triggers the inline node on a balanced `$…$` pair (currency-safe: the finder rejects a `$` preceded by `$` and any pair containing internal whitespace, so `5$ cash` / `$5` stay literal). `MathNodeView.svelte` renders KaTeX (`output: 'htmlAndMathml'` for screen readers, `throwOnError: false` so a bad equation shows inline in error color); the `/math` slash command and click-to-edit on an existing node open an in-app LaTeX popover (`MathLatexPopover.svelte`) with a live preview, replacing the native `window.prompt`. The popover is raised by a `silt:edit-math` window event so the editor and the NodeView stay decoupled (the NodeView is non-editable; it carries the latex as an attr). `Ctrl/Cmd+Enter` commits, `Esc` cancels, and an empty equation is rejected; math is implemented as a custom node rather than `@tiptap/extension-mathematics`, so it composes cleanly with Silt's converter/NodeView pipeline. **Mermaid** is a render branch on the existing `codeBlock`: a block whose `language` is `mermaid` renders an SVG via a lazy-loaded `mermaid.js` singleton (`useMermaid.ts`, dynamic import, ~200KB gzipped kept out of the main bundle, `securityLevel: 'strict'`, parse-guarded so invalid source shows a readable error) instead of the Shiki dual-layer; the ```mermaid fence round-trips via the existing `codeBlock.language` attr (Mermaid is a pure view). **@-mention** is an inline atomic `MentionNode` (`@[name]` token, like `((uuid))`); its suggestion list is a **read-only** `SELECT DISTINCT owner FROM tasks` projection surfaced via the `DistinctOwners(prefix)` IPC — SQLite stays working memory, no mention state is stored (§0 rule 4). `DistinctOwners` narrows server-side (`LIKE 'prefix%'`) so a vault with thousands of owners never ships the full list, and the editor caches the unfiltered set on mount with a short TTL plus a 120ms debounce on the prefix-refine path instead of re-fetching on every focus. Confirming a mention inside a `taskBlock` also stamps `[owner:: name]` in the same transaction (single source of truth for the token format via `buildMetaToken`); in a regular paragraph the chip is inserted with no owner write-back. The mention typeahead is a self-contained `Extension.create` mirroring `taskMetaSuggest` (no `@tiptap/suggestion` dependency — the in-repo convention that keeps the suggest logic jsdom-pure).
 
@@ -706,8 +705,7 @@ var(--color-status-danger)` + skip-ink + under (WCAG: color+shape, theme-aware).
 dictionary via the atomic `AddCustomDictionaryWord` IPC + Ignore); right-click
 over a misspelled word opens it, and a FormatToolbar spellcheck button opens it
 for the cursor's word. No hotkey by design (wavy underline + right-click +
-toolbar button). Multi-language packs, domain word lists, and custom-dictionary
-import/export are future work.
+toolbar button).
 
 **Typewriter mode** — `frontend/src/lib/editor/typewriter/TypewriterModeExtension.ts`
 is a ProseMirror PluginView.update that, on a keyboard-driven selection/doc
@@ -789,8 +787,7 @@ block CRUD) also validate a session token: the loader calls
 `RegisterPluginSession(pluginID)` at load time and the SDK closures capture the
 token. The Go side verifies `token ↔ pluginID` before `requireGrant` so a
 plugin cannot impersonate another by calling a raw binding with a different
-pluginID. Full plugin isolation via per-plugin webviews is the planned end
-state; the session token is the current enforcement layer until then.
+pluginID.
 
 **Registry-internal gates.** The three frontend registries
 (slash-registry, surfaces, decorations) check `isGranted(pluginID, cap)` from a
@@ -939,14 +936,13 @@ convention-anchored (see SPECS.md sample): Google Docs wins ties over MS
 Office; Office/Docs win over code editors for shared actions; VS Code/Sublime/
 Notepad++ fill gaps where Office/Docs have no opinion. Windows/Linux only
 (`Ctrl` everywhere). Spellcheck deliberately has no hotkey (wavy underline +
-right-click + a FormatToolbar button). The vault scaffolder no longer
-duplicates hotkeys into the scaffolded config.yaml — `Load()` decodes over
-`Defaults()`, which is the single source. Paste is not in the hotkey map:
+right-click + a FormatToolbar button). `Load()` decodes over
+`Defaults()`, which is the single source of truth for hotkeys. Paste is not in the hotkey map:
 `Ctrl+V` is ProseMirror's native rich paste, `Ctrl+Shift+V` inserts the
 clipboard as plain text (PlainPaste extension, lib/editor/plainPaste.ts).
 
 
-9. Performance Budgets & System Tray
+9. Performance Budgets
 
 9.1 Boot-Scanner Budget (Hard Regression Gate)
 
@@ -959,7 +955,3 @@ TestAtomicWrite_KillMidWriteRecoversViaWAL (backend/db/db_test.go) simulates a d
 9.3 UI Frame-Budget Probe
 
 frontend/src/lib/perf/frame-budget.ts provides `measureFrameBudget(label, fn)` — a dev-only probe (gated on `?perf=1` in the URL; zero-cost pass-through otherwise) that wraps a callback in `performance.mark`/`measure` + `requestAnimationFrame` and logs the elapsed time against the 16ms frame budget. Instrumented on the three highest-stress paths: Kanban drag-drop settle, TipTap editor transaction (docToBlocks), and theme-token injection.
-
-9.4 System Tray (Deferred)
-
-Wails v2 has an internal tray-menu struct but does not expose a public runtime API to register tray menus from application code. The system-tray / minimize-to-tray feature is therefore not yet available; it will be revisited when Wails v3 (full tray support) is adopted. The production build pipeline (`wails build --clean`), the idle-memory budget (<65 MB), and the cross-platform artifacts (Windows NSIS + portable zip, Linux AppImage + .deb) are otherwise complete.

@@ -677,7 +677,7 @@ index.js      native ESM exporting { manifest, init(ctx) }
 The `silt-attachments` plugin lets users attach arbitrary files to notes.
 
 - **File placement:** Files are copied into `<notebook>/attachments/` (visible placement, per the data-scoping principle). The `attachments/` directory is excluded from the scanner (`WalkMarkdown`), the sidebar navigator (`ListNavigation`), and the fsnotify watcher, so it never appears as an empty section and binary files are never indexed.
-- **Markdown convention:** Images use standard `![alt](attachments/foo.png)` syntax (rendered as `embedBlock` type `image`). Non-image files use the generic `embedBlock` node serialized via an HTML-comment marker `<!-- silt-embed: {"embedType":"attachment","src":"attachments/foo.pdf",...} -->`. The marker is preserved verbatim by the Go parser as the NOTE block's `clean_text` (the parser does not need to recognize the marker — the frontend converter detects it on load and emits it on save, so the round-trip is byte-identical). This is a deliberate design choice: parser-level recognition would require a new `ParsedBlock` field + renderer + indexer changes for no functional benefit over the converter-level approach.
+- **Markdown convention:** Images use standard `![alt](attachments/foo.png)` syntax. Non-image files are serialized as an HTML-comment marker `<!-- silt-embed: {"embedType":"attachment","src":"attachments/foo.pdf",...} -->` that round-trips byte for byte through the parser.
 - **Open in native handler:** Activating an attachment embed block opens the file in the OS default handler (Preview / Adobe / `xdg-open` / etc.), not in-app. The path is resolved against the notebook's actual root (in-vault or linked).
 - **Kanban travel:** An attachment embedBlock inserted as a CHILD of a task block (indented under it) automatically travels with its parent when the task is reordered. This is inherent to the block hierarchy — no explicit association model is needed.
 - **Copy-in semantics:** The source file is copied (not linked/moved) into `attachments/`. Filename collisions are resolved with a counter suffix (`report-1.pdf`, `report-2.pdf`). A 100 MB size limit and an executable filetype blocklist (`.exe`, `.bat`, `.sh`, etc.) prevent the attachment folder from becoming an unbounded executable drop zone.
@@ -766,19 +766,9 @@ already live on disk today:
 - Math (`$x$` / `$$x$$`) — de-facto on GitHub/Obsidian
 - Footnotes (`[^1]`) — de-facto on GitHub since 2021
 
-**Sub/super rationale:** GFM reserves `~` for `~~` strikethrough, so Pandoc's
-`~sub~`/`^sup^` shows as literal text on GitHub. HTML `<sub>`/`<sup>` is the
-interop-safe choice (renders on GitHub, Obsidian, VS Code, and through Pandoc).
-The `Ctrl+,` / `Ctrl+.` editor hotkeys toggle the existing HTML marks.
-
-**Future Pandoc-native authoring** (Pandoc dialect mode + an in-app `pandoc`
-export pipeline) is deferred to a future plugin — the "Obsidian route": the base
-stays GFM, a plugin opts in per file/notebook. Revisit
-when ~15–30% of users are active academic publishers (citations + footnotes +
-multi-line math + LaTeX/PDF export). The governing tiebreaker for future format
-questions is "what does GFM do?"; the council's reversibility analysis
-(GFM→Pandoc is additive, Pandoc→GFM is destructive) means GFM is strictly the
-more recoverable base if ever wrong.
+Sub/super uses HTML `<sub>`/`<sup>` (GFM reserves `~` for strikethrough,
+so Pandoc's `~sub~`/`^sup^` is not GFM-compatible). The `Ctrl+,` /
+`Ctrl+.` hotkeys toggle these marks.
 
 ## Inline Formatting
 
@@ -839,7 +829,6 @@ absence means the Edit default). A freshly-opened tab starts in
 TipTapEditor** (the editor is destroyed and rebuilt from the on-disk file on
 return to Edit), so a tab held in Source view pays no editor memory cost;
 the Edit scroll offset is restored across the round-trip.
-Cursor-position restore is not yet specified.
 
 ### Rich blocks & editor interactions
 
@@ -868,9 +857,7 @@ inserts an atomic mention chip. The `@[name]` token round-trips through
 `clean_text`; the suggestion source is a read-only projection — no mention
 state is stored. The owner list is filtered server-side as you type
 (`DistinctOwners(prefix)` → `LIKE 'prefix%'`) and cached briefly with a
-debounced refine, so opening the typeahead no longer re-fetches every owner
-on each focus and a vault with thousands of owners won't ship a huge list
-over IPC. Confirming a mention inside a task line also writes `[owner:: name]`
+debounced refine, so the typeahead never ships a huge owner list over IPC. Confirming a mention inside a task line also writes `[owner:: name]`
 in the same transaction (outside a task, the mention is just a reference and
 no owner token is written).
 
@@ -934,7 +921,7 @@ editor:
   focus_mode: false           # dim non-active paragraphs
   default_view_mode: "edit"   # "edit" or "source"
   # Inline spellcheck (on by default; en-US only — multi-language packs,
-  # domain word lists, and custom-dictionary import/export are future work).
+  # domain word lists, and custom-dictionary import/export).
   spellcheck_enabled: true
   spellcheck_language: "en-US"
   # Typewriter mode keeps the active line at a fixed viewport ratio

@@ -47,7 +47,7 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
 
 2.1 Color Tokens Schema (Cyber Forest — the default / primary theme)
 
-The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hue-agnostic **semantic accent tokens**. Components reference only the semantic accents (`--accent-primary-*` = the "go / done" hue, `--accent-secondary-*` = the "in progress" hue); each theme maps its concrete hues onto them. This is the single source of truth shared by the Go theme loader (`backend/themes`), the runtime CSS injector, and `cyber_forest.json`. **Cyber Forest is the default and primary theme** (embedded as the guaranteed fallback); the additional first-class palettes in §2.2 are alternates.
+The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hue-agnostic **semantic accent tokens**. Components reference only the semantic accents (`--accent-primary-*` = the "go / done" hue, `--accent-secondary-*` = the "in progress" hue); each theme maps its concrete hues onto them. This is the single source of truth shared by the theme loader, the runtime CSS injector, and `cyber_forest.json`. **Cyber Forest is the default and primary theme** (embedded as the guaranteed fallback); the additional first-class palettes in §2.2 are alternates.
 
 {
   "schema_version": "1.0.0",
@@ -166,7 +166,7 @@ Silt ships a curated set of first-class themes alongside the default. Each is a 
 | Stark | `silt-stark` | High-contrast / accessibility (WCAG AAA): pure black/white extremes, gold + cyan. |
 | Graphite | `silt-graphite` | Calm true-neutral monochrome: pure gray canvas, single restrained blue accent, neutral-steel secondary. |
 
-Every first-class theme ships both dark and light variants and its own `typography` pairing: Cyber Forest (Plus Jakarta Sans / JetBrains Mono / Hanken Grotesk — the default), Terra Noir (Source Serif 4 / IBM Plex Mono / Newsreader — warm editorial), Linen (Mulish / Fira Code / Sora — soft clean), Stark (Atkinson Hyperlegible / Geist Mono — the Braille Institute low-vision font, for the AAA theme), Graphite (Geist / Geist Mono / Schibsted Grotesk — developer aesthetic). The palettes below document the color design intent; the authoritative source for each value is the JSON in `backend/themes/themes/` (the contrast harness in `backend/themes/contrast_test.go` guards WCAG for every mode variant).
+Every first-class theme ships both dark and light variants and its own `typography` pairing: Cyber Forest (Plus Jakarta Sans / JetBrains Mono / Hanken Grotesk — the default), Terra Noir (Source Serif 4 / IBM Plex Mono / Newsreader — warm editorial), Linen (Mulish / Fira Code / Sora — soft clean), Stark (Atkinson Hyperlegible / Geist Mono — the Braille Institute low-vision font, for the AAA theme), Graphite (Geist / Geist Mono / Schibsted Grotesk — developer aesthetic). The palettes below document the color design intent.
 
 2.2.1 Terra Noir — warm dark earth
 
@@ -376,38 +376,11 @@ Command Menu Initialization: Scale transition from 0.97 to 1.0 combined with opa
 
 Kanban Card Drag-Reorder: Uses compile-time svelte/animate (using Svelte's native flip transition mechanics). Duration: 200ms with linear-out motion.
 
-7. Dynamic Theme Injection Runtime
+7. Picker & Selection UX
 
-To support user-defined styling, Silt implements a runtime CSS Custom Property injector. The active theme and dark/light mode are persisted in AppSettings (user-global settings.json) and resolved over the Wails IPC bridge; a Svelte theme store injects the resolved token map onto :root in a single paint frame. The token map includes both color tokens (--bg-*, --border-*, --text-*, --accent-*, --status-*) and, when the theme defines them, typography tokens (--font-headline, --font-body, --font-mono). Typography is theme-level (not per-mode): each theme can optionally declare font-family choices that override the config-driven editor.* defaults via CSS fallback chains in index.css (e.g. `var(--font-body, var(--editor-font-family), 'Plus Jakarta Sans', sans-serif)`). Themes without a typography section are fully backward compatible — the config values remain in effect.
+**Theme selection.** Settings → Appearance is the single surface. Mode is a `role="radiogroup"` of Dark / Light / System; changing mode never changes the active theme. Themes are a `role="listbox"` of `role="option"` rows with roving tabindex, Arrow/Home/End navigation, Enter/Space commit, and Esc to cancel any live preview. Swatches are data-driven from theme metadata (no per-theme code branches). The picker renders a live preview on hover/focus; the active theme is restored on `mouseleave`/`blur`/`Esc`. Errors and status updates flow through a `role="status" aria-live="polite"` region (escalating to `role="alert" aria-live="assertive"` for errors). The active id and mode persist across restarts via user-global settings.
 
-```
-                +------------------------------------------+
-                | Go: backend/themes (embed.FS default +    |
-                |     on-disk *.json loader + validator)    |
-                +------------------------------------------+
-                                   │  ListThemes / GetActiveTheme / ApplyTheme
-                                   ▼  [ActiveThemeResult: dark+light token maps]
-                +------------------------------------------+
-                |       Wails IPC Transport Layer           |
-                +------------------------------------------+
-                                   │
-                                   ▼
-+-----------------------------------------------------------------------+
-| Svelte theme store (frontend/src/theme)                               |
-|  - resolves "system" via prefers-color-scheme (both maps in hand)     |
-|  - injectTokens: rewrites ONE <style id="silt-theme">:root{...} block |
-|    (one DOM write -> one recalc -> same-tick repaint, no flicker)     |
-|  - index.css :root values are startup fallbacks only                  |
-+-----------------------------------------------------------------------+
-```
-
-A canonical default theme (cyber_forest) is embedded in the Go binary so the app always renders correctly before a vault exists or when the themes directory is wiped. The native webview BackgroundColour is resolved at launch from that embedded theme's `bg.void`, eliminating any pre-CSS flash that matches no token.
-
-Custom Theme Import: users can import a theme JSON via the Settings → Appearance "Import" button or by dragging a `.json` onto the tab (Wails `OnFileDrop`). The backend validates against the canonical schema using the same `themes.ParseAndValidate` the loader uses, namespaces the id (`user-` prefix on a built-in id, counter suffix on repeat), and writes the file atomically. `themes.ValidationErrors` propagate over IPC so the UI names the offending token and the expected format. On success the backend emits the Wails event `themes:changed` (distinct from the active-theme event `theme:changed`); the frontend `themesState` listing re-fetches and the new theme appears in the picker without a restart. Sandbox by schema: the canonical schema accepts only color values (hex / rgb / rgba) at every token slot, so embedded `<script>`, `url()`, `expression()`, and named colors are rejected structurally before they reach disk.
-
-User Theme Engine UX: Settings → Appearance is the single surface for theme selection. Mode is a `role="radiogroup"` of Dark / Light / System (changing mode never changes the active theme). Themes are a `role="listbox"` of `role="option"` rows with roving tabindex, Arrow/Home/End navigation, Enter/Space commit, and Esc to cancel any live preview. Swatches are data-driven from `ThemeInfo.Swatches` (no per-theme code branches). The picker renders a live preview on hover/focus by injecting the preview theme's tokens via the existing `injectTokens` path — restoring the active theme on `mouseleave`/`blur`/`Esc`. Errors and status updates flow through a `role="status" aria-live="polite"` region (escalating to `role="alert" aria-live="assertive"` for errors). The active id and mode persist across restarts via `AppSettings`.
-
-Page Template Picker: the template picker reuses the same modal chrome, Refined Cyber-Ink token system, and iconography rules as the theme picker. Iconography follows the Material Symbols convention; the `icon` frontmatter field is a Material Symbols name rendered at 18–20px. No emojis are used in first-class template icons — they are abstract, CSS-friendly glyphs. The picker is a centered overlay (`role="dialog"`, `aria-modal="true"`) with a category-grouped `role="listbox"`, roving tabindex (Arrow/Home/End/Enter), a live preview pane, a dynamic placeholder form, and a Tab focus trap. Entry points: the sidebar `content_copy` button + `Ctrl+Shift+T` (new page mode) and the `/template` slash command (insert mode).
+**Page Template Picker.** The template picker reuses the same modal chrome, Refined Cyber-Ink token system, and iconography rules as the theme picker. Iconography follows the Material Symbols convention; the `icon` frontmatter field is a Material Symbols name rendered at 18–20px. No emojis are used in first-class template icons — they are abstract, CSS-friendly glyphs. The picker is a centered overlay (`role="dialog"`, `aria-modal="true"`) with a category-grouped `role="listbox"`, roving tabindex (Arrow/Home/End/Enter), a live preview pane, a dynamic placeholder form, and a Tab focus trap. Entry points: the sidebar `content_copy` button + `Ctrl+Shift+T` (new page mode) and the `/template` slash command (insert mode).
 
 
 8. Accessibility (A11Y) & Keyboard Navigation Compliance
