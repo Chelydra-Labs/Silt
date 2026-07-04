@@ -257,7 +257,12 @@ func flattenChrome(out map[string]string, m Mode) {
 }
 
 // BGVoid returns the resolved bg.void for the given mode, used to set the
-// native webview BackgroundColour without a full flatten round-trip.
+// native webview BackgroundColour without a full flatten round-trip. This is
+// the page-level void; dual-surface themes with a chrome block may flash the
+// page color on chrome surfaces (sidebar/titlebar) during the brief pre-CSS
+// window. The index.css @theme block carries --color-chrome-* startup
+// fallbacks that mitigate this for the default palette; the runtime injector
+// resolves both surfaces within one paint cycle.
 func (t *Theme) BGVoid(mode string) string {
 	if mode == "light" {
 		return t.Modes.Light.BG.Void
