@@ -251,3 +251,61 @@ that are unique to each theme. Every `status`, every `error`, and every
 `editor.highlight` across all 11 themes is now a hand-tuned, palette-coherent
 value. Contrast gate green for all 11 (AAA ≥7:1 for Stark; AA ≥4.5:1 elsewhere,
 including Daybreak + Bubblegum light sidebars).
+
+---
+
+## Zone-coverage completion pass: explicit `editor` + `popover` everywhere
+
+A zone-coverage audit found that dark modes authored only 4 zones
+(`app`/`panel`/`modal`/`card`) for 8 of 11 themes — the `editor` (the primary
+writing surface of a notes app) and `popover` (menus/dropdowns) were left to
+inherit. Inheritance is fine for incidental zones, but the writing canvas and
+the menu layer should be deliberate. Light modes were fuller but **Stark light**
+was missing `editor`. This pass closes those gaps so every theme, in both modes,
+authors the full primary set: `app`/`editor`/`panel`/`card`/`modal`/`popover`
+(plus `sidebar` on the dual-surface Daybreak/Bubblegum light).
+
+### What changed
+
+- **Dark `editor` authored on 8 themes** (cyber_forest, graphite, frost,
+  daybreak, bubblegum, aggie, altgeld, stark). Each is a deliberate "page" one
+  perceptible step lighter than `app` and in the same hue family, so the writing
+  canvas reads as a distinct surface rather than the same wash as the chrome.
+  The 3 themes that already authored a textured editor (Linen weave, Terra Noir
+  grain, Synthwave grid) keep their overlays verbatim.
+- **Dark `popover` authored on all 11 themes** (none authored it before). Each
+  lifts one perceptible step above `modal` as the topmost tier
+  (menus/tooltips/dropdowns sit above dialogs).
+- **Stark light `editor` authored** — pure white (`#ffffff`) with a strong
+  `#3a3a3a` border, the AAA reading surface (21:1).
+- **Dark `modal` lifted off the panel plateau** on the 8 themes where
+  `modal ≡ panel` (graphite, frost, synthwave, daybreak, bubblegum, aggie,
+  altgeld, stark). A dialog now reads as raised one step above its panel parent,
+  giving the dark ladder a clean `app → editor → panel → modal/card → popover`
+  progression.
+- **Light `editor` re-seated between `app` and `panel`** on 10 themes. The
+  previous pass had authored light editors as the brightest tier (brighter than
+  `panel`), which broke the monotonic ladder. Each light editor now sits one
+  step above `app` and below `panel` — a deliberate paper surface distinguished
+  by its warm/cool hue (Linen/Terra Noir warm paper, Frost/Synthwave cool,
+  Cyber Forest neutral slate, etc.) rather than by brightness. Stark light is
+  the deliberate exception: its AAA identity keeps `editor` at pure white.
+
+### Result
+
+- **Zone coverage before → after:** dark modes 4 zones → 6 (5 → 6 for the 3
+  textured themes); Stark light 5 → 6. Every theme now authors
+  `app`/`editor`/`panel`/`card`/`modal`/`popover` in both modes.
+- **Ladders monotonic** in both modes for all 11 (`app` darkest/most-tinted →
+  `popover` lightest/nearest-white; `editor` between `app` and `panel`).
+  Stark light is intentionally non-monotonic by AAA design (reading surfaces
+  pure white, structure border-led).
+- **Gate green** for all 11 (`go test -race -count=1 ./backend/themes/...`),
+  `go vet` clean. The broadened gate (each zone's text + text-muted on its own
+  bg ≥ 4.5:1 / AAA-Stark; accent starts ≥ 3:1 on app) confirmed — every new
+  `editor`/`popover` bg was verified to keep text-muted ≥ 4.5:1 (tightest:
+  cyber_forest dark at 5.18:1 on the new popover).
+- **On-point:** no identity drift — only zones were added in each theme's
+  existing hue family and light-mode editor lightness adjusted; accents,
+  status, error, typography, geometry, and editor-interaction blocks are
+  unchanged from the prior pass.

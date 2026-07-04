@@ -18,9 +18,11 @@
     "dark": {
       "surfaces": {
         "app": { "bg": "#0a1810", "border": "#1a2820", "text": "#e8efe0" },
+        "editor": { "bg": "#0d1c14", "border": "#1e3028", "text": "#e8efe0" },
         "panel": { "bg": "#0f2018", "border": "#223830", "text": "#e8efe0" },
-        "modal": { "bg": "#0f2018", "border": "#365040", "text": "#e8efe0" },
-        "card": { "bg": "#142820", "border": "#223830", "text": "#e8efe0" }
+        "modal": { "bg": "#13281e", "border": "#365040", "text": "#e8efe0" },
+        "card": { "bg": "#142820", "border": "#223830", "text": "#e8efe0" },
+        "popover": { "bg": "#1a3328", "border": "#3e6048", "text": "#e8efe0" }
       },
       "hover": "#1a3328",
       "active": "#223e30",
@@ -69,7 +71,7 @@
     "light": {
       "surfaces": {
         "app": { "bg": "#e8efe2", "border": "#bccbb0", "text": "#1e4d2b" },
-        "editor": { "bg": "#f5faef", "border": "#b4c6a4", "text": "#1e4d2b" },
+        "editor": { "bg": "#ebf1e5", "border": "#b4c6a4", "text": "#1e4d2b" },
         "panel": { "bg": "#eef4e8", "border": "#b8c9a8", "text": "#1e4d2b" },
         "card": { "bg": "#f2f7ed", "border": "#c0d0b0", "text": "#1e4d2b" },
         "modal": { "bg": "#f8fcf4", "border": "#8aa878", "text": "#1e4d2b" },
