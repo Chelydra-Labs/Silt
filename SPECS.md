@@ -148,7 +148,13 @@ VaultRoot/
 │   │   ├── silt-terra-noir.json    ← warm dark earth
 │   │   ├── silt-linen.json         ← clean paper
 │   │   ├── silt-stark.json         ← WCAG AAA high-contrast
-│   │   └── silt-graphite.json      ← calm monochrome dark
+│   │   ├── silt-graphite.json      ← calm monochrome dark
+│   │   ├── silt-bubblegum.json     ← playful coral-pink / teal
+│   │   ├── silt-frost.json         ← crisp blue-tinted light
+│   │   ├── silt-synthwave.json     ← 80s retro neon
+│   │   ├── silt-daybreak.json       ← dark chrome + light page
+│   │   ├── silt-aggie.json         ← pine green + gold
+│   │   └── silt-altgeld.json       ← navy + orange prairie-fire
 │   └── templates/                  ← user-authored page templates (built-ins are embedded)
 │       ├── my-meeting-template.md
 │       └── sprint-review.md
@@ -484,7 +490,7 @@ Transforms the active block into a first-level markdown header (# ).
 
 To prevent styling stagnation, Silt provides a built-in user theme engine mapping to CSS Custom Properties.
 
-**Theme files** live as canonical modes-based JSON in `<vault>/.system/themes/`. Each theme carries a `schema_version`, `id`, `name`, an optional `typography` section, and a `modes.dark` / `modes.light` token set (bg, border, text, accent.primary / accent.secondary × start/end/glow, status). Accent tokens are hue-agnostic and **semantic**: components reference only `--accent-primary-*` (the "go / done" hue) and `--accent-secondary-*` (the "in progress" hue), and each theme maps its concrete hues onto them. The optional `typography` section (theme-level, not per-mode) defines font-family choices (`font_family`, `mono_font_family`, `headline_font`) emitted as `--font-body`, `--font-mono`, `--font-headline`; themes without a typography section inherit the config-driven fonts via CSS fallback chains.
+**Theme files** live as canonical modes-based JSON in `<vault>/.system/themes/`. Each theme carries a `schema_version`, `id`, `name`, an optional `typography` section, and a `modes.dark` / `modes.light` token set (bg, border, text, accent.primary / accent.secondary × start/end/glow, status). Accent tokens are hue-agnostic and **semantic**: components reference only `--accent-primary-*` (the "go / done" hue) and `--accent-secondary-*` (the "in progress" hue), and each theme maps its concrete hues onto them. The optional `typography` section (theme-level, not per-mode) defines font-family choices (`font_family`, `mono_font_family`, `headline_font`) emitted as `--font-body`, `--font-mono`, `--font-headline`; themes without a typography section inherit the config-driven fonts via CSS fallback chains. A mode MAY also declare an optional `chrome` sub-tree (`bg`/`border`/`text` only — accent, status, texture, and typography are NOT per-surface); when present, `Flatten` emits `--color-chrome-*` tokens that a `.silt-chrome` CSS scoping class applies to the sidebar, titlebar, and activity bar, enabling "dark chrome + light page" themes (Daybreak, Bubblegum) without per-component changes.
 
 **Default & first-class themes.** The app embeds a guaranteed-correct default (`cyber_forest`) plus a first-class set (Cyber Forest, Terra Noir, Linen, Stark, Graphite) so it always has a fallback — before a vault exists, when the themes directory is empty/wiped, and when the active id is missing or invalid. The full first-class roster is always selectable (on-disk copies win on id collisions), and a non-default active theme is resolved from the embedded set even when it is not on disk, so it never flashes the default palette.
 

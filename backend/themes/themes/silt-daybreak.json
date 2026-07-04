@@ -1,9 +1,9 @@
 {
   "schema_version": "1.0.0",
-  "id": "silt-inkwell",
-  "name": "Inkwell",
+  "id": "silt-daybreak",
+  "name": "Daybreak",
   "author": "Chelydra Labs",
-  "description": "Dark chrome with a warm off-white page: the readability-exception theme. A rich charcoal-navy app skeleton frames a warm paper-like editor surface in light mode.",
+  "description": "Dark night giving way to warm dawn light: a twilight-blue app skeleton frames a warm off-white editor surface. The readability-exception dual-surface theme.",
   "typography": {
     "font_family": "'Inter', sans-serif",
     "mono_font_family": "'JetBrains Mono', monospace",
@@ -85,22 +85,22 @@
       },
       "chrome": {
         "bg": {
-          "void": "#0f172a",
-          "surface": "#16213a",
-          "panel": "#1e293b",
-          "hover": "#283548",
-          "active": "#334155"
+          "void": "#1c2842",
+          "surface": "#243454",
+          "panel": "#2c3c5e",
+          "hover": "#384a6c",
+          "active": "#44588a"
         },
         "border": {
-          "muted": "#1e293b",
-          "zinc": "#334155",
-          "active": "#475569",
-          "focus": "#64748b"
+          "muted": "#2c3c5e",
+          "zinc": "#44588a",
+          "active": "#5068a0",
+          "focus": "#7090c0"
         },
         "text": {
           "primary": "#eaeef5",
-          "muted": "#a8b8cc",
-          "disabled": "#64748b"
+          "muted": "#c4d4e8",
+          "disabled": "#6a8aaa"
         }
       }
     }

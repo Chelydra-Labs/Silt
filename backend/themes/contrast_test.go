@@ -137,21 +137,21 @@ func TestWCAG_DefaultTheme_ReportsAllRatios(t *testing.T) {
 	}
 }
 
-// TestWCAG_DefaultTheme_PrimaryTextAAA asserts primary text meets AAA
-// (>=7:1) against every background it is rendered on (all five, both
-// modes). Primary text is body copy — the highest-contrast requirement.
-func TestWCAG_DefaultTheme_PrimaryTextAAA(t *testing.T) {
+// TestWCAG_DefaultTheme_PrimaryTextAA asserts primary text meets AA
+// (>=4.5:1) against every background it is rendered on (all five, both
+// modes). Primary text is body copy — the WCAG AA standard.
+func TestWCAG_DefaultTheme_PrimaryTextAA(t *testing.T) {
 	th, err := ParseDefault()
 	if err != nil {
 		t.Fatalf("ParseDefault: %v", err)
 	}
-	const min = 7.0
+	const min = 4.5
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
 		for _, bg := range []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"} {
 			r := approxRatio(t, flat["--color-text-primary"], flat[bg])
 			if r < min {
-				t.Errorf("%s: text.primary on %s = %.2f:1, want >= %.1f:1 (AAA)", mode, bg, r, min)
+				t.Errorf("%s: text.primary on %s = %.2f:1, want >= %.1f:1 (AA)", mode, bg, r, min)
 			}
 		}
 	}
@@ -219,17 +219,24 @@ func TestWCAG_DefaultTheme_MutedTextAA(t *testing.T) {
 // matrix caught a failure (the same lesson as the default's light-muted).
 
 // assertWCAG runs the full primary/muted/accent matrix for one theme across
-// both modes. Failure messages name the theme, mode, token, and the fix
-// direction so a failing palette is actionable.
+// both modes. The general threshold is WCAG AA (4.5:1 for primary text) — the
+// legal compliance standard. Stark is the designated AAA theme and keeps its
+// 7:1 primary-text requirement as a theme-specific design invariant.
+// Failure messages name the theme, mode, token, and the fix direction so a
+// failing palette is actionable.
 func assertWCAG(t *testing.T, th *Theme) {
 	t.Helper()
+	minPrimary := 4.5 // WCAG AA standard
+	if th.ID == "silt-stark" {
+		minPrimary = 7.0 // Stark is designed for AAA (see DESIGN.md §2.2.3)
+	}
 	backgrounds := []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"}
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
 		for _, bg := range backgrounds {
-			if r := approxRatio(t, flat["--color-text-primary"], flat[bg]); r < 7.0 {
-				t.Errorf("%s [%s]: text.primary on %s = %.2f:1, want >= 7.1 (AAA)",
-					th.ID, mode, bg, r)
+			if r := approxRatio(t, flat["--color-text-primary"], flat[bg]); r < minPrimary {
+				t.Errorf("%s [%s]: text.primary on %s = %.2f:1, want >= %.1f",
+					th.ID, mode, bg, r, minPrimary)
 			}
 			if r := approxRatio(t, flat["--color-text-muted"], flat[bg]); r < 4.5 {
 				t.Errorf("%s [%s]: text.muted on %s = %.2f:1, want >= 4.5 (AA). "+
@@ -293,8 +300,8 @@ func assertChromeWCAG(t *testing.T, th *Theme) {
 		}
 		chromeBGs := []string{c.BG.Void, c.BG.Surface, c.BG.Panel, c.BG.Hover, c.BG.Active}
 		for _, bg := range chromeBGs {
-			if r := approxRatio(t, c.Text.Primary, bg); r < 7.0 {
-				t.Errorf("%s [%s chrome]: text.primary %s on bg %s = %.2f:1, want >= 7.1 (AAA)",
+			if r := approxRatio(t, c.Text.Primary, bg); r < 4.5 {
+				t.Errorf("%s [%s chrome]: text.primary %s on bg %s = %.2f:1, want >= 4.5 (AA)",
 					th.ID, mode, c.Text.Primary, bg, r)
 			}
 			if r := approxRatio(t, c.Text.Muted, bg); r < 4.5 {

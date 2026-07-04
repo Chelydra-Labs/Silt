@@ -165,8 +165,14 @@ Silt ships a curated set of first-class themes alongside the default. Each is a 
 | Linen | `silt-linen` | Woven linen paper: warm grey-taupe canvas + woven-grain texture, slate-blue + muted lilac. |
 | Stark | `silt-stark` | High-contrast / accessibility (WCAG AAA): pure black/white extremes, gold + cyan. |
 | Graphite | `silt-graphite` | Calm true-neutral monochrome: pure gray canvas, single restrained blue accent, neutral-steel secondary. |
+| Bubblegum | `silt-bubblegum` | Playful and vibrant: coral-pink primary, teal secondary. Light mode uses dual surfaces (deep raspberry chrome + cream page). |
+| Frost | `silt-frost` | Clean and airy: crisp blue-tinted winter palette with sky-blue accents. |
+| Synthwave | `silt-synthwave` | 80s retro neon: deep indigo canvas, hot-pink + electric-cyan accents. |
+| Daybreak | `silt-daybreak` | Twilight-blue chrome + warm off-white page: the readability-exception dual-surface theme. |
+| Aggie | `silt-aggie` | Pine-green canvas with warm gold accents — alpine and agricultural. |
+| Altgeld | `silt-altgeld` | Dark navy canvas with bright orange + electric blue — prairie-fire energy. |
 
-Every first-class theme ships both dark and light variants and its own `typography` pairing: Cyber Forest (Plus Jakarta Sans / JetBrains Mono / Hanken Grotesk — the default), Terra Noir (Source Serif 4 / IBM Plex Mono / Newsreader — warm editorial), Linen (Mulish / Fira Code / Sora — soft clean), Stark (Atkinson Hyperlegible / Geist Mono — the Braille Institute low-vision font, for the AAA theme), Graphite (Geist / Geist Mono / Schibsted Grotesk — developer aesthetic). The palettes below document the color design intent.
+Every first-class theme ships both dark and light variants and its own `typography` pairing. The palettes below document the color design intent for all eleven first-class themes.
 
 2.2.1 Terra Noir — warm dark earth
 
@@ -199,6 +205,82 @@ For users who find Cyber Forest *too colorful*. Graphite is a **true neutral mon
 - Dark: `bg.void #0a0a0a` (true near-black, neutral); `text.primary #ebebeb`; `accent.primary #6f9ad8 → #4d72a0` (restrained blue); `accent.secondary #9aa3ad → #6f7882` (neutral steel).
 - Light: `bg.void #f8f8f8`; `text.primary #1a1a1a`; `accent.primary #4a6fa0 → #374f78`; `accent.secondary #6a737d → #525a63`.
 - Distinctness: primary (blue) and secondary (neutral steel) differ in both hue and chroma so go/done and in-progress never blur, while the overall surface stays a calm flat monochrome.
+
+2.2.5 Bubblegum — playful & vibrant
+
+A fun, energetic theme that breaks from the muted/professional incumbents.
+**Coral-pink** primary and **teal** secondary on a warm magenta-tinged
+canvas. Typography pairs Outfit (body — geometric, rounded), Sora (headline),
+and Fira Code (mono). Intent: the theme for users who want their workspace to
+feel creative and joyful rather than clinical — a decorated notebook, not a
+spreadsheet.
+
+- Dark: `bg.void #1a0e1e` (warm magenta-tinted near-black); `text.primary #f5ede8` (warm cream-white); `accent.primary #ff6b8a → #e84371` (coral-pink); `accent.secondary #4fd1c5 → #38b2ac` (teal).
+- Light (dual-surface): page `bg.void #fdf6f0` (warm cream), `text.primary #2d1f1a` (warm dark brown); chrome `bg.void #2a1322` (deep raspberry-black), `chrome.text.primary #f5ede8` (cream-white) — the app skeleton is a deep raspberry candy shell framing a warm cream page. Accents deepen to `#e84371` / `#2c7a7b` for readability on white.
+- Tuning: light `accent.primary.start` deepened from `#f59e0b`-family amber to `#c2710b` to clear AA non-text (3:1) on the warm cream page.
+
+2.2.6 Frost — clean & airy
+
+A crisp, blue-tinted palette that fills the "bright and cool" gap — the
+existing themes lean warm (Terra Noir), neutral (Graphite), or purely dark
+(Cyber Forest). Typography pairs DM Sans (body), Lexend (headline), and Geist
+Mono (mono). Dark mode is a moonlit frozen lake (cold steel-blue with icy
+accents); light mode is a brilliant winter morning. Intent: a workspace that
+feels clean, cold, and modern — the visual equivalent of fresh air.
+
+- Dark: `bg.void #0a0e14` (cold blue-black); `text.primary #e2eaf2` (cool ice-white); `accent.primary #38bdf8 → #0ea5e9` (sky-blue — frost on glass); `accent.secondary #818cf8 → #6366f1` (periwinkle).
+- Light: `bg.void #f0f4fa` (pale ice-blue); `text.primary #061020` (deep cold navy); `accent.primary #0284c7 → #0369a1` (deeper sky); `accent.secondary #4f46e5 → #3730a3` (deeper indigo).
+- Tuning: dark `text.muted #8a9aae → #94a4b8` to clear AA on the lightest dark surface (`bg.active #263348`).
+
+2.2.7 Synthwave — 80s retro neon
+
+Deep indigo/near-black canvas with neon-hot accents — the visual language of
+Miami Vice, Tron, and synthwave album art. Typography pairs Figtree (body),
+Bricolage Grotesque (headline — expressive display), and Space Mono (mono —
+retro terminal). Intent: unmistakably distinct from every other theme in the
+roster; the theme for users who want their workspace to feel like a night
+drive.
+
+- Dark: `bg.void #0d0b1a` (deep indigo-black); `text.primary #e8e6f0` (cool lavender-white); `accent.primary #ff2d95 → #e91e63` (hot pink/magenta — the neon sign); `accent.secondary #00f0ff → #00b8d4` (electric cyan — the grid line). Glow values intentionally stronger (0.15–0.18) for a neon-halo effect.
+- Light: `bg.void #f0eef5` (pale lavender — sun-bleached poster); `text.primary #1c1c34` (deep indigo); `accent.primary #c2185b → #880e4f` (deeper magenta); `accent.secondary #00838f → #006064` (deeper cyan).
+
+2.2.8 Daybreak — dark chrome + light page (dual surfaces)
+
+The **"readability exception"** theme: a twilight-blue app skeleton
+(sidebar, titlebar, activity bar) framing a warm off-white editor surface.
+Text in the chrome is light; text on the page is dark. Typography pairs Inter
+(body — neutral, highly readable), Hanken Grotesk (headline), and JetBrains
+Mono (mono). Intent: the theme for users who want dark navigation (low glare,
+clear structure) with a bright reading/writing surface — the pattern Notion,
+Readwise, and several code editors use for sustained reading sessions.
+
+- Dark: `bg.void #0c0e14` (dark charcoal-blue); `text.primary #eaeef5` (cool off-white); `accent.primary #f59e0b → #d97706` (warm amber); `accent.secondary #818cf8 → #6366f1` (indigo). Standard single-surface dark mode (no chrome block needed — everything is dark).
+- Light (dual-surface): page `bg.void #faf8f5` (warm off-white — the paper), `text.primary #1c1917` (warm near-black — ink on paper); chrome `bg.void #1c2842` (twilight blue — the pre-dawn sky), `chrome.bg.panel #2c3c5e` (anchor blue), `chrome.text.primary #eaeef5` (cool off-white). Shared accents: `accent.primary #c2710b → #92400e` (deep amber — glows on both dark chrome and light page), `accent.secondary #4338ca → #3730a3` (deep indigo).
+
+2.2.9 Aggie — heritage split: alfalfa/pumpkin (dark) → green/gold (light)
+
+A **dual-identity heritage easter egg**: dark mode evokes Colorado A&M's
+original colors (alfalfa green canvas + pumpkin orange accents — the harvest
+field at dusk), while light mode shifts to CSU's modern palette (green canvas
++ CSU Green text + gold/Oval Green accents — the modern campus on a sunny
+day). The dark→light switch mirrors the school's evolution from agricultural
+college to state university. Typography pairs Work Sans (body — humanist,
+warm), Manrope (headline), and IBM Plex Mono (mono).
+
+- Dark (historical — alfalfa green + pumpkin orange): `bg.void #0a1810` (dark alfalfa-green); `text.primary #e8efe0` (sage-white); `accent.primary #e07a30 → #b45a18` (pumpkin orange — derived from CSU Aggie Orange #D9782D); `accent.secondary #6aaa4a → #3a7a2a` (alfalfa green — the living plant color).
+- Light (modern — CSU green + gold): `bg.void #f0f5ee` (pale green meadow); `text.primary #1E4D2B` (CSU Green — the actual school color); `accent.primary #7a6408 → #5f4a06` (deep gold — CSU Gold #C8C372 deepened for readability); `accent.secondary #006144 → #004d36` (CSU Oval Green — the actual school color).
+
+2.2.10 Altgeld — Illinois Blue + Illini Orange (prairie fire)
+
+Dark Illinois Blue canvas with bright Illini Orange primary and electric blue
+secondary — the energy of a prairie fire at dusk. Light mode uses actual
+Illinois Blue (#13294B) as the text color and deep Illini Orange for accents.
+Typography pairs Public Sans (body — clean, institutional), Schibsted Grotesk
+(headline — bold, confident), and Martian Mono (mono). Intent: the boldest,
+most color-assertive palette in the roster — unmistakable school identity.
+
+- Dark: `bg.void #0d1525` (Illinois Blue #13294B-tinted near-black — the prairie night); `text.primary #e6ecf5` (cool blue-white — moonlight); `accent.primary #FF5F05 → #cc4a00` (Illini Orange — the actual school color); `accent.secondary #4080e0 → #2050a0` (bright blue — Illinois Blue family, brightened for dark-mode pop).
+- Light: `bg.void #f0f4fa` (pale ice-blue — the dawn sky); `text.primary #13294B` (Illinois Blue — the actual school color); `accent.primary #c44a00 → #9a3800` (deep Illini Orange for readability on white); `accent.secondary #1a3677 → #0d1f4d` (Illinois Blue family).
 
 
 3. Typography & Spacing Rhythm
@@ -385,9 +467,11 @@ Kanban Card Drag-Reorder: Uses compile-time svelte/animate (using Svelte's nativ
 
 8. Accessibility (A11Y) & Keyboard Navigation Compliance
 
-Silt is built for complete hands-on-keyboard efficiency, complying directly with WCAG 2.2 AAA guidelines:
+Silt is built for complete hands-on-keyboard efficiency, complying with WCAG 2.2 AA guidelines (the legal compliance standard). Stark is the designated AAA theme and retains its 7:1 body-text requirement as a theme-specific design invariant.
 
-Contrast Ratios: Text-to-background contrast ratios are strictly maintained above 7:1 for primary elements, and above 4.5:1 for secondary tags.
+Contrast Ratios: Text-to-background contrast ratios are maintained at or above WCAG AA (4.5:1 for normal text). Stark additionally maintains AAA (7:1) as its theme-specific requirement.
+
+Dual-Surface Themes: A mode may declare an optional `chrome` block (bg/border/text only) for the app skeleton. When present, the WCAG contrast harness tests chrome text against chrome backgrounds separately from the page/content surfaces — both must independently meet the AA (4.5:1) threshold. This enables "dark chrome + light page" designs (Daybreak, Bubblegum) where the sidebar and titlebar use a dark palette with light text while the editor uses a light palette with dark text, following the "readability exception" pattern documented in leading dark-mode design-systems guides.
 
 Focus States: Every interactive element features an explicit :focus-visible outline ring of $2\text{px}$ var(--color-border-focus) offset by $1\text{px}$ to prevent overlapping with components.
 

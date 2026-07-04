@@ -315,7 +315,7 @@ var firstClassIDs = map[string]bool{
 	"silt-bubblegum":   true,
 	"silt-frost":       true,
 	"silt-synthwave":   true,
-	"silt-inkwell":     true,
+	"silt-daybreak":   true,
 	"silt-aggie":       true,
 	"silt-altgeld":     true,
 }

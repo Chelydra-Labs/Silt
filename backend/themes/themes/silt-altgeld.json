@@ -3,7 +3,7 @@
   "id": "silt-altgeld",
   "name": "Altgeld",
   "author": "Chelydra Labs",
-  "description": "Prairie-fire energy: dark navy canvas with a bright orange primary and electric blue secondary. The blaze of a prairie fire at dusk over the central Illinois tallgrass.",
+  "description": "Prairie-fire energy: Illinois Blue canvas with Illini Orange primary and electric blue secondary. The blaze of a prairie fire at dusk over the central Illinois tallgrass.",
   "typography": {
     "font_family": "'Public Sans', sans-serif",
     "mono_font_family": "'Martian Mono', monospace",
@@ -12,33 +12,33 @@
   "modes": {
     "dark": {
       "bg": {
-        "void": "#0a0e1a",
-        "surface": "#0f1626",
-        "panel": "#141d30",
-        "hover": "#1a2438",
-        "active": "#222d44"
+        "void": "#0d1525",
+        "surface": "#121d35",
+        "panel": "#162540",
+        "hover": "#1c2d4c",
+        "active": "#243658"
       },
       "border": {
-        "muted": "#1a2438",
-        "zinc": "#222d44",
-        "active": "#34455e",
-        "focus": "#4a6080"
+        "muted": "#1a2840",
+        "zinc": "#243658",
+        "active": "#344d70",
+        "focus": "#4a6090"
       },
       "text": {
         "primary": "#e6ecf5",
-        "muted": "#8a9ab0",
+        "muted": "#94a4bc",
         "disabled": "#4a5a70"
       },
       "accent": {
         "primary": {
-          "start": "#ff6b1a",
-          "end": "#e04600",
+          "start": "#ff5f05",
+          "end": "#cc4a00",
           "glow": "rgba(255,95,5,0.15)"
         },
         "secondary": {
-          "start": "#4a78d4",
-          "end": "#1a3677",
-          "glow": "rgba(74,120,212,0.12)"
+          "start": "#4080e0",
+          "end": "#2050a0",
+          "glow": "rgba(64,128,224,0.12)"
         }
       },
       "status": {
@@ -62,20 +62,20 @@
         "focus": "#5a7090"
       },
       "text": {
-        "primary": "#0d1810",
+        "primary": "#13294b",
         "muted": "#3a4a60",
         "disabled": "#8a9aae"
       },
       "accent": {
         "primary": {
-          "start": "#d4400a",
-          "end": "#a33000",
-          "glow": "rgba(212,64,10,0.10)"
+          "start": "#c44a00",
+          "end": "#9a3800",
+          "glow": "rgba(255,95,5,0.10)"
         },
         "secondary": {
           "start": "#1a3677",
           "end": "#0d1f4d",
-          "glow": "rgba(26,54,119,0.08)"
+          "glow": "rgba(19,41,75,0.08)"
         }
       },
       "status": {
