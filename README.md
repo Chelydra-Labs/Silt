@@ -37,7 +37,7 @@ Silt is built on the belief that your notes belong to you.
   - [/] Critical workstream [priority:: 1] [due:: 2026-08-03] [owner:: Bob] #work/sprint-4
   ```
   **Recurring tasks** – Add `[recur:: every week]` to any task and Silt automatically generates the next instance when you complete it. Supported intervals: `every day`, `every weekday` (Mon–Fri), `every week`, `every N weeks`, `every month`, `every N months`, `every year`. The next due date is computed from the current due date, skipping any missed occurrences (no clutter from backfilled instances).
-- **Built-in & Custom Themes** – Styled with a "Cyber-Ink" design language. Ships with 5 premium themes (Cyber Forest, Terra Noir, Linen, Stark, Graphite). Import or export your own palettes as simple JSON files.
+- **Built-in & Custom Themes** – Styled with a "Cyber-Ink" design language. Ships with 11 premium themes including dark, light, playful, retro, and dual-surface (dark chrome + light page) palettes. Import or export your own as simple JSON files.
 - **Flexible Plugin SDK** – Dynamic viewports like Agenda, Calendar, and Kanban are decoupled as plugins. Extend Silt using native ES Modules in a secure runtime sandbox; plugins may carry their own per-plugin data store (including vector search) without touching the core Markdown index.
 - **Linked Notebooks** – Mount external folders (e.g., a synced OneDrive/SharePoint or Obsidian directory) directly without importing them. They are watched and edited in place.
 

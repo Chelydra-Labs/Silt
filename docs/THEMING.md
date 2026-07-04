@@ -17,6 +17,20 @@ Silt's entire visual surface — backgrounds, borders, text, accents, status col
 
 Both modes are **required** in every theme file. A theme with only a dark mode is invalid and will be rejected on import.
 
+### Chrome vs. content surfaces (dual-surface themes)
+
+Most themes use one palette across the entire app. A mode MAY optionally
+declare a **`chrome`** sub-tree — a separate `bg`/`border`/`text` set for the
+app skeleton (sidebar, titlebar, activity bar). When present, the chrome
+surfaces render with their own palette while the content area (editor, cards,
+modals) keeps the main `bg`/`border`/`text` tokens.
+
+This enables **"dark chrome + light page"** designs (Daybreak, Bubblegum light
+mode) — the "readability exception" pattern where dark navigation frames a
+bright reading surface. Accent, status, texture, and typography are **not**
+per-surface: they are shared across chrome and content. See §2 for the token
+reference and §3 for an annotated example.
+
 ### Semantic accents (the key idea)
 
 Silt components never reference a concrete hue like "teal" or "indigo". Instead they reference two **semantic** accent slots:
@@ -35,10 +49,16 @@ Each accent is a **triple**: `start` / `end` (a gradient pair) plus `glow` (a tr
 | Theme | Status | Description |
 | :--- | :--- | :--- |
 | **Cyber Forest** *(the default, "Refined Cyber-Ink")* | Shipped | Ink-rich dark slate canvas, surgical teal primary, indigo secondary. Embedded in the app as the guaranteed fallback. |
-| Terra Noir | Shipped (Sprint 8) | Warm dark earth palette: clay primary, moss secondary. |
-| Linen | Shipped (Sprint 8) | Clean, easy-on-the-eyes paper palette: desaturated slate-blue + muted lilac. Includes a woven paper-grain texture overlay (see §2 `texture`). |
-| Stark | Shipped (Sprint 8) | High-contrast / accessibility (WCAG AAA): pure black/white extremes, gold + cyan. |
-| Graphite | Shipped (Sprint 8) | Calm monochrome dark: cool near-blacks, a single restrained blue accent. |
+| Terra Noir | Shipped | Warm dark earth palette: clay primary, moss secondary. |
+| Linen | Shipped | Clean, easy-on-the-eyes paper palette: desaturated slate-blue + muted lilac. Includes a woven paper-grain texture overlay (see §2 `texture`). |
+| Stark | Shipped | High-contrast / accessibility (WCAG AAA): pure black/white extremes, gold + cyan. |
+| Graphite | Shipped | Calm monochrome dark: cool near-blacks, a single restrained blue accent. |
+| Bubblegum | Shipped | Playful and vibrant: coral-pink primary, teal secondary. Light mode uses a deep raspberry chrome + warm cream page (dual surfaces). |
+| Frost | Shipped | Clean and airy: crisp blue-tinted winter palette with sky-blue accents. |
+| Synthwave | Shipped | 80s retro neon: deep indigo canvas with hot-pink and electric-cyan accents. |
+| Daybreak | Shipped | Twilight-blue chrome + warm off-white page: the readability-exception dual-surface theme. |
+| Aggie | Shipped | Heritage split: dark mode evokes Colorado A&M's alfalfa green + pumpkin orange; light mode shifts to CSU's modern green + gold. |
+| Altgeld | Shipped | Illinois Blue canvas with Illini Orange primary — prairie-fire energy. |
 
 > First-class themes are bundled and always selectable. The schema and everything in this guide applies equally to first-class and user-authored themes.
 
@@ -107,6 +127,35 @@ Every theme is a JSON object. The table below lists **every token the validator 
 | `status.warn` | yes | `--color-status-warn` | Warnings. | color |
 | `status.danger` | yes | `--color-status-danger` | Errors / destructive. | color |
 | `status.success` | no | `--color-status-success` | Success / confirmed. When absent, falls through to the `@theme` static fallback (`#22c55e`). | color |
+
+### `chrome` (optional, per-mode — dual surfaces)
+
+A separate bg/border/text palette for the app skeleton (sidebar, titlebar,
+activity bar). When present, the theme engine emits `--color-chrome-*` CSS
+custom properties that a `.silt-chrome` scoping class applies to chrome
+surfaces — no per-component utility changes needed. When absent, chrome
+surfaces use the standard `--color-*` palette (backward compatible). Only
+`bg`, `border`, and `text` are part of chrome; accent, status, texture, and
+typography are shared across all surfaces.
+
+| JSON path | CSS variable | Meaning | Format |
+| :--- | :--- | :--- | :--- |
+| `chrome.bg.void` | `--color-chrome-void` | Chrome deepest canvas. | color |
+| `chrome.bg.surface` | `--color-chrome-surface` | Chrome raised surface. | color |
+| `chrome.bg.panel` | `--color-chrome-panel` | Chrome panels. | color |
+| `chrome.bg.hover` | `--color-chrome-hover` | Chrome hovered-row bg. | color |
+| `chrome.bg.active` | `--color-chrome-active` | Chrome pressed/active bg. | color |
+| `chrome.border.muted` | `--color-chrome-border-muted` | Chrome faintest divider. | color |
+| `chrome.border.zinc` | `--color-chrome-border-zinc` | Chrome standard hairline. | color |
+| `chrome.border.active` | `--color-chrome-border-active` | Chrome emphasized border. | color |
+| `chrome.border.focus` | `--color-chrome-border-focus` | Chrome focus-trace border. | color |
+| `chrome.text.primary` | `--color-chrome-text-primary` | Chrome body copy. | color |
+| `chrome.text.muted` | `--color-chrome-text-muted` | Chrome metadata/labels. | color |
+| `chrome.text.disabled` | `--color-chrome-text-disabled` | Chrome disabled text. | color |
+
+When authoring a chrome block, the chrome text must independently pass the
+WCAG targets (§5) against the chrome backgrounds — the contrast harness tests
+both surface sets separately.
 
 ### `texture` (optional, per-mode)
 
@@ -228,7 +277,7 @@ The smallest theme that passes validation — both modes, every required token. 
 2. **Give each a gradient pair (`start` → `end`).** `start` is the brighter/lighter end; `end` is the deeper end. Components draw `linear-gradient(to bottom right, start, end)`.
 3. **Make a matching `glow`.** The glow is the same hue at low alpha (≈0.08–0.15), used for soft halos behind active elements. Use `rgba(...)` so you can control transparency.
 4. **Mind the mode.** In light mode, accent `start`s are usually *deeper* (so they stay readable on white); in dark mode, *brighter* (so they glow on dark). Compare Cyber Forest's dark `#2dd4bf` vs light `#0d9488` for the same primary.
-5. **`primary` should pass AAA against `bg.void`.** See accessibility below.
+5. **`primary` should pass AA (4.5:1) against `bg.void`.** See accessibility below. Stark is the exception — it targets AAA (7:1) as a theme-specific design requirement.
 
 ---
 
@@ -238,7 +287,7 @@ Silt targets **WCAG 2.2**. Your theme is checked against the shipped palette; ai
 
 | Element | Minimum ratio | Level |
 | :--- | :--- | :--- |
-| `text.primary` on `bg.void` / `bg.surface` / `bg.panel` | **≥ 7:1** | AAA |
+| `text.primary` on `bg.void` / `bg.surface` / `bg.panel` | **≥ 4.5:1** | AA |
 | `text.muted` / `text.disabled` on backgrounds | **≥ 4.5:1** | AA |
 | `accent.primary.start` / `accent.secondary.start` on `bg.void` (non-text UI) | **≥ 3:1** | AA (non-text) |
 
@@ -318,7 +367,7 @@ Click **Export active** in **Settings → Appearance** to save the currently-act
 
 ## 9. Appendix: blank theme template
 
-Copy-paste this and fill in the `…` placeholders. Both modes are required; `typography`, `status.success`, and `texture` are optional (delete what you don't need).
+Copy-paste this and fill in the `…` placeholders. Both modes are required; `typography`, `status.success`, `texture`, and `chrome` are optional (delete what you don't need).
 
 ```json
 {
@@ -361,10 +410,15 @@ Copy-paste this and fill in the `…` placeholders. Both modes are required; `ty
         "image": "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
         "opacity": "0.08",
         "blend": "multiply"
+      },
+      "chrome": {
+        "bg":      { "void": "#………", "surface": "#………", "panel": "#………", "hover": "#………", "active": "#………" },
+        "border":  { "muted": "#………", "zinc": "#………", "active": "#………", "focus": "#………" },
+        "text":    { "primary": "#………", "muted": "#………", "disabled": "#………" }
       }
     }
   }
 }
 ```
 
-> **Delete `texture` entirely** if you don't want a surface overlay. A mode without a `texture` block pays zero compositing cost. Omit `status.success` to fall through to the built-in `#22c55e` green.
+> **Delete `texture` entirely** if you don't want a surface overlay. A mode without a `texture` block pays zero compositing cost. Omit `status.success` to fall through to the built-in `#22c55e` green. Delete `chrome` if you don't need dual surfaces — themes without a chrome block are completely unaffected.

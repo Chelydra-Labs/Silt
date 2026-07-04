@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0.0",
+  "id": "silt-synthwave",
+  "name": "Synthwave",
+  "author": "Chelydra Labs",
+  "description": "80s retro neon: deep indigo canvas with hot-pink and electric-cyan accents. Think Miami Vice, Tron, and synthwave album covers. A faded pastel light mode evokes a sun-bleached poster.",
+  "typography": {
+    "font_family": "'Figtree', sans-serif",
+    "mono_font_family": "'Space Mono', monospace",
+    "headline_font": "'Bricolage Grotesque', sans-serif"
+  },
+  "modes": {
+    "dark": {
+      "bg": {
+        "void": "#0d0b1a",
+        "surface": "#141126",
+        "panel": "#1a1830",
+        "hover": "#221f3a",
+        "active": "#2a2745"
+      },
+      "border": {
+        "muted": "#1f1c35",
+        "zinc": "#2a2745",
+        "active": "#3f3a5e",
+        "focus": "#5a5280"
+      },
+      "text": {
+        "primary": "#e8e6f0",
+        "muted": "#9a96b0",
+        "disabled": "#4a4660"
+      },
+      "accent": {
+        "primary": {
+          "start": "#ff2d95",
+          "end": "#e91e63",
+          "glow": "rgba(233,30,99,0.18)"
+        },
+        "secondary": {
+          "start": "#00f0ff",
+          "end": "#00b8d4",
+          "glow": "rgba(0,240,255,0.15)"
+        }
+      },
+      "status": {
+        "warn": "#fbbf24",
+        "danger": "#f43f5e",
+        "success": "#22c55e"
+      }
+    },
+    "light": {
+      "bg": {
+        "void": "#f0eef5",
+        "surface": "#ffffff",
+        "panel": "#ebe6f0",
+        "hover": "#ddd6e8",
+        "active": "#cabed8"
+      },
+      "border": {
+        "muted": "#ddd6e8",
+        "zinc": "#cabed8",
+        "active": "#a896b8",
+        "focus": "#7868a0"
+      },
+      "text": {
+        "primary": "#1c1c34",
+        "muted": "#4a4a68",
+        "disabled": "#9890a8"
+      },
+      "accent": {
+        "primary": {
+          "start": "#c2185b",
+          "end": "#880e4f",
+          "glow": "rgba(194,24,91,0.10)"
+        },
+        "secondary": {
+          "start": "#00838f",
+          "end": "#006064",
+          "glow": "rgba(0,131,143,0.08)"
+        }
+      },
+      "status": {
+        "warn": "#d97706",
+        "danger": "#be123c",
+        "success": "#16a34a"
+      }
+    }
+  }
+}

@@ -312,6 +312,12 @@ var firstClassIDs = map[string]bool{
 	"silt-linen":      true,
 	"silt-stark":      true,
 	"silt-graphite":   true,
+	"silt-bubblegum":  true,
+	"silt-frost":      true,
+	"silt-synthwave":  true,
+	"silt-daybreak":   true,
+	"silt-aggie":      true,
+	"silt-altgeld":    true,
 }
 
 // assertEmbeddedSet asserts that res contains exactly the embedded
@@ -441,9 +447,9 @@ func TestResolveActive_EmptyID_FallsBackToDefault(t *testing.T) {
 
 func TestHexToRGB(t *testing.T) {
 	cases := []struct {
-		in           string
-		r, g, b      uint8
-		ok           bool
+		in      string
+		r, g, b uint8
+		ok      bool
 	}{
 		{"#0c0c0e", 12, 12, 14, true},
 		{"#ffffff", 255, 255, 255, true},
@@ -555,11 +561,11 @@ func TestValidate_TextureRejectsCSSInjection(t *testing.T) {
 
 	// image: reject every CSS-injection character.
 	badImages := []string{
-		"url(data:); body{background:red}", // ; { }
-		"url(data:)}body{",                 // } {
+		"url(data:); body{background:red}",    // ; { }
+		"url(data:)}body{",                    // } {
 		"url(data:)<script>alert(1)</script>", // < >
-		"url(data:)>bad",                   // >
-		`url(data:)\escape`,                // backslash (CSS escape sequence)
+		"url(data:)>bad",                      // >
+		`url(data:)\escape`,                   // backslash (CSS escape sequence)
 	}
 	for _, img := range badImages {
 		tx := &Texture{Image: img, Opacity: "0.5", Blend: "overlay"}

@@ -81,6 +81,25 @@
   --color-status-danger: #f43f5e;
   --color-status-success: #22c55e;
 
+  /* Chrome dual-surface startup fallbacks. Before the runtime theme
+     injector writes --color-chrome-*, the .silt-chrome class resolves
+     --color-* from these. They mirror the default dark palette so the
+     sidebar/titlebar/activity bar never flash transparent on first paint.
+     The injector overwrites them with concrete or var(--color-*) values
+     once IPC returns. */
+  --color-chrome-void: #0c0c0e;
+  --color-chrome-surface: #121215;
+  --color-chrome-panel: #161619;
+  --color-chrome-hover: #1c1c21;
+  --color-chrome-active: #222226;
+  --color-chrome-border-muted: #1e1e23;
+  --color-chrome-border-zinc: #27272a;
+  --color-chrome-border-active: #3f3f46;
+  --color-chrome-border-focus: #52525b;
+  --color-chrome-text-primary: #dee3e6;
+  --color-chrome-text-muted: #8b8b94;
+  --color-chrome-text-disabled: #4b5563;
+
   /* Spacing */
   --spacing-guide-offset: -12px;
   --spacing-baseline-distance: 28px;
@@ -110,6 +129,28 @@
   --editor-mono-font-family: 'JetBrains Mono', monospace;
   --editor-font-size: 14px;
   --editor-line-height: 1.6;
+}
+
+/* Dual-surface chrome scoping class. When applied to the sidebar, titlebar,
+   or tab strip, the standard --color-* tokens resolve to the --color-chrome-*
+   palette instead. The theme engine always emits --color-chrome-* on :root
+   (concrete values when a theme defines a chrome block, var(--color-*)
+   fallbacks when it doesn't), so this class works with zero component
+   utility-class changes — bg-void, text-text-primary, etc. inside a
+   .silt-chrome element transparently use the chrome palette. */
+.silt-chrome {
+  --color-void: var(--color-chrome-void);
+  --color-surface: var(--color-chrome-surface);
+  --color-panel: var(--color-chrome-panel);
+  --color-hover: var(--color-chrome-hover);
+  --color-active: var(--color-chrome-active);
+  --color-border-muted: var(--color-chrome-border-muted);
+  --color-border-zinc: var(--color-chrome-border-zinc);
+  --color-border-active: var(--color-chrome-border-active);
+  --color-border-focus: var(--color-chrome-border-focus);
+  --color-text-primary: var(--color-chrome-text-primary);
+  --color-text-muted: var(--color-chrome-text-muted);
+  --color-text-disabled: var(--color-chrome-text-disabled);
 }
 
 html,

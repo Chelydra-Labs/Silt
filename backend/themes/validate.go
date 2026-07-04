@@ -126,6 +126,16 @@ func Validate(t *Theme) error {
 	errs = append(errs, validateMode("modes.dark", t.Modes.Dark)...)
 	errs = append(errs, validateMode("modes.light", t.Modes.Light)...)
 
+	// Chrome is optional per-mode. When present, its bg/border/text sub-trees
+	// must pass the same color-format checks as the main mode. Accent, status,
+	// and texture are NOT part of chrome (they're shared/page-scoped).
+	if t.Modes.Dark.Chrome != nil {
+		errs = append(errs, validateChromeColors("modes.dark.chrome", t.Modes.Dark.Chrome)...)
+	}
+	if t.Modes.Light.Chrome != nil {
+		errs = append(errs, validateChromeColors("modes.light.chrome", t.Modes.Light.Chrome)...)
+	}
+
 	// Typography is optional: when absent (nil) the theme inherits font
 	// choices from config. When present, each non-empty field is validated
 	// against isValidFontFamily to prevent CSS injection via font-family
@@ -198,6 +208,51 @@ func validateMode(prefix string, m Mode) ValidationErrors {
 	// Texture is optional; validate it only when the mode declares a block.
 	if m.Texture != nil {
 		errs = append(errs, validateTexture(prefix+".texture", m.Texture)...)
+	}
+	return errs
+}
+
+// chromeColorTokens lists the bg/border/text color slots a chrome block must
+// define when present. Mirrors the subset of requiredTokens that applies to
+// Chrome (accent/status/texture are NOT part of chrome).
+var chromeColorTokens = []struct {
+	path string
+	get  func(c *Chrome) string
+}{
+	{"bg.void", func(c *Chrome) string { return c.BG.Void }},
+	{"bg.surface", func(c *Chrome) string { return c.BG.Surface }},
+	{"bg.panel", func(c *Chrome) string { return c.BG.Panel }},
+	{"bg.hover", func(c *Chrome) string { return c.BG.Hover }},
+	{"bg.active", func(c *Chrome) string { return c.BG.Active }},
+	{"border.muted", func(c *Chrome) string { return c.Border.Muted }},
+	{"border.zinc", func(c *Chrome) string { return c.Border.Zinc }},
+	{"border.active", func(c *Chrome) string { return c.Border.Active }},
+	{"border.focus", func(c *Chrome) string { return c.Border.Focus }},
+	{"text.primary", func(c *Chrome) string { return c.Text.Primary }},
+	{"text.muted", func(c *Chrome) string { return c.Text.Muted }},
+	{"text.disabled", func(c *Chrome) string { return c.Text.Disabled }},
+}
+
+// validateChromeColors checks every bg/border/text color slot in a chrome
+// block using the same format rules as the main mode (must be present +
+// isValidColor). Called only when a mode declares a chrome block.
+func validateChromeColors(prefix string, c *Chrome) ValidationErrors {
+	var errs ValidationErrors
+	for _, tok := range chromeColorTokens {
+		val := tok.get(c)
+		if strings.TrimSpace(val) == "" {
+			errs = append(errs, ValidationError{
+				Field:   prefix + "." + tok.path,
+				Message: "token is missing",
+			})
+			continue
+		}
+		if !isValidColor(val) {
+			errs = append(errs, ValidationError{
+				Field:   prefix + "." + tok.path,
+				Message: fmt.Sprintf("not a valid color: %q (expected #hex or rgb()/rgba())", val),
+			})
+		}
 	}
 	return errs
 }

@@ -1178,7 +1178,7 @@
     <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
       <!-- Activity Bar -->
       <div
-        class="w-12 bg-surface border-r border-border-muted flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
+        class="silt-chrome w-12 bg-surface border-r border-border-muted flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
       >
         <div class="flex flex-col gap-4 items-center w-full">
           {#each views as v (v.id)}

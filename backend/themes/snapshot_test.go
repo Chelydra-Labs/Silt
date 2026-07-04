@@ -21,57 +21,83 @@ import (
 // intentionally re-tuned, and re-run the WCAG assertions to confirm AA
 // is still met on every background.
 var goldenDefaultDark = map[string]string{
-	"--color-void":               "#0c0c0e",
-	"--color-surface":            "#121215",
-	"--color-panel":              "#161619",
-	"--color-hover":              "#1c1c21",
-	"--color-active":             "#222226",
-	"--color-border-muted":          "#1e1e23",
-	"--color-border-zinc":           "#27272a",
-	"--color-border-active":         "#3f3f46",
-	"--color-border-focus":          "#52525b",
-	"--color-text-primary":          "#dee3e6",
-	"--color-text-muted":            "#8b8b94",
-	"--color-text-disabled":         "#4b5563",
-	"--color-accent-primary-start":  "#2dd4bf",
-	"--color-accent-primary-end":    "#0d9488",
-	"--color-accent-primary-glow":   "rgba(20, 184, 166, 0.15)",
+	"--color-void":                   "#0c0c0e",
+	"--color-surface":                "#121215",
+	"--color-panel":                  "#161619",
+	"--color-hover":                  "#1c1c21",
+	"--color-active":                 "#222226",
+	"--color-border-muted":           "#1e1e23",
+	"--color-border-zinc":            "#27272a",
+	"--color-border-active":          "#3f3f46",
+	"--color-border-focus":           "#52525b",
+	"--color-text-primary":           "#dee3e6",
+	"--color-text-muted":             "#8b8b94",
+	"--color-text-disabled":          "#4b5563",
+	"--color-accent-primary-start":   "#2dd4bf",
+	"--color-accent-primary-end":     "#0d9488",
+	"--color-accent-primary-glow":    "rgba(20, 184, 166, 0.15)",
 	"--color-accent-secondary-start": "#6366f1",
-	"--color-accent-secondary-end":  "#a855f7",
-	"--color-accent-secondary-glow": "rgba(168, 85, 247, 0.12)",
-	"--color-status-warn":           "#fbbf24",
-	"--color-status-danger":         "#f43f5e",
-	"--color-status-success":        "#22c55e",
-	"--font-body":             "'Plus Jakarta Sans', sans-serif",
-	"--font-mono":             "'JetBrains Mono', monospace",
-	"--font-headline":         "'Hanken Grotesk', sans-serif",
+	"--color-accent-secondary-end":   "#a855f7",
+	"--color-accent-secondary-glow":  "rgba(168, 85, 247, 0.12)",
+	"--color-status-warn":            "#fbbf24",
+	"--color-status-danger":          "#f43f5e",
+	"--color-status-success":         "#22c55e",
+	"--font-body":                    "'Plus Jakarta Sans', sans-serif",
+	"--font-mono":                    "'JetBrains Mono', monospace",
+	"--font-headline":                "'Hanken Grotesk', sans-serif",
+	// Chrome fallbacks (no chrome block → var(--color-*) references)
+	"--color-chrome-void":          "var(--color-void)",
+	"--color-chrome-surface":       "var(--color-surface)",
+	"--color-chrome-panel":         "var(--color-panel)",
+	"--color-chrome-hover":         "var(--color-hover)",
+	"--color-chrome-active":        "var(--color-active)",
+	"--color-chrome-border-muted":  "var(--color-border-muted)",
+	"--color-chrome-border-zinc":   "var(--color-border-zinc)",
+	"--color-chrome-border-active": "var(--color-border-active)",
+	"--color-chrome-border-focus":  "var(--color-border-focus)",
+	"--color-chrome-text-primary":  "var(--color-text-primary)",
+	"--color-chrome-text-muted":    "var(--color-text-muted)",
+	"--color-chrome-text-disabled": "var(--color-text-disabled)",
 }
 
 var goldenDefaultLight = map[string]string{
-	"--color-void":               "#f8fafc",
-	"--color-surface":            "#ffffff",
-	"--color-panel":              "#f1f5f9",
-	"--color-hover":              "#e2e8f0",
-	"--color-active":             "#cbd5e1",
-	"--color-border-muted":          "#e2e8f0",
-	"--color-border-zinc":           "#cbd5e1",
-	"--color-border-active":         "#94a3b8",
-	"--color-border-focus":          "#64748b",
-	"--color-text-primary":          "#0f172a",
-	"--color-text-muted":            "#4d5667",
-	"--color-text-disabled":         "#94a3b8",
-	"--color-accent-primary-start":  "#0d9488",
-	"--color-accent-primary-end":    "#115e59",
-	"--color-accent-primary-glow":   "rgba(13, 148, 136, 0.10)",
+	"--color-void":                   "#f8fafc",
+	"--color-surface":                "#ffffff",
+	"--color-panel":                  "#f1f5f9",
+	"--color-hover":                  "#e2e8f0",
+	"--color-active":                 "#cbd5e1",
+	"--color-border-muted":           "#e2e8f0",
+	"--color-border-zinc":            "#cbd5e1",
+	"--color-border-active":          "#94a3b8",
+	"--color-border-focus":           "#64748b",
+	"--color-text-primary":           "#0f172a",
+	"--color-text-muted":             "#4d5667",
+	"--color-text-disabled":          "#94a3b8",
+	"--color-accent-primary-start":   "#0d9488",
+	"--color-accent-primary-end":     "#115e59",
+	"--color-accent-primary-glow":    "rgba(13, 148, 136, 0.10)",
 	"--color-accent-secondary-start": "#4f46e5",
-	"--color-accent-secondary-end":  "#7c3aed",
-	"--color-accent-secondary-glow": "rgba(79, 70, 229, 0.08)",
-	"--color-status-warn":           "#d97706",
-	"--color-status-danger":         "#e11d48",
-	"--color-status-success":        "#16a34a",
-	"--font-body":             "'Plus Jakarta Sans', sans-serif",
-	"--font-mono":             "'JetBrains Mono', monospace",
-	"--font-headline":         "'Hanken Grotesk', sans-serif",
+	"--color-accent-secondary-end":   "#7c3aed",
+	"--color-accent-secondary-glow":  "rgba(79, 70, 229, 0.08)",
+	"--color-status-warn":            "#d97706",
+	"--color-status-danger":          "#e11d48",
+	"--color-status-success":         "#16a34a",
+	"--font-body":                    "'Plus Jakarta Sans', sans-serif",
+	"--font-mono":                    "'JetBrains Mono', monospace",
+	"--font-headline":                "'Hanken Grotesk', sans-serif",
+	// Chrome fallbacks (no chrome block → var(--color-*) references)
+	"--color-chrome-void":          "var(--color-void)",
+	"--color-chrome-surface":       "var(--color-surface)",
+	"--color-chrome-panel":         "var(--color-panel)",
+	"--color-chrome-hover":         "var(--color-hover)",
+	"--color-chrome-active":        "var(--color-active)",
+	"--color-chrome-border-muted":  "var(--color-border-muted)",
+	"--color-chrome-border-zinc":   "var(--color-border-zinc)",
+	"--color-chrome-border-active": "var(--color-border-active)",
+	"--color-chrome-border-focus":  "var(--color-border-focus)",
+	"--color-chrome-text-primary":  "var(--color-text-primary)",
+	"--color-chrome-text-muted":    "var(--color-text-muted)",
+	"--color-chrome-text-disabled": "var(--color-text-disabled)",
 }
 
 // TestDefaultTheme_GoldenSnapshot asserts the embedded default theme's
@@ -201,6 +227,22 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 		"--silt-texture-opacity": true,
 		"--silt-texture-blend":   true,
 	}
+	// Chrome dual-surface keys (superset; always emitted by Flatten as either
+	// concrete values or var(--color-*) fallbacks).
+	chromeKeys := map[string]bool{
+		"--color-chrome-void":          true,
+		"--color-chrome-surface":       true,
+		"--color-chrome-panel":         true,
+		"--color-chrome-hover":         true,
+		"--color-chrome-active":        true,
+		"--color-chrome-border-muted":  true,
+		"--color-chrome-border-zinc":   true,
+		"--color-chrome-border-active": true,
+		"--color-chrome-border-focus":  true,
+		"--color-chrome-text-primary":  true,
+		"--color-chrome-text-muted":    true,
+		"--color-chrome-text-disabled": true,
+	}
 	for _, th := range all {
 		if th.ID == DefaultThemeID {
 			continue
@@ -216,10 +258,11 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 					t.Errorf("%s [%s]: missing token %s", th.ID, mode, k)
 				}
 			}
-			// Any extra key must be the opt-in texture overlay, not a stray token.
+			// Any extra key must be the opt-in texture overlay or the
+			// always-present chrome dual-surface keys, not a stray token.
 			for k := range flat {
-				if !slices.Contains(expectedFlattenKeys, k) && !textureKeys[k] {
-					t.Errorf("%s [%s]: unexpected token %s (only --silt-texture-* overlays are allowed)",
+				if !slices.Contains(expectedFlattenKeys, k) && !textureKeys[k] && !chromeKeys[k] {
+					t.Errorf("%s [%s]: unexpected token %s (only --silt-texture-* and --color-chrome-* are allowed)",
 						th.ID, mode, k)
 				}
 			}
