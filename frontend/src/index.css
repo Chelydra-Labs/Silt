@@ -81,6 +81,25 @@
   --color-status-danger: #f43f5e;
   --color-status-success: #22c55e;
 
+  /* Chrome dual-surface startup fallbacks. Before the runtime theme
+     injector writes --color-chrome-*, the .silt-chrome class resolves
+     --color-* from these. They mirror the default dark palette so the
+     sidebar/titlebar/activity bar never flash transparent on first paint.
+     The injector overwrites them with concrete or var(--color-*) values
+     once IPC returns. */
+  --color-chrome-void: #0c0c0e;
+  --color-chrome-surface: #121215;
+  --color-chrome-panel: #161619;
+  --color-chrome-hover: #1c1c21;
+  --color-chrome-active: #222226;
+  --color-chrome-border-muted: #1e1e23;
+  --color-chrome-border-zinc: #27272a;
+  --color-chrome-border-active: #3f3f46;
+  --color-chrome-border-focus: #52525b;
+  --color-chrome-text-primary: #dee3e6;
+  --color-chrome-text-muted: #8b8b94;
+  --color-chrome-text-disabled: #4b5563;
+
   /* Spacing */
   --spacing-guide-offset: -12px;
   --spacing-baseline-distance: 28px;

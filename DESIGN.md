@@ -169,7 +169,7 @@ Silt ships a curated set of first-class themes alongside the default. Each is a 
 | Frost | `silt-frost` | Clean and airy: crisp blue-tinted winter palette with sky-blue accents. |
 | Synthwave | `silt-synthwave` | 80s retro neon: deep indigo canvas, hot-pink + electric-cyan accents. |
 | Daybreak | `silt-daybreak` | Twilight-blue chrome + warm off-white page: the readability-exception dual-surface theme. |
-| Aggie | `silt-aggie` | Pine-green canvas with warm gold accents — alpine and agricultural. |
+| Aggie | `silt-aggie` | Heritage split: dark mode = alfalfa green + pumpkin orange; light mode = CSU green + gold. |
 | Altgeld | `silt-altgeld` | Dark navy canvas with bright orange + electric blue — prairie-fire energy. |
 
 Every first-class theme ships both dark and light variants and its own `typography` pairing. The palettes below document the color design intent for all eleven first-class themes.
@@ -255,7 +255,7 @@ clear structure) with a bright reading/writing surface — the pattern Notion,
 Readwise, and several code editors use for sustained reading sessions.
 
 - Dark: `bg.void #0c0e14` (dark charcoal-blue); `text.primary #eaeef5` (cool off-white); `accent.primary #f59e0b → #d97706` (warm amber); `accent.secondary #818cf8 → #6366f1` (indigo). Standard single-surface dark mode (no chrome block needed — everything is dark).
-- Light (dual-surface): page `bg.void #faf8f5` (warm off-white — the paper), `text.primary #1c1917` (warm near-black — ink on paper); chrome `bg.void #1c2842` (twilight blue — the pre-dawn sky), `chrome.bg.panel #2c3c5e` (anchor blue), `chrome.text.primary #eaeef5` (cool off-white). Shared accents: `accent.primary #c2710b → #92400e` (deep amber — glows on both dark chrome and light page), `accent.secondary #4338ca → #3730a3` (deep indigo).
+- Light (dual-surface): page `bg.void #faf8f5` (warm off-white — the paper), `text.primary #1c1917` (warm near-black — ink on paper); chrome `bg.void #1c2842` (twilight blue — the pre-dawn sky), `chrome.bg.panel #2c3c5e` (anchor blue), `chrome.text.primary #eaeef5` (cool off-white). Shared accents: `accent.primary #cc7408 → #92400e` (amber — tuned to clear AA non-text on both chrome and page), `accent.secondary #6366f1 → #4f46e5` (indigo — brightened from #4338ca for chrome-surface visibility).
 
 2.2.9 Aggie — heritage split: alfalfa/pumpkin (dark) → green/gold (light)
 

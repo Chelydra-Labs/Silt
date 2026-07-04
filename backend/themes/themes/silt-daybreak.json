@@ -68,14 +68,14 @@
       },
       "accent": {
         "primary": {
-          "start": "#c2710b",
+          "start": "#cc7408",
           "end": "#92400e",
-          "glow": "rgba(194,113,11,0.12)"
+          "glow": "rgba(204,116,8,0.12)"
         },
         "secondary": {
-          "start": "#4338ca",
-          "end": "#3730a3",
-          "glow": "rgba(67,56,202,0.10)"
+          "start": "#6366f1",
+          "end": "#4f46e5",
+          "glow": "rgba(99,102,241,0.10)"
         }
       },
       "status": {

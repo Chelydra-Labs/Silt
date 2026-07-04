@@ -204,19 +204,17 @@ func TestWCAG_DefaultTheme_MutedTextAA(t *testing.T) {
 	}
 }
 
-// --- First-class theme WCAG coverage (Sprint 8) ---------------------------
+// --- First-class theme WCAG coverage ---------------------------------------
 //
-// The four new first-class themes (Terra Noir, Linen, Stark, Graphite) are
-// measured against the SAME matrix as the default: primary text >= 7:1 (AAA)
-// and muted text >= 4.5:1 (AA) on all five backgrounds in both modes, plus the
-// two accent starts >= 3:1 (AA non-text) on the canvas. The Sprint 7 harness
-// was designed so Sprint 8 "adds rows, not code" — these tests are those rows.
+// Every non-default first-class theme is measured against the SAME matrix:
+// primary text >= 4.5:1 (AA) — 7:1 (AAA) for Stark — and muted text >= 4.5:1
+// (AA) on all five backgrounds in both modes, plus the two accent starts
+// >= 3:1 (AA non-text) on the canvas.
 //
 // text.disabled and the glow tokens are decorative/non-essential per WCAG and
 // are intentionally not asserted here (documented in DESIGN.md); only tokens
 // that carry meaning (body text, metadata text, focus/selection accents) are
-// guarded. Starter palettes from the issues were tuned where the 5-background
-// matrix caught a failure (the same lesson as the default's light-muted).
+// guarded.
 
 // assertWCAG runs the full primary/muted/accent matrix for one theme across
 // both modes. The general threshold is WCAG AA (4.5:1 for primary text) — the
@@ -275,7 +273,7 @@ func TestWCAG_FirstClassThemes_AllMeetsTargets(t *testing.T) {
 		}
 		assertWCAG(t, th)
 		// Chrome WCAG: when a theme defines a chrome block in any mode,
-		// the chrome text must meet the same AAA/AA thresholds against
+		// the chrome text and accents must meet AA thresholds against
 		// chrome backgrounds. A no-op for themes without chrome.
 		assertChromeWCAG(t, th)
 	}
@@ -289,10 +287,13 @@ func assertChromeWCAG(t *testing.T, th *Theme) {
 	t.Helper()
 	for _, mode := range []string{"dark", "light"} {
 		var c *Chrome
+		var m Mode
 		if mode == "dark" {
 			c = th.Modes.Dark.Chrome
+			m = th.Modes.Dark
 		} else {
 			c = th.Modes.Light.Chrome
+			m = th.Modes.Light
 		}
 		if c == nil {
 			continue
@@ -306,6 +307,15 @@ func assertChromeWCAG(t *testing.T, th *Theme) {
 			if r := approxRatio(t, c.Text.Muted, bg); r < 4.5 {
 				t.Errorf("%s [%s chrome]: text.muted %s on bg %s = %.2f:1, want >= 4.5 (AA)",
 					th.ID, mode, c.Text.Muted, bg, r)
+			}
+		}
+		// Shared accents must also clear 3:1 (AA non-text) on the primary
+		// chrome surface — focus rings, selection highlights, and swatches
+		// render on the sidebar/titlebar, not just the content area.
+		for _, accent := range []string{m.Accent.Primary.Start, m.Accent.Secondary.Start} {
+			if r := approxRatio(t, accent, c.BG.Void); r < 3.0 {
+				t.Errorf("%s [%s chrome]: accent %s on chrome.void %s = %.2f:1, want >= 3.0 (AA non-text)",
+					th.ID, mode, accent, c.BG.Void, r)
 			}
 		}
 	}
