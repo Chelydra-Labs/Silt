@@ -7,7 +7,12 @@
   "typography": {
     "font_family": "'Public Sans', sans-serif",
     "mono_font_family": "'Martian Mono', monospace",
-    "headline_font": "'Schibsted Grotesk', sans-serif"
+    "headline_font": "'Schibsted Grotesk', sans-serif",
+    "scale": {
+      "size": { "xs": "0.75rem", "sm": "0.875rem", "base": "1rem", "lg": "1.125rem", "xl": "1.3125rem", "2xl": "1.625rem" },
+      "line_height": { "tight": "1.2", "normal": "1.55", "relaxed": "1.75" },
+      "weight": { "normal": "400", "medium": "500", "semibold": "600" }
+    }
   },
   "modes": {
     "dark": {
@@ -42,8 +47,23 @@
       },
       "error": {
         "fg": "#f43f5e",
-        "bg": "#121d35",
-        "border": "#344d70"
+        "bg": "#1a0d12",
+        "border": "#4d2030"
+      },
+      "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
+      "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 50%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 45%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 40%, transparent)"
+      },
+      "editor": {
+        "caret": "#ff5f05",
+        "selection": "rgba(255,95,5,0.25)",
+        "selection_text": "#e6ecf5",
+        "link": "#4080e0",
+        "link_hover": "#2050a0",
+        "highlight": "rgba(251,191,36,0.30)"
       }
     },
     "light": {
@@ -78,8 +98,23 @@
       },
       "error": {
         "fg": "#b3000c",
-        "bg": "#ffffff",
-        "border": "#94a8c0"
+        "bg": "#fdeeee",
+        "border": "#e0c0c0"
+      },
+      "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
+      "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 30%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 25%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 20%, transparent)"
+      },
+      "editor": {
+        "caret": "#c44a00",
+        "selection": "rgba(196,74,0,0.20)",
+        "selection_text": "#13294b",
+        "link": "#1a3677",
+        "link_hover": "#0d1f4d",
+        "highlight": "rgba(154,110,26,0.22)"
       }
     }
   }

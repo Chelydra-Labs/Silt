@@ -144,8 +144,8 @@
     z-index: 100;
     min-width: 180px;
     padding: 4px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #333);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 8px;
     box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.45));
     font-size: 13px;
@@ -174,6 +174,6 @@
   .menu-separator {
     height: 1px;
     margin: 4px 0;
-    background: var(--color-border-muted, #333);
+    background: var(--color-surface-popover-border);
   }
 </style>

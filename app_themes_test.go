@@ -645,3 +645,136 @@ func TestImportTheme_EmitsThemesChanged_NoCtxNoPanic(t *testing.T) {
 		t.Errorf("unexpected result: %+v", res)
 	}
 }
+
+// --- PickBackgroundImage (#391 engine half) --------------------------------
+//
+// The native picker can't run in CI, so these tests cover the binding's
+// guards (no vault, no ctx, bad zone) and the storage+write+fork path the
+// binding composes, by calling the same themes-package helpers directly under
+// a real scaffolded vault.
+
+// TestPickBackgroundImage_NoVault: before a vault is open the binding errors.
+func TestPickBackgroundImage_NoVault(t *testing.T) {
+	app := &App{spacesPerTab: 4}
+	if _, err := app.PickBackgroundImage("editor"); err == nil {
+		t.Fatal("expected error for pre-vault PickBackgroundImage")
+	}
+}
+
+// TestPickBackgroundImage_NoCtx: with no Wails context the binding errors
+// (same guard as PickThemeFile / PickExportPath).
+func TestPickBackgroundImage_NoCtx(t *testing.T) {
+	app := newTestApp(t) // ctx is nil in tests
+	if _, err := app.PickBackgroundImage("editor"); err == nil {
+		t.Fatal("expected error when ctx is nil")
+	}
+}
+
+// TestPickBackgroundImage_InvalidZone: an unknown zone is rejected. The
+// binding's own guard runs after the vault/ctx checks (which need a live Wails
+// context), so pin the contract via the validator the binding calls.
+func TestPickBackgroundImage_InvalidZone(t *testing.T) {
+	if themes.IsValidSurfaceZone("toolbar") {
+		t.Fatal("toolbar should not be a valid surface zone")
+	}
+	for _, z := range []string{"app", "sidebar", "editor", "panel", "card", "modal", "popover"} {
+		if !themes.IsValidSurfaceZone(z) {
+			t.Errorf("IsValidSurfaceZone(%q) = false, want true", z)
+		}
+	}
+}
+
+// TestPickBackgroundImage_StorageAndWritePath exercises the exact helper
+// sequence PickBackgroundImage runs after the picker returns (store the asset
+// → write the background → invalidate cache), against a real scaffolded vault
+// and the active custom theme. This is the testable core of the binding.
+func TestPickBackgroundImage_StorageAndWritePath(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	// Add a custom theme and make it active.
+	writeFile(t, filepath.Join(app.vaultPath, ".system", "themes", "terra.json"), validCustomThemeJSON)
+	if _, err := app.ApplyTheme("terra-test", "dark"); err != nil {
+		t.Fatalf("ApplyTheme: %v", err)
+	}
+
+	// Simulate a picked 1 KB png by writing it outside the vault.
+	src := filepath.Join(t.TempDir(), "pick.png")
+	writeBytes(t, src, make([]byte, 1024))
+
+	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
+	ref, isBase64, err := themes.StoreBackgroundAsset(themesDir, "terra-test", src)
+	if err != nil {
+		t.Fatalf("StoreBackgroundAsset: %v", err)
+	}
+	if !isBase64 {
+		t.Errorf("expected small image to be inlined as base64, got ref=%q", ref)
+	}
+	if err := themes.SetThemeBackgroundImage(themesDir, "terra-test", "editor", themes.Background{Image: ref}); err != nil {
+		t.Fatalf("SetThemeBackgroundImage: %v", err)
+	}
+	themes.InvalidateThemeCache("terra-test")
+
+	// The active theme now carries the editor background on both modes.
+	th, found, err := themes.LoadByID(themesDir, "terra-test")
+	if err != nil || !found {
+		t.Fatalf("LoadByID: err=%v found=%v", err, found)
+	}
+	if th.Modes.Dark.Surfaces.Editor == nil || th.Modes.Dark.Surfaces.Editor.Background == nil {
+		t.Fatal("dark editor background not set")
+	}
+	if th.Modes.Dark.Surfaces.Editor.Background.Image != ref {
+		t.Errorf("dark editor image = %q, want %q", th.Modes.Dark.Surfaces.Editor.Background.Image, ref)
+	}
+	if th.Modes.Light.Surfaces.Editor == nil || th.Modes.Light.Surfaces.Editor.Background == nil {
+		t.Fatal("light editor background not set")
+	}
+}
+
+// TestPickBackgroundImage_ForksEmbeddedActiveTheme: when the active theme is
+// embedded-only (its on-disk file was removed), the auto-fork step creates a
+// writable user-<id> copy. This is the fork branch of the binding, driven
+// through the same themes.ForkEmbeddedTheme call the binding makes.
+func TestPickBackgroundImage_ForksEmbeddedActiveTheme(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+	// Remove the scaffolded silt-linen.json so the active id is embedded-only.
+	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
+	if err := os.Remove(filepath.Join(themesDir, "silt-linen.json")); err != nil {
+		t.Fatalf("remove silt-linen.json: %v", err)
+	}
+	if _, err := app.ApplyTheme("silt-linen", "dark"); err != nil {
+		t.Fatalf("ApplyTheme (embedded, off-disk): %v", err)
+	}
+
+	// The binding would now call ForkEmbeddedTheme because LoadByID(themesDir,
+	// "silt-linen") returns found=false. Assert a user- prefixed fork appears.
+	forkedID, err := themes.ForkEmbeddedTheme(themesDir, "silt-linen")
+	if err != nil {
+		t.Fatalf("ForkEmbeddedTheme: %v", err)
+	}
+	if want := "user-silt-linen"; forkedID != want {
+		t.Errorf("forked id = %q, want %q", forkedID, want)
+	}
+	if _, err := os.Stat(filepath.Join(themesDir, forkedID+".json")); err != nil {
+		t.Errorf("expected fork file on disk: %v", err)
+	}
+	// And a background write to the fork succeeds (the whole point of forking).
+	if err := themes.SetThemeBackgroundImage(themesDir, forkedID, "editor", themes.Background{
+		Image: "url(\"data:image/png;base64,iVBORw0KGgo=\")",
+	}); err != nil {
+		t.Fatalf("SetThemeBackgroundImage on fork: %v", err)
+	}
+}
+
+// writeBytes is a raw-bytes counterpart to writeFile used for binary image
+// fixtures (writeFile takes a string).
+func writeBytes(t *testing.T, path string, b []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+}

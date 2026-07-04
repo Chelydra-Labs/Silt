@@ -1736,7 +1736,7 @@
     max-width: 460px;
     padding: 28px 32px;
     border-radius: 12px;
-    border: 1px solid var(--color-border-zinc, #27272a);
+    border: 1px solid var(--color-surface-modal-border);
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
   }
 
@@ -1784,7 +1784,7 @@
   .settings-mismatch-actions .secondary {
     background: transparent;
     color: var(--color-text-muted, #8b8b94);
-    border: 1px solid var(--color-border-muted, rgba(255, 255, 255, 0.15));
+    border: 1px solid var(--color-surface-modal-border);
   }
 
   .settings-mismatch-actions .secondary:hover {
@@ -1795,7 +1795,7 @@
 
   .settings-mismatch-actions .primary {
     background: var(--color-accent-primary-start, #4a9eff);
-    color: var(--color-void, #0c0c0e);
+    color: var(--color-surface-app);
     font-weight: 600;
   }
 

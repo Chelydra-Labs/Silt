@@ -499,27 +499,37 @@ Transforms the active block into a first-level markdown header (# ).
 
 6.4 Theme Customization Engine
 
-> **Theme System v2.** The forward architecture — schema v2, OKLCH derivation, 7 named surface zones, radii/spacing/shadow, typography scale, editor tokens, a unified per-zone background system, a CI contrast gate, and the custom-editor contract — is specified in [`docs/theme-system-v2-rfc.md`](docs/theme-system-v2-rfc.md). v2 is the only supported schema going forward (`schema_version: "2.0.0"`); the v1 description below documents the shipping engine until v2 lands.
+To prevent styling stagnation, Silt provides a built-in user theme engine mapping to CSS Custom Properties. The shipping schema is **Theme System v2**; the forward architecture — OKLCH derivation, the 7-zone surface model, the unified background system, the contrast guarantee, and the custom-editor contract — is specified in [`docs/theme-system-v2-rfc.md`](docs/theme-system-v2-rfc.md), and the decision to make v2 the only supported schema with no v1→v2 migration is recorded in [`docs/decisions/0002-theme-schema-v2-no-migration.md`](docs/decisions/0002-theme-schema-v2-no-migration.md). The internal pipeline is documented in ARCHITECTURE.md §4.4; the design-system token vision lives in DESIGN.md §2.1 / §7.
 
-To prevent styling stagnation, Silt provides a built-in user theme engine mapping to CSS Custom Properties.
+**Theme files** live as canonical modes-based JSON in `<vault>/.system/themes/`. Each theme carries `schema_version: "2.0.0"` (hard-enforced — any other value is rejected), `id`, `name`, an optional theme-level `typography` section, and a `modes.dark` / `modes.light` token set. A mode defines:
 
-**Theme files** live as canonical modes-based JSON in `<vault>/.system/themes/`. Each theme carries a `schema_version`, `id`, `name`, an optional `typography` section, and a `modes.dark` / `modes.light` token set (bg, border, text, accent.primary / accent.secondary × start/end/glow, status). Accent tokens are hue-agnostic and **semantic**: components reference only `--accent-primary-*` (the "go / done" hue) and `--accent-secondary-*` (the "in progress" hue), and each theme maps its concrete hues onto them. The optional `typography` section (theme-level, not per-mode) defines font-family choices (`font_family`, `mono_font_family`, `headline_font`) emitted as `--font-body`, `--font-mono`, `--font-headline`; themes without a typography section inherit the config-driven fonts via CSS fallback chains. A mode MAY also declare an optional `chrome` sub-tree (`bg`/`border`/`text` only — accent, status, texture, and typography are NOT per-surface); when present, `Flatten` emits `--color-chrome-*` tokens that a `.silt-chrome` CSS scoping class applies to the sidebar, titlebar, and activity bar, enabling "dark chrome + light page" themes (Daybreak, Bubblegum) without per-component changes.
+- **`surfaces`** — 7 named zones (`app, sidebar, editor, panel, card, modal, popover`), each `{bg, border, text}`. Only `app` is required; the rest inherit from their parent zone (`popover→modal→panel→app`; `sidebar`/`editor`→`app`; `card→panel`) when omitted, so a minimal theme authors one canvas and the rest follow. Each zone MAY also carry a unified `background` block (`image` / `size` / `opacity` / `blend` / `position` / `scrim`) that subsumes the legacy `texture` overlay and powers per-zone background photos.
+- **`accent`** — two hue-agnostic **semantic** triples (`primary` = the "go / done" hue, `secondary` = the "in progress" hue), each `start` / `end` / `glow`. Components reference only the semantic names; each theme maps its concrete hues onto them.
+- **`status`** — `warn` / `danger` / `success` (all three required).
+- **`error`** — a themeable family (`fg` / `bg` / `border`) replacing the static Material-3 error pink that used to render wrong in every dark theme; `status.danger` (destructive actions) and `error.fg` (validation / invalid input) are deliberately distinct.
+- Zone-agnostic interaction tokens (`hover`, `active`, `border_active`, `border_focus`) and emphasis levels (`text_muted`, `text_disabled`) that apply on every surface.
+- Optional **`radius`** / **`spacing`** / **`shadow`** geometry ramps, an **`editor`** interaction block (caret / selection / link / highlight), and a theme-level **`typography.scale`** (sizes / line-heights / weights). A theme that omits them renders with v1-equivalent geometry and type via emitted defaults.
+
+Color slots accept `#hex`, `rgb()` / `rgba()`, and `oklch(L C H[/ A])`; OKLCH is what lets a theme derive perceptually-uniform hover/active/disabled variants and what lets the CI contrast gate reason exactly. The v1 flat `bg` model, the `chrome` block, and the `texture` block are removed — the `sidebar` zone replaces chrome, and the per-zone `background` replaces texture.
 
 **Default & first-class themes.** The app embeds a guaranteed-correct default (`cyber_forest`) plus a first-class set (Cyber Forest, Terra Noir, Linen, Stark, Graphite, Bubblegum, Frost, Synthwave, Daybreak, Aggie, Altgeld) so it always has a fallback — before a vault exists, when the themes directory is empty/wiped, and when the active id is missing or invalid. The full first-class roster is always selectable (on-disk copies win on id collisions), and a non-default active theme is resolved from the embedded set even when it is not on disk, so it never flashes the default palette.
 
 **Mode & switching.** Each theme carries both dark and light token sets; the user picks Dark, Light, or System (System follows the OS preference, resolved locally). Switching applies live with no restart and no flicker, and the pre-CSS paint already uses the active theme's background colour so there is no first-paint flash of the wrong palette. The active theme id + mode persist across restarts in user-global settings — they must be known before any vault is open.
 
-**Import & export.** Users can import a theme from a JSON file (file picker or drag-and-drop) and export the active theme for round-trip editing. Imported themes are validated against the canonical schema: only `#hex` / `rgb()` / `rgba()` color values are accepted at every token slot (named colors, `hsl()`, `url()`, `<script>`, `expression()` are rejected before the file is written), and font-family values reject CSS-breaking characters. Imported ids are sanitized and namespaced so they cannot collide with built-ins. Validation errors surface per-field so the UI can name the offending token and the expected format. A successfully imported theme is immediately selectable without a restart.
+**Import & export.** Users can import a theme from a JSON file (file picker or drag-and-drop) and export the active theme for round-trip editing. Imported themes are validated against the canonical v2 schema: only `#hex` / `rgb()` / `rgba()` / `oklch()` color values are accepted at every token slot (named colors, `hsl()`, `url()` at color slots, `<script>`, `expression()` are rejected before the file is written), and font-family / background-image values reject CSS-breaking characters. `schema_version` must be exactly `"2.0.0"` — a v1 file is rejected with a clear, field-level error (there is no migration path; re-author it as v2). Imported ids are sanitized and namespaced so they cannot collide with built-ins. Validation errors surface per-field so the UI can name the offending token and the expected format. A successfully imported theme is immediately selectable without a restart.
+
+**Contrast guarantee.** A CI gate asserts WCAG AA (4.5:1 text, 3:1 UI) for every first-class theme in both modes; Stark is held to AAA (7:1). A theme that fails perceptual contrast will still import (validation checks structure/format, not contrast) but will be hard to read.
 
 **Settings → Appearance** is the single surface for theme selection — an accessible picker plus the mode toggle, import, and export. Mode is a `radiogroup` of Dark / Light / System; themes are a `listbox` of `option` rows with roving tabindex, Arrow/Home/End navigation, Enter/Space to commit, and Esc to cancel a live preview. Status and errors render in an `aria-live` region (escalating to `alert` on errors). The same theme engine drives the whole shell, including the custom titlebar.
 
-Schema Example (cyber_forest.json, dark mode shown):
+Schema Example (cyber_forest.json, dark mode shown — only the zones the theme authors are listed; `sidebar`, `editor`, and `popover` inherit from their parents):
 
+```
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "cyber_forest",
   "name": "Cyber Forest",
-  "author": "System Designer",
+  "author": "Chelydra Labs",
   "description": "...",
   "typography": {
     "font_family": "'Plus Jakarta Sans', sans-serif",
@@ -528,18 +538,26 @@ Schema Example (cyber_forest.json, dark mode shown):
   },
   "modes": {
     "dark": {
-      "bg": { "void": "#0c0c0e", "surface": "#121215", "panel": "#161619", "hover": "#1c1c21", "active": "#222226" },
-      "border": { "muted": "#1e1e23", "zinc": "#27272a", "active": "#3f3f46", "focus": "#52525b" },
-      "text": { "primary": "#dee3e6", "muted": "#8b8b94", "disabled": "#4b5563" },
+      "surfaces": {
+        "app":   { "bg": "#0c0c0e", "border": "#1e1e23", "text": "#dee3e6" },
+        "panel": { "bg": "#121215", "border": "#27272a", "text": "#dee3e6" },
+        "modal": { "bg": "#121215", "border": "#3f3f46", "text": "#dee3e6" },
+        "card":  { "bg": "#161619", "border": "#27272a", "text": "#dee3e6" }
+      },
+      "hover": "#1c1c21", "active": "#222226",
+      "border_active": "#3f3f46", "border_focus": "#52525b",
+      "text_muted": "#8b8b94", "text_disabled": "#4b5563",
       "accent": {
-        "primary": { "start": "#2dd4bf", "end": "#0d9488", "glow": "rgba(20, 184, 166, 0.15)" },
+        "primary":   { "start": "#2dd4bf", "end": "#0d9488", "glow": "rgba(20, 184, 166, 0.15)" },
         "secondary": { "start": "#6366f1", "end": "#a855f7", "glow": "rgba(168, 85, 247, 0.12)" }
       },
-      "status": { "warn": "#fbbf24", "danger": "#f43f5e" }
+      "status": { "warn": "#fbbf24", "danger": "#f43f5e", "success": "#22c55e" },
+      "error":  { "fg": "#f43f5e", "bg": "#121215", "border": "#3f3f46" }
     },
-    "light": { "..." : "..." }
+    "light": { "...": "..." }
   }
 }
+```
 
 
 6.5 Page Template Engine

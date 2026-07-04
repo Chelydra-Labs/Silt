@@ -32,10 +32,10 @@ var importMu sync.Mutex
 // to avoid clobbering an existing on-disk theme; the UI can show a "imported
 // as <id>" toast so the user understands why a different id appears.
 type ImportResult struct {
-	Info             ThemeInfo       `json:"info"`
-	RenamedFromID    string          `json:"renamed_from_id,omitempty"`
-	Renamed          bool            `json:"renamed"`
-	Warnings         []string        `json:"warnings,omitempty"`
+	Info             ThemeInfo         `json:"info"`
+	RenamedFromID    string            `json:"renamed_from_id,omitempty"`
+	Renamed          bool              `json:"renamed"`
+	Warnings         []string          `json:"warnings,omitempty"`
 	ValidationErrors []ValidationError `json:"validation_errors,omitempty"`
 }
 
@@ -185,6 +185,64 @@ func ExportThemeToPath(themesDir, id, dstPath string) error {
 	}
 	if err := parser.WriteFileAtomic(dstPath, canon); err != nil {
 		return fmt.Errorf("failed to write export: %w", err)
+	}
+	// Round-trip the assets directory too: a theme that references
+	// <id>.assets/<file> would point at a missing file after export/import if
+	// only the JSON were copied (RFC §3). No assets dir → nothing to copy.
+	if err := copyAssetsDirIfExists(themesDir, id, dstPath); err != nil {
+		return fmt.Errorf("failed to copy theme assets for export: %w", err)
+	}
+	return nil
+}
+
+// copyAssetsDirIfExists copies <themesDir>/<id>.assets/ to <dstDir>/<id>.assets/
+// (next to the exported JSON) when it exists, so an assets-dir theme round-trips
+// through export/import without broken references. A missing dir is the common
+// case (base64 / embedded-name themes have no assets dir) and is a no-op.
+func copyAssetsDirIfExists(themesDir, id, dstPath string) error {
+	srcAssets := filepath.Join(themesDir, id+".assets")
+	info, err := os.Stat(srcAssets)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	dstAssets := filepath.Join(filepath.Dir(dstPath), id+".assets")
+	return copyDir(srcAssets, dstAssets)
+}
+
+// copyDir recursively copies src to dst. Used only by the export path for the
+// per-theme assets directory; the tree is shallow in practice but the walk
+// handles nested directories defensively. Files are copied read-only (0o644)
+// since the destination is an export target, not the live store.
+func copyDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+			return err
+		}
 	}
 	return nil
 }

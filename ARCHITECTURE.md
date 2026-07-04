@@ -475,16 +475,20 @@ Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
           │  +  embed.FS cyber_forest.json (guaranteed fallback)
           ▼
   +----------------------------------------------------------+
-  | Go: backend/themes                                       |
-  |   validate.go  ParseAndValidate (schema sandbox)         |
-  |   loader.go    ListThemes / ResolveActive / LoadByID      |
-  |   importer.go  ImportThemeFromPath / ExportThemeToPath    |
-  |   cache.go     CachedThemeByID (mtime-aware, launch path) |
-  |   default.go   embedded canonical default                |
+  |   Go: backend/themes - Theme System v2                   |
+  |   validate.go    ParseAndValidate (schema sandbox)       |
+  |   loader.go      ListThemes / ResolveActive / FlatTokens |
+  |   importer.go    ImportThemeFromPath / ExportThemeToPath |
+  |   cache.go       CachedThemeByID (mtime-aware cache)     |
+  |   default.go     //go:embed themes/*.json (11 themes)    |
+  |   derivation.go  OKLCH hover/active/disabled derivation  |
+  |   background.go  per-zone background asset pipeline      |
+  |   theme.go       Theme schema + Flatten (token emission) |
   +----------------------------------------------------------+
           │  Wails JSON RPC (single Bind: { app })
           │   ListThemes / GetActiveTheme / ApplyTheme
           │   ImportTheme / ExportActiveTheme / PickThemeFile
+          │   PickBackgroundImage   (per-zone background asset pick)
           │   events: theme:changed | themes:changed
           ▼
   +----------------------------------------------------------+
@@ -508,15 +512,21 @@ Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
 
 **Storage layout.** Theme files live in `<vault>/.system/themes/*.json` (SPECS §3.2). The **first-class set** (`cyber_forest` plus Terra Noir, Linen, Stark, Graphite, Bubblegum, Frost, Synthwave, Daybreak, Aggie, Altgeld) is embedded via `//go:embed themes/*.json` and is what `ScaffoldVault` writes, so each first-class theme has one source of truth. `ListThemes` appends every embedded first-class theme (deduped — on-disk wins), so the full roster is always selectable even on an empty or wiped vault; `ResolveActive` / `CachedThemeByID` resolve a first-class id from the embed when it is not on disk, so a non-default active theme always resolves its palette from the embed, so the default palette never appears. The active id + mode persist to user-global `settings.json` — the only disk write in the engine.
 
-**backend/themes** validates the canonical schema (colors narrowed to `#hex`/`rgb()`/`rgba()` — the import sandbox), loads on-disk + embedded themes (deduped by id), imports/exports atomically, and serves a process-local mtime-aware cache. See the package for per-file responsibilities.
+**Schema & validation.** `backend/themes` validates the canonical v2 schema (RFC `docs/theme-system-v2-rfc.md`). `schema_version` is hard-enforced at `"2.0.0"` — any other value (including v1) is rejected with a descriptive error, and `DisallowUnknownFields` makes a typo fail loudly instead of being silently dropped. There is no v1→v2 migration path (single-user project; first-party themes were re-authored natively — see ADR `docs/decisions/0002-theme-schema-v2-no-migration.md`). Color slots accept `#hex` (`#rgb`/`#rrggbb`/`#rrggbbaa`), `rgb()`/`rgba()`, and `oklch(L C H[/ A])`; everything else (named colors, `hsl()`, `url()` at color slots, `expression()`, `<script>`) is rejected before the file is written — the import sandbox. The loader dedupes on-disk + embedded themes by id, imports/exports atomically, and serves a process-local mtime-aware cache.
 
-**IPC.** `ListThemes`, `GetActiveTheme`, `ApplyTheme`, `ImportTheme`, `ExportActiveTheme`, `PickThemeFile`. `ApplyTheme` persists to `settings.json` and emits `theme:changed`; `ImportTheme` emits `themes:changed` (the listing event — distinct from the active-theme event). `GetActiveTheme` returns both dark + light maps so the frontend resolves "system" locally without a second round-trip.
+**Flatten.** `Theme.Flatten(mode)` emits the CSS custom properties the runtime injector writes to `:root` — the *same* custom properties Tailwind v4's `@theme` block declares (and generates utilities from), so one namespace overrides both, with no alias layer. The emission is the **surface-zone model**: 7 named zones (`app, sidebar, editor, panel, card, modal, popover`), each producing `--color-surface-<zone>` / `-border` / `-text`. Inheritance is a strict tree realized as `var()` fallback chains (`popover→modal→panel→app`; `sidebar`/`editor`→`app`; `card→panel`): an authored zone is emitted verbatim, an omitted one falls back to its parent, so a theme switch repaints every surface in one cycle and every property always resolves. Zone-agnostic interaction tokens (`--color-hover`, `--color-active`, `--color-border-active`, `--color-border-focus`) and text-emphasis levels (`--color-text-primary`, `--color-text-muted`, `--color-text-disabled` — first-class semantic tokens; `text-primary` resolves to the app zone's foreground by definition, parallel to muted/disabled) apply on every surface. The accents, status, and the themeable error family (`--color-error`, `--color-error-bg`, `--color-error-border` — replacing the static Material-3 pink) round out the color namespace; the v1 parallel Material-3 palette is gone entirely (no aliases — a grep confirmed zero consumers). Optional `radius` / `spacing` / `shadow` ramps, an `editor` interaction block (caret/selection/link/highlight), theme-level `typography` (families plus a type scale), and a per-zone unified `background` block (absorbing the legacy `texture`; emits `--silt-bg-<zone>-*` overlay tokens) are emitted when authored, with sensible defaults otherwise. The v1 flat `bg` model, the `border`/`text` sub-blocks, the `chrome` block, and the `texture` block are removed; raised surfaces are now the `modal`/`popover` zones.
+
+**Token–utility generation contract.** Every key `Theme.Flatten` emits MUST also be declared in `frontend/src/index.css`'s `@theme` block (with Cyber Forest dark as the startup-fallback value), or Tailwind v4 will not generate the matching utility class (`bg-…`, `text-…`, `border-…`, `rounded-…`, `shadow-…`). The two lists are kept in sync by a CI drift guard (`hardcoded-colors.test.ts` diffs the `Flatten` key set against the `@theme` declarations) — drift fails loudly rather than silently producing a dead utility.
+
+**Chrome surfaces consume the sidebar zone directly.** The app skeleton (sidebar, titlebar, activity bar) renders the `sidebar` zone by using `sidebar`-zone utilities explicitly (`bg-surface-sidebar`, `border-surface-sidebar-border`, `text-surface-sidebar-text`). There is no scoping/remap class: each chrome element says `sidebar` the way a modal says `modal`. For themes that omit the sidebar zone, the engine's inheritance resolves `--color-surface-sidebar` to the app zone, so chrome matches the page; Daybreak and Bubblegum author a dark `sidebar` zone against a light `editor`/`app` to produce the "dark frame + bright page" effect. (The v1 `.silt-chrome` CSS-variable remap was a shim and is gone; the class survives only as a non-theming layout/drag hook if at all.)
+
+**IPC.** `ListThemes`, `GetActiveTheme`, `ApplyTheme`, `ImportTheme`, `ExportActiveTheme`, `PickThemeFile`, and `PickBackgroundImage` (picks a per-zone background image and runs it through the asset pipeline in `background.go` — small files inline as base64 data URIs, larger files into a per-theme assets directory, then cache-invalidate and emit `themes:changed`). `ApplyTheme` persists to `settings.json` and emits `theme:changed`; `ImportTheme` emits `themes:changed` (the listing event — distinct from the active-theme event). `GetActiveTheme` returns both dark + light maps so the frontend resolves "system" locally without a second round-trip.
 
 **Frontend** (`frontend/src/theme`): `store.svelte.ts` holds `themeState` (active id/name/mode + token maps) and `themesState` (listing + flat tokens for previews); `inject.ts` rewrites a single `<style id="silt-theme">:root{…}</style>` (one DOM write → one recalc → same-tick repaint); `AppearanceTab.svelte` is the accessible picker.
 
-**Launch background.** `main.go` resolves the webview `BackgroundColour` from the in-process theme cache so a non-default active theme's `bg.void` is used for the pre-CSS paint; it falls back to the embedded default when no settings exist or the active id is invalid.
+**Launch background.** `main.go` resolves the webview `BackgroundColour` from the in-process theme cache so a non-default active theme's app-zone background (`surfaces.app.bg`) is used for the pre-CSS paint; it falls back to the embedded default when no settings exist or the active id is invalid.
 
-**Dual-surface chrome tokens.** A mode MAY declare an optional `chrome` sub-tree (`bg`/`border`/`text` only — accent, status, texture, and typography are shared across all surfaces). When present, `Flatten` emits `--color-chrome-*` CSS custom properties with concrete values. When absent, it emits `var(--color-*)` fallbacks so a `.silt-chrome` CSS scoping class (applied to the sidebar, titlebar, and activity bar) transparently resolves to the standard palette. The scoping class reassigns `--color-*` from inherited `--color-chrome-*` values — no CSS variable cycle because `:root` defines both sets and `.silt-chrome` reads from the parent cascade. This enables "dark chrome + light page" themes (Daybreak, Bubblegum light mode) without per-component utility-class changes. The WCAG contrast harness tests chrome text/background pairs separately when a chrome block is present.
+**Contrast guarantee.** A CI gate (`backend/themes/contrast_test.go`) enumerates the critical semantic pairs for every embedded theme in both modes and fails the build below WCAG AA (4.5:1 text, 3:1 UI); Stark is asserted at AAA (7:1) for primary text as a regression guard.
 
 
 4.5 Template Engine IPC & Pipeline

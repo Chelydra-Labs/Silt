@@ -400,7 +400,6 @@ func TestParseDefault_IsValid(t *testing.T) {
 		"--color-hover", "--color-active", "--color-border-active", "--color-border-focus",
 		"--color-text-primary", "--color-text-muted", "--color-text-disabled",
 		"--color-error", "--color-error-bg", "--color-error-border",
-		"--color-background", "--color-on-surface",
 	} {
 		if _, ok := tokens[k]; !ok {
 			t.Errorf("Flatten missing %s", k)
@@ -944,16 +943,11 @@ func TestFlatten_EmitsSurfaceAppAndAliases(t *testing.T) {
 	if flat["--color-surface-app-text"] != "#dee3e6" {
 		t.Errorf("--color-surface-app-text = %q", flat["--color-surface-app-text"])
 	}
-	// text-primary is an alias for the app zone's text.
+	// text-primary is a first-class semantic emphasis token: primary body
+	// text, by definition the app zone's foreground (parallel to text-muted /
+	// text-disabled, which are zone-agnostic emphasis levels).
 	if flat["--color-text-primary"] != "var(--color-surface-app-text)" {
 		t.Errorf("--color-text-primary = %q, want var(--color-surface-app-text)", flat["--color-text-primary"])
-	}
-	// Material-3 aliases consumed by legacy CSS map onto the app zone.
-	if flat["--color-background"] != "var(--color-surface-app)" {
-		t.Errorf("--color-background = %q", flat["--color-background"])
-	}
-	if flat["--color-on-surface"] != "var(--color-surface-app-text)" {
-		t.Errorf("--color-on-surface = %q", flat["--color-on-surface"])
 	}
 }
 

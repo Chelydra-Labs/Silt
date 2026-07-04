@@ -635,7 +635,9 @@
   style:width={collapsed ? '0px' : sidebarWidth + 'px'}
   style:transition={sidebarDragging ? 'none' : 'all 200ms ease-out'}
   style:overflow={collapsed ? 'hidden' : 'visible'}
-  style:border-right={collapsed ? '0' : '1px solid var(--color-border-muted)'}
+  style:border-right={collapsed
+    ? '0'
+    : '1px solid var(--color-surface-sidebar-border)'}
 >
   <div
     class="px-3 py-3 flex flex-col gap-1 relative flex-1 overflow-hidden flex"
@@ -699,7 +701,7 @@
           ></button>
           <div
             class="absolute left-1 right-1 top-14 glass-palette border border-accent-primary-start/20 rounded-lg shadow-2xl z-[70] py-2 max-h-[60vh] overflow-y-auto custom-scrollbar"
-            style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--color-panel) 92%, transparent);"
+            style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--color-surface-sidebar) 92%, transparent);"
           >
             {#if tree.notebooks.length === 0}
               <div class="px-4 py-3 text-text-muted text-[12px] font-body-md">
@@ -1191,7 +1193,11 @@
 
 <style>
   .context-menu-card {
-    background-color: color-mix(in srgb, var(--color-panel) 90%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--color-surface-sidebar) 90%,
+      transparent
+    );
     backdrop-filter: blur(12px) saturate(140%);
     border: 1px solid var(--color-border-active);
     border-radius: 8px;

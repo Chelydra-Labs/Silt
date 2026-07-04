@@ -229,7 +229,7 @@
     aria-label="Settings"
     tabindex="-1"
     class="relative z-10 w-full max-w-4xl h-[80vh] glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 94%, transparent);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-panel) 94%, transparent);"
   >
     <!-- Left rail: tab list. A div (not <nav>) carries role="tablist" because a
          tablist is not a navigation landmark — the WAI-ARIA tab pattern uses a

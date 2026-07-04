@@ -380,7 +380,7 @@
     aria-label="Find and replace across vault"
     tabindex="-1"
     class="relative w-full max-w-3xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[600px]"
-    style="background: color-mix(in srgb, var(--color-panel) 95%, transparent);"
+    style="background: color-mix(in srgb, var(--color-surface-modal) 95%, transparent);"
   >
     <div class="px-4 py-3 border-b border-border-muted bg-void/30 space-y-2">
       <div class="flex items-center gap-2">

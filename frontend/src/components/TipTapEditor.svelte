@@ -369,8 +369,7 @@
 
   function onOpenColorPicker(e: Event): void {
     const markType = (e as CustomEvent).detail as
-      | 'textColor'
-      | 'backgroundColor'
+      'textColor' | 'backgroundColor'
     if (markType) openColorPickerPopover(markType)
   }
 
@@ -710,8 +709,7 @@
         : false
       // Update word count from CharacterCount storage (#168 Phase 3).
       const storage = editorInstance?.storage as unknown as
-        | Record<string, unknown>
-        | undefined
+        Record<string, unknown> | undefined
       const cc = storage?.characterCount as { words?: () => number } | undefined
       if (cc?.words) wordCount = cc.words()
       triggerAutoSave()
@@ -873,8 +871,7 @@
     }
     const onOpenBtn = (e: Event) => {
       const detail = (e as CustomEvent).detail as
-        | { x: number; y: number }
-        | undefined
+        { x: number; y: number } | undefined
       const head = editor.state.selection.head
       openSpellMenuAt(editor, head, detail ?? { x: 100, y: 100 }, true)
     }
@@ -1794,17 +1791,17 @@
     margin-top: 4px;
     padding: 4px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   }
 
   .link-input {
     width: 240px;
     padding: 4px 8px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
-    background: var(--color-surface, #1a1d24);
+    background: var(--color-surface-popover);
     color: var(--color-text-primary, #e6e6e6);
     font-size: 0.8rem;
     outline: none;
@@ -1820,8 +1817,8 @@
     margin-top: 4px;
     padding: 6px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     display: grid;
     grid-template-columns: repeat(6, 1fr);
@@ -1861,7 +1858,7 @@
   .cp-custom-input {
     width: 28px;
     height: 22px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 4px;
     background: transparent;
     cursor: pointer;
@@ -1881,8 +1878,8 @@
     margin-top: 4px;
     padding: 4px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     display: flex;
     flex-direction: column;
@@ -1926,8 +1923,8 @@
     margin-top: 4px;
     padding: 4px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     display: flex;
     flex-direction: column;
@@ -1957,9 +1954,13 @@
   }
 
   .context-menu-card {
-    background-color: color-mix(in srgb, var(--color-panel) 90%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--color-surface-popover) 90%,
+      transparent
+    );
     backdrop-filter: blur(12px) saturate(140%);
-    border: 1px solid var(--color-border-muted, #33333a);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 8px;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
     padding: 4px;
@@ -2011,7 +2012,7 @@
 
   .context-menu-separator {
     height: 1px;
-    background: var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover-border);
     margin: 4px;
   }
 </style>

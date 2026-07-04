@@ -268,7 +268,7 @@
     background: color-mix(
       in srgb,
       var(--color-accent-primary-glow, #6fa3ff) 12%,
-      var(--color-surface, #1a1d24)
+      var(--color-surface-card)
     );
     border: 1px solid
       color-mix(
@@ -293,7 +293,7 @@
     background: color-mix(
       in srgb,
       var(--color-accent-primary-glow, #6fa3ff) 12%,
-      var(--color-surface, #1a1d24)
+      var(--color-surface-card)
     );
     color: var(--color-text-primary, #e6e6e6);
     font-size: 12px;
@@ -307,7 +307,7 @@
     background: color-mix(
       in srgb,
       var(--color-accent-primary-glow, #6fa3ff) 18%,
-      var(--color-surface, #1a1d24)
+      var(--color-surface-card)
     );
   }
 

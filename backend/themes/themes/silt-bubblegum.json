@@ -7,7 +7,12 @@
   "typography": {
     "font_family": "'Outfit', sans-serif",
     "mono_font_family": "'Fira Code', monospace",
-    "headline_font": "'Sora', sans-serif"
+    "headline_font": "'Sora', sans-serif",
+    "scale": {
+      "size": { "xs": "0.75rem", "sm": "0.875rem", "base": "1rem", "lg": "1.125rem", "xl": "1.3125rem", "2xl": "1.625rem" },
+      "line_height": { "tight": "1.2", "normal": "1.55", "relaxed": "1.75" },
+      "weight": { "normal": "400", "medium": "500", "semibold": "600" }
+    }
   },
   "modes": {
     "dark": {
@@ -42,8 +47,23 @@
       },
       "error": {
         "fg": "#f43f5e",
-        "bg": "#221326",
-        "border": "#5a3360"
+        "bg": "#1f0c14",
+        "border": "#4d2030"
+      },
+      "radius": { "sm": "6px", "md": "10px", "lg": "14px", "xl": "18px", "full": "9999px" },
+      "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 50%, transparent)",
+        "md": "0 4px 14px color-mix(in oklch, var(--color-surface-app) 45%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 40%, transparent)"
+      },
+      "editor": {
+        "caret": "#ff6b8a",
+        "selection": "rgba(255,107,138,0.28)",
+        "selection_text": "#f5ede8",
+        "link": "#4fd1c5",
+        "link_hover": "#38b2ac",
+        "highlight": "rgba(251,191,36,0.30)"
       }
     },
     "light": {
@@ -79,8 +99,23 @@
       },
       "error": {
         "fg": "#e11d48",
-        "bg": "#ffffff",
-        "border": "#c4a494"
+        "bg": "#fdedf0",
+        "border": "#f5cdd6"
+      },
+      "radius": { "sm": "6px", "md": "10px", "lg": "14px", "xl": "18px", "full": "9999px" },
+      "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 30%, transparent)",
+        "md": "0 4px 14px color-mix(in oklch, var(--color-surface-app) 25%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 20%, transparent)"
+      },
+      "editor": {
+        "caret": "#e84371",
+        "selection": "rgba(232,67,113,0.20)",
+        "selection_text": "#2d1f1a",
+        "link": "#2c7a7b",
+        "link_hover": "#234e52",
+        "highlight": "rgba(217,119,6,0.22)"
       }
     }
   }

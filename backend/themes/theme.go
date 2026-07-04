@@ -340,11 +340,6 @@ func (t *Theme) Flatten(mode string) map[string]string {
 	out["--color-error-bg"] = m.Error.BG
 	out["--color-error-border"] = m.Error.Border
 
-	// Material-3 aliases consumed by legacy CSS: map to the app zone so the
-	// parallel M3 namespace is gone and the active theme wins everywhere (#386).
-	out["--color-background"] = "var(--color-surface-app)"
-	out["--color-on-surface"] = "var(--color-surface-app-text)"
-
 	// Geometry (optional; defaults keep v1-equivalent geometry).
 	flattenGeometry(out, m)
 

@@ -172,8 +172,8 @@
     padding: 8px;
     width: 300px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     display: flex;
     flex-direction: column;
@@ -190,9 +190,9 @@
   .mlp-input {
     width: 100%;
     padding: 6px 8px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
-    background: var(--color-surface, #1a1d24);
+    background: var(--color-surface-popover);
     color: var(--color-text-primary, #e6e6e6);
     font-family: var(--font-mono, monospace);
     font-size: 0.85rem;
@@ -209,7 +209,7 @@
   .mlp-preview {
     min-height: 44px;
     padding: 8px;
-    border: 1px solid var(--color-border-muted, #33333a);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
     background: var(--color-hover, rgba(255, 255, 255, 0.04));
     color: var(--color-text-primary, #e6e6e6);
@@ -235,7 +235,7 @@
   }
   .mlp-btn {
     padding: 4px 12px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
     background: transparent;
     color: var(--color-text-primary, #e6e6e6);

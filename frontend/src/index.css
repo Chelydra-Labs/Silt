@@ -8,33 +8,50 @@
    * same custom properties on :root at runtime (see backend Theme.Flatten
    * for the canonical v2 token names — surface zones, accents, status, the
    * themeable error family, geometry, and editor tokens), so Tailwind's
-   * generated utilities track the live theme with zero per-component
-   * changes. Values here only paint the brief pre-injection frame; every
-   * key is overwritten once IPC returns the active theme.
+   * generated utilities (bg-/text-/border-/rounded-/shadow-) track the
+   * live theme with zero per-component changes. Values here only paint the
+   * brief pre-injection frame; every key is overwritten once IPC returns
+   * the active theme. Every v2 token the engine emits is declared here so
+   * the corresponding utility class is generated and resolves before
+   * injection; zones Cyber Forest doesn't author inherit via var() chains
+   * mirroring the engine's strict-tree fallback.
    */
 
-  /* Surface zones (app → panel → card raised chain). The engine emits the
-     full zone tree (sidebar/editor/modal/popover) with var() fallbacks to
-     their parents, so declaring the app/panel/card roots is enough to keep
-     every zone resolving before injection. */
+  /* Surface zones — 7-zone model (RFC §5). Inheritance: sidebar/editor→app,
+     card/modal→panel, popover→modal. Cyber Forest authors app/panel/card/modal;
+     the rest inherit so they resolve identically before injection. */
   --color-surface-app: #0c0c0e;
+  --color-surface-app-border: #1e1e23;
+  --color-surface-app-text: #dee3e6;
+  --color-surface-sidebar: var(--color-surface-app);
+  --color-surface-sidebar-border: var(--color-surface-app-border);
+  --color-surface-sidebar-text: var(--color-surface-app-text);
+  --color-surface-editor: var(--color-surface-app);
+  --color-surface-editor-border: var(--color-surface-app-border);
+  --color-surface-editor-text: var(--color-surface-app-text);
   --color-surface-panel: #121215;
+  --color-surface-panel-border: #27272a;
+  --color-surface-panel-text: #dee3e6;
   --color-surface-card: #161619;
+  --color-surface-card-border: #27272a;
+  --color-surface-card-text: #dee3e6;
+  --color-surface-modal: #121215;
+  --color-surface-modal-border: #3f3f46;
+  --color-surface-modal-text: #dee3e6;
+  --color-surface-popover: var(--color-surface-modal);
+  --color-surface-popover-border: var(--color-surface-modal-border);
+  --color-surface-popover-text: var(--color-surface-modal-text);
+
+  /* Zone-agnostic interaction + emphasis tokens. */
   --color-hover: #1c1c21;
   --color-active: #222226;
-
-  /* Borders (zone-scoped where the name implies it). */
-  --color-surface-app-border: #1e1e23;
-  --color-surface-panel-border: #27272a;
   --color-border-active: #3f3f46;
   --color-border-focus: #52525b;
-
-  /* Text scale */
-  --color-text-primary: #dee3e6;
+  --color-text-primary: var(--color-surface-app-text);
   --color-text-muted: #8b8b94;
   --color-text-disabled: #4b5563;
 
-  /* Accent Gradients & Tones (semantic: primary=teal, secondary=indigo) */
+  /* Accent Gradients & Tones (semantic: primary=teal "go/done", secondary=indigo "in progress"). */
   --color-accent-primary-start: #2dd4bf;
   --color-accent-primary-end: #0d9488;
   --color-accent-primary-glow: rgba(20, 184, 166, 0.15);
@@ -42,13 +59,50 @@
   --color-accent-secondary-end: #a855f7;
   --color-accent-secondary-glow: rgba(168, 85, 247, 0.12);
 
-  /* Status (semantic: warn/danger/success). success has a fallback so
-     legacy themes without it still resolve (#165). */
+  /* Status (semantic: warn/danger/success). */
   --color-status-warn: #fbbf24;
   --color-status-danger: #f43f5e;
   --color-status-success: #22c55e;
 
-  /* Spacing */
+  /* Themeable error family (replaces the static Material-3 --color-error). */
+  --color-error: #f43f5e;
+  --color-error-bg: #121215;
+  --color-error-border: #3f3f46;
+
+  /* Editor interaction tokens (defaults derived from the palette). */
+  --color-editor-caret: var(--color-accent-primary-start);
+  --color-editor-selection: color-mix(
+    in oklch,
+    var(--color-accent-primary-start) 30%,
+    transparent
+  );
+  --color-editor-selection-text: var(--color-surface-editor-text);
+  --color-editor-link: var(--color-accent-secondary-start);
+  --color-editor-link-hover: var(--color-accent-secondary-end);
+  --color-editor-highlight: color-mix(
+    in oklch,
+    var(--color-status-warn) 40%,
+    transparent
+  );
+
+  /* Geometry (engine defaults; themes override for personality). */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+  --spacing-sm: 4px;
+  --spacing-md: 8px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+  --shadow-sm: 0 1px 2px
+    color-mix(in oklch, var(--color-surface-app) 40%, transparent);
+  --shadow-md: 0 4px 12px
+    color-mix(in oklch, var(--color-surface-app) 35%, transparent);
+  --shadow-lg: 0 12px 32px
+    color-mix(in oklch, var(--color-surface-app) 30%, transparent);
+
+  /* Layout spacing (non-theme; static guide rhythms). */
   --spacing-guide-offset: -12px;
   --spacing-baseline-distance: 28px;
   --spacing-indent-unit: 24px;
@@ -58,11 +112,6 @@
 :root {
   /* Transition timings */
   --transition-standard: cubic-bezier(0.16, 1, 0.3, 1);
-
-  /* Task Priority Tones (not theme-driven; static) */
-  --error: #ffb4ab;
-  --error-bg: rgba(255, 180, 171, 0.08);
-  --error-border: rgba(255, 180, 171, 0.2);
 
   /* Rhythms & Indent Spacing */
   --guide-offset: -12px;
@@ -584,7 +633,7 @@ body {
   justify-content: space-between;
   padding: 2px 6px;
   border-bottom: 1px solid var(--color-surface-app-border);
-  background: color-mix(in srgb, var(--color-surface-panel) 70%, transparent);
+  background: color-mix(in srgb, var(--color-surface-panel) 92%, transparent);
 }
 .silt-code-lang {
   background: transparent;
@@ -830,7 +879,7 @@ body {
 .ProseMirror details[data-type='details'] {
   border: 1px solid var(--color-surface-app-border);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-surface-panel) 60%, transparent);
+  background: color-mix(in srgb, var(--color-surface-panel) 92%, transparent);
   padding: 6px 10px;
   margin: 4px 0;
 }

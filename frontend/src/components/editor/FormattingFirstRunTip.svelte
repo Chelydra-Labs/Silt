@@ -43,7 +43,7 @@
     background: color-mix(
       in srgb,
       var(--color-accent-primary-glow, #6fa3ff) 12%,
-      var(--color-surface, #1a1d24)
+      var(--color-surface-card)
     );
     border: 1px solid
       color-mix(
@@ -70,8 +70,8 @@
     display: inline-block;
     padding: 1px 5px;
     border-radius: 4px;
-    background: var(--color-panel, #252830);
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    background: var(--color-surface-card);
+    border: 1px solid var(--color-surface-card-border);
     color: var(--color-text-primary, #e6e6e6);
     font-family: var(--font-mono, monospace);
     font-size: 0.7rem;
@@ -80,7 +80,7 @@
   .tip-dismiss {
     flex-shrink: 0;
     padding: 3px 10px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-card-border);
     border-radius: 6px;
     background: transparent;
     color: var(--color-text-muted, #8b95a3);

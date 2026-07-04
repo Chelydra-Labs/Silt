@@ -31,13 +31,9 @@
     align-items: center;
     height: 38px;
     padding: 0 16px;
-    background: color-mix(
-      in srgb,
-      var(--color-surface, #1a1d24) 95%,
-      transparent
-    );
+    background: color-mix(in srgb, var(--color-surface-panel) 95%, transparent);
     backdrop-filter: blur(8px);
-    border-bottom: 1px solid var(--color-border-muted, #2a2e36);
+    border-bottom: 1px solid var(--color-surface-panel-border);
     flex-shrink: 0;
     z-index: 15;
   }

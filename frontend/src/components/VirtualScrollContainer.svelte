@@ -139,7 +139,12 @@
     try {
       const result = await FetchPageBlocks(reqNotebook, reqSection, reqPage)
       if (notebook !== reqNotebook || page !== reqPage) {
-        console.log('[VSC] loadPage stale, discarding:', { reqNotebook, reqPage, currentNotebook: notebook, currentPage: page })
+        console.log('[VSC] loadPage stale, discarding:', {
+          reqNotebook,
+          reqPage,
+          currentNotebook: notebook,
+          currentPage: page
+        })
         return
       }
       blocks = result || []
@@ -524,7 +529,7 @@
     transition: border-bottom-color 0.25s ease-in-out;
   }
   h1[contenteditable]:hover {
-    border-bottom-color: var(--color-border-muted) !important;
+    border-bottom-color: var(--color-surface-editor-border) !important;
   }
   h1[contenteditable]:focus {
     border-bottom-color: var(--color-accent-primary-start) !important;

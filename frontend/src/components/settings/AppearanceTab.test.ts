@@ -21,8 +21,8 @@ const mocks = vi.hoisted(() => ({
     id: 'cyber_forest',
     name: 'Cyber Forest',
     mode: 'dark' as 'dark' | 'light' | 'system',
-    darkTokens: { '--color-void': '#0c0c0e' } as Record<string, string>,
-    lightTokens: { '--color-void': '#f8fafc' } as Record<string, string>,
+    darkTokens: { '--color-surface-app': '#0c0c0e' } as Record<string, string>,
+    lightTokens: { '--color-surface-app': '#f8fafc' } as Record<string, string>,
     error: null as string | null
   },
   themesState: {
@@ -211,8 +211,8 @@ describe('AppearanceTab picker a11y (#50)', () => {
     // preview to null, so we must provide data to exercise the path.
     mocks.themesState.flatTokens = {
       'terra-test': {
-        dark: { '--color-void': '#1a0f0a' },
-        light: { '--color-void': '#faf6f2' }
+        dark: { '--color-surface-app': '#1a0f0a' },
+        light: { '--color-surface-app': '#faf6f2' }
       }
     }
     render(AppearanceTab)
@@ -226,7 +226,7 @@ describe('AppearanceTab picker a11y (#50)', () => {
     await tick()
     // The preview theme's dark tokens are injected in place of the active.
     expect(mocks.injectTokens).toHaveBeenCalledWith({
-      '--color-void': '#1a0f0a'
+      '--color-surface-app': '#1a0f0a'
     })
 
     // Escape cancels the preview (onRowKey → previewId = null).
@@ -240,7 +240,7 @@ describe('AppearanceTab picker a11y (#50)', () => {
     // Give the active theme a typography block: the indicator derives from
     // themeState.darkTokens '--font-*' keys (theme-level, both modes).
     mocks.themeState.darkTokens = {
-      '--color-void': '#0c0c0e',
+      '--color-surface-app': '#0c0c0e',
       '--font-body': "'Plus Jakarta Sans', sans-serif",
       '--font-mono': "'JetBrains Mono', monospace",
       '--font-headline': "'Hanken Grotesk', sans-serif"
@@ -258,7 +258,7 @@ describe('AppearanceTab picker a11y (#50)', () => {
 
   it('hides the theme-typography indicator when the theme defines no fonts (#82)', () => {
     // No '--font-*' tokens → no indicator section.
-    mocks.themeState.darkTokens = { '--color-void': '#0c0c0e' }
+    mocks.themeState.darkTokens = { '--color-surface-app': '#0c0c0e' }
     render(AppearanceTab)
 
     expect(

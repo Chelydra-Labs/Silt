@@ -142,7 +142,7 @@
   .silt-math-empty {
     display: inline-block;
     padding: 0.5em 1em;
-    border: 1px dashed var(--color-border-muted, #444);
+    border: 1px dashed var(--color-surface-card-border);
     border-radius: 6px;
     background: transparent;
     color: var(--color-text-muted, #888);

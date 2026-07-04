@@ -317,7 +317,7 @@
     top: 25%;
     height: 50%;
     width: 1px;
-    background: var(--color-border-muted, #2a2d35);
+    background: var(--color-surface-panel-border);
     transition: opacity 120ms ease;
   }
 
@@ -341,10 +341,10 @@
 
   .tab-button.active {
     color: var(--color-accent-primary-start, #2dd4bf);
-    background: var(--color-void, #0c0c0e);
+    background: var(--color-surface-app);
     height: 100%;
     margin-top: 0;
-    border: 1px solid var(--color-border-muted, #2a2d35);
+    border: 1px solid var(--color-surface-panel-border);
     border-bottom: none;
     z-index: 2;
   }

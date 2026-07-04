@@ -99,7 +99,7 @@
     width: 4px;
     height: 100%;
     cursor: col-resize;
-    background-color: var(--color-border-muted);
+    background-color: var(--color-surface-sidebar-border);
     border: none;
     padding: 0;
     margin: 0;

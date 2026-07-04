@@ -31,8 +31,6 @@ var expectedV2ColorKeys = []string{
 	"--color-status-warn", "--color-status-danger", "--color-status-success",
 	// Themeable error family.
 	"--color-error", "--color-error-bg", "--color-error-border",
-	// Material-3 aliases mapped onto the app zone.
-	"--color-background", "--color-on-surface",
 }
 
 // expectedV2GeometryKeys is the always-emitted geometry ramp (Flatten emits

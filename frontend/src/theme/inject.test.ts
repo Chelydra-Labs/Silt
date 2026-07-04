@@ -19,39 +19,39 @@ describe('injectTokens', () => {
   })
 
   it('creates a single <style id="silt-theme"> element on first call', () => {
-    injectTokens({ '--color-void': '#0c0c0e' })
+    injectTokens({ '--color-surface-app': '#0c0c0e' })
     const el = document.getElementById(STYLE_ID)
     expect(el).toBeTruthy()
     expect(el!.tagName).toBe('STYLE')
   })
 
   it('reuses the same element on subsequent calls (no duplicate)', () => {
-    injectTokens({ '--color-void': '#0c0c0e' })
-    injectTokens({ '--color-void': '#101010' })
+    injectTokens({ '--color-surface-app': '#0c0c0e' })
+    injectTokens({ '--color-surface-app': '#101010' })
     const els = document.querySelectorAll(`#${STYLE_ID}`)
     expect(els.length).toBe(1)
   })
 
   it('emits every token as a CSS custom property on :root', () => {
     injectTokens({
-      '--color-void': '#0c0c0e',
+      '--color-surface-app': '#0c0c0e',
       '--color-accent-primary-start': '#2dd4bf'
     })
     const el = document.getElementById(STYLE_ID) as HTMLStyleElement
     expect(el.textContent).toContain(':root{')
-    expect(el.textContent).toContain('--color-void:#0c0c0e;')
+    expect(el.textContent).toContain('--color-surface-app:#0c0c0e;')
     expect(el.textContent).toContain('--color-accent-primary-start:#2dd4bf;')
   })
 
   it('skips empty / null / undefined values', () => {
     injectTokens({
-      '--color-void': '#0c0c0e',
+      '--color-surface-app': '#0c0c0e',
       '--empty': '',
       '--null': null as unknown as string,
       '--undef': undefined as unknown as string
     })
     const el = document.getElementById(STYLE_ID) as HTMLStyleElement
-    expect(el.textContent).toContain('--color-void:#0c0c0e;')
+    expect(el.textContent).toContain('--color-surface-app:#0c0c0e;')
     expect(el.textContent).not.toContain('--empty')
     expect(el.textContent).not.toContain('--null')
     expect(el.textContent).not.toContain('--undef')
@@ -63,7 +63,7 @@ describe('injectTokens', () => {
     // can assert the single textContent assignment is what carries
     // the new value. (We replace the property via Object.defineProperty
     // since textContent is a DOMString accessor, not a plain field.)
-    injectTokens({ '--color-void': '#0c0c0e' })
+    injectTokens({ '--color-surface-app': '#0c0c0e' })
     const el = document.getElementById(STYLE_ID) as HTMLStyleElement
     const calls: string[] = []
     const original = el.textContent
@@ -76,25 +76,25 @@ describe('injectTokens', () => {
         calls.push(v)
       }
     })
-    injectTokens({ '--color-void': '#101010' })
+    injectTokens({ '--color-surface-app': '#101010' })
     expect(calls).toHaveLength(1)
-    expect(calls[0]).toContain('--color-void:#101010;')
+    expect(calls[0]).toContain('--color-surface-app:#101010;')
   })
 
   it('round-trips through readToken', () => {
-    injectTokens({ '--color-void': '#abcdef' })
-    expect(readToken('--color-void').trim()).toBe('#abcdef')
+    injectTokens({ '--color-surface-app': '#abcdef' })
+    expect(readToken('--color-surface-app').trim()).toBe('#abcdef')
   })
 
   it('does not inject tokens that contain no characters between : and ;', () => {
     // Regression guard for the empty-skip rule.
-    injectTokens({ '--color-void': 'value', '--empty': '' })
+    injectTokens({ '--color-surface-app': 'value', '--empty': '' })
     const el = document.getElementById(STYLE_ID) as HTMLStyleElement
     // No dangling ';' preceded by an empty value segment.
     expect(el.textContent).not.toMatch(/--empty:;/)
   })
 
-  it('applying a new theme changes --color-void WITHOUT remounting the style element (#50)', () => {
+  it('applying a new theme changes --color-surface-app WITHOUT remounting the style element (#50)', () => {
     // The same-tick-repaint / no-remount contract is the core #46/#50
     // guarantee: switching the active theme rewrites the SAME <style>
     // element's textContent (one DOM write -> one recalc) rather than
@@ -102,16 +102,16 @@ describe('injectTokens', () => {
     // element exists after two applies, and (2) the resolved computed
     // value reflects the LATEST injection (proving the rewrite carried
     // the new value, not a stale copy).
-    injectTokens({ '--color-void': '#0c0c0e' })
+    injectTokens({ '--color-surface-app': '#0c0c0e' })
     const firstEl = document.getElementById(STYLE_ID)
 
-    injectTokens({ '--color-void': '#101010' })
+    injectTokens({ '--color-surface-app': '#101010' })
     const els = document.querySelectorAll(`#${STYLE_ID}`)
     expect(els.length).toBe(1)
     // The element instance is reused (same node), not recreated.
     expect(els[0]).toBe(firstEl)
     // The live computed value reflects the second injection.
-    expect(readToken('--color-void')).toBe('#101010')
+    expect(readToken('--color-surface-app')).toBe('#101010')
   })
 
   it('token consolidation: --color-* keys are the single namespace Tailwind utilities read (#146)', () => {
@@ -125,11 +125,11 @@ describe('injectTokens', () => {
     // @theme fallbacks) and verify every representative token resolves to
     // the injected value, NOT the fallback.
     injectTokens({
-      '--color-void': '#1a1410',
-      '--color-surface': '#241c16',
-      '--color-panel': '#2a2018',
-      '--color-border-muted': '#3d2e22',
-      '--color-border-zinc': '#4a3828',
+      '--color-surface-app': '#1a1410',
+      '--color-surface-panel': '#241c16',
+      '--color-surface-card': '#2a2018',
+      '--color-surface-app-border': '#3d2e22',
+      '--color-surface-panel-border': '#4a3828',
       '--color-text-primary': '#e8d5c0',
       '--color-text-muted': '#a89478',
       '--color-accent-primary-start': '#e07a3c',
@@ -144,7 +144,7 @@ describe('injectTokens', () => {
     // back.
     expect(readToken('--color-accent-primary-start').trim()).toBe('#e07a3c')
     expect(readToken('--color-text-primary').trim()).toBe('#e8d5c0')
-    expect(readToken('--color-void').trim()).toBe('#1a1410')
+    expect(readToken('--color-surface-app').trim()).toBe('#1a1410')
     // Prove the value is NOT the @theme fallback (which would indicate the
     // injector wrote the wrong key and the utility fell through).
     expect(readToken('--color-accent-primary-start').trim()).not.toBe('#2dd4bf')

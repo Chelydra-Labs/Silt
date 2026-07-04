@@ -47,89 +47,62 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
 
 2.1 Color Tokens Schema (Cyber Forest — the default / primary theme)
 
-The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hue-agnostic **semantic accent tokens**. Components reference only the semantic accents (`--accent-primary-*` = the "go / done" hue, `--accent-secondary-*` = the "in progress" hue); each theme maps its concrete hues onto them. This is the single source of truth shared by the theme loader, the runtime CSS injector, and `cyber_forest.json`. **Cyber Forest is the default and primary theme** (embedded as the guaranteed fallback); the additional first-class palettes in §2.2 are alternates.
+The canonical theme schema is **Theme System v2** (RFC `docs/theme-system-v2-rfc.md`; `schema_version: "2.0.0"`, the only supported version): modes-based (`modes.dark` / `modes.light`) with hue-agnostic **semantic accent tokens**, a **7-zone surface model**, a themeable **error family**, optional **geometry / typography-scale / editor** sub-trees, and a unified per-zone **background** block. Components reference only the semantic accents (`--accent-primary-*` = the "go / done" hue, `--accent-secondary-*` = the "in progress" hue); each theme maps its concrete hues onto them. This is the single source of truth shared by the theme loader, the runtime CSS injector, and `cyber_forest.json` — all three follow the token tables here. **Cyber Forest is the default and primary theme** (embedded as the guaranteed fallback); the additional first-class palettes in §2.2 are alternates.
 
+**The surface model (v2).** A mode authors 7 named zones — `app, sidebar, editor, panel, card, modal, popover` — each `{bg, border, text}`. Only `app` is required; the rest inherit from a parent zone (`popover→modal→panel→app`; `sidebar`/`editor`→`app`; `card→panel`) via `var()` fallback chains, so a theme that cares about one canvas (the editor, say) authors just that zone and the rest follow the app root. "Dark chrome + light page" patterns (Daybreak, Bubblegum light) are now expressed as a dark `sidebar` zone against a light `editor`/`app` — the v1 `chrome` block is removed. Color slots accept `#hex`, `rgb()`/`rgba()`, and `oklch(L C H[/ A])`; OKLCH is what lets a theme derive perceptually-uniform hover/active/disabled variants and what lets the CI contrast gate (AA; AAA for Stark) reason exactly.
+
+```
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "cyber_forest",
   "name": "Cyber Forest",
   "author": "Chelydra Labs",
-  "description": "...",
+  "description": "The default Silt dark theme: ink-rich slate canvas with surgical teal primary and indigo secondary accents.",
+  "typography": {
+    "font_family": "'Plus Jakarta Sans', sans-serif",
+    "mono_font_family": "'JetBrains Mono', monospace",
+    "headline_font": "'Hanken Grotesk', sans-serif"
+  },
   "modes": {
     "dark": {
-      "bg": {
-        "void": "#0c0c0e",
-        "surface": "#121215",
-        "panel": "#161619",
-        "hover": "#1c1c21",
-        "active": "#222226"
+      "surfaces": {
+        "app":   { "bg": "#0c0c0e", "border": "#1e1e23", "text": "#dee3e6" },
+        "panel": { "bg": "#121215", "border": "#27272a", "text": "#dee3e6" },
+        "modal": { "bg": "#121215", "border": "#3f3f46", "text": "#dee3e6" },
+        "card":  { "bg": "#161619", "border": "#27272a", "text": "#dee3e6" }
       },
-      "border": {
-        "muted": "#1e1e23",
-        "zinc": "#27272a",
-        "active": "#3f3f46",
-        "focus": "#52525b"
-      },
-      "text": {
-        "primary": "#dee3e6",
-        "muted": "#8b8b94",
-        "disabled": "#4b5563"
-      },
+      "hover": "#1c1c21", "active": "#222226",
+      "border_active": "#3f3f46", "border_focus": "#52525b",
+      "text_muted": "#8b8b94", "text_disabled": "#4b5563",
       "accent": {
-        "primary": {
-          "start": "#2dd4bf",
-          "end": "#0d9488",
-          "glow": "rgba(20, 184, 166, 0.15)"
-        },
-        "secondary": {
-          "start": "#6366f1",
-          "end": "#a855f7",
-          "glow": "rgba(168, 85, 247, 0.12)"
-        }
+        "primary":   { "start": "#2dd4bf", "end": "#0d9488", "glow": "rgba(20, 184, 166, 0.15)" },
+        "secondary": { "start": "#6366f1", "end": "#a855f7", "glow": "rgba(168, 85, 247, 0.12)" }
       },
-      "status": {
-        "warn": "#fbbf24",
-        "danger": "#f43f5e"
-      }
+      "status": { "warn": "#fbbf24", "danger": "#f43f5e", "success": "#22c55e" },
+      "error":  { "fg": "#f43f5e", "bg": "#121215", "border": "#3f3f46" }
     },
     "light": {
-      "bg": {
-        "void": "#f8fafc",
-        "surface": "#ffffff",
-        "panel": "#f1f5f9",
-        "hover": "#e2e8f0",
-        "active": "#cbd5e1"
+      "surfaces": {
+        "app":   { "bg": "#f8fafc", "border": "#e2e8f0", "text": "#0f172a" },
+        "panel": { "bg": "#ffffff", "border": "#cbd5e1", "text": "#0f172a" },
+        "modal": { "bg": "#ffffff", "border": "#94a3b8", "text": "#0f172a" },
+        "card":  { "bg": "#f1f5f9", "border": "#cbd5e1", "text": "#0f172a" }
       },
-      "border": {
-        "muted": "#e2e8f0",
-        "zinc": "#cbd5e1",
-        "active": "#94a3b8",
-        "focus": "#64748b"
-      },
-      "text": {
-        "primary": "#0f172a",
-        "muted": "#4d5667",
-        "disabled": "#94a3b8"
-      },
+      "hover": "#e2e8f0", "active": "#cbd5e1",
+      "border_active": "#94a3b8", "border_focus": "#64748b",
+      "text_muted": "#4d5667", "text_disabled": "#94a3b8",
       "accent": {
-        "primary": {
-          "start": "#0d9488",
-          "end": "#115e59",
-          "glow": "rgba(13, 148, 136, 0.10)"
-        },
-        "secondary": {
-          "start": "#4f46e5",
-          "end": "#7c3aed",
-          "glow": "rgba(79, 70, 229, 0.08)"
-        }
+        "primary":   { "start": "#0d9488", "end": "#115e59", "glow": "rgba(13, 148, 136, 0.10)" },
+        "secondary": { "start": "#4f46e5", "end": "#7c3aed", "glow": "rgba(79, 70, 229, 0.08)" }
       },
-      "status": {
-        "warn": "#d97706",
-        "danger": "#e11d48"
-      }
+      "status": { "warn": "#d97706", "danger": "#e11d48", "success": "#16a34a" },
+      "error":  { "fg": "#e11d48", "bg": "#ffffff", "border": "#94a3b8" }
     }
   }
 }
+```
+
+Cyber Forest authors only the `app`, `panel`, `modal`, and `card` zones; `sidebar`, `editor`, and `popover` inherit from `app`/`panel`/`modal`. The optional blocks a theme may add on top: `radius` / `spacing` / `shadow` (geometry ramps), `editor` (caret / selection / link / highlight), `typography.scale` (sizes / line-heights / weights), and a per-zone `background` (`image` / `size` / `opacity` / `blend` / `position` / `scrim`) that subsumes the v1 `texture` overlay and powers per-zone background photos. `Flatten` emits sensible defaults for every omitted block, so a minimal theme renders with v1-equivalent geometry and type. The themeable `error` family replaces the static Material-3 error pink; `status.danger` (destructive actions) and `error.fg` (validation / invalid input) are deliberately distinct.
 
 
 **Token usage convention (when to reach for `--color-text-primary` vs `--accent-primary-*`).**
@@ -471,7 +444,7 @@ Silt is built for complete hands-on-keyboard efficiency, complying with WCAG 2.2
 
 Contrast Ratios: Text-to-background contrast ratios are maintained at or above WCAG AA (4.5:1 for normal text). Stark additionally maintains AAA (7:1) as its theme-specific requirement.
 
-Dual-Surface Themes: A mode may declare an optional `chrome` block (bg/border/text only) for the app skeleton. When present, the WCAG contrast harness tests chrome text against chrome backgrounds separately from the page/content surfaces — both must independently meet the AA (4.5:1) threshold. This enables "dark chrome + light page" designs (Daybreak, Bubblegum) where the sidebar and titlebar use a dark palette with light text while the editor uses a light palette with dark text, following the "readability exception" pattern documented in leading dark-mode design-systems guides.
+Dual-surface themes: a theme that wants a dark app skeleton against a light reading surface (Daybreak, Bubblegum light) authors the `sidebar` zone dark against a light `editor` / `app` — the v1 `chrome` block is replaced by the `sidebar` surface zone. The WCAG contrast gate tests each zone's text against its own resolved background, so the dark sidebar and the light editor each independently meet the AA (4.5:1) threshold. This is the "readability exception" pattern — dark navigation framing a bright writing surface.
 
 Focus States: Every interactive element features an explicit :focus-visible outline ring of $2\text{px}$ var(--color-border-focus) offset by $1\text{px}$ to prevent overlapping with components.
 

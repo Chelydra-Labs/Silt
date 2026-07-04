@@ -28,7 +28,7 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
 ]
 
 // A line is exempt if the forbidden color appears as a CSS var() fallback
-// (e.g. `var(--color-surface, #131a18)`) — these are safe because the token
+// (e.g. `var(--color-surface-app, #131a18)`) — these are safe because the token
 // always wins when the theme engine injects it.
 const FALLBACK_PATTERN = /var\(--[a-z-]+,\s*$/
 
@@ -71,16 +71,17 @@ describe('themeable error + editor tokens (#386, #390)', () => {
   const indexLines = readLines('index.css')
   const indexText = indexLines.join('\n')
 
-  it('index.css has no static Material-3 --color-error declaration', () => {
+  it('index.css has no static Material-3 error pinks (#ffb4ab / #f43f5e family)', () => {
     // The themeable error family (--color-error*) is engine-emitted now; the
-    // CSS must only consume it via var(). A static `--color-error: <hex>`
-    // declaration would re-introduce the #386 bug (a fixed pink that wins in
-    // every dark theme). The bare `--error` task-priority tone (a separate,
-    // documented static concern) is not in scope here.
+    // CSS must only consume it via var(). Any static --color-error hex
+    // declaration — or the leftover bare --error task-priority pinks that
+    // reopened bug #386 — re-introduces a fixed color that wins in every
+    // theme. All of them must be gone.
     expect(
       indexText,
-      'static --color-error declaration must be removed'
-    ).not.toMatch(/--color-error\s*:\s*#/i)
+      'static Material-3 error declarations must be removed'
+    ).not.toMatch(/(--color-error|--error)\s*:\s*#/i)
+    expect(indexText).not.toMatch(/#ffb4ab/i)
   })
 
   it('index.css consumes the themeable error family via var()', () => {

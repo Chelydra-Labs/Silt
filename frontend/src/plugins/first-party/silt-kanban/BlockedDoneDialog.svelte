@@ -102,7 +102,7 @@
     aria-describedby="blocked-done-desc"
     tabindex="-1"
     class="relative w-full max-w-md rounded-xl border border-border-active shadow-2xl flex flex-col"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 92%, transparent);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 92%, transparent);"
   >
     <div class="p-5 flex items-start gap-3">
       <span

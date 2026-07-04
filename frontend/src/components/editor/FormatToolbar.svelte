@@ -412,7 +412,7 @@
   .toolbar-divider {
     width: 1px;
     height: 20px;
-    background: var(--color-border-muted, #2a2e36);
+    background: var(--color-surface-popover-border);
     margin: 0 4px;
     flex-shrink: 0;
   }

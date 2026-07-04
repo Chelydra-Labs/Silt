@@ -249,7 +249,7 @@
     aria-labelledby="vault-archive-title"
     tabindex="-1"
     class="relative z-10 w-full max-w-lg glass-palette border border-border-zinc rounded-xl shadow-2xl p-6"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 94%, transparent);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 94%, transparent);"
   >
     <div class="flex items-start gap-3 mb-4">
       <span

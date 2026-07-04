@@ -7,12 +7,28 @@
   "typography": {
     "font_family": "'Figtree', sans-serif",
     "mono_font_family": "'Space Mono', monospace",
-    "headline_font": "'Bricolage Grotesque', sans-serif"
+    "headline_font": "'Bricolage Grotesque', sans-serif",
+    "scale": {
+      "size": { "xs": "0.75rem", "sm": "0.875rem", "base": "1rem", "lg": "1.125rem", "xl": "1.25rem", "2xl": "1.5rem" },
+      "line_height": { "tight": "1.15", "normal": "1.5", "relaxed": "1.7" },
+      "weight": { "normal": "400", "medium": "500", "semibold": "600" }
+    }
   },
   "modes": {
     "dark": {
       "surfaces": {
         "app": { "bg": "#0d0b1a", "border": "#1f1c35", "text": "#e8e6f0" },
+        "editor": {
+          "bg": "#0d0b1a",
+          "border": "#1f1c35",
+          "text": "#e8e6f0",
+          "background": {
+            "image": "repeating-linear-gradient(0deg, rgba(0,240,255,0.6) 0 1px, transparent 1px 40px), repeating-linear-gradient(90deg, rgba(255,45,149,0.6) 0 1px, transparent 1px 40px)",
+            "size": "tile",
+            "opacity": 0.08,
+            "blend": "overlay"
+          }
+        },
         "panel": { "bg": "#141126", "border": "#2a2745", "text": "#e8e6f0" },
         "modal": { "bg": "#141126", "border": "#3f3a5e", "text": "#e8e6f0" },
         "card": { "bg": "#1a1830", "border": "#2a2745", "text": "#e8e6f0" }
@@ -25,13 +41,13 @@
       "text_disabled": "#4a4660",
       "accent": {
         "primary": {
-          "start": "#ff2d95",
-          "end": "#e91e63",
+          "start": "oklch(0.665 0.249 357)",
+          "end": "oklch(0.606 0.23 10)",
           "glow": "rgba(233,30,99,0.18)"
         },
         "secondary": {
-          "start": "#00f0ff",
-          "end": "#00b8d4",
+          "start": "oklch(0.87 0.148 203)",
+          "end": "oklch(0.719 0.126 214)",
           "glow": "rgba(0,240,255,0.15)"
         }
       },
@@ -42,8 +58,23 @@
       },
       "error": {
         "fg": "#f43f5e",
-        "bg": "#141126",
-        "border": "#3f3a5e"
+        "bg": "#1a0b14",
+        "border": "#4d2030"
+      },
+      "radius": { "sm": "3px", "md": "6px", "lg": "8px", "xl": "12px", "full": "9999px" },
+      "spacing": { "sm": "4px", "md": "6px", "lg": "10px", "xl": "16px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 55%, transparent)",
+        "md": "0 4px 16px color-mix(in oklch, var(--color-accent-primary-start) 12%, transparent), 0 2px 8px color-mix(in oklch, var(--color-surface-app) 40%, transparent)",
+        "lg": "0 8px 32px color-mix(in oklch, var(--color-accent-primary-start) 15%, transparent), 0 4px 16px color-mix(in oklch, var(--color-accent-secondary-start) 10%, transparent)"
+      },
+      "editor": {
+        "caret": "oklch(0.665 0.249 357)",
+        "selection": "rgba(255,45,149,0.30)",
+        "selection_text": "#e8e6f0",
+        "link": "oklch(0.87 0.148 203)",
+        "link_hover": "oklch(0.719 0.126 214)",
+        "highlight": "rgba(251,191,36,0.30)"
       }
     },
     "light": {
@@ -61,13 +92,13 @@
       "text_disabled": "#9890a8",
       "accent": {
         "primary": {
-          "start": "#c2185b",
-          "end": "#880e4f",
+          "start": "oklch(0.531 0.202 6)",
+          "end": "oklch(0.415 0.16 356)",
           "glow": "rgba(194,24,91,0.10)"
         },
         "secondary": {
-          "start": "#00838f",
-          "end": "#006064",
+          "start": "oklch(0.557 0.095 206)",
+          "end": "oklch(0.444 0.076 200)",
           "glow": "rgba(0,131,143,0.08)"
         }
       },
@@ -78,8 +109,23 @@
       },
       "error": {
         "fg": "#be123c",
-        "bg": "#ffffff",
-        "border": "#a896b8"
+        "bg": "#fbeef0",
+        "border": "#e8c0c8"
+      },
+      "radius": { "sm": "3px", "md": "6px", "lg": "8px", "xl": "12px", "full": "9999px" },
+      "spacing": { "sm": "4px", "md": "6px", "lg": "10px", "xl": "16px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 32%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 25%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 20%, transparent)"
+      },
+      "editor": {
+        "caret": "oklch(0.531 0.202 6)",
+        "selection": "rgba(194,24,91,0.20)",
+        "selection_text": "#1c1c34",
+        "link": "oklch(0.557 0.095 206)",
+        "link_hover": "oklch(0.444 0.076 200)",
+        "highlight": "rgba(217,119,6,0.22)"
       }
     }
   }

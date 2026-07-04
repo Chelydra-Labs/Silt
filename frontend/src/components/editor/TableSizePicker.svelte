@@ -81,8 +81,8 @@
     margin-top: 4px;
     padding: 8px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: center;
@@ -100,9 +100,9 @@
   .ts-input {
     width: 56px;
     padding: 4px 6px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
-    background: var(--color-surface, #1a1d24);
+    background: var(--color-surface-popover);
     color: var(--color-text-primary, #e6e6e6);
     font-size: 0.8rem;
     outline: none;

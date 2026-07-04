@@ -121,11 +121,17 @@ set a zone, and a `var(--color-surface-<parent>)` reference when they omitted it
 `--color-active`, `--color-border-active`, `--color-border-focus` remain
 zone-agnostic semantic tokens (S / color) at `mode.hover`, `mode.active`,
 `mode.border_active`, `mode.border_focus`. They are no longer nested under `bg`.
+**Text-emphasis tokens:** `--color-text-primary`, `--color-text-muted`,
+`--color-text-disabled` are first-class zone-agnostic semantic emphasis levels
+(primary / muted / disabled), parallel to the interaction tokens. `text-primary`
+resolves to the app zone's foreground by definition (it *is* "primary body
+text"); `text-muted`/`text-disabled` are authored per-mode.
 
-**Aliases for v1 consumers (D-section of #386):** `--color-background` and
-`--color-on-surface` (Material-3 aliases consumed by legacy CSS) are aliased to
-`--color-surface-app` / `--color-surface-app-text` — no parallel M3 namespace
-survives.
+**No Material-3 namespace survives.** The v1 parallel M3 palette
+(`--color-background`, `--color-on-surface`, the `--color-surface-container-*`
+family, `--color-error: #ffb4ab`, …) is removed entirely. Every UI color flows
+through the v2 tokens above; there are no aliases onto the M3 names (a grep
+confirmed zero consumers of the M3 names — keeping them would be dead code).
 
 ### 2.3 Semantic colors (accent / status / error)
 

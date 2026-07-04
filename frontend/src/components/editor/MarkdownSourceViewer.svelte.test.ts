@@ -17,8 +17,14 @@ import {
 const mocks = vi.hoisted(() => ({
   themeState: {
     mode: 'dark' as 'dark' | 'light' | 'system',
-    darkTokens: { '--color-text-primary': '#eee', '--color-surface': '#111' },
-    lightTokens: { '--color-text-primary': '#111', '--color-surface': '#eee' }
+    darkTokens: {
+      '--color-text-primary': '#eee',
+      '--color-surface-panel': '#111'
+    },
+    lightTokens: {
+      '--color-text-primary': '#111',
+      '--color-surface-panel': '#eee'
+    }
   },
   // The mock highlighter: resolves to a fixed span, or rejects, or never
   // resolves (pending) — each test picks the behaviour.
@@ -33,7 +39,7 @@ vi.mock('../../lib/editor/useMarkdownHighlighter', () => ({
     name: 'silt-source',
     type: mode,
     fg: tokens['--color-text-primary'] ?? '#eee',
-    bg: tokens['--color-surface'] ?? '#111',
+    bg: tokens['--color-surface-panel'] ?? '#111',
     colors: {},
     tokenColors: []
   }),

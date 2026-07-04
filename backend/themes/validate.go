@@ -348,12 +348,52 @@ func isSafeCSSValue(s string) bool {
 }
 
 // isSafeBackgroundImage accepts background-image values that cannot escape the
-// CSS custom-property declaration context (url(...), data URIs, gradients,
-// embedded-name references). Raw <, > are rejected because an unencoded
-// <svg> tag could otherwise inject markup; legitimate data URIs percent-encode
-// them as %3C / %3E.
+// CSS custom-property declaration context (:root{--name:VALUE;}). The value
+// flows verbatim into a CSS custom property consumed by background-image, so a
+// top-level declaration-breaker (';', '{', '}') would terminate the property
+// early and let attacker-controlled CSS leak. Breakers are still allowed
+// INSIDE url()/strings: CSS parses url("…;…") and "a;b" as single tokens, so a
+// ';' sealed inside them cannot terminate the surrounding declaration — which
+// is what makes a base64 data URI (url("data:image/png;base64,…"), #391) safe.
+//
+// Raw <, >, \ are rejected unconditionally: an unencoded <svg> could inject
+// markup and a CSS backslash-escape could disguise a breaker, so the few values
+// that need them must percent-encode (data URIs) or avoid them entirely. The
+// scan tracks paren depth and string state so a breaker at the top level
+// (outside any url()/string) is the only thing that fails the check.
 func isSafeBackgroundImage(s string) bool {
-	return isValidFontFamily(s)
+	depth := 0
+	inString := byte(0)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		// <, >, \ are never needed in a background-image value and are
+		// rejected outright (percent-encode or omit them).
+		if c == '<' || c == '>' || c == '\\' {
+			return false
+		}
+		if inString != 0 {
+			if c == inString {
+				inString = 0
+			}
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			inString = c
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 {
+				return false // unbalanced ')' would close the declaration
+			}
+			depth--
+		case ';', '{', '}':
+			if depth == 0 {
+				return false // top-level declaration-breaker
+			}
+		}
+	}
+	return inString == 0 && depth == 0
 }
 
 // isValidColor accepts the color forms used by the v2 theme: #hex (#rgb /
