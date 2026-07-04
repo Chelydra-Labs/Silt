@@ -334,7 +334,7 @@ describe('Calendar plugin', () => {
     mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     render(Calendar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
-    const heading = () => screen.getByRole('heading')
+    const heading = () => screen.getByRole('heading', { level: 2 })
     const before = heading().textContent
     setFocusDate('2026-08-15')
     await flush()

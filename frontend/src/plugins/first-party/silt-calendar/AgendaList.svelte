@@ -17,9 +17,10 @@
   interface Props {
     ctx: PluginContext
     manifest?: PluginManifest
+    taskCount?: number
   }
 
-  let { ctx, manifest }: Props = $props()
+  let { ctx, manifest, taskCount = $bindable(0) }: Props = $props()
 
   interface AgendaItem {
     id: string
@@ -231,6 +232,10 @@
   let activeFilter = $derived(getFocusState().activeFilter)
 
   $effect(() => {
+    taskCount = items.length
+  })
+
+  $effect(() => {
     const { focusDate, activeFilter: filter } = getFocusState()
     if (!focusDate && filter === 'all') return
     void items
@@ -263,20 +268,6 @@
 </script>
 
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden" data-agenda-list>
-  <header
-    class="px-6 py-4 border-b border-border-muted flex items-center gap-3"
-  >
-    <span class="material-symbols-outlined text-accent-primary-start"
-      >event_repeat</span
-    >
-    <h1 class="font-headline-lg text-headline-lg text-text-primary">
-      {manifest?.name ?? 'Agenda'}
-    </h1>
-    <span class="text-text-muted text-[12px] font-body-md ml-auto">
-      {items.length} active task{items.length === 1 ? '' : 's'}
-    </span>
-  </header>
-
   {#if activeFilter !== 'all'}
     <div
       class="px-6 py-1.5 border-b border-border-muted bg-accent-primary-glow flex items-center gap-2 text-[12px] font-body-md"

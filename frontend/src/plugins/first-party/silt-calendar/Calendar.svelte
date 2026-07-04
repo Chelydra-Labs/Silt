@@ -42,6 +42,7 @@
   let byDate = $state<Record<string, CalItem[]>>({})
   let loading = $state(true)
   let errorMsg = $state('')
+  let agendaTaskCount = $state(0)
 
   // Reactive "now" so the today-highlight updates if the calendar stays
   // mounted past midnight (ticks every 60s; only re-evaluates isToday).
@@ -461,69 +462,96 @@
 </script>
 
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
-  <header
-    class="px-6 py-4 border-b border-border-muted flex items-center gap-3 flex-wrap"
-  >
-    <span class="material-symbols-outlined text-accent-primary-start"
-      >calendar_month</span
-    >
-    <h1 class="font-headline-lg text-headline-lg text-text-primary">
-      {heading}
-    </h1>
-    <div class="flex items-center gap-1 ml-2">
-      <button
-        onclick={prev}
-        class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
-        aria-label="Previous"
+  <header class="px-6 py-4 border-b border-border-muted flex flex-col gap-3">
+    <!-- Row 1: Icon, Title, Switcher, New Task -->
+    <div class="flex items-center gap-3 w-full flex-wrap">
+      <span class="material-symbols-outlined text-accent-primary-start">
+        {mode === 'agenda' ? 'event_repeat' : 'calendar_month'}
+      </span>
+      <h1
+        class="font-headline-lg text-headline-lg text-text-primary flex items-baseline gap-2"
       >
-        <span class="material-symbols-outlined text-[18px]">chevron_left</span>
-      </button>
-      <button
-        onclick={goToday}
-        class="px-2.5 py-1 rounded border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
-        >Today</button
-      >
-      <button
-        onclick={next}
-        class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
-        aria-label="Next"
-      >
-        <span class="material-symbols-outlined text-[18px]">chevron_right</span>
-      </button>
+        {mode === 'agenda' ? 'Agenda' : (manifest?.name ?? 'Calendar')}
+        {#if mode === 'agenda'}
+          <span
+            class="text-text-muted text-[12px] font-body-md normal-case font-normal ml-2"
+            data-testid="agenda-active-count"
+          >
+            {agendaTaskCount} active task{agendaTaskCount === 1 ? '' : 's'}
+          </span>
+        {/if}
+      </h1>
+
+      <div class="ml-auto flex items-center gap-2">
+        <div
+          class="flex items-center gap-0.5 bg-surface border border-border-muted rounded-lg p-0.5"
+        >
+          <button
+            onclick={() => (mode = 'month')}
+            class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
+            class:bg-hover={mode === 'month'}
+            class:text-accent-primary-start={mode === 'month'}
+            class:text-text-muted={mode !== 'month'}>Month</button
+          >
+          <button
+            onclick={() => (mode = 'week')}
+            class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
+            class:bg-hover={mode === 'week'}
+            class:text-accent-primary-start={mode === 'week'}
+            class:text-text-muted={mode !== 'week'}>Week</button
+          >
+          <button
+            onclick={() => (mode = 'agenda')}
+            class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
+            class:bg-hover={mode === 'agenda'}
+            class:text-accent-primary-start={mode === 'agenda'}
+            class:text-text-muted={mode !== 'agenda'}>Agenda</button
+          >
+        </div>
+        <button
+          type="button"
+          onclick={openQuickAddUndated}
+          data-testid="calendar-new-task-btn"
+          class="flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
+        >
+          <span class="material-symbols-outlined text-[16px]">add</span>New task
+        </button>
+      </div>
     </div>
-    <div
-      class="ml-auto flex items-center gap-0.5 bg-surface border border-border-muted rounded-lg p-0.5"
-    >
-      <button
-        onclick={() => (mode = 'month')}
-        class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
-        class:bg-hover={mode === 'month'}
-        class:text-accent-primary-start={mode === 'month'}
-        class:text-text-muted={mode !== 'month'}>Month</button
-      >
-      <button
-        onclick={() => (mode = 'week')}
-        class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
-        class:bg-hover={mode === 'week'}
-        class:text-accent-primary-start={mode === 'week'}
-        class:text-text-muted={mode !== 'week'}>Week</button
-      >
-      <button
-        onclick={() => (mode = 'agenda')}
-        class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
-        class:bg-hover={mode === 'agenda'}
-        class:text-accent-primary-start={mode === 'agenda'}
-        class:text-text-muted={mode !== 'agenda'}>Agenda</button
-      >
-    </div>
-    <button
-      type="button"
-      onclick={openQuickAddUndated}
-      data-testid="calendar-new-task-btn"
-      class="flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
-    >
-      <span class="material-symbols-outlined text-[16px]">add</span>New task
-    </button>
+
+    <!-- Row 2: Date Range & Navigation (only for Month/Week views) -->
+    {#if mode !== 'agenda'}
+      <div class="flex items-center gap-2 flex-wrap">
+        <h2 class="font-headline-md text-headline-md text-text-primary">
+          {heading}
+        </h2>
+        <div class="flex items-center gap-1 ml-2">
+          <button
+            onclick={prev}
+            class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
+            aria-label="Previous"
+          >
+            <span class="material-symbols-outlined text-[18px]"
+              >chevron_left</span
+            >
+          </button>
+          <button
+            onclick={goToday}
+            class="px-2.5 py-1 rounded border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
+            >Today</button
+          >
+          <button
+            onclick={next}
+            class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
+            aria-label="Next"
+          >
+            <span class="material-symbols-outlined text-[18px]"
+              >chevron_right</span
+            >
+          </button>
+        </div>
+      </div>
+    {/if}
   </header>
 
   {#if getFocusState().activeFilter !== 'all' && mode !== 'agenda'}
@@ -601,7 +629,7 @@
   {#if mode === 'agenda'}
     <!-- Agenda mode renders the extracted grouped-list component. The
          shared focusState drives its scroll-to-group and dim behaviour. -->
-    <AgendaList {ctx} {manifest} />
+    <AgendaList {ctx} {manifest} bind:taskCount={agendaTaskCount} />
   {:else}
     <div class="flex-1 overflow-auto custom-scrollbar p-4">
       {#if loading}
