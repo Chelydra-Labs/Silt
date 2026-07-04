@@ -107,10 +107,7 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-full: 9999px;
-  --spacing-sm: 4px;
-  --spacing-md: 8px;
-  --spacing-lg: 16px;
-  --spacing-xl: 24px;
+
   --shadow-sm: 0 1px 2px
     color-mix(in oklch, var(--color-surface-app) 40%, transparent);
   --shadow-md: 0 4px 12px
@@ -128,6 +125,18 @@
 :root {
   /* Transition timings */
   --transition-standard: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Theme spacing tokens (the v2 `spacing` ramp). These live in :root, NOT
+     @theme, because (a) nothing consumes them as Tailwind utilities (the app
+     uses the numeric spacing scale: p-6, gap-2, …) and the Tailwind v4 docs
+     prescribe :root for "CSS variables that shouldn't have utility classes,"
+     and (b) keeping the `--spacing-*` namespace out of @theme avoids any
+     interaction with v4's dynamic spacing multiplier. The runtime theme
+     injector overrides these on :root per active theme. */
+  --spacing-sm: 4px;
+  --spacing-md: 8px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
 
   /* Rhythms & Indent Spacing */
   --guide-offset: -12px;
@@ -189,7 +198,7 @@ body {
 }
 .silt-texture-surface::before {
   content: '';
-  display: var(--silt-texture-display, none);
+  display: var(--silt-bg-editor-display, none);
   position: sticky;
   top: 0;
   left: 0;
@@ -204,10 +213,12 @@ body {
   margin-bottom: -100vh;
   z-index: 0;
   pointer-events: none;
-  background-image: var(--silt-texture-image, none);
+  background-image: var(--silt-bg-editor-image, none);
   background-repeat: repeat;
-  opacity: var(--silt-texture-opacity, 0);
-  mix-blend-mode: var(--silt-texture-blend, normal);
+  background-size: var(--silt-bg-editor-size, auto);
+  background-position: var(--silt-bg-editor-position, top left);
+  opacity: var(--silt-bg-editor-opacity, 0);
+  mix-blend-mode: var(--silt-bg-editor-blend, normal);
 }
 
 /* Global transitions for interactive states */

@@ -1175,7 +1175,7 @@
       {/if}
     </TitleBar>
 
-    <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
+    <div class="flex-1 flex mt-14 w-full relative min-h-0">
       <!-- Activity Bar -->
       <div
         class="silt-chrome w-12 bg-surface-sidebar border-r border-surface-sidebar-border flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
@@ -1717,10 +1717,10 @@
 
   <!-- Plugin rendered-UI surfaces (#117) -->
   <PluginModalHost />
+  <PluginStatusBar />
 </main>
 
 <ToastContainer />
-<PluginStatusBar />
 
 <style>
   .settings-mismatch-overlay {

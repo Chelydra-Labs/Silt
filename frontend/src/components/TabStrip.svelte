@@ -295,7 +295,7 @@
     margin-top: 4px;
     border: none;
     background: transparent;
-    color: var(--color-text-muted);
+    color: var(--color-surface-sidebar-text-muted);
     font-family: var(--font-body, inherit);
     font-size: 12px;
     cursor: pointer;
@@ -317,7 +317,7 @@
     top: 25%;
     height: 50%;
     width: 1px;
-    background: var(--color-surface-panel-border);
+    background: var(--color-surface-sidebar-border);
     transition: opacity 120ms ease;
   }
 
@@ -331,7 +331,7 @@
 
   .tab-button:hover {
     background: var(--color-hover);
-    color: var(--color-text-primary);
+    color: var(--color-surface-sidebar-text);
   }
 
   .tab-button:focus-visible {

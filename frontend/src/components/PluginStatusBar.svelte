@@ -17,7 +17,9 @@
 </script>
 
 {#if surfaces.length > 0}
-  <div class="flex items-center gap-1 px-1">
+  <div
+    class="flex items-center gap-1 px-3 py-1 bg-surface-panel border-t border-surface-panel-border h-6 select-none w-full flex-shrink-0 z-50"
+  >
     {#each surfaces as surface (surface.id)}
       <button
         onclick={() => {

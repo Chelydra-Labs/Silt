@@ -75,8 +75,8 @@
           "bg": "#1c2842",
           "border": "#2c3c5e",
           "text": "#eaeef5",
-          "text_muted": "#a8b4cc",
-          "text_disabled": "#7886a0"
+          "text_muted": "#bac7e3",
+          "text_disabled": "#8c9ab8"
         },
         "editor": { "bg": "#f4edda", "border": "#a88c6a", "text": "#1c1917" },
         "panel": { "bg": "#f7f1e3", "border": "#ac906e", "text": "#1c1917" },
