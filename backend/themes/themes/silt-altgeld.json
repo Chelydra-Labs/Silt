@@ -49,11 +49,11 @@
     },
     "light": {
       "bg": {
-        "void": "#f0f4fa",
+        "void": "#eaf0f6",
         "surface": "#ffffff",
-        "panel": "#e8eef5",
-        "hover": "#dde6f0",
-        "active": "#c8d6e6"
+        "panel": "#e4eaf2",
+        "hover": "#dae2ee",
+        "active": "#c6d2e2"
       },
       "border": {
         "muted": "#dde6f0",

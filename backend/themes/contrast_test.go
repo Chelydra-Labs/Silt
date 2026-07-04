@@ -281,11 +281,10 @@ func TestWCAG_FirstClassThemes_AllMeetsTargets(t *testing.T) {
 	}
 }
 
-// assertChromeWCAG runs the primary/muted text matrix for the chrome surfaces
-// when a theme defines Chrome blocks. Chrome text.primary must pass AAA
-// (≥7:1) on all chrome backgrounds; chrome text.muted must pass AA (≥4.5:1).
-// This is the dual-surface analog of assertWCAG: the page/content surfaces
-// are tested by assertWCAG above; this covers the app skeleton separately.
+// assertChromeWCAG runs the primary/muted text matrix for the chrome
+// surfaces when a theme defines Chrome blocks. Chrome text.primary and
+// text.muted must each pass WCAG AA (≥4.5:1) on every chrome background —
+// the dual-surface analog of assertWCAG for the app skeleton.
 func assertChromeWCAG(t *testing.T, th *Theme) {
 	t.Helper()
 	for _, mode := range []string{"dark", "light"} {

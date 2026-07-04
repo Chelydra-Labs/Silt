@@ -217,7 +217,7 @@ spreadsheet.
 
 - Dark: `bg.void #1a0e1e` (warm magenta-tinted near-black); `text.primary #f5ede8` (warm cream-white); `accent.primary #ff6b8a → #e84371` (coral-pink); `accent.secondary #4fd1c5 → #38b2ac` (teal).
 - Light (dual-surface): page `bg.void #fdf6f0` (warm cream), `text.primary #2d1f1a` (warm dark brown); chrome `bg.void #2a1322` (deep raspberry-black), `chrome.text.primary #f5ede8` (cream-white) — the app skeleton is a deep raspberry candy shell framing a warm cream page. Accents deepen to `#e84371` / `#2c7a7b` for readability on white.
-- Tuning: light `accent.primary.start` deepened from `#f59e0b`-family amber to `#c2710b` to clear AA non-text (3:1) on the warm cream page.
+- Tuning: dark `accent.primary.start #ff6b8a` deepened to `#e84371` in light mode for AA non-text (3:1) on the warm cream page; the dark-mode coral glows on the magenta canvas while the light-mode deeper coral reads cleanly on cream.
 
 2.2.6 Frost — clean & airy
 
@@ -280,7 +280,7 @@ Typography pairs Public Sans (body — clean, institutional), Schibsted Grotesk
 most color-assertive palette in the roster — unmistakable school identity.
 
 - Dark: `bg.void #0d1525` (Illinois Blue #13294B-tinted near-black — the prairie night); `text.primary #e6ecf5` (cool blue-white — moonlight); `accent.primary #FF5F05 → #cc4a00` (Illini Orange — the actual school color); `accent.secondary #4080e0 → #2050a0` (bright blue — Illinois Blue family, brightened for dark-mode pop).
-- Light: `bg.void #f0f4fa` (pale ice-blue — the dawn sky); `text.primary #13294B` (Illinois Blue — the actual school color); `accent.primary #c44a00 → #9a3800` (deep Illini Orange for readability on white); `accent.secondary #1a3677 → #0d1f4d` (Illinois Blue family).
+- Light: `bg.void #eaf0f6` (pale blue-grey — the dawn sky); `text.primary #13294B` (Illinois Blue — the actual school color); `accent.primary #c44a00 → #9a3800` (deep Illini Orange for readability on white); `accent.secondary #1a3677 → #0d1f4d` (Illinois Blue family).
 
 
 3. Typography & Spacing Rhythm
