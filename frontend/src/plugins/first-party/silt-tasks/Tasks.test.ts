@@ -563,7 +563,6 @@ describe('Tasks view — quick-add affordance (#399)', () => {
     const btn = screen.getByTestId('tasks-new-task-btn')
     expect(btn).toBeInTheDocument()
     expect(btn.textContent).toContain('New task')
-    expect(btn.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('clicking New task opens the quick-add input', async () => {
@@ -573,13 +572,10 @@ describe('Tasks view — quick-add affordance (#399)', () => {
     await fireEvent.click(screen.getByTestId('tasks-new-task-btn'))
     await flush()
 
-    expect(
-      screen.getByTestId('tasks-new-task-btn').getAttribute('aria-expanded')
-    ).toBe('true')
     expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
   })
 
-  it('clicking New task again closes the quick-add input', async () => {
+  it('clicking New task when input is already open keeps it open (open-only, no toggle race)', async () => {
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
@@ -590,8 +586,7 @@ describe('Tasks view — quick-add affordance (#399)', () => {
 
     await fireEvent.click(btn)
     await flush()
-    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
-    expect(btn.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
   })
 
   it('submitting calls ctx.createTask with the typed title and closes the inline input', async () => {

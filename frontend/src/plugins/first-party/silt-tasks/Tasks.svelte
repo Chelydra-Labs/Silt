@@ -283,9 +283,8 @@
     <div class="ml-auto flex flex-col items-end gap-0.5">
       <button
         type="button"
-        onclick={() => (showQuickAdd = !showQuickAdd)}
+        onclick={() => (showQuickAdd = true)}
         aria-label="New task"
-        aria-expanded={showQuickAdd}
         data-testid="tasks-new-task-btn"
         class="flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
       >
@@ -302,13 +301,16 @@
   </header>
 
   {#if showQuickAdd}
-    <div class="px-6 py-3 border-b border-border-muted bg-surface/30">
-      <QuickAddTask
-        {ctx}
-        keepOpenAfterCreate={false}
-        onCreated={() => (showQuickAdd = false)}
-        onCancel={() => (showQuickAdd = false)}
-      />
+    <div class="px-6 py-2 border-b border-border-muted bg-panel">
+      <div class="max-w-md">
+        <QuickAddTask
+          {ctx}
+          placeholder="New task — Enter to add, Esc to close"
+          keepOpenAfterCreate={false}
+          onCreated={() => (showQuickAdd = false)}
+          onCancel={() => (showQuickAdd = false)}
+        />
+      </div>
     </div>
   {/if}
 
@@ -375,8 +377,8 @@
             All caught up!
           </h3>
           <p class="text-text-muted text-[13px] font-body-md">
-            You have no active tasks. Restore any completed task below to
-            active, click <strong>New task</strong> above, or use
+            You have no active tasks. Restore a completed task below to the
+            active list, click <strong>New task</strong> above, or use
             <kbd
               class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-border-zinc font-mono text-[11px]"
               >Ctrl+Shift+N</kbd
