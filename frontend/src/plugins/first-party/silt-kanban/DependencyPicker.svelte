@@ -138,6 +138,9 @@
             : String(e)
     } finally {
       pending = false
+      // Clearing results unmounts the focused result button; restore focus to
+      // the input so keyboard/SR users can keep adding deps without re-tabbing.
+      depInput?.focus()
     }
   }
 

@@ -536,7 +536,7 @@
             onClose={closeRecurrence}
             anchor={recurrenceTrigger}
             matchWidth
-            class="rounded border border-border-muted bg-panel shadow-lg overflow-hidden"
+            class="rounded border border-border-muted bg-panel shadow-lg"
           >
             {#snippet content()}
               <div

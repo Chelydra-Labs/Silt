@@ -38,7 +38,17 @@
     matchWidth?: boolean
     /** Vertical gap between the anchor's bottom and the popover's top, in px. */
     gap?: number
-    /** Extra class on the floating layer (caller styling). */
+    /**
+     * Extra classes on the floating layer (caller styling). The wrapper owns
+     * `max-h-[80vh] overflow-auto`: that caps the layer to the viewport (so
+     * clampToViewport always has room to land) AND clips children to the
+     * `rounded` corners (any non-`visible` overflow respects border-radius).
+     * Do NOT pass a conflicting `overflow-*` utility here — two on one element
+     * resolve by compiled-stylesheet source order, not class order, so the
+     * winner is non-deterministic. If you need inner scrolling, put it on a
+     * child element (DependencyPicker's `<ul class="overflow-y-auto">` does
+     * this).
+     */
     class?: string
   }
 
