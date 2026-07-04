@@ -105,7 +105,7 @@
       "status": {
         "warn": "#945816",
         "danger": "#a01a3c",
-        "success": "#1c8460"
+        "success": "#1c7a4a"
       },
       "error": {
         "fg": "#a01a3c",
