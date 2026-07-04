@@ -365,6 +365,66 @@ func TestTaskDependencies_CascadeDelete(t *testing.T) {
 	}
 }
 
+// TestIndexFileBlocks_DanglingBlockedByRefSkipped verifies a [blocked_by::]
+// ref whose target doesn't exist in blocks is skipped (logged) rather than
+// aborting the re-index. INSERT OR IGNORE does not suppress SQLite FK
+// violations, so without the existence probe a single stale ref (deleted
+// task, hand-edited UUID, not-yet-indexed cross-file ref) would roll back
+// the whole file's index. The markdown round-trips the token, so the edge
+// re-materializes if the target is ever indexed.
+func TestIndexFileBlocks_DanglingBlockedByRefSkipped(t *testing.T) {
+	dm := newTestDB(t)
+	subject := "11111111-1111-1111-1111-111111111111"
+	ghost := "99999999-9999-9999-9999-999999999999"
+	blocks := []parser.ParsedBlock{
+		func() parser.ParsedBlock {
+			b := sampleTaskBlock(subject, 1)
+			b.BlockedBy = []string{ghost}
+			return b
+		}(),
+	}
+	if err := dm.IndexFileBlocks("vault", "W", "S", "P", blocks, nil); err != nil {
+		t.Fatalf("dangling ref should be skipped, not abort: %v", err)
+	}
+	var n int
+	if err := dm.db.QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 edges (ghost target skipped), got %d", n)
+	}
+}
+
+// TestIndexScanResults_DanglingBlockedByRefSkipped mirrors the above for the
+// cold-scan batch path: a stale ref in any file must not abort the whole
+// vault re-index.
+func TestIndexScanResults_DanglingBlockedByRefSkipped(t *testing.T) {
+	dm := newTestDB(t)
+	subject := "22222222-2222-2222-2222-222222222222"
+	ghost := "88888888-8888-8888-8888-888888888888"
+	mk := func(id string, deps []string) parser.ParsedBlock {
+		b := sampleTaskBlock(id, 1)
+		b.BlockedBy = deps
+		return b
+	}
+	results := []parser.ScanResult{{
+		Notebook: "W", Section: "S", Page: "P",
+		Blocks: []parser.ParsedBlock{mk(subject, []string{ghost})},
+	}}
+	count, _, err := dm.IndexScanResults(results)
+	if err != nil {
+		t.Fatalf("dangling ref should be skipped in batch scan, not abort: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 file indexed, got %d", count)
+	}
+	var n int
+	dm.db.QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n)
+	if n != 0 {
+		t.Errorf("expected 0 edges (ghost skipped), got %d", n)
+	}
+}
+
 // TestWarnOnDependencyCycle_DetectsHandEditedCycle verifies the defensive
 // guard fires on a cycle the setter would have refused (#301). A hand-edited
 // or externally-synced file can introduce A→B→A; the indexer still caches the

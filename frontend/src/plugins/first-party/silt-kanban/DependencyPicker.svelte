@@ -56,11 +56,19 @@
     deps = resolved
   }
 
-  // Re-resolve labels whenever the underlying edge list changes (e.g. after a
-  // board reload).
+  // Seed the chip list once per task (on mount / when the card changes). The
+  // picker treats its own `deps` as the source of truth for the panel's
+  // lifetime — addDep/removeDep are the only mutators — so a stale
+  // block:changed re-render of the parent (passing the pre-edit blocked_by
+  // projection before the new one propagates) can't transiently revert the
+  // chips. The parent's reload still eventually feeds back the canonical edge
+  // list, but by then the picker's optimistic state matches it.
+  let seededCardId = ''
   $effect(() => {
-    void blockedBy
-    void refreshDeps()
+    if (seededCardId !== cardId) {
+      seededCardId = cardId
+      void refreshDeps()
+    }
   })
 
   async function runSearch() {

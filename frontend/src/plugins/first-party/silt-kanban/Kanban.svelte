@@ -755,16 +755,7 @@
     } catch (e) {
       moveError = e instanceof Error ? e.message : String(e)
       liveMessage = 'Move failed — reverted.'
-      // Revert the optimistic DONE placement back to the source lane.
-      const cardId = pending.card.id
-      lanes = {
-        ...lanes,
-        DONE: (lanes.DONE ?? []).filter((c) => c.id !== cardId),
-        [pending.fromStatus]: [
-          ...(lanes[pending.fromStatus] ?? []),
-          { ...pending.card, status: pending.fromStatus }
-        ]
-      }
+      revertBlockedDone(pending)
     }
   }
 
@@ -774,16 +765,28 @@
     const pending = pendingBlockedDone
     if (!pending) return
     pendingBlockedDone = null
+    revertBlockedDone(pending)
+    liveMessage = 'Move cancelled.'
+  }
+
+  // Revert the optimistic DONE placement back to the source lane. Guard
+  // against a phantom lane: if fromStatus isn't a rendered column (a status
+  // the board doesn't show), fall back to TODO (the inbox) so the card can't
+  // disappear into an invisible lane key.
+  function revertBlockedDone(pending: {
+    card: KanbanCard
+    fromStatus: TaskStatus
+  }) {
     const cardId = pending.card.id
+    const revertTo: TaskStatus = columns.includes(pending.fromStatus)
+      ? pending.fromStatus
+      : 'TODO'
+    const revertedCard = { ...pending.card, status: revertTo }
     lanes = {
       ...lanes,
       DONE: (lanes.DONE ?? []).filter((c) => c.id !== cardId),
-      [pending.fromStatus]: [
-        ...(lanes[pending.fromStatus] ?? []),
-        { ...pending.card, status: pending.fromStatus }
-      ]
+      [revertTo]: [...(lanes[revertTo] ?? []), revertedCard]
     }
-    liveMessage = 'Move cancelled.'
   }
 
   // --- Keyboard navigation (a11y) ---

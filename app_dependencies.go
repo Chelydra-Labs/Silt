@@ -19,6 +19,11 @@ import (
 // on the dependency picker rather than as a generic error toast (#303).
 var ErrTaskCycle = errors.New("adding this dependency would create a circular dependency")
 
+// ErrUnknownDependency is returned when a proposed prerequisite is not an
+// indexed TASK block (deleted, typo'd UUID, or a non-task block). The frontend
+// surfaces it inline on the dependency picker.
+var ErrUnknownDependency = errors.New("dependency target is not an indexed task block")
+
 // SetTaskBlockedBy rewrites the [blocked_by:: ((uuid))...] token on a task
 // block, establishing its prerequisite set (#301/#303). An empty slice clears
 // the token (the task becomes self-actionable); a non-empty slice lists the
@@ -99,6 +104,26 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string) error {
 	notebook, section, page, blockType := loc.Notebook, loc.Section, loc.Page, loc.BlockType
 	if blockType != string(parser.BlockTask) {
 		return fmt.Errorf("block %s is not a task", blockID)
+	}
+
+	// Validate every proposed prerequisite exists as a TASK block. The cycle
+	// check (below) only walks IDs it finds in the edge set, so an unknown or
+	// non-task UUID would sail through, get written to markdown, then trip the
+	// FK-existence probe at index time (the index skips it, but the user would
+	// carry a permanently-broken token). Reject early with a clear error.
+	if len(normalized) > 0 {
+		var valid map[string]bool
+		a.coordinator.WithDBRead(func() {
+			valid, err = a.db.ValidTaskBlockIDs(normalized)
+		})
+		if err != nil {
+			return fmt.Errorf("failed to validate dependency targets: %w", err)
+		}
+		for _, id := range normalized {
+			if !valid[id] {
+				return fmt.Errorf("%w: %s", ErrUnknownDependency, id)
+			}
+		}
 	}
 
 	// Cycle check: build the existing graph from the task_dependencies cache,

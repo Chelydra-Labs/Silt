@@ -244,3 +244,35 @@ func TestUpdateBlockState_DoneFanOutEmitsForDependents(t *testing.T) {
 		t.Fatalf("UpdateBlockState lone DONE: %v", err)
 	}
 }
+
+// TestSetTaskBlockedBy_RejectsUnknownDependency verifies a proposed
+// prerequisite that isn't an indexed TASK block is rejected before writing the
+// token. The first-party picker filters to tasks, but the plugin/hand-fed
+// entry point doesn't; a non-existent or non-task UUID would otherwise persist
+// as a broken edge the index can't resolve.
+func TestSetTaskBlockedBy_RejectsUnknownDependency(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		subject = "d1e2f3a4-1111-1111-1111-111111111111"
+		realDep = "d1e2f3a4-2222-2222-2222-222222222222"
+		ghost   = "d1e2f3a4-3333-3333-3333-333333333333"
+	)
+	content := "- [ ] subject <!-- id: " + subject + " -->\n" +
+		"- [ ] realDep <!-- id: " + realDep + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "UnknownDep", "2026-07-01", content)
+
+	// A non-existent UUID is rejected.
+	err := app.SetTaskBlockedBy(subject, []string{ghost})
+	if !errors.Is(err, ErrUnknownDependency) {
+		t.Fatalf("expected ErrUnknownDependency for ghost UUID, got %v", err)
+	}
+	// A real task dep is accepted.
+	if err := app.SetTaskBlockedBy(subject, []string{realDep}); err != nil {
+		t.Fatalf("expected real dep to be accepted: %v", err)
+	}
+	// The rejected ghost never reached disk.
+	updated, _ := os.ReadFile(filePath)
+	if strings.Contains(string(updated), ghost) {
+		t.Errorf("ghost UUID must not reach disk:\n%s", updated)
+	}
+}

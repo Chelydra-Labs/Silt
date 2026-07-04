@@ -569,3 +569,35 @@ func (dm *DatabaseManager) DependencyEdges(blockIDs []string) (map[string][]stri
 	}
 	return out, nil
 }
+
+// ValidTaskBlockIDs returns the subset of `ids` that exist as TASK blocks in
+// the index. Used by the dependency setter to reject non-existent or non-task
+// prerequisites before writing the [blocked_by::] token — a stale/typo'd UUID
+// or a non-task block would otherwise persist as a broken edge the index can't
+// resolve (OpenBlockers JOINs tasks, so a non-task blocker never surfaces).
+func (dm *DatabaseManager) ValidTaskBlockIDs(ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := "SELECT id FROM blocks WHERE type = 'TASK' AND id IN (" + strings.Join(placeholders, ",") + ")"
+	rows, err := dm.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query valid task block ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
