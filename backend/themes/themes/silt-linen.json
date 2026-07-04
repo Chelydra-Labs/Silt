@@ -80,10 +80,10 @@
     },
     "light": {
       "surfaces": {
-        "app": { "bg": "#f6f0e4", "border": "#d9cfba", "text": "#2b2a27" },
+        "app": { "bg": "#efe8d6", "border": "#a08c6c", "text": "#2b2a27" },
         "editor": {
-          "bg": "#f8f2e6",
-          "border": "#d4c8b0",
+          "bg": "#f2ece0",
+          "border": "#a49070",
           "text": "#2b2a27",
           "background": {
             "image": "repeating-linear-gradient(0deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
@@ -92,13 +92,13 @@
             "blend": "multiply"
           }
         },
-        "panel": { "bg": "#fbf6ec", "border": "#d3c7af", "text": "#2b2a27" },
-        "card": { "bg": "#fdf9f1", "border": "#d8cdb6", "text": "#2b2a27" },
-        "modal": { "bg": "#fffcf5", "border": "#b8a98c", "text": "#2b2a27" },
-        "popover": { "bg": "#fffefb", "border": "#aa9a7c", "text": "#2b2a27" }
+        "panel": { "bg": "#f5f0e8", "border": "#a89474", "text": "#2b2a27" },
+        "card": { "bg": "#f9f4ed", "border": "#988466", "text": "#2b2a27" },
+        "modal": { "bg": "#fcf9f3", "border": "#7e6c4e", "text": "#2b2a27" },
+        "popover": { "bg": "#fffdf8", "border": "#6e5e44", "text": "#2b2a27" }
       },
-      "hover": "#ece4d2",
-      "active": "#ddd0b8",
+      "hover": "#e6dec8",
+      "active": "#d6cab0",
       "border_active": "#a89a7c",
       "border_focus": "#7a6e58",
       "text_muted": "#524a3e",

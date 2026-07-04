@@ -70,7 +70,7 @@
     },
     "light": {
       "surfaces": {
-        "app": { "bg": "#faf5ec", "border": "#d8c9b4", "text": "#1c1917" },
+        "app": { "bg": "#f1e8d0", "border": "#a48866", "text": "#1c1917" },
         "sidebar": {
           "bg": "#1c2842",
           "border": "#2c3c5e",
@@ -78,23 +78,23 @@
           "text_muted": "#a8b4cc",
           "text_disabled": "#7886a0"
         },
-        "editor": { "bg": "#fbf6ed", "border": "#d2c0a4", "text": "#1c1917" },
-        "panel": { "bg": "#fcf7ef", "border": "#d4c2a6", "text": "#1c1917" },
-        "card": { "bg": "#fefbf5", "border": "#dccab0", "text": "#1c1917" },
-        "modal": { "bg": "#fffdf9", "border": "#b09678", "text": "#1c1917" },
-        "popover": { "bg": "#ffffff", "border": "#a48868", "text": "#1c1917" }
+        "editor": { "bg": "#f4edda", "border": "#a88c6a", "text": "#1c1917" },
+        "panel": { "bg": "#f7f1e3", "border": "#ac906e", "text": "#1c1917" },
+        "card": { "bg": "#faf4e8", "border": "#94785c", "text": "#1c1917" },
+        "modal": { "bg": "#fdf8f0", "border": "#7c6248", "text": "#1c1917" },
+        "popover": { "bg": "#fffdf9", "border": "#6e5638", "text": "#1c1917" }
       },
-      "hover": "#ece2d2",
-      "active": "#dccabc",
+      "hover": "#e6d8ba",
+      "active": "#d4c49c",
       "border_active": "#8a8499",
       "border_focus": "#665038",
       "text_muted": "#47403a",
       "text_disabled": "#a89a8a",
       "accent": {
         "primary": {
-          "start": "#cc7408",
+          "start": "#bd6a08",
           "end": "#92400e",
-          "glow": "rgba(204,116,8,0.12)"
+          "glow": "rgba(189,106,8,0.12)"
         },
         "secondary": {
           "start": "#6366f1",
@@ -120,8 +120,8 @@
         "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 20%, transparent)"
       },
       "editor": {
-        "caret": "#cc7408",
-        "selection": "rgba(204,116,8,0.20)",
+        "caret": "#bd6a08",
+        "selection": "rgba(189,106,8,0.20)",
         "selection_text": "#1c1917",
         "link": "#6366f1",
         "link_hover": "#4f46e5",

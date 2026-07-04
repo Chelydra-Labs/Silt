@@ -309,3 +309,76 @@ authors the full primary set: `app`/`editor`/`panel`/`card`/`modal`/`popover`
   existing hue family and light-mode editor lightness adjusted; accents,
   status, error, typography, geometry, and editor-interaction blocks are
   unchanged from the prior pass.
+
+---
+
+## Light-mode character pass: wider ladders, confident tints, real borders
+
+The light modes read as a flat, timid wash: zone ladders were compressed to
+~0.02 luminance per tier (bubblegum's editor→panel step was **0.001** —
+identical surfaces), app bgs were tinted so faintly they read as "near-white
+with a hint," and borders were ~1.4-1.5:1 against their bg (invisible). This
+pass gives the light modes the same presence as their dark counterparts.
+
+The shape, applied to 10 of 11 themes (Stark is the AAA value-led exception):
+
+1. **Widened ladders** to ~0.030-0.050 luminance per step. App bgs dropped from
+   the timid ~0.84-0.92 band to a confident **0.72-0.81** (clearly tinted
+   canvases), climbing in perceptible steps to a near-white popover (~0.98).
+   Min step per theme went from ~0.001-0.024 → **0.026-0.038**.
+2. **Pushed app/editor chroma** so each app reads as a confident colored
+   canvas, not "white with a hint."
+3. **Strengthened borders** to clearly-darker shades of each bg — container
+   edges (card/modal/popover) now land at **3.5-8.4:1** against their bg
+   (was 1.4-1.5:1), so cards/modals/menus visibly lift off their parent.
+4. **Hover/active** re-tuned darker to sit below the new (darker) app.
+
+A key constraint surfaced: darkening the app *reduces* contrast for dark
+accents (they converge in luminance), so each theme's app luminance has a
+floor set by its accent's 3:1 gate. Two themes needed their accent deepened
+to free the app to be characterful (standard for light mode, where accents
+read deeper):
+
+- **Daybreak** amber primary `#cc7408` → `#bd6a08` (deeper amber; the original
+  forced app ≥ L0.86, which was too timid for a warm dawn-cream). Caret,
+  selection, and glow track the new hue.
+
+### Per-theme light-mode character
+
+- **Cyber Forest** — cool slate ladder deepened (`#e1e9f2` app → `#fcfdfe`
+  popover); the canvas now reads as clearly cool slate, not pale blue-white.
+  Teal accent clears 3.06:1 on the darker app.
+- **Terra Noir** — warm clay-parchment app `#efe0c6`; the editor grain overlay
+  is preserved. Clay accent 3.60:1. Warmest ladder in the set.
+- **Linen** — warm cream-paper app `#efe8d6`; woven-grain editor overlay
+  preserved. Slate-blue accent 3.18:1.
+- **Graphite** — neutral grey ladder `#e4e4e4` → `#fdfdfd`; restrained
+  monochrome identity kept, but the value ladder now has visible steps (the
+  single blue accent pops harder against the confident grey).
+- **Frost** — crisp icy-blue app `#dde8f4`; reads as a winter morning, not a
+  white hint of blue. Sky-blue OKLCH accent 3.30:1.
+- **Synthwave** — soft lilac app `#e2deec`; the light mode carries a hint of
+  the neon world (sun-bleached poster). Magenta OKLCH accent 4.46:1.
+- **Daybreak** — warm dawn-cream app `#f1e8d0` framing the dark twilight
+  sidebar; the dual-surface contrast is now sharper (deeper amber 3.29:1).
+- **Bubblegum** — warm blush app `#f4e3d8` framing the dark raspberry sidebar;
+  coral accent 3.07:1. The editor/panel plateau (was 0.001 step) is gone.
+- **Aggie** — soft alfalfa-green app `#dce8d2`; reads as a green meadow. CSU
+  Green text + gold accent (3.07:1) land against the confident green tint.
+- **Altgeld** — confident Illinois-blue app `#d2deec`; Illini Orange (3.56:1)
+  lands hard against the blue-tinted base — prairie-fire identity intact.
+- **Stark** — untouched. Its AAA identity is pure black/white extremes with
+  border-led structure; forcing tint would betray it. The value ladder
+  (white reading surfaces, grey structural tiers) is its character.
+
+### Verification
+
+`go test -race -count=1 ./backend/themes/...` green for all 11; `go vet` clean.
+Every light-mode accent clears ≥3:1 on its (now darker) app — including the
+OKLCH accents (terra-noir 3.60, frost 3.30, synthwave 4.46) verified via the Go
+harness. Dark modes were not touched in this pass. Representative before→after
+ladders:
+
+- **Bubblegum**: app 0.853→0.791, min step **0.001→0.030**.
+- **Cyber Forest**: app 0.884→0.807, min step **0.010→0.027**.
+- **Daybreak**: app 0.917→0.810, min step **0.009→0.026**.

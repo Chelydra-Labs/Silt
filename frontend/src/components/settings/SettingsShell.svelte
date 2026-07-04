@@ -253,8 +253,8 @@
           tabindex={activeTab === tab.id ? 0 : -1}
           class="relative flex items-center gap-3 pl-5 pr-4 py-2.5 mx-2 rounded-lg font-label-sm text-label-sm transition-all border-none cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 {activeTab ===
           tab.id
-            ? 'bg-white/5 text-accent-primary-start'
-            : 'text-text-muted hover:bg-white/[0.02] hover:text-text-primary'}"
+            ? 'bg-active text-accent-primary-start'
+            : 'text-text-muted hover:bg-hover hover:text-text-primary'}"
         >
           <!-- Left rail glowing line -->
           {#if activeTab === tab.id}

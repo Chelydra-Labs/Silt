@@ -214,7 +214,8 @@
             ondragend={onDragEnd}
             class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
             class:bg-hover={isActive}
-            class:text-accent-primary-start={isActive}
+            class:text-surface-sidebar-text={isActive}
+            class:font-medium={isActive}
             class:text-surface-sidebar-text-muted={!isActive}
             class:hover:text-surface-sidebar-text={!isActive}
             class:drag-over-top={dropTarget?.level === 'page' &&
