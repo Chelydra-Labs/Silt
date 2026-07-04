@@ -257,3 +257,121 @@ describe('AgendaList markDoneError UI', () => {
     expect(undatedGroup.textContent).toContain('Another undated')
   })
 })
+
+describe('AgendaList blocked-task badge + DONE guard (#302)', () => {
+  const blockedRow = {
+    rows: [
+      {
+        id: 'a-blocked',
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        file_date: '2026-06-16',
+        clean_content: 'Blocked agenda task',
+        status: 'TODO',
+        owner: '',
+        start_date: '',
+        due_date: '2026-06-16',
+        priority: 2,
+        is_blocked: 1
+      }
+    ],
+    truncated: false
+  }
+  const openRow = {
+    rows: [
+      {
+        ...blockedRow.rows[0],
+        id: 'a-open',
+        clean_content: 'Open agenda task',
+        is_blocked: 0
+      }
+    ],
+    truncated: false
+  }
+
+  beforeEach(() => {
+    mocks.sqliteQuery.mockReset()
+    mocks.updateBlockState.mockReset().mockResolvedValue(undefined)
+    resetFocusState()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('renders a lock badge with aria-label when a task is blocked', async () => {
+    mocks.sqliteQuery.mockResolvedValue(blockedRow)
+    render(AgendaList, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(
+      screen.getByLabelText('Blocked by unfinished prerequisite task(s)')
+    ).toBeInTheDocument()
+  })
+
+  it('does not render a lock badge when a task is not blocked', async () => {
+    mocks.sqliteQuery.mockResolvedValue(openRow)
+    render(AgendaList, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(
+      screen.queryByLabelText('Blocked by unfinished prerequisite task(s)')
+    ).toBeNull()
+  })
+
+  it('marking a blocked task done opens the confirm dialog and aborts on cancel', async () => {
+    mocks.sqliteQuery.mockResolvedValue(blockedRow)
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'b1', clean_content: 'Prereq task' }])
+    const ctx = { ...makeCtx(), getTaskBlockers }
+    render(AgendaList, { ctx, manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByLabelText('Mark done'))
+    // The guard awaits getTaskBlockers before opening the dialog.
+    await screen.findByRole('alertdialog', { name: 'Complete blocked task?' })
+
+    // No DONE write yet — the prompt is open.
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    // Cancel closes without persisting.
+    await fireEvent.click(screen.getByText('Cancel'))
+    await flush()
+
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+  })
+
+  it('marking a blocked task done persists when the user confirms', async () => {
+    mocks.sqliteQuery.mockResolvedValue(blockedRow)
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'b1', clean_content: 'Prereq task' }])
+    const ctx = { ...makeCtx(), getTaskBlockers }
+    render(AgendaList, { ctx, manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByLabelText('Mark done'))
+    await screen.findByRole('alertdialog', { name: 'Complete blocked task?' })
+
+    await fireEvent.click(screen.getByText('Complete anyway'))
+    await flush()
+
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('a-blocked', 'DONE')
+  })
+
+  it('an unblocked task marks done without prompting', async () => {
+    mocks.sqliteQuery.mockResolvedValue(openRow)
+    const getTaskBlockers = vi.fn()
+    const ctx = { ...makeCtx(), getTaskBlockers }
+    render(AgendaList, { ctx, manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByLabelText('Mark done'))
+    await flush()
+
+    expect(getTaskBlockers).not.toHaveBeenCalled()
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('a-open', 'DONE')
+  })
+})

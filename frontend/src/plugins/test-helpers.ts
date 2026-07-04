@@ -17,10 +17,16 @@ export const v2CtxStubs: Pick<
   | 'fullTextSearch'
   | 'getBacklinks'
   | 'getEmbeds'
+  | 'searchBlocks'
+  | 'searchTasks'
   | 'createBlock'
   | 'createTask'
   | 'setTaskDueDate'
   | 'setTaskRecurrence'
+  | 'setTaskBlockedBy'
+  | 'getTaskBlockers'
+  | 'fetchSubtree'
+  | 'saveSubtreeBlocks'
   | 'deleteBlock'
   | 'moveBlock'
   | 'applyBlocks'
@@ -62,10 +68,16 @@ export const v2CtxStubs: Pick<
   fullTextSearch: () => Promise.resolve(emptyResult),
   getBacklinks: () => Promise.resolve(emptyResult),
   getEmbeds: () => Promise.resolve(emptyResult),
+  searchBlocks: () => Promise.resolve([]),
+  searchTasks: () => Promise.resolve([]),
   createBlock: () => Promise.resolve(''),
   createTask: () => Promise.resolve(''),
   setTaskDueDate: () => Promise.resolve(true),
   setTaskRecurrence: () => Promise.resolve(true),
+  setTaskBlockedBy: () => Promise.resolve(true),
+  getTaskBlockers: () => Promise.resolve([]),
+  fetchSubtree: () => Promise.resolve([]),
+  saveSubtreeBlocks: () => Promise.resolve(true),
   deleteBlock: () => Promise.resolve(true),
   moveBlock: () => Promise.resolve(true),
   applyBlocks: () => Promise.resolve(true),

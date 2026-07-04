@@ -1,4 +1,10 @@
-import type { PluginContext, SqliteQueryResult, TaskStatus } from './sdk'
+import type {
+  PluginContext,
+  SearchHit,
+  SqliteQueryResult,
+  SubtreeBlock,
+  TaskStatus
+} from './sdk'
 import { localToday } from './sdk'
 import {
   PluginRawQuery,
@@ -7,6 +13,12 @@ import {
   PluginUpdateTaskMeta,
   PluginSetTaskDueDate,
   PluginSetTaskRecurrence,
+  PluginSetTaskBlockedBy,
+  GetTaskBlockers,
+  FetchSubtree,
+  PluginSaveSubtreeBlocks,
+  SearchBlocks,
+  SearchBlocksPaged,
   PluginCreateTask,
   GetPluginSettingsForNotebook,
   UpdatePluginSetting,
@@ -170,6 +182,26 @@ export function makePluginContext(
     // (stop recurring). Validated server-side for grammar + due-date anchor.
     setTaskRecurrence: (id, recurrence) =>
       PluginSetTaskRecurrence(pluginID, sessionToken ?? '', id, recurrence),
+    // Rewrite a task's [blocked_by:: ((uuid))...] token (#301/#303). Empty
+    // array clears all deps. Cycle prevention is enforced server-side.
+    setTaskBlockedBy: (id, depIDs) =>
+      PluginSetTaskBlockedBy(pluginID, sessionToken ?? '', id, depIDs),
+    // Open (non-DONE) prerequisites for the DONE-confirm dialog (#302).
+    getTaskBlockers: (id) => GetTaskBlockers(id),
+    // Child sub-tree fetch/splice for the Task Sub-Editor Modal (#305). The
+    // bindings exchange the Wails ParsedBlock; cast to the SDK's SubtreeBlock
+    // shape (a structural subset) so the modal and editor work in one type.
+    // saveSubtreeBlocks routes through the Plugin wrapper (gated by
+    // CapContentMutate); fetchSubtree/getTaskBlockers/searchBlocks are reads
+    // and stay direct (the fullTextSearch precedent).
+    fetchSubtree: (blockId) => FetchSubtree(blockId) as Promise<SubtreeBlock[]>,
+    saveSubtreeBlocks: (blockId, children) =>
+      PluginSaveSubtreeBlocks(
+        pluginID,
+        sessionToken ?? '',
+        blockId,
+        children as unknown as Parameters<typeof PluginSaveSubtreeBlocks>[3]
+      ),
     // Create a standalone task in <vault>/.silt/tasks.md (#368). title required;
     // dueDate/status optional with TODO + no-due defaults.
     createTask: (opts) =>
@@ -241,6 +273,25 @@ export function makePluginContext(
          FROM blocks b WHERE b.raw_content LIKE ? ORDER BY b.notebook, b.section, b.page`,
         ['%{{embed:' + id + '}}%']
       ),
+    // FTS5 block search — wraps the SearchBlocks binding so plugin code (the
+    // dependency picker, #303) never imports wailsjs/go/main/App.js directly
+    // (AGENTS.md — deprecated, breaks on per-plugin webviews #151/#152).
+    searchBlocks: (query) => SearchBlocks(query),
+    // Task-only search for the dependency picker: filters server-side via
+    // SearchBlocksPaged's Type filter so a non-task block can never become a
+    // prerequisite (OpenBlockers JOINs tasks; a non-task blocker would never
+    // surface in the DONE-confirm dialog).
+    searchTasks: async (query) => {
+      const res = await SearchBlocksPaged(query, 0, 50, {
+        notebook: '',
+        section: '',
+        tag: '',
+        type: 'TASK',
+        sort: '',
+        vaultOnly: false
+      })
+      return (res.results ?? []) as unknown as SearchHit[]
+    },
 
     // --- Block CRUD (#104) — gated by content-mutate (#156) -----------------
     // Same atomic-write path as mutateBlock.

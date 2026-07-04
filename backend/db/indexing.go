@@ -8,12 +8,34 @@ import (
 	"strings"
 	"time"
 
+	"silt/backend/dependencies"
 	"silt/backend/parser"
 )
 
 // tagRegex matches inline tags starting with # followed by a letter.
 // Package-level var so the regex is compiled once, not per ExtractTags call.
 var tagRegex = regexp.MustCompile(`\B#([a-zA-Z][a-zA-Z0-9_/-]*)`)
+
+// warnOnDependencyCycle builds the [blocked_by::] edge map for a set of blocks
+// and logs a warning when it contains a cycle (#301). The IPC setter prevents
+// cycles at write time, but a hand-edited or externally-synced file (Obsidian,
+// Dropbox) can still introduce one; this guard surfaces it so the user knows
+// the dependency graph is inconsistent rather than silently caching a loop.
+// The check is best-effort — it never blocks indexing or returns an error.
+func warnOnDependencyCycle(blocks []parser.ParsedBlock) {
+	edges := make(map[string][]string)
+	for _, b := range blocks {
+		if b.Type == parser.BlockTask && len(b.BlockedBy) > 0 {
+			edges[b.ID] = append(edges[b.ID], b.BlockedBy...)
+		}
+	}
+	if len(edges) == 0 {
+		return
+	}
+	if dependencies.DetectsCycle(edges) {
+		log.Printf("db: task_dependencies cycle detected in indexed blocks — a hand-edited or externally-synced file introduced a circular dependency; the setter normally prevents this")
+	}
+}
 
 // IsFileUnchanged reports whether the file at `path` was previously indexed
 // with the exact same mtime (Unix nanoseconds) and size. A warm restart uses
@@ -274,6 +296,15 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer stmtTask.Close()
 
+	// task_dependencies edges: one row per [blocked_by:: ((uuid))] ref on a
+	// task line. The cascade clear above already removed the block's prior
+	// edges (both FKs ON DELETE CASCADE), so each insert here is additive.
+	stmtTaskDep, err := tx.Prepare("INSERT OR IGNORE INTO task_dependencies (block_id, blocked_by_id) VALUES (?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmtTaskDep.Close()
+
 	stmtTag, err := tx.Prepare("INSERT INTO tags (block_id, raw_path, level_0, level_1, level_2) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
@@ -389,6 +420,46 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 		}
 	}
 
+	// Cache [blocked_by:: ((uuid))] edges in a second pass, AFTER every block
+	// row is inserted (#301). A task may reference a block that appears later
+	// in the file, so edges can't be inserted inline during the first pass
+	// without tripping the blocks(id) foreign key. The per-block clear at the
+	// top of this function (cascade on block-id delete) already removed the
+	// prior edge set, so each insert here is additive. INSERT OR IGNORE keeps
+	// the (block_id, blocked_by_id) PRIMARY KEY unique even if the parser
+	// handed back a duplicate.
+	warnOnDependencyCycle(blocks)
+	// Existence probe for dependency targets. A [blocked_by::] ref may point
+	// at a block that was deleted, a typo'd/hand-edited UUID, or a cross-file
+	// ref to a page not yet indexed. INSERT OR IGNORE does NOT suppress FK
+	// violations (SQLite conflict resolution excludes foreign keys), so an
+	// absent target would raise SQLITE_CONSTRAINT ForeignKey and abort the
+	// whole re-index. Probe within the transaction (just-inserted blocks are
+	// visible) and skip absent refs with a warning, mirroring the cycle guard.
+	stmtDepExists, err := tx.Prepare("SELECT 1 FROM blocks WHERE id = ? LIMIT 1")
+	if err != nil {
+		return fmt.Errorf("failed to prepare dep-existence probe: %w", err)
+	}
+	defer stmtDepExists.Close()
+	for _, block := range blocks {
+		if block.Type != parser.BlockTask {
+			continue
+		}
+		for _, depID := range block.BlockedBy {
+			var ok int
+			if err := stmtDepExists.QueryRow(depID).Scan(&ok); err != nil {
+				// Target block doesn't exist (sql.ErrNoRows) — skip rather
+				// than trip the FK. The markdown round-trips the token, so
+				// the edge re-materializes if the target is ever indexed.
+				log.Printf("db.IndexFileBlocks: skipping dependency %s -> %s: target block not indexed", block.ID, depID)
+				continue
+			}
+			if _, err := stmtTaskDep.Exec(block.ID, depID); err != nil {
+				return fmt.Errorf("failed to insert task_dependency for block %s: %w", block.ID, err)
+			}
+		}
+	}
+
 	return tx.Commit()
 }
 
@@ -415,6 +486,13 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		return 0, nil, err
 	}
 	defer stmtTask.Close()
+
+	// task_dependencies edges — mirror IndexFileBlocks (see comment there).
+	stmtTaskDep, err := tx.Prepare("INSERT OR IGNORE INTO task_dependencies (block_id, blocked_by_id) VALUES (?, ?)")
+	if err != nil {
+		return 0, nil, err
+	}
+	defer stmtTaskDep.Close()
 
 	stmtTag, err := tx.Prepare("INSERT INTO tags (block_id, raw_path, level_0, level_1, level_2) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
@@ -571,6 +649,53 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		}
 
 		indexedCount++
+	}
+
+	// Cache [blocked_by:: ((uuid))] edges in a second pass over every indexed
+	// file's blocks, AFTER all block rows are inserted (#301). Edges may cross
+	// file boundaries (a task blocked-by a task in a different page), so this
+	// pass runs after the whole results loop, not per-file. Mirrors the
+	// IndexFileBlocks second pass; see comment there.
+	//
+	// Cycle guard: a hand-edited or externally-synced file can introduce a
+	// cycle the setter would have refused. Check the accumulated edge set
+	// across all results (cycles can span files) and log a warning. This
+	// never blocks the batch — the index is best-effort consistent.
+	allEdges := make(map[string][]string)
+	for _, res := range results {
+		for _, b := range res.Blocks {
+			if b.Type == parser.BlockTask && len(b.BlockedBy) > 0 {
+				allEdges[b.ID] = append(allEdges[b.ID], b.BlockedBy...)
+			}
+		}
+	}
+	if len(allEdges) > 0 && dependencies.DetectsCycle(allEdges) {
+		log.Printf("db: task_dependencies cycle detected across indexed files — a hand-edited or externally-synced file introduced a circular dependency; the setter normally prevents this")
+	}
+	// Existence probe for dependency targets — see IndexFileBlocks comment.
+	// INSERT OR IGNORE doesn't suppress FK violations, and a single stale ref
+	// anywhere in the vault would otherwise abort the whole cold scan.
+	stmtDepExists, err := tx.Prepare("SELECT 1 FROM blocks WHERE id = ? LIMIT 1")
+	if err != nil {
+		return 0, skipped, fmt.Errorf("failed to prepare dep-existence probe: %w", err)
+	}
+	defer stmtDepExists.Close()
+	for _, res := range results {
+		for _, block := range res.Blocks {
+			if block.Type != parser.BlockTask {
+				continue
+			}
+			for _, depID := range block.BlockedBy {
+				var ok int
+				if err := stmtDepExists.QueryRow(depID).Scan(&ok); err != nil {
+					log.Printf("db.IndexScanResults: skipping dependency %s -> %s: target block not indexed", block.ID, depID)
+					continue
+				}
+				if _, err := stmtTaskDep.Exec(block.ID, depID); err != nil {
+					return 0, skipped, fmt.Errorf("failed to insert task_dependency for block %s: %w", block.ID, err)
+				}
+			}
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

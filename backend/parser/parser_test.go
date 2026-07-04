@@ -436,6 +436,81 @@ func TestParseLine_Recurrence(t *testing.T) {
 	})
 }
 
+// TestParseLine_BlockedBy covers the [blocked_by:: ((uuid))] token (#301):
+// single + multiple refs, CleanText stripping, de-duplication, that the
+// token is not echoed into ExtraTokens, and round-trip through render.
+func TestParseLine_BlockedBy(t *testing.T) {
+	t.Run("single ref parsed to BlockedBy", func(t *testing.T) {
+		line := "- [ ] Ship feature [blocked_by:: ((22222222-2222-2222-2222-222222222222))] <!-- id: 11111111-1111-1111-1111-111111111111 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if len(block.BlockedBy) != 1 || block.BlockedBy[0] != "22222222-2222-2222-2222-222222222222" {
+			t.Errorf("expected BlockedBy=[2222...], got %v", block.BlockedBy)
+		}
+		if block.CleanText != "Ship feature" {
+			t.Errorf("expected CleanText='Ship feature', got %q", block.CleanText)
+		}
+	})
+	t.Run("multiple refs parsed in order", func(t *testing.T) {
+		line := "- [ ] Launch [blocked_by:: ((22222222-2222-2222-2222-222222222222)) ((33333333-3333-3333-3333-333333333333))] <!-- id: 11111111-1111-1111-1111-111111111111 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		want := []string{"22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333"}
+		if len(block.BlockedBy) != 2 || block.BlockedBy[0] != want[0] || block.BlockedBy[1] != want[1] {
+			t.Errorf("expected BlockedBy=%v, got %v", want, block.BlockedBy)
+		}
+	})
+	t.Run("duplicate refs de-duplicated", func(t *testing.T) {
+		line := "- [ ] Launch [blocked_by:: ((22222222-2222-2222-2222-222222222222)) ((22222222-2222-2222-2222-222222222222))] <!-- id: 11111111-1111-1111-1111-111111111111 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if len(block.BlockedBy) != 1 || block.BlockedBy[0] != "22222222-2222-2222-2222-222222222222" {
+			t.Errorf("expected de-duped single ref, got %v", block.BlockedBy)
+		}
+	})
+	t.Run("blocked_by token not duplicated into ExtraTokens", func(t *testing.T) {
+		line := "- [ ] Task [blocked_by:: ((22222222-2222-2222-2222-222222222222))] [due:: 2026-07-15] <!-- id: 55555555-5555-5555-5555-555555555555 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if len(block.BlockedBy) != 1 {
+			t.Fatalf("expected BlockedBy len 1, got %v", block.BlockedBy)
+		}
+		for _, tok := range block.ExtraTokens {
+			if strings.Contains(strings.ToLower(tok), "blocked_by") {
+				t.Errorf("blocked_by token must not appear in ExtraTokens, found %q", tok)
+			}
+		}
+	})
+	t.Run("empty [blocked_by::] yields nil, not in ExtraTokens", func(t *testing.T) {
+		line := "- [ ] Task [blocked_by:: ] <!-- id: 44444444-4444-4444-4444-444444444444 -->"
+		block, _, _ := ParseLine(line, 1, 4)
+		if len(block.BlockedBy) != 0 {
+			t.Errorf("expected empty BlockedBy, got %v", block.BlockedBy)
+		}
+		if len(block.ExtraTokens) != 0 {
+			t.Errorf("expected no ExtraTokens, got %v", block.ExtraTokens)
+		}
+	})
+	t.Run("round-trips through RenderFileContent", func(t *testing.T) {
+		content := "---\nnotebook: \"work\"\nsection: \"\"\npage: \"plan\"\ndate: \"2026-07-15\"\ntags: []\n---\n- [ ] Ship [blocked_by:: ((22222222-2222-2222-2222-222222222222))] <!-- id: 66666666-6666-6666-6666-666666666666 -->\n"
+		blocks, meta, _, _, err := ParseFileContent(content, "work", "", "plan", "2026-07-15", 4)
+		if err != nil {
+			t.Fatalf("ParseFileContent failed: %v", err)
+		}
+		if len(blocks) != 1 || len(blocks[0].BlockedBy) != 1 || blocks[0].BlockedBy[0] != "22222222-2222-2222-2222-222222222222" {
+			t.Fatalf("expected 1 block blocked-by 2222..., got %+v", blocks)
+		}
+		fm, body := SplitFrontmatter(content)
+		rendered := RenderFileContent(blocks, body, fm, 4)
+		blocks2, _, _, _, err := ParseFileContent(rendered, meta.Notebook, meta.Section, meta.Page, meta.Date, 4)
+		if err != nil {
+			t.Fatalf("re-parse of rendered content failed: %v", err)
+		}
+		if len(blocks2) != 1 || len(blocks2[0].BlockedBy) != 1 || blocks2[0].BlockedBy[0] != "22222222-2222-2222-2222-222222222222" {
+			t.Errorf("blocked_by did not round-trip, got %+v", blocks2)
+		}
+		if !strings.Contains(rendered, "[blocked_by:: ((22222222-2222-2222-2222-222222222222))]") {
+			t.Errorf("rendered output missing [blocked_by:: ...]:\n%s", rendered)
+		}
+	})
+}
+
 // TestParseLine_UnknownTokens verifies that unrecognised [key:: value]
 // Dataview tokens (e.g. third-party fields like [project:: alpha]) survive
 // the parse → render round-trip so files stay interoperable with

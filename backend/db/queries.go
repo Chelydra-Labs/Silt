@@ -132,6 +132,16 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		}
 	}
 
+	if len(filter.BlockIDs) > 0 {
+		// Bound the query to an explicit ID set (GetTaskBlockers, #302).
+		placeholders := make([]string, len(filter.BlockIDs))
+		for i, id := range filter.BlockIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		baseQuery += " AND b.id IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
 	baseQuery += " ORDER BY b.file_date DESC, b.line_number ASC"
 
 	rows, err := dm.db.Query(baseQuery, args...)
@@ -226,6 +236,34 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	for i := range results {
 		if tags, ok := tagIndex[results[i].ID]; ok {
 			results[i].Tags = tags
+		}
+	}
+
+	// Hydrate BlockedBy from the task_dependencies join table via a single
+	// secondary query (same N+1-avoidance pattern as tags above, #301). Each
+	// row is one edge "block_id is blocked by blocked_by_id"; group them by
+	// block_id. The Kanban/Agenda badge and the dependency picker read this
+	// list without re-parsing markdown.
+	depQuery := "SELECT block_id, blocked_by_id FROM task_dependencies WHERE block_id IN (" + strings.Join(tagPlaceholders, ",") + ") ORDER BY block_id, blocked_by_id"
+	depRows, err := dm.db.Query(depQuery, blockIDs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query task dependencies: %w", err)
+	}
+	depIndex := make(map[string][]string, len(results))
+	for depRows.Next() {
+		var blockID, depID string
+		if err := depRows.Scan(&blockID, &depID); err != nil {
+			depRows.Close()
+			return nil, err
+		}
+		depIndex[blockID] = append(depIndex[blockID], depID)
+	}
+	if err := depRows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range results {
+		if deps, ok := depIndex[results[i].ID]; ok {
+			results[i].BlockedBy = deps
 		}
 	}
 
@@ -432,4 +470,134 @@ func (dm *DatabaseManager) DistinctOwners(prefix string) ([]string, error) {
 		return nil, fmt.Errorf("failed iterating distinct owners: %w", err)
 	}
 	return owners, nil
+}
+
+// OpenBlockers returns the IDs of a task's prerequisites that are not yet
+// DONE — i.e. the unfinished blockers standing between this task and
+// completion (#302). Used by the DONE-transition guard to decide whether to
+// prompt the user, and by the badge to decide "blocked" state. An empty slice
+// means the task is actionable (no open prerequisites). The reverse index
+// idx_task_deps_blocked_by serves this lookup without a scan.
+func (dm *DatabaseManager) OpenBlockers(blockID string) ([]string, error) {
+	rows, err := dm.db.Query(
+		`SELECT d.blocked_by_id FROM task_dependencies d
+		 JOIN tasks t ON t.block_id = d.blocked_by_id
+		 WHERE d.block_id = ? AND t.status != 'DONE'
+		 ORDER BY d.blocked_by_id`,
+		blockID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query open blockers for %s: %w", blockID, err)
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating open blockers: %w", err)
+	}
+	return out, nil
+}
+
+// DependentsOf returns the IDs of tasks that are blocked by blockID — i.e. the
+// tasks whose "blocked" state may flip when blockID is completed (#301
+// reactive fan-out). The reverse index serves this lookup. An empty slice
+// means nothing depends on blockID.
+func (dm *DatabaseManager) DependentsOf(blockID string) ([]string, error) {
+	rows, err := dm.db.Query(
+		"SELECT block_id FROM task_dependencies WHERE blocked_by_id = ? ORDER BY block_id",
+		blockID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query dependents of %s: %w", blockID, err)
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating dependents: %w", err)
+	}
+	return out, nil
+}
+
+// DependencyEdges returns the full blocked-by edge set keyed by dependent task
+// ID, restricted to the tasks whose IDs appear in `blockIDs`. Used by the IPC
+// setter's cycle check to build the existing graph before proposing a new edge.
+// Edges outside the requested set are irrelevant to a local cycle check and
+// omitted to keep the payload bounded.
+func (dm *DatabaseManager) DependencyEdges(blockIDs []string) (map[string][]string, error) {
+	if len(blockIDs) == 0 {
+		return map[string][]string{}, nil
+	}
+	placeholders := make([]string, len(blockIDs))
+	args := make([]interface{}, len(blockIDs))
+	for i, id := range blockIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	// Pull edges where either endpoint is in the set: a cycle through the
+	// proposed edge may traverse nodes already known to the dependent side.
+	query := "SELECT block_id, blocked_by_id FROM task_dependencies WHERE block_id IN (" + strings.Join(placeholders, ",") + ") OR blocked_by_id IN (" + strings.Join(placeholders, ",") + ")"
+	// Duplicate args for the second IN clause.
+	fullArgs := append(args, args...)
+	rows, err := dm.db.Query(query, fullArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query dependency edges: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string][]string)
+	for rows.Next() {
+		var from, to string
+		if err := rows.Scan(&from, &to); err != nil {
+			return nil, err
+		}
+		out[from] = append(out[from], to)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating dependency edges: %w", err)
+	}
+	return out, nil
+}
+
+// ValidTaskBlockIDs returns the subset of `ids` that exist as TASK blocks in
+// the index. Used by the dependency setter to reject non-existent or non-task
+// prerequisites before writing the [blocked_by::] token — a stale/typo'd UUID
+// or a non-task block would otherwise persist as a broken edge the index can't
+// resolve (OpenBlockers JOINs tasks, so a non-task blocker never surfaces).
+func (dm *DatabaseManager) ValidTaskBlockIDs(ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := "SELECT id FROM blocks WHERE type = 'TASK' AND id IN (" + strings.Join(placeholders, ",") + ")"
+	rows, err := dm.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query valid task block ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }

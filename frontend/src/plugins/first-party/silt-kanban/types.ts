@@ -26,6 +26,14 @@ export interface KanbanCard {
   // for one-off tasks; e.g. 'every week'. The Kanban SQL aliases t.recur to
   // this field (query.ts).
   recurrence: string
+  // Pipe-delimited dependent-task UUIDs from the task_dependencies join
+  // table (#301). Absent/empty when the task has no prerequisites. The
+  // is_blocked derived flag below drives the lock badge + DONE guard.
+  blocked_by?: string
+  // Derived: 1 when the task has at least one non-DONE prerequisite, else 0.
+  // Computed by a correlated subquery in the Kanban SQL (query.ts) so the
+  // badge and the DONE-confirm guard read it without a second round-trip.
+  is_blocked?: number
   comments_count: number
   links_count: number
   // Pipe-delimited raw tag paths from a GROUP_CONCAT subquery; absent

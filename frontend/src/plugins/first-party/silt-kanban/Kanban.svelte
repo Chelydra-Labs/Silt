@@ -8,6 +8,8 @@
   import { EventsOn } from '../../../../wailsjs/runtime/runtime.js'
   import FilterBar from './FilterBar.svelte'
   import CardDetailPanel from './CardDetailPanel.svelte'
+  import BlockedDoneDialog from './BlockedDoneDialog.svelte'
+  import TaskSubEditorModal from './TaskSubEditorModal.svelte'
   import QuickAddTask from '../shared/QuickAddTask.svelte'
   import type { KanbanCard, KanbanFilters, Scope } from './types'
   import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
@@ -304,6 +306,25 @@
 
   // Card selected for the slide-out detail panel (null = closed).
   let selectedCard = $state<KanbanCard | null>(null)
+
+  // Card opened in the focused Task Sub-Editor Modal (#304). Null = closed.
+  // Set by double-clicking a card; single-click still opens the slide-out
+  // detail panel so both affordances coexist on the same card.
+  let subEditorCard = $state<KanbanCard | null>(null)
+
+  // Single-click is deferred by a short timer so a dblclick can cancel it,
+  // preventing the slide-out panel from flashing open before the modal opens.
+  let clickTimer: ReturnType<typeof setTimeout> | null = null
+
+  // DONE-on-blocked confirm (#302): when a blocked card is dragged or keyed
+  // into the DONE lane, we pause the optimistic move and ask the user. The
+  // pending object carries the original move args so confirm() can resume it
+  // and cancel() can revert the optimistic state. Null = no prompt open.
+  let pendingBlockedDone = $state<{
+    card: KanbanCard
+    fromStatus: TaskStatus
+    blockers: { id: string; clean_content?: string }[]
+  } | null>(null)
 
   let totalCards = $derived(
     Object.values(lanes).reduce((sum, lane) => sum + lane.length, 0)
@@ -697,6 +718,23 @@
     liveMessage = `Task moved to ${laneLabel(toStatus)}`
 
     try {
+      // DONE-on-blocked guard (#302): if the card carries open prerequisites,
+      // pause before persisting so the user can confirm (or cancel). The
+      // optimistic move already happened above; cancel() reverts it.
+      if (toStatus === 'DONE' && card.is_blocked && !pendingBlockedDone) {
+        const blockers = await ctx.getTaskBlockers(card.id)
+        if (blockers.length > 0) {
+          pendingBlockedDone = {
+            card,
+            fromStatus,
+            blockers: blockers.map((b) => ({
+              id: b.id,
+              clean_content: b.clean_content
+            }))
+          }
+          return
+        }
+      }
       await ctx.updateBlockState(card.id, toStatus)
     } catch (e) {
       // A newer move started after this one; its optimistic state is
@@ -705,6 +743,53 @@
       moveError = e instanceof Error ? e.message : String(e)
       lanes = prevLanes
       liveMessage = 'Move failed — reverted.'
+    }
+  }
+
+  // Resume a paused DONE-on-blocked move after the user confirms (#302). The
+  // optimistic move already landed in the DONE lane; this just persists it and
+  // clears the prompt. pendingBlockedDone is nulled so confirm can't loop.
+  async function confirmBlockedDone() {
+    const pending = pendingBlockedDone
+    if (!pending) return
+    pendingBlockedDone = null
+    try {
+      await ctx.updateBlockState(pending.card.id, 'DONE')
+      liveMessage = 'Task completed despite open prerequisites.'
+    } catch (e) {
+      moveError = e instanceof Error ? e.message : String(e)
+      liveMessage = 'Move failed — reverted.'
+      revertBlockedDone(pending)
+    }
+  }
+
+  // Cancel a paused DONE-on-blocked move: revert the optimistic placement to
+  // the source lane and close the prompt.
+  function cancelBlockedDone() {
+    const pending = pendingBlockedDone
+    if (!pending) return
+    pendingBlockedDone = null
+    revertBlockedDone(pending)
+    liveMessage = 'Move cancelled.'
+  }
+
+  // Revert the optimistic DONE placement back to the source lane. Guard
+  // against a phantom lane: if fromStatus isn't a rendered column (a status
+  // the board doesn't show), fall back to TODO (the inbox) so the card can't
+  // disappear into an invisible lane key.
+  function revertBlockedDone(pending: {
+    card: KanbanCard
+    fromStatus: TaskStatus
+  }) {
+    const cardId = pending.card.id
+    const revertTo: TaskStatus = columns.includes(pending.fromStatus)
+      ? pending.fromStatus
+      : 'TODO'
+    const revertedCard = { ...pending.card, status: revertTo }
+    lanes = {
+      ...lanes,
+      DONE: (lanes.DONE ?? []).filter((c) => c.id !== cardId),
+      [revertTo]: [...(lanes[revertTo] ?? []), revertedCard]
     }
   }
 
@@ -973,7 +1058,7 @@
                   role="button"
                   tabindex="0"
                   aria-grabbed={draggingId === card.id ? 'true' : 'false'}
-                  aria-label={`${card.clean_content}, ${laneLabel(col)}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}. Arrow keys change status.`}
+                  aria-label={`${card.clean_content}, ${laneLabel(col)}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}. Arrow keys change status.`}
                   draggable="true"
                   animate:flip={{ duration: 200, easing: cubicOut }}
                   class="group relative bg-panel border border-border-muted rounded-lg p-3 cursor-grab transition-all duration-200 hover:bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {card.status ===
@@ -983,7 +1068,31 @@
                   ondragstart={(e) => onDragStart(e, card, col as TaskStatus)}
                   ondragend={cleanupDrag}
                   onkeydown={(e) => onCardKeydown(e, card, col as TaskStatus)}
-                  onclick={() => (selectedCard = card)}
+                  onclick={() => {
+                    // Defer the single-click open by a tick so a dblclick
+                    // can cancel it — otherwise the slide-out panel flashes
+                    // open for ~200ms before the modal yanks it away.
+                    if (clickTimer) {
+                      clearTimeout(clickTimer)
+                      clickTimer = null
+                      return
+                    }
+                    clickTimer = setTimeout(() => {
+                      selectedCard = card
+                      clickTimer = null
+                    }, 200)
+                  }}
+                  ondblclick={(e) => {
+                    e.stopPropagation()
+                    if (clickTimer) {
+                      clearTimeout(clickTimer)
+                      clickTimer = null
+                    }
+                    // Close any slide-out panel the first click may have
+                    // opened so only the modal is visible while editing.
+                    selectedCard = null
+                    subEditorCard = card
+                  }}
                 >
                   {#if card.pinned}
                     <span
@@ -1079,6 +1188,19 @@
                           >
                         </span>
                       {/if}
+                      {#if card.is_blocked}
+                        <span
+                          class="text-status-warn flex items-center"
+                          role="img"
+                          title="Blocked by unfinished prerequisite task(s)"
+                          aria-label="Blocked by unfinished prerequisite task(s)"
+                        >
+                          <span
+                            class="material-symbols-outlined text-[12px]"
+                            aria-hidden="true">lock</span
+                          >
+                        </span>
+                      {/if}
                     </div>
                   </div>
                 </div>
@@ -1147,6 +1269,31 @@
     aria-hidden="true"
     onclick={() => (menuCol = null)}
   ></div>
+{/if}
+
+{#if pendingBlockedDone}
+  <BlockedDoneDialog
+    cardText={pendingBlockedDone.card.clean_content}
+    blockers={pendingBlockedDone.blockers}
+    onConfirm={confirmBlockedDone}
+    onCancel={cancelBlockedDone}
+  />
+{/if}
+
+{#if subEditorCard}
+  <TaskSubEditorModal
+    blockId={subEditorCard.id}
+    notebook={subEditorCard.notebook}
+    section={subEditorCard.section}
+    page={subEditorCard.page}
+    parentTaskText={subEditorCard.clean_content}
+    {ctx}
+    onClose={() => {
+      // Reload so the board reflects any sub-tree edits the modal persisted.
+      reload()
+      subEditorCard = null
+    }}
+  />
 {/if}
 
 <style>

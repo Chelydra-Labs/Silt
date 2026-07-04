@@ -62,6 +62,60 @@ export interface SqliteQueryResult {
   truncated: boolean
 }
 
+/**
+ * A task prerequisite returned by `getTaskBlockers` (#302). Carries the
+ * breadcrumb + display fields the DONE-confirm dialog lists so the user can
+ * see *which* tasks are blocking completion. Mirrors the relevant subset of
+ * the backend TaskResult projection; display fields are optional to match
+ * the Go struct's omitempty json tags.
+ */
+export interface BlockerTask {
+  id: string
+  clean_content?: string
+  owner?: string
+  due_date?: string
+  notebook?: string
+  section?: string
+  page?: string
+}
+
+/**
+ * A block in a task's child sub-tree (#305). Mirrors the editor's ParsedBlock
+ * shape (the JSON that crosses the Wails IPC boundary in FetchPageBlocks /
+ * SaveFileBlocks). The focused Task Sub-Editor Modal seeds its TipTap instance
+ * from a fetched SubtreeBlock[] and serializes edits back via saveSubtreeBlocks.
+ */
+export interface SubtreeBlock {
+  id: string
+  parent_id?: string
+  type: string
+  depth: number
+  raw_text: string
+  clean_text: string
+  status?: string
+  owner?: string
+  start_date?: string
+  due_date?: string
+  recurrence?: string
+  priority?: number
+  line_number: number
+  file_date?: string
+  language?: string
+}
+
+/**
+ * A block-search hit returned by `searchBlocks` (#303). Mirrors the relevant
+ * subset of the backend TaskResult projection — enough for the dependency
+ * picker (and embed insertion) to render a breadcrumb + label per result.
+ */
+export interface SearchHit {
+  id: string
+  clean_content?: string
+  notebook?: string
+  section?: string
+  page?: string
+}
+
 export interface PluginContext {
   /**
    * The active notebook. This is a LIVE reactive getter (#69): reading it
@@ -121,6 +175,38 @@ export interface PluginContext {
    * file, re-indexes, and emits `block:changed`. Gated by content-mutate.
    */
   setTaskRecurrence: (id: string, recurrence: string) => Promise<boolean>
+  /**
+   * Rewrite a task's `[blocked_by:: ((uuid))...]` inline token on disk
+   * atomically (#301/#303). Pass an empty array to clear all dependencies.
+   * Cycle prevention runs server-side: adding an edge that would close a
+   * loop is rejected (the promise rejects). Round-trips through the markdown
+   * file, re-indexes, and emits block:changed. Gated by content-mutate.
+   */
+  setTaskBlockedBy: (id: string, depIDs: string[]) => Promise<boolean>
+  /**
+   * Return the open (non-DONE) prerequisites of a task (#302), each with full
+   * metadata (owner, due date, breadcrumb) for the DONE-transition confirm
+   * dialog. Empty array = the task is actionable.
+   */
+  getTaskBlockers: (id: string) => Promise<BlockerTask[]>
+  /**
+   * Fetch a task block's child sub-tree — the indented blocks beneath it
+   * (#305). Used to seed the focused Task Sub-Editor Modal. Returns an empty
+   * array when the task has no children. Read-only; no IPC write. The block
+   * shape mirrors the editor's ParsedBlock; see SubtreeBlock.
+   */
+  fetchSubtree: (blockId: string) => Promise<SubtreeBlock[]>
+  /**
+   * Splice an edited child sub-tree back into the parent task's block,
+   * atomically re-rendering the whole page through the canonical write chain
+   * (#305). The parent task block and all surrounding content are preserved
+   * verbatim; only the contiguous child range (depth > parent depth) is
+   * replaced. Emits block:changed for the parent so views refresh.
+   */
+  saveSubtreeBlocks: (
+    blockId: string,
+    children: SubtreeBlock[]
+  ) => Promise<boolean>
   /**
    * Create a standalone task (a GFM checkbox) in the dedicated non-note
    * markdown file `<vault>/.silt/tasks.md` (#368). The task is queryable via
@@ -188,6 +274,21 @@ export interface PluginContext {
   fullTextSearch: (query: string) => Promise<SqliteQueryResult>
   getBacklinks: (uuid: string) => Promise<SqliteQueryResult>
   getEmbeds: (uuid: string) => Promise<SqliteQueryResult>
+  /**
+   * FTS5 block search (#303 dependency picker, embed insertion). Returns
+   * matching blocks with breadcrumb + clean-content metadata. Wraps the
+   * SearchBlocks binding so plugin code never imports wailsjs/go/main/App.js
+   * directly (AGENTS.md — deprecated, breaks on per-plugin webviews #151/#152).
+   */
+  searchBlocks: (query: string) => Promise<SearchHit[]>
+  /**
+   * FTS5 search constrained to TASK blocks (#303). The dependency picker uses
+   * this so a non-task (note/header/code) can never be added as a
+   * `[blocked_by::]` prerequisite — OpenBlockers JOINs tasks, so a non-task
+   * blocker would silently never appear in the DONE-confirm dialog and could
+   * never be cleared, leaving the dependent permanently "blocked".
+   */
+  searchTasks: (query: string) => Promise<SearchHit[]>
 
   /**
    * Block CRUD (#104). These reuse the same atomic-write + re-index path as

@@ -154,6 +154,30 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create tags table: %w", err)
 	}
 
+	// Task Dependencies Table — caches the [blocked_by:: ((uuid))] edges parsed
+	// from task lines (#301). Each row means "block_id is blocked by
+	// blocked_by_id". Both columns FK to blocks(id) ON DELETE CASCADE so a
+	// deleted block cleans up its edges both as a dependent and as a blocker.
+	// The table is a re-derivable projection of the markdown tokens (rule 4 —
+	// SQLite is working memory); the markdown is the source of truth. The
+	// reverse-lookup index on blocked_by_id serves the DONE-branch fan-out
+	// ("who is blocked by the block I just completed?") and the Kanban/Agenda
+	// "blocking me" badge without a full scan.
+	createTaskDepsTable := `
+	CREATE TABLE IF NOT EXISTS task_dependencies (
+		block_id     TEXT NOT NULL,
+		blocked_by_id TEXT NOT NULL,
+		PRIMARY KEY(block_id, blocked_by_id),
+		FOREIGN KEY(block_id)      REFERENCES blocks(id) ON DELETE CASCADE,
+		FOREIGN KEY(blocked_by_id) REFERENCES blocks(id) ON DELETE CASCADE
+	);`
+	if _, err := dm.db.Exec(createTaskDepsTable); err != nil {
+		return fmt.Errorf("failed to create task_dependencies table: %w", err)
+	}
+	if _, err := dm.db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_deps_blocked_by ON task_dependencies(blocked_by_id)`); err != nil {
+		return fmt.Errorf("failed to create task_dependencies reverse-lookup index: %w", err)
+	}
+
 	// Files Table — records the last-seen mtime + size of every indexed file
 	// so a warm restart can skip re-parsing/re-indexing unchanged files (#29).
 	// Lives in the same (on-disk, WAL) database as the blocks index so it

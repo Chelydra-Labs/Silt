@@ -1,8 +1,10 @@
 <script lang="ts">
   import { fly } from 'svelte/transition'
+  import { tick } from 'svelte'
   import type { PluginContext, TaskStatus } from '../../sdk'
   import type { KanbanCard } from './types'
   import { PRIORITY_LABELS, laneLabel } from './types'
+  import DependencyPicker from './DependencyPicker.svelte'
 
   interface Props {
     card: KanbanCard | null
@@ -16,6 +18,24 @@
 
   let { card, ctx, onClose, onMetaChanged }: Props = $props()
 
+  // Focus management (mirrors BlockedDoneDialog): move focus into the panel on
+  // open and restore it to the trigger on close, so keyboard/AT users keep
+  // context. The panel is always-mounted with card toggling null, so the
+  // $effect keys on card presence and tracks the previously-focused element.
+  let panelRef = $state<HTMLDivElement | null>(null)
+  let previouslyFocused: HTMLElement | null = null
+  $effect(() => {
+    if (card) {
+      previouslyFocused = document.activeElement as HTMLElement
+      // Focus the panel container once it renders. tabindex=-1 lets it
+      // receive focus without joining the tab order.
+      tick().then(() => panelRef?.focus())
+    } else if (previouslyFocused) {
+      previouslyFocused.focus?.()
+      previouslyFocused = null
+    }
+  })
+
   function statusChipClass(s: TaskStatus): string {
     if (s === 'TODO') return 'text-text-muted border-border-muted bg-surface'
     if (s === 'DOING')
@@ -24,6 +44,12 @@
   }
 
   let tagList = $derived(card?.tags ? card.tags.split('|').filter(Boolean) : [])
+
+  // The blocked_by edge list is pipe-delimited in the Kanban SQL projection
+  // (#301); split it into the uuid array the DependencyPicker consumes.
+  let blockedByList = $derived(
+    card?.blocked_by ? card.blocked_by.split('|').filter(Boolean) : []
+  )
 
   // Local optimistic mirrors for the two mutable metadata fields (pin +
   // progress). The panel is the only writer for these while open, so an
@@ -263,11 +289,13 @@
     onclick={onClose}
   ></div>
   <div
+    bind:this={panelRef}
     transition:fly={{ x: 320, duration: 200 }}
-    class="fixed right-0 top-14 h-[calc(100vh-56px)] w-96 bg-panel border-l border-border-muted z-40 overflow-y-auto custom-scrollbar"
+    class="fixed right-0 top-14 h-[calc(100vh-56px)] w-96 bg-panel border-l border-border-muted z-40 overflow-y-auto custom-scrollbar focus:outline-none"
     role="dialog"
     aria-modal="true"
     aria-labelledby="card-detail-title"
+    tabindex="-1"
   >
     <!-- Header -->
     <div
@@ -606,6 +634,15 @@
           <span class="text-[10px] font-label-sm text-text-muted">links</span>
         </div>
       </section>
+
+      {#if card}
+        <DependencyPicker
+          cardId={card.id}
+          blockedBy={blockedByList}
+          {ctx}
+          {onMetaChanged}
+        />
+      {/if}
 
       <!-- Open in editor -->
       <section>
