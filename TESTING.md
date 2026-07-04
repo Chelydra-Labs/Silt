@@ -141,6 +141,9 @@ manually against `wails dev`. Grouped by surface; each item is pass/fail.
 - [ ] Task Sub-Editor: double-click a Kanban card opens the modal; nested
       notes/sub-tasks edit and save back to the parent file; surrounding
       content is untouched; Esc restores focus to the card.
+- [ ] CardDetailPanel recurrence dropdown and the dependency typeahead results
+      stay fully visible (not clipped) when the section sits low in the scroll
+      area; arrow/Enter/Esc and click-away still behave.
 
 **Themes & templates**
 - [ ] Theme picker: switch, mode toggle (Dark/Light/System), import a JSON
