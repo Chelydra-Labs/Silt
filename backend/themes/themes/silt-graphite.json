@@ -39,7 +39,7 @@
         "secondary": {
           "start": "#9aa3ad",
           "end": "#6f7882",
-          "glow": "rgba(140, 150, 160, 0.10)"
+          "glow": "rgba(154, 163, 173, 0.10)"
         }
       },
       "status": {
@@ -92,7 +92,7 @@
         "secondary": {
           "start": "#6a737d",
           "end": "#525a63",
-          "glow": "rgba(90, 100, 110, 0.08)"
+          "glow": "rgba(106, 115, 125, 0.08)"
         }
       },
       "status": {

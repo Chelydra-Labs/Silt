@@ -53,9 +53,9 @@
         }
       },
       "status": {
-        "warn": "#ffc857",
+        "warn": "#ffb04a",
         "danger": "#ff3d6e",
-        "success": "#4ddbb0"
+        "success": "#5ce0c4"
       },
       "error": {
         "fg": "#ff3d6e",
@@ -75,7 +75,7 @@
         "selection_text": "#e8e6f0",
         "link": "oklch(0.87 0.148 203)",
         "link_hover": "oklch(0.719 0.126 214)",
-        "highlight": "rgba(255,200,87,0.30)"
+        "highlight": "rgba(255,180,80,0.30)"
       }
     },
     "light": {

@@ -45,7 +45,7 @@
       "status": {
         "warn": "#e8c45a",
         "danger": "#e85a7a",
-        "success": "#4ddbb0"
+        "success": "#3ac8a4"
       },
       "error": {
         "fg": "#e85a7a",
