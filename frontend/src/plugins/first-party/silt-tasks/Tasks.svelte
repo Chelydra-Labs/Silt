@@ -280,27 +280,25 @@
     <h1 class="font-headline-lg text-headline-lg text-text-primary">
       {manifest?.name ?? 'Tasks'}
     </h1>
-    <button
-      type="button"
-      onclick={() => (showQuickAdd = !showQuickAdd)}
-      aria-label="Add a task"
-      aria-expanded={showQuickAdd}
-      data-testid="tasks-add-button"
-      class="flex items-center gap-1 px-2 py-1 rounded text-[12px] font-label-sm
-             text-text-muted hover:text-text-primary hover:bg-hover
-             border border-border-zinc bg-transparent cursor-pointer
-             transition-colors"
-    >
-      <span class="material-symbols-outlined text-[14px]">add</span>
-      Add
-    </button>
-    <span
-      class="text-text-muted text-[12px] font-body-md ml-auto"
-      aria-live="polite"
-      data-testid="tasks-open-count"
-    >
-      {openItems.length} active task{openItems.length === 1 ? '' : 's'}
-    </span>
+    <div class="ml-auto flex flex-col items-end gap-0.5">
+      <button
+        type="button"
+        onclick={() => (showQuickAdd = !showQuickAdd)}
+        aria-label="New task"
+        aria-expanded={showQuickAdd}
+        data-testid="tasks-new-task-btn"
+        class="flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
+      >
+        <span class="material-symbols-outlined text-[16px]">add</span>New task
+      </button>
+      <span
+        class="text-text-muted text-[12px] font-body-md"
+        aria-live="polite"
+        data-testid="tasks-open-count"
+      >
+        {openItems.length} active task{openItems.length === 1 ? '' : 's'}
+      </span>
+    </div>
   </header>
 
   {#if showQuickAdd}
@@ -361,7 +359,8 @@
         class="text-text-muted py-10 text-center font-body-md"
         data-testid="tasks-empty"
       >
-        No tasks yet. Use <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
+        No tasks yet. Click <strong>New task</strong> above or use
+        <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
       </div>
     {:else}
       {#if openItems.length === 0}
@@ -377,7 +376,8 @@
           </h3>
           <p class="text-text-muted text-[13px] font-body-md">
             You have no active tasks. Restore any completed task below to
-            active, or use <kbd
+            active, click <strong>New task</strong> above, or use
+            <kbd
               class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-border-zinc font-mono text-[11px]"
               >Ctrl+Shift+N</kbd
             > to capture a new task.
