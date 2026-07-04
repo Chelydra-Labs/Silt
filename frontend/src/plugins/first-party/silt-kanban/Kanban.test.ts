@@ -193,6 +193,16 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
+// Click a card and wait past the single-click debounce (200ms) so the
+// slide-out detail panel opens. The debounce lets a dblclick cancel the
+// single-click open (avoiding a panel flash before the sub-editor modal).
+async function clickCard(card: HTMLElement) {
+  await fireEvent.click(card)
+  // Advance past the 200ms debounce timer.
+  await new Promise((r) => setTimeout(r, 220))
+  await tick()
+}
+
 describe('Kanban plugin (#19)', () => {
   beforeEach(() => {
     // Reset the kanban plugin settings to defaults. Column add/remove
@@ -288,6 +298,8 @@ describe('Kanban plugin (#19)', () => {
       .querySelector<HTMLElement>('[data-card]')
     expect(todoCard).toBeTruthy()
     await fireEvent.click(todoCard!)
+    await new Promise((r) => setTimeout(r, 220))
+    await tick()
 
     // The slide-out detail panel renders as a dialog with the card title.
     const dialog = screen.getByRole('dialog')
@@ -306,6 +318,8 @@ describe('Kanban plugin (#19)', () => {
       .getByRole('group', { name: 'To Do' })
       .querySelector<HTMLElement>('[data-card]')
     await fireEvent.click(todoCard!)
+    await new Promise((r) => setTimeout(r, 220))
+    await tick()
 
     const openBtn = screen.getByRole('button', { name: /open in editor/i })
     await fireEvent.click(openBtn)
@@ -690,8 +704,7 @@ describe('Kanban plugin (#19)', () => {
     const card = screen
       .getByRole('group', { name: 'To Do' })
       .querySelector<HTMLElement>('[data-card]')!
-    await fireEvent.click(card)
-    await flush()
+    await clickCard(card)
 
     const dialog = screen.getByRole('dialog')
     const pinBtn = within(dialog).getByRole('button', { name: /pin/i })
@@ -734,8 +747,7 @@ describe('Kanban plugin (#19)', () => {
     const card = screen
       .getByRole('group', { name: 'To Do' })
       .querySelector<HTMLElement>('[data-card]')!
-    await fireEvent.click(card)
-    await flush()
+    await clickCard(card)
 
     const dialog = screen.getByRole('dialog')
     const pinBtn = within(dialog).getByRole('button', { name: /pin/i })
@@ -818,8 +830,7 @@ describe('Kanban plugin (#19)', () => {
     const card = screen
       .getByRole('group', { name: 'To Do' })
       .querySelector<HTMLElement>('[data-card]')!
-    await fireEvent.click(card)
-    await flush()
+    await clickCard(card)
 
     const dialog = screen.getByRole('dialog')
     const slider = within(dialog).getByLabelText('Task progress')

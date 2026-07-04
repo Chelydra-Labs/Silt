@@ -35,25 +35,32 @@
   let errorMsg = $state('')
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-  // Resolve a uuid → display label (clean_content, falling back to uuid).
-  async function resolveLabel(id: string): Promise<string> {
+  // Resolve the whole blocked-by set to display labels in a single query
+  // (one IPC round-trip regardless of how many prerequisites the task has).
+  // Falls back to the truncated uuid for any id not present in the index.
+  async function refreshDeps() {
+    if (blockedBy.length === 0) {
+      deps = []
+      return
+    }
+    const placeholders = blockedBy.map(() => '?').join(', ')
+    let labels = new Map<string, string>()
     try {
       const { rows } = await ctx.sqliteQuery(
-        `SELECT clean_content FROM blocks WHERE id = ? LIMIT 1`,
-        [id]
+        `SELECT id, clean_content FROM blocks WHERE id IN (${placeholders})`,
+        blockedBy
       )
-      const row = rows[0] as { clean_content?: string } | undefined
-      return row?.clean_content || id.slice(0, 8)
+      for (const r of rows) {
+        const row = r as { id?: string; clean_content?: string }
+        if (row.id) labels.set(row.id, row.clean_content || row.id.slice(0, 8))
+      }
     } catch {
-      return id.slice(0, 8)
+      // Fall back to truncated uuids for all deps.
     }
-  }
-
-  async function refreshDeps() {
-    const resolved = await Promise.all(
-      blockedBy.map(async (id) => ({ id, label: await resolveLabel(id) }))
-    )
-    deps = resolved
+    deps = blockedBy.map((id) => ({
+      id,
+      label: labels.get(id) ?? id.slice(0, 8)
+    }))
   }
 
   // Seed the chip list once per task (on mount / when the card changes). The

@@ -312,6 +312,10 @@
   // detail panel so both affordances coexist on the same card.
   let subEditorCard = $state<KanbanCard | null>(null)
 
+  // Single-click is deferred by a short timer so a dblclick can cancel it,
+  // preventing the slide-out panel from flashing open before the modal opens.
+  let clickTimer: ReturnType<typeof setTimeout> | null = null
+
   // DONE-on-blocked confirm (#302): when a blocked card is dragged or keyed
   // into the DONE lane, we pause the optimistic move and ask the user. The
   // pending object carries the original move args so confirm() can resume it
@@ -1064,13 +1068,28 @@
                   ondragstart={(e) => onDragStart(e, card, col as TaskStatus)}
                   ondragend={cleanupDrag}
                   onkeydown={(e) => onCardKeydown(e, card, col as TaskStatus)}
-                  onclick={() => (selectedCard = card)}
+                  onclick={() => {
+                    // Defer the single-click open by a tick so a dblclick
+                    // can cancel it — otherwise the slide-out panel flashes
+                    // open for ~200ms before the modal yanks it away.
+                    if (clickTimer) {
+                      clearTimeout(clickTimer)
+                      clickTimer = null
+                      return
+                    }
+                    clickTimer = setTimeout(() => {
+                      selectedCard = card
+                      clickTimer = null
+                    }, 200)
+                  }}
                   ondblclick={(e) => {
                     e.stopPropagation()
-                    // Single-click fired first and opened the slide-out
-                    // detail panel; close it so only the modal is visible
-                    // while editing, otherwise the panel lingers behind the
-                    // modal and re-surfaces unexpectedly on close.
+                    if (clickTimer) {
+                      clearTimeout(clickTimer)
+                      clickTimer = null
+                    }
+                    // Close any slide-out panel the first click may have
+                    // opened so only the modal is visible while editing.
                     selectedCard = null
                     subEditorCard = card
                   }}
@@ -1172,6 +1191,7 @@
                       {#if card.is_blocked}
                         <span
                           class="text-status-warn flex items-center"
+                          role="img"
                           title="Blocked by unfinished prerequisite task(s)"
                           aria-label="Blocked by unfinished prerequisite task(s)"
                         >

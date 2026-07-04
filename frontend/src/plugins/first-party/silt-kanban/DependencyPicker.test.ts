@@ -45,20 +45,28 @@ describe('DependencyPicker (#303)', () => {
   beforeEach(() => {
     mocks.searchTasks.mockReset()
     mocks.setTaskBlockedBy.mockReset().mockResolvedValue(true)
-    // Label resolution: return a clean_content for the queried uuid.
-    mocks.sqliteQuery.mockReset().mockImplementation(async () => ({
-      rows: [{ clean_content: 'Resolved label' }],
-      truncated: false
-    }))
+    // Label resolution: refreshDeps runs a single SELECT id, clean_content
+    // FROM blocks WHERE id IN (...) for the whole blocked-by set. Echo each
+    // queried id back with a label so the chips render text.
+    mocks.sqliteQuery
+      .mockReset()
+      .mockImplementation(async (_sql: string, params?: unknown[]) => {
+        const ids = (params as string[]) ?? []
+        const rows = ids.map((id) => ({ id, clean_content: 'Resolved label' }))
+        return { rows, truncated: false }
+      })
   })
 
   afterEach(() => cleanup())
 
   it('renders existing dependencies as chips with remove buttons', async () => {
-    mocks.sqliteQuery.mockImplementation(async () => ({
-      rows: [{ clean_content: 'Prereq task' }],
-      truncated: false
-    }))
+    mocks.sqliteQuery.mockImplementation(
+      async (_sql: string, params?: unknown[]) => {
+        const ids = (params as string[]) ?? []
+        const rows = ids.map((id) => ({ id, clean_content: 'Prereq task' }))
+        return { rows, truncated: false }
+      }
+    )
     render(DependencyPicker, {
       cardId: 'task-1',
       blockedBy: ['dep-1'],
@@ -85,7 +93,7 @@ describe('DependencyPicker (#303)', () => {
 
   it('removing a dependency calls setTaskBlockedBy with the filtered list', async () => {
     mocks.sqliteQuery.mockImplementation(async () => ({
-      rows: [{ clean_content: 'Dep A' }],
+      rows: [{ id: 'dep-a', clean_content: 'Dep A' }],
       truncated: false
     }))
     render(DependencyPicker, {

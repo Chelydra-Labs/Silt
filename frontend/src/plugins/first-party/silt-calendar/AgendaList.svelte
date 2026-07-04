@@ -10,6 +10,9 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import { plusDaysISO } from '../../sdk'
+  // Reuse the Kanban's BlockedDoneDialog so the DONE-on-blocked guard is the
+  // same glassy, focus-trapped surface everywhere (#302 consistency).
+  import BlockedDoneDialog from '../silt-kanban/BlockedDoneDialog.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -40,6 +43,14 @@
   let errorMsg = $state('')
   let markDoneError = $state('')
   let markDoneTimer: ReturnType<typeof setTimeout> | null = null
+
+  // DONE-on-blocked confirm (#302): when a blocked task is marked done, pause
+  // and open the BlockedDoneDialog (the same surface the Kanban uses) listing
+  // the open prerequisites. Null = no prompt open.
+  let pendingBlockedDone = $state<{
+    item: AgendaItem
+    blockers: { id: string; clean_content?: string }[]
+  } | null>(null)
 
   async function reload() {
     loading = true
@@ -126,21 +137,28 @@
     markDoneError = ''
     if (markDoneTimer) clearTimeout(markDoneTimer)
     // DONE-on-blocked guard (#302): if the task carries open prerequisites,
-    // confirm before persisting. The native confirm() is accessible
-    // (keyboard-operable, screen-reader announced) and avoids coupling this
-    // list view to a full glassy modal per row.
-    if (item.is_blocked) {
+    // pause and open the BlockedDoneDialog (the same glassy, focus-trapped
+    // surface the Kanban uses) so the DONE guard is consistent across views.
+    if (item.is_blocked && !pendingBlockedDone) {
       const blockers = await ctx.getTaskBlockers(item.id)
       if (blockers.length > 0) {
-        const names = blockers
-          .map((b) => `“${b.clean_content ?? 'untitled'}”`)
-          .join(', ')
-        const ok = window.confirm(
-          `This task is blocked by ${blockers.length} unfinished task(s): ${names}.\n\nComplete anyway?`
-        )
-        if (!ok) return
+        pendingBlockedDone = {
+          item,
+          blockers: blockers.map((b) => ({
+            id: b.id,
+            clean_content: b.clean_content
+          }))
+        }
+        return
       }
     }
+    await persistDone(item)
+  }
+
+  // Persist the DONE transition for a task and drop it from the list on
+  // success. Shared by the unblocked path (markDone) and the confirm path
+  // (confirmBlockedDone).
+  async function persistDone(item: AgendaItem) {
     try {
       await ctx.updateBlockState(item.id, 'DONE')
       // Only remove from the list once the backend confirmed the change;
@@ -157,6 +175,19 @@
         markDoneTimer = null
       }, 8_000)
     }
+  }
+
+  // Confirm/cancel the DONE-on-blocked prompt (#302). The item is held in
+  // pendingBlockedDone; confirm persists it, cancel just closes the dialog.
+  async function confirmBlockedDone() {
+    const pending = pendingBlockedDone
+    if (!pending) return
+    pendingBlockedDone = null
+    await persistDone(pending.item)
+  }
+
+  function cancelBlockedDone() {
+    pendingBlockedDone = null
   }
 
   function openItem(item: AgendaItem) {
@@ -411,6 +442,7 @@
                   {#if item.is_blocked}
                     <span
                       class="text-status-warn flex-shrink-0"
+                      role="img"
                       title="Blocked by unfinished prerequisite task(s)"
                       aria-label="Blocked by unfinished prerequisite task(s)"
                     >
@@ -429,3 +461,12 @@
     {/if}
   </div>
 </div>
+
+{#if pendingBlockedDone}
+  <BlockedDoneDialog
+    cardText={pendingBlockedDone.item.clean_content}
+    blockers={pendingBlockedDone.blockers}
+    onConfirm={confirmBlockedDone}
+    onCancel={cancelBlockedDone}
+  />
+{/if}

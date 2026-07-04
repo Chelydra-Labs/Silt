@@ -321,9 +321,8 @@ describe('AgendaList blocked-task badge + DONE guard (#302)', () => {
     ).toBeNull()
   })
 
-  it('marking a blocked task done prompts for confirmation and aborts on cancel', async () => {
+  it('marking a blocked task done opens the confirm dialog and aborts on cancel', async () => {
     mocks.sqliteQuery.mockResolvedValue(blockedRow)
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const getTaskBlockers = vi
       .fn()
       .mockResolvedValue([{ id: 'b1', clean_content: 'Prereq task' }])
@@ -332,17 +331,20 @@ describe('AgendaList blocked-task badge + DONE guard (#302)', () => {
     await flush()
 
     await fireEvent.click(screen.getByLabelText('Mark done'))
+    // The guard awaits getTaskBlockers before opening the dialog.
+    await screen.findByRole('alertdialog', { name: 'Complete blocked task?' })
+
+    // No DONE write yet — the prompt is open.
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    // Cancel closes without persisting.
+    await fireEvent.click(screen.getByText('Cancel'))
     await flush()
 
-    // confirm was shown (with the blocker text) and the user declined.
-    expect(confirmSpy).toHaveBeenCalled()
-    expect(confirmSpy.mock.calls[0][0]).toContain('Prereq task')
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
   })
 
   it('marking a blocked task done persists when the user confirms', async () => {
     mocks.sqliteQuery.mockResolvedValue(blockedRow)
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const getTaskBlockers = vi
       .fn()
       .mockResolvedValue([{ id: 'b1', clean_content: 'Prereq task' }])
@@ -351,23 +353,25 @@ describe('AgendaList blocked-task badge + DONE guard (#302)', () => {
     await flush()
 
     await fireEvent.click(screen.getByLabelText('Mark done'))
+    await screen.findByRole('alertdialog', { name: 'Complete blocked task?' })
+
+    await fireEvent.click(screen.getByText('Complete anyway'))
     await flush()
 
-    expect(confirmSpy).toHaveBeenCalled()
     expect(mocks.updateBlockState).toHaveBeenCalledWith('a-blocked', 'DONE')
   })
 
   it('an unblocked task marks done without prompting', async () => {
     mocks.sqliteQuery.mockResolvedValue(openRow)
-    const confirmSpy = vi.spyOn(window, 'confirm')
-    const ctx = { ...makeCtx(), getTaskBlockers: vi.fn() }
+    const getTaskBlockers = vi.fn()
+    const ctx = { ...makeCtx(), getTaskBlockers }
     render(AgendaList, { ctx, manifest: MANIFEST })
     await flush()
 
     await fireEvent.click(screen.getByLabelText('Mark done'))
     await flush()
 
-    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(getTaskBlockers).not.toHaveBeenCalled()
     expect(mocks.updateBlockState).toHaveBeenCalledWith('a-open', 'DONE')
   })
 })
