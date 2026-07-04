@@ -79,21 +79,24 @@ func FormatRefs(refs []string) string {
 
 // WouldCreateCycle reports whether adding the edge from→to to the given edge
 // set would introduce a cycle. Edges map a task UUID to the UUIDs it is
-// blocked by (i.e. from→to means "from is blocked by to"). A cycle exists
-// when to can already reach from along existing edges, because the proposed
-// edge from→to would then close the loop.
+// blocked by (i.e. from→to means "from is blocked by to"). Adding from→to
+// closes a loop exactly when `to` can already reach `from` along the existing
+// edges — so this is a plain reachability query from `to` for `from`.
 //
 // Self-edges (from == to) are cycles by definition and are rejected without
-// consulting the edge set. The check is a depth-first search over the
-// "blocked-by" graph with a recursion stack; it runs in O(V+E) over the
-// reachable subgraph.
+// consulting the edge set. Runs in O(V+E) over the reachable subgraph. The
+// setter keeps the persisted graph acyclic, so a pre-existing cycle (only
+// possible via a hand-edited file) doesn't reach this check in production;
+// warnOnDependencyCycle surfaces those separately at index time.
 func WouldCreateCycle(edges map[string][]string, from, to string) bool {
 	if from == to {
 		return true
 	}
-	// A cycle exists iff `to` can reach `from` through the existing edges.
+	// Adding from→to creates a cycle iff `to` can already reach `from`.
+	// A pre-existing cycle elsewhere in the reachable subgraph is irrelevant
+	// to whether THIS edge closes a loop, so this is reachability — not
+	// general cycle detection.
 	visited := make(map[string]bool)
-	inStack := make(map[string]bool)
 	var dfs func(node string) bool
 	dfs = func(node string) bool {
 		if node == from {
@@ -103,17 +106,11 @@ func WouldCreateCycle(edges map[string][]string, from, to string) bool {
 			return false
 		}
 		visited[node] = true
-		inStack[node] = true
 		for _, next := range edges[node] {
-			if !visited[next] && dfs(next) {
-				return true
-			} else if inStack[next] {
-				// Back edge onto the current path → cycle present even
-				// without reaching `from`.
+			if dfs(next) {
 				return true
 			}
 		}
-		inStack[node] = false
 		return false
 	}
 	return dfs(to)

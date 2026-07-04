@@ -71,11 +71,12 @@
     }
     loading = true
     try {
-      const raw = await ctx.searchBlocks(q)
-      // Filter out: self and already-added deps. The search returns
-      // task-like blocks; keep only ones with an id.
+      // Task-only search: a non-task block can't be a meaningful prerequisite
+      // (OpenBlockers JOINs tasks), so filter server-side via searchTasks.
+      const raw = await ctx.searchTasks(q)
+      // Filter out self and already-added deps.
       const existing = new Set(deps.map((d) => d.id))
-      results = (raw as SearchHit[]).filter(
+      results = raw.filter(
         (r) => r.id && r.id !== cardId && !existing.has(r.id)
       )
       selectedIdx = 0

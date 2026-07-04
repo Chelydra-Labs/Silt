@@ -57,6 +57,13 @@
   let saveError = $state('')
   let saving = $state(false)
   let saveTimer: ReturnType<typeof setTimeout> | null = null
+  // Re-queue signal: when persist() is called while a save is in flight, the
+  // early-return sets this so the in-flight save re-runs once it resolves —
+  // otherwise edits made during the IPC window would be silently dropped.
+  let saveRequested = false
+  // The currently in-flight save promise, so close/teardown can await a full
+  // drain (persist → any re-queued persist) before unmounting.
+  let inFlight: Promise<void> = Promise.resolve()
 
   // Suppress the onUpdate handler during a programmatic setContent so it
   // doesn't register as user input (mirrors TipTapEditor's suppressUpdate).
@@ -161,34 +168,61 @@
 
   async function persist() {
     if (!editorInstance || editorInstance.isDestroyed) return
-    if (saving) return
+    // A save is already in flight: don't drop this edit — flag it so the
+    // in-flight save re-runs persist() once it resolves, capturing whatever
+    // the user typed during the IPC window.
+    if (saving) {
+      saveRequested = true
+      return
+    }
     const edited = docToBlocks(editorInstance.getJSON()) as ParsedBlock[]
     saving = true
-    try {
-      await ctx.saveSubtreeBlocks(blockId, edited)
-      unsavedChanges = false
-      saveError = ''
-    } catch (e) {
-      saveError = e instanceof Error ? e.message : String(e)
-    } finally {
-      saving = false
+    // Track the in-flight save so drainSave (close/teardown) can await it.
+    inFlight = (async () => {
+      try {
+        await ctx.saveSubtreeBlocks(blockId, edited)
+        unsavedChanges = false
+        saveError = ''
+      } catch (e) {
+        saveError = e instanceof Error ? e.message : String(e)
+      } finally {
+        saving = false
+        // If an edit landed while this save was in flight, re-run now so the
+        // latest document state reaches disk before any close proceeds.
+        if (saveRequested && editorInstance && !editorInstance.isDestroyed) {
+          saveRequested = false
+          void persist()
+        }
+      }
+    })()
+    await inFlight
+  }
+
+  // drainSave awaits the full save pipeline (the in-flight save plus any
+  // edit-triggered re-queue) so close/teardown can't unmount before the
+  // latest edits are persisted. Returns once no save is pending.
+  async function drainSave(): Promise<void> {
+    // Cancel any debounced save not yet fired so persist() runs immediately.
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    if (unsavedChanges) {
+      void persist()
+    }
+    await inFlight
+    // If persist re-queued itself, chase the tail until the queue drains.
+    while (saveRequested || saving) {
+      await inFlight
     }
   }
 
   // --- Close with unsaved-edits guard (#306) ---
-  function attemptClose() {
+  async function attemptClose() {
     if (unsavedChanges || saving) {
-      // Flush the pending save first, then close. A debounced edit hasn't
-      // landed yet; persisting now ensures no data loss on close.
-      if (saveTimer) {
-        clearTimeout(saveTimer)
-        saveTimer = null
-      }
-      void persist().then(() => {
-        unsavedChanges = false
-        onClose()
-      })
-      return
+      // Flush the full save pipeline before closing so no edit is dropped.
+      await drainSave()
+      unsavedChanges = false
     }
     onClose()
   }
@@ -226,9 +260,12 @@
     // template (the SettingsShell pattern) — no addEventListener here, or
     // every Esc/Tab would fire the handler twice.
     return () => {
-      if (saveTimer) clearTimeout(saveTimer)
-      // Flush any last edit before teardown so nothing is lost.
-      if (unsavedChanges) void persist()
+      // Flush any in-flight + pending save before teardown so an unmount
+      // (navigation) can't drop edits. attemptClose is the user-facing path
+      // and already drains; this is the safety net for unmount-without-close.
+      // Fire-and-forget drainSave — Svelte's cleanup can't await, but the
+      // IPC call still reaches the backend and persists.
+      void drainSave()
       previouslyFocused?.focus?.()
     }
   })

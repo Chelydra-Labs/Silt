@@ -1,5 +1,6 @@
 import type {
   PluginContext,
+  SearchHit,
   SqliteQueryResult,
   SubtreeBlock,
   TaskStatus
@@ -15,8 +16,9 @@ import {
   PluginSetTaskBlockedBy,
   GetTaskBlockers,
   FetchSubtree,
-  SaveSubtreeBlocks,
+  PluginSaveSubtreeBlocks,
   SearchBlocks,
+  SearchBlocksPaged,
   PluginCreateTask,
   GetPluginSettingsForNotebook,
   UpdatePluginSetting,
@@ -189,11 +191,16 @@ export function makePluginContext(
     // Child sub-tree fetch/splice for the Task Sub-Editor Modal (#305). The
     // bindings exchange the Wails ParsedBlock; cast to the SDK's SubtreeBlock
     // shape (a structural subset) so the modal and editor work in one type.
+    // saveSubtreeBlocks routes through the Plugin wrapper (gated by
+    // CapContentMutate); fetchSubtree/getTaskBlockers/searchBlocks are reads
+    // and stay direct (the fullTextSearch precedent).
     fetchSubtree: (blockId) => FetchSubtree(blockId) as Promise<SubtreeBlock[]>,
     saveSubtreeBlocks: (blockId, children) =>
-      SaveSubtreeBlocks(
+      PluginSaveSubtreeBlocks(
+        pluginID,
+        sessionToken ?? '',
         blockId,
-        children as unknown as Parameters<typeof SaveSubtreeBlocks>[1]
+        children as unknown as Parameters<typeof PluginSaveSubtreeBlocks>[3]
       ),
     // Create a standalone task in <vault>/.silt/tasks.md (#368). title required;
     // dueDate/status optional with TODO + no-due defaults.
@@ -270,6 +277,21 @@ export function makePluginContext(
     // dependency picker, #303) never imports wailsjs/go/main/App.js directly
     // (AGENTS.md — deprecated, breaks on per-plugin webviews #151/#152).
     searchBlocks: (query) => SearchBlocks(query),
+    // Task-only search for the dependency picker: filters server-side via
+    // SearchBlocksPaged's Type filter so a non-task block can never become a
+    // prerequisite (OpenBlockers JOINs tasks; a non-task blocker would never
+    // surface in the DONE-confirm dialog).
+    searchTasks: async (query) => {
+      const res = await SearchBlocksPaged(query, 0, 50, {
+        notebook: '',
+        section: '',
+        tag: '',
+        type: 'TASK',
+        sort: '',
+        vaultOnly: false
+      })
+      return (res.results ?? []) as unknown as SearchHit[]
+    },
 
     // --- Block CRUD (#104) — gated by content-mutate (#156) -----------------
     // Same atomic-write path as mutateBlock.

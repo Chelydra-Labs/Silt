@@ -165,6 +165,16 @@ func TestWouldCreateCycle(t *testing.T) {
 			from:  a, to: d,                                       // A->D short-circuit, no loop
 			want: false,
 		},
+		{
+			// A pre-existing cycle B<->C that does NOT include `from` (A).
+			// Adding A->C must be ALLOWED: the new edge can't close a loop
+			// because nothing reaches A. This guards against over-reporting
+			// (a back-edge-only check would wrongly reject this).
+			name:  "pre-existing unrelated cycle does not block the edge",
+			edges: map[string][]string{b: {c}, c: {b}},
+			from:  a, to: c,
+			want: false,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

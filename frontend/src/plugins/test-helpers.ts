@@ -18,6 +18,7 @@ export const v2CtxStubs: Pick<
   | 'getBacklinks'
   | 'getEmbeds'
   | 'searchBlocks'
+  | 'searchTasks'
   | 'createBlock'
   | 'createTask'
   | 'setTaskDueDate'
@@ -68,6 +69,7 @@ export const v2CtxStubs: Pick<
   getBacklinks: () => Promise.resolve(emptyResult),
   getEmbeds: () => Promise.resolve(emptyResult),
   searchBlocks: () => Promise.resolve([]),
+  searchTasks: () => Promise.resolve([]),
   createBlock: () => Promise.resolve(''),
   createTask: () => Promise.resolve(''),
   setTaskDueDate: () => Promise.resolve(true),

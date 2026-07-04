@@ -9,6 +9,7 @@ import (
 
 	"silt/backend/db"
 	"silt/backend/parser"
+	"silt/backend/plugins"
 )
 
 // FetchSubtree returns a task block's child sub-tree — the contiguous run of
@@ -93,8 +94,30 @@ func extractSubtree(blocks []parser.ParsedBlock, parentID string) []parser.Parse
 	return subtree
 }
 
-// SaveSubtreeBlocks splices an edited child sub-tree back into the parent
-// task's block (#305). It re-parses the whole file, replaces the contiguous
+// SaveSubtreeBlocks is the app-level entry point for the sub-editor splice
+// (#305). First-party callers (the editor host) use this directly; plugins go
+// through the PluginSaveSubtreeBlocks wrapper, which gates on
+// CapContentMutate (SPECS §8.3 — plugins never call App methods directly).
+func (a *App) SaveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (bool, error) {
+	return a.saveSubtreeBlocks(blockID, children)
+}
+
+// PluginSaveSubtreeBlocks is the plugin-SDK wrapper for SaveSubtreeBlocks,
+// gated by the standard capability + session checks. Mirrors
+// PluginSetTaskBlockedBy — a third-party plugin without the CapContentMutate
+// grant must not be able to splice arbitrary blocks into a task's sub-tree.
+func (a *App) PluginSaveSubtreeBlocks(pluginID, sessionToken, blockID string, children []parser.ParsedBlock) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
+	return a.saveSubtreeBlocks(blockID, children)
+}
+
+// saveSubtreeBlocks is the shared core for the app-level and plugin-level entry
+// points. It re-parses the whole file, replaces the contiguous
 // child range (depth > parent depth) with the incoming children, then runs the
 // canonical write chain: RenderFileContent → WriteFileAtomic → re-parse →
 // IndexFileBlocks → emit block:changed. The parent task and all surrounding
@@ -102,7 +125,7 @@ func extractSubtree(blocks []parser.ParsedBlock, parentID string) []parser.Parse
 // because RenderFileContent re-serializes the full slice. Holds both
 // LockBlockWrite(parentID) and LockFileWrite(filePath) so the splice is atomic
 // and races no concurrent writer. Returns true when a write occurred.
-func (a *App) SaveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (bool, error) {
+func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (bool, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {

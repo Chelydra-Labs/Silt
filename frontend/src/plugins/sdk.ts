@@ -281,6 +281,14 @@ export interface PluginContext {
    * directly (AGENTS.md — deprecated, breaks on per-plugin webviews #151/#152).
    */
   searchBlocks: (query: string) => Promise<SearchHit[]>
+  /**
+   * FTS5 search constrained to TASK blocks (#303). The dependency picker uses
+   * this so a non-task (note/header/code) can never be added as a
+   * `[blocked_by::]` prerequisite — OpenBlockers JOINs tasks, so a non-task
+   * blocker would silently never appear in the DONE-confirm dialog and could
+   * never be cleared, leaving the dependent permanently "blocked".
+   */
+  searchTasks: (query: string) => Promise<SearchHit[]>
 
   /**
    * Block CRUD (#104). These reuse the same atomic-write + re-index path as

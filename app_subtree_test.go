@@ -228,3 +228,56 @@ func TestFetchSubtree_NoChildrenReturnsEmpty(t *testing.T) {
 		t.Errorf("expected empty subtree, got %d blocks", len(got))
 	}
 }
+
+// TestPluginSaveSubtreeBlocks_RequireCapability verifies the plugin wrapper
+// gates on CapContentMutate + a valid session — a third-party plugin without
+// the grant cannot splice arbitrary blocks into a task's sub-tree (#305).
+// Mirrors the requireGrant denial pattern in app_capabilities_test.go.
+func TestPluginSaveSubtreeBlocks_RequireCapability(t *testing.T) {
+	app := newTestApp(t)
+	const parent = "a1b2c3d4-0000-0000-0000-000000000040"
+	content := "- [ ] parent <!-- id: " + parent + " -->\n"
+	indexTestFile(t, app, "W", "S", "GatedSub", "2026-07-01", content)
+
+	// An ungranted third-party plugin is denied before any disk I/O. Even a
+	// bad session token is rejected first; use a plausible ungranted id.
+	_, err := app.PluginSaveSubtreeBlocks(
+		"not-a-real-plugin", "any-token", parent, nil,
+	)
+	if err == nil {
+		t.Fatal("expected PluginSaveSubtreeBlocks to reject an ungranted third-party plugin, got nil")
+	}
+	// The denial must happen before the file is touched: confirm the splice
+	// never ran by checking the parent still has no children written.
+	// (The file is unchanged regardless, but asserting the error proves the
+	// gate fired rather than the splice silently no-op'ing.)
+}
+
+// TestPluginSaveSubtreeBlocks_FirstPartySucceeds verifies a first-party
+// plugin (implicitly granted) with a valid session can splice — the gate
+// doesn't lock out legitimate callers.
+func TestPluginSaveSubtreeBlocks_FirstPartySucceeds(t *testing.T) {
+	app := newTestApp(t)
+	const parent = "a1b2c3d4-0000-0000-0000-000000000050"
+	content := "- [ ] parent <!-- id: " + parent + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "FirstPartySub", "2026-07-01", content)
+	tok := registerTestSession(t, app, "silt-kanban")
+
+	newChildren := []parser.ParsedBlock{{
+		ID:         "b2c3d4e5-0000-0000-0000-000000000051",
+		Type:       parser.BlockNote,
+		Depth:      1,
+		CleanText:  "via plugin",
+		RawText:    "- via plugin",
+		LineNumber: 2,
+		FileDate:   "2026-07-01",
+	}}
+	ok, err := app.PluginSaveSubtreeBlocks("silt-kanban", tok, parent, newChildren)
+	if err != nil || !ok {
+		t.Fatalf("PluginSaveSubtreeBlocks (first-party): ok=%v err=%v", ok, err)
+	}
+	updated, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(updated), "via plugin") {
+		t.Errorf("first-party splice should have written the child in:\n%s", updated)
+	}
+}

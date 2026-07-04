@@ -239,18 +239,22 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		})
 		// Look up each dependent's location once so the event carries the
 		// breadcrumb the frontend expects. A missing location (block deleted
-		// between the write and this lookup) is silently skipped — the next
-		// re-index reconciles.
+		// between the write and this lookup, or a stale FK) is skipped —
+		// broadcasting with an empty breadcrumb would hand the frontend a
+		// malformed event it can't route, so wait for the next re-index to
+		// reconcile.
 		for _, depID := range dependents {
 			if depID == blockID {
 				continue
 			}
 			var depLoc db.BlockLocation
-			a.coordinator.WithDBReadResult(func() error {
+			if err := a.coordinator.WithDBReadResult(func() error {
 				var e error
 				depLoc, e = a.db.GetBlockLocation(depID)
 				return e
-			})
+			}); err != nil || depLoc.Notebook == "" {
+				continue
+			}
 			a.emitBlockChanged(depID, sanitizePathSegment(depLoc.Notebook), sanitizePathSegment(depLoc.Section), sanitizePathSegment(depLoc.Page), "")
 		}
 	}

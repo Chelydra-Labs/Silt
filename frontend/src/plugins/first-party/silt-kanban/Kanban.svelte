@@ -1064,6 +1064,11 @@
                   onclick={() => (selectedCard = card)}
                   ondblclick={(e) => {
                     e.stopPropagation()
+                    // Single-click fired first and opened the slide-out
+                    // detail panel; close it so only the modal is visible
+                    // while editing, otherwise the panel lingers behind the
+                    // modal and re-surfaces unexpectedly on close.
+                    selectedCard = null
                     subEditorCard = card
                   }}
                 >
