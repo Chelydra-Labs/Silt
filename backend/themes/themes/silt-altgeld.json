@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0.0",
+  "id": "silt-altgeld",
+  "name": "Altgeld",
+  "author": "Chelydra Labs",
+  "description": "Prairie-fire energy: dark navy canvas with a bright orange primary and electric blue secondary. The blaze of a prairie fire at dusk over the central Illinois tallgrass.",
+  "typography": {
+    "font_family": "'Public Sans', sans-serif",
+    "mono_font_family": "'Martian Mono', monospace",
+    "headline_font": "'Schibsted Grotesk', sans-serif"
+  },
+  "modes": {
+    "dark": {
+      "bg": {
+        "void": "#0a0e1a",
+        "surface": "#0f1626",
+        "panel": "#141d30",
+        "hover": "#1a2438",
+        "active": "#222d44"
+      },
+      "border": {
+        "muted": "#1a2438",
+        "zinc": "#222d44",
+        "active": "#34455e",
+        "focus": "#4a6080"
+      },
+      "text": {
+        "primary": "#e6ecf5",
+        "muted": "#8a9ab0",
+        "disabled": "#4a5a70"
+      },
+      "accent": {
+        "primary": {
+          "start": "#ff6b1a",
+          "end": "#e04600",
+          "glow": "rgba(255,95,5,0.15)"
+        },
+        "secondary": {
+          "start": "#4a78d4",
+          "end": "#1a3677",
+          "glow": "rgba(74,120,212,0.12)"
+        }
+      },
+      "status": {
+        "warn": "#fbbf24",
+        "danger": "#f43f5e",
+        "success": "#22c55e"
+      }
+    },
+    "light": {
+      "bg": {
+        "void": "#f0f4fa",
+        "surface": "#ffffff",
+        "panel": "#e8eef5",
+        "hover": "#dde6f0",
+        "active": "#c8d6e6"
+      },
+      "border": {
+        "muted": "#dde6f0",
+        "zinc": "#c8d6e6",
+        "active": "#94a8c0",
+        "focus": "#5a7090"
+      },
+      "text": {
+        "primary": "#0d1810",
+        "muted": "#3a4a60",
+        "disabled": "#8a9aae"
+      },
+      "accent": {
+        "primary": {
+          "start": "#d4400a",
+          "end": "#a33000",
+          "glow": "rgba(212,64,10,0.10)"
+        },
+        "secondary": {
+          "start": "#1a3677",
+          "end": "#0d1f4d",
+          "glow": "rgba(26,54,119,0.08)"
+        }
+      },
+      "status": {
+        "warn": "#9a6e1a",
+        "danger": "#b3000c",
+        "success": "#16a34a"
+      }
+    }
+  }
+}

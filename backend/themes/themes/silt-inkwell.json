@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0.0",
+  "id": "silt-inkwell",
+  "name": "Inkwell",
+  "author": "Chelydra Labs",
+  "description": "Dark chrome with a warm off-white page: the readability-exception theme. A rich charcoal-navy app skeleton frames a warm paper-like editor surface in light mode.",
+  "typography": {
+    "font_family": "'Inter', sans-serif",
+    "mono_font_family": "'JetBrains Mono', monospace",
+    "headline_font": "'Hanken Grotesk', sans-serif"
+  },
+  "modes": {
+    "dark": {
+      "bg": {
+        "void": "#0c0e14",
+        "surface": "#12151e",
+        "panel": "#161a25",
+        "hover": "#1c2130",
+        "active": "#242a3c"
+      },
+      "border": {
+        "muted": "#1a1f2e",
+        "zinc": "#242a3c",
+        "active": "#384255",
+        "focus": "#506080"
+      },
+      "text": {
+        "primary": "#eaeef5",
+        "muted": "#94a3b8",
+        "disabled": "#475569"
+      },
+      "accent": {
+        "primary": {
+          "start": "#f59e0b",
+          "end": "#d97706",
+          "glow": "rgba(245,158,11,0.12)"
+        },
+        "secondary": {
+          "start": "#818cf8",
+          "end": "#6366f1",
+          "glow": "rgba(129,140,248,0.10)"
+        }
+      },
+      "status": {
+        "warn": "#fbbf24",
+        "danger": "#f43f5e",
+        "success": "#22c55e"
+      }
+    },
+    "light": {
+      "bg": {
+        "void": "#faf8f5",
+        "surface": "#ffffff",
+        "panel": "#f5f1ec",
+        "hover": "#ece6de",
+        "active": "#ddd6ca"
+      },
+      "border": {
+        "muted": "#ece6de",
+        "zinc": "#ddd6ca",
+        "active": "#b8aa94",
+        "focus": "#8a7860"
+      },
+      "text": {
+        "primary": "#1c1917",
+        "muted": "#57534e",
+        "disabled": "#a8a29e"
+      },
+      "accent": {
+        "primary": {
+          "start": "#c2710b",
+          "end": "#92400e",
+          "glow": "rgba(194,113,11,0.12)"
+        },
+        "secondary": {
+          "start": "#4338ca",
+          "end": "#3730a3",
+          "glow": "rgba(67,56,202,0.10)"
+        }
+      },
+      "status": {
+        "warn": "#b45309",
+        "danger": "#be123c",
+        "success": "#16a34a"
+      },
+      "chrome": {
+        "bg": {
+          "void": "#0f172a",
+          "surface": "#16213a",
+          "panel": "#1e293b",
+          "hover": "#283548",
+          "active": "#334155"
+        },
+        "border": {
+          "muted": "#1e293b",
+          "zinc": "#334155",
+          "active": "#475569",
+          "focus": "#64748b"
+        },
+        "text": {
+          "primary": "#eaeef5",
+          "muted": "#a8b8cc",
+          "disabled": "#64748b"
+        }
+      }
+    }
+  }
+}

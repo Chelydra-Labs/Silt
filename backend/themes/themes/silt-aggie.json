@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0.0",
+  "id": "silt-aggie",
+  "name": "Aggie",
+  "author": "Chelydra Labs",
+  "description": "Alpine and agricultural: deep pine-green canvas with warm gold accents. The palette of Colorado's Front Range pine forests and golden aspen groves.",
+  "typography": {
+    "font_family": "'Work Sans', sans-serif",
+    "mono_font_family": "'IBM Plex Mono', monospace",
+    "headline_font": "'Manrope', sans-serif"
+  },
+  "modes": {
+    "dark": {
+      "bg": {
+        "void": "#0a1410",
+        "surface": "#0f1c16",
+        "panel": "#142119",
+        "hover": "#1b2a20",
+        "active": "#233428"
+      },
+      "border": {
+        "muted": "#1a2720",
+        "zinc": "#243428",
+        "active": "#384e38",
+        "focus": "#527856"
+      },
+      "text": {
+        "primary": "#e8efe9",
+        "muted": "#9ab098",
+        "disabled": "#3a5a3e"
+      },
+      "accent": {
+        "primary": {
+          "start": "#d4a84a",
+          "end": "#a67c1a",
+          "glow": "rgba(212,168,74,0.15)"
+        },
+        "secondary": {
+          "start": "#5a9d4a",
+          "end": "#2d7a3e",
+          "glow": "rgba(90,157,74,0.12)"
+        }
+      },
+      "status": {
+        "warn": "#f0a823",
+        "danger": "#d83a3a",
+        "success": "#22c55e"
+      }
+    },
+    "light": {
+      "bg": {
+        "void": "#f0f5f0",
+        "surface": "#ffffff",
+        "panel": "#e8efe8",
+        "hover": "#d8e4d8",
+        "active": "#c4d4c4"
+      },
+      "border": {
+        "muted": "#d8e4d8",
+        "zinc": "#c4d4c4",
+        "active": "#8aaa8a",
+        "focus": "#5a7a5a"
+      },
+      "text": {
+        "primary": "#0d2818",
+        "muted": "#3a5a3e",
+        "disabled": "#8aaa8a"
+      },
+      "accent": {
+        "primary": {
+          "start": "#8b6914",
+          "end": "#5f4a0a",
+          "glow": "rgba(139,105,20,0.10)"
+        },
+        "secondary": {
+          "start": "#1a5c2e",
+          "end": "#0d3d1a",
+          "glow": "rgba(26,92,46,0.08)"
+        }
+      },
+      "status": {
+        "warn": "#b8791a",
+        "danger": "#bd3434",
+        "success": "#16a34a"
+      }
+    }
+  }
+}

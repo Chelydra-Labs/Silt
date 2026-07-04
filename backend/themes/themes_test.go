@@ -307,11 +307,17 @@ func TestBGVoid(t *testing.T) {
 // theme is caught (the picker's first-party set is an intentional product
 // decision, not a side effect of the embed).
 var firstClassIDs = map[string]bool{
-	DefaultThemeID:    true,
-	"silt-terra-noir": true,
-	"silt-linen":      true,
-	"silt-stark":      true,
-	"silt-graphite":   true,
+	DefaultThemeID:     true,
+	"silt-terra-noir":  true,
+	"silt-linen":       true,
+	"silt-stark":       true,
+	"silt-graphite":    true,
+	"silt-bubblegum":   true,
+	"silt-frost":       true,
+	"silt-synthwave":   true,
+	"silt-inkwell":     true,
+	"silt-aggie":       true,
+	"silt-altgeld":     true,
 }
 
 // assertEmbeddedSet asserts that res contains exactly the embedded

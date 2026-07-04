@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0.0",
+  "id": "silt-frost",
+  "name": "Frost",
+  "author": "Chelydra Labs",
+  "description": "Clean and airy: a crisp blue-tinted palette that feels like a winter morning. Cool steel-blue dark mode, brilliant ice-white light mode with sky-blue accents.",
+  "typography": {
+    "font_family": "'DM Sans', sans-serif",
+    "mono_font_family": "'Geist Mono', monospace",
+    "headline_font": "'Lexend', sans-serif"
+  },
+  "modes": {
+    "dark": {
+      "bg": {
+        "void": "#0a0e14",
+        "surface": "#101620",
+        "panel": "#161e2a",
+        "hover": "#1d2838",
+        "active": "#263348"
+      },
+      "border": {
+        "muted": "#1a2433",
+        "zinc": "#263348",
+        "active": "#3a4d68",
+        "focus": "#5a7390"
+      },
+      "text": {
+        "primary": "#e2eaf2",
+        "muted": "#94a4b8",
+        "disabled": "#4a5a6e"
+      },
+      "accent": {
+        "primary": {
+          "start": "#38bdf8",
+          "end": "#0ea5e9",
+          "glow": "rgba(56,189,248,0.12)"
+        },
+        "secondary": {
+          "start": "#818cf8",
+          "end": "#6366f1",
+          "glow": "rgba(129,140,248,0.10)"
+        }
+      },
+      "status": {
+        "warn": "#fbbf24",
+        "danger": "#f43f5e",
+        "success": "#22c55e"
+      }
+    },
+    "light": {
+      "bg": {
+        "void": "#f0f4fa",
+        "surface": "#ffffff",
+        "panel": "#e8eef6",
+        "hover": "#dde6f0",
+        "active": "#c8d6e6"
+      },
+      "border": {
+        "muted": "#dde6f0",
+        "zinc": "#c8d6e6",
+        "active": "#94a8c0",
+        "focus": "#5a7090"
+      },
+      "text": {
+        "primary": "#061020",
+        "muted": "#3a4a60",
+        "disabled": "#8a9aae"
+      },
+      "accent": {
+        "primary": {
+          "start": "#0284c7",
+          "end": "#0369a1",
+          "glow": "rgba(2,132,199,0.10)"
+        },
+        "secondary": {
+          "start": "#4f46e5",
+          "end": "#3730a3",
+          "glow": "rgba(79,70,229,0.08)"
+        }
+      },
+      "status": {
+        "warn": "#d97706",
+        "danger": "#e11d48",
+        "success": "#16a34a"
+      }
+    }
+  }
+}
