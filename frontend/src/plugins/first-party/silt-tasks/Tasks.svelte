@@ -277,27 +277,27 @@
     <span class="material-symbols-outlined text-accent-primary-start"
       >checklist</span
     >
-    <h1 class="font-headline-lg text-headline-lg text-text-primary">
+    <h1
+      class="font-headline-lg text-headline-lg text-text-primary flex items-baseline gap-2"
+    >
       {manifest?.name ?? 'Tasks'}
-    </h1>
-    <div class="ml-auto flex flex-col items-end gap-0.5">
-      <button
-        type="button"
-        onclick={() => (showQuickAdd = true)}
-        aria-label="New task"
-        data-testid="tasks-new-task-btn"
-        class="flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
-      >
-        <span class="material-symbols-outlined text-[16px]">add</span>New task
-      </button>
       <span
-        class="text-text-muted text-[12px] font-body-md"
+        class="text-text-muted text-[12px] font-body-md normal-case font-normal ml-2"
         aria-live="polite"
         data-testid="tasks-open-count"
       >
         {openItems.length} active task{openItems.length === 1 ? '' : 's'}
       </span>
-    </div>
+    </h1>
+    <button
+      type="button"
+      onclick={() => (showQuickAdd = true)}
+      aria-label="New task"
+      data-testid="tasks-new-task-btn"
+      class="ml-auto flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
+    >
+      <span class="material-symbols-outlined text-[16px]">add</span>New task
+    </button>
   </header>
 
   {#if showQuickAdd}

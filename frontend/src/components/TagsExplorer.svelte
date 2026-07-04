@@ -49,27 +49,30 @@
 </script>
 
 <div class="flex-1 flex flex-col min-h-0 bg-void">
-  <div class="px-6 py-3 border-b border-border-muted flex items-center gap-2">
-    {#if activeTag}
-      <span class="material-symbols-outlined text-accent-secondary-start"
-        >label</span
-      >
-      <span class="text-accent-secondary-start font-label-sm-bold"
-        >#{activeTag}</span
-      >
-      <span class="text-text-muted text-[12px]"
-        >· {results.length} block{results.length === 1 ? '' : 's'}</span
-      >
-    {:else}
-      <span class="text-text-muted font-body-md"
-        >Select a tag in the sidebar to see its blocks.</span
-      >
-    {/if}
-  </div>
+  <header
+    class="px-6 py-4 border-b border-border-muted flex items-center gap-3"
+  >
+    <span class="material-symbols-outlined text-accent-primary-start"
+      >label</span
+    >
+    <h1
+      class="font-headline-lg text-headline-lg text-text-primary flex items-baseline gap-2"
+    >
+      Tags
+      {#if activeTag}
+        <span
+          class="text-text-muted text-[12px] font-body-md normal-case font-normal ml-2"
+          data-testid="tags-count"
+        >
+          #{activeTag} · {results.length} block{results.length === 1 ? '' : 's'}
+        </span>
+      {/if}
+    </h1>
+  </header>
   <div class="flex-1 overflow-y-auto custom-scrollbar">
     {#if !activeTag}
       <div class="text-text-muted text-center py-16 font-body-md">
-        Pick a tag in the sidebar.
+        Select a tag in the sidebar to see its blocks.
       </div>
     {:else}
       {#if loadingResults}
