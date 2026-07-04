@@ -235,4 +235,78 @@ describe('DependencyPicker (#303)', () => {
       await screen.findByText(/Cannot add: would create a circular dependency/)
     ).toBeInTheDocument()
   })
+
+  it('portals the results listbox out of the scroll container so it is not clipped (#376)', async () => {
+    mocks.searchTasks.mockResolvedValue([
+      {
+        id: 'dep-portaled',
+        clean_content: 'Portaled result',
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily'
+      }
+    ])
+    const { container } = render(DependencyPicker, {
+      cardId: 'task-1',
+      blockedBy: [],
+      ctx: makeCtx()
+    })
+    await flush()
+
+    const input = screen.getByLabelText(
+      'Search tasks to add as dependencies'
+    ) as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'port' } })
+    // The search is debounced (180ms); flush past the timer.
+    await new Promise((r) => setTimeout(r, 220))
+    await flush()
+
+    // The option renders into document.body via the shared <Popover> portal —
+    // NOT inside the picker's container, so it escapes CardDetailPanel's
+    // overflow-y-auto clip. Mirrors the recurrence dropdown's escape test.
+    const option = await screen.findByRole('option', {
+      name: /Portaled result/
+    })
+    expect(document.body.contains(option)).toBe(true)
+    expect(container.contains(option)).toBe(false)
+  })
+
+  it('restores focus to the search input after adding a dependency (a11y)', async () => {
+    mocks.searchTasks.mockResolvedValue([
+      {
+        id: 'dep-focus',
+        clean_content: 'Focus result',
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily'
+      }
+    ])
+    render(DependencyPicker, {
+      cardId: 'task-1',
+      blockedBy: [],
+      ctx: makeCtx()
+    })
+    await flush()
+
+    const input = screen.getByLabelText(
+      'Search tasks to add as dependencies'
+    ) as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'foc' } })
+    await new Promise((r) => setTimeout(r, 220))
+    await flush()
+
+    // Realistic interaction: the result button receives focus (mouse or
+    // keyboard activation), then is clicked. addDep clears `results`
+    // synchronously, which unmounts that focused button — without the
+    // restore-to-input, focus would strand on document.body.
+    const option = screen.getByRole('option', { name: /Focus result/ })
+    const optionButton = option.querySelector('button') as HTMLButtonElement
+    optionButton.focus()
+    await fireEvent.click(optionButton)
+    await flush()
+
+    expect(mocks.setTaskBlockedBy).toHaveBeenCalledWith('task-1', ['dep-focus'])
+    // Focus came back to the input, not document.body.
+    expect(document.activeElement).toBe(input)
+  })
 })

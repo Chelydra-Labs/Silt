@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PluginContext, SearchHit } from '../../sdk'
+  import Popover from '../../../components/Popover.svelte'
 
   /**
    * Dependency picker for the CardDetailPanel (#303). Lists a task's current
@@ -29,6 +30,9 @@
 
   let query = $state('')
   let results = $state<SearchHit[]>([])
+  // Anchor for the results <Popover>; the search input binds this so the
+  // floating listbox can be portaled out of CardDetailPanel's scroll container.
+  let depInput = $state<HTMLInputElement | null>(null)
   let selectedIdx = $state(0)
   let loading = $state(false)
   let pending = $state(false)
@@ -134,6 +138,9 @@
             : String(e)
     } finally {
       pending = false
+      // Clearing results unmounts the focused result button; restore focus to
+      // the input so keyboard/SR users can keep adding deps without re-tabbing.
+      depInput?.focus()
     }
   }
 
@@ -210,8 +217,9 @@
   {/if}
 
   <!-- Typeahead search input -->
-  <div class="relative">
+  <div>
     <input
+      bind:this={depInput}
       type="text"
       bind:value={query}
       oninput={onInput}
@@ -227,12 +235,22 @@
         : undefined}
       class="w-full px-2 py-1.5 rounded border border-border-muted bg-surface text-[12px] font-body-md text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-primary-start"
     />
-    {#if results.length > 0}
+  </div>
+  <Popover
+    open={results.length > 0}
+    onClose={() => {
+      results = []
+    }}
+    anchor={depInput}
+    matchWidth
+    class="rounded border border-border-active bg-panel shadow-2xl"
+  >
+    {#snippet content()}
       <ul
         id="dep-search-results"
         role="listbox"
         aria-label="Matching tasks"
-        class="absolute z-10 left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded border border-border-active bg-panel shadow-2xl"
+        class="max-h-48 overflow-y-auto"
       >
         {#each results as res, idx (res.id)}
           <li
@@ -260,8 +278,8 @@
           </li>
         {/each}
       </ul>
-    {/if}
-  </div>
+    {/snippet}
+  </Popover>
 
   <!-- Cycle / error region, announced to assistive tech -->
   {#if errorMsg}

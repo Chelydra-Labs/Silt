@@ -11,6 +11,7 @@
     setAutoCheck
   } from '../../updates/store.svelte'
   import { settings, toggleDevMode } from '../../settings/store.svelte'
+  import { stripMarkdown } from '../../lib/markdownToPlainText'
 
   let version = $state('…')
 
@@ -34,12 +35,15 @@
   // notes. GitHub release notes typically open with section headers (## New,
   // ## Fixes, …) which carry no signal in a raw-text preview, so heading-only
   // lines are filtered out first; if the whole excerpt is headings, fall back
-  // to the leading lines so the panel is never empty.
+  // to the leading lines so the panel is never empty. The remaining lines are
+  // stripped of inline markdown syntax (#378) so `**`/`[]()`/`` ` `` noise
+  // doesn't leak into the preview — the "View full notes" link opens the
+  // fully-rendered page, so this stays a plain-text render (tier-1 fix).
   function notesExcerpt(notes: string): string {
     const lines = notes.split('\n').filter((l) => l.trim())
     const content = lines.filter((l) => !/^\s{0,3}#{1,6}\s/.test(l))
     const picked = content.length > 0 ? content : lines
-    return picked.slice(0, 6).join('\n')
+    return stripMarkdown(picked.slice(0, 6).join('\n'))
   }
 
   async function onCheck() {
