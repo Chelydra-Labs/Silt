@@ -252,6 +252,65 @@ describe('Sidebar', () => {
     void tagSearch
   })
 
+  it("activeView='tasks' renders the TaskSidebarPanel and hides the notes tree (#380)", async () => {
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'tasks',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    // TaskSidebarPanel renders its own header + helper; the notebook selector
+    // ("Active Notebook") is the unambiguous page-tree marker and must be
+    // absent — the notes nav tree is suppressed in the Tasks view.
+    expect(screen.getByText('Tasks')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Your tasks live in the Tasks view/i)
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Active Notebook')).toBeNull()
+  })
+
+  it('switching activeView notes→tasks→notes mounts and unmounts the TaskSidebarPanel', async () => {
+    const baseProps = {
+      activeNotebook: 'Work',
+      activeSection: '',
+      activePage: '',
+      collapsed: false,
+      onSelectNotebook: () => {},
+      onSelectSection: () => {},
+      onSelectPage: () => {},
+      onPinPage: () => {},
+      onSelectView: () => {}
+    }
+    const { rerender } = render(Sidebar, {
+      props: { ...baseProps, activeView: 'notes' }
+    })
+    await flush()
+    // Notes view shows the page tree.
+    expect(screen.getByText('Active Notebook')).toBeInTheDocument()
+    expect(screen.queryByText('Tasks')).toBeNull()
+
+    await rerender({ ...baseProps, activeView: 'tasks' })
+    await flush()
+    // Tasks view swaps in the panel and drops the tree.
+    expect(screen.getByText('Tasks')).toBeInTheDocument()
+    expect(screen.queryByText('Active Notebook')).toBeNull()
+
+    await rerender({ ...baseProps, activeView: 'notes' })
+    await flush()
+    // Back to notes — the tree is restored and the panel is gone.
+    expect(screen.getByText('Active Notebook')).toBeInTheDocument()
+    expect(screen.queryByText('Tasks')).toBeNull()
+  })
+
   it("activeView='kanban' with no sidebarComponent → page tree fallback (#321)", async () => {
     // Plugin registered (kanban is bundled) but its sidebarComponent is
     // intentionally absent in this test (mimics the pre-#321 state).
