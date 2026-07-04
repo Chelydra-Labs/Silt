@@ -1,9 +1,9 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "silt-synthwave",
   "name": "Synthwave",
   "author": "Chelydra Labs",
-  "description": "80s retro neon: deep indigo canvas with hot-pink and electric-cyan accents. Think Miami Vice, Tron, and synthwave album covers. A faded pastel light mode evokes a sun-bleached poster.",
+  "description": "80s retro neon: deep indigo canvas with hot-pink and electric-cyan accents. Think Miami Vice, Tron, and synthwave album covers. A faded pastel light mode evokes a sun-bleach poster.",
   "typography": {
     "font_family": "'Figtree', sans-serif",
     "mono_font_family": "'Space Mono', monospace",
@@ -11,24 +11,18 @@
   },
   "modes": {
     "dark": {
-      "bg": {
-        "void": "#0d0b1a",
-        "surface": "#141126",
-        "panel": "#1a1830",
-        "hover": "#221f3a",
-        "active": "#2a2745"
+      "surfaces": {
+        "app": { "bg": "#0d0b1a", "border": "#1f1c35", "text": "#e8e6f0" },
+        "panel": { "bg": "#141126", "border": "#2a2745", "text": "#e8e6f0" },
+        "modal": { "bg": "#141126", "border": "#3f3a5e", "text": "#e8e6f0" },
+        "card": { "bg": "#1a1830", "border": "#2a2745", "text": "#e8e6f0" }
       },
-      "border": {
-        "muted": "#1f1c35",
-        "zinc": "#2a2745",
-        "active": "#3f3a5e",
-        "focus": "#5a5280"
-      },
-      "text": {
-        "primary": "#e8e6f0",
-        "muted": "#9a96b0",
-        "disabled": "#4a4660"
-      },
+      "hover": "#221f3a",
+      "active": "#2a2745",
+      "border_active": "#3f3a5e",
+      "border_focus": "#5a5280",
+      "text_muted": "#9a96b0",
+      "text_disabled": "#4a4660",
       "accent": {
         "primary": {
           "start": "#ff2d95",
@@ -45,27 +39,26 @@
         "warn": "#fbbf24",
         "danger": "#f43f5e",
         "success": "#22c55e"
+      },
+      "error": {
+        "fg": "#f43f5e",
+        "bg": "#141126",
+        "border": "#3f3a5e"
       }
     },
     "light": {
-      "bg": {
-        "void": "#f0eef5",
-        "surface": "#ffffff",
-        "panel": "#ebe6f0",
-        "hover": "#ddd6e8",
-        "active": "#cabed8"
+      "surfaces": {
+        "app": { "bg": "#f0eef5", "border": "#ddd6e8", "text": "#1c1c34" },
+        "panel": { "bg": "#ffffff", "border": "#cabed8", "text": "#1c1c34" },
+        "modal": { "bg": "#ffffff", "border": "#a896b8", "text": "#1c1c34" },
+        "card": { "bg": "#ebe6f0", "border": "#cabed8", "text": "#1c1c34" }
       },
-      "border": {
-        "muted": "#ddd6e8",
-        "zinc": "#cabed8",
-        "active": "#a896b8",
-        "focus": "#7868a0"
-      },
-      "text": {
-        "primary": "#1c1c34",
-        "muted": "#4a4a68",
-        "disabled": "#9890a8"
-      },
+      "hover": "#ddd6e8",
+      "active": "#cabed8",
+      "border_active": "#a896b8",
+      "border_focus": "#7868a0",
+      "text_muted": "#4a4a68",
+      "text_disabled": "#9890a8",
       "accent": {
         "primary": {
           "start": "#c2185b",
@@ -82,6 +75,11 @@
         "warn": "#d97706",
         "danger": "#be123c",
         "success": "#16a34a"
+      },
+      "error": {
+        "fg": "#be123c",
+        "bg": "#ffffff",
+        "border": "#a896b8"
       }
     }
   }

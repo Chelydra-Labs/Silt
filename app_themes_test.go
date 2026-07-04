@@ -23,31 +23,43 @@ func configDirOverride(t *testing.T) {
 // validCustomThemeJSON is a second valid theme (id "terra-test") used to
 // exercise multi-theme enumeration and switching.
 const validCustomThemeJSON = `{
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "terra-test",
   "name": "Terra Test",
   "author": "Tester",
   "description": "a second theme",
   "modes": {
     "dark": {
-      "bg": {"void":"#1a0f0a","surface":"#2a1a12","panel":"#33221a","hover":"#3d2a20","active":"#4a3328"},
-      "border": {"muted":"#2a1a12","zinc":"#3d2a20","active":"#5a3d30","focus":"#7a5238"},
-      "text": {"primary":"#f0e6dc","muted":"#a08878","disabled":"#5a4a40"},
+      "surfaces": {
+        "app": {"bg":"#1a0f0a","border":"#2a1a12","text":"#f0e6dc"},
+        "panel": {"bg":"#2a1a12","border":"#3d2a20","text":"#f0e6dc"},
+        "card": {"bg":"#33221a","border":"#3d2a20","text":"#f0e6dc"},
+        "modal": {"bg":"#2a1a12","border":"#5a3d30","text":"#f0e6dc"}
+      },
+      "hover":"#3d2a20","active":"#4a3328","border_active":"#5a3d30","border_focus":"#7a5238",
+      "text_muted":"#a08878","text_disabled":"#5a4a40",
       "accent": {
         "primary": {"start":"#c2410c","end":"#7c2d12","glow":"rgba(194,65,12,0.15)"},
         "secondary": {"start":"#4d7c0f","end":"#365314","glow":"rgba(77,124,15,0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
+      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"},
+      "error": {"fg":"#f43f5e","bg":"#2a1a12","border":"#5a3d30"}
     },
     "light": {
-      "bg": {"void":"#faf6f2","surface":"#ffffff","panel":"#f1ebe4","hover":"#e5dccf","active":"#d6c7b4"},
-      "border": {"muted":"#e5dccf","zinc":"#d6c7b4","active":"#a8907a","focus":"#7a6452"},
-      "text": {"primary":"#2a1a12","muted":"#7a6452","disabled":"#a8907a"},
+      "surfaces": {
+        "app": {"bg":"#faf6f2","border":"#e5dccf","text":"#2a1a12"},
+        "panel": {"bg":"#ffffff","border":"#d6c7b4","text":"#2a1a12"},
+        "card": {"bg":"#f1ebe4","border":"#d6c7b4","text":"#2a1a12"},
+        "modal": {"bg":"#ffffff","border":"#a8907a","text":"#2a1a12"}
+      },
+      "hover":"#e5dccf","active":"#d6c7b4","border_active":"#a8907a","border_focus":"#7a6452",
+      "text_muted":"#7a6452","text_disabled":"#a8907a",
       "accent": {
         "primary": {"start":"#9a3412","end":"#7c2d12","glow":"rgba(154,52,18,0.10)"},
         "secondary": {"start":"#3f6212","end":"#365314","glow":"rgba(63,98,18,0.08)"}
       },
-      "status": {"warn":"#b45309","danger":"#be123c","success":"#16a34a"}
+      "status": {"warn":"#b45309","danger":"#be123c","success":"#16a34a"},
+      "error": {"fg":"#be123c","bg":"#ffffff","border":"#a8907a"}
     }
   }
 }`
@@ -67,15 +79,15 @@ func TestGetActiveTheme_DefaultOnFreshVault(t *testing.T) {
 		t.Errorf("expected default mode dark, got %q", res.Mode)
 	}
 	// Effective first-paint tokens must be the dark set.
-	if res.Tokens["--color-void"] != "#0c0c0e" {
-		t.Errorf("expected dark bg.void #0c0c0e, got %q", res.Tokens["--color-void"])
+	if res.Tokens["--color-surface-app"] != "#0c0c0e" {
+		t.Errorf("expected dark bg.void #0c0c0e, got %q", res.Tokens["--color-surface-app"])
 	}
 	// Both maps present so the frontend can resolve "system" locally.
-	if res.DarkTokens["--color-void"] != "#0c0c0e" {
-		t.Errorf("DarkTokens bg.void wrong: %q", res.DarkTokens["--color-void"])
+	if res.DarkTokens["--color-surface-app"] != "#0c0c0e" {
+		t.Errorf("DarkTokens bg.void wrong: %q", res.DarkTokens["--color-surface-app"])
 	}
-	if res.LightTokens["--color-void"] != "#f8fafc" {
-		t.Errorf("LightTokens bg.void wrong: %q", res.LightTokens["--color-void"])
+	if res.LightTokens["--color-surface-app"] != "#f8fafc" {
+		t.Errorf("LightTokens bg.void wrong: %q", res.LightTokens["--color-surface-app"])
 	}
 	if res.BGVoid != "#0c0c0e" {
 		t.Errorf("BGVoid wrong: %q", res.BGVoid)
@@ -148,8 +160,8 @@ func TestApplyTheme_SwitchesAndPersists(t *testing.T) {
 		t.Errorf("expected mode light, got %q", res.Mode)
 	}
 	// Effective tokens reflect the light mode of the selected theme.
-	if res.Tokens["--color-void"] != "#faf6f2" {
-		t.Errorf("light bg.void wrong: %q", res.Tokens["--color-void"])
+	if res.Tokens["--color-surface-app"] != "#faf6f2" {
+		t.Errorf("light bg.void wrong: %q", res.Tokens["--color-surface-app"])
 	}
 
 	// The selection persisted across a fresh settings load.
@@ -169,7 +181,7 @@ func TestApplyTheme_SwitchesAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetActiveTheme after apply: %v", err)
 	}
-	if res2.ID != "terra-test" || res2.Tokens["--color-void"] != "#faf6f2" {
+	if res2.ID != "terra-test" || res2.Tokens["--color-surface-app"] != "#faf6f2" {
 		t.Errorf("GetActiveTheme did not reflect persisted light theme: %+v", res2)
 	}
 }
@@ -239,12 +251,12 @@ func TestApplyTheme_SystemModeResolvesFirstPaintDark(t *testing.T) {
 	if res.Mode != "system" {
 		t.Errorf("mode = %q, want system", res.Mode)
 	}
-	if res.Tokens["--color-void"] != "#0c0c0e" {
-		t.Errorf("system should first-paint dark bg.void, got %q", res.Tokens["--color-void"])
+	if res.Tokens["--color-surface-app"] != "#0c0c0e" {
+		t.Errorf("system should first-paint dark bg.void, got %q", res.Tokens["--color-surface-app"])
 	}
 	// But both maps are present so the frontend can resolve the real preference.
-	if res.LightTokens["--color-void"] != "#f8fafc" {
-		t.Errorf("system mode must still ship light tokens, got %q", res.LightTokens["--color-void"])
+	if res.LightTokens["--color-surface-app"] != "#f8fafc" {
+		t.Errorf("system mode must still ship light tokens, got %q", res.LightTokens["--color-surface-app"])
 	}
 }
 
@@ -317,8 +329,8 @@ func TestBuildThemeResult_DarkFirstPaint(t *testing.T) {
 	if res.Mode != "system" {
 		t.Errorf("mode = %q, want system", res.Mode)
 	}
-	if res.Tokens["--color-void"] != "#0c0c0e" {
-		t.Errorf("system first-paint should be dark bg.void, got %q", res.Tokens["--color-void"])
+	if res.Tokens["--color-surface-app"] != "#0c0c0e" {
+		t.Errorf("system first-paint should be dark bg.void, got %q", res.Tokens["--color-surface-app"])
 	}
 	if res.DarkTokens["--color-accent-primary-start"] != "#2dd4bf" {
 		t.Errorf("dark primary-start wrong: %q", res.DarkTokens["--color-accent-primary-start"])
@@ -331,8 +343,8 @@ func TestBuildThemeResult_DarkFirstPaint(t *testing.T) {
 	}
 	// light mode: effective tokens are light.
 	lightRes := buildThemeResult(th, "light")
-	if lightRes.Tokens["--color-void"] != "#f8fafc" {
-		t.Errorf("light effective bg.void wrong: %q", lightRes.Tokens["--color-void"])
+	if lightRes.Tokens["--color-surface-app"] != "#f8fafc" {
+		t.Errorf("light effective bg.void wrong: %q", lightRes.Tokens["--color-surface-app"])
 	}
 	if lightRes.BGVoid != "#f8fafc" {
 		t.Errorf("light BGVoid wrong: %q", lightRes.BGVoid)

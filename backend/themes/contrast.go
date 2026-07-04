@@ -55,21 +55,21 @@ func linear(c uint8) float64 {
 	return math.Pow((cs+0.055)/1.055, 2.4)
 }
 
-// parseColorAny accepts #hex (#rgb / #rrggbb / #rrggbbaa) and rgb() /
-// rgba() functional notation, returning 8-bit sRGB channels. It mirrors
-// isValidColor's accepted grammar (validate.go) so any color that
-// passes theme validation can be measured for contrast. Non-matching
-// inputs — including NaN/Inf components, which strconv.ParseFloat
-// accepts with a nil error — return ok=false.
+// parseColorAny accepts #hex (#rgb / #rrggbb / #rrggbbaa), rgb() / rgba()
+// functional notation, and oklch() (resolved to sRGB via the Oklab inverse in
+// derivation.go), returning 8-bit sRGB channels. It mirrors isValidColor's
+// accepted grammar (validate.go) so any color that passes theme validation can
+// be measured for contrast. Non-matching inputs — including NaN/Inf
+// components, which strconv.ParseFloat accepts with a nil error — return
+// ok=false.
 //
-// Asymmetry with isValidColor: only the 3 RGB components are parsed
-// (the loop below reads parts[0..2]); the alpha channel is never read,
-// so it is dropped rather than validated. Therefore a malformed alpha
-// (e.g. rgba(12,12,14,NaN)) is ACCEPTED here even though isValidColor
-// rejects it (isValidColor validates the full color spec, alpha
-// included). This is deliberate — luminance is defined over opaque
-// colors — and is pinned by TestContrastRatio_AcceptedColorForms. Do
-// not add an alpha guard here without updating that contract.
+// Asymmetry with isValidColor: only the 3 RGB components are parsed from
+// rgb()/rgba() (the loop below reads parts[0..2]); the alpha channel is never
+// read, so it is dropped rather than validated. Therefore a malformed alpha
+// (e.g. rgba(12,12,14,NaN)) is ACCEPTED here even though isValidColor rejects
+// it. This is deliberate — luminance is defined over opaque colors — and is
+// pinned by TestContrastRatio_AcceptedColorForms. Do not add an alpha guard
+// here without updating that contract.
 func parseColorAny(s string) (r, g, b uint8, ok bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -78,6 +78,16 @@ func parseColorAny(s string) (r, g, b uint8, ok bool) {
 	if s[0] == '#' {
 		r, g, b, ok = HexToRGB(s)
 		return r, g, b, ok
+	}
+	// OKLCH resolves through the Oklab inverse to sRGB so contrast math works
+	// on OKLCH-authored tokens without a separate code path.
+	if strings.HasPrefix(s, "oklch(") && strings.HasSuffix(s, ")") {
+		lch, ok := parseOKLCH(s)
+		if !ok {
+			return 0, 0, 0, false
+		}
+		r, g, b := oklchToSRGB(lch.L, lch.C, lch.H)
+		return r, g, b, true
 	}
 	inner, wantParts := "", 0
 	switch {

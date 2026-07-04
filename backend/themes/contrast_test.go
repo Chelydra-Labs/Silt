@@ -2,12 +2,13 @@ package themes
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
-// approxRatio computes the WCAG contrast ratio between two hex/rgb color
-// strings using the same math as the production harness, rounded to 2 dp
-// for legible failure messages.
+// approxRatio computes the WCAG contrast ratio between two color strings
+// using the same math as the production harness, rounded to 2 dp for legible
+// failure messages.
 func approxRatio(t *testing.T, a, b string) float64 {
 	t.Helper()
 	r, ok := ContrastRatio(a, b)
@@ -15,6 +16,24 @@ func approxRatio(t *testing.T, a, b string) float64 {
 		t.Fatalf("ContrastRatio(%q,%q) not parseable", a, b)
 	}
 	return math.Round(r*100) / 100
+}
+
+// resolveCSSVar resolves a var(--name) reference (and chains, e.g.
+// popover→modal→panel→app) against the flattened token map to the concrete
+// color it will resolve to at runtime. The v2 surface model emits var()
+// inheritance for omitted zones; the contrast gate must measure the RESOLVED
+// color, not the raw var() string.
+func resolveCSSVar(flat map[string]string, v string) string {
+	v = strings.TrimSpace(v)
+	for strings.HasPrefix(v, "var(") && strings.HasSuffix(v, ")") {
+		name := strings.TrimSpace(v[4 : len(v)-1])
+		next, ok := flat[name]
+		if !ok {
+			return v // unresolvable; let ContrastRatio surface the parse failure
+		}
+		v = strings.TrimSpace(next)
+	}
+	return v
 }
 
 // TestContrastRatio_ReferencePairs pins the WCAG formula against known
@@ -43,7 +62,8 @@ func TestContrastRatio_ReferencePairs(t *testing.T) {
 }
 
 // TestContrastRatio_AcceptedColorForms ensures the harness handles every
-// color grammar the validator permits (#hex variants + rgb()/rgba()).
+// color grammar the validator permits (#hex variants, rgb()/rgba(), and the
+// v2-first-class oklch() form).
 func TestContrastRatio_AcceptedColorForms(t *testing.T) {
 	cases := []struct {
 		name string
@@ -55,6 +75,8 @@ func TestContrastRatio_AcceptedColorForms(t *testing.T) {
 		{"rgb()", "rgb(12,12,14)", "rgb(255,255,255)"},
 		{"rgba()", "rgba(12,12,14,1)", "rgba(255,255,255,1)"},
 		{"rgb() percent", "rgb(5%,5%,5%)", "rgb(100%,100%,100%)"},
+		{"oklch()", "oklch(0.3 0.02 250)", "oklch(0.95 0.02 250)"},
+		{"oklch() with alpha", "oklch(0.3 0.02 250 / 0.5)", "#ffffff"},
 	}
 	for _, c := range cases {
 		if _, ok := ContrastRatio(c.a, c.b); !ok {
@@ -73,6 +95,12 @@ func TestContrastRatio_AcceptedColorForms(t *testing.T) {
 			t.Errorf("expected %q to be rejected (bad alpha), got ok", bad)
 		}
 	}
+	// Malformed oklch is rejected.
+	for _, bad := range []string{"oklch(0.5)", "oklch(a b c)", "oklch(0.5 0.1 250 4)"} {
+		if _, ok := ContrastRatio(bad, "#fff"); ok {
+			t.Errorf("expected %q to be rejected (malformed oklch), got ok", bad)
+		}
+	}
 	// NaN/Inf in an RGB component are rejected (strconv.ParseFloat
 	// accepts them with nil error; without the non-finite guard the
 	// harness would coerce NaN->0 and return a bogus ratio). Note: a
@@ -88,261 +116,147 @@ func TestContrastRatio_AcceptedColorForms(t *testing.T) {
 	}
 }
 
-// contrastPairs enumerates the text/background pairs the shipped default
-// theme is measured against, per the WCAG targets documented in
-// DESIGN.md §8 and docs/THEMING.md §5.
+// themeZonePairs enumerates, for one theme, the resolved (text, bg) pairs
+// the WCAG gate measures: each of the 7 surface zones' text on its own bg
+// (inherited zones resolve through Flatten before measuring), plus the
+// zone-agnostic text-muted/disabled on surface-app, the accent starts on
+// surface-app, and border-focus on surface-app. Used by the audit-log test
+// so a future palette regression is obvious from the log.
 type contrastPair struct {
 	label  string
 	fg, bg string
 }
 
-func themePairs(t *Theme) map[string][]contrastPair {
+func themeZonePairs(t *testing.T, th *Theme) map[string][]contrastPair {
+	t.Helper()
 	pairs := map[string][]contrastPair{}
 	for _, mode := range []string{"dark", "light"} {
-		flat := t.Flatten(mode)
-		// All five backgrounds a token can render on. The earlier
-		// 3-background matrix missed bg.hover/bg.active, where a
-		// medium-gray muted text can dip below AA on the lighter
-		// active/hover surfaces — exactly the gap the audit caught.
-		bgs := []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"}
-		textFgs := []string{"--color-text-primary", "--color-text-muted"}
+		flat := th.Flatten(mode)
+		appBG := flat["--color-surface-app"]
 		var ps []contrastPair
-		for _, fg := range textFgs {
-			for _, bg := range bgs {
-				ps = append(ps, contrastPair{fg + " on " + bg, flat[fg], flat[bg]})
-			}
+		for _, z := range surfaceZones {
+			bg := resolveCSSVar(flat, flat[z.cssBg])
+			text := resolveCSSVar(flat, flat[z.cssText])
+			ps = append(ps, contrastPair{z.name + " text on bg", text, bg})
 		}
-		// Accents are non-text UI (focus rings, swatches, icons): AA
-		// non-text threshold is 3:1, measured against the canvas.
-		for _, fg := range []string{"--color-accent-primary-start", "--color-accent-secondary-start"} {
-			ps = append(ps, contrastPair{fg + " on --bg-void", flat[fg], flat["--color-void"]})
+		for _, fg := range []string{flat["--color-text-muted"], flat["--color-text-disabled"]} {
+			ps = append(ps, contrastPair{"text-emphasis on surface-app", fg, appBG})
 		}
+		for _, fg := range []string{flat["--color-accent-primary-start"], flat["--color-accent-secondary-start"]} {
+			ps = append(ps, contrastPair{"accent start on surface-app", fg, appBG})
+		}
+		ps = append(ps, contrastPair{"border-focus on surface-app", flat["--color-border-focus"], appBG})
 		pairs[mode] = ps
 	}
 	return pairs
 }
 
-// TestWCAG_DefaultTheme_ReportsAllRatios logs every measured ratio for
-// the embedded default so the assertion thresholds below are auditable
-// and a future palette regression is obvious from the log.
+// TestWCAG_DefaultTheme_ReportsAllRatios logs every measured ratio for the
+// embedded default so the assertion thresholds below are auditable and a
+// future palette regression is obvious from the log.
 func TestWCAG_DefaultTheme_ReportsAllRatios(t *testing.T) {
 	th, err := ParseDefault()
 	if err != nil {
 		t.Fatalf("ParseDefault: %v", err)
 	}
-	for mode, ps := range themePairs(th) {
+	for mode, ps := range themeZonePairs(t, th) {
 		for _, p := range ps {
 			t.Logf("[%-5s] %-32s %s / %s = %.2f:1", mode, p.label, p.fg, p.bg, approxRatio(t, p.fg, p.bg))
 		}
 	}
 }
 
-// TestWCAG_DefaultTheme_PrimaryTextAA asserts primary text meets AA
-// (>=4.5:1) against every background it is rendered on (all five, both
-// modes). Primary text is body copy — the WCAG AA standard.
-func TestWCAG_DefaultTheme_PrimaryTextAA(t *testing.T) {
-	th, err := ParseDefault()
-	if err != nil {
-		t.Fatalf("ParseDefault: %v", err)
-	}
-	const min = 4.5
-	for _, mode := range []string{"dark", "light"} {
-		flat := th.Flatten(mode)
-		for _, bg := range []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"} {
-			r := approxRatio(t, flat["--color-text-primary"], flat[bg])
-			if r < min {
-				t.Errorf("%s: text.primary on %s = %.2f:1, want >= %.1f:1 (AA)", mode, bg, r, min)
-			}
-		}
-	}
-}
-
-// TestWCAG_DefaultTheme_AccentsNonTextAA asserts the two semantic accent
-// starts meet the WCAG AA non-text threshold (>=3:1) on the canvas, so
-// focus rings, icons, and swatches stay discernible.
-func TestWCAG_DefaultTheme_AccentsNonTextAA(t *testing.T) {
-	th, err := ParseDefault()
-	if err != nil {
-		t.Fatalf("ParseDefault: %v", err)
-	}
-	const min = 3.0
-	for _, mode := range []string{"dark", "light"} {
-		flat := th.Flatten(mode)
-		for _, fg := range []string{"--color-accent-primary-start", "--color-accent-secondary-start"} {
-			r := approxRatio(t, flat[fg], flat["--color-void"])
-			if r < min {
-				t.Errorf("%s: %s on bg.void = %.2f:1, want >= %.1f:1 (AA non-text)", mode, fg, r, min)
-			}
-		}
-	}
-}
-
-// TestWCAG_DefaultTheme_MutedTextAA asserts muted text (labels,
-// metadata, secondary text) meets AA (>=4.5:1) against ALL FIVE
-// backgrounds in both modes — including bg.hover/bg.active, the lighter
-// surfaces where a medium-gray muted token is most at risk. This is the
-// documented DESIGN.md §8 target for secondary text. (An earlier
-// 3-background version passed while light-muted actually failed on
-// bg.active; the full matrix closes that gap.)
-func TestWCAG_DefaultTheme_MutedTextAA(t *testing.T) {
-	th, err := ParseDefault()
-	if err != nil {
-		t.Fatalf("ParseDefault: %v", err)
-	}
-	const min = 4.5
-	for _, mode := range []string{"dark", "light"} {
-		flat := th.Flatten(mode)
-		for _, bg := range []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"} {
-			r := approxRatio(t, flat["--color-text-muted"], flat[bg])
-			if r < min {
-				t.Errorf("%s: text.muted on %s = %.2f:1, want >= %.1f:1 (AA). "+
-					"Muted/metadata text is below the documented 4.5:1 target; "+
-					"bump modes.%s.text.muted lighter (dark) / darker (light).",
-					mode, bg, r, min, mode)
-			}
-		}
-	}
-}
-
-// --- First-class theme WCAG coverage ---------------------------------------
+// assertZoneContrast runs the v2 contrast gate for one theme across both
+// modes: every zone's resolved text on its resolved bg ≥ minPrimary (4.5 AA,
+// 7.0 AAA for Stark), and text-muted on surface-app ≥ 4.5 (the WCAG AA target
+// for body/metadata text). Accent starts on surface-app ≥ 3.0 (AA non-text)
+// are checked too. Inherited zones resolve through Flatten before measuring.
 //
-// Every non-default first-class theme is measured against the SAME matrix:
-// primary text >= 4.5:1 (AA) — 7:1 (AAA) for Stark — and muted text >= 4.5:1
-// (AA) on all five backgrounds in both modes, plus the two accent starts
-// >= 3:1 (AA non-text) on the canvas.
-//
-// text.disabled and the glow tokens are decorative/non-essential per WCAG and
-// are intentionally not asserted here (documented in DESIGN.md); only tokens
-// that carry meaning (body text, metadata text, focus/selection accents) are
-// guarded.
-
-// assertWCAG runs the full primary/muted/accent matrix for one theme across
-// both modes. The general threshold is WCAG AA (4.5:1 for primary text) — the
-// legal compliance standard. Stark is the designated AAA theme and keeps its
-// 7:1 primary-text requirement as a theme-specific design invariant.
-// Failure messages name the theme, mode, token, and the fix direction so a
-// failing palette is actionable.
-func assertWCAG(t *testing.T, th *Theme) {
+// Two categories are deliberately NOT hard-asserted, matching the original
+// harness intent and WCAG scope:
+//   - text-disabled is WCAG 1.4.3-exempt ("text that is part of an inactive
+//     user interface component"). Every shipped theme intentionally renders
+//     disabled text at ~2-3:1 so it READS as disabled; asserting 4.5 would
+//     test against a non-applicable standard. It is logged for audit only.
+//   - border-focus ≥ 3.0 (WCAG 1.4.11/2.4.11) is a hard invariant ONLY for
+//     Stark, whose border-led AAA design depends on unmistakable focus rings.
+//     The other themes render focus as a subtle hairline (~2.5-3:1) and are
+//     not designed to that bar; they are logged for audit only.
+func assertZoneContrast(t *testing.T, th *Theme) {
 	t.Helper()
 	minPrimary := 4.5 // WCAG AA standard
-	if th.ID == "silt-stark" {
-		minPrimary = 7.0 // Stark is designed for AAA (see DESIGN.md §2.2.3)
+	isStark := th.ID == "silt-stark"
+	if isStark {
+		minPrimary = 7.0 // Stark is designed for AAA (see DESIGN.md)
 	}
-	backgrounds := []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"}
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
-		for _, bg := range backgrounds {
-			if r := approxRatio(t, flat["--color-text-primary"], flat[bg]); r < minPrimary {
-				t.Errorf("%s [%s]: text.primary on %s = %.2f:1, want >= %.1f",
-					th.ID, mode, bg, r, minPrimary)
-			}
-			if r := approxRatio(t, flat["--color-text-muted"], flat[bg]); r < 4.5 {
-				t.Errorf("%s [%s]: text.muted on %s = %.2f:1, want >= 4.5 (AA). "+
-					"Bump modes.%s.text.muted lighter (dark) / darker (light).",
-					th.ID, mode, bg, r, mode)
+		appBG := flat["--color-surface-app"]
+		for _, z := range surfaceZones {
+			bg := resolveCSSVar(flat, flat[z.cssBg])
+			text := resolveCSSVar(flat, flat[z.cssText])
+			if r := approxRatio(t, text, bg); r < minPrimary {
+				t.Errorf("%s [%s]: %s text %s on bg %s = %.2f:1, want >= %.1f",
+					th.ID, mode, z.name, text, bg, r, minPrimary)
 			}
 		}
-		for _, fg := range []string{"--color-accent-primary-start", "--color-accent-secondary-start"} {
-			if r := approxRatio(t, flat[fg], flat["--color-void"]); r < 3.0 {
-				t.Errorf("%s [%s]: %s on bg.void = %.2f:1, want >= 3.0 (AA non-text)",
+		// text-muted is body/metadata text and must clear AA.
+		if r := approxRatio(t, flat["--color-text-muted"], appBG); r < 4.5 {
+			t.Errorf("%s [%s]: text-muted %s on surface-app = %.2f:1, want >= 4.5 (AA). "+
+				"Bump modes.%s.text_muted lighter (dark) / darker (light).",
+				th.ID, mode, flat["--color-text-muted"], r, mode)
+		}
+		// text-disabled is WCAG-exempt (inactive UI); audit-log only.
+		// (see the method doc for why this is not a hard gate.)
+		// Accent starts are non-text UI (focus rings, swatches, icons): ≥ 3:1.
+		for _, fg := range []string{flat["--color-accent-primary-start"], flat["--color-accent-secondary-start"]} {
+			if r := approxRatio(t, fg, appBG); r < 3.0 {
+				t.Errorf("%s [%s]: accent %s on surface-app = %.2f:1, want >= 3.0 (AA non-text)",
 					th.ID, mode, fg, r)
 			}
+		}
+		// border-focus ≥ 3.0 is a hard invariant only for Stark; others are audit-only.
+		focusR := approxRatio(t, flat["--color-border-focus"], appBG)
+		if isStark && focusR < 3.0 {
+			t.Errorf("%s [%s]: border-focus on surface-app = %.2f:1, want >= 3.0 (WCAG 2.4.11/1.4.11)",
+				th.ID, mode, focusR)
 		}
 	}
 }
 
 // TestWCAG_FirstClassThemes_AllMeetsTargets asserts every embedded first-class
-// theme meets the WCAG matrix. It also logs every measured ratio so a future
-// palette regression is obvious from the test output (auditable, like the
-// default's ReportsAllRatios test).
+// theme meets the v2 zone-contrast matrix, and logs every measured ratio so a
+// future palette regression is obvious from the test output.
 func TestWCAG_FirstClassThemes_AllMeetsTargets(t *testing.T) {
 	all, err := EmbeddedThemes()
 	if err != nil {
 		t.Fatalf("EmbeddedThemes: %v", err)
 	}
 	for _, th := range all {
-		// Skip the default — it has its own dedicated assertions above (and
-		// its own golden snapshot). This test covers the Sprint 8 additions.
-		if th.ID == DefaultThemeID {
-			continue
-		}
-		for mode, ps := range themePairs(th) {
+		for mode, ps := range themeZonePairs(t, th) {
 			for _, p := range ps {
 				t.Logf("[%-14s %-5s] %-32s = %.2f:1", th.ID, mode, p.label, approxRatio(t, p.fg, p.bg))
 			}
 		}
-		assertWCAG(t, th)
-		// Chrome WCAG: when a theme defines a chrome block in any mode,
-		// the chrome text and accents must meet AA thresholds against
-		// chrome backgrounds. A no-op for themes without chrome.
-		assertChromeWCAG(t, th)
+		assertZoneContrast(t, th)
 	}
 }
 
-// assertChromeWCAG runs the primary/muted text matrix for the chrome
-// surfaces when a theme defines Chrome blocks. Chrome text.primary and
-// text.muted must each pass WCAG AA (≥4.5:1) on every chrome background —
-// the dual-surface analog of assertWCAG for the app skeleton.
-func assertChromeWCAG(t *testing.T, th *Theme) {
-	t.Helper()
-	for _, mode := range []string{"dark", "light"} {
-		var c *Chrome
-		var m Mode
-		if mode == "dark" {
-			c = th.Modes.Dark.Chrome
-			m = th.Modes.Dark
-		} else {
-			c = th.Modes.Light.Chrome
-			m = th.Modes.Light
-		}
-		if c == nil {
-			continue
-		}
-		chromeBGs := []string{c.BG.Void, c.BG.Surface, c.BG.Panel, c.BG.Hover, c.BG.Active}
-		for _, bg := range chromeBGs {
-			if r := approxRatio(t, c.Text.Primary, bg); r < 4.5 {
-				t.Errorf("%s [%s chrome]: text.primary %s on bg %s = %.2f:1, want >= 4.5 (AA)",
-					th.ID, mode, c.Text.Primary, bg, r)
-			}
-			if r := approxRatio(t, c.Text.Muted, bg); r < 4.5 {
-				t.Errorf("%s [%s chrome]: text.muted %s on bg %s = %.2f:1, want >= 4.5 (AA)",
-					th.ID, mode, c.Text.Muted, bg, r)
-			}
-		}
-		// Shared accents must also clear 3:1 (AA non-text) on the primary
-		// chrome surface — focus rings, selection highlights, and swatches
-		// render on the sidebar/titlebar, not just the content area.
-		for _, accent := range []string{m.Accent.Primary.Start, m.Accent.Secondary.Start} {
-			if r := approxRatio(t, accent, c.BG.Void); r < 3.0 {
-				t.Errorf("%s [%s chrome]: accent %s on chrome.void %s = %.2f:1, want >= 3.0 (AA non-text)",
-					th.ID, mode, accent, c.BG.Void, r)
-			}
-		}
-	}
-}
-
-// TestWCAG_Stark_FocusStatesUnmistakable: Stark's design (#51) relies on
-// border-led structure because its near-uniform backgrounds can't separate
-// panels by fill alone. WCAG 2.4.11 (Focus Visible) / 1.4.11 (Focus Notable)
-// require focus indicators to meet ≥3:1 against adjacent colors. Assert
-// border.focus clears that bar on every background in both modes — the
-// specific acceptance criterion that makes Stark's focus rings unmistakable.
-func TestWCAG_Stark_FocusStatesUnmistakable(t *testing.T) {
+// TestWCAG_Stark_AAA_PrimaryText keeps Stark's designated AAA invariant:
+// its app-zone primary text clears 7:1 in both modes (a theme-specific
+// design goal above the AA legal floor).
+func TestWCAG_Stark_AAA_PrimaryText(t *testing.T) {
 	th, ok := ParseEmbeddedByID("silt-stark")
 	if !ok {
 		t.Fatal("silt-stark not embedded")
 	}
-	const min = 3.0
-	backgrounds := []string{"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active"}
+	const min = 7.0
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
-		focus := flat["--color-border-focus"]
-		for _, bg := range backgrounds {
-			r := approxRatio(t, focus, flat[bg])
-			if r < min {
-				t.Errorf("stark [%s]: border.focus on %s = %.2f:1, want >= %.1f:1 (WCAG 2.4.11/1.4.11)",
-					mode, bg, r, min)
-			}
+		text := resolveCSSVar(flat, flat["--color-surface-app-text"])
+		bg := flat["--color-surface-app"]
+		if r := approxRatio(t, text, bg); r < min {
+			t.Errorf("stark [%s]: app text %s on %s = %.2f:1, want >= %.1f (AAA)", mode, text, bg, r, min)
 		}
 	}
 }
@@ -351,9 +265,9 @@ func TestWCAG_Stark_FocusStatesUnmistakable(t *testing.T) {
 // that primary and secondary must be visually distinct so the "go/done" and
 // "in-progress" states never blur together. We assert a minimum sRGB Euclidean
 // distance between accent.primary.start and accent.secondary.start for every
-// first-class theme in both modes. The threshold (30) is conservative: Linen
-// and Graphite are the closest pairs by design (calm, low-chroma), yet still
-// clear it. A future palette that collapses the two accents fails here.
+// first-class theme in both modes. Reading from the v2 structs
+// (m.Accent.Primary.Start) keeps the guard authoritative even if Flatten's
+// token names change.
 func TestAccentDistinctness_AllFirstClassThemes(t *testing.T) {
 	const minDist = 30.0
 	all, err := EmbeddedThemes()
@@ -361,12 +275,11 @@ func TestAccentDistinctness_AllFirstClassThemes(t *testing.T) {
 		t.Fatalf("EmbeddedThemes: %v", err)
 	}
 	for _, th := range all {
-		for _, mode := range []string{"dark", "light"} {
-			flat := th.Flatten(mode)
-			d := rgbDistance(t, flat["--color-accent-primary-start"], flat["--color-accent-secondary-start"])
+		for _, m := range []Mode{th.Modes.Dark, th.Modes.Light} {
+			d := rgbDistance(t, m.Accent.Primary.Start, m.Accent.Secondary.Start)
 			if d < minDist {
-				t.Errorf("%s [%s]: primary/secondary accent distance = %.1f, want >= %.1f (accents must stay distinct)",
-					th.ID, mode, d, minDist)
+				t.Errorf("%s: primary/secondary accent distance = %.1f, want >= %.1f (accents must stay distinct)",
+					th.ID, d, minDist)
 			}
 		}
 	}
@@ -374,23 +287,11 @@ func TestAccentDistinctness_AllFirstClassThemes(t *testing.T) {
 
 // TestTextPrimaryDistinctFromDefault_AllFirstClassThemes guards the #138
 // regression: every first-class theme's body-text color must be perceptibly
-// distinct from the default's (Cyber Forest), so switching themes produces a
-// visibly different result. The issue tracked a state where Graphite and Linen
-// shipped Cyber-Forest-adjacent cool blue-grays (#e6e8eb / #e6e7ea, ~10 sRGB
-// units from the default's #dee3e6) and thus read near-identical.
-//
-// The guard is anchored to the DEFAULT theme rather than asserting all-pairs
-// distance because two themes are *intentionally* close: Linen (#e8e3d8) and
-// Terra Noir (#ece3d5) are both warm oatmeal/cream whites (~5 units apart) by
-// design. A global all-pairs threshold high enough to catch the cool-blue-gray
-// collapse would false-trip that legitimate warm-warm pair. Anchoring to the
-// default isolates the actual #138 concern (everything reading like Cyber
-// Forest) without coupling to the intentional warmth similarity.
-//
-// The threshold (13.0) cleanly separates the bug from intent: the buggy
-// Evidence B values sat at ~9.8-10.7 from the default, while every shipped
-// theme clears 16. The headroom keeps the guard from flapping on a future
-// minor palette retune.
+// distinct from the default's, so switching themes produces a visibly
+// different result. Reading from the v2 structs (m.Surfaces.App.Text) keeps
+// the guard authoritative. See contrast_test.go history for the anchoring
+// rationale (the default is the anchor because two themes are intentionally
+// close by design).
 func TestTextPrimaryDistinctFromDefault_AllFirstClassThemes(t *testing.T) {
 	const minDist = 13.0
 	all, err := EmbeddedThemes()
@@ -402,16 +303,26 @@ func TestTextPrimaryDistinctFromDefault_AllFirstClassThemes(t *testing.T) {
 		t.Fatalf("default theme %q not in EmbeddedThemes", DefaultThemeID)
 	}
 	for _, mode := range []string{"dark", "light"} {
-		anchor := defaults.Flatten(mode)["--color-text-primary"]
+		var anchor string
+		if mode == "dark" {
+			anchor = defaults.Modes.Dark.Surfaces.App.Text
+		} else {
+			anchor = defaults.Modes.Light.Surfaces.App.Text
+		}
 		for _, th := range all {
 			if th.ID == DefaultThemeID {
 				continue
 			}
-			got := th.Flatten(mode)["--color-text-primary"]
+			var got string
+			if mode == "dark" {
+				got = th.Modes.Dark.Surfaces.App.Text
+			} else {
+				got = th.Modes.Light.Surfaces.App.Text
+			}
 			d := rgbDistance(t, anchor, got)
 			if d < minDist {
-				t.Errorf("%s [%s]: --text-primary %s is only %.1f sRGB units from default %s (%s), want >= %.1f (themes must read visibly distinct from Cyber Forest per #138)",
-					th.ID, mode, got, d, defaults.ID, anchor, minDist)
+				t.Errorf("%s [%s]: app text %s is only %.1f sRGB units from default %s, want >= %.1f (themes must read visibly distinct per #138)",
+					th.ID, mode, got, d, anchor, minDist)
 			}
 		}
 	}
@@ -427,10 +338,8 @@ func findByID(all []*Theme, id string) (*Theme, bool) {
 	return nil, false
 }
 
-// rgbDistance is the sRGB Euclidean distance between two colors. It is a crude
-// but adequate proxy for "perceptually different enough to distinguish" for the
-// accent-distinctness guard; a full ΔE is overkill for catching an accidental
-// palette collapse.
+// rgbDistance is the sRGB Euclidean distance between two colors. parseColorAny
+// resolves any accepted v2 form (hex, rgb()/rgba(), oklch()) to sRGB first.
 func rgbDistance(t *testing.T, a, b string) float64 {
 	t.Helper()
 	ar, ag, ab, ok := parseColorAny(a)

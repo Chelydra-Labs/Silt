@@ -1,64 +1,31 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-error: #ffb4ab;
-  --color-background: #0e1416;
-  --color-on-secondary: #1000a9;
-  --color-inverse-on-surface: #2b3133;
-  --color-on-secondary-fixed-variant: #2f2ebe;
-  --color-outline-variant: #3d494c;
-  --color-tertiary: #ffb873;
-  --color-secondary: #c0c1ff;
-  --color-on-surface: #dee3e6;
-  --color-surface-container-lowest: #090f11;
-  --color-surface-bright: #343a3c;
-  --color-outline: #869397;
-  --color-on-surface-variant: #bcc9cd;
-  --color-on-error-container: #ffdad6;
-  --color-on-background: #dee3e6;
-  --color-surface-container-highest: #303638;
-  --color-surface-container-high: #252b2d;
-  --color-secondary-container: #3131c0;
-  --color-on-secondary-container: #b0b2ff;
-  --color-surface-variant: #303638;
-  --color-surface-dim: #0e1416;
-  --color-surface-container: #1b2122;
-  --color-tertiary-fixed-dim: #ffb873;
-  --color-on-error: #690005;
-  --color-inverse-surface: #dee3e6;
-  --color-on-tertiary-container: #5b3200;
-  --color-on-tertiary: #4b2800;
-  --color-on-tertiary-fixed-variant: #6a3b00;
-  --color-tertiary-container: #e89337;
-  --color-tertiary-fixed: #ffdcbf;
-  --color-error-container: #93000a;
-  --color-secondary-fixed: #e1e0ff;
-  --color-on-tertiary-fixed: #2d1600;
-  --color-surface-container-low: #171d1e;
-  --color-on-secondary-fixed: #07006c;
-  --color-secondary-fixed-dim: #c0c1ff;
-
   /*
    * Semantic theme tokens — Cyber Forest dark as the STARTUP FALLBACK.
    *
-   * These are the SINGLE source of truth for themeable colors (#146).
    * The runtime theme injector (<style id="silt-theme">) overrides these
-   * same --color-* custom properties on :root at runtime, so Tailwind's
-   * generated utilities (bg-void, text-accent-primary-start, etc.) track
-   * the live theme with zero per-component changes. There is no separate
-   * unprefixed namespace and no bridge/alias layer.
+   * same custom properties on :root at runtime (see backend Theme.Flatten
+   * for the canonical v2 token names — surface zones, accents, status, the
+   * themeable error family, geometry, and editor tokens), so Tailwind's
+   * generated utilities track the live theme with zero per-component
+   * changes. Values here only paint the brief pre-injection frame; every
+   * key is overwritten once IPC returns the active theme.
    */
 
-  /* Background scale */
-  --color-void: #0c0c0e;
-  --color-surface: #121215;
-  --color-panel: #161619;
+  /* Surface zones (app → panel → card raised chain). The engine emits the
+     full zone tree (sidebar/editor/modal/popover) with var() fallbacks to
+     their parents, so declaring the app/panel/card roots is enough to keep
+     every zone resolving before injection. */
+  --color-surface-app: #0c0c0e;
+  --color-surface-panel: #121215;
+  --color-surface-card: #161619;
   --color-hover: #1c1c21;
   --color-active: #222226;
 
-  /* Border scale */
-  --color-border-muted: #1e1e23;
-  --color-border-zinc: #27272a;
+  /* Borders (zone-scoped where the name implies it). */
+  --color-surface-app-border: #1e1e23;
+  --color-surface-panel-border: #27272a;
   --color-border-active: #3f3f46;
   --color-border-focus: #52525b;
 
@@ -80,25 +47,6 @@
   --color-status-warn: #fbbf24;
   --color-status-danger: #f43f5e;
   --color-status-success: #22c55e;
-
-  /* Chrome dual-surface startup fallbacks. Before the runtime theme
-     injector writes --color-chrome-*, the .silt-chrome class resolves
-     --color-* from these. They mirror the default dark palette so the
-     sidebar/titlebar/activity bar never flash transparent on first paint.
-     The injector overwrites them with concrete or var(--color-*) values
-     once IPC returns. */
-  --color-chrome-void: #0c0c0e;
-  --color-chrome-surface: #121215;
-  --color-chrome-panel: #161619;
-  --color-chrome-hover: #1c1c21;
-  --color-chrome-active: #222226;
-  --color-chrome-border-muted: #1e1e23;
-  --color-chrome-border-zinc: #27272a;
-  --color-chrome-border-active: #3f3f46;
-  --color-chrome-border-focus: #52525b;
-  --color-chrome-text-primary: #dee3e6;
-  --color-chrome-text-muted: #8b8b94;
-  --color-chrome-text-disabled: #4b5563;
 
   /* Spacing */
   --spacing-guide-offset: -12px;
@@ -131,31 +79,9 @@
   --editor-line-height: 1.6;
 }
 
-/* Dual-surface chrome scoping class. When applied to the sidebar, titlebar,
-   or tab strip, the standard --color-* tokens resolve to the --color-chrome-*
-   palette instead. The theme engine always emits --color-chrome-* on :root
-   (concrete values when a theme defines a chrome block, var(--color-*)
-   fallbacks when it doesn't), so this class works with zero component
-   utility-class changes — bg-void, text-text-primary, etc. inside a
-   .silt-chrome element transparently use the chrome palette. */
-.silt-chrome {
-  --color-void: var(--color-chrome-void);
-  --color-surface: var(--color-chrome-surface);
-  --color-panel: var(--color-chrome-panel);
-  --color-hover: var(--color-chrome-hover);
-  --color-active: var(--color-chrome-active);
-  --color-border-muted: var(--color-chrome-border-muted);
-  --color-border-zinc: var(--color-chrome-border-zinc);
-  --color-border-active: var(--color-chrome-border-active);
-  --color-border-focus: var(--color-chrome-border-focus);
-  --color-text-primary: var(--color-chrome-text-primary);
-  --color-text-muted: var(--color-chrome-text-muted);
-  --color-text-disabled: var(--color-chrome-text-disabled);
-}
-
 html,
 body {
-  background-color: var(--color-void);
+  background-color: var(--color-surface-app);
   color: var(--color-text-primary);
   margin: 0;
   padding: 0;
@@ -234,10 +160,10 @@ body {
   height: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-void);
+  background: var(--color-surface-app);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border-muted);
+  background: var(--color-surface-app-border);
   border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -251,7 +177,7 @@ body {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: var(--color-border-muted);
+  background: var(--color-surface-app-border);
 }
 
 /* Typography styles — font families resolve through the theme pipeline
@@ -304,7 +230,7 @@ body {
   width: 1px;
   background: linear-gradient(
     to bottom,
-    var(--color-border-muted) 60%,
+    var(--color-surface-app-border) 60%,
     transparent 100%
   );
   opacity: 0.55;
@@ -327,7 +253,7 @@ body {
 /* Frosted glass palette style */
 .glass-palette {
   backdrop-filter: blur(12px) saturate(140%);
-  background: color-mix(in srgb, var(--color-panel) 75%, transparent);
+  background: color-mix(in srgb, var(--color-surface-card) 75%, transparent);
 }
 
 /* Stronger frosted glass for modal dialogs (denser panel tint + heavier
@@ -337,12 +263,12 @@ body {
    (blur(16px) saturate(140%) + 90% panel) should use this class instead. */
 .glass-palette-strong {
   backdrop-filter: blur(16px) saturate(140%);
-  background: color-mix(in srgb, var(--color-panel) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface-card) 90%, transparent);
 }
 
 /* Custom checkbox states */
 .todo-check {
-  border: 1px solid var(--color-border-zinc);
+  border: 1px solid var(--color-surface-panel-border);
   transition: all 120ms var(--transition-standard);
   background-color: transparent;
 }
@@ -354,7 +280,8 @@ body {
 .doing-check {
   border: 1px solid transparent;
   background:
-    linear-gradient(var(--color-surface), var(--color-surface)) padding-box,
+    linear-gradient(var(--color-surface-panel), var(--color-surface-panel))
+      padding-box,
     linear-gradient(
         to right,
         var(--color-accent-secondary-start),
@@ -392,16 +319,17 @@ body {
   height: 100%;
   background: radial-gradient(
     circle at center,
-    color-mix(in srgb, var(--color-surface) 60%, var(--color-void)) 0%,
-    var(--color-void) 100%
+    color-mix(in srgb, var(--color-surface-panel) 60%, var(--color-surface-app))
+      0%,
+    var(--color-surface-app) 100%
   );
   padding: 2rem;
 }
 
 .onboarding-card {
-  background-color: var(--color-surface);
-  border: 1px solid var(--color-border-muted);
-  border-radius: 12px;
+  background-color: var(--color-surface-panel);
+  border: 1px solid var(--color-surface-app-border);
+  border-radius: var(--radius-lg);
   padding: 2.5rem;
   width: 100%;
   max-width: 480px;
@@ -450,12 +378,12 @@ body {
     var(--color-accent-primary-start) 0%,
     var(--color-accent-primary-end) 100%
   );
-  color: var(--color-void);
+  color: var(--color-surface-app);
   font-weight: 600;
   font-size: 0.95rem;
   border: none;
   padding: 0.8rem 1.75rem;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   box-shadow: 0 4px 12px var(--color-accent-primary-glow);
   outline: none;
@@ -478,6 +406,7 @@ body {
   font-size: var(--editor-font-size);
   line-height: var(--editor-line-height);
   color: var(--color-text-primary);
+  caret-color: var(--color-editor-caret);
   outline: none;
   min-height: 60px;
 }
@@ -641,12 +570,9 @@ body {
    transparent editable layer). Both layers share the mono font metrics so the
    coloured tokens align with the invisible raw characters. */
 .silt-code {
-  border: 1px solid var(--color-border-muted, #27272a);
-  border-radius: 8px;
-  background: var(
-    --color-surface-raised,
-    color-mix(in srgb, var(--color-surface, #1a1d24) 92%, transparent)
-  );
+  border: 1px solid var(--color-surface-app-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-modal);
   overflow: hidden;
 }
 .silt-code.selected {
@@ -657,12 +583,8 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 2px 6px;
-  border-bottom: 1px solid var(--color-border-muted, #27272a);
-  background: color-mix(
-    in srgb,
-    var(--color-surface, #1a1d24) 70%,
-    transparent
-  );
+  border-bottom: 1px solid var(--color-surface-app-border);
+  background: color-mix(in srgb, var(--color-surface-panel) 70%, transparent);
 }
 .silt-code-lang {
   background: transparent;
@@ -734,7 +656,7 @@ body {
   display: flex;
   justify-content: center;
   padding: 12px;
-  background: var(--color-surface, #1e1e22);
+  background: var(--color-surface-panel);
   border-radius: 6px;
   overflow: auto;
 }
@@ -748,9 +670,9 @@ body {
   gap: 8px;
   padding: 10px 12px;
   border-radius: 6px;
-  background: var(--color-error-bg, rgba(239, 68, 68, 0.12));
-  border: 1px solid var(--color-error-border, rgba(239, 68, 68, 0.4));
-  color: var(--color-error, #ef4444);
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
+  color: var(--color-error);
   font-family: var(--font-mono, monospace);
   font-size: 0.85em;
 }
@@ -767,7 +689,7 @@ body {
   display: block;
   width: 100%;
   padding: 0.75em 1em;
-  border: 1px dashed var(--color-border-muted, #444);
+  border: 1px dashed var(--color-surface-app-border);
   border-radius: 6px;
   background: transparent;
   color: var(--color-text-muted, #888);
@@ -886,7 +808,7 @@ body {
   position: relative;
   z-index: 1;
   color: transparent;
-  caret-color: var(--color-text-primary, #e6e6e6);
+  caret-color: var(--color-editor-caret);
   outline: none;
   min-height: 22px;
 }
@@ -906,13 +828,9 @@ body {
    operability + implicit aria-expanded. We theme the summary marker and
    the body chrome; the collapse state is ephemeral (not persisted). */
 .ProseMirror details[data-type='details'] {
-  border: 1px solid var(--color-border-muted, #27272a);
-  border-radius: 8px;
-  background: color-mix(
-    in srgb,
-    var(--color-surface, #1a1d24) 60%,
-    transparent
-  );
+  border: 1px solid var(--color-surface-app-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface-panel) 60%, transparent);
   padding: 6px 10px;
   margin: 4px 0;
 }
@@ -947,7 +865,7 @@ body {
 /* GFM tables (#172). TipTap's Table extension renders the grid inside a
    `.tableWrapper` NodeView, so we key off that wrapper (more robust than the
    data-type attr, which the NodeView applies programmatically). Borders use
-   the theme's `--color-border-active` token (not `--color-border-muted`, which
+   the theme's `--color-border-active` token (not `--color-surface-app-border`, which
    is nearly invisible against the surface) so cells are clearly delimited on
    every theme — no new theme token is required, the border palette already
    covers this. */
@@ -957,11 +875,8 @@ body {
   width: 100%;
   margin: 6px 0;
   overflow: hidden;
-  border-radius: 8px;
-  background: var(
-    --color-surface-raised,
-    color-mix(in srgb, var(--color-surface, #1a1d24) 92%, transparent)
-  );
+  border-radius: var(--radius-md);
+  background: var(--color-surface-modal);
 }
 .ProseMirror .tableWrapper table td,
 .ProseMirror .tableWrapper table th {
@@ -984,11 +899,7 @@ body {
    subtle so they read as guidance, not noise, and stay out of the way of the
    selectedCell overlay (which paints on top via ::after). */
 .ProseMirror .tableWrapper table tbody tr:nth-child(even) td {
-  background: color-mix(
-    in srgb,
-    var(--color-surface, #1a1d24) 55%,
-    transparent
-  );
+  background: color-mix(in srgb, var(--color-surface-panel) 55%, transparent);
 }
 .ProseMirror .tableWrapper table tbody tr:hover td {
   background: color-mix(
@@ -1028,13 +939,9 @@ body {
   gap: 2px;
   padding: 4px;
   margin: 0 0 6px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border-muted, #33333a);
-  background: color-mix(
-    in srgb,
-    var(--color-surface, #1e1e22) 92%,
-    transparent
-  );
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-surface-app-border);
+  background: color-mix(in srgb, var(--color-surface-panel) 92%, transparent);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 .tct-btn {
@@ -1061,13 +968,9 @@ body {
   font-size: 18px;
 }
 
-/* Selection highlight uses the theme accent. */
+/* Selection highlight uses the themeable editor-selection token (#390). */
 .ProseMirror ::selection {
-  background: color-mix(
-    in srgb,
-    var(--color-accent-primary-start) 25%,
-    transparent
-  );
+  background: var(--color-editor-selection);
 }
 
 /* Maps standard Material icon elements to the self-hosted @font-face rules (#237, F2) */
@@ -1137,7 +1040,7 @@ body {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--color-border-muted);
+  background: var(--color-surface-app-border);
   position: relative;
   overflow: hidden;
   flex-shrink: 0;
@@ -1146,7 +1049,7 @@ body {
 .skeleton-text {
   height: 12px;
   border-radius: 4px;
-  background: var(--color-border-muted);
+  background: var(--color-surface-app-border);
   position: relative;
   overflow: hidden;
 }
@@ -1164,7 +1067,7 @@ body {
   width: 60px;
   height: 16px;
   border-radius: 4px;
-  background: var(--color-border-muted);
+  background: var(--color-surface-app-border);
   position: relative;
   overflow: hidden;
   margin-left: auto;

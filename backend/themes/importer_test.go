@@ -9,35 +9,45 @@ import (
 )
 
 // validCustomThemeJSON mirrors the constant in app_themes_test.go: a
-// structurally-valid canonical theme with id "terra-test" used as the
+// structurally-valid canonical v2 theme with id "terra-test" used as the
 // base for import tests. Defining a local copy here keeps the
 // themes-package tests self-contained.
 const validCustomThemeJSON = `{
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "terra-test",
   "name": "Terra Test",
   "author": "Tester",
   "description": "a second theme",
   "modes": {
     "dark": {
-      "bg": {"void":"#1a0f0a","surface":"#2a1a12","panel":"#33221a","hover":"#3d2a20","active":"#4a3328"},
-      "border": {"muted":"#2a1a12","zinc":"#3d2a20","active":"#5a3d30","focus":"#7a5238"},
-      "text": {"primary":"#f0e6dc","muted":"#a08878","disabled":"#5a4a40"},
+      "surfaces": {"app": {"bg": "#1a0f0a", "border": "#2a1a12", "text": "#f0e6dc"}},
+      "hover": "#3d2a20",
+      "active": "#4a3328",
+      "border_active": "#5a3d30",
+      "border_focus": "#7a5238",
+      "text_muted": "#a08878",
+      "text_disabled": "#5a4a40",
       "accent": {
-        "primary": {"start":"#c2410c","end":"#7c2d12","glow":"rgba(194,65,12,0.15)"},
-        "secondary": {"start":"#4d7c0f","end":"#365314","glow":"rgba(77,124,15,0.12)"}
+        "primary": {"start": "#c2410c", "end": "#7c2d12", "glow": "rgba(194,65,12,0.15)"},
+        "secondary": {"start": "#4d7c0f", "end": "#365314", "glow": "rgba(77,124,15,0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
+      "status": {"warn": "#fbbf24", "danger": "#f43f5e", "success": "#22c55e"},
+      "error": {"fg": "#ffb4ab", "bg": "#5a1a0a", "border": "#7d2a2a"}
     },
     "light": {
-      "bg": {"void":"#faf6f2","surface":"#ffffff","panel":"#f1ebe4","hover":"#e5dccf","active":"#d6c7b4"},
-      "border": {"muted":"#e5dccf","zinc":"#d6c7b4","active":"#a8907a","focus":"#7a6452"},
-      "text": {"primary":"#2a1a12","muted":"#7a6452","disabled":"#a8907a"},
+      "surfaces": {"app": {"bg": "#faf6f2", "border": "#e5dccf", "text": "#2a1a12"}},
+      "hover": "#e5dccf",
+      "active": "#d6c7b4",
+      "border_active": "#a8907a",
+      "border_focus": "#7a6452",
+      "text_muted": "#7a6452",
+      "text_disabled": "#a8907a",
       "accent": {
-        "primary": {"start":"#9a3412","end":"#7c2d12","glow":"rgba(154,52,18,0.10)"},
-        "secondary": {"start":"#3f6212","end":"#365314","glow":"rgba(63,98,18,0.08)"}
+        "primary": {"start": "#9a3412", "end": "#7c2d12", "glow": "rgba(154,52,18,0.10)"},
+        "secondary": {"start": "#3f6212", "end": "#365314", "glow": "rgba(63,98,18,0.08)"}
       },
-      "status": {"warn":"#b45309","danger":"#be123c","success":"#16a34a"}
+      "status": {"warn": "#b45309", "danger": "#be123c", "success": "#16a34a"},
+      "error": {"fg": "#ba1a1a", "bg": "#ffdad6", "border": "#93000a"}
     }
   }
 }`
@@ -140,7 +150,7 @@ func TestImportThemeFromPath_SandboxRejectsNonColor(t *testing.T) {
 		`url(http://evil.example/x)`,
 		`expression(alert(1))`,
 		`<script>alert(1)</script>`,
-		`red`,         // named color — explicitly not accepted by isValidColor
+		`red`,          // named color — explicitly not accepted by isValidColor
 		`hsl(0,0%,0%)`, // also not accepted
 		`not-a-color`,
 	}
@@ -218,11 +228,15 @@ func TestImportThemeFromPath_RejectsDuplicateImportID(t *testing.T) {
 	}
 }
 
-func TestImportThemeFromPath_SanitizesID(t *testing.T) {
+// TestImportThemeFromPath_RejectsInvalidFormatID: v2 Validate enforces the
+// id format ([a-z0-9_-]) directly, so an import whose source id contains
+// spaces / uppercase / punctuation is rejected at validation with an error
+// on the id field — before the importer's sanitize step can run. No file is
+// written. (The sanitizer itself is unit-covered by TestSanitizeThemeID; the
+// only live renaming path through the importer is the namespace step, covered
+// by TestImportThemeFromPath_NamespacesBuiltInID.)
+func TestImportThemeFromPath_RejectsInvalidFormatID(t *testing.T) {
 	themesDir := t.TempDir()
-	// An id with mixed case, spaces, and other invalid chars must be
-	// sanitized to [a-z0-9_-] and the result is what's used for the
-	// filename and the on-disk id.
 	weirdID := "My Theme v2 (final)!"
 	src := filepath.Join(t.TempDir(), "src.json")
 	clone := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"`+weirdID+`"`, 1)
@@ -230,40 +244,55 @@ func TestImportThemeFromPath_SanitizesID(t *testing.T) {
 
 	res, err := ImportThemeFromPath(themesDir, src)
 	if err != nil {
-		t.Fatalf("import: %v", err)
+		t.Fatalf("unexpected hard error: %v", err)
 	}
-	want := "my-theme-v2-final"
-	if res.Info.ID != want {
-		t.Errorf("expected sanitized id %q, got %q", want, res.Info.ID)
+	if len(res.ValidationErrors) == 0 {
+		t.Fatal("expected validation errors for an invalid-format id")
 	}
-	if !res.Renamed {
-		t.Errorf("expected Renamed=true for sanitized id")
+	found := false
+	for _, e := range res.ValidationErrors {
+		if e.Field == "id" {
+			found = true
+		}
 	}
-	if res.RenamedFromID != weirdID {
-		t.Errorf("RenamedFromID = %q, want %q", res.RenamedFromID, weirdID)
+	if !found {
+		t.Errorf("expected an id validation error, got %+v", res.ValidationErrors)
 	}
-	if _, err := os.Stat(filepath.Join(themesDir, want+".json")); err != nil {
-		t.Errorf("expected sanitized filename: %v", err)
+	// No file written.
+	entries, _ := os.ReadDir(themesDir)
+	if len(entries) != 0 {
+		t.Errorf("expected no file written for an invalid-format id, got %+v", entries)
 	}
 }
 
 func TestImportThemeFromPath_RejectsAllInvalidID(t *testing.T) {
 	// A theme whose id consists entirely of invalid characters (e.g.
-	// punctuation) sanitizes to "". Before the fix this slipped past
-	// Validate (non-empty id) and produced a ".json" file with an empty
-	// id. Now the importer must reject it explicitly.
+	// punctuation) is rejected at validation by v2's IsValidThemeID gate
+	// (previously it slipped past Validate, which only checked non-empty,
+	// and produced a ".json" file with an empty id after sanitization).
+	// It now surfaces as a non-fatal ValidationErrors result on the id
+	// field with no file written.
 	themesDir := t.TempDir()
 	badID := "!@#$"
 	clone := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"`+badID+`"`, 1)
 	src := filepath.Join(t.TempDir(), "src.json")
 	mustWriteTheme(t, filepath.Dir(src), filepath.Base(src), clone)
 
-	_, err := ImportThemeFromPath(themesDir, src)
-	if err == nil {
-		t.Fatal("expected error for all-invalid theme ID")
+	res, err := ImportThemeFromPath(themesDir, src)
+	if err != nil {
+		t.Fatalf("unexpected hard error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "invalid after sanitization") {
-		t.Errorf("expected sanitization error, got: %v", err)
+	if len(res.ValidationErrors) == 0 {
+		t.Fatal("expected validation errors for an all-invalid id")
+	}
+	found := false
+	for _, e := range res.ValidationErrors {
+		if e.Field == "id" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an id validation error, got %+v", res.ValidationErrors)
 	}
 	// No file written.
 	entries, _ := os.ReadDir(themesDir)
@@ -366,7 +395,7 @@ func TestSanitizeThemeID(t *testing.T) {
 	// on them). All other invalid chars collapse to single hyphens, and
 	// double-hyphens are collapsed.
 	cases := map[string]string{
-		"My Theme v2 (final)!":  "my-theme-v2-final",
+		"My Theme v2 (final)!":   "my-theme-v2-final",
 		"hello---world":          "hello-world",
 		"-leading-and-trailing-": "leading-and-trailing",
 		"already-clean":          "already-clean",

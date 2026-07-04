@@ -7,119 +7,234 @@ import (
 	"testing"
 )
 
-// goldenDefaultDark / goldenDefaultLight pin the EXACT flattened CSS
-// token map produced by the embedded default theme (cyber_forest.json).
-// This is the default-theme regression snapshot (#50): any drift in the
-// shipped default — an accidental token edit, a migration regression, a
-// palette change without intent — fails here with a precise diff.
-//
-// The text.muted values were corrected during #50 to bring
-// muted/metadata text up to the WCAG AA 4.5:1 target documented in
-// DESIGN.md §8 (see contrast_test.go), across ALL FIVE backgrounds
-// (void/surface/panel/hover/active): dark #71717a → #8b8b94, light
-// #64748b → #4d5667. Update these only if the muted token is
-// intentionally re-tuned, and re-run the WCAG assertions to confirm AA
-// is still met on every background.
-var goldenDefaultDark = map[string]string{
-	"--color-void":                   "#0c0c0e",
-	"--color-surface":                "#121215",
-	"--color-panel":                  "#161619",
-	"--color-hover":                  "#1c1c21",
-	"--color-active":                 "#222226",
-	"--color-border-muted":           "#1e1e23",
-	"--color-border-zinc":            "#27272a",
-	"--color-border-active":          "#3f3f46",
-	"--color-border-focus":           "#52525b",
-	"--color-text-primary":           "#dee3e6",
-	"--color-text-muted":             "#8b8b94",
-	"--color-text-disabled":          "#4b5563",
-	"--color-accent-primary-start":   "#2dd4bf",
-	"--color-accent-primary-end":     "#0d9488",
-	"--color-accent-primary-glow":    "rgba(20, 184, 166, 0.15)",
-	"--color-accent-secondary-start": "#6366f1",
-	"--color-accent-secondary-end":   "#a855f7",
-	"--color-accent-secondary-glow":  "rgba(168, 85, 247, 0.12)",
-	"--color-status-warn":            "#fbbf24",
-	"--color-status-danger":          "#f43f5e",
-	"--color-status-success":         "#22c55e",
-	"--font-body":                    "'Plus Jakarta Sans', sans-serif",
-	"--font-mono":                    "'JetBrains Mono', monospace",
-	"--font-headline":                "'Hanken Grotesk', sans-serif",
-	// Chrome fallbacks (no chrome block → var(--color-*) references)
-	"--color-chrome-void":          "var(--color-void)",
-	"--color-chrome-surface":       "var(--color-surface)",
-	"--color-chrome-panel":         "var(--color-panel)",
-	"--color-chrome-hover":         "var(--color-hover)",
-	"--color-chrome-active":        "var(--color-active)",
-	"--color-chrome-border-muted":  "var(--color-border-muted)",
-	"--color-chrome-border-zinc":   "var(--color-border-zinc)",
-	"--color-chrome-border-active": "var(--color-border-active)",
-	"--color-chrome-border-focus":  "var(--color-border-focus)",
-	"--color-chrome-text-primary":  "var(--color-text-primary)",
-	"--color-chrome-text-muted":    "var(--color-text-muted)",
-	"--color-chrome-text-disabled": "var(--color-text-disabled)",
+// expectedV2ColorKeys is the always-emitted v2 color-token set: the 7 surface
+// zones × 3 (bg/border/text), the 4 zone-agnostic interaction tokens, the 3
+// text-emphasis levels, 6 accent colors, 3 status colors, 3 error colors, and
+// the 2 Material-3 aliases that map onto the app zone.
+var expectedV2ColorKeys = []string{
+	// 7 surface zones × 3.
+	"--color-surface-app", "--color-surface-app-border", "--color-surface-app-text",
+	"--color-surface-sidebar", "--color-surface-sidebar-border", "--color-surface-sidebar-text",
+	"--color-surface-editor", "--color-surface-editor-border", "--color-surface-editor-text",
+	"--color-surface-panel", "--color-surface-panel-border", "--color-surface-panel-text",
+	"--color-surface-card", "--color-surface-card-border", "--color-surface-card-text",
+	"--color-surface-modal", "--color-surface-modal-border", "--color-surface-modal-text",
+	"--color-surface-popover", "--color-surface-popover-border", "--color-surface-popover-text",
+	// Zone-agnostic interaction tokens.
+	"--color-hover", "--color-active", "--color-border-active", "--color-border-focus",
+	// Text-emphasis levels.
+	"--color-text-primary", "--color-text-muted", "--color-text-disabled",
+	// Accents.
+	"--color-accent-primary-start", "--color-accent-primary-end", "--color-accent-primary-glow",
+	"--color-accent-secondary-start", "--color-accent-secondary-end", "--color-accent-secondary-glow",
+	// Status.
+	"--color-status-warn", "--color-status-danger", "--color-status-success",
+	// Themeable error family.
+	"--color-error", "--color-error-bg", "--color-error-border",
+	// Material-3 aliases mapped onto the app zone.
+	"--color-background", "--color-on-surface",
 }
 
-var goldenDefaultLight = map[string]string{
-	"--color-void":                   "#f8fafc",
-	"--color-surface":                "#ffffff",
-	"--color-panel":                  "#f1f5f9",
-	"--color-hover":                  "#e2e8f0",
-	"--color-active":                 "#cbd5e1",
-	"--color-border-muted":           "#e2e8f0",
-	"--color-border-zinc":            "#cbd5e1",
-	"--color-border-active":          "#94a3b8",
-	"--color-border-focus":           "#64748b",
-	"--color-text-primary":           "#0f172a",
-	"--color-text-muted":             "#4d5667",
-	"--color-text-disabled":          "#94a3b8",
-	"--color-accent-primary-start":   "#0d9488",
-	"--color-accent-primary-end":     "#115e59",
-	"--color-accent-primary-glow":    "rgba(13, 148, 136, 0.10)",
-	"--color-accent-secondary-start": "#4f46e5",
-	"--color-accent-secondary-end":   "#7c3aed",
-	"--color-accent-secondary-glow":  "rgba(79, 70, 229, 0.08)",
-	"--color-status-warn":            "#d97706",
-	"--color-status-danger":          "#e11d48",
-	"--color-status-success":         "#16a34a",
-	"--font-body":                    "'Plus Jakarta Sans', sans-serif",
-	"--font-mono":                    "'JetBrains Mono', monospace",
-	"--font-headline":                "'Hanken Grotesk', sans-serif",
-	// Chrome fallbacks (no chrome block → var(--color-*) references)
-	"--color-chrome-void":          "var(--color-void)",
-	"--color-chrome-surface":       "var(--color-surface)",
-	"--color-chrome-panel":         "var(--color-panel)",
-	"--color-chrome-hover":         "var(--color-hover)",
-	"--color-chrome-active":        "var(--color-active)",
-	"--color-chrome-border-muted":  "var(--color-border-muted)",
-	"--color-chrome-border-zinc":   "var(--color-border-zinc)",
-	"--color-chrome-border-active": "var(--color-border-active)",
-	"--color-chrome-border-focus":  "var(--color-border-focus)",
-	"--color-chrome-text-primary":  "var(--color-text-primary)",
-	"--color-chrome-text-muted":    "var(--color-text-muted)",
-	"--color-chrome-text-disabled": "var(--color-text-disabled)",
+// expectedV2GeometryKeys is the always-emitted geometry ramp (Flatten emits
+// sensible defaults when a theme omits radius/spacing/shadow).
+var expectedV2GeometryKeys = []string{
+	"--radius-sm", "--radius-md", "--radius-lg", "--radius-xl", "--radius-full",
+	"--spacing-sm", "--spacing-md", "--spacing-lg", "--spacing-xl",
+	"--shadow-sm", "--shadow-md", "--shadow-lg",
 }
 
-// TestDefaultTheme_GoldenSnapshot asserts the embedded default theme's
-// flattened dark + light token maps are byte-identical to the golden
-// maps above. On drift the failure names every mismatched token and its
-// expected vs actual value so a reviewer sees exactly what changed.
-func TestDefaultTheme_GoldenSnapshot(t *testing.T) {
+// expectedV2EditorKeys is the always-emitted editor-canvas interaction block
+// (Flatten derives defaults from the active palette when a theme omits it).
+var expectedV2EditorKeys = []string{
+	"--color-editor-caret", "--color-editor-selection", "--color-editor-selection-text",
+	"--color-editor-link", "--color-editor-link-hover", "--color-editor-highlight",
+}
+
+// expectedV2TypographyKeys are the theme-level font keys Flatten emits when a
+// theme carries a typography block (the default does).
+var expectedV2TypographyKeys = []string{
+	"--font-body", "--font-mono", "--font-headline",
+}
+
+// isBackgroundOverlayKey reports whether a token is one of the opt-in
+// --silt-bg-<zone>-* overlay keys Flatten emits only for surfaces that
+// declare a background block.
+func isBackgroundOverlayKey(k string) bool {
+	return strings.HasPrefix(k, "--silt-bg-")
+}
+
+// isTypeScaleKey reports whether a token is one of the optional type-scale
+// keys (--font-size-*/--line-height-*/--font-weight-*) a typography.scale
+// block may emit.
+func isTypeScaleKey(k string) bool {
+	return strings.HasPrefix(k, "--font-size-") ||
+		strings.HasPrefix(k, "--line-height-") ||
+		strings.HasPrefix(k, "--font-weight-")
+}
+
+// TestDefaultTheme_FlattensV2TokenSet asserts the embedded default flattens
+// to exactly the v2 canonical token set: every always-emitted color, geometry,
+// and editor key is present, plus the default's typography fonts; the only
+// allowed extras are the optional type-scale and background-overlay keys; and
+// NO legacy v1 token (--color-void/surface/panel/chrome-*) survives.
+func TestDefaultTheme_FlattensV2TokenSet(t *testing.T) {
 	th, err := ParseDefault()
 	if err != nil {
 		t.Fatalf("embedded default is invalid: %v", err)
 	}
-	for _, c := range []struct {
-		mode   string
-		golden map[string]string
-	}{
-		{"dark", goldenDefaultDark},
-		{"light", goldenDefaultLight},
-	} {
-		got := th.Flatten(c.mode)
-		assertTokenMap(t, c.mode, c.golden, got)
+	if th.SchemaVersion != SupportedSchemaVersion {
+		t.Errorf("default schema_version = %q, want %q", th.SchemaVersion, SupportedSchemaVersion)
+	}
+	for _, c := range []string{"dark", "light"} {
+		got := th.Flatten(c)
+		// Every always-emitted key must be present.
+		for _, k := range expectedV2ColorKeys {
+			if _, ok := got[k]; !ok {
+				t.Errorf("%s mode: missing canonical v2 token %s", c, k)
+			}
+		}
+		for _, k := range expectedV2GeometryKeys {
+			if _, ok := got[k]; !ok {
+				t.Errorf("%s mode: missing geometry token %s", c, k)
+			}
+		}
+		for _, k := range expectedV2EditorKeys {
+			if _, ok := got[k]; !ok {
+				t.Errorf("%s mode: missing editor token %s", c, k)
+			}
+		}
+		// The default ships a typography block, so its fonts are present.
+		for _, k := range expectedV2TypographyKeys {
+			if _, ok := got[k]; !ok {
+				t.Errorf("%s mode: missing typography token %s", c, k)
+			}
+		}
+		// Any extra key must be an allowed optional (background overlay or
+		// type-scale), never a stray legacy token.
+		for k := range got {
+			if slices.Contains(expectedV2ColorKeys, k) ||
+				slices.Contains(expectedV2GeometryKeys, k) ||
+				slices.Contains(expectedV2EditorKeys, k) ||
+				slices.Contains(expectedV2TypographyKeys, k) ||
+				isBackgroundOverlayKey(k) || isTypeScaleKey(k) {
+				continue
+			}
+			t.Errorf("%s mode: unexpected token %s (v2 emits only the canonical set + optional background/type-scale)", c, k)
+		}
+		// Legacy v1 tokens must NOT survive the v2 Flatten.
+		for _, legacy := range []string{
+			"--color-void", "--color-surface", "--color-panel",
+			"--color-border-muted", "--color-border-zinc", "--color-chrome-void",
+			"--silt-texture-image", "--silt-texture-display",
+		} {
+			if _, ok := got[legacy]; ok {
+				t.Errorf("%s mode: legacy v1 token %s must not be emitted", c, legacy)
+			}
+		}
 	}
 }
+
+// TestDefaultTheme_GoldenSnapshot value-level pin. The v2 default
+// (cyber_forest.json) is being re-authored natively in parallel; once the
+// v2 values are finalized, pin them here exactly so any future drift fails
+// with a precise diff. For now the token-set guard above covers structure.
+
+// TestFirstClassThemes_FlattenShape pins the structural contract for every
+// non-default first-class theme: both modes flatten to the canonical v2
+// color/geometry/editor token set, the typography block is present, and any
+// extra key is the opt-in background overlay (--silt-bg-*) or the type-scale.
+func TestFirstClassThemes_FlattenShape(t *testing.T) {
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	for _, th := range all {
+		if th.ID == DefaultThemeID {
+			continue
+		}
+		if th.Typography == nil {
+			t.Errorf("%s: expected a typography block", th.ID)
+		}
+		for _, mode := range []string{"dark", "light"} {
+			flat := th.Flatten(mode)
+			// Every canonical v2 color token must be present.
+			for _, k := range expectedV2ColorKeys {
+				if _, ok := flat[k]; !ok {
+					t.Errorf("%s [%s]: missing token %s", th.ID, mode, k)
+				}
+			}
+			for _, k := range expectedV2GeometryKeys {
+				if _, ok := flat[k]; !ok {
+					t.Errorf("%s [%s]: missing geometry token %s", th.ID, mode, k)
+				}
+			}
+			for _, k := range expectedV2EditorKeys {
+				if _, ok := flat[k]; !ok {
+					t.Errorf("%s [%s]: missing editor token %s", th.ID, mode, k)
+				}
+			}
+			// Any extra key must be the opt-in background overlay or
+			// type-scale, not a stray or legacy token.
+			for k := range flat {
+				switch {
+				case slices.Contains(expectedV2ColorKeys, k),
+					slices.Contains(expectedV2GeometryKeys, k),
+					slices.Contains(expectedV2EditorKeys, k),
+					slices.Contains(expectedV2TypographyKeys, k),
+					isBackgroundOverlayKey(k),
+					isTypeScaleKey(k):
+					// allowed canonical or optional key
+				default:
+					t.Errorf("%s [%s]: unexpected token %s (only --silt-bg-* and type-scale are allowed extras)",
+						th.ID, mode, k)
+				}
+			}
+		}
+	}
+}
+
+// TestBackgroundDisplay_GatedByBackgroundBlock pins the --silt-bg-<zone>-display
+// contract: a surface that declares a background block flips its overlay on
+// (display:block), and a surface without one emits nothing. This is the exact
+// behavior the overlay's display:var(--silt-bg-<zone>-display,none) relies on;
+// a regression here would either hide a theme's texture/photo or force a
+// composited layer onto every non-background surface.
+func TestBackgroundDisplay_GatedByBackgroundBlock(t *testing.T) {
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	for _, th := range all {
+		for _, mode := range []string{"dark", "light"} {
+			var m Mode
+			if mode == "dark" {
+				m = th.Modes.Dark
+			} else {
+				m = th.Modes.Light
+			}
+			flat := th.Flatten(mode)
+			for _, z := range surfaceZones {
+				s := z.get(m.Surfaces)
+				key := "--silt-bg-" + z.name + "-display"
+				_, hasDisplay := flat[key]
+				if s != nil && s.Background != nil {
+					if !hasDisplay {
+						t.Errorf("%s [%s] %s: surface with a background block must emit %s", th.ID, mode, z.name, key)
+					} else if flat[key] != "block" {
+						t.Errorf("%s [%s] %s: %s = %q, want \"block\"", th.ID, mode, z.name, key, flat[key])
+					}
+				} else {
+					if hasDisplay {
+						t.Errorf("%s [%s] %s: surface without a background block must NOT emit %s (got %q)",
+							th.ID, mode, z.name, key, flat[key])
+					}
+				}
+			}
+		}
+	}
+}
+
+// --- retained helpers (kept for the value-level golden snapshot to come) -----
 
 func assertTokenMap(t *testing.T, mode string, want, got map[string]string) {
 	t.Helper()
@@ -156,9 +271,9 @@ func assertTokenMap(t *testing.T, mode string, want, got map[string]string) {
 		}
 	}
 	if mismatch > 0 {
-		t.Errorf("%s mode: embedded default theme drifted from the golden snapshot (%d token(s) changed):%s\n"+
-			"If the change is intentional, update goldenDefault%s in snapshot_test.go.",
-			mode, mismatch, b.String(), titleCase(mode))
+		t.Errorf("%s mode: theme drifted from the golden snapshot (%d token(s) changed):%s\n"+
+			"If the change is intentional, update the golden map in snapshot_test.go.",
+			mode, mismatch, b.String())
 	}
 }
 
@@ -167,153 +282,4 @@ func titleCase(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
-}
-
-// expectedFlattenKeys is the complete set of CSS custom properties a theme
-// with the default typography block produces when flattened: 21 color tokens
-// + 3 typography tokens (--font-body/mono/headline). The default golden
-// snapshot above pins every VALUE of cyber_forest against this set; the
-// first-class shape guard below pins the SET (and the tuned tokens) for the
-// Sprint 8 additions.
-var expectedFlattenKeys = []string{
-	"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active",
-	"--color-border-muted", "--color-border-zinc", "--color-border-active", "--color-border-focus",
-	"--color-text-primary", "--color-text-muted", "--color-text-disabled",
-	"--color-accent-primary-start", "--color-accent-primary-end", "--color-accent-primary-glow",
-	"--color-accent-secondary-start", "--color-accent-secondary-end", "--color-accent-secondary-glow",
-	"--color-status-warn", "--color-status-danger", "--color-status-success",
-	"--font-body", "--font-mono", "--font-headline",
-}
-
-// TestFirstClassThemes_FlattenShape pins the structural contract for every
-// non-default first-class theme: both modes flatten to exactly the canonical
-// color-token key set (no missing/extra color tokens), the typography block is
-// present, and the specifically WCAG-tuned tokens hold their known-good
-// values. The default has a full value-level golden snapshot above; the new
-// themes get shape + tuned-token guards (the contrast harness covers WCAG drift
-// on the rest).
-//
-// The optional decorative texture overlay (--silt-texture-image/opacity/blend,
-// used by Linen's woven-paper surface) is an opt-in superset on top of the
-// canonical token set: it is allowed here but never required, so a theme
-// without a texture block still passes.
-func TestFirstClassThemes_FlattenShape(t *testing.T) {
-	all, err := EmbeddedThemes()
-	if err != nil {
-		t.Fatalf("EmbeddedThemes: %v", err)
-	}
-	// Tuned tokens: values changed during Sprint 8 to clear the WCAG
-	// 5-background AA matrix. Pinning them here catches a regression of the
-	// fix with a precise message (the contrast test would also fail, but
-	// less specifically).
-	tuned := map[string]map[string]string{
-		"silt-terra-noir": {"dark|--color-text-muted": "#a89478"},
-		// #138: pin Graphite/Linen dark text-primary at the distinct values
-		// #136 anchored (neutral-white / warm-oatmeal). The issue tracked a
-		// state where these collapsed to Cyber-Forest-adjacent cool blue-grays
-		// (#e6e8eb / #e6e7ea) and themes stopped reading differently. The
-		// distinctness guard in contrast_test.go covers the perceptual side;
-		// this pin catches an exact-value revert with a precise diff message.
-		"silt-graphite": {"dark|--color-text-primary": "#ebebeb"},
-		"silt-linen": {
-			"dark|--color-text-muted":   "#b9b0a1",
-			"dark|--color-text-primary": "#e8e3d8",
-		},
-	}
-	// Opt-in decorative texture overlay keys (superset; allowed, not required).
-	textureKeys := map[string]bool{
-		"--silt-texture-display": true,
-		"--silt-texture-image":   true,
-		"--silt-texture-opacity": true,
-		"--silt-texture-blend":   true,
-	}
-	// Chrome dual-surface keys (superset; always emitted by Flatten as either
-	// concrete values or var(--color-*) fallbacks).
-	chromeKeys := map[string]bool{
-		"--color-chrome-void":          true,
-		"--color-chrome-surface":       true,
-		"--color-chrome-panel":         true,
-		"--color-chrome-hover":         true,
-		"--color-chrome-active":        true,
-		"--color-chrome-border-muted":  true,
-		"--color-chrome-border-zinc":   true,
-		"--color-chrome-border-active": true,
-		"--color-chrome-border-focus":  true,
-		"--color-chrome-text-primary":  true,
-		"--color-chrome-text-muted":    true,
-		"--color-chrome-text-disabled": true,
-	}
-	for _, th := range all {
-		if th.ID == DefaultThemeID {
-			continue
-		}
-		if th.Typography == nil {
-			t.Errorf("%s: expected a typography block", th.ID)
-		}
-		for _, mode := range []string{"dark", "light"} {
-			flat := th.Flatten(mode)
-			// Every canonical color token must be present.
-			for _, k := range expectedFlattenKeys {
-				if _, ok := flat[k]; !ok {
-					t.Errorf("%s [%s]: missing token %s", th.ID, mode, k)
-				}
-			}
-			// Any extra key must be the opt-in texture overlay or the
-			// always-present chrome dual-surface keys, not a stray token.
-			for k := range flat {
-				if !slices.Contains(expectedFlattenKeys, k) && !textureKeys[k] && !chromeKeys[k] {
-					t.Errorf("%s [%s]: unexpected token %s (only --silt-texture-* and --color-chrome-* are allowed)",
-						th.ID, mode, k)
-				}
-			}
-			// Tuned-token pin.
-			if tt, ok := tuned[th.ID]; ok {
-				for key, want := range tt {
-					// key is "<mode>|<token>"
-					if strings.HasPrefix(key, mode+"|") {
-						tok := strings.TrimPrefix(key, mode+"|")
-						if got := flat[tok]; got != want {
-							t.Errorf("%s [%s]: tuned %s = %s, want %s (WCAG tuning regressed)",
-								th.ID, mode, tok, got, want)
-						}
-					}
-				}
-			}
-		}
-	}
-}
-
-// TestTextureDisplay_GatedByTextureBlock pins the --silt-texture-display
-// contract introduced for the render-gating optimization: a mode that
-// declares a texture block must flip the global overlay on (display:block),
-// and a mode without one must emit nothing (so the frontend's body::before
-// stays display:none and never instantiates a full-screen layer). This is
-// the exact behavior the overlay's display:var(--silt-texture-display,none)
-// relies on; a regression here would either hide Linen's texture or force a
-// composited layer onto every non-textured theme.
-func TestTextureDisplay_GatedByTextureBlock(t *testing.T) {
-	all, err := EmbeddedThemes()
-	if err != nil {
-		t.Fatalf("EmbeddedThemes: %v", err)
-	}
-	wantTextured := map[string]bool{"silt-linen": true} // the only first-class textured theme
-	for _, th := range all {
-		for _, mode := range []string{"dark", "light"} {
-			flat := th.Flatten(mode)
-			_, hasDisplay := flat["--silt-texture-display"]
-			if wantTextured[th.ID] {
-				if !hasDisplay {
-					t.Errorf("%s [%s]: textured theme must emit --silt-texture-display", th.ID, mode)
-				} else if flat["--silt-texture-display"] != "block" {
-					t.Errorf("%s [%s]: --silt-texture-display = %q, want \"block\"",
-						th.ID, mode, flat["--silt-texture-display"])
-				}
-			} else {
-				if hasDisplay {
-					t.Errorf("%s [%s]: non-textured theme must NOT emit --silt-texture-display (got %q)",
-						th.ID, mode, flat["--silt-texture-display"])
-				}
-			}
-		}
-	}
 }

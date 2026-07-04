@@ -86,10 +86,10 @@ func TestEmbeddedThemeFiles_UsedByScaffold(t *testing.T) {
 // listing's FlatTokens reflect the on-disk content, not the embedded one.
 func TestListThemes_OnDiskDefaultWinsDedup(t *testing.T) {
 	dir := t.TempDir()
-	// A cyber_forest variant whose bg.void differs from the embedded default
-	// (#0c0c0e) so we can prove the on-disk copy is the one selected.
+	// A cyber_forest variant whose surfaces.app.bg differs from the embedded
+	// default so we can prove the on-disk copy is the one selected.
 	edited := strings.Replace(minimalValidJSON, `"id": "test-theme"`, `"id": "cyber_forest"`, 1)
-	edited = strings.Replace(edited, `"#000000"`, `"#abcdef"`, 1) // dark bg.void → sentinel
+	edited = strings.Replace(edited, `"#0c0c0e"`, `"#abcdef"`, 1) // dark surfaces.app.bg → sentinel
 	mustWriteTheme(t, dir, "cyber_forest.json", edited)
 
 	res, err := ListThemes(dir)
@@ -108,10 +108,10 @@ func TestListThemes_OnDiskDefaultWinsDedup(t *testing.T) {
 	if cf.Source != "disk" {
 		t.Errorf("on-disk cyber_forest source = %q, want \"disk\"", cf.Source)
 	}
-	// The on-disk sentinel bg.void must be the one surfaced (proves dedup
-	// picked disk over embed, not just that the id is present).
-	if got := res.FlatTokens[DefaultThemeID].Dark["--color-void"]; got != "#abcdef" {
-		t.Errorf("on-disk cyber_forest dark bg.void = %q, want #abcdef (disk wins)", got)
+	// The on-disk sentinel surfaces.app.bg must be the one surfaced (proves
+	// dedup picked disk over embed, not just that the id is present).
+	if got := res.FlatTokens[DefaultThemeID].Dark["--color-surface-app"]; got != "#abcdef" {
+		t.Errorf("on-disk cyber_forest dark surface-app = %q, want #abcdef (disk wins)", got)
 	}
 }
 
