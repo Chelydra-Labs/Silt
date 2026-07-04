@@ -29,6 +29,7 @@
   import type { PluginContext, PluginManifest } from '../../sdk'
   import { plusDaysISO } from '../../sdk'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../lib/standaloneTasksNav'
+  import QuickAddTask from '../shared/QuickAddTask.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -85,6 +86,7 @@
   // header button; state is runtime-only (not persisted — v1; a future
   // per-plugin setting could remember the user's pref).
   let showCompleted = $state(false)
+  let showQuickAdd = $state(false)
 
   async function reload() {
     loading = true
@@ -278,6 +280,20 @@
     <h1 class="font-headline-lg text-headline-lg text-text-primary">
       {manifest?.name ?? 'Tasks'}
     </h1>
+    <button
+      type="button"
+      onclick={() => (showQuickAdd = !showQuickAdd)}
+      aria-label="Add a task"
+      aria-expanded={showQuickAdd}
+      data-testid="tasks-add-button"
+      class="flex items-center gap-1 px-2 py-1 rounded text-[12px] font-label-sm
+             text-text-muted hover:text-text-primary hover:bg-hover
+             border border-border-zinc bg-transparent cursor-pointer
+             transition-colors"
+    >
+      <span class="material-symbols-outlined text-[14px]">add</span>
+      Add
+    </button>
     <span
       class="text-text-muted text-[12px] font-body-md ml-auto"
       aria-live="polite"
@@ -286,6 +302,17 @@
       {openItems.length} active task{openItems.length === 1 ? '' : 's'}
     </span>
   </header>
+
+  {#if showQuickAdd}
+    <div class="px-6 py-3 border-b border-border-muted bg-surface/30">
+      <QuickAddTask
+        {ctx}
+        keepOpenAfterCreate={false}
+        onCreated={() => (showQuickAdd = false)}
+        onCancel={() => (showQuickAdd = false)}
+      />
+    </div>
+  {/if}
 
   {#if markDoneError}
     <div
