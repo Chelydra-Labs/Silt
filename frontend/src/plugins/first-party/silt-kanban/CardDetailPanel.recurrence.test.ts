@@ -199,4 +199,24 @@ describe('CardDetailPanel — recurrence', () => {
     // The trigger button should not be present.
     expect(screen.queryByText('Set recurrence…')).toBeNull()
   })
+
+  it('portals the recurrence listbox out of the scroll container so it is not clipped (#376)', async () => {
+    const ctx = makeCtx()
+    const { container } = render(CardDetailPanel, {
+      props: { card: makeCard(), ctx, onClose: () => {} }
+    })
+    const trigger = container.querySelector(
+      'button[aria-haspopup="listbox"]'
+    ) as HTMLElement
+    await fireEvent.click(trigger)
+    // The listbox options render into document.body via the shared <Popover>
+    // portal — NOT inside the panel's overflow-y-auto container, so lower
+    // options can no longer be clipped when the section sits low.
+    const option = await screen.findByRole('option', { name: 'every week' })
+    expect(document.body.contains(option)).toBe(true)
+    expect(container.contains(option)).toBe(false)
+    // "Stop recurring" only appears when a recurrence is already set; here it
+    // must be absent, confirming the conditional still works through the portal.
+    expect(screen.queryByText('Stop recurring')).toBeNull()
+  })
 })

@@ -5,6 +5,7 @@
   import type { KanbanCard } from './types'
   import { PRIORITY_LABELS, laneLabel } from './types'
   import DependencyPicker from './DependencyPicker.svelte'
+  import Popover from '../../../components/Popover.svelte'
 
   interface Props {
     card: KanbanCard | null
@@ -71,6 +72,9 @@
   let progressPending = $state(false)
   let recurrencePending = $state(false)
   let recurrenceOpen = $state(false)
+  // Anchor for the recurrence <Popover>; the trigger button binds this so the
+  // floating listbox can be positioned + portaled out of the scroll container.
+  let recurrenceTrigger = $state<HTMLButtonElement | null>(null)
   let recurrenceFocusIdx = $state(-1)
   let customRecurrence = $state('')
 
@@ -499,45 +503,45 @@
           Recurrence
         </h3>
         {#if card.due_date}
-          <div class="relative">
-            <button
-              type="button"
-              onclick={() => {
-                recurrenceOpen = !recurrenceOpen
-                recurrenceFocusIdx = 0
-              }}
-              onkeydown={onRecurrenceKeydown}
-              disabled={recurrencePending}
-              aria-haspopup="listbox"
-              aria-expanded={recurrenceOpen}
-              aria-controls="recurrence-listbox"
-              class="w-full flex items-center justify-between px-3 py-2 rounded border border-border-muted bg-surface hover:bg-hover transition-colors disabled:opacity-50 text-[12px] font-label-sm text-text-primary"
-            >
-              <span class="flex items-center gap-2">
-                <span
-                  class="material-symbols-outlined text-[16px] {recurrenceState
-                    ? 'text-accent-secondary-start'
-                    : 'text-text-muted'}"
-                  aria-hidden="true">event_repeat</span
-                >
-                {recurrenceState || 'Set recurrence…'}
-              </span>
+          <button
+            bind:this={recurrenceTrigger}
+            type="button"
+            onclick={() => {
+              recurrenceOpen = !recurrenceOpen
+              recurrenceFocusIdx = 0
+            }}
+            onkeydown={onRecurrenceKeydown}
+            disabled={recurrencePending}
+            aria-haspopup="listbox"
+            aria-expanded={recurrenceOpen}
+            aria-controls="recurrence-listbox"
+            class="w-full flex items-center justify-between px-3 py-2 rounded border border-border-muted bg-surface hover:bg-hover transition-colors disabled:opacity-50 text-[12px] font-label-sm text-text-primary"
+          >
+            <span class="flex items-center gap-2">
               <span
-                class="material-symbols-outlined text-[14px] text-text-muted"
-                aria-hidden="true">expand_more</span
+                class="material-symbols-outlined text-[16px] {recurrenceState
+                  ? 'text-accent-secondary-start'
+                  : 'text-text-muted'}"
+                aria-hidden="true">event_repeat</span
               >
-            </button>
-            {#if recurrenceOpen}
-              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-              <div
-                class="fixed inset-0 z-10"
-                onclick={closeRecurrence}
-                aria-hidden="true"
-              ></div>
+              {recurrenceState || 'Set recurrence…'}
+            </span>
+            <span
+              class="material-symbols-outlined text-[14px] text-text-muted"
+              aria-hidden="true">expand_more</span
+            >
+          </button>
+          <Popover
+            open={recurrenceOpen}
+            onClose={closeRecurrence}
+            anchor={recurrenceTrigger}
+            matchWidth
+            class="rounded border border-border-muted bg-panel shadow-lg overflow-hidden"
+          >
+            {#snippet content()}
               <div
                 id="recurrence-listbox"
                 transition:fly={{ y: -4, duration: 100 }}
-                class="absolute left-0 right-0 mt-1 z-20 rounded border border-border-muted bg-panel shadow-lg overflow-hidden"
                 role="listbox"
                 tabindex="-1"
                 aria-label="Recurrence options"
@@ -606,8 +610,8 @@
                   </div>
                 {/if}
               </div>
-            {/if}
-          </div>
+            {/snippet}
+          </Popover>
         {:else}
           <p class="text-[11px] font-label-sm text-text-muted italic">
             Set a due date first to configure recurrence.
