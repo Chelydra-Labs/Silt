@@ -61,3 +61,51 @@ describe('hardcoded dark color guard (#260)', () => {
     })
   }
 })
+
+// Theme System v2 guards (#386, #390). The error family and editor tokens are
+// now themeable — emitted by the engine — so index.css must consume them via
+// var() and must not carry the legacy static Material-3 error pink (#ffb4ab)
+// that won regardless of the active theme. These assertions pin that the
+// consolidation is not silently reverted.
+describe('themeable error + editor tokens (#386, #390)', () => {
+  const indexLines = readLines('index.css')
+  const indexText = indexLines.join('\n')
+
+  it('index.css has no static Material-3 --color-error declaration', () => {
+    // The themeable error family (--color-error*) is engine-emitted now; the
+    // CSS must only consume it via var(). A static `--color-error: <hex>`
+    // declaration would re-introduce the #386 bug (a fixed pink that wins in
+    // every dark theme). The bare `--error` task-priority tone (a separate,
+    // documented static concern) is not in scope here.
+    expect(
+      indexText,
+      'static --color-error declaration must be removed'
+    ).not.toMatch(/--color-error\s*:\s*#/i)
+  })
+
+  it('index.css consumes the themeable error family via var()', () => {
+    for (const token of [
+      '--color-error',
+      '--color-error-bg',
+      '--color-error-border'
+    ]) {
+      expect(
+        indexText,
+        `${token} must be consumed via var() so the active theme wins`
+      ).toMatch(
+        new RegExp(`var\\(${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+      )
+    }
+  })
+
+  it('index.css consumes the editor tokens via var()', () => {
+    for (const token of ['--color-editor-caret', '--color-editor-selection']) {
+      expect(
+        indexText,
+        `${token} must be consumed via var() so the editor canvas is themed`
+      ).toMatch(
+        new RegExp(`var\\(${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+      )
+    }
+  })
+})
