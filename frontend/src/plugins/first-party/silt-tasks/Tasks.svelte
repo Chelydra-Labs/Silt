@@ -29,6 +29,7 @@
   import type { PluginContext, PluginManifest } from '../../sdk'
   import { plusDaysISO } from '../../sdk'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../lib/standaloneTasksNav'
+  import QuickAddTask from '../shared/QuickAddTask.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -85,6 +86,7 @@
   // header button; state is runtime-only (not persisted — v1; a future
   // per-plugin setting could remember the user's pref).
   let showCompleted = $state(false)
+  let showQuickAdd = $state(false)
 
   async function reload() {
     loading = true
@@ -278,14 +280,39 @@
     <h1 class="font-headline-lg text-headline-lg text-text-primary">
       {manifest?.name ?? 'Tasks'}
     </h1>
-    <span
-      class="text-text-muted text-[12px] font-body-md ml-auto"
-      aria-live="polite"
-      data-testid="tasks-open-count"
-    >
-      {openItems.length} active task{openItems.length === 1 ? '' : 's'}
-    </span>
+    <div class="ml-auto flex flex-col items-end gap-0.5">
+      <button
+        type="button"
+        onclick={() => (showQuickAdd = true)}
+        aria-label="New task"
+        data-testid="tasks-new-task-btn"
+        class="flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
+      >
+        <span class="material-symbols-outlined text-[16px]">add</span>New task
+      </button>
+      <span
+        class="text-text-muted text-[12px] font-body-md"
+        aria-live="polite"
+        data-testid="tasks-open-count"
+      >
+        {openItems.length} active task{openItems.length === 1 ? '' : 's'}
+      </span>
+    </div>
   </header>
+
+  {#if showQuickAdd}
+    <div class="px-6 py-2 border-b border-border-muted bg-panel">
+      <div class="max-w-md">
+        <QuickAddTask
+          {ctx}
+          placeholder="New task — Enter to add, Esc to close"
+          keepOpenAfterCreate={false}
+          onCreated={() => (showQuickAdd = false)}
+          onCancel={() => (showQuickAdd = false)}
+        />
+      </div>
+    </div>
+  {/if}
 
   {#if markDoneError}
     <div
@@ -334,7 +361,8 @@
         class="text-text-muted py-10 text-center font-body-md"
         data-testid="tasks-empty"
       >
-        No tasks yet. Use <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
+        No tasks yet. Click <strong>New task</strong> above or use
+        <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
       </div>
     {:else}
       {#if openItems.length === 0}
@@ -349,8 +377,9 @@
             All caught up!
           </h3>
           <p class="text-text-muted text-[13px] font-body-md">
-            You have no active tasks. Restore any completed task below to
-            active, or use <kbd
+            You have no active tasks. Restore a completed task below to the
+            active list, click <strong>New task</strong> above, or use
+            <kbd
               class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-border-zinc font-mono text-[11px]"
               >Ctrl+Shift+N</kbd
             > to capture a new task.
