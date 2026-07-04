@@ -5,6 +5,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updateBlockState: vi.fn(),
+  createTask: vi.fn().mockResolvedValue('new-task-id'),
   blockChangedCallbacks: [] as Array<() => void>
 }))
 
@@ -19,6 +20,7 @@ import { v2CtxStubs } from '../../test-helpers'
 
 function makeCtx(): PluginContext {
   return {
+    ...v2CtxStubs,
     activeNotebook: '',
     activeSection: '',
     activePage: '',
@@ -26,6 +28,7 @@ function makeCtx(): PluginContext {
     sqliteQuery: mocks.sqliteQuery,
     updateBlockState: mocks.updateBlockState,
     mutateBlock: vi.fn(),
+    createTask: mocks.createTask,
     updateTaskMeta: vi.fn(),
     getPluginSettings: vi.fn(() => Promise.resolve({})),
     on: <E extends PluginEventName>(
@@ -41,8 +44,7 @@ function makeCtx(): PluginContext {
         }
       }
       return () => {}
-    },
-    ...v2CtxStubs
+    }
   }
 }
 
@@ -118,6 +120,7 @@ describe('Tasks view', () => {
     mocks.sqliteQuery.mockReset()
     mocks.updateBlockState.mockReset()
     mocks.updateBlockState.mockResolvedValue(true)
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
     mocks.blockChangedCallbacks.length = 0
   })
 
@@ -544,6 +547,101 @@ describe('Tasks view', () => {
     expect(farRow?.closest('[data-group]')?.getAttribute('data-group')).toBe(
       'later'
     )
+  })
+})
+
+describe('Tasks view — quick-add affordance (#399)', () => {
+  beforeEach(() => {
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+  })
+
+  it('shows an Add button in the header', async () => {
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const btn = screen.getByTestId('tasks-add-button')
+    expect(btn).toBeInTheDocument()
+    expect(btn.textContent).toContain('Add')
+    expect(btn.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('clicking Add opens the quick-add input', async () => {
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-add-button'))
+    await flush()
+
+    expect(
+      screen.getByTestId('tasks-add-button').getAttribute('aria-expanded')
+    ).toBe('true')
+    expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
+  })
+
+  it('clicking Add again closes the quick-add input', async () => {
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const btn = screen.getByTestId('tasks-add-button')
+    await fireEvent.click(btn)
+    await flush()
+    expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
+
+    await fireEvent.click(btn)
+    await flush()
+    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
+    expect(btn.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('submitting calls ctx.createTask with the typed title and closes the input', async () => {
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-add-button'))
+    await flush()
+
+    const input = screen.getByTestId('quick-add-task-input')
+    await fireEvent.input(input, { target: { value: 'Ship the feature' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+
+    expect(mocks.createTask).toHaveBeenCalledTimes(1)
+    const call = mocks.createTask.mock.calls[0][0]
+    expect(call.title).toBe('Ship the feature')
+    expect(call.status).toBe('TODO')
+    expect(call.dueDate).toBeUndefined()
+    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
+  })
+
+  it('Escape cancels without calling createTask', async () => {
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-add-button'))
+    await flush()
+
+    const input = screen.getByTestId('quick-add-task-input')
+    await fireEvent.keyDown(input, { key: 'Escape' })
+    await flush()
+
+    expect(mocks.createTask).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
+  })
+
+  it('empty submit is rejected', async () => {
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-add-button'))
+    await flush()
+
+    const input = screen.getByTestId('quick-add-task-input')
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+
+    expect(mocks.createTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
   })
 })
 
