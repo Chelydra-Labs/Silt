@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { SearchBlocks } from '../../../../wailsjs/go/main/App.js'
-  import type { PluginContext } from '../../sdk'
+  import type { PluginContext, SearchHit } from '../../sdk'
 
   /**
    * Dependency picker for the CardDetailPanel (#303). Lists a task's current
    * `[blocked_by::]` prerequisites as removable chips, with a typeahead input
-   * backed by SearchBlocks to add new ones. Mirrors the recurrence editor's
+   * backed by ctx.searchBlocks to add new ones. Mirrors the recurrence editor's
    * optimistic-commit + revert-on-failure contract and the BlockPickerModal's
    * debounced search + keyboard nav.
    */
@@ -29,15 +28,7 @@
   let deps = $state<DepDisplay[]>([])
 
   let query = $state('')
-  let results = $state<
-    {
-      id: string
-      clean_content?: string
-      notebook?: string
-      section?: string
-      page?: string
-    }[]
-  >([])
+  let results = $state<SearchHit[]>([])
   let selectedIdx = $state(0)
   let loading = $state(false)
   let pending = $state(false)
@@ -80,19 +71,13 @@
     }
     loading = true
     try {
-      const raw = await SearchBlocks(q)
-      // Filter out: self and already-added deps. SearchBlocks returns
+      const raw = await ctx.searchBlocks(q)
+      // Filter out: self and already-added deps. The search returns
       // task-like blocks; keep only ones with an id.
       const existing = new Set(deps.map((d) => d.id))
-      results = (
-        raw as {
-          id: string
-          clean_content?: string
-          notebook?: string
-          section?: string
-          page?: string
-        }[]
-      ).filter((r) => r.id && r.id !== cardId && !existing.has(r.id))
+      results = (raw as SearchHit[]).filter(
+        (r) => r.id && r.id !== cardId && !existing.has(r.id)
+      )
       selectedIdx = 0
     } catch {
       results = []

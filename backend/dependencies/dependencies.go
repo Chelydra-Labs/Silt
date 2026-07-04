@@ -5,7 +5,7 @@
 // "blocked by" — using the standard block-reference syntax inside an inline
 // metadata token:
 //
-//	- [ ] Ship feature [blocked_by:: ((a)) ((b))]
+//   - [ ] Ship feature [blocked_by:: ((a)) ((b))]
 //
 // The token's value is one or more space-separated ((uuid)) references. This
 // package owns three concerns:

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"silt/backend/dependencies"
 	"silt/backend/db"
+	"silt/backend/dependencies"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 )

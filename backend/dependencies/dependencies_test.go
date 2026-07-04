@@ -137,14 +137,14 @@ func TestWouldCreateCycle(t *testing.T) {
 		{
 			name:  "direct back-edge A->B then B->A",
 			edges: map[string][]string{a: {b}}, // A blocked by B
-			from:  b, to: a, // propose B blocked by A → cycle
-			want:  true,
+			from:  b, to: a,                    // propose B blocked by A → cycle
+			want: true,
 		},
 		{
 			name:  "transitive A->B->C->A",
 			edges: map[string][]string{a: {b}, b: {c}}, // A->B->C
-			from:  c, to: a, // propose C->A → cycle
-			want:  true,
+			from:  c, to: a,                            // propose C->A → cycle
+			want: true,
 		},
 		{
 			name:  "transitive A->B->C->D allowed (no loop)",
@@ -157,13 +157,13 @@ func TestWouldCreateCycle(t *testing.T) {
 			name:  "independent branch allowed",
 			edges: map[string][]string{a: {b}}, // A->B
 			from:  c, to: d,                    // C->D unrelated → allowed
-			want:  false,
+			want: false,
 		},
 		{
 			name:  "diamond allowed",
 			edges: map[string][]string{a: {b, c}, b: {d}, c: {d}}, // A->{B,C}->{D}
-			from:  a, to: d, // A->D short-circuit, no loop
-			want:  false,
+			from:  a, to: d,                                       // A->D short-circuit, no loop
+			want: false,
 		},
 	}
 	for _, tc := range tests {

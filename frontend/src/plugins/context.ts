@@ -16,6 +16,7 @@ import {
   GetTaskBlockers,
   FetchSubtree,
   SaveSubtreeBlocks,
+  SearchBlocks,
   PluginCreateTask,
   GetPluginSettingsForNotebook,
   UpdatePluginSetting,
@@ -265,6 +266,10 @@ export function makePluginContext(
          FROM blocks b WHERE b.raw_content LIKE ? ORDER BY b.notebook, b.section, b.page`,
         ['%{{embed:' + id + '}}%']
       ),
+    // FTS5 block search — wraps the SearchBlocks binding so plugin code (the
+    // dependency picker, #303) never imports wailsjs/go/main/App.js directly
+    // (AGENTS.md — deprecated, breaks on per-plugin webviews #151/#152).
+    searchBlocks: (query) => SearchBlocks(query),
 
     // --- Block CRUD (#104) — gated by content-mutate (#156) -----------------
     // Same atomic-write path as mutateBlock.

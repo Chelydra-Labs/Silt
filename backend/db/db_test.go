@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -361,6 +362,72 @@ func TestTaskDependencies_CascadeDelete(t *testing.T) {
 	// BlockedBy so no edges remain.
 	if n != 0 {
 		t.Errorf("expected 0 edges after blocker removed + dependent cleared, got %d", n)
+	}
+}
+
+// TestWarnOnDependencyCycle_DetectsHandEditedCycle verifies the defensive
+// guard fires on a cycle the setter would have refused (#301). A hand-edited
+// or externally-synced file can introduce A→B→A; the indexer still caches the
+// edges (best-effort) but the guard logs a warning.
+func TestWarnOnDependencyCycle_DetectsHandEditedCycle(t *testing.T) {
+	a := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	b := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	// A is blocked by B, B is blocked by A — a 2-node cycle.
+	cyclic := []parser.ParsedBlock{
+		{ID: a, Type: parser.BlockTask, Depth: 0, BlockedBy: []string{b}},
+		{ID: b, Type: parser.BlockTask, Depth: 0, BlockedBy: []string{a}},
+	}
+	// Capture log output to assert the warning fired.
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr) // restore default
+	warnOnDependencyCycle(cyclic)
+	if !strings.Contains(buf.String(), "cycle detected") {
+		t.Errorf("expected a cycle warning, got log output: %q", buf.String())
+	}
+
+	// A DAG does NOT warn.
+	buf.Reset()
+	dag := []parser.ParsedBlock{
+		{ID: a, Type: parser.BlockTask, Depth: 0, BlockedBy: []string{b}},
+		{ID: b, Type: parser.BlockTask, Depth: 0},
+	}
+	warnOnDependencyCycle(dag)
+	if strings.Contains(buf.String(), "cycle detected") {
+		t.Errorf("did not expect a cycle warning for a DAG, got: %q", buf.String())
+	}
+
+	// No edges does NOT warn.
+	buf.Reset()
+	warnOnDependencyCycle([]parser.ParsedBlock{{ID: a, Type: parser.BlockTask, Depth: 0}})
+	if strings.Contains(buf.String(), "cycle detected") {
+		t.Errorf("did not expect a cycle warning with no edges, got: %q", buf.String())
+	}
+}
+
+// TestIndexFileBlocks_HandEditedCycleStillIndexes confirms the indexer does
+// NOT reject a cyclic edge set (it caches the edges best-effort) — the guard
+// only logs. This keeps an externally-synced cycle from breaking the index.
+func TestIndexFileBlocks_HandEditedCycleStillIndexes(t *testing.T) {
+	dm := newTestDB(t)
+	a := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	b := "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	// Silence the expected warning so the test log stays clean.
+	log.SetOutput(os.Stderr)
+	blocks := []parser.ParsedBlock{
+		func() parser.ParsedBlock { blk := sampleTaskBlock(a, 1); blk.BlockedBy = []string{b}; return blk }(),
+		func() parser.ParsedBlock { blk := sampleTaskBlock(b, 2); blk.BlockedBy = []string{a}; return blk }(),
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks rejected a cyclic edge set: %v", err)
+	}
+	// Both edges are cached despite the cycle.
+	var n int
+	if err := dm.db.QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 cached edges despite the cycle, got %d", n)
 	}
 }
 

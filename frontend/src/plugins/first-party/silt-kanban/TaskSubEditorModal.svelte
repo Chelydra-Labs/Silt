@@ -222,11 +222,10 @@
 
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement
-    window.addEventListener('keydown', handleKeydown)
-    // The subtree load + focus are kicked off from onCreate (above) once the
-    // editor instance exists; nothing async to do here beyond focus-trap setup.
+    // Keydown is handled by <svelte:window onkeydown={handleKeydown}> in the
+    // template (the SettingsShell pattern) — no addEventListener here, or
+    // every Esc/Tab would fire the handler twice.
     return () => {
-      window.removeEventListener('keydown', handleKeydown)
       if (saveTimer) clearTimeout(saveTimer)
       // Flush any last edit before teardown so nothing is lost.
       if (unsavedChanges) void persist()

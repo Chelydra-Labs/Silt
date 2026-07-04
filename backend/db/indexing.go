@@ -8,12 +8,34 @@ import (
 	"strings"
 	"time"
 
+	"silt/backend/dependencies"
 	"silt/backend/parser"
 )
 
 // tagRegex matches inline tags starting with # followed by a letter.
 // Package-level var so the regex is compiled once, not per ExtractTags call.
 var tagRegex = regexp.MustCompile(`\B#([a-zA-Z][a-zA-Z0-9_/-]*)`)
+
+// warnOnDependencyCycle builds the [blocked_by::] edge map for a set of blocks
+// and logs a warning when it contains a cycle (#301). The IPC setter prevents
+// cycles at write time, but a hand-edited or externally-synced file (Obsidian,
+// Dropbox) can still introduce one; this guard surfaces it so the user knows
+// the dependency graph is inconsistent rather than silently caching a loop.
+// The check is best-effort — it never blocks indexing or returns an error.
+func warnOnDependencyCycle(blocks []parser.ParsedBlock) {
+	edges := make(map[string][]string)
+	for _, b := range blocks {
+		if b.Type == parser.BlockTask && len(b.BlockedBy) > 0 {
+			edges[b.ID] = append(edges[b.ID], b.BlockedBy...)
+		}
+	}
+	if len(edges) == 0 {
+		return
+	}
+	if dependencies.DetectsCycle(edges) {
+		log.Printf("db: task_dependencies cycle detected in indexed blocks — a hand-edited or externally-synced file introduced a circular dependency; the setter normally prevents this")
+	}
+}
 
 // IsFileUnchanged reports whether the file at `path` was previously indexed
 // with the exact same mtime (Unix nanoseconds) and size. A warm restart uses
@@ -406,6 +428,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	// prior edge set, so each insert here is additive. INSERT OR IGNORE keeps
 	// the (block_id, blocked_by_id) PRIMARY KEY unique even if the parser
 	// handed back a duplicate.
+	warnOnDependencyCycle(blocks)
 	for _, block := range blocks {
 		if block.Type != parser.BlockTask {
 			continue
@@ -605,7 +628,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 			}
 		}
 
-			indexedCount++
+		indexedCount++
 	}
 
 	// Cache [blocked_by:: ((uuid))] edges in a second pass over every indexed
@@ -613,6 +636,22 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	// file boundaries (a task blocked-by a task in a different page), so this
 	// pass runs after the whole results loop, not per-file. Mirrors the
 	// IndexFileBlocks second pass; see comment there.
+	//
+	// Cycle guard: a hand-edited or externally-synced file can introduce a
+	// cycle the setter would have refused. Check the accumulated edge set
+	// across all results (cycles can span files) and log a warning. This
+	// never blocks the batch — the index is best-effort consistent.
+	allEdges := make(map[string][]string)
+	for _, res := range results {
+		for _, b := range res.Blocks {
+			if b.Type == parser.BlockTask && len(b.BlockedBy) > 0 {
+				allEdges[b.ID] = append(allEdges[b.ID], b.BlockedBy...)
+			}
+		}
+	}
+	if len(allEdges) > 0 && dependencies.DetectsCycle(allEdges) {
+		log.Printf("db: task_dependencies cycle detected across indexed files — a hand-edited or externally-synced file introduced a circular dependency; the setter normally prevents this")
+	}
 	for _, res := range results {
 		for _, block := range res.Blocks {
 			if block.Type != parser.BlockTask {

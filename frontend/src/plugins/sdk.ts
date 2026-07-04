@@ -103,6 +103,19 @@ export interface SubtreeBlock {
   language?: string
 }
 
+/**
+ * A block-search hit returned by `searchBlocks` (#303). Mirrors the relevant
+ * subset of the backend TaskResult projection — enough for the dependency
+ * picker (and embed insertion) to render a breadcrumb + label per result.
+ */
+export interface SearchHit {
+  id: string
+  clean_content?: string
+  notebook?: string
+  section?: string
+  page?: string
+}
+
 export interface PluginContext {
   /**
    * The active notebook. This is a LIVE reactive getter (#69): reading it
@@ -261,6 +274,13 @@ export interface PluginContext {
   fullTextSearch: (query: string) => Promise<SqliteQueryResult>
   getBacklinks: (uuid: string) => Promise<SqliteQueryResult>
   getEmbeds: (uuid: string) => Promise<SqliteQueryResult>
+  /**
+   * FTS5 block search (#303 dependency picker, embed insertion). Returns
+   * matching blocks with breadcrumb + clean-content metadata. Wraps the
+   * SearchBlocks binding so plugin code never imports wailsjs/go/main/App.js
+   * directly (AGENTS.md — deprecated, breaks on per-plugin webviews #151/#152).
+   */
+  searchBlocks: (query: string) => Promise<SearchHit[]>
 
   /**
    * Block CRUD (#104). These reuse the same atomic-write + re-index path as

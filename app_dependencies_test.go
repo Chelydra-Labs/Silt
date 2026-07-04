@@ -165,7 +165,7 @@ func TestSetTaskBlockedBy_RejectsNonTask(t *testing.T) {
 func TestGetTaskBlockers_OpenOnly(t *testing.T) {
 	app := newTestApp(t)
 	const (
-		subject = "f6a7b8c9-1111-1111-1111-111111111111"
+		subject  = "f6a7b8c9-1111-1111-1111-111111111111"
 		blocker1 = "f6a7b8c9-2222-2222-2222-222222222222"
 		blocker2 = "f6a7b8c9-3333-3333-3333-333333333333"
 	)

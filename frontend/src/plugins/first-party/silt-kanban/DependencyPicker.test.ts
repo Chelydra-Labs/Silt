@@ -2,17 +2,16 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
-// Hoisted mocks: SearchBlocks is the Wails binding the typeahead calls; the
-// sqliteQuery stub resolves dep-label lookups so chips can render text.
+// Hoisted mocks: searchBlocks is the ctx method the typeahead calls (wrapping
+// the SearchBlocks binding); sqliteQuery resolves dep-label lookups so chips
+// render text. The picker now goes through ctx.searchBlocks, not the binding
+// directly (AGENTS.md — no direct wailsjs imports from plugin code).
 const mocks = vi.hoisted(() => ({
-  SearchBlocks: vi.fn(),
+  searchBlocks: vi.fn(),
   setTaskBlockedBy: vi.fn(),
   sqliteQuery: vi.fn()
 }))
 
-vi.mock('../../../../wailsjs/go/main/App.js', () => ({
-  SearchBlocks: mocks.SearchBlocks
-}))
 vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
   EventsOn: vi.fn(() => () => {})
 }))
@@ -29,9 +28,10 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     today: '2026-07-01',
     ...v2CtxStubs,
     // Overrides come AFTER v2CtxStubs so the test's mocks win over the
-    // no-op stubs (v2CtxStubs also defines setTaskBlockedBy/sqliteQuery).
+    // no-op stubs (v2CtxStubs also defines these methods).
     sqliteQuery: mocks.sqliteQuery,
     setTaskBlockedBy: mocks.setTaskBlockedBy,
+    searchBlocks: mocks.searchBlocks,
     ...overrides
   } as PluginContext
 }
@@ -43,7 +43,7 @@ async function flush() {
 
 describe('DependencyPicker (#303)', () => {
   beforeEach(() => {
-    mocks.SearchBlocks.mockReset()
+    mocks.searchBlocks.mockReset()
     mocks.setTaskBlockedBy.mockReset().mockResolvedValue(true)
     // Label resolution: return a clean_content for the queried uuid.
     mocks.sqliteQuery.mockReset().mockImplementation(async () => ({
@@ -106,7 +106,7 @@ describe('DependencyPicker (#303)', () => {
       rows: [{ clean_content: 'X' }],
       truncated: false
     }))
-    mocks.SearchBlocks.mockResolvedValue([
+    mocks.searchBlocks.mockResolvedValue([
       {
         id: 'dep-found',
         clean_content: 'Found task',
@@ -145,7 +145,7 @@ describe('DependencyPicker (#303)', () => {
       rows: [{ clean_content: 'Existing' }],
       truncated: false
     }))
-    mocks.SearchBlocks.mockResolvedValue([
+    mocks.searchBlocks.mockResolvedValue([
       {
         id: 'task-1',
         clean_content: 'Self',
@@ -194,7 +194,7 @@ describe('DependencyPicker (#303)', () => {
       rows: [{ clean_content: 'X' }],
       truncated: false
     }))
-    mocks.SearchBlocks.mockResolvedValue([
+    mocks.searchBlocks.mockResolvedValue([
       {
         id: 'dep-cycle',
         clean_content: 'Cycle',

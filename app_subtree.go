@@ -243,7 +243,7 @@ func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []pars
 		normalized[i] = c
 	}
 
-	out := make([]parser.ParsedBlock, 0, len(blocks)-((childEnd-(parentIdx+1)))+len(normalized))
+	out := make([]parser.ParsedBlock, 0, len(blocks)-(childEnd-(parentIdx+1))+len(normalized))
 	out = append(out, blocks[:parentIdx+1]...)
 	out = append(out, normalized...)
 	out = append(out, blocks[childEnd:]...)
