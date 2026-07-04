@@ -67,7 +67,7 @@
 </script>
 
 <header
-  class="silt-chrome drag-region bg-void flex justify-between items-center h-14 w-full z-50 fixed top-0 border-b border-border-muted select-none"
+  class="silt-chrome drag-region bg-surface-sidebar flex justify-between items-center h-14 w-full z-50 fixed top-0 border-b border-surface-sidebar-border select-none"
 >
   <!-- Left: brand zone (matches sidebar width) + sidebar toggle at the boundary -->
   <div class="flex items-center min-w-0 h-full flex-grow">
@@ -134,7 +134,7 @@
       <span class="material-symbols-outlined text-[20px]">search</span>
     </button>
 
-    <div class="w-px h-6 bg-border-muted mx-1"></div>
+    <div class="w-px h-6 bg-surface-sidebar-border mx-1"></div>
 
     <!-- Window controls (hidden on macOS — Wails injects native traffic lights) -->
     {#if !isMac}

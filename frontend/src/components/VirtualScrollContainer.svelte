@@ -336,7 +336,7 @@
 </script>
 
 <div
-  class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-void relative"
+  class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-surface-app relative"
 >
   {#if viewMode === 'edit' && findBarState.open}
     <FindBar editor={editorInstance!} onClose={() => findBarState.close()} />
@@ -347,7 +347,7 @@
 
   <div
     bind:this={containerEl}
-    class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-void flex flex-col min-h-0"
+    class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-surface-app flex flex-col min-h-0"
   >
     <div class="relative z-[1] flex flex-col flex-1">
       <nav
@@ -455,7 +455,7 @@
 
   <!-- Floating Editor Actions Bar -->
   <div
-    class="absolute right-6 z-40 flex items-center gap-1 p-1 bg-panel/60 backdrop-blur-md border border-border-muted/50 rounded-full shadow-lg transition-all duration-300 opacity-60 hover:opacity-100 hover:scale-105"
+    class="absolute right-6 z-40 flex items-center gap-1 p-1 bg-surface-popover/60 backdrop-blur-md border border-surface-popover-border/50 rounded-full shadow-lg transition-all duration-300 opacity-60 hover:opacity-100 hover:scale-105"
     class:top-4={!(viewMode === 'edit' && showFormatToolbar)}
     class:top-14={viewMode === 'edit' && showFormatToolbar}
   >
@@ -490,7 +490,7 @@
       <span class="material-symbols-outlined text-[18px]">text_format</span>
     </button>
 
-    <div class="w-px h-4 bg-border-muted mx-0.5"></div>
+    <div class="w-px h-4 bg-surface-popover-border mx-0.5"></div>
 
     <!-- View Mode Toggle — a toggle button: stable accessible name + aria-pressed
          conveys state (the canonical pattern), and the title carries the
@@ -514,7 +514,7 @@
   <!-- Floating Editor Status Bar (Word Count) -->
   {#if showWordCount && wordCount > 0 && viewMode === 'edit'}
     <div
-      class="absolute bottom-6 right-6 z-40 flex items-center px-3 py-1.5 bg-panel/60 backdrop-blur-md border border-border-muted/50 rounded-full shadow-lg text-[11px] font-medium tracking-wide text-text-muted transition-all duration-300 opacity-60 hover:opacity-100"
+      class="absolute bottom-6 right-6 z-40 flex items-center px-3 py-1.5 bg-surface-popover/60 backdrop-blur-md border border-surface-popover-border/50 rounded-full shadow-lg text-[11px] font-medium tracking-wide text-text-muted transition-all duration-300 opacity-60 hover:opacity-100"
     >
       <div class="font-mono text-text-muted/80" role="status" aria-live="off">
         {wordCount}

@@ -10,8 +10,8 @@
   // the Kanban sidebar and is tracked as a separate enhancement.
 </script>
 
-<div class="flex-grow flex flex-col min-h-0 bg-surface">
-  <div class="px-3 py-3 border-b border-border-muted flex-shrink-0">
+<div class="flex-grow flex flex-col min-h-0 bg-surface-panel">
+  <div class="px-3 py-3 border-b border-surface-panel-border flex-shrink-0">
     <div class="flex items-center gap-2">
       <span
         class="material-symbols-outlined text-accent-primary-start text-[20px]"
@@ -26,7 +26,7 @@
 
   <div class="flex-grow overflow-y-auto custom-scrollbar p-4">
     <div
-      class="text-center py-10 px-3 rounded-xl border border-dashed border-border-muted bg-surface/10 select-none"
+      class="text-center py-10 px-3 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 select-none"
     >
       <span
         class="material-symbols-outlined text-accent-primary-start text-4xl mb-2"
@@ -38,7 +38,7 @@
       <p class="text-text-muted text-[12px] font-body-md leading-relaxed">
         Capture one from anywhere with
         <kbd
-          class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-border-zinc font-mono text-[11px]"
+          class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-[11px]"
           >Ctrl+Shift+N</kbd
         >
       </p>

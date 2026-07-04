@@ -87,7 +87,7 @@
     {#if showHover}
       <div
         transition:fade={{ duration: 120 }}
-        class="absolute z-50 top-full left-0 mt-1 w-80 max-w-[80vw] glass-palette border border-border-zinc rounded-lg shadow-2xl p-3 text-left"
+        class="absolute z-50 top-full left-0 mt-1 w-80 max-w-[80vw] glass-palette border border-surface-popover-border rounded-lg shadow-2xl p-3 text-left"
         style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-popover) 94%, transparent);"
       >
         <div

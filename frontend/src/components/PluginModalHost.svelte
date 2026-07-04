@@ -45,11 +45,11 @@
         role="dialog"
         aria-modal="true"
         aria-label={surface.label}
-        class="relative bg-panel border border-border-active rounded-xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden"
+        class="relative bg-surface-modal border border-border-active rounded-xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden"
         style="min-height: 200px; max-height: 80vh;"
       >
         <div
-          class="flex items-center justify-between px-4 py-2 border-b border-border-muted"
+          class="flex items-center justify-between px-4 py-2 border-b border-surface-modal-border"
         >
           <span class="text-text-primary text-[13px] font-label-sm-bold"
             >{surface.label}</span

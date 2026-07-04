@@ -228,7 +228,7 @@
     aria-modal="true"
     aria-label="Settings"
     tabindex="-1"
-    class="relative z-10 w-full max-w-4xl h-[80vh] glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex"
+    class="relative z-10 w-full max-w-4xl h-[80vh] glass-palette border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex"
     style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-panel) 94%, transparent);"
   >
     <!-- Left rail: tab list. A div (not <nav>) carries role="tablist" because a
@@ -236,7 +236,7 @@
          generic container, mirroring the main TabStrip. Delegated keyboard nav
          (Arrow/Home/End) lives here with roving tabindex on the buttons. -->
     <div
-      class="w-52 flex-shrink-0 border-r border-border-muted bg-surface/40 flex flex-col py-3"
+      class="w-52 flex-shrink-0 border-r border-surface-modal-border bg-surface-modal/40 flex flex-col py-3"
       aria-label="Settings sections"
       role="tablist"
       tabindex="-1"
@@ -269,9 +269,11 @@
     </div>
 
     <!-- Right: active panel -->
-    <div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-void/5">
+    <div
+      class="flex-1 min-w-0 flex flex-col overflow-hidden bg-surface-modal/5"
+    >
       <div
-        class="flex items-center justify-between px-6 py-4 border-b border-border-muted flex-shrink-0"
+        class="flex items-center justify-between px-6 py-4 border-b border-surface-modal-border flex-shrink-0"
       >
         <h2
           class="font-headline-md text-headline-md text-text-primary capitalize"

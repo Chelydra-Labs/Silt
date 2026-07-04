@@ -137,17 +137,19 @@
         </li>
       {/each}
     </ul>
-    <div class="flex justify-end gap-2 px-5 py-3 border-t border-border-muted">
+    <div
+      class="flex justify-end gap-2 px-5 py-3 border-t border-surface-modal-border"
+    >
       <button
         data-action="cancel"
-        class="px-3 py-1.5 rounded-md text-sm font-label-sm text-text-primary border border-border-zinc hover:bg-hover transition-colors"
+        class="px-3 py-1.5 rounded-md text-sm font-label-sm text-text-primary border border-surface-modal-border hover:bg-hover transition-colors"
         onclick={onCancel}
       >
         Cancel
       </button>
       <button
         data-action="confirm"
-        class="px-3 py-1.5 rounded-md text-sm font-label-sm text-void bg-status-warn hover:opacity-90 transition-opacity"
+        class="px-3 py-1.5 rounded-md text-sm font-label-sm text-surface-app bg-status-warn hover:opacity-90 transition-opacity"
         onclick={onConfirm}
       >
         Complete anyway

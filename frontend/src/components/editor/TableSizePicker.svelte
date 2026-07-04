@@ -95,7 +95,7 @@
   }
   .ts-label {
     font-size: 10px;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
   }
   .ts-input {
     width: 56px;
@@ -103,15 +103,15 @@
     border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
     background: var(--color-surface-popover);
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     font-size: 0.8rem;
     outline: none;
   }
   .ts-input:focus {
-    border-color: var(--color-accent-primary-glow, #6fa3ff);
+    border-color: var(--color-accent-primary-glow);
   }
   .ts-times {
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     margin-top: 14px;
   }
   .ts-insert {
@@ -119,7 +119,7 @@
     padding: 4px 10px;
     border: none;
     border-radius: 6px;
-    background: var(--color-accent-primary-start, #2dd4bf);
+    background: var(--color-accent-primary-start);
     color: #001813;
     font-size: 0.8rem;
     font-weight: 600;

@@ -5,8 +5,8 @@
 // source files for known-offensive patterns so they never creep back.
 
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync, readdirSync } from 'node:fs'
+import { resolve, relative } from 'node:path'
 
 const frontendSrc = resolve(__dirname, '..')
 
@@ -35,6 +35,24 @@ const FALLBACK_PATTERN = /var\(--[a-z-]+,\s*$/
 function readLines(relPath: string): string[] {
   const abs = resolve(frontendSrc, relPath)
   return readFileSync(abs, 'utf-8').split('\n')
+}
+
+// Recursively collect every .svelte and .ts file under frontend/src. Used by
+// the v2 drift guard to scan for resurrected dead utility classes.
+function walkSrcFiles(dir: string = frontendSrc): string[] {
+  const out: string[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = resolve(dir, entry.name)
+    if (entry.isDirectory()) {
+      out.push(...walkSrcFiles(full))
+    } else if (
+      entry.isFile() &&
+      (/\.svelte$/.test(entry.name) || /\.ts$/.test(entry.name))
+    ) {
+      out.push(full)
+    }
+  }
+  return out
 }
 
 describe('hardcoded dark color guard (#260)', () => {
@@ -72,14 +90,21 @@ describe('themeable error + editor tokens (#386, #390)', () => {
   const indexText = indexLines.join('\n')
 
   it('index.css has no static Material-3 error pinks (#ffb4ab / #f43f5e family)', () => {
-    // The themeable error family (--color-error*) is engine-emitted now; the
-    // CSS must only consume it via var(). Any static --color-error hex
-    // declaration — or the leftover bare --error task-priority pinks that
-    // reopened bug #386 — re-introduces a fixed color that wins in every
-    // theme. All of them must be gone.
+    // The themeable error family (--color-error*) is engine-emitted now. The
+    // one legitimate place a hex may appear is the @theme block, which
+    // declares the startup fallback (overwritten at runtime by the injector)
+    // for every v2 token — including --color-error. A second static
+    // declaration in the regular CSS rules, or the leftover bare --error
+    // task-priority pink, would re-introduce a fixed color that wins in every
+    // theme (#386). Strip @theme from the search so the startup fallback is
+    // allowed but rule-level statics stay forbidden.
+    const themeBlockRe = indexText.match(/@theme\s*\{[\s\S]*?\n\}/)
+    const nonThemeCss = themeBlockRe
+      ? indexText.replace(themeBlockRe[0], '')
+      : indexText
     expect(
-      indexText,
-      'static Material-3 error declarations must be removed'
+      nonThemeCss,
+      'static Material-3 error declarations must live only in @theme'
     ).not.toMatch(/(--color-error|--error)\s*:\s*#/i)
     expect(indexText).not.toMatch(/#ffb4ab/i)
   })
@@ -108,5 +133,94 @@ describe('themeable error + editor tokens (#386, #390)', () => {
         new RegExp(`var\\(${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
       )
     }
+  })
+})
+
+// Theme System v2 drift guard. The migration to v2 surface-zone tokens removed
+// ~49 files' worth of dead v1 utilities (the void/surface/panel background
+// fills, the border-muted/border-zinc edges, and the void text colour). Those
+// utilities reference custom properties the engine no longer emits, so Tailwind
+// v4 generates no rule for them and the element falls through to transparent —
+// the root cause of the transparency / lost-chrome bugs. These two guards
+// ensure neither the dead CSS variables nor the dead utility classes creep
+// back in.
+describe('theme v2 drift guard (#386)', () => {
+  const indexLines = readLines('index.css')
+  const indexText = indexLines.join('\n')
+
+  // Extract the @theme block — its declarations are what drive Tailwind v4
+  // utility generation. A dead v1 token name re-declared here would
+  // regenerate the matching dead utility from its --color-* variable.
+  const themeBlockMatch = indexText.match(/@theme\s*\{([\s\S]*?)\n\}/)
+  const themeBlock = themeBlockMatch ? themeBlockMatch[1] : ''
+
+  // Dead v1 CSS variable names. The bare --color-surface / --color-panel
+  // entries carry a trailing `:` so they do NOT match the valid v2 zone names
+  // (--color-surface-app, --color-panel-border, …). --color-chrome is a prefix
+  // match: any --color-chrome-* residue is dead.
+  const DEAD_DECLARATIONS = [
+    '--color-void:',
+    '--color-surface:',
+    '--color-surface-raised:',
+    '--color-panel:',
+    '--color-border-muted:',
+    '--color-border-zinc:',
+    '--color-chrome',
+    '--color-background:',
+    '--color-on-surface:'
+  ]
+
+  it('@theme block declares no dead v1 token names', () => {
+    const violations = DEAD_DECLARATIONS.filter((name) =>
+      new RegExp(name.replace(/[:]/g, '\\$&')).test(themeBlock)
+    )
+    expect(
+      violations,
+      `@theme re-declares dead v1 tokens: ${violations.join(', ')}`
+    ).toEqual([])
+  })
+
+  it('@theme declares every v2 surface zone (sanity)', () => {
+    // If the @theme extraction silently broke (unmatched braces), the previous
+    // assertion would pass vacuously. Pinning the known-good zone names here
+    // guarantees themeBlock actually contains the declarations.
+    expect(themeBlock.length, '@theme block must be extracted').toBeGreaterThan(
+      0
+    )
+    for (const zone of [
+      '--color-surface-app',
+      '--color-surface-sidebar',
+      '--color-surface-editor',
+      '--color-surface-panel',
+      '--color-surface-card',
+      '--color-surface-modal',
+      '--color-surface-popover'
+    ]) {
+      expect(themeBlock, `${zone} must be declared in @theme`).toContain(zone)
+    }
+  })
+
+  it('no .svelte/.ts file under src/ uses dead v1 utility classes', () => {
+    // Negative lookaheads on `surface` and `panel` exclude the valid v2 zone
+    // names (surface-app, panel-border, …). surface-raised, border-muted, and
+    // border-zinc have no v2 namesakes so they need no lookahead.
+    const deadUtility =
+      /\b(bg|text|border)-(?:void|surface-raised|border-muted|border-zinc|surface(?!-)|panel(?!-))\b/
+    const files = walkSrcFiles()
+    const violations: string[] = []
+    for (const file of files) {
+      const lines = readFileSync(file, 'utf-8').split('\n')
+      lines.forEach((line, i) => {
+        if (deadUtility.test(line)) {
+          violations.push(
+            `${relative(frontendSrc, file)}:${i + 1}: ${line.trim()}`
+          )
+        }
+      })
+    }
+    expect(
+      violations,
+      `dead v1 utility classes found:\n${violations.join('\n')}`
+    ).toEqual([])
   })
 })

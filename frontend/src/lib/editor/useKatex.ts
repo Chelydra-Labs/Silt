@@ -47,7 +47,7 @@ export async function renderKatex(
     const html = katex.renderToString(latex, {
       displayMode,
       throwOnError: false,
-      errorColor: 'var(--color-error, #ef4444)',
+      errorColor: 'var(--color-error)',
       output: 'htmlAndMathml',
       strict: 'warn'
     })

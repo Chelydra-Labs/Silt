@@ -86,7 +86,7 @@ func TestGetActiveTheme_DefaultOnFreshVault(t *testing.T) {
 	if res.DarkTokens["--color-surface-app"] != "#0c0c0e" {
 		t.Errorf("DarkTokens bg.void wrong: %q", res.DarkTokens["--color-surface-app"])
 	}
-	if res.LightTokens["--color-surface-app"] != "#f8fafc" {
+	if res.LightTokens["--color-surface-app"] != "#eef2f7" {
 		t.Errorf("LightTokens bg.void wrong: %q", res.LightTokens["--color-surface-app"])
 	}
 	if res.BGVoid != "#0c0c0e" {
@@ -255,7 +255,7 @@ func TestApplyTheme_SystemModeResolvesFirstPaintDark(t *testing.T) {
 		t.Errorf("system should first-paint dark bg.void, got %q", res.Tokens["--color-surface-app"])
 	}
 	// But both maps are present so the frontend can resolve the real preference.
-	if res.LightTokens["--color-surface-app"] != "#f8fafc" {
+	if res.LightTokens["--color-surface-app"] != "#eef2f7" {
 		t.Errorf("system mode must still ship light tokens, got %q", res.LightTokens["--color-surface-app"])
 	}
 }
@@ -343,10 +343,10 @@ func TestBuildThemeResult_DarkFirstPaint(t *testing.T) {
 	}
 	// light mode: effective tokens are light.
 	lightRes := buildThemeResult(th, "light")
-	if lightRes.Tokens["--color-surface-app"] != "#f8fafc" {
+	if lightRes.Tokens["--color-surface-app"] != "#eef2f7" {
 		t.Errorf("light effective bg.void wrong: %q", lightRes.Tokens["--color-surface-app"])
 	}
-	if lightRes.BGVoid != "#f8fafc" {
+	if lightRes.BGVoid != "#eef2f7" {
 		t.Errorf("light BGVoid wrong: %q", lightRes.BGVoid)
 	}
 }

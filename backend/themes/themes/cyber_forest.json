@@ -68,17 +68,19 @@
     },
     "light": {
       "surfaces": {
-        "app": { "bg": "#f8fafc", "border": "#e2e8f0", "text": "#0f172a" },
-        "panel": { "bg": "#ffffff", "border": "#cbd5e1", "text": "#0f172a" },
-        "modal": { "bg": "#ffffff", "border": "#94a3b8", "text": "#0f172a" },
-        "card": { "bg": "#f1f5f9", "border": "#cbd5e1", "text": "#0f172a" }
+        "app": { "bg": "#eef2f7", "border": "#c7d0dc", "text": "#0f172a" },
+        "editor": { "bg": "#f6f9fc", "border": "#bcc8d6", "text": "#0f172a" },
+        "panel": { "bg": "#f4f7fb", "border": "#b9c4d2", "text": "#0f172a" },
+        "card": { "bg": "#f9fbfd", "border": "#c2cddb", "text": "#0f172a" },
+        "modal": { "bg": "#fcfdfe", "border": "#8a98ac", "text": "#0f172a" },
+        "popover": { "bg": "#ffffff", "border": "#7e8da3", "text": "#0f172a" }
       },
-      "hover": "#e2e8f0",
-      "active": "#cbd5e1",
-      "border_active": "#94a3b8",
-      "border_focus": "#64748b",
-      "text_muted": "#4d5667",
-      "text_disabled": "#94a3b8",
+      "hover": "#e1e7f0",
+      "active": "#d0d9e6",
+      "border_active": "#6b7a90",
+      "border_focus": "#475569",
+      "text_muted": "#475569",
+      "text_disabled": "#8a98a8",
       "accent": {
         "primary": {
           "start": "#0d9488",
@@ -98,8 +100,8 @@
       },
       "error": {
         "fg": "#e11d48",
-        "bg": "#fdf2f4",
-        "border": "#fbcdd6"
+        "bg": "#fde8ec",
+        "border": "#e88ea0"
       },
       "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
       "spacing": { "sm": "4px", "md": "8px", "lg": "16px", "xl": "24px" },

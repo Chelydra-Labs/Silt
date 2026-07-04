@@ -69,9 +69,10 @@
     "light": {
       "surfaces": {
         "app": { "bg": "#ffffff", "border": "#6e6e6e", "text": "#000000" },
-        "panel": { "bg": "#ffffff", "border": "#4a4a4a", "text": "#000000" },
+        "panel": { "bg": "#f2f2f2", "border": "#3a3a3a", "text": "#000000" },
         "modal": { "bg": "#ffffff", "border": "#000000", "text": "#000000" },
-        "card": { "bg": "#ededed", "border": "#4a4a4a", "text": "#000000" }
+        "card": { "bg": "#e4e4e4", "border": "#2a2a2a", "text": "#000000" },
+        "popover": { "bg": "#ffffff", "border": "#000000", "text": "#000000" }
       },
       "hover": "#dcdcdc",
       "active": "#c4c4c4",

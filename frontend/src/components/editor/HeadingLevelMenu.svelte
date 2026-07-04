@@ -147,7 +147,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     font-size: 0.78rem;
     cursor: pointer;
     transition:
@@ -158,10 +158,10 @@
   .heading-trigger:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 15%,
+      var(--color-accent-primary-start) 15%,
       transparent
     );
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
   }
 
   .chevron {
@@ -192,7 +192,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     font-size: 0.78rem;
     text-align: left;
     cursor: pointer;
@@ -201,22 +201,22 @@
   .menu-item:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 15%,
+      var(--color-accent-primary-start) 15%,
       transparent
     );
   }
 
   .menu-item.active {
-    color: var(--color-accent-primary-glow, #6fa3ff);
+    color: var(--color-accent-primary-glow);
   }
 
   .menu-item .material-symbols-outlined {
     font-size: 16px;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
   }
 
   .menu-item.active .material-symbols-outlined {
-    color: var(--color-accent-primary-glow, #6fa3ff);
+    color: var(--color-accent-primary-glow);
   }
 
   .check {

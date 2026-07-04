@@ -182,7 +182,7 @@
 
   .mlp-label {
     font-size: 10px;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
@@ -193,7 +193,7 @@
     border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
     background: var(--color-surface-popover);
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     font-family: var(--font-mono, monospace);
     font-size: 0.85rem;
     line-height: 1.4;
@@ -201,7 +201,7 @@
     outline: none;
   }
   .mlp-input:focus {
-    border-color: var(--color-accent-primary-glow, #6fa3ff);
+    border-color: var(--color-accent-primary-glow);
   }
 
   /* Preview pane: a subtly distinct background so it reads as rendered output
@@ -211,19 +211,19 @@
     padding: 8px;
     border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
-    background: var(--color-hover, rgba(255, 255, 255, 0.04));
-    color: var(--color-text-primary, #e6e6e6);
+    background: var(--color-hover);
+    color: var(--color-text-primary);
     overflow-x: auto;
   }
   .mlp-preview :global(.katex-display) {
     margin: 0;
   }
   .mlp-preview-empty {
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     font-size: 0.8rem;
   }
   .mlp-error {
-    color: var(--color-error, #ef4444);
+    color: var(--color-error);
     font-family: var(--font-mono, monospace);
     font-size: 0.8rem;
   }
@@ -238,16 +238,16 @@
     border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     font-size: 0.8rem;
     font-weight: 600;
     cursor: pointer;
   }
   .mlp-btn:hover {
-    border-color: var(--color-text-muted, #8b95a3);
+    border-color: var(--color-text-muted);
   }
   .mlp-commit {
-    background: var(--color-accent-primary-start, #2dd4bf);
+    background: var(--color-accent-primary-start);
     border-color: transparent;
     color: #001813;
   }

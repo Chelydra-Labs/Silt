@@ -93,7 +93,7 @@
         Workspace
       </h3>
       <div
-        class="flex items-center gap-2 bg-surface border border-border-muted rounded-lg px-3 py-2.5"
+        class="flex items-center gap-2 bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2.5"
       >
         <span class="material-symbols-outlined text-text-muted text-[18px]"
           >folder</span
@@ -122,7 +122,7 @@
             <div
               role="menu"
               aria-label="Vault actions"
-              class="absolute right-0 top-full mt-1 z-10 w-44 bg-panel border border-border-zinc rounded-lg shadow-xl py-1"
+              class="absolute right-0 top-full mt-1 z-10 w-44 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
             >
               <button
                 type="button"
@@ -152,7 +152,7 @@
                 >
                 Copy vault…
               </button>
-              <div class="my-1 border-t border-border-muted"></div>
+              <div class="my-1 border-t border-surface-popover-border"></div>
               <button
                 type="button"
                 bind:this={menuItemRefs[2]}
@@ -181,7 +181,7 @@
                 >
                 Import vault…
               </button>
-              <div class="my-1 border-t border-border-muted"></div>
+              <div class="my-1 border-t border-surface-popover-border"></div>
               <button
                 type="button"
                 bind:this={menuItemRefs[4]}

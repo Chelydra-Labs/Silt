@@ -1141,7 +1141,7 @@
 </script>
 
 <main
-  class="w-full h-full flex flex-col bg-void text-text-primary overflow-hidden font-body-md"
+  class="w-full h-full flex flex-col bg-surface-app text-text-primary overflow-hidden font-body-md"
 >
   {#if loading || !isInitialized}
     <Onboarding
@@ -1178,7 +1178,7 @@
     <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
       <!-- Activity Bar -->
       <div
-        class="silt-chrome w-12 bg-surface border-r border-border-muted flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
+        class="silt-chrome w-12 bg-surface-sidebar border-r border-surface-sidebar-border flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
       >
         <div class="flex flex-col gap-4 items-center w-full">
           {#each views as v (v.id)}
@@ -1231,7 +1231,7 @@
           transition:fade={{ duration: 150 }}
           aria-label="Show sidebar"
           title="Show sidebar (Ctrl+B)"
-          class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface/80 backdrop-blur-md border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
+          class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface-sidebar/80 backdrop-blur-md border border-surface-sidebar-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
         >
           <span class="material-symbols-outlined text-[18px]"
             >left_panel_open</span
@@ -1303,7 +1303,9 @@
       {/if}
 
       <!-- Content viewport -->
-      <div class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-void">
+      <div
+        class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-surface-app"
+      >
         {#if settings.config?.ui?.open_devtools_on_startup === true}
           <div
             class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-[10px] font-mono px-2 py-1 rounded opacity-80 pointer-events-none"
@@ -1409,7 +1411,7 @@
                         })
                       )
                     }}
-                    class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-void font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
+                    class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-surface-app font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
                   >
                     <span
                       class="material-symbols-outlined text-[18px]"
@@ -1422,7 +1424,7 @@
                       templatePickerMode = 'new-page'
                       showTemplatePicker = true
                     }}
-                    class="px-4 py-2 rounded-lg bg-transparent border border-border-zinc text-text-primary font-label-sm-bold hover:bg-hover transition-all cursor-pointer flex items-center gap-2"
+                    class="px-4 py-2 rounded-lg bg-transparent border border-surface-panel-border text-text-primary font-label-sm-bold hover:bg-hover transition-all cursor-pointer flex items-center gap-2"
                   >
                     <span
                       class="material-symbols-outlined text-[18px]"
@@ -1493,7 +1495,7 @@
       }}
     >
       <div
-        class="w-full max-w-md glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl p-5"
+        class="w-full max-w-md glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl p-5"
         transition:fade={{ duration: 120 }}
         role="dialog"
         aria-modal="true"
@@ -1743,14 +1745,14 @@
   .settings-mismatch-modal h2 {
     margin: 0 0 12px;
     font-size: 1.15rem;
-    color: var(--color-text-primary, #dee3e6);
+    color: var(--color-text-primary);
   }
 
   .settings-mismatch-modal p {
     margin: 0 0 20px;
     font-size: 0.9rem;
     line-height: 1.5;
-    color: var(--color-text-muted, #8b8b94);
+    color: var(--color-text-muted);
   }
 
   .settings-mismatch-modal code {
@@ -1783,7 +1785,7 @@
 
   .settings-mismatch-actions .secondary {
     background: transparent;
-    color: var(--color-text-muted, #8b8b94);
+    color: var(--color-text-muted);
     border: 1px solid var(--color-surface-modal-border);
   }
 
@@ -1794,7 +1796,7 @@
   }
 
   .settings-mismatch-actions .primary {
-    background: var(--color-accent-primary-start, #4a9eff);
+    background: var(--color-accent-primary-start);
     color: var(--color-surface-app);
     font-weight: 600;
   }

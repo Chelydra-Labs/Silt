@@ -63,7 +63,7 @@
   </div>
   <button
     onclick={load}
-    class="mt-1 text-text-muted hover:text-text-primary text-[10px] font-label-sm-bold bg-transparent border border-border-muted rounded px-2 py-0.5 cursor-pointer"
+    class="mt-1 text-text-muted hover:text-text-primary text-[10px] font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-0.5 cursor-pointer"
   >
     Refresh
   </button>

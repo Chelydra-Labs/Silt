@@ -1802,13 +1802,13 @@
     border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
     background: var(--color-surface-popover);
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     font-size: 0.8rem;
     outline: none;
   }
 
   .link-input:focus {
-    border-color: var(--color-accent-primary-glow, #6fa3ff);
+    border-color: var(--color-accent-primary-glow);
   }
 
   .color-picker-popover {
@@ -1837,7 +1837,7 @@
   }
 
   .cp-swatch:hover {
-    border-color: var(--color-text-primary, #e6e6e6);
+    border-color: var(--color-text-primary);
   }
 
   .cp-reset {
@@ -1845,7 +1845,7 @@
     align-items: center;
     justify-content: center;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
   }
 
   .cp-custom-row {
@@ -1893,14 +1893,14 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     text-align: left;
     cursor: pointer;
     font-family: inherit;
   }
 
   .meta-suggest-item.selected {
-    background: var(--color-accent-primary-start, #4f7cff);
+    background: var(--color-accent-primary-start);
     color: #fff;
   }
 
@@ -1938,14 +1938,14 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     text-align: left;
     cursor: pointer;
     font-family: inherit;
   }
 
   .mention-suggest-item.selected {
-    background: var(--color-accent-primary-start, #4f7cff);
+    background: var(--color-accent-primary-start);
     color: #fff;
   }
 
@@ -1976,7 +1976,7 @@
     padding: 6px 12px;
     border: none;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     font-size: 12px;
     font-family: var(--font-body, inherit);
     text-align: left;
@@ -1986,7 +1986,7 @@
   }
 
   .context-menu-item:hover {
-    background-color: var(--color-hover, #1e2128);
+    background-color: var(--color-hover);
   }
 
   .context-menu-item:disabled {
@@ -1995,17 +1995,17 @@
   }
 
   .context-menu-item.text-status-danger {
-    color: var(--color-status-danger, #e5484d);
+    color: var(--color-status-danger);
   }
 
   .context-menu-item.text-status-danger .material-symbols-outlined {
-    color: var(--color-status-danger, #e5484d);
+    color: var(--color-status-danger);
   }
 
   .context-menu-item:hover.text-status-danger {
     background-color: color-mix(
       in srgb,
-      var(--color-status-danger, #e5484d) 15%,
+      var(--color-status-danger) 15%,
       transparent
     );
   }

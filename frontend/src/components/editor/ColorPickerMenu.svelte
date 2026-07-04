@@ -125,7 +125,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     cursor: pointer;
     transition:
       background 0.1s,
@@ -135,10 +135,10 @@
   .color-trigger:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 15%,
+      var(--color-accent-primary-start) 15%,
       transparent
     );
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
   }
 
   .color-trigger .material-symbols-outlined {
@@ -169,7 +169,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     font-size: 0.75rem;
     text-align: left;
     cursor: pointer;
@@ -178,14 +178,14 @@
   .color-action:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 15%,
+      var(--color-accent-primary-start) 15%,
       transparent
     );
   }
 
   .color-action .material-symbols-outlined {
     font-size: 16px;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
   }
 
   .swatch-grid {
@@ -208,7 +208,7 @@
   }
 
   .swatch:hover {
-    border-color: var(--color-text-primary, #e6e6e6);
+    border-color: var(--color-text-primary);
     transform: scale(1.1);
   }
 
@@ -218,7 +218,7 @@
     justify-content: space-between;
     padding: 4px 8px;
     font-size: 0.75rem;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
   }
 
   .custom-input {

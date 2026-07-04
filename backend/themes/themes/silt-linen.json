@@ -79,10 +79,10 @@
     },
     "light": {
       "surfaces": {
-        "app": { "bg": "#faf6ef", "border": "#e9e4d8", "text": "#2b2a27" },
+        "app": { "bg": "#f6f0e4", "border": "#d9cfba", "text": "#2b2a27" },
         "editor": {
-          "bg": "#ffffff",
-          "border": "#ddd6c6",
+          "bg": "#fffdf8",
+          "border": "#d4c8b0",
           "text": "#2b2a27",
           "background": {
             "image": "repeating-linear-gradient(0deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
@@ -91,16 +91,17 @@
             "blend": "multiply"
           }
         },
-        "panel": { "bg": "#ffffff", "border": "#ddd6c6", "text": "#2b2a27" },
-        "modal": { "bg": "#ffffff", "border": "#b0a99b", "text": "#2b2a27" },
-        "card": { "bg": "#f3efe6", "border": "#ddd6c6", "text": "#2b2a27" }
+        "panel": { "bg": "#fbf6ec", "border": "#d3c7af", "text": "#2b2a27" },
+        "card": { "bg": "#fdf9f1", "border": "#d8cdb6", "text": "#2b2a27" },
+        "modal": { "bg": "#fffcf5", "border": "#b8a98c", "text": "#2b2a27" },
+        "popover": { "bg": "#fffefb", "border": "#aa9a7c", "text": "#2b2a27" }
       },
-      "hover": "#e9e4d8",
-      "active": "#ddd6c6",
-      "border_active": "#b0a99b",
-      "border_focus": "#8a8270",
-      "text_muted": "#56544a",
-      "text_disabled": "#a59f8c",
+      "hover": "#ece4d2",
+      "active": "#ddd0b8",
+      "border_active": "#a89a7c",
+      "border_focus": "#7a6e58",
+      "text_muted": "#524a3e",
+      "text_disabled": "#a89e8a",
       "accent": {
         "primary": {
           "start": "#4a8a9c",
@@ -120,8 +121,8 @@
       },
       "error": {
         "fg": "#b85555",
-        "bg": "#fbeeee",
-        "border": "#e0c0c0"
+        "bg": "#fbe8e6",
+        "border": "#d6a0a0"
       },
       "radius": { "sm": "8px", "md": "12px", "lg": "16px", "xl": "20px", "full": "9999px" },
       "spacing": { "sm": "8px", "md": "12px", "lg": "20px", "xl": "32px" },

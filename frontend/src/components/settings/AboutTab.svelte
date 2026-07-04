@@ -91,7 +91,7 @@
     </h3>
 
     <div
-      class="bg-surface border border-border-muted rounded-lg px-4 py-3 space-y-3"
+      class="bg-surface-panel border border-surface-panel-border rounded-lg px-4 py-3 space-y-3"
     >
       <div class="flex items-center justify-between gap-3">
         <button
@@ -100,7 +100,7 @@
           disabled={updateState.status === 'checking' ||
             updateState.status === 'downloading' ||
             updateState.status === 'installing'}
-          class="font-label-sm-bold text-[12px] px-3 py-1.5 rounded-md bg-accent-primary-start text-surface hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
+          class="font-label-sm-bold text-[12px] px-3 py-1.5 rounded-md bg-accent-primary-start text-surface-app hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
         >
           {updateState.status === 'checking'
             ? 'Checking…'
@@ -131,7 +131,7 @@
             </p>
             {#if notesExcerpt(updateState.releaseNotes)}
               <pre
-                class="text-text-muted text-[11px] whitespace-pre-wrap bg-bg/40 rounded-md p-2 border border-border-muted"
+                class="text-text-muted text-[11px] whitespace-pre-wrap bg-surface-panel/40 rounded-md p-2 border border-surface-panel-border"
                 style="font-family: var(--editor-mono-font-family, var(--font-mono, monospace))">{notesExcerpt(
                   updateState.releaseNotes
                 )}</pre>
@@ -141,7 +141,7 @@
                 <button
                   type="button"
                   onclick={onInstall}
-                  class="font-label-sm-bold text-[12px] px-3 py-1.5 rounded-md bg-accent-primary-start text-surface hover:brightness-110 border-none cursor-pointer"
+                  class="font-label-sm-bold text-[12px] px-3 py-1.5 rounded-md bg-accent-primary-start text-surface-app hover:brightness-110 border-none cursor-pointer"
                 >
                   Install update
                 </button>
@@ -160,7 +160,7 @@
             <p class="text-text-muted">Downloading…</p>
             {#if updateState.downloadProgress !== null && updateState.downloadProgress >= 0}
               <div
-                class="w-full h-1.5 rounded-full bg-border-muted overflow-hidden"
+                class="w-full h-1.5 rounded-full bg-surface-panel-border overflow-hidden"
                 role="progressbar"
                 aria-valuenow={updateState.downloadProgress}
                 aria-valuemin={0}
@@ -174,7 +174,7 @@
             {:else}
               <!-- Indeterminate: total unknown. -->
               <div
-                class="w-full h-1.5 rounded-full bg-border-muted overflow-hidden"
+                class="w-full h-1.5 rounded-full bg-surface-panel-border overflow-hidden"
                 role="progressbar"
                 aria-label="Downloading update"
               >
@@ -206,7 +206,7 @@
            a11y rules; Space/Toggle operate natively as a button. Disabled
            while a save is in flight so two rapid flips cannot race. -->
       <label
-        class="flex items-center justify-between gap-3 pt-2 border-t border-border-muted {updateState.autoCheckInflight
+        class="flex items-center justify-between gap-3 pt-2 border-t border-surface-panel-border {updateState.autoCheckInflight
           ? ''
           : 'cursor-pointer'}"
       >
@@ -224,10 +224,10 @@
             ? 'cursor-wait opacity-60'
             : 'cursor-pointer'} {updateState.autoCheck
             ? 'bg-accent-primary-start'
-            : 'bg-border-muted'}"
+            : 'bg-surface-panel-border'}"
         >
           <span
-            class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-surface transition-transform {updateState.autoCheck
+            class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-surface-panel transition-transform {updateState.autoCheck
               ? 'translate-x-4'
               : ''}"
           ></span>
@@ -264,7 +264,7 @@
     </ul>
   </section>
 
-  <section class="border-t border-border-muted pt-4 mt-4">
+  <section class="border-t border-surface-panel-border pt-4 mt-4">
     <h4
       class="font-label-sm-bold text-text-primary uppercase tracking-wider text-[10px] mb-3"
     >
@@ -282,8 +282,8 @@
         class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer border-none focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/40"
         class:bg-accent-primary-start={settings.config?.ui
           ?.open_devtools_on_startup === true}
-        class:bg-border-muted={settings.config?.ui?.open_devtools_on_startup !==
-          true}
+        class:bg-surface-panel-border={settings.config?.ui
+          ?.open_devtools_on_startup !== true}
       >
         <span
           class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform"

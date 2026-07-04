@@ -156,7 +156,7 @@
     text-align: left;
     padding: 0.375rem 0.625rem;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -164,11 +164,11 @@
   }
   .menu-item:hover:not(.disabled),
   .menu-item:focus-visible {
-    background: var(--color-hover, rgba(255, 255, 255, 0.08));
+    background: var(--color-hover);
     outline: none;
   }
   .menu-item.disabled {
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     cursor: default;
   }
   .menu-separator {

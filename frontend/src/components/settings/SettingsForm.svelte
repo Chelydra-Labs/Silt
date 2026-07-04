@@ -107,7 +107,7 @@
         {:else if field.type === 'select'}
           <select
             id="setting-{pluginID}-{field.key}"
-            class="bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md"
+            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-[12px] font-body-md"
             bind:value={draft[field.key]}
           >
             {#each field.options ?? [] as opt}
@@ -118,14 +118,14 @@
           <input
             type="color"
             id="setting-{pluginID}-{field.key}"
-            class="w-12 h-8 rounded border border-border-muted bg-transparent cursor-pointer"
+            class="w-12 h-8 rounded border border-surface-panel-border bg-transparent cursor-pointer"
             bind:value={draft[field.key]}
           />
         {:else if field.type === 'list'}
           <input
             type="text"
             id="setting-{pluginID}-{field.key}"
-            class="bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
+            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
             placeholder={fieldLabel(field.type)}
             value={Array.isArray(draft[field.key])
               ? draft[field.key].join(', ')
@@ -141,7 +141,7 @@
           <input
             type="text"
             id="setting-{pluginID}-{field.key}"
-            class="bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full font-mono"
+            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full font-mono"
             placeholder="e.g. Ctrl+Shift+A"
             bind:value={draft[field.key]}
             onkeydown={(e) => {
@@ -163,7 +163,7 @@
           <input
             type="number"
             id="setting-{pluginID}-{field.key}"
-            class="bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
+            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
             placeholder={fieldLabel(field.type)}
             min={field.min}
             max={field.max}
@@ -173,7 +173,7 @@
           <input
             type="text"
             id="setting-{pluginID}-{field.key}"
-            class="bg-void border border-border-muted rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
+            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
             placeholder={fieldLabel(field.type)}
             minlength={field.minLength}
             maxlength={field.maxLength}
@@ -203,7 +203,7 @@
         <button
           onclick={revert}
           disabled={saving}
-          class="text-text-muted hover:text-text-primary border border-border-muted font-label-sm-bold px-3 py-1 rounded cursor-pointer disabled:opacity-50 text-[11px]"
+          class="text-text-muted hover:text-text-primary border border-surface-panel-border font-label-sm-bold px-3 py-1 rounded cursor-pointer disabled:opacity-50 text-[11px]"
         >
           Revert
         </button>

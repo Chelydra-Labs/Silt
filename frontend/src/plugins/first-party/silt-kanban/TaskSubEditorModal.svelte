@@ -343,7 +343,7 @@
   >
     <!-- Header: breadcrumbs + parent task title + status -->
     <header
-      class="flex items-center gap-3 px-5 py-3 border-b border-border-muted flex-shrink-0"
+      class="flex items-center gap-3 px-5 py-3 border-b border-surface-modal-border flex-shrink-0"
     >
       <span
         class="material-symbols-outlined text-accent-primary-start text-[20px]"
@@ -391,7 +391,7 @@
 
     <!-- Status footer -->
     <footer
-      class="flex items-center justify-between px-5 py-2 border-t border-border-muted flex-shrink-0"
+      class="flex items-center justify-between px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
     >
       <span
         class="text-[11px] font-label-sm {saveError

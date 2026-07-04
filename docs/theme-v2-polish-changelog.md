@@ -107,3 +107,60 @@ light. Standard 16px type ramp honours the heritage/legibility identity.
 Bold mid-scale geometry with prairie-fire orange caret + Illinois-blue link.
 Slightly larger display sizes (xl 1.3125rem, 2xl 1.625rem). Error bg tuned
 to read clearly against the Illinois Blue canvas. Standard 16px base.
+
+---
+
+## Light-mode surface refresh
+
+The light modes had collapsed toward a single flat near-white: `panel` and
+`modal` were both `#ffffff`, `card` sat *below* `app` (recessed rather than
+raised), borders were 2–3% from their bg (invisible), and `app` started so
+close to white there was no headroom for a ladder. This pass re-authored every
+light mode so each zone reads as a distinct, intentional surface.
+
+The shape is consistent across the set: `app` is pushed down to a clearly
+tinted base (the theme's identity hue at ~88–92% L), then the ladder climbs in
+visible 2–3% steps — panel → card → modal → popover — toward the lightest tier
+(white or near-white). A dedicated `editor` "paper" zone is authored for every
+theme (slightly warmer/cooler than the app) so the writing canvas feels like a
+page rather than the same wash. `popover` is now explicitly authored (the
+lightest tier) on all themes instead of inheriting modal. Borders are deepened
+to ~8–12% darker than their bg so containers actually delineate; `border_focus`
+is pulled darker for clearer focus rings; `text_muted`/`text_disabled` are
+tuned to stay ≥4.5:1 (and far above for Stark). Error blocks get a clearer
+soft-tint bg with a visibly chromatic border so validation errors read as
+errors. Daybreak/Bubblegum keep their dark `sidebar` chrome verbatim. Dark
+modes, accents, OKLCH-adopted colors (Frost/Terra Noir/Synthwave), Linen/Terra
+Noir editor grain, the Synthwave dark grid, geometry, and typography are all
+untouched. Contrast gate green for all 11 (AAA ≥7:1 for Stark).
+
+- **Cyber Forest light**: cool slate ladder (`#eef2f7` → `#ffffff`); added
+  cool-paper editor; borders pulled to slate-gray; crisper focus ring.
+- **Linen light**: warm paper progression (`#f6f0e4` → `#fffefb`); editor
+  grain preserved on a warm-white sheet; visible taupe borders.
+- **Stark light**: intentionally restrained AAA ladder — white app/modal/
+  popover, `#f2f2f2` panel, `#e4e4e4` inset card (all ≥14:1); hierarchy is
+  border-led (descending to pure black on modal/popover). Identity preserved.
+- **Graphite light**: true-neutral gray ladder (`#ececec` → `#ffffff`); the
+  single blue accent now pops against the calm gray base.
+- **Frost light**: icy blue ladder (`#e6eef8` → `#ffffff`) climbing to
+  frost-white; OKLCH sky-blue/indigo accents preserved; clear blue-gray
+  borders.
+- **Synthwave light**: sun-bleached lavender poster ladder (`#eae6f0` →
+  `#ffffff`); OKLCH pink/cyan accents preserved; stays clean (no grid, per the
+  poster identity).
+- **Terra Noir light**: warm earth ladder (`#efe4d0` → `#fffcf5`); OKLCH
+  clay/moss accents and the warm editor grain both preserved.
+- **Daybreak light**: warm cream ladder (`#faf5ec` → `#ffffff`) tuned so the
+  amber accent still clears 3:1; dark twilight sidebar kept verbatim.
+- **Bubblegum light**: warm peach ladder (`#f7ece2` → `#fffcf7`); deep
+  raspberry sidebar kept verbatim; coral accent pops against the peach base.
+- **Aggie light**: alfalfa-green-tinted ladder (`#e6efe0` → `#fcfef8`); gold
+  + green heritage accents read cleanly.
+- **Altgeld light**: Illinois-Blue-tinted ladder (`#dde7f2` → `#fbfdfe`);
+  Illini Orange primary lands hard against the blue-tinted base.
+
+Biggest refreshes (most-flat → most-laddered): **Graphite, Frost, Altgeld,
+Aggie, Synthwave** — these had the most severe panel≡modal≡white collapse and
+the faintest borders. **Stark** got the lightest touch (its AAA identity is
+austere by design).

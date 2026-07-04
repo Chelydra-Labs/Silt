@@ -631,7 +631,7 @@
 
 <aside
   data-sidebar
-  class="silt-chrome bg-surface border-r border-border-muted flex flex-col py-[4px] h-full flex-shrink-0 select-none z-40"
+  class="silt-chrome bg-surface-sidebar border-r border-surface-sidebar-border flex flex-col py-[4px] h-full flex-shrink-0 select-none z-40"
   style:width={collapsed ? '0px' : sidebarWidth + 'px'}
   style:transition={sidebarDragging ? 'none' : 'all 200ms ease-out'}
   style:overflow={collapsed ? 'hidden' : 'visible'}
@@ -745,7 +745,7 @@
               {/each}
             {/if}
 
-            <div class="border-t border-border-muted mt-1 pt-1">
+            <div class="border-t border-surface-sidebar-border mt-1 pt-1">
               <button
                 onclick={() => {
                   showNotebookDropdown = false
@@ -790,7 +790,7 @@
          in a span whose title gives the prerequisite reason — a native title
          on a disabled button doesn't show, but on the wrapper it does. -->
       <div
-        class="px-1 flex items-stretch gap-0.5 mb-1 p-0.5 bg-panel border border-border-muted rounded-lg"
+        class="px-1 flex items-stretch gap-0.5 mb-1 p-0.5 bg-surface-sidebar border border-surface-sidebar-border rounded-lg"
       >
         <span title={sectionHint} class="flex-1 flex">
           <button
@@ -805,7 +805,7 @@
             >
           </button>
         </span>
-        <div class="w-px bg-border-muted my-1.5 flex-shrink-0"></div>
+        <div class="w-px bg-surface-sidebar-border my-1.5 flex-shrink-0"></div>
         <span title={pageHint} class="flex-1 flex">
           <button
             onclick={() => handleCreatePageInline(activeSection || '')}
@@ -817,7 +817,7 @@
             <span class="material-symbols-outlined text-[20px]">note_add</span>
           </button>
         </span>
-        <div class="w-px bg-border-muted my-1.5 flex-shrink-0"></div>
+        <div class="w-px bg-surface-sidebar-border my-1.5 flex-shrink-0"></div>
         <span title="New page from template" class="flex-1 flex">
           <button
             onclick={() =>
@@ -849,7 +849,7 @@
       <div class="flex-1 overflow-y-auto custom-scrollbar px-1">
         {#if !activeNotebookObj}
           <div
-            class="text-text-muted py-10 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
+            class="text-text-muted py-10 text-center font-body-md text-[13px] border border-dashed border-surface-sidebar-border rounded-lg mx-1"
           >
             {#if tree.notebooks.length === 0}
               No notebooks yet.<br />Create or open one to begin.
@@ -860,7 +860,7 @@
         {:else}
           {#if hasNoContent}
             <div
-              class="text-text-muted py-6 text-center font-body-md text-[13px] border border-dashed border-border-muted rounded-lg mx-1"
+              class="text-text-muted py-6 text-center font-body-md text-[13px] border border-dashed border-surface-sidebar-border rounded-lg mx-1"
             >
               No sections or pages yet.<br />Create one to get started.
             </div>
@@ -893,7 +893,9 @@
           <!-- Section-less root pages -->
           {#each sortedSections.filter((s) => s.name === '') as rootSec}
             {#if rootSec.pages.length > 0}
-              <div class="h-px bg-border-muted my-3 mx-1.5 opacity-50"></div>
+              <div
+                class="h-px bg-surface-sidebar-border my-3 mx-1.5 opacity-50"
+              ></div>
               {#each sortByName(rootSec.pages, navOrder.pages[`${activeNotebook}/`] ?? []) as pg (pg.name)}
                 {@const isActive =
                   activeSection === '' && activePage === pg.name}
@@ -964,7 +966,7 @@
           >
             {#if dragItem?.level === 'page'}
               <div
-                class="text-text-muted text-[11px] font-body-md py-1.5 px-2 text-center border border-dashed border-border-muted rounded"
+                class="text-text-muted text-[11px] font-body-md py-1.5 px-2 text-center border border-dashed border-surface-sidebar-border rounded"
               >
                 Drop to move to notebook root
               </div>
@@ -979,7 +981,7 @@
        color via icon + text; aria-live so AT users hear the error. -->
   {#if dndError}
     <div
-      class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-2xl border border-status-danger/40 bg-panel"
+      class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-2xl border border-status-danger/40 bg-surface-sidebar"
       role="alert"
       aria-live="assertive"
     >
@@ -1009,9 +1011,9 @@
           ? `Rename ${createMode}`
           : `New ${createMode}`}
         tabindex="-1"
-        class="relative w-full max-w-md glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
+        class="relative w-full max-w-md glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
       >
-        <div class="px-5 py-4 border-b border-border-muted">
+        <div class="px-5 py-4 border-b border-surface-modal-border">
           <h2 class="font-headline-md text-headline-md text-text-primary">
             {editingMode === 'rename' ? 'Rename' : 'New'}
             {createMode === 'notebook' ? 'Notebook' : 'Section'}
@@ -1041,7 +1043,7 @@
               : createMode === 'notebook'
                 ? 'Notebook name…'
                 : 'Section name…'}
-            class="w-full bg-surface border border-border-zinc rounded-lg px-3 py-2.5 text-text-primary text-[14px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+            class="w-full bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2.5 text-text-primary text-[14px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
           />
           {#if createError}
             <p class="text-error text-[12px] font-body-md mt-2">
@@ -1050,7 +1052,7 @@
           {/if}
         </div>
         <div
-          class="flex items-center justify-end gap-2 px-5 py-3 border-t border-border-muted"
+          class="flex items-center justify-end gap-2 px-5 py-3 border-t border-surface-modal-border"
         >
           <button
             onclick={() => (createMode = '')}
@@ -1078,7 +1080,7 @@
 
   <!-- Sidebar Footer -->
   <div
-    class="px-3 py-2 border-t border-border-muted flex items-center justify-between bg-surface flex-shrink-0"
+    class="px-3 py-2 border-t border-surface-sidebar-border flex items-center justify-between bg-surface-sidebar flex-shrink-0"
   >
     <button
       onclick={() => (collapsed = true)}
@@ -1154,9 +1156,9 @@
       aria-modal="true"
       aria-label="Confirm delete"
       tabindex="-1"
-      class="relative w-full max-w-sm glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl overflow-hidden"
+      class="relative w-full max-w-sm glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
     >
-      <div class="px-5 py-4 border-b border-border-muted">
+      <div class="px-5 py-4 border-b border-surface-modal-border">
         <h2 class="font-headline-md text-headline-md text-text-primary">
           {deleteTargetLinked
             ? 'Unlink Notebook?'

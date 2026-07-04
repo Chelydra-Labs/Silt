@@ -105,26 +105,26 @@
     border: none;
     border-radius: 5px;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     cursor: pointer;
   }
 
   .bubble-btn:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 20%,
+      var(--color-accent-primary-start) 20%,
       transparent
     );
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
   }
 
   .bubble-btn.active {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-glow, #6fa3ff) 25%,
+      var(--color-accent-primary-glow) 25%,
       transparent
     );
-    color: var(--color-accent-primary-glow, #6fa3ff);
+    color: var(--color-accent-primary-glow);
   }
 
   .bubble-btn .material-symbols-outlined {

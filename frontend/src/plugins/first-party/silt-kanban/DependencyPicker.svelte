@@ -197,7 +197,7 @@
     <ul class="flex flex-wrap gap-1.5">
       {#each deps as dep (dep.id)}
         <li
-          class="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-border-muted bg-surface text-[11px] font-label-sm text-text-primary"
+          class="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-surface-popover-border bg-surface-popover text-[11px] font-label-sm text-text-primary"
         >
           <span class="truncate max-w-[180px]">{dep.label}</span>
           <button
@@ -233,7 +233,7 @@
       aria-activedescendant={results.length > 0
         ? `dep-result-${selectedIdx}`
         : undefined}
-      class="w-full px-2 py-1.5 rounded border border-border-muted bg-surface text-[12px] font-body-md text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-primary-start"
+      class="w-full px-2 py-1.5 rounded border border-surface-popover-border bg-surface-popover text-[12px] font-body-md text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-primary-start"
     />
   </div>
   <Popover
@@ -243,7 +243,7 @@
     }}
     anchor={depInput}
     matchWidth
-    class="rounded border border-border-active bg-panel shadow-2xl"
+    class="rounded border border-border-active bg-surface-popover shadow-2xl"
   >
     {#snippet content()}
       <ul

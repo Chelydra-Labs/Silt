@@ -446,25 +446,25 @@ export const CALLOUT_VARIANTS: Record<
   tip: {
     icon: 'lightbulb',
     label: 'Tip',
-    accent: 'var(--color-status-success, #30a46c)',
+    accent: 'var(--color-status-success)',
     role: 'note'
   },
   warning: {
     icon: 'warning',
     label: 'Warning',
-    accent: 'var(--color-status-warn, #f5a623)',
+    accent: 'var(--color-status-warn)',
     role: 'note'
   },
   danger: {
     icon: 'error',
     label: 'Danger',
-    accent: 'var(--color-status-danger, #e5484d)',
+    accent: 'var(--color-status-danger)',
     role: 'alert'
   },
   success: {
     icon: 'check_circle',
     label: 'Success',
-    accent: 'var(--color-status-success, #30a46c)',
+    accent: 'var(--color-status-success)',
     role: 'status'
   },
   quote: {

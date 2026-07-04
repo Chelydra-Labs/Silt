@@ -272,7 +272,7 @@
 
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden" data-tasks-view>
   <header
-    class="px-6 py-4 border-b border-border-muted flex items-center gap-3"
+    class="px-6 py-4 border-b border-surface-panel-border flex items-center gap-3"
   >
     <span class="material-symbols-outlined text-accent-primary-start"
       >checklist</span
@@ -301,7 +301,9 @@
   </header>
 
   {#if showQuickAdd}
-    <div class="px-6 py-2 border-b border-border-muted bg-panel">
+    <div
+      class="px-6 py-2 border-b border-surface-panel-border bg-surface-panel"
+    >
       <div class="max-w-md">
         <QuickAddTask
           {ctx}
@@ -367,7 +369,7 @@
     {:else}
       {#if openItems.length === 0}
         <div
-          class="text-center py-12 px-4 rounded-xl border border-dashed border-border-muted bg-surface/10 max-w-md mx-auto my-8 select-none"
+          class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
         >
           <span
             class="material-symbols-outlined text-accent-primary-start text-5xl mb-2"
@@ -380,7 +382,7 @@
             You have no active tasks. Restore a completed task below to the
             active list, click <strong>New task</strong> above, or use
             <kbd
-              class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-border-zinc font-mono text-[11px]"
+              class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-[11px]"
               >Ctrl+Shift+N</kbd
             > to capture a new task.
           </p>
@@ -546,7 +548,7 @@
       {/if}
       {#if openTruncated || doneTruncated}
         <p
-          class="text-text-muted text-[12px] font-body-md border-t border-border-muted pt-3 mt-6"
+          class="text-text-muted text-[12px] font-body-md border-t border-surface-panel-border pt-3 mt-6"
           role="status"
           aria-live="polite"
           data-testid="tasks-truncated-notice"

@@ -13,7 +13,7 @@
   const cardClass = $derived(
     selected
       ? 'border-accent-primary-start/60 bg-accent-primary-glow'
-      : 'border-border-muted bg-surface/60'
+      : 'border-surface-popover-border bg-surface-popover/60'
   )
   // Read the live active location so the click-to-open path always has a
   // notebook to pass to OpenAttachment, even if the user has navigated away
@@ -102,7 +102,7 @@
       </div>
       {#if attrs.pluginID}
         <span
-          class="text-[9px] text-text-muted uppercase tracking-wider border border-border-muted rounded px-1.5 py-0.5"
+          class="text-[9px] text-text-muted uppercase tracking-wider border border-surface-popover-border rounded px-1.5 py-0.5"
         >
           {attrs.pluginID}
         </span>
@@ -157,7 +157,7 @@
       </div>
       {#if attrs.pluginID}
         <span
-          class="text-[9px] text-text-muted uppercase tracking-wider border border-border-muted rounded px-1.5 py-0.5"
+          class="text-[9px] text-text-muted uppercase tracking-wider border border-surface-popover-border rounded px-1.5 py-0.5"
         >
           {attrs.pluginID}
         </span>

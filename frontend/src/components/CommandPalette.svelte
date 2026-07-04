@@ -140,7 +140,7 @@
 <!-- Command Palette Container (Frosted glass) -->
 <div
   bind:this={containerEl}
-  class="w-64 glass-palette border border-border-zinc rounded shadow-2xl z-[100] overflow-hidden py-2 scale-100 origin-top-left transition-transform custom-scrollbar"
+  class="w-64 glass-palette border border-surface-popover-border rounded shadow-2xl z-[100] overflow-hidden py-2 scale-100 origin-top-left transition-transform custom-scrollbar"
   style="backdrop-filter: blur(12px) saturate(140%); background: color-mix(in srgb, var(--color-surface-popover) 85%, transparent); max-height: 280px; overflow-y: auto; {style}"
 >
   {#if filteredCommands.length === 0}
@@ -151,13 +151,13 @@
     {#each filteredCommands as cmd, idx}
       {#if cmd.pluginID && (idx === 0 || !filteredCommands[idx - 1].pluginID)}
         <div
-          class="px-3 py-1.5 text-[10px] text-text-muted font-label-sm-bold uppercase tracking-widest border-t border-border-muted mt-1 pt-2 select-none"
+          class="px-3 py-1.5 text-[10px] text-text-muted font-label-sm-bold uppercase tracking-widest border-t border-surface-popover-border mt-1 pt-2 select-none"
         >
           Plugins
         </div>
       {:else if !cmd.pluginID && idx === 0}
         <div
-          class="px-3 py-1.5 text-[10px] text-text-muted font-label-sm-bold uppercase tracking-widest border-b border-border-muted mb-1 select-none"
+          class="px-3 py-1.5 text-[10px] text-text-muted font-label-sm-bold uppercase tracking-widest border-b border-surface-popover-border mb-1 select-none"
         >
           Commands
         </div>

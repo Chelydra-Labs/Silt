@@ -156,7 +156,7 @@
     </span>
     {#if totalCount > 0}
       <span
-        class="text-[9px] font-label-sm text-text-muted bg-panel border border-border-muted rounded-full px-1.5 py-0.5"
+        class="text-[9px] font-label-sm text-text-muted bg-surface-sidebar border border-surface-sidebar-border rounded-full px-1.5 py-0.5"
       >
         {totalCount}
       </span>
@@ -179,7 +179,7 @@
       class="ml-4 border-l pl-1 mt-0.5 mb-1.5 transition-colors duration-200 {activeSection ===
       sectionKey
         ? 'border-accent-primary-start/30'
-        : 'border-border-muted'}"
+        : 'border-surface-sidebar-border'}"
     >
       {#if section.pages.length === 0 && (!section.children || section.children.length === 0)}
         <div

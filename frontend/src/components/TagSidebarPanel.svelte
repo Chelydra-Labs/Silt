@@ -83,8 +83,8 @@
   })
 </script>
 
-<div class="flex-grow flex flex-col min-h-0 bg-surface">
-  <div class="px-3 py-3 border-b border-border-muted flex-shrink-0">
+<div class="flex-grow flex flex-col min-h-0 bg-surface-panel">
+  <div class="px-3 py-3 border-b border-surface-panel-border flex-shrink-0">
     <div class="flex items-center gap-2 mb-2">
       <span
         class="material-symbols-outlined text-accent-primary-start text-[20px]"
@@ -97,7 +97,7 @@
         bind:value={query}
         type="text"
         placeholder="Filter tags…"
-        class="w-full bg-surface border border-border-zinc rounded-lg pl-3 pr-8 py-1.5 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+        class="w-full bg-surface-panel border border-surface-panel-border rounded-lg pl-3 pr-8 py-1.5 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
       />
       {#if query}
         <button

@@ -248,7 +248,7 @@
     aria-modal="true"
     aria-labelledby="vault-archive-title"
     tabindex="-1"
-    class="relative z-10 w-full max-w-lg glass-palette border border-border-zinc rounded-xl shadow-2xl p-6"
+    class="relative z-10 w-full max-w-lg glass-palette border border-surface-modal-border rounded-xl shadow-2xl p-6"
     style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 94%, transparent);"
   >
     <div class="flex items-start gap-3 mb-4">
@@ -287,7 +287,7 @@
             >Archive file</span
           >
           <div
-            class="flex items-center gap-2 mt-1.5 bg-surface border border-border-zinc rounded-lg px-3 py-2"
+            class="flex items-center gap-2 mt-1.5 bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2"
           >
             <span class="material-symbols-outlined text-text-muted text-[18px]"
               >archive</span
@@ -302,7 +302,7 @@
               bind:this={firstBtn}
               onclick={chooseExportDest}
               disabled={busy}
-              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-border-zinc text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Choose…
             </button>
@@ -317,7 +317,7 @@
             >Archive</span
           >
           <div
-            class="flex items-center gap-2 mt-1.5 bg-surface border border-border-zinc rounded-lg px-3 py-2"
+            class="flex items-center gap-2 mt-1.5 bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2"
           >
             <span class="material-symbols-outlined text-text-muted text-[18px]"
               >archive</span
@@ -332,7 +332,7 @@
               bind:this={firstBtn}
               onclick={chooseArchive}
               disabled={busy}
-              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-border-zinc text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Choose…
             </button>
@@ -343,7 +343,7 @@
             >Destination folder</span
           >
           <div
-            class="flex items-center gap-2 mt-1.5 bg-surface border border-border-zinc rounded-lg px-3 py-2"
+            class="flex items-center gap-2 mt-1.5 bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2"
           >
             <span class="material-symbols-outlined text-text-muted text-[18px]"
               >folder</span
@@ -357,7 +357,7 @@
               type="button"
               onclick={chooseImportDest}
               disabled={busy}
-              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-border-zinc text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Choose…
             </button>
@@ -435,7 +435,7 @@
 
       <!-- Actions -->
       <div
-        class="flex items-center justify-end gap-2 pt-4 mt-2 border-t border-border-muted"
+        class="flex items-center justify-end gap-2 pt-4 mt-2 border-t border-surface-modal-border"
       >
         <button
           onclick={onClose}
@@ -482,7 +482,7 @@
         </div>
       </div>
       <div
-        class="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-border-muted"
+        class="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-surface-modal-border"
       >
         <button
           onclick={onClose}
