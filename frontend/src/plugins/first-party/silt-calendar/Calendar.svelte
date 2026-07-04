@@ -471,7 +471,7 @@
       <h1
         class="font-headline-lg text-headline-lg text-text-primary flex items-baseline gap-2"
       >
-        {mode === 'agenda' ? 'Agenda' : (manifest?.name ?? 'Calendar')}
+        {mode === 'month' ? 'Month' : mode === 'week' ? 'Week' : 'Agenda'}
         {#if mode === 'agenda'}
           <span
             class="text-text-muted text-[12px] font-body-md normal-case font-normal ml-2"
