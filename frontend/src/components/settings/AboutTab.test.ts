@@ -105,7 +105,7 @@ describe('AboutTab update UI (#312)', () => {
       'https://github.com/Chelydra-Labs/Silt/releases/v0.5.0'
     mocks.updateState.releaseNotes = '## New\n- in-app updates\n- bugfix'
     mocks.updateState.assetUrl = 'https://example/asset.exe'
-    render(AboutTab)
+    const { container } = render(AboutTab)
     await tick()
     expect(screen.getByText(/Silt 0\.5\.0 is available/i)).toBeInTheDocument()
     expect(screen.getByText(/in-app updates/i)).toBeInTheDocument()
@@ -115,6 +115,52 @@ describe('AboutTab update UI (#312)', () => {
     expect(
       screen.getByRole('link', { name: /View full notes/i })
     ).toBeInTheDocument()
+    // Heading-only lines are filtered; remaining bullets render as clean text.
+    const pre = container.querySelector('pre')
+    expect(pre).not.toBeNull()
+    expect(pre!.textContent).toContain('• in-app updates')
+    expect(pre!.textContent).not.toMatch(/^\s*#{1,6}\s/m)
+  })
+
+  it('strips raw markdown syntax from the release-notes excerpt (#378)', async () => {
+    mocks.GetAppVersion.mockResolvedValue('0.4.0')
+    mocks.loadSettings.mockResolvedValue(undefined)
+    mocks.updateState.status = 'available'
+    mocks.updateState.latestVersion = '0.5.0'
+    mocks.updateState.releaseUrl =
+      'https://github.com/Chelydra-Labs/Silt/releases/v0.5.0'
+    mocks.updateState.releaseNotes = [
+      '## Release highlights',
+      '- **Harden recurring tasks engine**',
+      '- Parse and index `[recur::]` tokens',
+      '- See [the docs](https://example/docs) for details',
+      '- ~~deprecated~~ old API removed'
+    ].join('\n')
+    mocks.updateState.assetUrl = 'https://example/asset.exe'
+    const { container } = render(AboutTab)
+    await tick()
+    const pre = container.querySelector('pre')
+    expect(pre).not.toBeNull()
+    const text = pre!.textContent ?? ''
+    // No raw markdown syntax leaks into the preview.
+    expect(text).not.toContain('**')
+    expect(text).not.toContain('`')
+    expect(text).not.toMatch(/\]\(/)
+    expect(text).not.toContain('~~')
+    // The readable content survives, cleaned.
+    expect(text).toContain('• Harden recurring tasks engine')
+    expect(text).toContain('• Parse and index [recur::] tokens')
+    expect(text).toContain('• See the docs for details')
+    expect(text).toContain('• deprecated old API removed')
+    // Heading-only line is filtered out entirely.
+    expect(text).not.toContain('Release highlights')
+    // The fully-rendered page is still one click away.
+    expect(
+      screen.getByRole('link', { name: /View full notes/i })
+    ).toHaveAttribute(
+      'href',
+      'https://github.com/Chelydra-Labs/Silt/releases/v0.5.0'
+    )
   })
 
   it('does not render the Install button when no platform asset is available', async () => {
