@@ -61,8 +61,13 @@
   // early-return sets this so the in-flight save re-runs once it resolves —
   // otherwise edits made during the IPC window would be silently dropped.
   let saveRequested = false
+  // Snapshot of the doc captured at early-return time. The retry after an
+  // in-flight save flushes this snapshot directly (bypassing the live editor)
+  // so an unmount that destroys the editor before the save resolves can't
+  // drop the edit — the doc is already serialized.
+  let pendingSnapshot: ParsedBlock[] | null = null
   // The currently in-flight save promise, so close/teardown can await a full
-  // drain (persist → any re-queued persist) before unmounting.
+  // drain (persist → any re-queued flush) before unmounting.
   let inFlight: Promise<void> = Promise.resolve()
 
   // Suppress the onUpdate handler during a programmatic setContent so it
@@ -144,13 +149,18 @@
       const subtree = await ctx.fetchSubtree(blockId)
       if (!editorInstance || editorInstance.isDestroyed) return
       suppressUpdate = true
-      editorInstance.commands.setContent(
-        blocksToDoc(subtree as ParsedBlock[]),
-        {
-          emitUpdate: false
-        }
-      )
-      suppressUpdate = false
+      try {
+        editorInstance.commands.setContent(
+          blocksToDoc(subtree as ParsedBlock[]),
+          {
+            emitUpdate: false
+          }
+        )
+      } finally {
+        // ensure suppressUpdate resets even if setContent throws, so a
+        // later failed load can't permanently silence user-typing saves.
+        suppressUpdate = false
+      }
       unsavedChanges = false
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e)
@@ -168,11 +178,13 @@
 
   async function persist() {
     if (!editorInstance || editorInstance.isDestroyed) return
-    // A save is already in flight: don't drop this edit — flag it so the
-    // in-flight save re-runs persist() once it resolves, capturing whatever
-    // the user typed during the IPC window.
+    // A save is already in flight: don't drop this edit. Capture the doc
+    // snapshot NOW so the in-flight save's finally can flush it directly,
+    // without needing the live editor (which onDestroy may tear down before
+    // the IPC resolves on the unmount-without-close path).
     if (saving) {
       saveRequested = true
+      pendingSnapshot = docToBlocks(editorInstance.getJSON()) as ParsedBlock[]
       return
     }
     const edited = docToBlocks(editorInstance.getJSON()) as ParsedBlock[]
@@ -187,11 +199,25 @@
         saveError = e instanceof Error ? e.message : String(e)
       } finally {
         saving = false
-        // If an edit landed while this save was in flight, re-run now so the
-        // latest document state reaches disk before any close proceeds.
-        if (saveRequested && editorInstance && !editorInstance.isDestroyed) {
+        // If an edit landed while this save was in flight, flush the captured
+        // snapshot directly — bypassing the editor entirely so an unmount
+        // that destroyed it can't drop the edit.
+        if (saveRequested && pendingSnapshot) {
+          const next = pendingSnapshot
           saveRequested = false
-          void persist()
+          pendingSnapshot = null
+          saving = true
+          inFlight = (async () => {
+            try {
+              await ctx.saveSubtreeBlocks(blockId, next)
+              unsavedChanges = false
+              saveError = ''
+            } catch (e) {
+              saveError = e instanceof Error ? e.message : String(e)
+            } finally {
+              saving = false
+            }
+          })()
         }
       }
     })()
@@ -374,8 +400,8 @@
           : unsavedChanges
             ? 'text-status-warn'
             : 'text-text-muted'}"
-        role="status"
-        aria-live="polite"
+        role={saveError ? 'alert' : 'status'}
+        aria-live={saveError ? 'assertive' : 'polite'}
       >
         {statusText}
       </span>

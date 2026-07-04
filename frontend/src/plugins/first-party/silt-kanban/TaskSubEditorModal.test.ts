@@ -232,4 +232,55 @@ describe('TaskSubEditorModal (#304)', () => {
 
     expect(onClose).toHaveBeenCalled()
   })
+
+  it('flushes a pending snapshot when unmounted during an in-flight save (no data loss)', async () => {
+    // Regression: unmount-without-close used to drop edits made during an
+    // in-flight save because the retry was gated on a live editor, which
+    // onDestroy tears down before the IPC resolves. The snapshot fix flushes
+    // the captured doc directly. We assert a second save call lands.
+    let resolveFirst!: () => void
+    const firstSave = new Promise<void>((r) => (resolveFirst = r))
+    const calls: unknown[][] = []
+    mocks.saveSubtreeBlocks.mockImplementation((_id, children) => {
+      calls.push(children)
+      // First call hangs until the test resolves it; subsequent calls return.
+      if (calls.length === 1) return firstSave.then(() => undefined)
+      return Promise.resolve()
+    })
+    mocks.fetchSubtree.mockResolvedValue([])
+
+    const { unmount } = render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    // Wait for the editor to mount.
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    // Simulate a user edit by injecting text into the ProseMirror node and
+    // dispatching a transaction so onUpdate fires + schedules a save.
+    const pm = document.querySelector('.ProseMirror') as HTMLElement
+    pm.textContent = 'edited content'
+    // Dispatch an input event so TipTap's view picks up the DOM change and
+    // fires onUpdate (which sets unsavedChanges + scheduleSave).
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+
+    // Advance past the 600ms debounce so persist() runs (the first save).
+    await vi.waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1))
+
+    // Now unmount WITHOUT going through attemptClose (route-change path).
+    // onDestroy runs synchronously, destroying the editor.
+    unmount()
+
+    // Resolve the first in-flight save. The snapshot flush must fire a
+    // second save call even though the editor is gone.
+    resolveFirst()
+    await flush()
+    // Allow the microtask queue to settle the finally + flush.
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(calls.length).toBeGreaterThanOrEqual(2)
+  })
 })

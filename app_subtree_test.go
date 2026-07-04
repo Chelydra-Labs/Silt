@@ -281,3 +281,36 @@ func TestPluginSaveSubtreeBlocks_FirstPartySucceeds(t *testing.T) {
 		t.Errorf("first-party splice should have written the child in:\n%s", updated)
 	}
 }
+
+// TestSpliceSubtree_NormalizesIncomingDepths verifies a plugin caller passing
+// children with Depth <= parentDepth can't corrupt the file hierarchy: the
+// splice forces every child strictly beneath the parent, preserving relative
+// ordering. Without normalization, a Depth-0 child under a Depth-2 parent
+// would render at the parent's indent and vanish from extractSubtree.
+func TestSpliceSubtree_NormalizesIncomingDepths(t *testing.T) {
+	const parent = "a1b2c3d4-0000-0000-0000-000000000060"
+	blocks := []parser.ParsedBlock{
+		{ID: parent, Type: parser.BlockTask, Depth: 2, CleanText: "parent"},
+	}
+	// Malicious/buggy caller: two children, both at Depth 0 (at/above parent).
+	badChildren := []parser.ParsedBlock{
+		{ID: "child-a-0000-0000-0000-000000000061", Type: parser.BlockNote, Depth: 0, CleanText: "child a"},
+		{ID: "child-b-0000-0000-0000-000000000062", Type: parser.BlockNote, Depth: 1, CleanText: "child b"},
+	}
+	got, ok := spliceSubtree(blocks, parent, badChildren)
+	if !ok {
+		t.Fatal("spliceSubtree returned ok=false for an existing parent")
+	}
+	// Both children must end up strictly deeper than the parent (Depth 2).
+	for i, b := range got {
+		if b.ID == "child-a-0000-0000-0000-000000000061" || b.ID == "child-b-0000-0000-0000-000000000062" {
+			if b.Depth <= 2 {
+				t.Errorf("child %s Depth = %d, must be > parent depth 2 (index %d)", b.ID, b.Depth, i)
+			}
+		}
+	}
+	// Relative ordering preserved: child b started deeper than child a.
+	if got[1].Depth >= got[2].Depth {
+		t.Errorf("relative depth ordering lost: child a Depth=%d, child b Depth=%d", got[1].Depth, got[2].Depth)
+	}
+}

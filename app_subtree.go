@@ -258,12 +258,31 @@ func spliceSubtree(blocks []parser.ParsedBlock, parentID string, children []pars
 	}
 
 	// Defensive: stamp ParentID on every incoming child so the re-parse
-	// resolves the hierarchy even if the caller omitted it. Depth is left as
-	// the editor set it (the serializer indents by Depth * spacesPerTab).
+	// resolves the hierarchy even if the caller omitted it. Normalize depths
+	// so every child lives strictly beneath the parent: a plugin caller
+	// (buggy or malicious) passing Depth <= parentDepth would otherwise render
+	// at or above the parent's indent, corrupting the markdown nesting and
+	// causing extractSubtree to silently drop the block on the next fetch.
+	// Preserve relative ordering among siblings but anchor the shallowest to
+	// parentDepth+1.
 	normalized := make([]parser.ParsedBlock, len(children))
-	for i, c := range children {
-		c.ParentID = parentID
-		normalized[i] = c
+	if len(children) > 0 {
+		minDepth := children[0].Depth
+		for _, c := range children[1:] {
+			if c.Depth < minDepth {
+				minDepth = c.Depth
+			}
+		}
+		delta := (parentDepth + 1) - minDepth
+		for i, c := range children {
+			c.ParentID = parentID
+			c.Depth += delta
+			// Clamp: even after the shift, nothing sits at or above the parent.
+			if c.Depth <= parentDepth {
+				c.Depth = parentDepth + 1
+			}
+			normalized[i] = c
+		}
 	}
 
 	out := make([]parser.ParsedBlock, 0, len(blocks)-(childEnd-(parentIdx+1))+len(normalized))
