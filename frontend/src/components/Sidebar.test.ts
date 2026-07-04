@@ -158,7 +158,7 @@ describe('Sidebar', () => {
     await flush()
 
     const label = screen.getByText('No Notebook')
-    expect(label).toHaveClass('text-text-primary')
+    expect(label).toHaveClass('text-surface-sidebar-text')
     expect(label).not.toHaveClass('text-accent-primary-start')
   })
 

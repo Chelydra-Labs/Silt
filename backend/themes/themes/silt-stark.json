@@ -43,7 +43,7 @@
       "status": {
         "warn": "#ff8c00",
         "danger": "#ff4d6b",
-        "success": "#22c55e"
+        "success": "#34d36b"
       },
       "error": {
         "fg": "#ff4d6b",
@@ -82,9 +82,9 @@
       "text_disabled": "#5a5a5a",
       "accent": {
         "primary": {
-          "start": "#8a5a00",
-          "end": "#6f4800",
-          "glow": "rgba(138,90,0,0.16)"
+          "start": "#b88a00",
+          "end": "#806000",
+          "glow": "rgba(184,138,0,0.16)"
         },
         "secondary": {
           "start": "#005f70",
@@ -95,7 +95,7 @@
       "status": {
         "warn": "#9c5800",
         "danger": "#b3000c",
-        "success": "#16a34a"
+        "success": "#0e7a36"
       },
       "error": {
         "fg": "#b3000c",
@@ -110,8 +110,8 @@
         "lg": "0 8px 24px color-mix(in oklch, var(--color-surface-app) 35%, transparent)"
       },
       "editor": {
-        "caret": "#8a5a00",
-        "selection": "rgba(138,90,0,0.30)",
+        "caret": "#b88a00",
+        "selection": "rgba(184,138,0,0.30)",
         "selection_text": "#ffffff",
         "link": "#005f70",
         "link_hover": "#00475a",

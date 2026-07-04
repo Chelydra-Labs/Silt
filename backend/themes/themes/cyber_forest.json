@@ -19,7 +19,7 @@
       "surfaces": {
         "app": { "bg": "#0c0c0e", "border": "#1e1e23", "text": "#dee3e6" },
         "panel": { "bg": "#121215", "border": "#27272a", "text": "#dee3e6" },
-        "modal": { "bg": "#121215", "border": "#3f3f46", "text": "#dee3e6" },
+        "modal": { "bg": "#151519", "border": "#3f3f46", "text": "#dee3e6" },
         "card": { "bg": "#161619", "border": "#27272a", "text": "#dee3e6" }
       },
       "hover": "#1c1c21",
@@ -32,23 +32,23 @@
         "primary": {
           "start": "#2dd4bf",
           "end": "#0d9488",
-          "glow": "rgba(20, 184, 166, 0.15)"
+          "glow": "rgba(45, 212, 191, 0.15)"
         },
         "secondary": {
           "start": "#6366f1",
           "end": "#a855f7",
-          "glow": "rgba(168, 85, 247, 0.12)"
+          "glow": "rgba(99, 102, 241, 0.12)"
         }
       },
       "status": {
-        "warn": "#fbbf24",
-        "danger": "#f43f5e",
-        "success": "#22c55e"
+        "warn": "#e0b04a",
+        "danger": "#dd5a72",
+        "success": "#37b594"
       },
       "error": {
-        "fg": "#f43f5e",
-        "bg": "#1a1012",
-        "border": "#4d2030"
+        "fg": "#e8728a",
+        "bg": "#171015",
+        "border": "#4a2a38"
       },
       "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
       "spacing": { "sm": "4px", "md": "8px", "lg": "16px", "xl": "24px" },
@@ -63,7 +63,7 @@
         "selection_text": "#dee3e6",
         "link": "#6366f1",
         "link_hover": "#a855f7",
-        "highlight": "rgba(251,191,36,0.30)"
+        "highlight": "rgba(224,176,74,0.30)"
       }
     },
     "light": {
@@ -94,12 +94,12 @@
         }
       },
       "status": {
-        "warn": "#d97706",
-        "danger": "#e11d48",
-        "success": "#16a34a"
+        "warn": "#a96c1c",
+        "danger": "#c33a4e",
+        "success": "#1c8460"
       },
       "error": {
-        "fg": "#e11d48",
+        "fg": "#c33a4e",
         "bg": "#fde8ec",
         "border": "#e88ea0"
       },
@@ -116,7 +116,7 @@
         "selection_text": "#0f172a",
         "link": "#4f46e5",
         "link_hover": "#7c3aed",
-        "highlight": "rgba(217,119,6,0.25)"
+        "highlight": "rgba(169,108,28,0.25)"
       }
     }
   }

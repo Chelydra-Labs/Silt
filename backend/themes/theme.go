@@ -94,13 +94,23 @@ type Surfaces struct {
 	Card    *Surface `json:"card,omitempty"`
 }
 
-// Surface is one UI region's canvas: a background, a hairline border, and a
-// foreground text color, plus an optional decorative/photo background block.
+// Surface is one UI region's canvas: a background, a hairline border, a
+// foreground text color, optional per-zone text-emphasis overrides, and an
+// optional decorative/photo background block.
+//
+// Per-zone text emphasis (TextMuted/TextDisabled) is required ONLY when a
+// zone's bg luminance differs enough from the app zone that the global
+// text-muted/text-disabled would be unreadable on it — the canonical case is
+// a dark sidebar zone in an otherwise light theme (Daybreak, Bubblegum). When
+// omitted, Flatten falls back to the global emphasis tokens so a normal zone
+// pays no cost and reads identically to the app canvas.
 type Surface struct {
-	BG         string      `json:"bg"`
-	Border     string      `json:"border"`
-	Text       string      `json:"text"`
-	Background *Background `json:"background,omitempty"`
+	BG           string      `json:"bg"`
+	Border       string      `json:"border"`
+	Text         string      `json:"text"`
+	TextMuted    string      `json:"text_muted,omitempty"`
+	TextDisabled string      `json:"text_disabled,omitempty"`
+	Background   *Background `json:"background,omitempty"`
 }
 
 // Background is the unified per-zone surface overlay that subsumes the v1
@@ -194,14 +204,17 @@ type Editor struct {
 
 // surfaceZone describes one named surface zone for Flatten inheritance and
 // the contrast gate. Parent == "" means the zone is a root (always concrete).
-// The bg/border/text triple maps a zone to its emitted CSS custom properties.
+// The bg/border/text/text-muted/text-disabled quintet maps a zone to its
+// emitted CSS custom properties.
 type surfaceZone struct {
-	name      string
-	parent    string
-	cssBg     string
-	cssBorder string
-	cssText   string
-	get       func(s Surfaces) *Surface
+	name            string
+	parent          string
+	cssBg           string
+	cssBorder       string
+	cssText         string
+	cssTextMuted    string
+	cssTextDisabled string
+	get             func(s Surfaces) *Surface
 }
 
 // surfaceZones is the canonical, ordered zone list with the strict-tree
@@ -211,19 +224,19 @@ type surfaceZone struct {
 //	     └─ panel ─┬─ card
 //	               └─ modal ── popover
 var surfaceZones = []surfaceZone{
-	{name: "app", parent: "", cssBg: "--color-surface-app", cssBorder: "--color-surface-app-border", cssText: "--color-surface-app-text",
+	{name: "app", parent: "", cssBg: "--color-surface-app", cssBorder: "--color-surface-app-border", cssText: "--color-surface-app-text", cssTextMuted: "--color-surface-app-text-muted", cssTextDisabled: "--color-surface-app-text-disabled",
 		get: func(s Surfaces) *Surface { return &s.App }},
-	{name: "sidebar", parent: "app", cssBg: "--color-surface-sidebar", cssBorder: "--color-surface-sidebar-border", cssText: "--color-surface-sidebar-text",
+	{name: "sidebar", parent: "app", cssBg: "--color-surface-sidebar", cssBorder: "--color-surface-sidebar-border", cssText: "--color-surface-sidebar-text", cssTextMuted: "--color-surface-sidebar-text-muted", cssTextDisabled: "--color-surface-sidebar-text-disabled",
 		get: func(s Surfaces) *Surface { return s.Sidebar }},
-	{name: "editor", parent: "app", cssBg: "--color-surface-editor", cssBorder: "--color-surface-editor-border", cssText: "--color-surface-editor-text",
+	{name: "editor", parent: "app", cssBg: "--color-surface-editor", cssBorder: "--color-surface-editor-border", cssText: "--color-surface-editor-text", cssTextMuted: "--color-surface-editor-text-muted", cssTextDisabled: "--color-surface-editor-text-disabled",
 		get: func(s Surfaces) *Surface { return s.Editor }},
-	{name: "panel", parent: "app", cssBg: "--color-surface-panel", cssBorder: "--color-surface-panel-border", cssText: "--color-surface-panel-text",
+	{name: "panel", parent: "app", cssBg: "--color-surface-panel", cssBorder: "--color-surface-panel-border", cssText: "--color-surface-panel-text", cssTextMuted: "--color-surface-panel-text-muted", cssTextDisabled: "--color-surface-panel-text-disabled",
 		get: func(s Surfaces) *Surface { return s.Panel }},
-	{name: "card", parent: "panel", cssBg: "--color-surface-card", cssBorder: "--color-surface-card-border", cssText: "--color-surface-card-text",
+	{name: "card", parent: "panel", cssBg: "--color-surface-card", cssBorder: "--color-surface-card-border", cssText: "--color-surface-card-text", cssTextMuted: "--color-surface-card-text-muted", cssTextDisabled: "--color-surface-card-text-disabled",
 		get: func(s Surfaces) *Surface { return s.Card }},
-	{name: "modal", parent: "panel", cssBg: "--color-surface-modal", cssBorder: "--color-surface-modal-border", cssText: "--color-surface-modal-text",
+	{name: "modal", parent: "panel", cssBg: "--color-surface-modal", cssBorder: "--color-surface-modal-border", cssText: "--color-surface-modal-text", cssTextMuted: "--color-surface-modal-text-muted", cssTextDisabled: "--color-surface-modal-text-disabled",
 		get: func(s Surfaces) *Surface { return s.Modal }},
-	{name: "popover", parent: "modal", cssBg: "--color-surface-popover", cssBorder: "--color-surface-popover-border", cssText: "--color-surface-popover-text",
+	{name: "popover", parent: "modal", cssBg: "--color-surface-popover", cssBorder: "--color-surface-popover-border", cssText: "--color-surface-popover-text", cssTextMuted: "--color-surface-popover-text-muted", cssTextDisabled: "--color-surface-popover-text-disabled",
 		get: func(s Surfaces) *Surface { return s.Popover }},
 }
 
@@ -241,11 +254,24 @@ func zoneByName(name string) (surfaceZone, bool) {
 // the author set the zone, concrete values are written. When absent (nil),
 // each property falls back to its parent zone's token via var() so a theme
 // switch repaints both surfaces in one cycle and the property always resolves.
+// Per-zone text emphasis (text-muted/disabled) emits concrete when authored,
+// otherwise falls back to the GLOBAL emphasis tokens — so only a zone whose
+// luminance differs from the app (e.g. a dark sidebar) needs to override them.
 func emitSurface(out map[string]string, z surfaceZone, s *Surface) {
 	if s != nil {
 		out[z.cssBg] = strings.TrimSpace(s.BG)
 		out[z.cssBorder] = strings.TrimSpace(s.Border)
 		out[z.cssText] = strings.TrimSpace(s.Text)
+		if v := strings.TrimSpace(s.TextMuted); v != "" {
+			out[z.cssTextMuted] = v
+		} else {
+			out[z.cssTextMuted] = "var(--color-text-muted)"
+		}
+		if v := strings.TrimSpace(s.TextDisabled); v != "" {
+			out[z.cssTextDisabled] = v
+		} else {
+			out[z.cssTextDisabled] = "var(--color-text-disabled)"
+		}
 		emitBackground(out, z, s.Background)
 		return
 	}
@@ -253,6 +279,8 @@ func emitSurface(out map[string]string, z surfaceZone, s *Surface) {
 	out[z.cssBg] = "var(" + p.cssBg + ")"
 	out[z.cssBorder] = "var(" + p.cssBorder + ")"
 	out[z.cssText] = "var(" + p.cssText + ")"
+	out[z.cssTextMuted] = "var(" + p.cssTextMuted + ")"
+	out[z.cssTextDisabled] = "var(" + p.cssTextDisabled + ")"
 }
 
 // emitBackground writes a zone's optional decorative/photo background. Emitted

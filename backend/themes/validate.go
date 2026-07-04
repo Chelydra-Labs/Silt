@@ -195,11 +195,26 @@ func validateSurface(prefix string, s *Surface, required bool) ValidationErrors 
 		}
 		return nil
 	}
-	return append(append(append(
+	return append(append(append(append(append(
 		validateColorField(prefix+".bg", s.BG),
 		validateColorField(prefix+".border", s.Border)...),
 		validateColorField(prefix+".text", s.Text)...),
+		validateOptionalColor(prefix+".text_muted", s.TextMuted)...),
+		validateOptionalColor(prefix+".text_disabled", s.TextDisabled)...),
 		validateBackground(prefix+".background", s.Background)...)
+}
+
+// validateOptionalColor accepts an empty value (the field is optional) but
+// validates the format when present. Used for per-zone text-emphasis overrides.
+func validateOptionalColor(field, value string) ValidationErrors {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if !isValidColor(value) {
+		return ValidationErrors{{Field: field, Message: fmt.Sprintf("not a valid color: %q (expected #hex, rgb()/rgba(), or oklch())", value)}}
+	}
+	return nil
 }
 
 // validateTriple checks a start/end/glow accent triple. Glow is commonly a

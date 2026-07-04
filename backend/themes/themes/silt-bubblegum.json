@@ -41,14 +41,14 @@
         }
       },
       "status": {
-        "warn": "#fbbf24",
-        "danger": "#f43f5e",
-        "success": "#22c55e"
+        "warn": "#ffc857",
+        "danger": "#ff5a78",
+        "success": "#4dd0c0"
       },
       "error": {
-        "fg": "#f43f5e",
-        "bg": "#1f0c14",
-        "border": "#4d2030"
+        "fg": "#ff5a78",
+        "bg": "#1f0a14",
+        "border": "#5a1a38"
       },
       "radius": { "sm": "6px", "md": "10px", "lg": "14px", "xl": "18px", "full": "9999px" },
       "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
@@ -63,13 +63,19 @@
         "selection_text": "#f5ede8",
         "link": "#4fd1c5",
         "link_hover": "#38b2ac",
-        "highlight": "rgba(251,191,36,0.30)"
+        "highlight": "rgba(255,200,87,0.30)"
       }
     },
     "light": {
       "surfaces": {
         "app": { "bg": "#f7ece2", "border": "#e8cfc0", "text": "#2d1f1a" },
-        "sidebar": { "bg": "#2a1322", "border": "#3d1e32", "text": "#f5ede8" },
+        "sidebar": {
+          "bg": "#2a1322",
+          "border": "#3d1e32",
+          "text": "#f5ede8",
+          "text_muted": "#c8a8b8",
+          "text_disabled": "#8a6a78"
+        },
         "editor": { "bg": "#fdf5ec", "border": "#e2c4b2", "text": "#2d1f1a" },
         "panel": { "bg": "#faeee3", "border": "#e4c8b6", "text": "#2d1f1a" },
         "card": { "bg": "#fdf4ea", "border": "#eccfbd", "text": "#2d1f1a" },
@@ -79,7 +85,7 @@
       "hover": "#f0e0d4",
       "active": "#e4d0c0",
       "border_active": "#a8786a",
-      "border_focus": "#6c4838",
+      "border_focus": "#6a4458",
       "text_muted": "#56403a",
       "text_disabled": "#ae8c7e",
       "accent": {
@@ -95,13 +101,13 @@
         }
       },
       "status": {
-        "warn": "#d97706",
-        "danger": "#e11d48",
-        "success": "#16a34a"
+        "warn": "#c46a1a",
+        "danger": "#c8324a",
+        "success": "#1f7a78"
       },
       "error": {
-        "fg": "#e11d48",
-        "bg": "#fde2e8",
+        "fg": "#c8324a",
+        "bg": "#fce2e8",
         "border": "#e08aa0"
       },
       "radius": { "sm": "6px", "md": "10px", "lg": "14px", "xl": "18px", "full": "9999px" },
@@ -117,7 +123,7 @@
         "selection_text": "#2d1f1a",
         "link": "#2c7a7b",
         "link_hover": "#234e52",
-        "highlight": "rgba(217,119,6,0.22)"
+        "highlight": "rgba(196,106,26,0.22)"
       }
     }
   }

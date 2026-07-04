@@ -1168,7 +1168,7 @@
         />
       {:else}
         <div
-          class="flex items-center px-4 py-1 text-text-muted text-[11px] uppercase tracking-widest font-label-sm-bold"
+          class="flex items-center px-4 py-1 text-surface-sidebar-text-muted text-[11px] uppercase tracking-widest font-label-sm-bold"
         >
           {views.find((v) => v.id === activeView)?.label ?? activeView}
         </div>
@@ -1195,7 +1195,7 @@
               }}
               class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
               class:text-accent-primary-start={activeView === v.id}
-              class:text-text-muted={activeView !== v.id}
+              class:text-surface-sidebar-text-muted={activeView !== v.id}
               aria-label={v.label}
               aria-pressed={activeView === v.id}
               title={v.label}
@@ -1214,7 +1214,7 @@
 
         <button
           onclick={() => openSettings('workspace')}
-          class="w-9 h-9 rounded-lg flex items-center justify-center text-text-muted hover:text-accent-primary-start hover:bg-hover hover:scale-105 active:scale-95 transition-all cursor-pointer border-none bg-transparent focus:outline-none"
+          class="w-9 h-9 rounded-lg flex items-center justify-center text-surface-sidebar-text-muted hover:text-accent-primary-start hover:bg-hover hover:scale-105 active:scale-95 transition-all cursor-pointer border-none bg-transparent focus:outline-none"
           aria-label="Settings"
           title="Settings"
         >
@@ -1231,7 +1231,7 @@
           transition:fade={{ duration: 150 }}
           aria-label="Show sidebar"
           title="Show sidebar (Ctrl+B)"
-          class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface-sidebar/80 backdrop-blur-md border border-surface-sidebar-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
+          class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface-sidebar/80 backdrop-blur-md border border-surface-sidebar-border text-surface-sidebar-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
         >
           <span class="material-symbols-outlined text-[18px]"
             >left_panel_open</span

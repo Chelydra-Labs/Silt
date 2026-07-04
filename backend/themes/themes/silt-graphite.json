@@ -41,14 +41,14 @@
         }
       },
       "status": {
-        "warn": "#c9a368",
-        "danger": "#b06868",
-        "success": "#22c55e"
+        "warn": "#c8b074",
+        "danger": "#c25555",
+        "success": "#5a9678"
       },
       "error": {
-        "fg": "#b06868",
-        "bg": "#1a0e0e",
-        "border": "#3a2020"
+        "fg": "#c25555",
+        "bg": "#1a1212",
+        "border": "#3a2a2a"
       },
       "radius": { "sm": "2px", "md": "4px", "lg": "6px", "xl": "8px", "full": "9999px" },
       "spacing": { "sm": "4px", "md": "6px", "lg": "12px", "xl": "20px" },
@@ -63,7 +63,7 @@
         "selection_text": "#ebebeb",
         "link": "#9aa3ad",
         "link_hover": "#6f7882",
-        "highlight": "rgba(201,163,104,0.25)"
+        "highlight": "rgba(200,176,116,0.25)"
       }
     },
     "light": {
@@ -94,12 +94,12 @@
         }
       },
       "status": {
-        "warn": "#9a6e1a",
-        "danger": "#a33235",
-        "success": "#16a34a"
+        "warn": "#7a6428",
+        "danger": "#9c4848",
+        "success": "#3a7a5a"
       },
       "error": {
-        "fg": "#a33235",
+        "fg": "#9c4848",
         "bg": "#fbe6e6",
         "border": "#c08080"
       },
@@ -116,7 +116,7 @@
         "selection_text": "#1a1a1a",
         "link": "#6a737d",
         "link_hover": "#525a63",
-        "highlight": "rgba(154,110,26,0.22)"
+        "highlight": "rgba(122,100,40,0.22)"
       }
     }
   }

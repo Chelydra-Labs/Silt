@@ -30,7 +30,7 @@
           }
         },
         "panel": { "bg": "#2b2825", "border": "#443f3a", "text": "#e8e3d8" },
-        "modal": { "bg": "#2b2825", "border": "#57504a", "text": "#e8e3d8" },
+        "modal": { "bg": "#302c29", "border": "#57504a", "text": "#e8e3d8" },
         "card": { "bg": "#312e2a", "border": "#443f3a", "text": "#e8e3d8" }
       },
       "hover": "#383431",
@@ -43,7 +43,7 @@
         "primary": {
           "start": "#7fb3c4",
           "end": "#5d97ab",
-          "glow": "rgba(125, 179, 196, 0.12)"
+          "glow": "rgba(127, 179, 196, 0.12)"
         },
         "secondary": {
           "start": "#a8a3d4",
@@ -54,7 +54,7 @@
       "status": {
         "warn": "#e0b566",
         "danger": "#d27878",
-        "success": "#22c55e"
+        "success": "#7a9a6a"
       },
       "error": {
         "fg": "#d27878",
@@ -117,7 +117,7 @@
       "status": {
         "warn": "#b08428",
         "danger": "#b85555",
-        "success": "#16a34a"
+        "success": "#4a7a4a"
       },
       "error": {
         "fg": "#b85555",

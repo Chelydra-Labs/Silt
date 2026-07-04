@@ -12,14 +12,14 @@ import (
 // text-emphasis levels, 6 accent colors, 3 status colors, 3 error colors, and
 // the 2 Material-3 aliases that map onto the app zone.
 var expectedV2ColorKeys = []string{
-	// 7 surface zones × 3.
-	"--color-surface-app", "--color-surface-app-border", "--color-surface-app-text",
-	"--color-surface-sidebar", "--color-surface-sidebar-border", "--color-surface-sidebar-text",
-	"--color-surface-editor", "--color-surface-editor-border", "--color-surface-editor-text",
-	"--color-surface-panel", "--color-surface-panel-border", "--color-surface-panel-text",
-	"--color-surface-card", "--color-surface-card-border", "--color-surface-card-text",
-	"--color-surface-modal", "--color-surface-modal-border", "--color-surface-modal-text",
-	"--color-surface-popover", "--color-surface-popover-border", "--color-surface-popover-text",
+	// 7 surface zones × 5 (bg/border/text/text-muted/text-disabled).
+	"--color-surface-app", "--color-surface-app-border", "--color-surface-app-text", "--color-surface-app-text-muted", "--color-surface-app-text-disabled",
+	"--color-surface-sidebar", "--color-surface-sidebar-border", "--color-surface-sidebar-text", "--color-surface-sidebar-text-muted", "--color-surface-sidebar-text-disabled",
+	"--color-surface-editor", "--color-surface-editor-border", "--color-surface-editor-text", "--color-surface-editor-text-muted", "--color-surface-editor-text-disabled",
+	"--color-surface-panel", "--color-surface-panel-border", "--color-surface-panel-text", "--color-surface-panel-text-muted", "--color-surface-panel-text-disabled",
+	"--color-surface-card", "--color-surface-card-border", "--color-surface-card-text", "--color-surface-card-text-muted", "--color-surface-card-text-disabled",
+	"--color-surface-modal", "--color-surface-modal-border", "--color-surface-modal-text", "--color-surface-modal-text-muted", "--color-surface-modal-text-disabled",
+	"--color-surface-popover", "--color-surface-popover-border", "--color-surface-popover-text", "--color-surface-popover-text-muted", "--color-surface-popover-text-disabled",
 	// Zone-agnostic interaction tokens.
 	"--color-hover", "--color-active", "--color-border-active", "--color-border-focus",
 	// Text-emphasis levels.

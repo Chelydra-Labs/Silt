@@ -191,7 +191,6 @@ func assertZoneContrast(t *testing.T, th *Theme) {
 	}
 	for _, mode := range []string{"dark", "light"} {
 		flat := th.Flatten(mode)
-		appBG := flat["--color-surface-app"]
 		for _, z := range surfaceZones {
 			bg := resolveCSSVar(flat, flat[z.cssBg])
 			text := resolveCSSVar(flat, flat[z.cssText])
@@ -199,8 +198,23 @@ func assertZoneContrast(t *testing.T, th *Theme) {
 				t.Errorf("%s [%s]: %s text %s on bg %s = %.2f:1, want >= %.1f",
 					th.ID, mode, z.name, text, bg, r, minPrimary)
 			}
+			// text-muted is a GLOBAL emphasis token rendered on every surface
+			// (metadata, captions, secondary text on cards/panels/modals), not
+			// just the app canvas. Each zone carries (or inherits) its own
+			// text-muted so a zone whose luminance differs from the app (e.g. a
+			// dark sidebar in a light theme) can override it. Measure the
+			// zone-resolved value against that zone's bg — otherwise muted text
+			// ships unreadable on raised/tinted/dark-chrome surfaces.
+			zoneMuted := resolveCSSVar(flat, flat[z.cssTextMuted])
+			if r := approxRatio(t, zoneMuted, bg); r < 4.5 {
+				t.Errorf("%s [%s]: text-muted %s on %s bg %s = %.2f:1, want >= 4.5 (AA). "+
+					"Adjust modes.%s.text_muted (or surfaces.%s.text_muted for a dark-chrome zone).",
+					th.ID, mode, zoneMuted, z.name, bg, r, mode, z.name)
+			}
 		}
-		// text-muted is body/metadata text and must clear AA.
+		// text-muted on surface-app is now covered by the per-zone loop above;
+		// keep an explicit app message for the actionable hint.
+		appBG := resolveCSSVar(flat, flat["--color-surface-app"])
 		if r := approxRatio(t, flat["--color-text-muted"], appBG); r < 4.5 {
 			t.Errorf("%s [%s]: text-muted %s on surface-app = %.2f:1, want >= 4.5 (AA). "+
 				"Bump modes.%s.text_muted lighter (dark) / darker (light).",

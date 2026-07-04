@@ -23,24 +23,40 @@
   --color-surface-app: #0c0c0e;
   --color-surface-app-border: #1e1e23;
   --color-surface-app-text: #dee3e6;
+  --color-surface-app-text-muted: #8b8b94;
+  --color-surface-app-text-disabled: #4b5563;
   --color-surface-sidebar: var(--color-surface-app);
   --color-surface-sidebar-border: var(--color-surface-app-border);
   --color-surface-sidebar-text: var(--color-surface-app-text);
+  --color-surface-sidebar-text-muted: var(--color-surface-app-text-muted);
+  --color-surface-sidebar-text-disabled: var(--color-surface-app-text-disabled);
   --color-surface-editor: var(--color-surface-app);
   --color-surface-editor-border: var(--color-surface-app-border);
   --color-surface-editor-text: var(--color-surface-app-text);
+  --color-surface-editor-text-muted: var(--color-surface-app-text-muted);
+  --color-surface-editor-text-disabled: var(--color-surface-app-text-disabled);
   --color-surface-panel: #121215;
   --color-surface-panel-border: #27272a;
   --color-surface-panel-text: #dee3e6;
+  --color-surface-panel-text-muted: var(--color-surface-app-text-muted);
+  --color-surface-panel-text-disabled: var(--color-surface-app-text-disabled);
   --color-surface-card: #161619;
   --color-surface-card-border: #27272a;
   --color-surface-card-text: #dee3e6;
+  --color-surface-card-text-muted: var(--color-surface-app-text-muted);
+  --color-surface-card-text-disabled: var(--color-surface-app-text-disabled);
   --color-surface-modal: #121215;
   --color-surface-modal-border: #3f3f46;
   --color-surface-modal-text: #dee3e6;
+  --color-surface-modal-text-muted: var(--color-surface-app-text-muted);
+  --color-surface-modal-text-disabled: var(--color-surface-app-text-disabled);
   --color-surface-popover: var(--color-surface-modal);
   --color-surface-popover-border: var(--color-surface-modal-border);
   --color-surface-popover-text: var(--color-surface-modal-text);
+  --color-surface-popover-text-muted: var(--color-surface-modal-text-muted);
+  --color-surface-popover-text-disabled: var(
+    --color-surface-modal-text-disabled
+  );
 
   /* Zone-agnostic interaction + emphasis tokens. */
   --color-hover: #1c1c21;

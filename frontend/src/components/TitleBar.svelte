@@ -99,7 +99,7 @@
           </div>
           {#if !sidebarCollapsed}
             <span
-              class="font-headline-md text-headline-md text-text-primary font-bold tracking-tight whitespace-nowrap group-hover:text-accent-primary-start transition-colors duration-300"
+              class="font-headline-md text-headline-md text-surface-sidebar-text font-bold tracking-tight whitespace-nowrap group-hover:text-accent-primary-start transition-colors duration-300"
               >Silt</span
             >
             {#if isMac}
@@ -129,7 +129,7 @@
         )
         return h ? ` (${h})` : ''
       })()}`}
-      class="flex items-center justify-center h-9 w-9 rounded-lg text-text-muted hover:text-text-primary hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none"
+      class="flex items-center justify-center h-9 w-9 rounded-lg text-surface-sidebar-text-muted hover:text-surface-sidebar-text hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none"
     >
       <span class="material-symbols-outlined text-[20px]">search</span>
     </button>
@@ -143,7 +143,7 @@
           onclick={() => WindowMinimise()}
           aria-label="Minimize"
           title="Minimize"
-          class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-surface-sidebar-text-muted hover:text-surface-sidebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
         >
           <span class="material-symbols-outlined text-[18px]">remove</span>
         </button>
@@ -151,7 +151,7 @@
           onclick={handleToggleMax}
           aria-label={maximised ? 'Restore' : 'Maximize'}
           title={maximised ? 'Restore' : 'Maximize'}
-          class="h-full w-11 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-surface-sidebar-text-muted hover:text-surface-sidebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
         >
           <span class="material-symbols-outlined text-[18px]"
             >{maximised ? 'fullscreen_exit' : 'crop_square'}</span
@@ -161,7 +161,7 @@
           onclick={() => Quit()}
           aria-label="Close"
           title="Close"
-          class="h-full w-11 flex items-center justify-center text-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-surface-sidebar-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
         >
           <span class="material-symbols-outlined text-[18px]">close</span>
         </button>

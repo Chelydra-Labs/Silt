@@ -41,14 +41,14 @@
         }
       },
       "status": {
-        "warn": "#fbbf24",
-        "danger": "#f43f5e",
-        "success": "#22c55e"
+        "warn": "#e8c45a",
+        "danger": "#e85a7a",
+        "success": "#4ddbb0"
       },
       "error": {
-        "fg": "#f43f5e",
-        "bg": "#1a0d12",
-        "border": "#4d2030"
+        "fg": "#e85a7a",
+        "bg": "#181014",
+        "border": "#4a2a3a"
       },
       "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
       "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
@@ -63,15 +63,15 @@
         "selection_text": "#e2eaf2",
         "link": "oklch(0.68 0.158 277)",
         "link_hover": "oklch(0.585 0.204 277)",
-        "highlight": "rgba(251,191,36,0.28)"
+        "highlight": "rgba(232,196,90,0.28)"
       }
     },
     "light": {
       "surfaces": {
-        "app": { "bg": "#e6eef8", "border": "#b8c8dc", "text": "#061020" },
-        "editor": { "bg": "#f4f9fd", "border": "#b0c2d8", "text": "#061020" },
-        "panel": { "bg": "#eef4fa", "border": "#b4c6da", "text": "#061020" },
-        "card": { "bg": "#f4f8fc", "border": "#bccce0", "text": "#061020" },
+        "app": { "bg": "#e4ecf7", "border": "#b4c4d8", "text": "#061020" },
+        "editor": { "bg": "#f5fafe", "border": "#b0c2d8", "text": "#061020" },
+        "panel": { "bg": "#ebf2fa", "border": "#b8c8dc", "text": "#061020" },
+        "card": { "bg": "#f1f6fc", "border": "#bccce0", "text": "#061020" },
         "modal": { "bg": "#fafdff", "border": "#8aa4c0", "text": "#061020" },
         "popover": { "bg": "#ffffff", "border": "#7e9abc", "text": "#061020" }
       },
@@ -94,12 +94,12 @@
         }
       },
       "status": {
-        "warn": "#d97706",
-        "danger": "#e11d48",
-        "success": "#16a34a"
+        "warn": "#a8741c",
+        "danger": "#bc3a58",
+        "success": "#1f9a78"
       },
       "error": {
-        "fg": "#e11d48",
+        "fg": "#bc3a58",
         "bg": "#fde6ea",
         "border": "#e08a9c"
       },
@@ -116,7 +116,7 @@
         "selection_text": "#061020",
         "link": "oklch(0.511 0.23 277)",
         "link_hover": "oklch(0.398 0.177 277)",
-        "highlight": "rgba(217,119,6,0.22)"
+        "highlight": "rgba(168,116,28,0.22)"
       }
     }
   }

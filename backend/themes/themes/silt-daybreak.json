@@ -31,7 +31,7 @@
       "accent": {
         "primary": {
           "start": "#f59e0b",
-          "end": "#d97706",
+          "end": "#c97008",
           "glow": "rgba(245,158,11,0.12)"
         },
         "secondary": {
@@ -41,14 +41,14 @@
         }
       },
       "status": {
-        "warn": "#fbbf24",
-        "danger": "#f43f5e",
-        "success": "#22c55e"
+        "warn": "#e09a2c",
+        "danger": "#dd5a6e",
+        "success": "#3a9a6a"
       },
       "error": {
-        "fg": "#f43f5e",
-        "bg": "#1a0d12",
-        "border": "#4d2030"
+        "fg": "#dd5a6e",
+        "bg": "#1f1014",
+        "border": "#4a2a36"
       },
       "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
       "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
@@ -63,13 +63,19 @@
         "selection_text": "#eaeef5",
         "link": "#818cf8",
         "link_hover": "#6366f1",
-        "highlight": "rgba(251,191,36,0.30)"
+        "highlight": "rgba(224,154,44,0.30)"
       }
     },
     "light": {
       "surfaces": {
         "app": { "bg": "#faf5ec", "border": "#d8c9b4", "text": "#1c1917" },
-        "sidebar": { "bg": "#1c2842", "border": "#2c3c5e", "text": "#eaeef5" },
+        "sidebar": {
+          "bg": "#1c2842",
+          "border": "#2c3c5e",
+          "text": "#eaeef5",
+          "text_muted": "#a8b4cc",
+          "text_disabled": "#7886a0"
+        },
         "editor": { "bg": "#fdf9f0", "border": "#d2c0a4", "text": "#1c1917" },
         "panel": { "bg": "#fcf7ef", "border": "#d4c2a6", "text": "#1c1917" },
         "card": { "bg": "#fefbf5", "border": "#dccab0", "text": "#1c1917" },
@@ -78,7 +84,7 @@
       },
       "hover": "#ece2d2",
       "active": "#dccabc",
-      "border_active": "#9c8060",
+      "border_active": "#8a8499",
       "border_focus": "#665038",
       "text_muted": "#47403a",
       "text_disabled": "#a89a8a",
@@ -95,12 +101,12 @@
         }
       },
       "status": {
-        "warn": "#b45309",
-        "danger": "#be123c",
-        "success": "#16a34a"
+        "warn": "#945816",
+        "danger": "#a01a3c",
+        "success": "#1c8460"
       },
       "error": {
-        "fg": "#be123c",
+        "fg": "#a01a3c",
         "bg": "#fbe6e8",
         "border": "#d68a98"
       },
@@ -117,7 +123,7 @@
         "selection_text": "#1c1917",
         "link": "#6366f1",
         "link_hover": "#4f46e5",
-        "highlight": "rgba(180,83,9,0.22)"
+        "highlight": "rgba(148,88,22,0.22)"
       }
     }
   }

@@ -164,3 +164,90 @@ Biggest refreshes (most-flat → most-laddered): **Graphite, Frost, Altgeld,
 Aggie, Synthwave** — these had the most severe panel≡modal≡white collapse and
 the faintest borders. **Stark** got the lightest touch (its AAA identity is
 austere by design).
+
+---
+
+## Design re-author pass: per-theme palette cohesion
+
+A follow-up pass that retunes each theme's `status` / `error` family (and a few
+accents, glows, and surface ladders) so every palette reads as deliberate and
+self-coherent. The driver: six themes (cyber_forest, frost, synthwave,
+daybreak, bubblegum, altgeld) had shipped with an identical copy-pasted
+`status {#fbbf24 / #f43f5e / #22c55e}` + `error {#f43f5e …}` block — verbatim
+Tailwind amber-400 / rose-500 / green-500. That single shared block was why
+"they all look the same." Every status/error family is now hand-tuned to belong
+to its theme's hue family, and every accent `glow` is re-aligned to its
+gradient's actual start hue. The broadened contrast gate (which now also tests
+each zone's resolved `text-muted` on its own bg) is green for all 11 themes,
+including the two previously-failing dual-surface light sidebars.
+
+### Accent gradient values kept where DESIGN.md canonizes them
+`#2dd4bf`/`#0d9488`/`#6366f1`/`#a855f7` (Cyber Forest) and
+`#f59e0b`/`#d97706`/`#6366f1`/`#4f46e5` (Daybreak) are the documented identity
+hues from DESIGN.md §2.1 / §2.2.8 — each appears only in its own theme, so they
+are deliberate and per-theme, not copy-paste. They are preserved; everything
+around them (status, error, highlight, glow) is re-authored.
+
+### Per-theme notes
+
+- **Cyber Forest (default)** — exemplary template. Dark `modal` lifts off the
+  panel plateau (`#121215` → `#151519`). Status retuned to the cool palette:
+  warn a muted gold `#e0b04a`, danger a cool rose `#dd5a72`, success a teal-green
+  `#37b594` (harmonizes with the primary). Error block is now slate-plum.
+  Accents/glows aligned to start hues. Light status mirrors the cool family.
+- **Terra Noir** — dark `modal` lifts off the editor/panel plateau
+  (`#17110b` → `#1c140d`). Status joins the earth palette: warn ochre, danger
+  brick, success a fresh leaf-green distinct from the moss "in-progress"
+  secondary. Error stays the warm clay block. Light status deepened (ochre /
+  brick / moss).
+- **Linen** — dark `modal` lifts (`#2b2825` → `#302c29`). The lone stock value
+  (success `#22c55e`) replaced with a low-chroma sage `#7a9a6a` / `#4a7a4a` to
+  match Linen's muted identity. Warn/danger already custom — preserved.
+- **Stark** — light `accent.primary.start` corrected from olive-bronze `#8a5a00`
+  to true gold `#b88a00` (clears the 3:1 non-text gate at 3.15:1; AAA text gate
+  untouched at 21:1). `end` + `glow` track the new gold. Success retuned vivid
+  for AAA legibility on both extremes (`#34d36b` dark, `#0e7a36` light).
+- **Graphite** — the warm status/error were the only warm colors in a
+  cool-neutral monochrome, so they are cooled and desaturated: warn
+  low-chroma `#c8b074`, danger dusty `#c25555`, success muted sage `#5a9678`.
+  Error bg/border neutralized. Light mirrors.
+- **Frost** — status retuned frosty: warn `#e8c45a`, danger a cool berry-rose
+  `#e85a7a`, success icy mint `#4ddbb0`. Light ladder re-authored so `panel`
+  sits clearly below `card` (no card/panel inversion) and `editor` reads as the
+  bright cool paper. Light status deepened.
+- **Synthwave** — status retuned neon: warn `#ffc857`, danger hot-magenta
+  `#ff3d6e`, success neon-mint `#4ddbb0`. The `error` block is now internally
+  hue-consistent (the bg was plum while fg/border were red — now all magenta
+  family). Light `editor`/`card` plateau split (`#f4f1fa` / `#f8f5fc`).
+- **Daybreak** — **gate fix**: light `sidebar` now authors its own `text_muted`
+  (`#a8b4cc`, 7.0:1 on the twilight bg) and `text_disabled` so muted sidebar
+  text stops rendering at 1.4:1. Light `border_active` neutralized (`#9c8060`
+  → `#8a8499`) so the warm-brown no longer leaks onto the cool sidebar. Status
+  retuned warm (amber / rose / green).
+- **Bubblegum** — **gate fix**: light `sidebar` authors its own `text_muted`
+  (`#c8a8b8`, 8.0:1 on the raspberry bg) and `text_disabled`. Light
+  `border_focus` realigned to the raspberry family (`#6c4838` → `#6a4458`).
+  Status retuned to the coral/teal palette — success moves to the teal side
+  (`#1f7a78`), danger to deep coral matching the primary. Error is dark
+  raspberry. Light status deepened.
+- **Aggie** — light `accent.primary.start` corrected from olive `#7a6408` (H93)
+  to true gold `#a07c00`; the cited `#b08800` would have failed the 3:1 gate on
+  the green app (2.81:1), so the brightest passing gold was chosen (3.32:1).
+  `end` + `glow` track the new gold. Light ladder re-authored (panel below card,
+  editor as warm paper). Success becomes CSU green (`#2a7a22`, matching the
+  text identity). Dark success is alfalfa-green.
+- **Altgeld** — light primary + secondary `glow` re-aligned to their gradient
+  hues (primary was the dark-mode orange, secondary was the text-color blue —
+  both now match their light-mode starts). Light ladder re-authored (panel below
+  card, editor as paper). Status retuned to the orange/blue family (warn
+  prairie-fire amber `#ffa840`, danger `#e85060`, success warm green).
+
+### Audit: zero stock-Tailwind status/error values remain
+A repo-wide grep for the offender set (`#fbbf24`, `#d97706`, `#f43f5e`,
+`#e11d48`, `#22c55e`, `#16a34a`, `#ef4444`, `rgba(251,191,36,…)`,
+`rgba(217,119,6,…)`, etc.) returns matches only in the DESIGN.md-canonical
+accent gradients of Cyber Forest and Daybreak — the documented identity hues
+that are unique to each theme. Every `status`, every `error`, and every
+`editor.highlight` across all 11 themes is now a hand-tuned, palette-coherent
+value. Contrast gate green for all 11 (AAA ≥7:1 for Stark; AA ≥4.5:1 elsewhere,
+including Daybreak + Bubblegum light sidebars).
