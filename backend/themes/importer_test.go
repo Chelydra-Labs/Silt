@@ -560,3 +560,72 @@ func mustReadFile(t *testing.T, path string) []byte {
 	}
 	return b
 }
+
+// TestCopyDir_RejectsOversizeAsset pins the export-path size bound: a hostile
+// or accidentally-huge synced asset cannot drive unbounded allocation when the
+// assets dir is copied out. The cap matches StoreBackgroundAsset's ingest cap
+// (maxBackgroundAssetBytes), so an asset that survives ingest cannot crash
+// export, and an asset manually dropped into the dir is still bounded.
+func TestCopyDir_RejectsOversizeAsset(t *testing.T) {
+	src := t.TempDir()
+	// A file exactly at the cap copies fine; one byte over is rejected.
+	atCap := make([]byte, maxBackgroundAssetBytes)
+	overCap := make([]byte, maxBackgroundAssetBytes+1)
+	if err := os.WriteFile(filepath.Join(src, "ok.bin"), atCap, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "huge.bin"), overCap, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("at cap copies", func(t *testing.T) {
+		dst := t.TempDir()
+		singleSrc := t.TempDir()
+		if err := os.WriteFile(filepath.Join(singleSrc, "ok.bin"), atCap, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := copyDir(singleSrc, dst); err != nil {
+			t.Fatalf("copyDir at-cap: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dst, "ok.bin")); err != nil {
+			t.Errorf("expected at-cap file copied: %v", err)
+		}
+	})
+
+	t.Run("over cap rejected", func(t *testing.T) {
+		dst := t.TempDir()
+		err := copyDir(src, dst)
+		if err == nil {
+			t.Fatal("expected copyDir to reject an oversize asset, got nil")
+		}
+		if !strings.Contains(err.Error(), "exceeds the") {
+			t.Errorf("expected the error to mention the cap, got: %v", err)
+		}
+	})
+}
+
+// TestExportThemeToPath_OversizeAssetRejected exercises the full export path:
+// an oversize file placed directly into <id>.assets/ (bypassing the
+// StoreBackgroundAsset ingest gate) must be rejected at export time by the
+// copyDir bound, not silently streamed to disk.
+func TestExportThemeToPath_OversizeAssetRejected(t *testing.T) {
+	themesDir := t.TempDir()
+	id := importCustomTheme(t, themesDir)
+	// Drop a hostile oversize file straight into the assets dir.
+	assetsDir := filepath.Join(themesDir, id+".assets")
+	if err := os.MkdirAll(assetsDir, 0o755); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	huge := make([]byte, maxBackgroundAssetBytes+1)
+	if err := os.WriteFile(filepath.Join(assetsDir, "hostile.png"), huge, 0o644); err != nil {
+		t.Fatalf("write hostile asset: %v", err)
+	}
+	dst := filepath.Join(t.TempDir(), "out.json")
+	err := ExportThemeToPath(themesDir, id, dst)
+	if err == nil {
+		t.Fatal("expected export to reject an oversize asset, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") && !strings.Contains(err.Error(), "cap") {
+		t.Errorf("expected a cap-related error, got: %v", err)
+	}
+}

@@ -65,11 +65,11 @@ var ErrImportDuplicate = errors.New("theme id already exists")
 // of object ListThemes enumerates.
 //
 // Sandbox by schema, not by string sanitization: the canonical schema accepts
-// only color values (#hex / rgb() / rgba()) at every token slot, so embedded
-// <script>, url(), or expression() values cannot reach the on-disk file
-// even if a hostile author tries. Go's json.Unmarshal ignores unknown fields
-// silently, so a JSON with extra non-color keys is structurally still a
-// theme; the only enforced rejection is the value-format one in Validate.
+// only color values (#hex / rgb() / rgba() / oklch()) at every token slot, so
+// embedded <script>, url(), or expression() values cannot reach the on-disk
+// file even if a hostile author tries. Go's json.Unmarshal ignores unknown
+// fields silently, so a JSON with extra non-color keys is structurally still
+// a theme; the only enforced rejection is the value-format one in Validate.
 func ImportThemeFromPath(themesDir, srcPath string) (*ImportResult, error) {
 	if themesDir == "" {
 		return nil, fmt.Errorf("themes directory is empty (vault not loaded)")
@@ -164,6 +164,12 @@ func ExportThemeToPath(themesDir, id, dstPath string) error {
 	if themesDir == "" {
 		return fmt.Errorf("themes directory is empty (vault not loaded)")
 	}
+	// Defense-in-depth: id flows into filepath.Join(themesDir, id+".assets")
+	// via copyAssetsDirIfExists. An empty id resolves to the embedded default
+	// further down; any non-empty id must pass the safe-id check.
+	if id != "" && !IsValidThemeID(id) {
+		return fmt.Errorf("invalid theme id %q", id)
+	}
 	// Guard against silent default-fallback: if the user's active id is a
 	// custom theme but the file is missing/corrupted, ResolveActive would
 	// silently return the embedded default. Error instead so the user knows
@@ -200,6 +206,12 @@ func ExportThemeToPath(themesDir, id, dstPath string) error {
 // through export/import without broken references. A missing dir is the common
 // case (base64 / embedded-name themes have no assets dir) and is a no-op.
 func copyAssetsDirIfExists(themesDir, id, dstPath string) error {
+	// Defense-in-depth: id flows into filepath.Join(themesDir, id+".assets").
+	// All other id→path sites are guarded upstream; this is the only one that
+	// took an unvalidated id (a caller could pass a path-traversal string).
+	if !IsValidThemeID(id) {
+		return fmt.Errorf("invalid theme id %q", id)
+	}
 	srcAssets := filepath.Join(themesDir, id+".assets")
 	info, err := os.Stat(srcAssets)
 	if err != nil {
@@ -218,7 +230,10 @@ func copyAssetsDirIfExists(themesDir, id, dstPath string) error {
 // copyDir recursively copies src to dst. Used only by the export path for the
 // per-theme assets directory; the tree is shallow in practice but the walk
 // handles nested directories defensively. Files are copied read-only (0o644)
-// since the destination is an export target, not the live store.
+// since the destination is an export target, not the live store. Each file is
+// size-bounded by maxBackgroundAssetBytes (matching the StoreBackgroundAsset
+// ingest cap) so a hostile or accidentally-huge synced asset cannot drive
+// unbounded allocation on export.
 func copyDir(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
@@ -236,9 +251,9 @@ func copyDir(src, dst string) error {
 			}
 			continue
 		}
-		data, err := os.ReadFile(srcPath)
+		data, err := safeio.ReadFileMax(srcPath, maxBackgroundAssetBytes)
 		if err != nil {
-			return err
+			return fmt.Errorf("asset %s exceeds the %d-byte cap: %w", srcPath, maxBackgroundAssetBytes, err)
 		}
 		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
 			return err

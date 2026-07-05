@@ -344,7 +344,7 @@
     background: var(--color-surface-app);
     height: 100%;
     margin-top: 0;
-    border: 1px solid var(--color-surface-panel-border);
+    border: 1px solid var(--color-surface-app-border);
     border-bottom: none;
     z-index: 2;
   }

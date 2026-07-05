@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -269,16 +270,28 @@ func validateShadowValue(field, value string) ValidationErrors {
 }
 
 // validateScaleMap checks the optional typography-scale maps. Empty maps are
-// valid (the scale is optional); values must be safe CSS.
+// valid (the scale is optional); keys must match the safe-key whitelist
+// (they flow verbatim into CSS custom-property names) and values must be
+// safe CSS.
 func validateScaleMap(prefix string, m map[string]string) ValidationErrors {
 	var errs ValidationErrors
 	for k, v := range m {
+		if !scaleKeyPattern.MatchString(k) {
+			errs = append(errs, ValidationError{Field: prefix + "." + k, Message: "scale key must match ^[a-z0-9-]+$"})
+			continue
+		}
 		if !isSafeCSSValue(strings.TrimSpace(v)) {
 			errs = append(errs, ValidationError{Field: prefix + "." + k, Message: fmt.Sprintf("not a safe value: %q", v)})
 		}
 	}
 	return errs
 }
+
+// scaleKeyPattern whitelists typography-scale map keys. Keys are interpolated
+// verbatim into CSS custom-property names (out["--font-size-"+k]), so a key
+// like "sm;--color-surface-app" would be a CSS injection. The set matches the
+// safe-identifier chars used elsewhere in the schema (lowercase alnum and '-').
+var scaleKeyPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // validateBackground sandbox-checks an optional per-zone background block. The
 // image value flows verbatim into a CSS background-image, so it must not
@@ -463,7 +476,12 @@ func isValidColor(s string) bool {
 			return false
 		}
 		if i == wantParts-1 && wantParts == 4 {
-			if v < 0 || v > 1 {
+			// Alpha: numeric 0–1 or CSS Color 4 percent 0–100%.
+			if percent {
+				if v < 0 || v > 100 {
+					return false
+				}
+			} else if v < 0 || v > 1 {
 				return false
 			}
 		} else if percent {

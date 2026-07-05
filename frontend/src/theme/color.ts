@@ -57,7 +57,9 @@ export function parseColor(s: string): RgbColor | null {
 /** Any accepted color → #rrggbb (opaque; alpha dropped, mirroring the Go canonical form). Null if unparseable. */
 export function toHex(s: string): string | null {
   const c = rgbOf(s)
-  return c ? formatHex(c) : null
+  // Force alpha to 1 so formatHex always emits opaque #rrggbb, matching the
+  // Go canonical form regardless of culori's version-specific alpha handling.
+  return c ? formatHex({ ...c, alpha: 1 }) : null
 }
 
 /** Any accepted color → OKLCH components, or null if unparseable. */

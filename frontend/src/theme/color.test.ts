@@ -22,6 +22,14 @@ describe('color helper (#385)', () => {
     expect(toHex('#fff')).toBe('#ffffff')
   })
 
+  it('toHex drops alpha, producing opaque #rrggbb (Go canonical form)', () => {
+    // rgba with alpha < 1 must still produce a 6-digit opaque hex — the Go
+    // canonical form strips alpha, and toHex mirrors that.
+    expect(toHex('rgba(0,0,0,0.5)')).toBe('#000000')
+    // 8-digit hex (#rrggbbaa) must also collapse to opaque #rrggbb.
+    expect(toHex('#ff000080')).toBe('#ff0000')
+  })
+
   it('oklch parses and formatOklch produces a parseable string', () => {
     const lch = toOklch('oklch(0.7 0.15 250)')
     expect(lch).not.toBeNull()

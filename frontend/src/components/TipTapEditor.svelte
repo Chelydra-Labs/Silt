@@ -1901,7 +1901,7 @@
 
   .meta-suggest-item.selected {
     background: var(--color-accent-primary-start);
-    color: #fff;
+    color: var(--color-surface-app-text);
   }
 
   .meta-suggest-key {
@@ -1946,7 +1946,7 @@
 
   .mention-suggest-item.selected {
     background: var(--color-accent-primary-start);
-    color: #fff;
+    color: var(--color-surface-app-text);
   }
 
   .mention-suggest-at {

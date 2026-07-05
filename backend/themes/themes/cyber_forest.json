@@ -101,7 +101,7 @@
         "success": "#1c8460"
       },
       "error": {
-        "fg": "#c33a4e",
+        "fg": "#a83828",
         "bg": "#fde8ec",
         "border": "#e88ea0"
       },

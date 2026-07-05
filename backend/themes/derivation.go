@@ -69,13 +69,17 @@ func parseOKLCH(s string) (oklchText, bool) {
 		inner = strings.TrimSpace(inner[:idx])
 		lch.hasAlpha = true
 	}
-	parts := strings.Fields(inner)
-	if len(parts) < 3 || len(parts) > 3 {
-		// Allow comma-separated form too (oklch(L, C, H)) for resilience.
+	// Comma-separated form (oklch(L, C, H)) is accepted alongside the
+	// space-separated canonical form; strings.Fields would leave trailing
+	// commas attached to each component and silently fail.
+	var parts []string
+	if strings.Contains(inner, ",") {
 		parts = strings.Split(inner, ",")
 		for i := range parts {
 			parts[i] = strings.TrimSpace(parts[i])
 		}
+	} else {
+		parts = strings.Fields(inner)
 	}
 	if len(parts) != 3 {
 		return lch, false

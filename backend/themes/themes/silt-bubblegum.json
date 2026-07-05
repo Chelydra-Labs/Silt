@@ -45,10 +45,10 @@
       "status": {
         "warn": "#ffc857",
         "danger": "#ff5a78",
-        "success": "#4dd0c0"
+        "success": "#34d399"
       },
       "error": {
-        "fg": "#ff5a78",
+        "fg": "#ff7a92",
         "bg": "#1f0a14",
         "border": "#5a1a38"
       },
@@ -105,10 +105,10 @@
       "status": {
         "warn": "#c46a1a",
         "danger": "#c8324a",
-        "success": "#1f7a78"
+        "success": "#0e9466"
       },
       "error": {
-        "fg": "#c8324a",
+        "fg": "#aa3422",
         "bg": "#fce2e8",
         "border": "#e08aa0"
       },

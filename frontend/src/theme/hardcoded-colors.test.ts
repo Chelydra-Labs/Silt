@@ -10,15 +10,6 @@ import { resolve, relative } from 'node:path'
 
 const frontendSrc = resolve(__dirname, '..')
 
-const FILES_TO_CHECK = [
-  'index.css',
-  'components/Sidebar.svelte',
-  'components/TipTapEditor.svelte',
-  'components/settings/SettingsShell.svelte',
-  'components/settings/VaultActionModal.svelte',
-  'components/settings/VaultArchiveModal.svelte'
-]
-
 // Hardcoded dark colors that should never appear outside of CSS custom
 // property fallback values (var(--token, <fallback>) is acceptable; a
 // bare rgba(22, 22, 25, ...) or #131a18 is not).
@@ -37,8 +28,14 @@ function readLines(relPath: string): string[] {
   return readFileSync(abs, 'utf-8').split('\n')
 }
 
-// Recursively collect every .svelte and .ts file under frontend/src. Used by
-// the v2 drift guard to scan for resurrected dead utility classes.
+// Recursively collect every .svelte and .ts file under frontend/src. The
+// narrower scope (frontend src only) is intentional: schema-v2 +
+// DisallowUnknownFields makes non-frontend v1-token drift structurally
+// impossible, so the repo-wide Go scan that existed in v1
+// (theme_migration_invariant_test.go) was deliberately retired.
+// Test files are excluded from the hardcoded-color scan below because they
+// legitimately reference the forbidden patterns as fixtures (this file
+// defines FORBIDDEN_PATTERNS itself).
 function walkSrcFiles(dir: string = frontendSrc): string[] {
   const out: string[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -56,9 +53,13 @@ function walkSrcFiles(dir: string = frontendSrc): string[] {
 }
 
 describe('hardcoded dark color guard (#260)', () => {
-  for (const file of FILES_TO_CHECK) {
-    it(`${file} has no hardcoded dark rgba/hex colors`, () => {
-      const lines = readLines(file)
+  for (const file of walkSrcFiles()) {
+    // Skip test files — they legitimately reference forbidden patterns as
+    // fixtures (this file defines FORBIDDEN_PATTERNS itself).
+    if (/\.test\.[jt]s$/.test(file)) continue
+    const rel = relative(frontendSrc, file)
+    it(`${rel} has no hardcoded dark rgba/hex colors`, () => {
+      const lines = readFileSync(file, 'utf-8').split('\n')
       const violations: string[] = []
 
       for (let i = 0; i < lines.length; i++) {

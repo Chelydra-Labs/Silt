@@ -299,6 +299,61 @@ func TestAccentDistinctness_AllFirstClassThemes(t *testing.T) {
 	}
 }
 
+// TestStatusErrorDistinct_AllFirstClassThemes guards the documented contract
+// (theme.go Error docstring): status.danger (destructive actions) and error.fg
+// (validation/invalid input) are deliberately distinct, so a destructive button
+// never reads identically to an inline validation error. We assert a minimum
+// sRGB Euclidean distance between the two for every first-class theme in both
+// modes. Reading from the v2 structs keeps the guard authoritative even if
+// Flatten's token names change.
+func TestStatusErrorDistinct_AllFirstClassThemes(t *testing.T) {
+	const minDist = 15.0
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	for _, th := range all {
+		for _, m := range []Mode{th.Modes.Dark, th.Modes.Light} {
+			d := rgbDistance(t, m.Status.Danger, m.Error.FG)
+			if d < minDist {
+				t.Errorf("%s: status.danger %s vs error.fg %s distance = %.1f, want >= %.1f (danger and error must stay distinct)",
+					th.ID, m.Status.Danger, m.Error.FG, d, minDist)
+			}
+		}
+	}
+}
+
+// TestErrorForegroundReadable_AllFirstClassThemes guards the readability of
+// error.fg, which renders as inline validation/error TEXT (role="alert"
+// messages, form errors, failure banners) on the app, panel, and modal
+// surfaces. The per-zone text gate does not cover error.fg (it is not a
+// surface text token), so this assertion closes that gap: error.fg must clear
+// AA 4.5:1 against each surface it renders on, in both modes. A theme whose
+// error.fg is tuned only for distinctness from danger (e.g. a too-light tint)
+// will fail here and must be darkened/shifted until it reads as text.
+func TestErrorForegroundReadable_AllFirstClassThemes(t *testing.T) {
+	const min = 4.5
+	surfaces := []string{"app", "panel", "modal"}
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	for _, th := range all {
+		for _, mode := range []string{"dark", "light"} {
+			flat := th.Flatten(mode)
+			fg := resolveCSSVar(flat, flat["--color-error"])
+			for _, z := range surfaces {
+				bg := resolveCSSVar(flat, flat["--color-surface-"+z])
+				if r := approxRatio(t, fg, bg); r < min {
+					t.Errorf("%s [%s]: error.fg %s on %s bg %s = %.2f:1, want >= %.1f (AA text). "+
+						"Darken/shift modes.%s.error.fg until it reads as text on the %s surface.",
+						th.ID, mode, fg, z, bg, r, min, mode, z)
+				}
+			}
+		}
+	}
+}
+
 // TestTextPrimaryDistinctFromDefault_AllFirstClassThemes guards the #138
 // regression: every first-class theme's body-text color must be perceptibly
 // distinct from the default's, so switching themes produces a visibly

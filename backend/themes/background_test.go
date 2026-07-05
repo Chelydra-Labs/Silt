@@ -1,6 +1,7 @@
 package themes
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,12 +71,20 @@ func TestStoreBackgroundAsset_LargeFileCopiedToAssetsDir(t *testing.T) {
 	if isBase64 {
 		t.Errorf("expected isBase64=false for a large file, got ref=%q", ref)
 	}
-	wantRef := "url(\"terra-test.assets/photo-1.jpg\")"
-	if ref != wantRef {
-		t.Errorf("reference = %q, want %q (sanitized filename + self-describing path)", ref, wantRef)
+	// Filename is now <sanitized-base>-<8-hex-content-hash>.jpg so two
+	// zones picking same-named images do not clobber each other.
+	wantPrefix := "url(\"terra-test.assets/photo-1-"
+	wantSuffix := ".jpg\")"
+	if !strings.HasPrefix(ref, wantPrefix) || !strings.HasSuffix(ref, wantSuffix) {
+		t.Errorf("reference = %q, want prefix %q and suffix %q (sanitized name + content hash)", ref, wantPrefix, wantSuffix)
 	}
-	// The file was copied into the per-theme assets directory.
-	copied := filepath.Join(themesDir, "terra-test.assets", "photo-1.jpg")
+	hashExt := ref[len(wantPrefix) : len(ref)-len(wantSuffix)]
+	if len(hashExt) != 8 {
+		t.Errorf("expected 8 hex chars of content hash, got %q", hashExt)
+	}
+	// The file was copied into the per-theme assets directory under the
+	// same hashed name the reference points at.
+	copied := filepath.Join(themesDir, "terra-test.assets", "photo-1-"+hashExt+".jpg")
 	if _, err := os.Stat(copied); err != nil {
 		t.Errorf("expected asset copied to %s: %v", copied, err)
 	}
@@ -95,6 +104,72 @@ func TestStoreBackgroundAsset_OversizeRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds the") {
 		t.Errorf("expected the error to mention the cap, got: %v", err)
+	}
+}
+
+// TestStoreBackgroundAsset_SameBasenameNoCollision: two zones that pick two
+// different source images sharing the same basename (e.g. photo.png in two
+// different pick dirs) must NOT clobber each other in <id>.assets/. A short
+// content hash differentiates them.
+func TestStoreBackgroundAsset_SameBasenameNoCollision(t *testing.T) {
+	themesDir := t.TempDir()
+
+	// Two source files in different dirs, both named "photo.png", with
+	// distinct contents so their content hashes differ.
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	src1 := filepath.Join(dir1, "photo.png")
+	src2 := filepath.Join(dir2, "photo.png")
+	payload1 := bytes.Repeat([]byte{0x10}, 60*1024) // over the inline threshold
+	payload2 := bytes.Repeat([]byte{0x20}, 60*1024)
+	if err := os.WriteFile(src1, payload1, 0o644); err != nil {
+		t.Fatalf("write src1: %v", err)
+	}
+	if err := os.WriteFile(src2, payload2, 0o644); err != nil {
+		t.Fatalf("write src2: %v", err)
+	}
+
+	ref1, isB64One, err := StoreBackgroundAsset(themesDir, "terra-test", src1)
+	if err != nil {
+		t.Fatalf("StoreBackgroundAsset #1: %v", err)
+	}
+	if isB64One {
+		t.Fatal("expected asset #1 to be copied, not inlined")
+	}
+	ref2, isB64Two, err := StoreBackgroundAsset(themesDir, "terra-test", src2)
+	if err != nil {
+		t.Fatalf("StoreBackgroundAsset #2: %v", err)
+	}
+	if isB64Two {
+		t.Fatal("expected asset #2 to be copied, not inlined")
+	}
+
+	// The two references must differ (different content hashes).
+	if ref1 == ref2 {
+		t.Errorf("two distinct same-named assets produced the same reference %q (clobber risk)", ref1)
+	}
+
+	// Both asset files exist on disk and preserve their distinct bytes.
+	body1 := strings.TrimSuffix(strings.TrimPrefix(ref1, `url("terra-test.assets/`), `")`)
+	body2 := strings.TrimSuffix(strings.TrimPrefix(ref2, `url("terra-test.assets/`), `")`)
+	path1 := filepath.Join(themesDir, "terra-test.assets", body1)
+	path2 := filepath.Join(themesDir, "terra-test.assets", body2)
+	got1, err := os.ReadFile(path1)
+	if err != nil {
+		t.Fatalf("read asset #1 at %s: %v", path1, err)
+	}
+	got2, err := os.ReadFile(path2)
+	if err != nil {
+		t.Fatalf("read asset #2 at %s: %v", path2, err)
+	}
+	if !bytes.Equal(got1, payload1) {
+		t.Errorf("asset #1 bytes drift: got %d bytes, want %d", len(got1), len(payload1))
+	}
+	if !bytes.Equal(got2, payload2) {
+		t.Errorf("asset #2 bytes drift: got %d bytes, want %d", len(got2), len(payload2))
+	}
+	if bytes.Equal(got1, got2) {
+		t.Errorf("the two stored assets have identical bytes (collision not avoided)")
 	}
 }
 

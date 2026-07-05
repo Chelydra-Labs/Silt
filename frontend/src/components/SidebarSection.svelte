@@ -158,7 +158,7 @@
     </span>
     {#if totalCount > 0}
       <span
-        class="text-[9px] font-label-sm text-surface-sidebar-text-muted bg-surface-sidebar border border-surface-sidebar-border rounded-full px-1.5 py-0.5"
+        class="text-[9px] font-label-sm text-surface-sidebar-text-muted bg-surface-card border border-surface-sidebar-border rounded-full px-1.5 py-0.5"
       >
         {totalCount}
       </span>

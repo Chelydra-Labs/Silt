@@ -13,7 +13,7 @@ import (
 // example.
 //
 // v2 is the only supported schema (SupportedSchemaVersion). v1 themes are
-// rejected; first-party themes are re-authored nively (no migration — see
+// rejected; first-party themes are re-authored natively (no migration — see
 // ADR docs/decisions/0002-theme-schema-v2-no-migration.md).
 type Theme struct {
 	SchemaVersion string      `json:"schema_version"`
@@ -299,9 +299,7 @@ func emitBackground(out map[string]string, z surfaceZone, b *Background) {
 	if v := strings.TrimSpace(b.Size); v != "" {
 		out["--silt-bg-"+z.name+"-size"] = v
 	}
-	if b.Opacity != 0 {
-		out["--silt-bg-"+z.name+"-opacity"] = trimFloat(b.Opacity)
-	}
+	out["--silt-bg-"+z.name+"-opacity"] = trimFloat(b.Opacity)
 	if v := strings.TrimSpace(b.Blend); v != "" {
 		out["--silt-bg-"+z.name+"-blend"] = v
 	}

@@ -341,11 +341,17 @@ func TestIsValidColor(t *testing.T) {
 		"#fff", "#ffffff", "#ffffffff",
 		"rgba(0,0,0,0.5)", "rgba(0, 0, 0, 0)", "rgba(255,255,255,1)",
 		"rgb(1,2,3)", "rgb(100%, 0%, 0%)",
+		// CSS Color 4 percent alpha.
+		"rgba(0, 0, 0, 50%)", "rgba(0,0,0,100%)",
 		// v2 first-class oklch grammar.
 		"oklch(0.5 0.1 250)",
 		"oklch(0.5 0.1 250 / 0.5)",
 		"oklch(50% 0.1 250)",
 		"oklch(0.8 0 0)",
+		// Comma-separated oklch (CSS Color 4 legacy form, accepted for
+		// resilience — strings.Fields would leave trailing commas attached).
+		"oklch(0.5, 0.1, 250)",
+		"oklch(0.5, 0.1, 250 / 0.5)",
 	}
 	for _, c := range good {
 		if !isValidColor(c) {
@@ -358,6 +364,8 @@ func TestIsValidColor(t *testing.T) {
 		"rgba(999,0,0,0.5)", // rgb component out of range
 		"rgba(0,0,0,2)",     // alpha > 1
 		"rgba(0,0,0,-1)",    // alpha < 0
+		"rgba(0,0,0,150%)",  // percent alpha > 100%
+		"rgba(0,0,0,-5%)",   // percent alpha < 0
 		"rgb(1,2,3,4)",      // too many components
 		"rgb(300,0,0)",      // out of range
 		"rgba(a,b,c,d)",     // non-numeric
@@ -379,6 +387,35 @@ func TestIsValidColor(t *testing.T) {
 		if isValidColor(c) {
 			t.Errorf("isValidColor(%q) = true, want false", c)
 		}
+	}
+}
+
+func TestParseOKLCH_CommaForm(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		l, c, h float64
+	}{
+		{"comma-separated", "oklch(0.5, 0.1, 250)", 0.5, 0.1, 250},
+		{"comma-separated with alpha", "oklch(0.5, 0.1, 250 / 0.5)", 0.5, 0.1, 250},
+		{"space-separated still works", "oklch(0.5 0.1 250)", 0.5, 0.1, 250},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			lch, ok := parseOKLCH(c.in)
+			if !ok {
+				t.Fatalf("parseOKLCH(%q) = false, want true", c.in)
+			}
+			if lch.L != c.l {
+				t.Errorf("L = %v, want %v", lch.L, c.l)
+			}
+			if lch.C != c.c {
+				t.Errorf("C = %v, want %v", lch.C, c.c)
+			}
+			if lch.H != c.h {
+				t.Errorf("H = %v, want %v", lch.H, c.h)
+			}
+		})
 	}
 }
 
@@ -753,6 +790,60 @@ func TestValidate_BackgroundRejectsCSSInjection(t *testing.T) {
 	)
 	if _, err := ParseAndValidate([]byte(crafted)); err == nil {
 		t.Errorf("expected ParseAndValidate to reject a crafted theme with an injection background.image")
+	}
+}
+
+// TestValidate_TypographyScaleBadKeyRejected pins the scale-key whitelist:
+// keys flow verbatim into CSS custom-property names (out["--font-size-"+k]),
+// so a key like "sm;--color-surface-app" would be CSS injection. The key
+// pattern ^[a-z0-9-]+$ is the only thing that stops it.
+func TestValidate_TypographyScaleBadKeyRejected(t *testing.T) {
+	// Sanity: a clean scale validates.
+	goodScale := strings.Replace(
+		minimalValidJSON,
+		`"modes": {`,
+		`"typography": { "scale": { "size": {"sm": "0.875rem", "base": "1rem"} } },
+    "modes": {`,
+		1,
+	)
+	if _, err := ParseAndValidate([]byte(goodScale)); err != nil {
+		t.Fatalf("clean scale should validate, got %v", err)
+	}
+	// A key with declaration-breaking chars is rejected.
+	for _, badKey := range []string{
+		`sm;--color-surface-app`,
+		`base}body{`,
+		`has space`,
+		`UPPER`,
+		`under_score`,
+	} {
+		bad := strings.Replace(
+			minimalValidJSON,
+			`"modes": {`,
+			`"typography": { "scale": { "size": {"`+badKey+`": "1rem"} } },
+    "modes": {`,
+			1,
+		)
+		_, err := ParseAndValidate([]byte(bad))
+		if err == nil {
+			t.Errorf("expected validation error for scale key %q, got nil", badKey)
+		} else {
+			verrs, ok := err.(ValidationErrors)
+			if !ok {
+				t.Errorf("expected ValidationErrors for scale key %q, got %T: %v", badKey, err, err)
+			} else {
+				found := false
+				for _, e := range verrs {
+					if strings.Contains(e.Message, "scale key") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected 'scale key' error for %q, got %v", badKey, verrs)
+				}
+			}
+		}
 	}
 }
 

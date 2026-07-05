@@ -19,6 +19,8 @@ import { injectTokens } from './inject'
 
 export type ThemeMode = 'dark' | 'light' | 'system'
 
+const VALID_MODES: ThemeMode[] = ['dark', 'light', 'system']
+
 export interface ThemeState {
   id: string
   name: string
@@ -243,7 +245,9 @@ function applyResult(res: {
 }): void {
   themeState.id = res.id
   themeState.name = res.name
-  themeState.mode = (res.mode as ThemeMode) || 'dark'
+  themeState.mode = (VALID_MODES as readonly string[]).includes(res.mode)
+    ? (res.mode as ThemeMode)
+    : 'dark'
   themeState.darkTokens = res.dark_tokens || {}
   themeState.lightTokens = res.light_tokens || {}
   themeState.error = null

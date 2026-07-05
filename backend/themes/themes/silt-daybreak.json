@@ -48,7 +48,7 @@
         "success": "#3a9a6a"
       },
       "error": {
-        "fg": "#dd5a6e",
+        "fg": "#ee6e82",
         "bg": "#1f1014",
         "border": "#4a2a36"
       },
@@ -108,7 +108,7 @@
         "success": "#1c7a4a"
       },
       "error": {
-        "fg": "#a01a3c",
+        "fg": "#bc2e48",
         "bg": "#fbe6e8",
         "border": "#d68a98"
       },

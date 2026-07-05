@@ -171,6 +171,13 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 					t.Errorf("%s [%s]: missing editor token %s", th.ID, mode, k)
 				}
 			}
+			// Typography family tokens are emitted when authored; all
+			// first-class themes author them, so absence is a Flatten regression.
+			for _, k := range expectedV2TypographyKeys {
+				if _, ok := flat[k]; !ok {
+					t.Errorf("%s [%s]: missing typography token %s", th.ID, mode, k)
+				}
+			}
 			// Any extra key must be the opt-in background overlay or
 			// type-scale, not a stray or legacy token.
 			for k := range flat {

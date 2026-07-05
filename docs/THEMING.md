@@ -215,6 +215,16 @@ When absent, the theme inherits fonts from your [`config.yaml`](../SPECS.md) `ed
 
 You may author any color as `oklch(L C H)` — lightness `L ∈ [0,1]`, chroma `C ≥ 0`, hue `H` in degrees — or `oklch(L C H / A)` with alpha. OKLCH is **perceptually uniform**: the same lightness step reads as the same brightness shift on every hue, which is why derived hover/active/disabled variants stay balanced. The engine emits an OKLCH value **verbatim** (it does not silently convert it to hex) and parses it internally for the contrast gate. Hex-authored themes keep working exactly as before — reach for OKLCH when you want perceptual uniformity.
 
+The Go parser (`backend/themes/derivation.go`) is resilient, so you can paste a value from any tool. All of these are accepted and equivalent:
+
+| Form | Example |
+| :--- | :--- |
+| Space-separated, unitless (canonical) | `oklch(0.7 0.15 180)` |
+| Comma-separated | `oklch(0.7, 0.15, 180)` |
+| Percent lightness | `oklch(70% 0.15 180)` |
+| Degree-suffixed hue | `oklch(0.7 0.15 180deg)` |
+| Optional alpha (any of the above + `/ A`) | `oklch(0.7 0.15 180 / 0.5)` |
+
 ```
 "accent": {
   "primary": { "start": "oklch(0.7 0.15 180)", "end": "oklch(0.55 0.13 185)", "glow": "oklch(0.7 0.15 180 / 0.15)" }
@@ -352,8 +362,11 @@ Silt targets **WCAG 2.2**. Your theme is checked against the shipped palette; ai
 | Element | Minimum ratio | Level |
 | :--- | :--- | :--- |
 | Each zone's `text` on its own `bg` (every authored zone) | **≥ 4.5:1** | AA |
-| `text_muted` / `text_disabled` on zone backgrounds | **≥ 4.5:1** | AA |
+| `text_muted` on zone backgrounds | **≥ 4.5:1** | AA |
 | `accent.primary.start` / `accent.secondary.start` on `surfaces.app.bg` (non-text UI) | **≥ 3:1** | AA (non-text) |
+| `border_focus` on `surfaces.app.bg` (**Stark only**) | **≥ 3.0:1** | AA (non-text) — Stark-only hard invariant |
+
+> **Advisory / WCAG-exempt (inactive UI) — not hard-gated.** `text_disabled` is WCAG 1.4.3-exempt ("text that is part of an inactive user interface component"). The CI gate (`contrast_test.go`) logs its ratio for audit but does NOT assert a 4.5:1 floor — every shipped theme intentionally renders disabled text at ~2–3:1 so it reads as disabled. Don't over-engineer disabled text to a 4.5:1 target that isn't enforced. Likewise, `border_focus` on non-Stark themes is audit-only (a subtle ~2.5–3:1 hairline by design); only Stark's border-led AAA model hard-asserts the 3.0:1 floor in the row above.
 
 ### How to verify
 

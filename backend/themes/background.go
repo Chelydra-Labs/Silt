@@ -1,6 +1,7 @@
 package themes
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -111,9 +112,12 @@ func StoreBackgroundAsset(themesDir, themeID, srcPath string) (ref string, isBas
 	// reference is the self-describing relative path <themeID>.assets/<file>
 	// (wrapped in url() so it is a valid background-image value); the future
 	// reference resolver (RFC §3) resolves it against the themes directory.
+	// A short content hash is appended to the sanitized basename so two
+	// zones that pick same-named images do not clobber each other on disk.
 	baseName := strings.ToLower(filepath.Base(srcPath))
 	base := sanitizeBgFilename(strings.TrimSuffix(baseName, ext))
-	filename := base + ext
+	sum := sha256.Sum256(raw)
+	filename := fmt.Sprintf("%s-%x%s", base, sum[:4], ext)
 	assetsDir := filepath.Join(themesDir, themeID+".assets")
 	if err := os.MkdirAll(assetsDir, 0o755); err != nil {
 		return "", false, fmt.Errorf("failed to create assets directory %s: %w", assetsDir, err)
