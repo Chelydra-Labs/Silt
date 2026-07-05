@@ -58,7 +58,8 @@ func ToSRGB(s string) (r, g, b uint8, ok bool) {
 
 // parseOKLCH parses "oklch(L C H)" or "oklch(L C H / A)" into components.
 // L ∈ [0,1] (percent form L% also accepted), C ≥ 0, H in degrees (wraps).
-// NaN/Inf components are rejected (Go's ParseFloat accepts them with nil err).
+// Out-of-range L/C/alpha, NaN, and Inf are rejected so an author's typo
+// surfaces at validation rather than rendering as a silently-clamped color.
 func parseOKLCH(s string) (oklchText, bool) {
 	inner := s[len("oklch(") : len(s)-1]
 	var lch oklchText
@@ -84,15 +85,15 @@ func parseOKLCH(s string) (oklchText, bool) {
 	if len(parts) != 3 {
 		return lch, false
 	}
-	L, okL := parseComponent(parts[0], 1.0, 0, 1) // L is 0–1 (or 0–100%)
-	C, okC := parseComponent(parts[1], 1.0, 0, math.Inf(1))
+	L, okL := parseComponentStrict(parts[0], 1.0, 0, 1) // L is 0–1 (or 0–100%)
+	C, okC := parseComponentStrict(parts[1], 1.0, 0, math.Inf(1))
 	H, okH := parseAngle(parts[2])
 	if !okL || !okC || !okH {
 		return lch, false
 	}
 	lch.L, lch.C, lch.H = L, C, H
 	if lch.hasAlpha {
-		a, okA := parseComponent(alphaStr, 1.0, 0, 1)
+		a, okA := parseComponentStrict(alphaStr, 1.0, 0, 1)
 		if !okA {
 			return lch, false
 		}
@@ -101,9 +102,15 @@ func parseOKLCH(s string) (oklchText, bool) {
 	return lch, true
 }
 
-// parseComponent parses a numeric component that may be a bare number or a
-// percentage relative to `scale`. NaN/Inf rejected.
-func parseComponent(s string, scale, lo, hi float64) (float64, bool) {
+// parseComponentStrict parses a numeric component that may be a bare number
+// or a percentage relative to `scale`, rejecting NaN/Inf and any value
+// outside [lo,hi]. Input validation must surface an author's out-of-range
+// typo (e.g. oklch(-0.5 …)) rather than silently clamp it to a different
+// color than the JSON implies. Derivation arithmetic does not flow through
+// here: the shift helpers clamp on the oklab struct directly via clamp(),
+// and output quantization clamps via to8() — only the parse-time path needs
+// the strict contract.
+func parseComponentStrict(s string, scale, lo, hi float64) (float64, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, false
@@ -115,13 +122,19 @@ func parseComponent(s string, scale, lo, hi float64) (float64, bool) {
 			return 0, false
 		}
 		v = v / 100.0 * scale
-		return clamp(v, lo, hi), true
+		if v < lo || v > hi {
+			return 0, false
+		}
+		return v, true
 	}
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0, false
 	}
-	return clamp(v, lo, hi), true
+	if v < lo || v > hi {
+		return 0, false
+	}
+	return v, true
 }
 
 // parseAngle parses a hue in degrees (unitless or with a `deg` suffix). Hue

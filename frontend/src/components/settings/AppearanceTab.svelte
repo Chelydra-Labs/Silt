@@ -226,6 +226,14 @@
   const effectiveMode = $derived(
     themeState.mode === 'system' ? systemScheme.mode : themeState.mode
   )
+
+  // SR companion to the visible `· Dark`/`· Light` suffix (which is
+  // aria-hidden to avoid colliding with the Dark/Light radio names).
+  // Empty outside system mode so the live region stays silent — the
+  // Dark/Light radios already convey their own selection.
+  const systemSchemeAnnouncement = $derived(
+    themeState.mode === 'system' ? `Using ${systemScheme.mode} appearance` : ''
+  )
 </script>
 
 <svelte:window on:keydown={onWindowKey} />
@@ -256,6 +264,8 @@
           class:text-accent-primary-start={active}
           class:text-text-muted={!active}
           class:hover:text-text-primary={!active}
+          class:ring-1={active}
+          class:ring-accent-primary-start={active}
         >
           <span class="material-symbols-outlined text-[16px]">{m.icon}</span>
           {m.label}
@@ -271,6 +281,14 @@
       "System" follows your OS appearance preference. Switching mode does not
       change the active theme.
     </p>
+    <!-- SR-only live region: announces the resolved scheme only while
+         System mode is active. The visible `· Dark`/`· Light` suffix
+         is aria-hidden (avoids radio-name collisions), so without this
+         region a System-mode user would never hear which scheme is
+         currently resolved or when the OS flips it. -->
+    <div class="sr-only" aria-live="polite">
+      {systemSchemeAnnouncement}
+    </div>
   </section>
 
   <!-- Active-theme typography overrides (#82) -->
@@ -499,3 +517,21 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /* Visually hidden but available to assistive tech. Used by the
+     system-scheme aria-live region. Matches the locally-scoped
+     .sr-only in PluginNoteBanners.svelte / Calendar.svelte (no global
+     utility exists). */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>

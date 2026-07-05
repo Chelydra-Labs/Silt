@@ -17,9 +17,9 @@
    * mirroring the engine's strict-tree fallback.
    */
 
-  /* Surface zones — 7-zone model (RFC §5). Inheritance: sidebar/editor→app,
-     card/modal→panel, popover→modal. Cyber Forest authors app/panel/card/modal;
-     the rest inherit so they resolve identically before injection. */
+  /* Surface zones — 9-zone model (RFC §5). Inheritance: sidebar/editor/titlebar/
+     activitybar→app, card→panel, modal→panel, popover→modal. Cyber Forest authors
+     app/panel/card/modal; the rest inherit so they resolve identically before injection. */
   --color-surface-app: #0c0c0e;
   --color-surface-app-border: #1e1e23;
   --color-surface-app-text: #dee3e6;

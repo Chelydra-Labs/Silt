@@ -3,6 +3,7 @@ package themes
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -533,10 +534,40 @@ func ParseAndValidate(raw []byte) (*Theme, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&t); err != nil {
+		// DisallowUnknownFields and UnmarshalTypeError produce generic
+		// errors that bypass the structured ValidationError path; the
+		// picker renders field-level errors but cannot format a raw
+		// string, so a typo like "borde" must be converted here.
+		if verrs := decodeValidationErrors(err); verrs != nil {
+			return nil, verrs
+		}
 		return nil, fmt.Errorf("theme JSON is not parseable: %w", err)
 	}
 	if err := Validate(&t); err != nil {
 		return nil, err
 	}
 	return &t, nil
+}
+
+// unknownFieldRe extracts the field name from DisallowUnknownFields errors,
+// whose message shape is: json: unknown field "fieldname"
+var unknownFieldRe = regexp.MustCompile(`json: unknown field "([^"]*)"`)
+
+// decodeValidationErrors converts a json.Decoder error into structured
+// ValidationErrors when it describes a recoverable schema mismatch (unknown
+// field, wrong-typed field) rather than a fatal parse failure. Returns nil
+// for errors the caller should treat as generic.
+func decodeValidationErrors(err error) ValidationErrors {
+	var uterr *json.UnmarshalTypeError
+	if errors.As(err, &uterr) {
+		field := uterr.Field
+		if field == "" {
+			field = "$"
+		}
+		return ValidationErrors{{Field: field, Message: fmt.Sprintf("field has wrong type: expected %s", uterr.Type)}}
+	}
+	if m := unknownFieldRe.FindStringSubmatch(err.Error()); m != nil {
+		return ValidationErrors{{Field: m[1], Message: fmt.Sprintf("unknown field %q", m[1])}}
+	}
+	return nil
 }

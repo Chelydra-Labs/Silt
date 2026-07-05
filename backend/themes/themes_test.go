@@ -180,16 +180,17 @@ func TestValidate_BadColor(t *testing.T) {
 // and rgb out of range. oklch is now a first-class color form in v2.
 func TestValidate_BadColors(t *testing.T) {
 	cases := map[string]string{
-		"bad hex":           `"#gggggg"`,
-		"short hex":         `"#ff"`,
-		"oklch too few":     `"oklch(0.5)"`,
-		"oklch non-numeric": `"oklch(a b c)"`,
-		"oklch too many":    `"oklch(0.5 0.1 250 4)"`,
-		"named color":       `"red"`,
-		"hsl (unsupported)": `"hsl(0,0%,0%)"`,
-		"rgb out of range":  `"rgb(300,0,0)"`,
-		"rgba alpha > 1":    `"rgba(0,0,0,2)"`,
-		"url() injection":   `"url(http://evil.example/x)"`,
+		"bad hex":              `"#gggggg"`,
+		"short hex":            `"#ff"`,
+		"oklch too few":        `"oklch(0.5)"`,
+		"oklch non-numeric":    `"oklch(a b c)"`,
+		"oklch too many":       `"oklch(0.5 0.1 250 4)"`,
+		"oklch L out of range": `"oklch(-0.5 0.1 250)"`, // H2: rejected, not clamped to black
+		"named color":          `"red"`,
+		"hsl (unsupported)":    `"hsl(0,0%,0%)"`,
+		"rgb out of range":     `"rgb(300,0,0)"`,
+		"rgba alpha > 1":       `"rgba(0,0,0,2)"`,
+		"url() injection":      `"url(http://evil.example/x)"`,
 	}
 	for name, val := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -274,6 +275,36 @@ func TestValidate_RejectsUnknownJSONFields(t *testing.T) {
 				t.Errorf("expected a parse/unknown-field error, got: %v", err)
 			}
 		})
+	}
+}
+
+// TestParseAndValidate_UnknownFieldStructured pins the H4 fix: an unknown
+// field surfaces as a structured ValidationError (Field + Message) so the
+// picker can render it inline, not as a generic error string the UI can't
+// format. DisallowUnknownFields produces a generic error at the decoder
+// boundary; ParseAndValidate converts it before returning.
+func TestParseAndValidate_UnknownFieldStructured(t *testing.T) {
+	bad := strings.Replace(minimalValidJSON, `"border_active": "#3f3f46"`, `"borde_active": "#3f3f46"`, 1)
+	_, err := ParseAndValidate([]byte(bad))
+	if err == nil {
+		t.Fatal("expected unknown-field rejection")
+	}
+	verrs, ok := err.(ValidationErrors)
+	if !ok {
+		t.Fatalf("expected ValidationErrors for unknown field, got %T: %v", err, err)
+	}
+	found := false
+	for _, e := range verrs {
+		if e.Field == "borde_active" {
+			found = true
+			if !strings.Contains(e.Message, "unknown field") {
+				t.Errorf("expected message to mention 'unknown field', got %q", e.Message)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected a structured error on field %q, got %+v", "borde_active", verrs)
 	}
 }
 
@@ -374,6 +405,17 @@ func TestIsValidColor(t *testing.T) {
 		"oklch(0.5 0.1)",       // too few components
 		"oklch(a b c)",         // non-numeric
 		"oklch(0.5 0.1 250 4)", // too many components
+		// Out-of-range oklch components must be REJECTED, not silently
+		// clamped (H2). A typo like oklch(-0.5 …) would otherwise render
+		// as black (L clamped to 0) — a different color than the JSON
+		// implies. The in-range values the 11 embedded themes use must
+		// keep parsing (covered by TestIsValidColor + EmbeddedThemes).
+		"oklch(-0.5 0.1 250)",       // L < 0
+		"oklch(1.5 0.1 250)",        // L > 1
+		"oklch(0.5 -0.1 250)",       // C < 0
+		"oklch(-50% 0.1 250)",       // L% < 0
+		"oklch(0.5 0.1 250 / 1.5)",  // alpha > 1
+		"oklch(0.5 0.1 250 / -0.1)", // alpha < 0
 		// NaN/Inf: strconv.ParseFloat accepts them with a nil error, and
 		// NaN range comparisons (v < 0 || v > 255) are both false, so
 		// without an explicit non-finite guard these slip through the
@@ -416,6 +458,30 @@ func TestParseOKLCH_CommaForm(t *testing.T) {
 				t.Errorf("H = %v, want %v", lch.H, c.h)
 			}
 		})
+	}
+}
+
+// TestParseOKLCH_RejectsOutOfRange pins the H2 fix: out-of-range oklch
+// components are rejected at parse time, not silently clamped to a different
+// color. Without this, oklch(-0.5 0.1 250) would have its L clamped to 0 and
+// render as black — masking an author's typo. The in-range oklch values used
+// by the 11 embedded themes (L 0.4–0.87, C ≥ 0) keep parsing (asserted by
+// EmbeddedThemes surviving ParseAndValidate and TestIsValidColor).
+func TestParseOKLCH_RejectsOutOfRange(t *testing.T) {
+	for _, c := range []string{
+		"oklch(-0.5 0.1 250)",       // L < 0
+		"oklch(1.5 0.1 250)",        // L > 1
+		"oklch(0.5 -0.1 250)",       // C < 0
+		"oklch(-50% 0.1 250)",       // L% < 0
+		"oklch(0.5 0.1 250 / 1.5)",  // alpha > 1
+		"oklch(0.5 0.1 250 / -0.1)", // alpha < 0
+	} {
+		if _, ok := parseOKLCH(c); ok {
+			t.Errorf("parseOKLCH(%q) = true, want false (out-of-range must be rejected, not clamped)", c)
+		}
+		if isValidColor(c) {
+			t.Errorf("isValidColor(%q) = true, want false", c)
+		}
 	}
 }
 

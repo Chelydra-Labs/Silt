@@ -80,6 +80,11 @@ func TestThemeAssetHandler_ServesValidAsset(t *testing.T) {
 	if !strings.HasPrefix(ct, "image/") {
 		t.Errorf("Content-Type = %q, want an image/* type", ct)
 	}
+	// A strict CSP locks the response to image-context even if a future
+	// Content-Type mix-up would otherwise let an SVG execute script.
+	if csp := resp.Header.Get("Content-Security-Policy"); csp != "default-src 'none'; img-src 'self'" {
+		t.Errorf("Content-Security-Policy = %q, want %q", csp, "default-src 'none'; img-src 'self'")
+	}
 }
 
 // TestThemeAssetHandler_InvalidThemeID: an id that fails IsValidThemeID
@@ -181,6 +186,37 @@ func TestThemeAssetHandler_NoVaultOpen(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 when no vault is open", resp.StatusCode)
+	}
+}
+
+// TestThemeAssetHandler_RejectsDisallowedExtension: the handler mirrors
+// StoreBackgroundAsset's ingestion allowlist (png/jpg/jpeg/webp/gif/svg).
+// A file with any other extension — even if a sync client dropped it into
+// <id>.assets/ — is treated as not-found so the existence of a non-image
+// on disk is never confirmed to a probe. The .png case stays green via
+// TestThemeAssetHandler_ServesValidAsset above.
+func TestThemeAssetHandler_RejectsDisallowedExtension(t *testing.T) {
+	themesDir := t.TempDir()
+	// A real .txt on disk under a valid id + safe filename shape — the
+	// extension gate is the only thing that should keep it from being served.
+	buildAssetTree(t, themesDir, "terra-test", "notes.txt", []byte("plain text, not an image"))
+
+	h := themeAssetHandler(func() string { return themesDir })
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/terra-test.assets/notes.txt")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for disallowed extension", resp.StatusCode)
+	}
+	// And the body must not echo the file's bytes back.
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "plain text, not an image") {
+		t.Errorf("response leaked contents of disallowed-extension file")
 	}
 }
 

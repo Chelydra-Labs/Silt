@@ -307,19 +307,21 @@ func sanitizeThemeID(id string) string {
 	return id
 }
 
-// namespaceThemeID ensures the chosen id does not collide with a built-in
-// theme (themes.DefaultThemeID) or with any on-disk theme already present
-// in themesDir. Built-ins get a "user-" prefix; a second collision appends
-// -2, -3, … Collisions with on-disk themes (where the original id is
-// already in the user namespace) are a hard error so the user can rename
-// the source JSON rather than silently overwrite a different theme.
+// namespaceThemeID ensures the chosen id does not collide with an embedded
+// first-class theme or with any on-disk theme already present in themesDir.
+// First-class ids get a "user-" prefix; a second collision appends -2, -3, …
+// Collisions with on-disk themes (where the original id is already in the
+// user namespace) are a hard error so the user can rename the source JSON
+// rather than silently overwrite a different theme.
 func namespaceThemeID(themesDir, id, originalID string) (string, error) {
-	// 1. If the id matches a built-in (DefaultThemeID), namespace it.
-	//    We deliberately do not scan the directory looking for "is this a
-	//    built-in id" because the canonical built-in is the embedded
-	//    default and any disk copy is its own thing — overriding those
-	//    was the bug the namespace step exists to prevent.
-	if id == DefaultThemeID {
+	// 1. If the id matches ANY embedded first-class theme, namespace it.
+	//    The embed-authoritative loader skips on-disk themes whose id
+	//    matches a first-class id and serves the embedded copy instead,
+	//    so an import that keeps the id would silently never appear in
+	//    the picker (the documented export→edit→re-import loop breaks
+	//    for 10/11 themes). ParseEmbeddedByID is the single roster check
+	//    across the full shipped set.
+	if _, ok := ParseEmbeddedByID(id); ok {
 		id = userPrefix + id
 	}
 

@@ -195,7 +195,9 @@ describe('theme v2 drift guard (#386)', () => {
       '--color-surface-panel',
       '--color-surface-card',
       '--color-surface-modal',
-      '--color-surface-popover'
+      '--color-surface-popover',
+      '--color-surface-titlebar',
+      '--color-surface-activitybar'
     ]) {
       expect(themeBlock, `${zone} must be declared in @theme`).toContain(zone)
     }

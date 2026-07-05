@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -8,6 +9,23 @@ import (
 
 	"silt/backend/themes"
 )
+
+// allowedAssetExts is the set of extensions this handler will serve. It
+// mirrors the ingestion allowlist allowedBackgroundExts in
+// backend/themes/background.go (png/jpg/jpeg/webp/gif/svg); that var is
+// unexported and lives in another package, so the set is duplicated here.
+// Keep the two in sync when the accepted image formats change. Restricting
+// the handler to the same set closes the gap between what StoreBackgroundAsset
+// writes (allowlisted) and what a sync client could drop on disk (anything):
+// a non-image in <id>.assets is treated as not-found rather than served.
+var allowedAssetExts = map[string]struct{}{
+	".png":  {},
+	".jpg":  {},
+	".jpeg": {},
+	".webp": {},
+	".gif":  {},
+	".svg":  {},
+}
 
 // themeAssetHandler serves per-theme background assets
 // (<themeID>.assets/<file>) from the current themes directory. The themes
@@ -28,6 +46,7 @@ func themeAssetHandler(themesDirResolver func() string) http.Handler {
 		// Only GET/HEAD make sense for asset serving; ServeContent handles
 		// HEAD itself. Anything else is a miss.
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			log.Printf("themeasset: 404 %s (method %s not allowed)", r.URL.Path, r.Method)
 			http.NotFound(w, r)
 			return
 		}
@@ -40,6 +59,7 @@ func themeAssetHandler(themesDirResolver func() string) http.Handler {
 			// No "<id>.assets/" segment, or empty id prefix — not ours.
 			// Letting NotFound fall through is correct: Wails already
 			// attempted the embedded Assets, so this is genuinely missing.
+			log.Printf("themeasset: 404 %s (no <id>.assets/ segment)", r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
@@ -47,6 +67,7 @@ func themeAssetHandler(themesDirResolver func() string) http.Handler {
 		if !themes.IsValidThemeID(themeID) {
 			// Reject path-traversal / format tricks at the id boundary
 			// before any filesystem touch.
+			log.Printf("themeasset: 404 %s (invalid theme id)", r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
@@ -54,13 +75,23 @@ func themeAssetHandler(themesDirResolver func() string) http.Handler {
 		if !isSafeAssetFilename(filename) {
 			// A traversal attempt or absolute path — refuse rather than 404
 			// so a probe is distinguishable from a benign miss in logs.
+			log.Printf("themeasset: 403 %s (unsafe filename shape)", r.URL.Path)
 			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if _, ok := allowedAssetExts[strings.ToLower(filepath.Ext(filename))]; !ok {
+			// Mirrors the ingestion gate: StoreBackgroundAsset only writes
+			// image extensions, so a non-image here was dropped by a sync
+			// client. Treat as not-found — never confirm it exists.
+			log.Printf("themeasset: 404 %s (disallowed extension)", r.URL.Path)
+			http.NotFound(w, r)
 			return
 		}
 
 		themesDir := themesDirResolver()
 		if themesDir == "" {
 			// No vault open yet — nothing to serve.
+			log.Printf("themeasset: 404 %s (no vault open)", r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
@@ -71,25 +102,36 @@ func themeAssetHandler(themesDirResolver func() string) http.Handler {
 		// confines the read to assetsRoot.
 		fullPath := filepath.Join(assetsRoot, filepath.Clean(filename))
 		if !isWithinDir(fullPath, assetsRoot) {
+			log.Printf("themeasset: 403 %s (escapes assets dir)", r.URL.Path)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 
 		f, err := os.Open(fullPath)
 		if err != nil {
+			log.Printf("themeasset: 404 %s (open failed)", r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
 		defer f.Close()
 		fi, err := f.Stat()
 		if err != nil {
+			log.Printf("themeasset: 404 %s (stat failed)", r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
 		if fi.IsDir() {
+			log.Printf("themeasset: 404 %s (is directory)", r.URL.Path)
 			http.NotFound(w, r)
 			return
 		}
+		// Defense against an SVG (or a sniffed-as-html file) being
+		// interpreted as an active document in the webview: even though
+		// ServeContent sets an image Content-Type, lock the response to
+		// image-only so a future content-type mix-up can't execute
+		// script. The webview loads these via url() in CSS, which is
+		// image-context only.
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'")
 		// ServeContent sets Content-Type via sniffing when the response
 		// header is unset, and handles Range requests + If-Modified-Since,
 		// both of which the webview's image loader emits.

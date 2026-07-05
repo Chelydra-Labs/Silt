@@ -227,8 +227,8 @@ func setZoneBackground(s *Surfaces, zone string, bg *Background) {
 }
 
 // assignSurface stores a Surface pointer under the named zone's field. app is
-// a value field (handled by callers via s.App directly); the other six zones
-// are pointers.
+// a value field (handled by callers via s.App directly); the other eight zones
+// are pointers (see surfaceZones in theme.go for the canonical list).
 func assignSurface(s *Surfaces, zone string, surface *Surface) {
 	switch zone {
 	case "sidebar":

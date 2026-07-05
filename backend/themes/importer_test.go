@@ -518,6 +518,72 @@ func TestNamespaceThemeID_BuiltIn(t *testing.T) {
 	}
 }
 
+// TestNamespaceThemeID_FirstClassIDs pins the B1 fix: ANY embedded first-class
+// id is namespaced, not just DefaultThemeID. The embed-authoritative loader
+// skips on-disk themes whose id matches a first-class id, so namespacing only
+// cyber_forest left the other 10 first-class ids un-importable (the import
+// reported success but the theme never appeared in the picker).
+func TestNamespaceThemeID_FirstClassIDs(t *testing.T) {
+	for _, id := range []string{
+		"silt-stark",
+		"silt-terra-noir",
+		"silt-linen",
+		"silt-graphite",
+	} {
+		got, err := namespaceThemeID(t.TempDir(), id, id)
+		if err != nil {
+			t.Errorf("namespace %q: %v", id, err)
+			continue
+		}
+		if want := userPrefix + id; got != want {
+			t.Errorf("namespace %q = %q, want %q", id, got, want)
+		}
+	}
+}
+
+// TestImport_FirstClassIDNamespaced pins the B1 fix end-to-end: importing a
+// JSON whose source id is a non-default first-class id must rename it under
+// "user-" AND the result must appear in ListThemes. Before the fix the
+// embed-authoritative loader hid the on-disk copy, so the import "succeeded"
+// but was invisible — silently breaking the export→edit→re-import loop for
+// 10/11 themes.
+func TestImport_FirstClassIDNamespaced(t *testing.T) {
+	themesDir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "src.json")
+	clone := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"silt-stark"`, 1)
+	mustWriteTheme(t, filepath.Dir(src), filepath.Base(src), clone)
+
+	res, err := ImportThemeFromPath(themesDir, src)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	want := userPrefix + "silt-stark"
+	if res.Info.ID != want {
+		t.Fatalf("expected renamed id %q, got %q", want, res.Info.ID)
+	}
+	if !res.Renamed || res.RenamedFromID != "silt-stark" {
+		t.Errorf("expected Renamed=true from silt-stark, got Renamed=%v FromID=%q", res.Renamed, res.RenamedFromID)
+	}
+
+	// The original bug: the on-disk file was written but the picker never
+	// showed it because ListThemes serves the embedded copy for any
+	// first-class id and skips the on-disk duplicate.
+	listing, err := ListThemes(themesDir)
+	if err != nil {
+		t.Fatalf("ListThemes: %v", err)
+	}
+	found := false
+	for _, ti := range listing.Themes {
+		if ti.ID == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("namespaced id %q not surfaced by ListThemes: %+v", want, listing.Themes)
+	}
+}
+
 func TestNamespaceThemeID_DuplicateBuiltInSuffixed(t *testing.T) {
 	dir := t.TempDir()
 	// Pre-create user-cyber_forest.json so the next namespace step
