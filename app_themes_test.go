@@ -820,3 +820,70 @@ func TestImportTheme_ConcurrentSerializesThemeWrites(t *testing.T) {
 		}
 	}
 }
+
+// TestImportTheme_ConcurrentSameID exercises the importer's collision-check-
+// then-write under contention (#404 hardening). N goroutines import the SAME
+// custom theme source concurrently. The importer REJECTS a duplicate custom id
+// (ErrImportDuplicate) — it does not rename. Under themeWriteMu the check-
+// then-write is atomic: exactly ONE goroutine wins (passes the check + writes),
+// and the remaining N-1 see the on-disk file and reject. Without the lock,
+// multiple goroutines could race past the check before any write lands and all
+// "succeed" — clobbering the same path and losing data. Asserting exactly one
+// success proves the serialization is working.
+func TestImportTheme_ConcurrentSameID(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	const n = 6
+	type result struct {
+		id  string
+		err error
+	}
+	results := make([]result, n)
+	done := make(chan struct{})
+
+	// Every goroutine imports the exact same source — same custom id.
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer func() { done <- struct{}{} }()
+			src := filepath.Join(t.TempDir(), "src.json")
+			body := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"collide-me"`, 1)
+			writeFile(t, src, body)
+			res, err := app.ImportTheme(src)
+			if err != nil {
+				results[i] = result{err: err}
+				return
+			}
+			results[i] = result{id: res.Info.ID}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		<-done
+	}
+
+	// Exactly ONE import must succeed (the winner of the serialized race).
+	// The rest reject with the duplicate-id error. Without themeWriteMu,
+	// multiple goroutines could pass the collision check before the first
+	// write lands, producing >1 success and clobbering the same file.
+	successes := 0
+	var winnerID string
+	for _, r := range results {
+		if r.err == nil {
+			successes++
+			winnerID = r.id
+		}
+	}
+	if successes != 1 {
+		t.Errorf("expected exactly 1 successful import under themeWriteMu, got %d — "+
+			"the collision check-then-write is not atomic", successes)
+	}
+
+	// The winner's file exists on disk.
+	if winnerID != "" {
+		p := filepath.Join(app.vaultPath, ".system", "themes", winnerID+".json")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("winner theme %s missing from disk: %v", winnerID, err)
+		}
+	}
+}

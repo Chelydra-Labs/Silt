@@ -552,6 +552,7 @@
       {ctx}
       placeholder="Add a task — Enter to add"
       keepOpenAfterCreate={true}
+      autofocus={false}
     />
   </div>
 </div>

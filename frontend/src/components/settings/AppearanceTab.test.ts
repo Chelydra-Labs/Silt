@@ -309,4 +309,105 @@ describe('AppearanceTab picker a11y (#50)', () => {
       expect(region?.textContent?.trim()).toBe('')
     })
   })
+
+  describe('swatch surface identity (#405)', () => {
+    beforeEach(() => {
+      mocks.themeState.mode = 'dark'
+    })
+
+    it('renders a mini-card chip filled with the theme surface bg + accent dots', () => {
+      // Provide flatTokens for both themes so the swatch reads from them
+      // rather than falling back to the CSS variable defaults.
+      mocks.themesState.flatTokens = {
+        cyber_forest: {
+          dark: {
+            '--color-surface-app': '#0c0c0e',
+            '--color-accent-primary-start': '#2dd4bf',
+            '--color-accent-secondary-start': '#6366f1'
+          },
+          light: {
+            '--color-surface-app': '#f8fafc',
+            '--color-accent-primary-start': '#0d9488',
+            '--color-accent-secondary-start': '#4f46e5'
+          }
+        },
+        'terra-test': {
+          dark: {
+            '--color-surface-app': '#1a0f0a',
+            '--color-accent-primary-start': '#c2410c',
+            '--color-accent-secondary-start': '#4d7c0f'
+          },
+          light: {
+            '--color-surface-app': '#faf6f2',
+            '--color-accent-primary-start': '#7c2d12',
+            '--color-accent-secondary-start': '#365314'
+          }
+        }
+      }
+
+      render(AppearanceTab)
+
+      // Each option row has one chip + two dots.
+      const options = screen.getAllByRole('option')
+      expect(options).toHaveLength(2)
+
+      for (const opt of options) {
+        const chip = opt.querySelector(
+          '.theme-swatch-chip'
+        ) as HTMLElement | null
+        expect(chip, 'chip must render').toBeTruthy()
+        const dots = chip!.querySelectorAll('.theme-swatch-dot')
+        expect(dots.length, 'exactly two accent dots').toBe(2)
+      }
+
+      // Cyber Forest's chip is filled with the dark surface bg (#0c0c0e).
+      // jsdom normalizes hex to rgb() on read-back.
+      const cfOption = screen.getByRole('option', { name: /Cyber Forest/i })
+      const cfChip = cfOption.querySelector('.theme-swatch-chip') as HTMLElement
+      expect(cfChip.style.backgroundColor).toBe('rgb(12, 12, 14)')
+      // The first dot carries the primary accent.
+      const cfDots = cfChip.querySelectorAll('.theme-swatch-dot')
+      expect((cfDots[0] as HTMLElement).style.backgroundColor).toBe(
+        'rgb(45, 212, 191)'
+      )
+      expect((cfDots[1] as HTMLElement).style.backgroundColor).toBe(
+        'rgb(99, 102, 241)'
+      )
+    })
+
+    it('surface fill distinguishes a warm theme from a cool theme at a glance', () => {
+      mocks.themesState.flatTokens = {
+        cyber_forest: {
+          dark: {
+            '--color-surface-app': '#0c0c0e',
+            '--color-accent-primary-start': '#2dd4bf',
+            '--color-accent-secondary-start': '#6366f1'
+          },
+          light: {}
+        },
+        'terra-test': {
+          dark: {
+            '--color-surface-app': '#1a0f0a',
+            '--color-accent-primary-start': '#c2410c',
+            '--color-accent-secondary-start': '#4d7c0f'
+          },
+          light: {}
+        }
+      }
+
+      render(AppearanceTab)
+
+      const cfChip = screen
+        .getByRole('option', { name: /Cyber Forest/i })
+        .querySelector('.theme-swatch-chip') as HTMLElement
+      const terraChip = screen
+        .getByRole('option', { name: /Terra Test/i })
+        .querySelector('.theme-swatch-chip') as HTMLElement
+      // The whole point of #405: the surface fills differ so the user can
+      // tell the themes apart by temperature, not just by accent.
+      expect(cfChip.style.backgroundColor).not.toBe(
+        terraChip.style.backgroundColor
+      )
+    })
+  })
 })

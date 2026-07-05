@@ -8,7 +8,7 @@
 // surfaces). The user's stored mark color is always authoritative — only the
 // initial default swatch row is theme-derived.
 
-import { toOklch, toHex, contrastRatioWCAG } from '../../theme/color'
+import { toOklch, toHex } from '../../theme/color'
 
 export interface ColorEntry {
   id: string
@@ -151,26 +151,6 @@ export function readActiveThemeColorTokens(): Record<string, string> {
  */
 export function resolveColor(entry: ColorEntry, isDark: boolean): string {
   return isDark ? entry.dark : entry.light
-}
-
-/**
- * Derive the legibility-checked variant for a given mode. If the derived
- * variant fails WCAG AA (4.5:1) against the background, the raw entry value
- * is still returned — the L-targeting is a best-effort heuristic, not a hard
- * gate, and the user's explicit pick always wins. Exported for testability.
- */
-export function resolveColorChecked(
-  entry: ColorEntry,
-  isDark: boolean,
-  bg: string
-): string {
-  const hex = resolveColor(entry, isDark)
-  const ratio = contrastRatioWCAG(hex, bg)
-  if (ratio !== null && ratio < 4.5) {
-    // Log-worthy in dev but not blocking — the L targets are tuned for the
-    // common case; an edge-case theme may miss AA on one swatch.
-  }
-  return hex
 }
 
 // FALLBACK_COLOR_PALETTE is used only before the theme has injected its tokens

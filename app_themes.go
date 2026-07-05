@@ -209,6 +209,12 @@ func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	if vaultPath == "" {
 		return nil, fmt.Errorf("vault not loaded")
 	}
+	// Compute themesDir from the snapshotted vaultPath so the write always
+	// targets the correct absolute directory even if the vault closes between
+	// the RUnlock and the themeWriteMu acquisition (#404 hardening). Calling
+	// a.themesDir() here would re-read a.vaultPath without a lock and could
+	// return a relative ".system/themes" path if CloseVault nil'd the field.
+	themesDir := filepath.Join(vaultPath, ".system", "themes")
 	// Serialize the theme-file write so two concurrent imports can't race
 	// on the importer's collision-check-then-write (#404). The validation
 	// step is pure CPU (no disk write) and could run outside the lock, but
@@ -216,7 +222,7 @@ func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	// check-then-write is atomic w.r.t. other theme writers.
 	a.themeWriteMu.Lock()
 	defer a.themeWriteMu.Unlock()
-	res, err := themes.ImportThemeFromPath(a.themesDir(), srcPath)
+	res, err := themes.ImportThemeFromPath(themesDir, srcPath)
 	if err != nil {
 		log.Printf("themes: ImportTheme(%q) failed: %v", filepath.Base(srcPath), err)
 		return nil, err
@@ -303,9 +309,14 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 	// second PickBackgroundImage (#404). The settings write inside this
 	// section goes through UpdateSettings (settingsWriteMu), so the lock
 	// ordering is themeWriteMu → settingsWriteMu — never reversed.
+	//
+	// Compute themesDir from the snapshotted vaultPath (not a.themesDir(),
+	// which re-reads a.vaultPath without a lock) so the write targets the
+	// correct absolute directory even if the vault closed during the dialog
+	// above (#404 hardening).
 	a.themeWriteMu.Lock()
 	defer a.themeWriteMu.Unlock()
-	themesDir := a.themesDir()
+	themesDir := filepath.Join(vaultPath, ".system", "themes")
 
 	// If the active theme is embedded-only (no on-disk file), fork it so the
 	// background edit targets a writable copy. Mirrors the importer's "user-"
