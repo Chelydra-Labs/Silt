@@ -83,10 +83,12 @@ func TestGetActiveTheme_DefaultOnFreshVault(t *testing.T) {
 		t.Errorf("expected dark bg.void #0c0c0e, got %q", res.Tokens["--color-surface-app"])
 	}
 	// Both maps present so the frontend can resolve "system" locally.
+	// Values reflect the EMBEDDED default (first-class themes are
+	// embedded-authoritative — a ScaffoldVault seed can't shadow them).
 	if res.DarkTokens["--color-surface-app"] != "#0c0c0e" {
 		t.Errorf("DarkTokens bg.void wrong: %q", res.DarkTokens["--color-surface-app"])
 	}
-	if res.LightTokens["--color-surface-app"] != "#e1e9f2" {
+	if res.LightTokens["--color-surface-app"] != "#f8fafc" {
 		t.Errorf("LightTokens bg.void wrong: %q", res.LightTokens["--color-surface-app"])
 	}
 	if res.BGVoid != "#0c0c0e" {
@@ -100,13 +102,15 @@ func TestListThemes_IncludesScaffoldedDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListThemes: %v", err)
 	}
-	// ScaffoldVault wrote cyber_forest.json on disk → present as source disk.
+	// ScaffoldVault wrote cyber_forest.json on disk, but first-class themes
+	// are embedded-authoritative → present as source "default" (the embedded
+	// copy wins over the vault shadow).
 	found := false
 	for _, ti := range res.Themes {
 		if ti.ID == themes.DefaultThemeID {
 			found = true
-			if ti.Source != "disk" {
-				t.Errorf("scaffolded default should be source=disk, got %q", ti.Source)
+			if ti.Source != "default" {
+				t.Errorf("first-class default should be source=default (embed wins), got %q", ti.Source)
 			}
 		}
 	}
@@ -255,7 +259,9 @@ func TestApplyTheme_SystemModeResolvesFirstPaintDark(t *testing.T) {
 		t.Errorf("system should first-paint dark bg.void, got %q", res.Tokens["--color-surface-app"])
 	}
 	// But both maps are present so the frontend can resolve the real preference.
-	if res.LightTokens["--color-surface-app"] != "#e1e9f2" {
+	// Light tokens reflect the EMBEDDED default (first-class themes are
+	// embedded-authoritative — a ScaffoldVault seed can't shadow them).
+	if res.LightTokens["--color-surface-app"] != "#f8fafc" {
 		t.Errorf("system mode must still ship light tokens, got %q", res.LightTokens["--color-surface-app"])
 	}
 }
@@ -341,12 +347,12 @@ func TestBuildThemeResult_DarkFirstPaint(t *testing.T) {
 	if res.BGVoid != "#0c0c0e" {
 		t.Errorf("BGVoid wrong: %q", res.BGVoid)
 	}
-	// light mode: effective tokens are light.
+	// light mode: effective tokens are light (embedded values).
 	lightRes := buildThemeResult(th, "light")
-	if lightRes.Tokens["--color-surface-app"] != "#e1e9f2" {
+	if lightRes.Tokens["--color-surface-app"] != "#f8fafc" {
 		t.Errorf("light effective bg.void wrong: %q", lightRes.Tokens["--color-surface-app"])
 	}
-	if lightRes.BGVoid != "#e1e9f2" {
+	if lightRes.BGVoid != "#f8fafc" {
 		t.Errorf("light BGVoid wrong: %q", lightRes.BGVoid)
 	}
 }

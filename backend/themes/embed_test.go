@@ -80,38 +80,54 @@ func TestEmbeddedThemeFiles_UsedByScaffold(t *testing.T) {
 	}
 }
 
-// TestListThemes_OnDiskDefaultWinsDedup: when a user has an on-disk
-// cyber_forest.json (e.g. they exported and tweaked it), the on-disk copy wins
-// the dedup and the embedded default is suppressed — source="disk", and the
-// listing's FlatTokens reflect the on-disk content, not the embedded one.
-func TestListThemes_OnDiskDefaultWinsDedup(t *testing.T) {
+// TestListThemes_EmbedWinsOverVaultForFirstClass: when the vault holds a
+// same-id cyber_forest.json (a legacy ScaffoldVault seed or a manual copy),
+// the embedded first-class copy is authoritative — the on-disk file is
+// ignored, the listing's cyber_forest is source="default", and FlatTokens
+// reflect the embedded values, not the stale on-disk sentinel. Custom ids
+// still resolve from disk as before.
+func TestListThemes_EmbedWinsOverVaultForFirstClass(t *testing.T) {
 	dir := t.TempDir()
 	// A cyber_forest variant whose surfaces.app.bg differs from the embedded
-	// default so we can prove the on-disk copy is the one selected.
+	// default so we can prove the on-disk copy is NOT the one selected.
 	edited := strings.Replace(minimalValidJSON, `"id": "test-theme"`, `"id": "cyber_forest"`, 1)
 	edited = strings.Replace(edited, `"#0c0c0e"`, `"#abcdef"`, 1) // dark surfaces.app.bg → sentinel
 	mustWriteTheme(t, dir, "cyber_forest.json", edited)
+	// A genuinely custom id alongside it must still resolve from disk.
+	custom := strings.Replace(minimalValidJSON, `"id": "test-theme"`, `"id": "terra-test"`, 1)
+	mustWriteTheme(t, dir, "terra-test.json", custom)
 
 	res, err := ListThemes(dir)
 	if err != nil {
 		t.Fatalf("ListThemes: %v", err)
 	}
 	var cf *ThemeInfo
+	var customTI *ThemeInfo
 	for i := range res.Themes {
-		if res.Themes[i].ID == DefaultThemeID {
+		switch res.Themes[i].ID {
+		case DefaultThemeID:
 			cf = &res.Themes[i]
+		case "terra-test":
+			customTI = &res.Themes[i]
 		}
 	}
 	if cf == nil {
 		t.Fatalf("cyber_forest not in listing: %+v", res.Themes)
 	}
-	if cf.Source != "disk" {
-		t.Errorf("on-disk cyber_forest source = %q, want \"disk\"", cf.Source)
+	if cf.Source != "default" {
+		t.Errorf("cyber_forest source = %q, want \"default\" (embed wins over vault shadow)", cf.Source)
 	}
-	// The on-disk sentinel surfaces.app.bg must be the one surfaced (proves
-	// dedup picked disk over embed, not just that the id is present).
-	if got := res.FlatTokens[DefaultThemeID].Dark["--color-surface-app"]; got != "#abcdef" {
-		t.Errorf("on-disk cyber_forest dark surface-app = %q, want #abcdef (disk wins)", got)
+	// The embedded dark surfaces.app.bg (#0c0c0e) must be surfaced, NOT the
+	// on-disk sentinel #abcdef — proves the on-disk shadow was ignored.
+	if got := res.FlatTokens[DefaultThemeID].Dark["--color-surface-app"]; got != "#0c0c0e" {
+		t.Errorf("cyber_forest dark surface-app = %q, want #0c0c0e (embedded, not vault shadow %q)", got, "#abcdef")
+	}
+	// Custom id still resolves from disk (source="disk").
+	if customTI == nil {
+		t.Fatalf("custom terra-test not in listing: %+v", res.Themes)
+	}
+	if customTI.Source != "disk" {
+		t.Errorf("custom terra-test source = %q, want \"disk\"", customTI.Source)
 	}
 }
 
