@@ -243,6 +243,10 @@ func assignSurface(s *Surfaces, zone string, surface *Surface) {
 		s.Modal = surface
 	case "popover":
 		s.Popover = surface
+	case "titlebar":
+		s.Titlebar = surface
+	case "activitybar":
+		s.Activitybar = surface
 	}
 }
 

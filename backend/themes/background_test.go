@@ -274,6 +274,51 @@ func TestSetThemeBackgroundImage_UnauthoredZoneSeedsFromParent(t *testing.T) {
 	}
 }
 
+func TestSetThemeBackgroundImage_NewZonesTitlebarActivitybar(t *testing.T) {
+	// Regression for the 9-zone model: assignSurface must handle titlebar +
+	// activitybar so a background write to an unauthored new zone seeds it
+	// from app and stores the image, rather than silently no-oping.
+	themesDir := t.TempDir()
+	id := importCustomTheme(t, themesDir)
+	bg := Background{Image: "url(\"terra-test.assets/foo.png\")"}
+
+	for _, zone := range []string{"titlebar", "activitybar"} {
+		if err := SetThemeBackgroundImage(themesDir, id, zone, bg); err != nil {
+			t.Fatalf("SetThemeBackgroundImage %s: %v", zone, err)
+		}
+	}
+	reloaded, found, err := LoadByID(themesDir, id)
+	if err != nil || !found {
+		t.Fatalf("LoadByID: err=%v found=%v", err, found)
+	}
+	for _, mode := range []string{"dark", "light"} {
+		var m Mode
+		if mode == "dark" {
+			m = reloaded.Modes.Dark
+		} else {
+			m = reloaded.Modes.Light
+		}
+		for _, zone := range []string{"titlebar", "activitybar"} {
+			var sv *Surface
+			switch zone {
+			case "titlebar":
+				sv = m.Surfaces.Titlebar
+			case "activitybar":
+				sv = m.Surfaces.Activitybar
+			}
+			if sv == nil {
+				t.Fatalf("%s %s surface nil after set (assignSurface missing case?)", mode, zone)
+			}
+			if sv.Background == nil || sv.Background.Image != bg.Image {
+				t.Errorf("%s %s background not set: %+v", mode, zone, sv.Background)
+			}
+			if sv.BG == "" || sv.Border == "" || sv.Text == "" {
+				t.Errorf("%s %s surface not seeded from app: %+v", mode, zone, sv)
+			}
+		}
+	}
+}
+
 func TestSetThemeBackgroundImage_RejectsEmbeddedID(t *testing.T) {
 	themesDir := t.TempDir()
 	// DefaultThemeID is embedded-only (not on disk in this empty themesDir).
