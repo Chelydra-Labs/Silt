@@ -157,7 +157,7 @@ Every first-class theme ships both dark and light variants and its own `typograp
 A dark earth palette: warm near-black canvas with **clay/terracotta** primary (selection guides, active focus, completed checks) and **moss** secondary (in-progress / DOING indicator, metadata chips). Intent: a warmer, organic counterpart to Cyber Forest's cool slate, for users who prefer earth tones over cyber neons.
 
 - Dark: `surfaces.app.bg #100b07` (warm near-black); `surfaces.app.text #ece3d5` (warm white); `accent.primary #e07a3c → #b4421a` (clay); `accent.secondary #84a04a → #5e7d2f` (moss).
-- Light (dual-surface): `surfaces.app.bg #f6efe4` (warm paper); `surfaces.app.text #2a2014`; `surfaces.sidebar.bg #120c06` (warm brown-black); `accent.primary #c2511f → #9a3a14`; `accent.secondary #5a7d2a → #44611d`.
+- Light (dual-surface): `surfaces.app.bg #f6efe4` (warm paper); `surfaces.app.text #2a2014`; `surfaces.sidebar.bg #120c06` (warm brown-black with matching dark titlebar and activitybar); `accent.primary #c2511f → #9a3a14`; `accent.secondary #5a7d2a → #44611d`.
 - Tuning: dark `text-muted #8a7860 → #a89478` to clear WCAG AA (4.5:1) on `active` — the binding constraint in dark mode is muted text on the lightest interaction surface.
 
 2.2.2 Linen — woven linen paper
@@ -165,7 +165,7 @@ A dark earth palette: warm near-black canvas with **clay/terracotta** primary (s
 A soft, low-chroma palette modeled on natural linen: a warm grey-taupe canvas in dark mode (the authentic flax/oatmeal tone — grey-dominant with a whisper of warmth, never brown) and warm paper in light, both carrying a subtle **woven-thread + paper-grain background** on the editor surface (Linen is the canonical first-class theme that declares a `surfaces.editor.background` block; see §2.1). `primary` = muted **slate-blue** (reads as faded fountain-pen ink on paper), `secondary` = muted **lilac**. Intent: long-session comfort — a calm, tactile "paper" surface distinct from Cyber Forest's cool slate and Graphite's flat monochrome.
 
 - Dark: `surfaces.app.bg #242220` (warm grey-taupe); `surfaces.app.text #e8e3d8` (oatmeal-white); `accent.primary #7fb3c4 → #5d97ab`; `accent.secondary #a8a3d4 → #847cb0`; `surfaces.editor.background` = light-thread linen weave + grayscale grain, `overlay` blend, opacity 0.08, `size: tile`.
-- Light (dual-surface): `surfaces.app.bg #faf6ef` (warm paper, not pure white); `surfaces.app.text #2b2a27`; `surfaces.sidebar.bg #1e1c18` (warm taupe); `accent.primary #4a8a9c → #3a7383`; `accent.secondary #686da3 → #565b8e`; `surfaces.editor.background` = dark-thread weave + grain, `multiply` blend, opacity 0.10, `size: tile`.
+- Light (dual-surface): `surfaces.app.bg #faf6ef` (warm paper, not pure white); `surfaces.app.text #2b2a27`; `surfaces.sidebar.bg #1e1c18` (warm taupe with matching dark titlebar and activitybar); `accent.primary #4a8a9c → #3a7383`; `accent.secondary #686da3 → #565b8e`; `surfaces.editor.background` = dark-thread weave + grain, `multiply` blend, opacity 0.10, `size: tile`.
 - Tuning: dark `text-muted → #b9b0a1` (warm grey) to clear AA on Linen's surfaces.
 
 2.2.3 Stark — high-contrast / accessibility (WCAG AAA)
@@ -181,7 +181,7 @@ A first-class accessibility theme targeting **WCAG 2.2 AAA** (≥7:1 body text).
 For users who find Cyber Forest *too colorful*. Graphite is a **true neutral monochrome**: pure neutral-gray surfaces (zero blue tint, unlike Cyber Forest's blue slate) with a **single restrained blue** accent as the only color and a **neutral steel** secondary. Neutral-white text (`#ebebeb`) reads distinctly cleaner/warmer than Cyber Forest's cool `#dee3e6`. Intent: the "developer dark" / "dimmed" aesthetic — a calm, flat, low-chroma surface. Comfortable AAA contrast, **not** the extreme contrast of Stark.
 
 - Dark: `surfaces.app.bg #0a0a0a` (true near-black, neutral); `surfaces.app.text #ebebeb`; `accent.primary #6f9ad8 → #4d72a0` (restrained blue); `accent.secondary #9aa3ad → #6f7882` (neutral steel).
-- Light (dual-surface): `surfaces.app.bg #f8f8f8`; `surfaces.app.text #1a1a1a`; `surfaces.sidebar.bg #0e0e0e` (neutral dark grey); `accent.primary #4a6fa0 → #374f78`; `accent.secondary #6a737d → #525a63`.
+- Light (dual-surface): `surfaces.app.bg #f8f8f8`; `surfaces.app.text #1a1a1a`; `surfaces.sidebar.bg #0e0e0e` (neutral dark grey with matching dark titlebar and activitybar); `accent.primary #4a6fa0 → #374f78`; `accent.secondary #6a737d → #525a63`.
 - Distinctness: primary (blue) and secondary (neutral steel) differ in both hue and chroma so go/done and in-progress never blur, while the overall surface stays a calm flat monochrome.
 
 2.2.5 Bubblegum — playful & vibrant
@@ -194,7 +194,7 @@ feel creative and joyful rather than clinical — a decorated notebook, not a
 spreadsheet.
 
 - Dark: `surfaces.app.bg #1a0e1e` (warm magenta-tinted near-black); `surfaces.app.text #f5ede8` (warm cream-white); `accent.primary #ff6b8a → #e84371` (coral-pink); `accent.secondary #4fd1c5 → #38b2ac` (teal).
-- Light (dual-surface): page `surfaces.app.bg #fdf6f0` (warm cream), `surfaces.app.text #2d1f1a` (warm dark brown); the `sidebar` zone is authored dark — `surfaces.sidebar.bg #2a1322` (deep raspberry-black), `surfaces.sidebar.text #f5ede8` (cream-white) — so the app skeleton is a deep raspberry candy shell framing a warm cream page. Accents deepen to `#e84371` / `#2c7a7b` for readability on white.
+- Light (dual-surface): page `surfaces.app.bg #fdf6f0` (warm cream), `surfaces.app.text #2d1f1a` (warm dark brown); the `sidebar` zone is authored dark — `surfaces.sidebar.bg #2a1322` (deep raspberry-black with matching dark titlebar and activitybar) — so the app skeleton is a deep raspberry candy shell framing a warm cream page. Accents deepen to `#e84371` / `#2c7a7b` for readability on white.
 - Tuning: dark `accent.primary.start #ff6b8a` deepened to `#e84371` in light mode for AA non-text (3:1) on the warm cream page; the dark-mode coral glows on the magenta canvas while the light-mode deeper coral reads cleanly on cream.
 
 2.2.6 Frost — clean & airy
@@ -207,7 +207,7 @@ accents); light mode is a brilliant winter morning. Intent: a workspace that
 feels clean, cold, and modern — the visual equivalent of fresh air.
 
 - Dark: `surfaces.app.bg #0a0e14` (cold blue-black); `surfaces.app.text #e2eaf2` (cool ice-white); `accent.primary #38bdf8 → #0ea5e9` (sky-blue — frost on glass); `accent.secondary #818cf8 → #6366f1` (periwinkle).
-- Light (dual-surface): `surfaces.app.bg #f0f4fa` (pale ice-blue); `surfaces.app.text #061020` (deep cold navy); `surfaces.sidebar.bg #0a1018` (cold blue-black); `accent.primary #0284c7 → #0369a1` (deeper sky); `accent.secondary #4f46e5 → #3730a3` (deeper indigo).
+- Light (dual-surface): `surfaces.app.bg #f0f4fa` (pale ice-blue); `surfaces.app.text #061020` (deep cold navy); `surfaces.sidebar.bg #0a1018` (cold blue-black with matching dark titlebar and activitybar); `accent.primary #0284c7 → #0369a1` (deeper sky); `accent.secondary #4f46e5 → #3730a3` (deeper indigo).
 - Tuning: dark `text-muted #8a9aae → #94a4b8` to clear AA on the lightest interaction surface (`active #263348`).
 
 2.2.7 Synthwave — 80s retro neon
@@ -222,7 +222,7 @@ distinct from every other theme in the roster; the theme for users who want
 their workspace to feel alive with retro-futurist energy.
 
 - Dark: `surfaces.app.bg #120b24` (rich purple-black — not just dark, visibly purple); `surfaces.app.text #e8e6f0` (cool lavender-white); `accent.primary oklch(0.665 0.249 357)` (hot pink/magenta — the neon sign); `accent.secondary oklch(0.87 0.148 203)` (electric cyan — the grid line). Glow values intentionally strongest in the roster (0.18–0.22) for an unmistakable neon-halo effect. Tron-style cyan/pink grid on the editor canvas (40px cells, overlay blend, opacity 0.10). Elevated surfaces (panel → card → modal → popover) climb a visible purple ladder so modals feel like glowing chrome panels.
-- Light (dual-surface): `surfaces.app.bg #f0e4e8` (warm blush-peach — Miami sunset canvas, not generic lavender); `surfaces.app.text #1c1c34` (deep indigo); `surfaces.sidebar.bg #1a1030` (dark indigo-purple); `accent.primary oklch(0.52 0.22 350)` (vivid magenta — still neon-hot against the warm base); `accent.secondary oklch(0.54 0.12 200)` (saturated cyan — electric, not muted). Warm rose-mauve borders throughout. The warm base is what makes this mode read as synthwave rather than generic pastel.
+- Light (dual-surface): `surfaces.app.bg #f0e4e8` (warm blush-peach — Miami sunset canvas, not generic lavender); `surfaces.app.text #1c1c34` (deep indigo); `surfaces.sidebar.bg #1a1030` (dark indigo-purple with matching dark titlebar and activitybar); `accent.primary oklch(0.52 0.22 350)` (vivid magenta — still neon-hot against the warm base); `accent.secondary oklch(0.54 0.12 200)` (saturated cyan — electric, not muted). Warm rose-mauve borders throughout. The warm base is what makes this mode read as synthwave rather than generic pastel.
 
 
 2.2.8 Daybreak — dark sidebar + light page (dual surfaces)
@@ -236,7 +236,7 @@ clear structure) with a bright reading/writing surface — the pattern Notion,
 Readwise, and several code editors use for sustained reading sessions.
 
 - Dark: `surfaces.app.bg #0c0e14` (dark charcoal-blue); `surfaces.app.text #eaeef5` (cool off-white); `accent.primary #f59e0b → #d97706` (warm amber); `accent.secondary #818cf8 → #6366f1` (indigo). Standard single-surface dark mode (no `sidebar` override needed — everything is dark).
-- Light (dual-surface): page `surfaces.app.bg #faf8f5` (warm off-white — the paper), `surfaces.app.text #1c1917` (warm near-black — ink on paper); the `sidebar` zone is authored dark — `surfaces.sidebar.bg #1c2842` (twilight blue — the pre-dawn sky), `surfaces.sidebar.border #2c3c5e` (anchor blue), `surfaces.sidebar.text #eaeef5` (cool off-white). Shared accents: `accent.primary #cc7408 → #92400e` (amber — tuned to clear AA non-text on both sidebar and page), `accent.secondary #6366f1 → #4f46e5` (indigo — brightened from #4338ca for sidebar-surface visibility).
+- Light (dual-surface): page `surfaces.app.bg #faf8f5` (warm off-white — the paper), `surfaces.app.text #1c1917` (warm near-black — ink on paper); the `sidebar`, `titlebar`, and `activitybar` zones are authored dark — `surfaces.sidebar.bg #1c2842` (twilight blue — the pre-dawn sky with matching dark titlebar and activitybar), `surfaces.sidebar.border #2c3c5e` (anchor blue), `surfaces.sidebar.text #eaeef5` (cool off-white). Shared accents: `accent.primary #cc7408 → #92400e` (amber — tuned to clear AA non-text on both sidebar and page), `accent.secondary #6366f1 → #4f46e5` (indigo — brightened from #4338ca for sidebar-surface visibility).
 
 2.2.9 Aggie — heritage split: alfalfa/pumpkin (dark) → green/gold (light)
 
@@ -249,7 +249,7 @@ college to state university. Typography pairs Work Sans (body — humanist,
 warm), Manrope (headline), and IBM Plex Mono (mono).
 
 - Dark (historical — alfalfa green + pumpkin orange): `surfaces.app.bg #0a1810` (dark alfalfa-green); `surfaces.app.text #e8efe0` (sage-white); `accent.primary #e07a30 → #b45a18` (pumpkin orange — derived from CSU Aggie Orange #D9782D); `accent.secondary #6aaa4a → #3a7a2a` (alfalfa green — the living plant color).
-- Light (modern dual-surface): `surfaces.app.bg #f0f5ee` (pale green meadow); `surfaces.app.text #1E4D2B` (CSU Green — the actual school color); `surfaces.sidebar.bg #1E4D2B` (CSU Green); `accent.primary #7a6408 → #5f4a06` (deep gold — CSU Gold #C8C372 deepened for readability); `accent.secondary #006144 → #004d36` (CSU Oval Green — the actual school color).
+- Light (modern dual-surface): `surfaces.app.bg #f0f5ee` (pale green meadow); `surfaces.app.text #1E4D2B` (CSU Green — the actual school color); `surfaces.sidebar.bg #1E4D2B` (CSU Green with matching dark green titlebar and activitybar); `accent.primary #7a6408 → #5f4a06` (deep gold — CSU Gold #C8C372 deepened for readability); `accent.secondary #006144 → #004d36` (CSU Oval Green — the actual school color).
 
 2.2.10 Altgeld — Illinois Blue + Illini Orange (prairie fire)
 
@@ -261,7 +261,7 @@ Typography pairs Public Sans (body — clean, institutional), Schibsted Grotesk
 most color-assertive palette in the roster — unmistakable school identity.
 
 - Dark: `surfaces.app.bg #0d1525` (Illinois Blue #13294B-tinted near-black — the prairie night); `surfaces.app.text #e6ecf5` (cool blue-white — moonlight); `accent.primary #FF5F05 → #cc4a00` (Illini Orange — the actual school color); `accent.secondary #4080e0 → #2050a0` (bright blue — Illinois Blue family, brightened for dark-mode pop).
-- Light (dual-surface): `surfaces.app.bg #eaf0f6` (pale blue-grey — the dawn sky); `surfaces.app.text #13294B` (Illinois Blue — the actual school color); `surfaces.sidebar.bg #0d1525` (Illinois Blue-black); `accent.primary #c44a00 → #9a3800` (deep Illini Orange for readability on white); `accent.secondary #1a3677 → #0d1f4d` (Illinois Blue family).
+- Light (dual-surface): `surfaces.app.bg #eaf0f6` (pale blue-grey — the dawn sky); `surfaces.app.text #13294B` (Illinois Blue — the actual school color); `surfaces.sidebar.bg #0d1525` (Illinois Blue-black with matching dark titlebar and activitybar); `accent.primary #c44a00 → #9a3800` (deep Illini Orange for readability on white); `accent.secondary #1a3677 → #0d1f4d` (Illinois Blue family).
 
 
 3. Typography & Spacing Rhythm
