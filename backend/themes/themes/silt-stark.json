@@ -85,8 +85,8 @@
       "text_disabled": "#5a5a5a",
       "accent": {
         "primary": {
-          "start": "#b88a00",
-          "end": "#806000",
+          "start": "#8a5a00",
+          "end": "#6f4800",
           "glow": "rgba(184,138,0,0.16)"
         },
         "secondary": {
@@ -113,8 +113,8 @@
         "lg": "0 8px 24px color-mix(in oklch, var(--color-surface-app) 35%, transparent)"
       },
       "editor": {
-        "caret": "#b88a00",
-        "selection": "rgba(184,138,0,0.30)",
+        "caret": "#8a5a00",
+        "selection": "rgba(138,90,0,0.30)",
         "selection_text": "#ffffff",
         "link": "#005f70",
         "link_hover": "#00475a",

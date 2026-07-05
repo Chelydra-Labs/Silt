@@ -70,19 +70,19 @@
     },
     "light": {
       "surfaces": {
-        "app": { "bg": "#e1e9f2", "border": "#7888a0", "text": "#0f172a" },
-        "editor": { "bg": "#e8eef5", "border": "#7d8da3", "text": "#0f172a" },
-        "panel": { "bg": "#eef3f9", "border": "#8293a8", "text": "#0f172a" },
-        "card": { "bg": "#f3f7fb", "border": "#6c7e98", "text": "#0f172a" },
-        "modal": { "bg": "#f7fafd", "border": "#5a6c88", "text": "#0f172a" },
-        "popover": { "bg": "#fcfdfe", "border": "#4d6080", "text": "#0f172a" }
+        "app": { "bg": "#f8fafc", "border": "#e2e8f0", "text": "#0f172a" },
+        "editor": { "bg": "#fcfdfe", "border": "#d0d7e0", "text": "#0f172a" },
+        "panel": { "bg": "#ffffff", "border": "#cbd5e1", "text": "#0f172a" },
+        "card": { "bg": "#f1f5f9", "border": "#cbd5e1", "text": "#0f172a" },
+        "modal": { "bg": "#ffffff", "border": "#94a3b8", "text": "#0f172a" },
+        "popover": { "bg": "#ffffff", "border": "#64748b", "text": "#0f172a" }
       },
-      "hover": "#d2dde9",
-      "active": "#c0ccdb",
-      "border_active": "#6b7a90",
-      "border_focus": "#475569",
-      "text_muted": "#475569",
-      "text_disabled": "#8a98a8",
+      "hover": "#e2e8f0",
+      "active": "#cbd5e1",
+      "border_active": "#94a3b8",
+      "border_focus": "#64748b",
+      "text_muted": "#4d5667",
+      "text_disabled": "#94a3b8",
       "accent": {
         "primary": {
           "start": "#0d9488",
@@ -96,14 +96,14 @@
         }
       },
       "status": {
-        "warn": "#a96c1c",
-        "danger": "#c33a4e",
-        "success": "#1c8460"
+        "warn": "#d97706",
+        "danger": "#e11d48",
+        "success": "#16a34a"
       },
       "error": {
-        "fg": "#a83828",
-        "bg": "#fde8ec",
-        "border": "#e88ea0"
+        "fg": "#e11d48",
+        "bg": "#ffffff",
+        "border": "#94a3b8"
       },
       "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
       "spacing": { "sm": "4px", "md": "8px", "lg": "16px", "xl": "24px" },
@@ -118,7 +118,7 @@
         "selection_text": "#0f172a",
         "link": "#4f46e5",
         "link_hover": "#7c3aed",
-        "highlight": "rgba(169,108,28,0.25)"
+        "highlight": "rgba(217,119,6,0.25)"
       }
     }
   }
