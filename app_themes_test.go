@@ -20,6 +20,20 @@ func configDirOverride(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 }
 
+// expectedDefaultToken returns the embedded default theme's flattened token for
+// (mode, key), so tests assert "result == the packaged default" rather than a
+// hardcoded hex that breaks on every default-theme edit. The default theme is
+// embedded-authoritative, so this is the durable source of truth for any
+// "first-paint matches the default" assertion.
+func expectedDefaultToken(t *testing.T, mode, key string) string {
+	t.Helper()
+	def, err := themes.ParseDefault()
+	if err != nil {
+		t.Fatalf("ParseDefault: %v", err)
+	}
+	return def.Flatten(mode)[key]
+}
+
 // validCustomThemeJSON is a second valid theme (id "terra-test") used to
 // exercise multi-theme enumeration and switching.
 const validCustomThemeJSON = `{
@@ -79,20 +93,20 @@ func TestGetActiveTheme_DefaultOnFreshVault(t *testing.T) {
 		t.Errorf("expected default mode dark, got %q", res.Mode)
 	}
 	// Effective first-paint tokens must be the dark set.
-	if res.Tokens["--color-surface-app"] != "#0c0c0e" {
-		t.Errorf("expected dark bg.void #0c0c0e, got %q", res.Tokens["--color-surface-app"])
+	if got, want := res.Tokens["--color-surface-app"], expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
+		t.Errorf("expected dark bg.void to match embedded default, got %q want %q", got, want)
 	}
 	// Both maps present so the frontend can resolve "system" locally.
 	// Values reflect the EMBEDDED default (first-class themes are
 	// embedded-authoritative — a ScaffoldVault seed can't shadow them).
-	if res.DarkTokens["--color-surface-app"] != "#0c0c0e" {
-		t.Errorf("DarkTokens bg.void wrong: %q", res.DarkTokens["--color-surface-app"])
+	if got, want := res.DarkTokens["--color-surface-app"], expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
+		t.Errorf("DarkTokens bg.void should match embedded default, got %q want %q", got, want)
 	}
-	if res.LightTokens["--color-surface-app"] != "#f8fafc" {
-		t.Errorf("LightTokens bg.void wrong: %q", res.LightTokens["--color-surface-app"])
+	if got, want := res.LightTokens["--color-surface-app"], expectedDefaultToken(t, "light", "--color-surface-app"); got != want {
+		t.Errorf("LightTokens bg.void should match embedded default, got %q want %q", got, want)
 	}
-	if res.BGVoid != "#0c0c0e" {
-		t.Errorf("BGVoid wrong: %q", res.BGVoid)
+	if got, want := res.BGVoid, expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
+		t.Errorf("BGVoid should match embedded default dark bg, got %q want %q", got, want)
 	}
 }
 
@@ -255,14 +269,14 @@ func TestApplyTheme_SystemModeResolvesFirstPaintDark(t *testing.T) {
 	if res.Mode != "system" {
 		t.Errorf("mode = %q, want system", res.Mode)
 	}
-	if res.Tokens["--color-surface-app"] != "#0c0c0e" {
-		t.Errorf("system should first-paint dark bg.void, got %q", res.Tokens["--color-surface-app"])
+	if got, want := res.Tokens["--color-surface-app"], expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
+		t.Errorf("system should first-paint dark bg.void matching embedded default, got %q want %q", got, want)
 	}
 	// But both maps are present so the frontend can resolve the real preference.
 	// Light tokens reflect the EMBEDDED default (first-class themes are
 	// embedded-authoritative — a ScaffoldVault seed can't shadow them).
-	if res.LightTokens["--color-surface-app"] != "#f8fafc" {
-		t.Errorf("system mode must still ship light tokens, got %q", res.LightTokens["--color-surface-app"])
+	if got, want := res.LightTokens["--color-surface-app"], expectedDefaultToken(t, "light", "--color-surface-app"); got != want {
+		t.Errorf("system mode must still ship light tokens matching embedded default, got %q want %q", got, want)
 	}
 }
 
@@ -335,25 +349,25 @@ func TestBuildThemeResult_DarkFirstPaint(t *testing.T) {
 	if res.Mode != "system" {
 		t.Errorf("mode = %q, want system", res.Mode)
 	}
-	if res.Tokens["--color-surface-app"] != "#0c0c0e" {
-		t.Errorf("system first-paint should be dark bg.void, got %q", res.Tokens["--color-surface-app"])
+	if got, want := res.Tokens["--color-surface-app"], expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
+		t.Errorf("system first-paint should be dark bg.void matching embedded default, got %q want %q", got, want)
 	}
-	if res.DarkTokens["--color-accent-primary-start"] != "#2dd4bf" {
-		t.Errorf("dark primary-start wrong: %q", res.DarkTokens["--color-accent-primary-start"])
+	if got, want := res.DarkTokens["--color-accent-primary-start"], expectedDefaultToken(t, "dark", "--color-accent-primary-start"); got != want {
+		t.Errorf("dark primary-start should match embedded default, got %q want %q", got, want)
 	}
-	if res.LightTokens["--color-accent-primary-start"] != "#0d9488" {
-		t.Errorf("light primary-start wrong: %q", res.LightTokens["--color-accent-primary-start"])
+	if got, want := res.LightTokens["--color-accent-primary-start"], expectedDefaultToken(t, "light", "--color-accent-primary-start"); got != want {
+		t.Errorf("light primary-start should match embedded default, got %q want %q", got, want)
 	}
-	if res.BGVoid != "#0c0c0e" {
-		t.Errorf("BGVoid wrong: %q", res.BGVoid)
+	if got, want := res.BGVoid, expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
+		t.Errorf("BGVoid should match embedded default dark bg, got %q want %q", got, want)
 	}
 	// light mode: effective tokens are light (embedded values).
 	lightRes := buildThemeResult(th, "light")
-	if lightRes.Tokens["--color-surface-app"] != "#f8fafc" {
-		t.Errorf("light effective bg.void wrong: %q", lightRes.Tokens["--color-surface-app"])
+	if got, want := lightRes.Tokens["--color-surface-app"], expectedDefaultToken(t, "light", "--color-surface-app"); got != want {
+		t.Errorf("light effective bg.void should match embedded default, got %q want %q", got, want)
 	}
-	if lightRes.BGVoid != "#f8fafc" {
-		t.Errorf("light BGVoid wrong: %q", lightRes.BGVoid)
+	if got, want := lightRes.BGVoid, expectedDefaultToken(t, "light", "--color-surface-app"); got != want {
+		t.Errorf("light BGVoid should match embedded default, got %q want %q", got, want)
 	}
 }
 

@@ -222,6 +222,10 @@
     }
     return 'bg-surface-panel border border-surface-panel-border text-text-muted'
   }
+
+  const effectiveMode = $derived(
+    themeState.mode === 'system' ? systemScheme.mode : themeState.mode
+  )
 </script>
 
 <svelte:window on:keydown={onWindowKey} />
@@ -337,6 +341,8 @@
       <div role="listbox" aria-label="Available themes" class="space-y-2">
         {#each themesState.items as theme, i (theme.id)}
           {@const active = isActive(theme)}
+          {@const modeTokens =
+            themesState.flatTokens[theme.id]?.[effectiveMode]}
           <button
             type="button"
             id={`theme-row-${theme.id}`}
@@ -364,18 +370,24 @@
             class:bg-accent-primary-glow={active}
             class:border-accent-primary-start={active}
           >
-            <!-- Swatches: data-driven from theme.Swatches; no per-theme branching. -->
+            <!-- Swatches: data-driven from themesState.flatTokens with fallback to theme.swatches -->
             <div class="flex items-center gap-1.5 flex-shrink-0">
               <span
                 aria-hidden="true"
                 class="block w-4 h-8 rounded-sm border border-surface-panel-border"
-                style="background-color: {theme.swatches?.[0] ??
+                style="background-color: {modeTokens?.[
+                  '--color-accent-primary-start'
+                ] ??
+                  theme.swatches?.[0] ??
                   'var(--color-accent-primary-start)'}"
               ></span>
               <span
                 aria-hidden="true"
                 class="block w-4 h-8 rounded-sm border border-surface-panel-border"
-                style="background-color: {theme.swatches?.[1] ??
+                style="background-color: {modeTokens?.[
+                  '--color-accent-secondary-start'
+                ] ??
+                  theme.swatches?.[1] ??
                   'var(--color-accent-secondary-start)'}"
               ></span>
             </div>

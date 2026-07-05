@@ -117,10 +117,17 @@ func TestListThemes_EmbedWinsOverVaultForFirstClass(t *testing.T) {
 	if cf.Source != "default" {
 		t.Errorf("cyber_forest source = %q, want \"default\" (embed wins over vault shadow)", cf.Source)
 	}
-	// The embedded dark surfaces.app.bg (#0e0f12) must be surfaced, NOT the
-	// on-disk sentinel #abcdef — proves the on-disk shadow was ignored.
-	if got := res.FlatTokens[DefaultThemeID].Dark["--color-surface-app"]; got != "#0e0f12" {
-		t.Errorf("cyber_forest dark surface-app = %q, want #0e0f12 (embedded, not vault shadow %q)", got, "#abcdef")
+	// The embedded dark surfaces.app.bg must be surfaced, NOT the on-disk
+	// sentinel #abcdef — proves the on-disk shadow was ignored. The expected
+	// value is derived from the packaged embedded default so this assertion
+	// survives any future default-theme edit.
+	def, err := ParseDefault()
+	if err != nil {
+		t.Fatalf("ParseDefault: %v", err)
+	}
+	wantBG := def.Modes.Dark.Surfaces.App.BG
+	if got := res.FlatTokens[DefaultThemeID].Dark["--color-surface-app"]; got != wantBG {
+		t.Errorf("cyber_forest dark surface-app = %q, want embedded default %q (not vault shadow %q)", got, wantBG, "#abcdef")
 	}
 	// Custom id still resolves from disk (source="disk").
 	if customTI == nil {
