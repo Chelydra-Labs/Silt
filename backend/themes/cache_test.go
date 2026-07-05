@@ -254,9 +254,9 @@ func TestCachedThemeByID_FirstClassIgnoresVaultShadow(t *testing.T) {
 		t.Fatalf("resolved id = %q, want cyber_forest", th.ID)
 	}
 	// Embedded copy is authoritative: dark surfaces.app.bg must be the
-	// embedded #0c0c0e, NOT the stale on-disk sentinel #abcdef.
-	if got := th.Modes.Dark.Surfaces.App.BG; got != "#0c0c0e" {
-		t.Errorf("cyber_forest dark surfaces.app.bg = %q, want #0c0c0e (embedded; vault shadow %q must be ignored)",
+	// embedded #0e0f12, NOT the stale on-disk sentinel #abcdef.
+	if got := th.Modes.Dark.Surfaces.App.BG; got != "#0e0f12" {
+		t.Errorf("cyber_forest dark surfaces.app.bg = %q, want #0e0f12 (embedded; vault shadow %q must be ignored)",
 			got, "#abcdef")
 	}
 }

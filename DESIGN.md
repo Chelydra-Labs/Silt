@@ -35,7 +35,7 @@ Most digital workspace applications fall into one of two visual extremes: flat, 
 
 Silt implements "Refined Cyber-Ink"—a design framework engineered for deep, distraction-free focus:
 
-Ink-Rich Canvas: The interface relies on an ultra-dark slate base (#0c0c0e) and dark charcoal panels (#121215). This mimics high-grade dark paper, absorbing light emission to protect eyes on OLED, mini-LED, and high-brightness displays.
+Ink-Rich Canvas: The interface relies on an ultra-dark slate base (#0e0f12) and dark charcoal panels (#14151b). This mimics high-grade dark paper, absorbing light emission to protect eyes on OLED, mini-LED, and high-brightness displays.
 
 Surgical Accents: Highly saturated color gradients are constrained to less than 3% of the active viewport area. They act as glowing signposts (for checkboxes, keyboard navigation path markers, and active selection guides). The teal accent sits in the teal-400 → teal-600 range (rather than a fully-saturated sky/cyan) so it stays readable across long sessions without inducing visual fatigue; the indigo "in-progress" gradient remains one notch more vivid so the active state still draws the eye.
 
@@ -66,12 +66,12 @@ The canonical theme schema is **Theme System v2** (RFC `docs/theme-system-v2-rfc
   "modes": {
     "dark": {
       "surfaces": {
-        "app":     { "bg": "#0c0c0e", "border": "#1e1e23", "text": "#dee3e6" },
-        "editor":  { "bg": "#0f0f13", "border": "#23232a", "text": "#dee3e6" },
-        "panel":   { "bg": "#121215", "border": "#27272a", "text": "#dee3e6" },
-        "modal":   { "bg": "#151519", "border": "#3f3f46", "text": "#dee3e6" },
-        "card":    { "bg": "#161619", "border": "#27272a", "text": "#dee3e6" },
-        "popover": { "bg": "#191920", "border": "#4a4a52", "text": "#dee3e6" }
+        "app":     { "bg": "#0e0f12", "border": "#1c1d24", "text": "#dee3e6" },
+        "editor":  { "bg": "#111216", "border": "#21232c", "text": "#dee3e6" },
+        "panel":   { "bg": "#14151b", "border": "#272935", "text": "#dee3e6" },
+        "modal":   { "bg": "#1c1d25", "border": "#373a4b", "text": "#dee3e6" },
+        "card":    { "bg": "#181920", "border": "#272935", "text": "#dee3e6" },
+        "popover": { "bg": "#22242e", "border": "#42475b", "text": "#dee3e6" }
       },
       "hover": "#1c1c21", "active": "#222226",
       "border_active": "#3f3f46", "border_focus": "#52525b",
@@ -235,7 +235,7 @@ Mono (mono). Intent: the theme for users who want dark navigation (low glare,
 clear structure) with a bright reading/writing surface — the pattern Notion,
 Readwise, and several code editors use for sustained reading sessions.
 
-- Dark: `surfaces.app.bg #0c0e14` (dark charcoal-blue); `surfaces.app.text #eaeef5` (cool off-white); `accent.primary #f59e0b → #d97706` (warm amber); `accent.secondary #818cf8 → #6366f1` (indigo). Standard single-surface dark mode (no `sidebar` override needed — everything is dark).
+- Dark: `surfaces.app.bg #131a26` (twilight blue-black); `surfaces.app.text #eaeef5` (cool off-white); `accent.primary #f59e0b → #d97706` (warm amber); `accent.secondary #818cf8 → #6366f1` (indigo). Single-surface dark mode matching the twilight-blue palette of the light mode skeleton.
 - Light (dual-surface): page `surfaces.app.bg #faf8f5` (warm off-white — the paper), `surfaces.app.text #1c1917` (warm near-black — ink on paper); the `sidebar`, `titlebar`, and `activitybar` zones are authored dark — `surfaces.sidebar.bg #1c2842` (twilight blue — the pre-dawn sky with matching dark titlebar and activitybar), `surfaces.sidebar.border #2c3c5e` (anchor blue), `surfaces.sidebar.text #eaeef5` (cool off-white). Shared accents: `accent.primary #cc7408 → #92400e` (amber — tuned to clear AA non-text on both sidebar and page), `accent.secondary #6366f1 → #4f46e5` (indigo — brightened from #4338ca for sidebar-surface visibility).
 
 2.2.9 Aggie — heritage split: alfalfa/pumpkin (dark) → green/gold (light)
