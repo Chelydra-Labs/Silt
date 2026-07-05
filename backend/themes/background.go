@@ -37,11 +37,12 @@ const (
 	base64InlineThreshold int64 = 50 * 1024 // 50 KB
 )
 
-// allowedBackgroundExts maps a lowercased extension to the MIME subtype used in
+// AllowedBackgroundExts maps a lowercased extension to the MIME subtype used in
 // the data URI. Anything outside this set is rejected at pick time so a user
 // cannot point the background pipeline at an arbitrary (potentially huge or
-// non-image) file.
-var allowedBackgroundExts = map[string]string{
+// non-image) file. Exported so the Wails asset handler (themeassets.go) serves
+// the same set the ingestion pipeline writes — one source of truth.
+var AllowedBackgroundExts = map[string]string{
 	".png":  "image/png",
 	".jpg":  "image/jpeg",
 	".jpeg": "image/jpeg",
@@ -82,7 +83,7 @@ func StoreBackgroundAsset(themesDir, themeID, srcPath string) (ref string, isBas
 		return "", false, errors.New("source path is empty")
 	}
 	ext := strings.ToLower(filepath.Ext(srcPath))
-	mime, ok := allowedBackgroundExts[ext]
+	mime, ok := AllowedBackgroundExts[ext]
 	if !ok {
 		return "", false, fmt.Errorf("unsupported image extension %q (allowed: .png .jpg .jpeg .webp .gif .svg)", ext)
 	}
@@ -145,13 +146,24 @@ func sanitizeBgFilename(name string) string {
 	return name
 }
 
-// IsValidSurfaceZone reports whether zone is one of the 7 named surface zones
-// a background can be attached to (app/sidebar/editor/panel/card/modal/popover,
-// RFC §5). Exported so the Wails binding validates the zone before opening the
+// IsValidSurfaceZone reports whether zone is one of the named surface zones a
+// background can be attached to (RFC §5; see surfaceZones for the canonical
+// list). Exported so the Wails binding validates the zone before opening the
 // native picker.
 func IsValidSurfaceZone(zone string) bool {
 	_, ok := zoneByName(zone)
 	return ok
+}
+
+// ValidSurfaceZoneNames returns the canonical zone names joined as a
+// comma-separated list, for error messages. Generated from surfaceZones so the
+// accepted set and the surfaced list can never drift apart.
+func ValidSurfaceZoneNames() string {
+	names := make([]string, len(surfaceZones))
+	for i, z := range surfaceZones {
+		names[i] = z.name
+	}
+	return strings.Join(names, ", ")
 }
 
 // SetThemeBackgroundImage writes bg into the given zone's background block on
@@ -173,7 +185,7 @@ func SetThemeBackgroundImage(themesDir, themeID, zone string, bg Background) err
 		return errors.New("themes directory is empty (vault not loaded)")
 	}
 	if _, ok := zoneByName(zone); !ok {
-		return fmt.Errorf("invalid surface zone %q (valid: app, sidebar, editor, panel, card, modal, popover)", zone)
+		return fmt.Errorf("invalid surface zone %q (valid: %s)", zone, ValidSurfaceZoneNames())
 	}
 	if verrs := validateBackground("background", &bg); len(verrs) > 0 {
 		return verrs

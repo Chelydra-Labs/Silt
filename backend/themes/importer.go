@@ -64,12 +64,14 @@ var ErrImportDuplicate = errors.New("theme id already exists")
 // same call, so any theme that survives an import is exactly the same kind
 // of object ListThemes enumerates.
 //
-// Sandbox by schema, not by string sanitization: the canonical schema accepts
-// only color values (#hex / rgb() / rgba() / oklch()) at every token slot, so
-// embedded <script>, url(), or expression() values cannot reach the on-disk
-// file even if a hostile author tries. Go's json.Unmarshal ignores unknown
-// fields silently, so a JSON with extra non-color keys is structurally still
-// a theme; the only enforced rejection is the value-format one in Validate.
+// Sandbox by validator, not by string sanitization: every token slot is
+// checked by isSafeBackgroundImage / isValidFontFamily / isSafeCSSValue, which
+// reject <, >, \, and top-level declaration-breakers — so embedded <script>
+// or markup cannot reach the on-disk file even though url() (background
+// images), font-family strings, and color-mix()/var() shadows are accepted.
+// Unknown fields are rejected too (DisallowUnknownFields → structured
+// ValidationErrors), so a JSON with extra keys fails rather than silently
+// becoming a structurally-different theme.
 func ImportThemeFromPath(themesDir, srcPath string) (*ImportResult, error) {
 	if themesDir == "" {
 		return nil, fmt.Errorf("themes directory is empty (vault not loaded)")

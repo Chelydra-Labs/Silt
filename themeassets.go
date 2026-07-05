@@ -10,23 +10,6 @@ import (
 	"silt/backend/themes"
 )
 
-// allowedAssetExts is the set of extensions this handler will serve. It
-// mirrors the ingestion allowlist allowedBackgroundExts in
-// backend/themes/background.go (png/jpg/jpeg/webp/gif/svg); that var is
-// unexported and lives in another package, so the set is duplicated here.
-// Keep the two in sync when the accepted image formats change. Restricting
-// the handler to the same set closes the gap between what StoreBackgroundAsset
-// writes (allowlisted) and what a sync client could drop on disk (anything):
-// a non-image in <id>.assets is treated as not-found rather than served.
-var allowedAssetExts = map[string]struct{}{
-	".png":  {},
-	".jpg":  {},
-	".jpeg": {},
-	".webp": {},
-	".gif":  {},
-	".svg":  {},
-}
-
 // themeAssetHandler serves per-theme background assets
 // (<themeID>.assets/<file>) from the current themes directory. The themes
 // directory is DYNAMIC — it is <vault>/.system/themes, resolved from
@@ -79,7 +62,7 @@ func themeAssetHandler(themesDirResolver func() string) http.Handler {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if _, ok := allowedAssetExts[strings.ToLower(filepath.Ext(filename))]; !ok {
+		if _, ok := themes.AllowedBackgroundExts[strings.ToLower(filepath.Ext(filename))]; !ok {
 			// Mirrors the ingestion gate: StoreBackgroundAsset only writes
 			// image extensions, so a non-image here was dropped by a sync
 			// client. Treat as not-found — never confirm it exists.

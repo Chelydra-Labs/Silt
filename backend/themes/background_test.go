@@ -421,15 +421,29 @@ func TestForkEmbeddedTheme_RejectsNonEmbeddedID(t *testing.T) {
 // --- IsValidSurfaceZone ----------------------------------------------------
 
 func TestIsValidSurfaceZone(t *testing.T) {
-	valid := []string{"app", "sidebar", "editor", "panel", "card", "modal", "popover"}
-	for _, z := range valid {
-		if !IsValidSurfaceZone(z) {
-			t.Errorf("IsValidSurfaceZone(%q) = false, want true", z)
+	// Every canonical zone must validate; iterate surfaceZones so adding a
+	// future zone can't silently drop out of coverage (the 7-zone hardcode
+	// here previously missed titlebar/activitybar).
+	for _, z := range surfaceZones {
+		if !IsValidSurfaceZone(z.name) {
+			t.Errorf("IsValidSurfaceZone(%q) = false, want true", z.name)
 		}
 	}
 	for _, z := range []string{"", "toolbar", "APP", "toast"} {
 		if IsValidSurfaceZone(z) {
 			t.Errorf("IsValidSurfaceZone(%q) = true, want false", z)
+		}
+	}
+}
+
+func TestValidSurfaceZoneNames(t *testing.T) {
+	// The surfaced list must name exactly the zones IsValidSurfaceZone accepts
+	// — drift between the accepted set and error-message list is the bug the
+	// helper exists to prevent.
+	list := ValidSurfaceZoneNames()
+	for _, z := range surfaceZones {
+		if !strings.Contains(list, z.name) {
+			t.Errorf("ValidSurfaceZoneNames() = %q, missing canonical zone %q", list, z.name)
 		}
 	}
 }

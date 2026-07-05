@@ -253,7 +253,7 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 		return nil, fmt.Errorf("application context not ready")
 	}
 	if !themes.IsValidSurfaceZone(zone) {
-		return nil, fmt.Errorf("invalid surface zone %q (valid: app, sidebar, editor, panel, card, modal, popover)", zone)
+		return nil, fmt.Errorf("invalid surface zone %q (valid: %s)", zone, themes.ValidSurfaceZoneNames())
 	}
 
 	settings, err := vault.LoadSettings()
@@ -301,7 +301,11 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	bg := themes.Background{Image: ref}
+	// A picked photo is the common case: cover the surface at full opacity.
+	// Without these defaults Opacity is the zero value (0), which emitBackground
+	// writes verbatim and the overlay CSS applies as fully transparent — a
+	// "successful" pick that renders nothing.
+	bg := themes.Background{Image: ref, Size: "cover", Opacity: 1.0}
 	if err := themes.SetThemeBackgroundImage(a.themesDir(), targetID, zone, bg); err != nil {
 		return nil, err
 	}
