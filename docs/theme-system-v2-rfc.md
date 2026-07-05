@@ -57,8 +57,8 @@ re-opened by downstream work.
 | D2 | **OKLCH derivation:** eager, in Go (`derivation.go`). | Keeps the CI contrast gate and the editor seeing deterministic, testable values. CSS `oklch(from … calc())` relative-color syntax is supported in the Wails webview, but eager derivation keeps the gate/editor/CI agreement exact. Hex-authored themes still derive the same way (parsed to OKLCH internally). |
 | D3 | **Frontend color library:** `culori`. | ~10 kB gzipped tree-shaken; full OKLCH + `contrastWCAG21`; function-oriented (tree-shakes well). Over `colorjs.io` (OOP-leaning) and `better-color-tools` (no contrast). |
 | D4 | **`schema_version`:** `"2.0.0"`, hard-enforced. Unsupported versions rejected with a descriptive error. **No v1→v2 migration** (single-user project; first-party themes are re-authored natively). | See ADR `docs/decisions/0002-theme-schema-v2-no-migration.md`. |
-| D5 | **Surface zones:** 7 — `app, sidebar, editor, panel, modal, popover, card`. `toast` reuses `popover`. | Matches the recon (VS Code flat + Obsidian defaulting) without VS Code's ~600-token sprawl. |
-| D6 | **Inheritance:** strict tree (linear fallback via `var()` chains): `popover→modal→panel→app`, `editor→app`, `sidebar→app`, `card→panel`. | Chosen over a DAG for predictability under user customization: a zone an author omits falls back to its parent; an author who sets it gets exactly what they wrote. |
+| D5 | **Surface zones:** 9 — `app, sidebar, editor, panel, modal, popover, card, titlebar, activitybar`. `toast` reuses `popover`. | Matches the recon (VS Code flat + Obsidian defaulting) without VS Code's ~600-token sprawl. |
+| D6 | **Inheritance:** strict tree (linear fallback via `var()` chains): `popover→modal→panel→app`, `editor→app`, `sidebar→app`, `card→panel`, `titlebar→app`, `activitybar→app`. | Chosen over a DAG for predictability under user customization: a zone an author omits falls back to its parent; an author who sets it gets exactly what they wrote. |
 | D7 | **Per-zone fields:** `bg`, `border`, `text` only. Hover/active stay zone-agnostic semantic interaction tokens. | Interaction state is the same gesture everywhere; only the canvas differs. |
 | D8 | **Editor tokens:** top-level `editor` block on `Mode`, not nested under the `editor` surface zone. | Caret/selection/link/highlight are interaction elements, not surfaces. |
 | D9 | **`radius`/`spacing`/`shadow`:** per-mode; small fixed sets — `radius` `{sm,md,lg,xl,full}`, `spacing` `{sm,md,lg,xl}`, `shadow` `{sm,md,lg}`. | Per-mode for consistency with the existing model; fixed sets keep authoring and the editor simple. |
@@ -83,7 +83,7 @@ Types: `color` / `dimension` / `fontFamily` / `fontWeight` / `image`.
 ### 2.2 Surface zones (replaces v1 `bg` + `chrome` + `border` + `text`)
 
 The flat `bg: {void,surface,panel,hover,active}`, `border`, `text`, and optional
-`chrome` blocks are **removed**. Each of the 7 zones carries `{bg, border, text}`.
+`chrome` blocks are **removed**. Each of the 9 zones carries `{bg, border, text}`.
 Each field is a single color (S tier, `color`). A zone an author omits falls
 back to its parent per D6.
 
@@ -261,16 +261,18 @@ derived values.
 
 ## 5. Surface-zone model
 
-Seven zones (D5), each `{bg, border, text}` (D7). Inheritance is a strict tree
+Nine zones (D5), each `{bg, border, text}` (D7). Inheritance is a strict tree
 (D6) realized as `var()` fallback chains at `:root`:
 
 ```
 app ────────────── the root canvas (always authored)
-├── sidebar        (→ app if omitted)
-├── editor         (→ app if omitted)
-└── panel          (→ app if omitted)
-    ├── card       (→ panel)
-    └── modal      (→ panel)
+├── sidebar         (→ app if omitted)
+├── editor          (→ app if omitted)
+├── titlebar        (→ app if omitted)
+├── activitybar     (→ app if omitted)
+└── panel           (→ app if omitted)
+    ├── card        (→ panel)
+    └── modal       (→ panel)
         └── popover (→ modal)
 ```
 
@@ -279,16 +281,16 @@ A UI region maps to exactly one zone (#387 audit):
 | Zone | UI region |
 |---|---|
 | `app` | the root background behind everything |
-| `sidebar` | navigation sidebar, activity bar |
+| `sidebar` | folders / notebook list |
 | `editor` | the TipTap writing canvas |
 | `panel` | docked panels, settings panes, the kanban/calendar surfaces |
 | `card` | cards, list items, callouts |
 | `modal` | modal dialogs |
 | `popover` | menus, dropdowns, tooltips, toasts |
+| `titlebar` | top title bar / header |
+| `activitybar` | leftmost vertical navigation strip |
 
-The v1 `chrome` block is **removed**; its concerns (sidebar/titlebar/activity-bar
-palette) fold into the `sidebar` zone. Daybreak/Bubblegum's "dark chrome + light
-page" becomes a `sidebar` zone authored dark against a light `editor`/`app`.
+The v1 `chrome` block is **removed**; its concerns (sidebar/titlebar/activitybar palette) are now mapped to separate `sidebar`, `titlebar`, and `activitybar` zones. Daybreak, Synthwave, and Bubblegum author dark chrome zones against a light `editor`/`app`.
 
 ## 6. Contrast guarantee
 
