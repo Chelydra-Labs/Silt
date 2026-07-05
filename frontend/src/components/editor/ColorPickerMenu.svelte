@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { Editor } from 'svelte-tiptap'
   import {
-    DEFAULT_COLOR_PALETTE,
+    deriveColorPalette,
+    readActiveThemeColorTokens,
     resolveColor,
+    FALLBACK_COLOR_PALETTE,
     type ColorEntry
   } from '../../lib/editor/colors'
 
@@ -55,6 +57,17 @@
   const triggerLabel = $derived(
     markType === 'textColor' ? 'Text color' : 'Background color'
   )
+
+  // Theme-derived palette (#408): re-read the active theme's color anchors
+  // from :root each time the menu opens so the swatch row tracks the theme.
+  // Falls back to the fixed set only if the theme tokens are unavailable.
+  const palette = $derived.by(() => {
+    void menuOpen
+    const tokens = readActiveThemeColorTokens()
+    return Object.keys(tokens).length > 0
+      ? deriveColorPalette(tokens)
+      : FALLBACK_COLOR_PALETTE
+  })
 </script>
 
 <div class="color-picker-wrapper" bind:this={wrapperEl}>
@@ -85,7 +98,7 @@
         <span>No color</span>
       </button>
       <div class="swatch-grid" role="group" aria-label="Color palette">
-        {#each DEFAULT_COLOR_PALETTE as entry (entry.id)}
+        {#each palette as entry (entry.id)}
           <button
             type="button"
             class="swatch"

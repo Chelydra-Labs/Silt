@@ -68,7 +68,12 @@
   import TableContextToolbar from './editor/TableContextToolbar.svelte'
   import TableSizePicker from './editor/TableSizePicker.svelte'
   import MathLatexPopover from './editor/MathLatexPopover.svelte'
-  import { DEFAULT_COLOR_PALETTE, resolveColor } from '../lib/editor/colors'
+  import {
+    deriveColorPalette,
+    readActiveThemeColorTokens,
+    resolveColor,
+    FALLBACK_COLOR_PALETTE
+  } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { clampToViewport } from '../lib/editor/popoverPositioning'
   import {
@@ -190,6 +195,17 @@
   // Track OS dark/light preference reactively so isDark updates when the
   // OS theme changes under mode === 'system' (#168 color palette).
   let isDark = $derived(isSystemDark())
+
+  // Theme-derived color palette (#408): re-read the active theme's anchors
+  // from :root whenever the dark/light mode flips, so the popover's swatch
+  // row tracks the theme. Falls back to the fixed set pre-theme-injection.
+  const colorPalette = $derived.by(() => {
+    void isDark
+    const tokens = readActiveThemeColorTokens()
+    return Object.keys(tokens).length > 0
+      ? deriveColorPalette(tokens)
+      : FALLBACK_COLOR_PALETTE
+  })
 
   let colorEnabled = $derived(
     settings.config?.ui?.formatting?.color_enabled !== false
@@ -1711,7 +1727,7 @@
           aria-hidden="true">format_color_reset</span
         >
       </button>
-      {#each DEFAULT_COLOR_PALETTE as entry (entry.id)}
+      {#each colorPalette as entry (entry.id)}
         <button
           type="button"
           class="cp-swatch"
