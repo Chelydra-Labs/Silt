@@ -65,7 +65,8 @@
     'os-clipboard': 'Clipboard',
     'os-notify': 'Notifications',
     'ui-surface': 'Render UI surfaces',
-    'editor-schema': 'Extend the editor'
+    'editor-schema': 'Extend the editor',
+    'content-mutate': 'Create and modify content'
   }
 
   function qualifierLabel(q: true | string): string {
