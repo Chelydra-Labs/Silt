@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-// expectedV2ColorKeys is the always-emitted v2 color-token set: the 7 surface
-// zones × 3 (bg/border/text), the 4 zone-agnostic interaction tokens, the 3
-// text-emphasis levels, 6 accent colors, 3 status colors, 3 error colors, and
-// the 2 Material-3 aliases that map onto the app zone.
+// expectedV2ColorKeys is the always-emitted v2 color-token set: the 9 surface
+// zones × 5 (bg/border/text/text-muted/text-disabled), 6 nav-icon tokens, the
+// 4 zone-agnostic interaction tokens, the 3 text-emphasis levels, 6 accent
+// colors, 3 status colors, and 3 error colors.
 var expectedV2ColorKeys = []string{
 	// 9 surface zones × 5 (bg/border/text/text-muted/text-disabled).
 	"--color-surface-app", "--color-surface-app-border", "--color-surface-app-text", "--color-surface-app-text-muted", "--color-surface-app-text-disabled",

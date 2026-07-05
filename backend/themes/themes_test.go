@@ -847,6 +847,60 @@ func TestValidate_TypographyScaleBadKeyRejected(t *testing.T) {
 	}
 }
 
+// TestValidate_NavIconsBadKeyRejected pins the nav_icons key whitelist.
+// nav_icons keys flow verbatim into CSS custom-property names
+// (out["--color-nav-icon-"+k]), so a key like "x;--color-error" would let an
+// untrusted imported theme override any --color-* token. The key pattern
+// ^[a-z0-9-]+$ (the same one that gates typography scale keys) is the only
+// thing that stops it.
+func TestValidate_NavIconsBadKeyRejected(t *testing.T) {
+	// Sanity: clean nav_icons keys validate.
+	good := strings.Replace(
+		minimalValidJSON,
+		`"error": {"fg": "#ffb4ab", "bg": "#93000a", "border": "#7d2a2a"}`,
+		`"error": {"fg": "#ffb4ab", "bg": "#93000a", "border": "#7d2a2a"}, "nav_icons": {"notes": "#2dd4bf", "settings": "#94a3b8"}`,
+		1,
+	)
+	if _, err := ParseAndValidate([]byte(good)); err != nil {
+		t.Fatalf("clean nav_icons should validate, got %v", err)
+	}
+	// A key with declaration-breaking chars is rejected.
+	for _, badKey := range []string{
+		`x;--color-error`,
+		`notes}body{`,
+		`has space`,
+		`UPPER`,
+		`under_score`,
+	} {
+		bad := strings.Replace(
+			minimalValidJSON,
+			`"error": {"fg": "#ffb4ab", "bg": "#93000a", "border": "#7d2a2a"}`,
+			`"error": {"fg": "#ffb4ab", "bg": "#93000a", "border": "#7d2a2a"}, "nav_icons": {"`+badKey+`": "#ff0000"}`,
+			1,
+		)
+		_, err := ParseAndValidate([]byte(bad))
+		if err == nil {
+			t.Errorf("expected validation error for nav_icons key %q, got nil", badKey)
+			continue
+		}
+		verrs, ok := err.(ValidationErrors)
+		if !ok {
+			t.Errorf("expected ValidationErrors for nav_icons key %q, got %T: %v", badKey, err, err)
+			continue
+		}
+		found := false
+		for _, e := range verrs {
+			if strings.Contains(e.Message, "nav_icons key") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected 'nav_icons key' error for %q, got %v", badKey, verrs)
+		}
+	}
+}
+
 func TestValidate_TypographyPartial(t *testing.T) {
 	// Only headline_font defined — other fields are optional.
 	partial := strings.Replace(

@@ -67,7 +67,7 @@
 </script>
 
 <header
-  class="silt-chrome drag-region bg-surface-titlebar flex justify-between items-center h-14 w-full z-50 fixed top-0 border-b border-surface-titlebar-border select-none"
+  class="drag-region bg-surface-titlebar flex justify-between items-center h-14 w-full z-50 fixed top-0 border-b border-surface-titlebar-border select-none"
 >
   <!-- Left: brand zone (matches sidebar width) + sidebar toggle at the boundary -->
   <div class="flex items-center min-w-0 h-full flex-grow">

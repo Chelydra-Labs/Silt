@@ -224,4 +224,28 @@ describe('theme v2 drift guard (#386)', () => {
       `dead v1 utility classes found:\n${violations.join('\n')}`
     ).toEqual([])
   })
+
+  it('no .svelte/.ts file under src/ uses the dead silt-chrome class', () => {
+    // Theme System v2 removed the .silt-chrome variable-remap CSS rule, so the
+    // class attribute is now pure dead markup on chrome surfaces. This guard
+    // prevents it from creeping back. Test files are excluded because they
+    // legitimately name the class as a fixture (this assertion does too).
+    const files = walkSrcFiles().filter((f) => !/\.test\.[jt]s$/.test(f))
+    const deadChrome = /\bsilt-chrome\b/
+    const violations: string[] = []
+    for (const file of files) {
+      const lines = readFileSync(file, 'utf-8').split('\n')
+      lines.forEach((line, i) => {
+        if (deadChrome.test(line)) {
+          violations.push(
+            `${relative(frontendSrc, file)}:${i + 1}: ${line.trim()}`
+          )
+        }
+      })
+    }
+    expect(
+      violations,
+      `dead silt-chrome class usage found:\n${violations.join('\n')}`
+    ).toEqual([])
+  })
 })

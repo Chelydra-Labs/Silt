@@ -1178,7 +1178,7 @@
     <div class="flex-1 flex mt-14 w-full relative min-h-0">
       <!-- Activity Bar -->
       <div
-        class="silt-chrome w-12 bg-surface-activitybar border-r border-surface-activitybar-border flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
+        class="w-12 bg-surface-activitybar border-r border-surface-activitybar-border flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
       >
         <div class="flex flex-col gap-4 items-center w-full">
           {#each views as v (v.id)}

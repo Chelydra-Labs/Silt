@@ -189,8 +189,16 @@ func validateMode(prefix string, m Mode) ValidationErrors {
 		errs = append(errs, validateShadowValue(prefix+".border_glow", v)...)
 	}
 
-	// Optional nav icon color overrides: validated like standard colors when present.
+	// Optional nav icon color overrides. Keys flow verbatim into CSS custom-
+	// property names (out["--color-nav-icon-"+k]), so they are gated by the
+	// same safe-key whitelist as typography scale keys — a key like
+	// "x;--color-error" would otherwise be CSS injection. Values are validated
+	// like standard colors when present.
 	for k, v := range m.NavIcons {
+		if !scaleKeyPattern.MatchString(k) {
+			errs = append(errs, ValidationError{Field: prefix + ".nav_icons." + k, Message: "nav_icons key must match ^[a-z0-9-]+$"})
+			continue
+		}
 		if val := strings.TrimSpace(v); val != "" {
 			errs = append(errs, validateColorField(prefix+".nav_icons."+k, val)...)
 		}
