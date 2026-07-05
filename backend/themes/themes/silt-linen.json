@@ -82,17 +82,17 @@
     },
     "light": {
       "surfaces": {
-        "app": { "bg": "#faf6ef", "border": "#a08c6c", "text": "#2b2a27" },
+        "app": { "bg": "#fdfbf7", "border": "#dfd7c8", "text": "#2b2a27" },
         "sidebar": {
-          "bg": "#1e1c18",
-          "border": "#302c24",
-          "text": "#e8e3d8",
-          "text_muted": "#b9b0a1",
-          "text_disabled": "#574f45"
+          "bg": "#f5ede0",
+          "border": "#dfd7c8",
+          "text": "#2b2a27",
+          "text_muted": "#594c3e",
+          "text_disabled": "#908472"
         },
         "editor": {
-          "bg": "#fbfaf7",
-          "border": "#a49070",
+          "bg": "#fbfaf6",
+          "border": "#e8dfd0",
           "text": "#2b2a27",
           "background": {
             "image": "repeating-linear-gradient(0deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
@@ -101,19 +101,19 @@
             "blend": "multiply"
           }
         },
-        "panel": { "bg": "#ffffff", "border": "#a89474", "text": "#2b2a27" },
-        "card": { "bg": "#ffffff", "border": "#988466", "text": "#2b2a27" },
-        "modal": { "bg": "#ffffff", "border": "#7e6c4e", "text": "#2b2a27" },
-        "popover": { "bg": "#ffffff", "border": "#6e5e44", "text": "#2b2a27" },
-        "titlebar": { "bg": "#181613", "border": "#302c24", "text": "#e8e3d8", "text_muted": "#b9b0a1", "text_disabled": "#574f45" },
-        "activitybar": { "bg": "#22201b", "border": "#36322a", "text": "#e8e3d8", "text_muted": "#b9b0a1", "text_disabled": "#574f45" }
+        "panel": { "bg": "#ffffff", "border": "#e2d8c7", "text": "#2b2a27" },
+        "card": { "bg": "#ffffff", "border": "#dfd7c8", "text": "#2b2a27" },
+        "modal": { "bg": "#ffffff", "border": "#cbbfae", "text": "#2b2a27" },
+        "popover": { "bg": "#ffffff", "border": "#bbaea2", "text": "#2b2a27" },
+        "titlebar": { "bg": "#ebdcc4", "border": "#dfd7c8", "text": "#2b2a27", "text_muted": "#594c3e", "text_disabled": "#908472" },
+        "activitybar": { "bg": "#ebdcc4", "border": "#dfd7c8", "text": "#2b2a27", "text_muted": "#594c3e", "text_disabled": "#908472" }
       },
-      "hover": "#e6dec8",
-      "active": "#d6cab0",
-      "border_active": "#a89a7c",
-      "border_focus": "#7a6e58",
-      "text_muted": "#524a3e",
-      "text_disabled": "#a89e8a",
+      "hover": "#eae2d0",
+      "active": "#decfa9",
+      "border_active": "#bfb094",
+      "border_focus": "#8c7e65",
+      "text_muted": "#594c3e",
+      "text_disabled": "#908472",
       "accent": {
         "primary": {
           "start": "#4a8a9c",

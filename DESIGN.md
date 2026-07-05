@@ -165,7 +165,7 @@ A dark earth palette: warm near-black canvas with **clay/terracotta** primary (s
 A soft, low-chroma palette modeled on natural linen: a warm grey-taupe canvas in dark mode (the authentic flax/oatmeal tone — grey-dominant with a whisper of warmth, never brown) and warm paper in light, both carrying a subtle **woven-thread + paper-grain background** on the editor surface (Linen is the canonical first-class theme that declares a `surfaces.editor.background` block; see §2.1). `primary` = muted **slate-blue** (reads as faded fountain-pen ink on paper), `secondary` = muted **lilac**. Intent: long-session comfort — a calm, tactile "paper" surface distinct from Cyber Forest's cool slate and Graphite's flat monochrome.
 
 - Dark: `surfaces.app.bg #242220` (warm grey-taupe); `surfaces.app.text #e8e3d8` (oatmeal-white); `accent.primary #7fb3c4 → #5d97ab`; `accent.secondary #a8a3d4 → #847cb0`; `surfaces.editor.background` = light-thread linen weave + grayscale grain, `overlay` blend, opacity 0.08, `size: tile`.
-- Light (dual-surface): `surfaces.app.bg #faf6ef` (warm paper, not pure white); `surfaces.app.text #2b2a27`; `surfaces.sidebar.bg #1e1c18` (warm taupe with matching dark titlebar and activitybar); `accent.primary #4a8a9c → #3a7383`; `accent.secondary #686da3 → #565b8e`; `surfaces.editor.background` = dark-thread weave + grain, `multiply` blend, opacity 0.10, `size: tile`.
+- Light: `surfaces.app.bg #fdfbf7` (warm paper); `surfaces.app.text #2b2a27`; `surfaces.sidebar.bg #f5ede0` (soft warm oatmeal flax sidebar with matching light titlebar and activitybar); `accent.primary #4a8a9c → #3a7383`; `accent.secondary #686da3 → #565b8e`; `surfaces.editor.background` = dark-thread weave + grain, `multiply` blend, opacity 0.10, `size: tile`.
 - Tuning: dark `text-muted → #b9b0a1` (warm grey) to clear AA on Linen's surfaces.
 
 2.2.3 Stark — high-contrast / accessibility (WCAG AAA)
@@ -207,7 +207,7 @@ accents); light mode is a brilliant winter morning. Intent: a workspace that
 feels clean, cold, and modern — the visual equivalent of fresh air.
 
 - Dark: `surfaces.app.bg #0a0e14` (cold blue-black); `surfaces.app.text #e2eaf2` (cool ice-white); `accent.primary #38bdf8 → #0ea5e9` (sky-blue — frost on glass); `accent.secondary #818cf8 → #6366f1` (periwinkle).
-- Light (dual-surface): `surfaces.app.bg #f0f4fa` (pale ice-blue); `surfaces.app.text #061020` (deep cold navy); `surfaces.sidebar.bg #0a1018` (cold blue-black with matching dark titlebar and activitybar); `accent.primary #0284c7 → #0369a1` (deeper sky); `accent.secondary #4f46e5 → #3730a3` (deeper indigo).
+- Light: `surfaces.app.bg #f4f8fc` (bright frost-blue white); `surfaces.app.text #061020` (deep cold navy); `surfaces.sidebar.bg #e8eff8` (frosted soft ice-blue sidebar with matching light titlebar and activitybar); `accent.primary #0284c7 → #0369a1` (deeper sky); `accent.secondary #4f46e5 → #3730a3` (deeper indigo).
 - Tuning: dark `text-muted #8a9aae → #94a4b8` to clear AA on the lightest interaction surface (`active #263348`).
 
 2.2.7 Synthwave — 80s retro neon

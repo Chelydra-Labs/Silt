@@ -72,28 +72,28 @@
     },
     "light": {
       "surfaces": {
-        "app": { "bg": "#f0f4fa", "border": "#6e88a8", "text": "#061020" },
+        "app": { "bg": "#f4f8fc", "border": "#c4d6eb", "text": "#061020" },
         "sidebar": {
-          "bg": "#0a1018",
-          "border": "#182030",
-          "text": "#e2eaf2",
-          "text_muted": "#8a9aae",
-          "text_disabled": "#3a4a60"
+          "bg": "#e8eff8",
+          "border": "#c4d6eb",
+          "text": "#0d203d",
+          "text_muted": "#43556d",
+          "text_disabled": "#8fa4bd"
         },
-        "editor": { "bg": "#f5f8fb", "border": "#728cac", "text": "#061020" },
-        "panel": { "bg": "#fbfcfd", "border": "#7690b0", "text": "#061020" },
-        "card": { "bg": "#ffffff", "border": "#5a7494", "text": "#061020" },
-        "modal": { "bg": "#ffffff", "border": "#486484", "text": "#061020" },
-        "popover": { "bg": "#ffffff", "border": "#3c5878", "text": "#061020" },
-        "titlebar": { "bg": "#070b10", "border": "#141d2a", "text": "#e2eaf2", "text_muted": "#8a9aae", "text_disabled": "#3a4a60" },
-        "activitybar": { "bg": "#0d141e", "border": "#1b2738", "text": "#e2eaf2", "text_muted": "#8a9aae", "text_disabled": "#3a4a60" }
+        "editor": { "bg": "#fcfdfe", "border": "#d2e2f4", "text": "#061020" },
+        "panel": { "bg": "#ffffff", "border": "#cbdcf0", "text": "#061020" },
+        "card": { "bg": "#ffffff", "border": "#c4d6eb", "text": "#061020" },
+        "modal": { "bg": "#ffffff", "border": "#aec7e4", "text": "#061020" },
+        "popover": { "bg": "#ffffff", "border": "#9dbadc", "text": "#061020" },
+        "titlebar": { "bg": "#dbe5f0", "border": "#c4d6eb", "text": "#0d203d", "text_muted": "#43556d", "text_disabled": "#8fa4bd" },
+        "activitybar": { "bg": "#dbe5f0", "border": "#c4d6eb", "text": "#0d203d", "text_muted": "#43556d", "text_disabled": "#8fa4bd" }
       },
-      "hover": "#cce0f0",
-      "active": "#b4cee4",
-      "border_active": "#7a96b4",
-      "border_focus": "#466488",
-      "text_muted": "#36486a",
-      "text_disabled": "#7e9ab4",
+      "hover": "#e2ebf4",
+      "active": "#d4e2f1",
+      "border_active": "#8db4dd",
+      "border_focus": "#4b7db2",
+      "text_muted": "#43556d",
+      "text_disabled": "#8fa4bd",
       "accent": {
         "primary": {
           "start": "oklch(0.588 0.139 242)",
