@@ -1178,7 +1178,7 @@
     <div class="flex-1 flex mt-14 w-full relative min-h-0">
       <!-- Activity Bar -->
       <div
-        class="silt-chrome w-12 bg-surface-sidebar border-r border-surface-sidebar-border flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
+        class="silt-chrome w-12 bg-surface-activitybar border-r border-surface-activitybar-border flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
       >
         <div class="flex flex-col gap-4 items-center w-full">
           {#each views as v (v.id)}
@@ -1195,7 +1195,7 @@
               }}
               class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
               class:text-accent-primary-start={activeView === v.id}
-              class:text-surface-sidebar-text-muted={activeView !== v.id}
+              class:text-surface-activitybar-text-muted={activeView !== v.id}
               aria-label={v.label}
               aria-pressed={activeView === v.id}
               title={v.label}
@@ -1206,7 +1206,11 @@
                   style:opacity={sidebarCollapsed ? '0.5' : '1'}
                 ></div>
               {/if}
-              <span class="material-symbols-outlined text-[20px]">{v.icon}</span
+              <span
+                class="material-symbols-outlined text-[20px]"
+                style:color={activeView === v.id
+                  ? undefined
+                  : `var(--color-nav-icon-${v.id})`}>{v.icon}</span
               >
             </button>
           {/each}
@@ -1214,11 +1218,14 @@
 
         <button
           onclick={() => openSettings('workspace')}
-          class="w-9 h-9 rounded-lg flex items-center justify-center text-surface-sidebar-text-muted hover:text-accent-primary-start hover:bg-hover hover:scale-105 active:scale-95 transition-all cursor-pointer border-none bg-transparent focus:outline-none"
+          class="w-9 h-9 rounded-lg flex items-center justify-center text-surface-activitybar-text-muted hover:text-accent-primary-start hover:bg-hover hover:scale-105 active:scale-95 transition-all cursor-pointer border-none bg-transparent focus:outline-none"
           aria-label="Settings"
           title="Settings"
         >
-          <span class="material-symbols-outlined text-[20px]">settings</span>
+          <span
+            class="material-symbols-outlined text-[20px]"
+            style:color={`var(--color-nav-icon-settings)`}>settings</span
+          >
         </button>
       </div>
 

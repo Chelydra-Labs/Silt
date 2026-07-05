@@ -58,6 +58,29 @@
     --color-surface-modal-text-disabled
   );
 
+  --color-surface-titlebar: var(--color-surface-app);
+  --color-surface-titlebar-border: var(--color-surface-app-border);
+  --color-surface-titlebar-text: var(--color-surface-app-text);
+  --color-surface-titlebar-text-muted: var(--color-surface-app-text-muted);
+  --color-surface-titlebar-text-disabled: var(
+    --color-surface-app-text-disabled
+  );
+
+  --color-surface-activitybar: var(--color-surface-app);
+  --color-surface-activitybar-border: var(--color-surface-app-border);
+  --color-surface-activitybar-text: var(--color-surface-app-text);
+  --color-surface-activitybar-text-muted: var(--color-surface-app-text-muted);
+  --color-surface-activitybar-text-disabled: var(
+    --color-surface-app-text-disabled
+  );
+
+  --color-nav-icon-notes: var(--color-surface-activitybar-text-muted);
+  --color-nav-icon-tags: var(--color-surface-activitybar-text-muted);
+  --color-nav-icon-calendar: var(--color-surface-activitybar-text-muted);
+  --color-nav-icon-tasks: var(--color-surface-activitybar-text-muted);
+  --color-nav-icon-kanban: var(--color-surface-activitybar-text-muted);
+  --color-nav-icon-settings: var(--color-surface-activitybar-text-muted);
+
   /* Zone-agnostic interaction + emphasis tokens. */
   --color-hover: #1c1c21;
   --color-active: #222226;
@@ -114,6 +137,10 @@
     color-mix(in oklch, var(--color-surface-app) 35%, transparent);
   --shadow-lg: 0 12px 32px
     color-mix(in oklch, var(--color-surface-app) 30%, transparent);
+
+  /* Effect tokens (optional; themes override for personality). */
+  --focus-glow: none;
+  --border-glow: none;
 
   /* Layout spacing (non-theme; static guide rhythms). */
   --spacing-guide-offset: -12px;
@@ -224,6 +251,23 @@ body {
 /* Global transitions for interactive states */
 * {
   box-sizing: border-box;
+}
+
+/* Theme-driven focus glow: adds a box-shadow halo on focus-visible when the
+   active theme sets --focus-glow (e.g. Synthwave's neon pink+cyan halo).
+   Themes that omit focus_glow emit "none", so this rule is a visual no-op
+   for them. The outline remains the primary focus indicator; this layers a
+   glow behind it for themes that want ambient neon energy. */
+:focus-visible {
+  box-shadow: var(--focus-glow);
+}
+
+/* Theme-driven border glow: applies an ambient box-shadow to bordered
+   surface elements when the theme sets --border-glow. Synthwave uses this
+   for neon edge glow on cards/panels/modals; other themes can use it for
+   subtle earthy depth or icy shimmer. "none" is a no-op. */
+.border-glow {
+  box-shadow: var(--border-glow);
 }
 
 .transition-all-standard {

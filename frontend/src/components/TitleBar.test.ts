@@ -54,7 +54,7 @@ describe('TitleBar', () => {
     // <img alt="Silt"> exposes its name via the alt attribute, not text
     // content, so it is not matched.
     const wordmark = screen.getByText('Silt')
-    expect(wordmark).toHaveClass('text-surface-sidebar-text')
+    expect(wordmark).toHaveClass('text-surface-titlebar-text')
     expect(wordmark).not.toHaveClass('text-accent-primary-start')
   })
 })

@@ -80,18 +80,23 @@ type Mode struct {
 	Spacing      *Spacing `json:"spacing,omitempty"`
 	Shadow       *Shadow  `json:"shadow,omitempty"`
 	Editor       *Editor  `json:"editor,omitempty"`
+	FocusGlow       string   `json:"focus_glow,omitempty"`
+	BorderGlow      string   `json:"border_glow,omitempty"`
+	NavIcons        map[string]string `json:"nav_icons,omitempty"`
 }
 
-// Surfaces holds the 7 named surface zones. App is the always-authored root;
+// Surfaces holds the 9 named surface zones. App is the always-authored root;
 // the rest are optional and inherit from their parent when absent.
 type Surfaces struct {
-	App     Surface  `json:"app"`
-	Sidebar *Surface `json:"sidebar,omitempty"`
-	Editor  *Surface `json:"editor,omitempty"`
-	Panel   *Surface `json:"panel,omitempty"`
-	Modal   *Surface `json:"modal,omitempty"`
-	Popover *Surface `json:"popover,omitempty"`
-	Card    *Surface `json:"card,omitempty"`
+	App         Surface  `json:"app"`
+	Sidebar     *Surface `json:"sidebar,omitempty"`
+	Editor      *Surface `json:"editor,omitempty"`
+	Panel       *Surface `json:"panel,omitempty"`
+	Modal       *Surface `json:"modal,omitempty"`
+	Popover     *Surface `json:"popover,omitempty"`
+	Card        *Surface `json:"card,omitempty"`
+	Titlebar    *Surface `json:"titlebar,omitempty"`
+	Activitybar *Surface `json:"activitybar,omitempty"`
 }
 
 // Surface is one UI region's canvas: a background, a hairline border, a
@@ -220,7 +225,7 @@ type surfaceZone struct {
 // surfaceZones is the canonical, ordered zone list with the strict-tree
 // inheritance graph (RFC §5 / decision D6):
 //
-//	app ─┬─ sidebar, editor, panel
+//	app ─┬─ sidebar, editor, panel, titlebar, activitybar
 //	     └─ panel ─┬─ card
 //	               └─ modal ── popover
 var surfaceZones = []surfaceZone{
@@ -238,6 +243,10 @@ var surfaceZones = []surfaceZone{
 		get: func(s Surfaces) *Surface { return s.Modal }},
 	{name: "popover", parent: "modal", cssBg: "--color-surface-popover", cssBorder: "--color-surface-popover-border", cssText: "--color-surface-popover-text", cssTextMuted: "--color-surface-popover-text-muted", cssTextDisabled: "--color-surface-popover-text-disabled",
 		get: func(s Surfaces) *Surface { return s.Popover }},
+	{name: "titlebar", parent: "app", cssBg: "--color-surface-titlebar", cssBorder: "--color-surface-titlebar-border", cssText: "--color-surface-titlebar-text", cssTextMuted: "--color-surface-titlebar-text-muted", cssTextDisabled: "--color-surface-titlebar-text-disabled",
+		get: func(s Surfaces) *Surface { return s.Titlebar }},
+	{name: "activitybar", parent: "app", cssBg: "--color-surface-activitybar", cssBorder: "--color-surface-activitybar-border", cssText: "--color-surface-activitybar-text", cssTextMuted: "--color-surface-activitybar-text-muted", cssTextDisabled: "--color-surface-activitybar-text-disabled",
+		get: func(s Surfaces) *Surface { return s.Activitybar }},
 }
 
 // zoneByName resolves a zone name to its surfaceZone descriptor.
@@ -372,6 +381,12 @@ func (t *Theme) Flatten(mode string) map[string]string {
 	// Editor interaction tokens (optional; defaults keep browser equivalents).
 	flattenEditor(out, m)
 
+	// Effects (optional; "none" when omitted so existing themes are unaffected).
+	flattenEffects(out, m)
+
+	// Nav icons (optional; defaults to activitybar text-muted).
+	flattenNavIcons(out, m)
+
 	// Typography (theme-level, not per-mode).
 	flattenTypography(out, t.Typography)
 
@@ -471,6 +486,38 @@ func flattenTypography(out map[string]string, ty *Typography) {
 			if vv := strings.TrimSpace(v); vv != "" {
 				out["--font-weight-"+k] = vv
 			}
+		}
+	}
+}
+
+// flattenEffects emits the optional glow effect tokens. "none" when omitted so
+// existing themes are unaffected — CSS box-shadow: none is a no-op.
+func flattenEffects(out map[string]string, m Mode) {
+	if v := strings.TrimSpace(m.FocusGlow); v != "" {
+		out["--focus-glow"] = v
+	} else {
+		out["--focus-glow"] = "none"
+	}
+	if v := strings.TrimSpace(m.BorderGlow); v != "" {
+		out["--border-glow"] = v
+	} else {
+		out["--border-glow"] = "none"
+	}
+}
+
+// flattenNavIcons emits the optional navigation icon colors. Defaults to
+// var(--color-surface-activitybar-text-muted) when omitted.
+func flattenNavIcons(out map[string]string, m Mode) {
+	// Pre-populate the canonical views so they are always present.
+	canonical := []string{"notes", "tags", "calendar", "tasks", "kanban", "settings"}
+	for _, id := range canonical {
+		out["--color-nav-icon-"+id] = "var(--color-surface-activitybar-text-muted)"
+	}
+
+	// Layer on any custom overrides from the theme map.
+	for k, v := range m.NavIcons {
+		if val := strings.TrimSpace(v); val != "" {
+			out["--color-nav-icon-"+k] = val
 		}
 	}
 }

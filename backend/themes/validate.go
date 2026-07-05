@@ -181,6 +181,20 @@ func validateMode(prefix string, m Mode) ValidationErrors {
 		errs = append(errs, validateColorField(prefix+".editor.link_hover", e.LinkHover)...)
 		errs = append(errs, validateColorField(prefix+".editor.highlight", e.Highlight)...)
 	}
+	// Optional glow effects: CSS box-shadow strings, validated like shadows.
+	if v := strings.TrimSpace(m.FocusGlow); v != "" {
+		errs = append(errs, validateShadowValue(prefix+".focus_glow", v)...)
+	}
+	if v := strings.TrimSpace(m.BorderGlow); v != "" {
+		errs = append(errs, validateShadowValue(prefix+".border_glow", v)...)
+	}
+
+	// Optional nav icon color overrides: validated like standard colors when present.
+	for k, v := range m.NavIcons {
+		if val := strings.TrimSpace(v); val != "" {
+			errs = append(errs, validateColorField(prefix+".nav_icons."+k, val)...)
+		}
+	}
 
 	return errs
 }

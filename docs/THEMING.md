@@ -19,20 +19,22 @@ Both modes are **required** in every theme file. A theme with only a dark mode i
 
 ### Surface zones (the canvas model)
 
-Silt's UI is divided into 7 named **surface zones** — `app`, `sidebar`,
-`editor`, `panel`, `card`, `modal`, `popover` — and each zone carries its own
+Silt's UI is divided into 9 named **surface zones** — `app`, `sidebar`,
+`editor`, `panel`, `card`, `modal`, `popover`, `titlebar`, `activitybar` — and each zone carries its own
 `bg` / `border` / `text`. Only **`app`** (the root canvas behind everything) is
 required; the others are optional and **inherit** from a parent zone when you
 leave them out:
 
 ```
 app          the root (always authored)
-├─ sidebar     → app      (navigation sidebar, activity bar)
-├─ editor      → app      (the TipTap writing canvas)
-├─ panel       → app      (docked panels, settings, kanban/calendar)
-│  ├─ card       → panel    (cards, list items, callouts)
-│  └─ modal      → panel    (modal dialogs)
-│     └─ popover   → modal    (menus, dropdowns, tooltips, toasts)
+├─ sidebar      → app      (filetree/notebook list)
+├─ editor       → app      (the TipTap writing canvas)
+├─ panel        → app      (docked panels, settings, kanban/calendar)
+│  ├─ card        → panel    (cards, list items, callouts)
+│  └─ modal       → panel    (modal dialogs)
+│     └─ popover    → modal    (menus, dropdowns, tooltips, toasts)
+├─ titlebar     → app      (top title bar / header)
+└─ activitybar  → app      (leftmost vertical navigation strip)
 ```
 
 So a minimal theme authors just `app` and every other surface follows. A theme
@@ -101,12 +103,14 @@ Each zone is `{bg, border, text}`. Only **`surfaces.app`** is required; every ot
 | JSON path | CSS variable | Required | Meaning |
 | :--- | :--- | :--- | :--- |
 | `surfaces.app.{bg,border,text}` | `--color-surface-app` / `-app-border` / `-app-text` | yes | The root canvas behind everything. `bg` also seeds the native window background (the pre-CSS paint color). |
-| `surfaces.sidebar.*` | `--color-surface-sidebar{,-border,-text}` | no | Navigation sidebar, activity bar. Inherits from `app`. |
+| `surfaces.sidebar.*` | `--color-surface-sidebar{,-border,-text}` | no | Folders / notebook list. Inherits from `app`. |
 | `surfaces.editor.*` | `--color-surface-editor{,-border,-text}` | no | The TipTap writing canvas. Inherits from `app`. |
 | `surfaces.panel.*` | `--color-surface-panel{,-border,-text}` | no | Docked panels, settings panes, kanban/calendar. Inherits from `app`. |
 | `surfaces.card.*` | `--color-surface-card{,-border,-text}` | no | Cards, list items, callouts. Inherits from `panel`. |
 | `surfaces.modal.*` | `--color-surface-modal{,-border,-text}` | no | Modal dialogs. Inherits from `panel`. |
 | `surfaces.popover.*` | `--color-surface-popover{,-border,-text}` | no | Menus, dropdowns, tooltips, toasts. Inherits from `modal`. |
+| `surfaces.titlebar.*` | `--color-surface-titlebar{,-border,-text}` | no | Top title bar / header. Inherits from `app`. |
+| `surfaces.activitybar.*` | `--color-surface-activitybar{,-border,-text}` | no | Leftmost vertical navigation strip. Inherits from `app`. |
 
 When you omit a zone, the engine emits `var(--color-surface-<parent>)` fallbacks, so the zone always resolves and a theme switch repaints every surface in one cycle. Author a zone only when you want it to differ from its parent. `--color-text-primary` (body copy, highest-contrast text) is not authored directly — it is an alias for `surfaces.app.text`.
 
@@ -174,6 +178,16 @@ Caret, selection, link, and highlight colors for the writing canvas. These are i
 | `editor.link` | `--color-editor-link` | Link color. |
 | `editor.link_hover` | `--color-editor-link-hover` | Hovered link. |
 | `editor.highlight` | `--color-editor-highlight` | The highlight marker. |
+
+### `focus_glow` / `border_glow` / `nav_icons` (optional, per-mode)
+
+Optional visual effects and icon overrides to give advanced themes extra polish.
+
+| JSON path | CSS variable | Meaning |
+| :--- | :--- | :--- |
+| `focus_glow` | `--focus-glow` | CSS box-shadow value for active focus halos. Defaults to `none`. |
+| `border_glow` | `--border-glow` | CSS box-shadow value for card/panel borders. Defaults to `none`. |
+| `nav_icons` | `--color-nav-icon-*` | Map of `view_id: color` overrides (e.g. `{"notes": "#ff2d95"}`) for navigation icons in the activity bar. Falls back to activitybar's muted text color. |
 
 ### `background` — per-zone surface overlay (optional, per-zone)
 
@@ -462,11 +476,13 @@ Copy-paste this and fill in the `…` placeholders. Both modes are required; eve
   "modes": {
     "dark": {
       "surfaces": {
-        "app":     { "bg": "#………", "border": "#………", "text": "#………" },
-        "sidebar": { "bg": "#………", "border": "#………", "text": "#………" },
-        "editor":  { "bg": "#………", "border": "#………", "text": "#………",
-                     "background": { "image": "…", "size": "tile", "opacity": 0.06, "blend": "overlay" } },
-        "panel":   { "bg": "#………", "border": "#………", "text": "#………" }
+        "app":         { "bg": "#………", "border": "#………", "text": "#………" },
+        "sidebar":     { "bg": "#………", "border": "#………", "text": "#………" },
+        "editor":      { "bg": "#………", "border": "#………", "text": "#………",
+                         "background": { "image": "…", "size": "tile", "opacity": 0.06, "blend": "overlay" } },
+        "panel":       { "bg": "#………", "border": "#………", "text": "#………" },
+        "titlebar":    { "bg": "#………", "border": "#………", "text": "#………" },
+        "activitybar": { "bg": "#………", "border": "#………", "text": "#………" }
       },
       "hover": "#………", "active": "#………",
       "border_active": "#………", "border_focus": "#………",
@@ -479,7 +495,13 @@ Copy-paste this and fill in the `…` placeholders. Both modes are required; eve
       "error":  { "fg": "#………", "bg": "#………", "border": "#………" },
       "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
       "editor": { "caret": "#………", "selection": "rgba(…,…,…,0.25)", "selection_text": "#………",
-                  "link": "#………", "link_hover": "#………", "highlight": "rgba(…,…,…,0.35)" }
+                  "link": "#………", "link_hover": "#………", "highlight": "rgba(…,…,…,0.35)" },
+      "focus_glow": "0 0 12px rgba(…,…,…,0.3)",
+      "border_glow": "0 0 10px rgba(…,…,…,0.1)",
+      "nav_icons": {
+        "notes": "#………",
+        "tags": "#………"
+      }
     },
     "light": {
       "surfaces": {

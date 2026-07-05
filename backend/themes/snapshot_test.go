@@ -12,7 +12,7 @@ import (
 // text-emphasis levels, 6 accent colors, 3 status colors, 3 error colors, and
 // the 2 Material-3 aliases that map onto the app zone.
 var expectedV2ColorKeys = []string{
-	// 7 surface zones × 5 (bg/border/text/text-muted/text-disabled).
+	// 9 surface zones × 5 (bg/border/text/text-muted/text-disabled).
 	"--color-surface-app", "--color-surface-app-border", "--color-surface-app-text", "--color-surface-app-text-muted", "--color-surface-app-text-disabled",
 	"--color-surface-sidebar", "--color-surface-sidebar-border", "--color-surface-sidebar-text", "--color-surface-sidebar-text-muted", "--color-surface-sidebar-text-disabled",
 	"--color-surface-editor", "--color-surface-editor-border", "--color-surface-editor-text", "--color-surface-editor-text-muted", "--color-surface-editor-text-disabled",
@@ -20,6 +20,9 @@ var expectedV2ColorKeys = []string{
 	"--color-surface-card", "--color-surface-card-border", "--color-surface-card-text", "--color-surface-card-text-muted", "--color-surface-card-text-disabled",
 	"--color-surface-modal", "--color-surface-modal-border", "--color-surface-modal-text", "--color-surface-modal-text-muted", "--color-surface-modal-text-disabled",
 	"--color-surface-popover", "--color-surface-popover-border", "--color-surface-popover-text", "--color-surface-popover-text-muted", "--color-surface-popover-text-disabled",
+	"--color-surface-titlebar", "--color-surface-titlebar-border", "--color-surface-titlebar-text", "--color-surface-titlebar-text-muted", "--color-surface-titlebar-text-disabled",
+	"--color-surface-activitybar", "--color-surface-activitybar-border", "--color-surface-activitybar-text", "--color-surface-activitybar-text-muted", "--color-surface-activitybar-text-disabled",
+	"--color-nav-icon-notes", "--color-nav-icon-tags", "--color-nav-icon-calendar", "--color-nav-icon-tasks", "--color-nav-icon-kanban", "--color-nav-icon-settings",
 	// Zone-agnostic interaction tokens.
 	"--color-hover", "--color-active", "--color-border-active", "--color-border-focus",
 	// Text-emphasis levels.
@@ -39,6 +42,8 @@ var expectedV2GeometryKeys = []string{
 	"--radius-sm", "--radius-md", "--radius-lg", "--radius-xl", "--radius-full",
 	"--spacing-sm", "--spacing-md", "--spacing-lg", "--spacing-xl",
 	"--shadow-sm", "--shadow-md", "--shadow-lg",
+	// Effect tokens (always emitted; "none" when omitted).
+	"--focus-glow", "--border-glow",
 }
 
 // expectedV2EditorKeys is the always-emitted editor-canvas interaction block
@@ -68,6 +73,11 @@ func isTypeScaleKey(k string) bool {
 	return strings.HasPrefix(k, "--font-size-") ||
 		strings.HasPrefix(k, "--line-height-") ||
 		strings.HasPrefix(k, "--font-weight-")
+}
+
+// isNavIconKey reports whether a token is one of the optional nav-icon keys.
+func isNavIconKey(k string) bool {
+	return strings.HasPrefix(k, "--color-nav-icon-")
 }
 
 // TestDefaultTheme_FlattensV2TokenSet asserts the embedded default flattens
@@ -114,10 +124,10 @@ func TestDefaultTheme_FlattensV2TokenSet(t *testing.T) {
 				slices.Contains(expectedV2GeometryKeys, k) ||
 				slices.Contains(expectedV2EditorKeys, k) ||
 				slices.Contains(expectedV2TypographyKeys, k) ||
-				isBackgroundOverlayKey(k) || isTypeScaleKey(k) {
+				isBackgroundOverlayKey(k) || isTypeScaleKey(k) || isNavIconKey(k) {
 				continue
 			}
-			t.Errorf("%s mode: unexpected token %s (v2 emits only the canonical set + optional background/type-scale)", c, k)
+			t.Errorf("%s mode: unexpected token %s (v2 emits only the canonical set + optional background/type-scale/nav-icon)", c, k)
 		}
 		// Legacy v1 tokens must NOT survive the v2 Flatten.
 		for _, legacy := range []string{
@@ -187,10 +197,11 @@ func TestFirstClassThemes_FlattenShape(t *testing.T) {
 					slices.Contains(expectedV2EditorKeys, k),
 					slices.Contains(expectedV2TypographyKeys, k),
 					isBackgroundOverlayKey(k),
-					isTypeScaleKey(k):
+					isTypeScaleKey(k),
+					isNavIconKey(k):
 					// allowed canonical or optional key
 				default:
-					t.Errorf("%s [%s]: unexpected token %s (only --silt-bg-* and type-scale are allowed extras)",
+					t.Errorf("%s [%s]: unexpected token %s (only --silt-bg-*, type-scale, and nav-icon are allowed extras)",
 						th.ID, mode, k)
 				}
 			}
