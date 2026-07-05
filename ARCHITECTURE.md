@@ -757,6 +757,22 @@ Running a local-first system that allows concurrent UI actions and external file
 
 Because SQLite runs in memory, concurrent reads/writes from the Svelte UI and the fsnotify file monitor must be strictly controlled to prevent database-locked exceptions. The engine routes all file writing and database tasks through an app-wide `core.ExecutionCoordinator`: a per-file `sync.Mutex` map (`LockFileWrite(path, fn)` serializes all writes to a given path, so writes to *different* files don't block each other) plus the DB connection. DB access is serialized via `SetMaxOpenConns(1)`; WAL still allows unlimited concurrent readers (§3). See `backend/core`.
 
+The App-level locking model is layered on top of the coordinator and guards
+distinct concerns with distinct mutexes (see `app.go` for the full contract):
+`vaultMu` (RWMutex) protects the LIFECYCLE of the vault-scoped service
+pointers (db, coordinator, watcher, tracker, vaultPath) — reader IPC handlers
+take `RLock` for the call's duration so a lifecycle cutover can't nil a
+pointer mid-use; lifecycle transitions take the exclusive `Lock`.
+`themeWriteMu` (Mutex) serializes on-disk theme-file mutations (import, fork,
+set-background) so the importer's collision-check-then-write and the fork's
+stat-then-write can't race. `settingsWriteMu` (Mutex, in `vault.go`)
+serializes the settings.json read-modify-write. A handler that writes both a
+theme file and settings.json acquires `themeWriteMu` first, then
+`settingsWriteMu` (never reversed). Blocking native dialogs (file pickers)
+are never called under `vaultMu` — the handler snapshots the needed paths
+under `RLock`, releases, runs the dialog, then acquires `themeWriteMu` for the
+write.
+
 
 6.2 Viewport Sync Conflict Mitigation
 
