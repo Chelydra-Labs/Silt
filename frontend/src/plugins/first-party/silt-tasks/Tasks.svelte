@@ -534,25 +534,25 @@
         </p>
       {/if}
     {/if}
+  </div>
 
-    <!-- Persistent inline quick-add at the bottom of the list (#409).
-         Mirrors the Kanban board's per-column inline-add UX: type a title,
-         Enter creates a standalone task, the input clears and stays focused
-         for rapid capture. keepOpenAfterCreate drives the clear+refocus loop
-         inside QuickAddTask; the block:changed subscription above reloads
-         the list so the new row appears on the next tick. No onCancel is
-         passed: this is a persistent affordance, not a toggle, so
-         blur-with-empty-title leaves it in place. -->
-    <div
-      class="border-t border-surface-panel-border pt-3 mt-4"
-      data-testid="tasks-inline-quickadd"
-    >
-      <QuickAddTask
-        {ctx}
-        placeholder="Add a task — Enter to add"
-        keepOpenAfterCreate={true}
-      />
-    </div>
+  <!-- Persistent inline quick-add, pinned at the bottom of the view (#409).
+       Lives OUTSIDE the scroll container so it stays anchored to the viewport
+       bottom regardless of list length (empty, short, or scrolling). Mirrors
+       the Kanban board's per-column inline-add UX: type a title, Enter creates
+       a standalone task, the input clears and stays focused for rapid capture.
+       keepOpenAfterCreate drives the clear+refocus loop inside QuickAddTask;
+       the block:changed subscription above reloads the list so the new row
+       appears on the next tick. -->
+  <div
+    class="px-6 py-3 border-t border-surface-panel-border bg-surface-panel flex-shrink-0"
+    data-testid="tasks-inline-quickadd"
+  >
+    <QuickAddTask
+      {ctx}
+      placeholder="Add a task — Enter to add"
+      keepOpenAfterCreate={true}
+    />
   </div>
 </div>
 
