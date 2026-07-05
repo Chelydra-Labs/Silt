@@ -194,7 +194,7 @@ feel creative and joyful rather than clinical — a decorated notebook, not a
 spreadsheet.
 
 - Dark: `surfaces.app.bg #1a0e1e` (warm magenta-tinted near-black); `surfaces.app.text #f5ede8` (warm cream-white); `accent.primary #ff6b8a → #e84371` (coral-pink); `accent.secondary #4fd1c5 → #38b2ac` (teal).
-- Light (dual-surface): page `surfaces.app.bg #fdf6f0` (warm cream), `surfaces.app.text #2d1f1a` (warm dark brown); the `sidebar` zone is authored dark — `surfaces.sidebar.bg #2a1322` (deep raspberry-black with matching dark titlebar and activitybar) — so the app skeleton is a deep raspberry candy shell framing a warm cream page. Accents deepen to `#e84371` / `#2c7a7b` for readability on white.
+- Light: `surfaces.app.bg #fffcf9` (warm cotton-candy cream); `surfaces.app.text #5c2433` (deep raspberry-rose); `surfaces.sidebar.bg #ffeff2` (soft bubblegum-pink with matching light titlebar and activitybar).
 - Tuning: dark `accent.primary.start #ff6b8a` deepened to `#e84371` in light mode for AA non-text (3:1) on the warm cream page; the dark-mode coral glows on the magenta canvas while the light-mode deeper coral reads cleanly on cream.
 
 2.2.6 Frost — clean & airy
