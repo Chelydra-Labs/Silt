@@ -114,6 +114,18 @@ func main() {
 		Frameless:        true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
+			// Serve per-theme background assets (<id>.assets/<file>) from
+			// the CURRENT themes directory. Wails tries the embedded
+			// Assets first and only falls through to Handler on a miss, so
+			// this only receives the dynamic background-image references —
+			// every regular frontend asset still loads from the embed. The
+			// resolver reads vaultPath under vaultMu on each request so a
+			// vault open/switch after startup is reflected immediately.
+			Handler: themeAssetHandler(func() string {
+				app.vaultMu.RLock()
+				defer app.vaultMu.RUnlock()
+				return app.themesDir()
+			}),
 		},
 		Debug: options.Debug{
 			OpenInspectorOnStartup: shouldOpenDevtools(),
@@ -136,4 +148,3 @@ func main() {
 		println("Error:", err.Error())
 	}
 }
-

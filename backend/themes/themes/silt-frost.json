@@ -98,7 +98,7 @@
       "status": {
         "warn": "#a8741c",
         "danger": "#bc3a58",
-        "success": "#1f9a78"
+        "success": "#137d56"
       },
       "error": {
         "fg": "#a83020",

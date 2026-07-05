@@ -116,7 +116,7 @@
         }
       },
       "status": {
-        "warn": "#b08428",
+        "warn": "#856018",
         "danger": "#b85555",
         "success": "#4a7a4a"
       },

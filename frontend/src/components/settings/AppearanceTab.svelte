@@ -23,6 +23,7 @@
     loadThemes,
     pickAndImportTheme,
     restoreActiveTheme,
+    systemScheme,
     themeState,
     themesState,
     themeStatus,
@@ -214,7 +215,7 @@
   function statusClasses(s: ThemeStatus | null): string {
     if (!s || !s.message) return ''
     if (s.kind === 'error') {
-      return 'bg-error/10 border border-error/30 text-error'
+      return 'bg-error-bg border border-error-border text-error'
     }
     if (s.kind === 'success') {
       return 'bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start'
@@ -254,6 +255,11 @@
         >
           <span class="material-symbols-outlined text-[16px]">{m.icon}</span>
           {m.label}
+          {#if m.id === 'system'}
+            <span class="text-text-muted font-label-sm" aria-hidden="true"
+              >· {systemScheme.mode === 'dark' ? 'Dark' : 'Light'}</span
+            >
+          {/if}
         </button>
       {/each}
     </div>
@@ -315,7 +321,7 @@
       </div>
     {:else if themesState.loadError}
       <div
-        class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md"
+        class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
         role="alert"
       >
         <span class="material-symbols-outlined text-[18px]">error</span>

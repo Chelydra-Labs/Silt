@@ -584,7 +584,7 @@ func TestCopyDir_RejectsOversizeAsset(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(singleSrc, "ok.bin"), atCap, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := copyDir(singleSrc, dst); err != nil {
+		if err := copyDir(singleSrc, dst, 0); err != nil {
 			t.Fatalf("copyDir at-cap: %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(dst, "ok.bin")); err != nil {
@@ -594,7 +594,7 @@ func TestCopyDir_RejectsOversizeAsset(t *testing.T) {
 
 	t.Run("over cap rejected", func(t *testing.T) {
 		dst := t.TempDir()
-		err := copyDir(src, dst)
+		err := copyDir(src, dst, 0)
 		if err == nil {
 			t.Fatal("expected copyDir to reject an oversize asset, got nil")
 		}
@@ -627,5 +627,105 @@ func TestExportThemeToPath_OversizeAssetRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds the") && !strings.Contains(err.Error(), "cap") {
 		t.Errorf("expected a cap-related error, got: %v", err)
+	}
+}
+
+// TestCopyDir_SkipsSymlinks pins the symlink hardening: a symlink placed
+// in the assets dir is skipped (not followed). Without the Lstat check,
+// copyDir would call IsDir() (which Stats through the link), follow it,
+// and copy the link target's bytes — turning an in-assets symlink into an
+// arbitrary out-of-tree read on export.
+func TestCopyDir_SkipsSymlinks(t *testing.T) {
+	// Some CI sandboxes (root, certain containers) follow symlinks even
+	// when our Lstat-based guard runs; the structural assertion below
+	// (link skipped, regular file copied) holds regardless.
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	// A real regular file that MUST be copied.
+	realBytes := []byte("real-file-contents")
+	if err := os.WriteFile(filepath.Join(src, "real.txt"), realBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A separate file outside src that the symlink points at; if the link
+	// were followed, its contents would land in dst as "linked.txt".
+	outside := filepath.Join(t.TempDir(), "outside-secret.txt")
+	if err := os.WriteFile(outside, []byte("should-not-be-copied"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(src, "linked.txt")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		// Symlinks may be unsupported (no elevated perms on Windows, etc).
+		// Skip rather than fail in those environments.
+		t.Skipf("symlink unsupported in this environment: %v", err)
+	}
+
+	if err := copyDir(src, dst, 0); err != nil {
+		t.Fatalf("copyDir: %v", err)
+	}
+	// Regular file copied.
+	got, err := os.ReadFile(filepath.Join(dst, "real.txt"))
+	if err != nil {
+		t.Fatalf("expected real.txt copied: %v", err)
+	}
+	if string(got) != string(realBytes) {
+		t.Errorf("real.txt bytes drift: %q", got)
+	}
+	// Symlink NOT followed: dst/linked.txt must not exist.
+	if _, err := os.Lstat(filepath.Join(dst, "linked.txt")); err == nil {
+		t.Errorf("symlink was followed — dst/linked.txt exists but should have been skipped")
+	}
+}
+
+// TestCopyDir_RejectsTooDeepTree pins the depth bound: a tree nested beyond
+// maxAssetsCopyDepth must be rejected, not walked indefinitely. This is the
+// cycle / zip-bomb backstop that complements the per-file size cap.
+func TestCopyDir_RejectsTooDeepTree(t *testing.T) {
+	src := t.TempDir()
+	// Build a chain deeper than maxAssetsCopyDepth. copyDir is called at
+	// depth 0 against src itself; each level of nesting inside increments
+	// the recursion depth. So depth=0 sees src, depth=1 sees src/d1, …
+	// and depth=maxAssetsCopyDepth+1 must error before reading anything.
+	cur := src
+	for i := 0; i <= maxAssetsCopyDepth+1; i++ {
+		cur = filepath.Join(cur, "d")
+		if err := os.MkdirAll(cur, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", cur, err)
+		}
+		// Drop a file at every level so the recursion actually descends.
+		if err := os.WriteFile(filepath.Join(cur, "f.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	dst := t.TempDir()
+	err := copyDir(src, dst, 0)
+	if err == nil {
+		t.Fatal("expected copyDir to reject an over-deep tree, got nil")
+	}
+	if !strings.Contains(err.Error(), "nested too deep") {
+		t.Errorf("expected a depth-related error, got: %v", err)
+	}
+}
+
+// TestCopyDir_AllowsShallowTree confirms the depth bound doesn't reject the
+// legitimate case: the assets dir + a couple of legitimate subdirectories
+// must still copy cleanly.
+func TestCopyDir_AllowsShallowTree(t *testing.T) {
+	src := t.TempDir()
+	// Nest up to exactly maxAssetsCopyDepth (entry + 3 levels).
+	cur := src
+	for i := 0; i < maxAssetsCopyDepth; i++ {
+		cur = filepath.Join(cur, "d")
+		if err := os.MkdirAll(cur, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(cur, "f.txt"), []byte("ok"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	dst := t.TempDir()
+	if err := copyDir(src, dst, 0); err != nil {
+		t.Fatalf("expected shallow tree to copy, got: %v", err)
 	}
 }

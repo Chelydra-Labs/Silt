@@ -518,7 +518,7 @@
       <!-- Error banner -->
       {#if settings.error}
         <div
-          class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md"
+          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
         >
           <span class="material-symbols-outlined text-[18px]">error</span>
           <span class="flex-1">{settings.error}</span>

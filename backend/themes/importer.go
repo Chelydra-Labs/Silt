@@ -224,8 +224,17 @@ func copyAssetsDirIfExists(themesDir, id, dstPath string) error {
 		return nil
 	}
 	dstAssets := filepath.Join(filepath.Dir(dstPath), id+".assets")
-	return copyDir(srcAssets, dstAssets)
+	return copyDir(srcAssets, dstAssets, 0)
 }
+
+// maxAssetsCopyDepth bounds how deep copyDir will recurse through the
+// per-theme assets directory. The tree is intentionally shallow (one level
+// of <id>.assets/<file>); a deeper tree is either a hostile zip-bomb
+// attempt or an accidentally-synced nested folder, and either way the
+// export should fail loudly instead of walking an unbounded chain of
+// directories. Depth is counted from the entry call (depth 0 = the assets
+// dir itself).
+const maxAssetsCopyDepth = 3
 
 // copyDir recursively copies src to dst. Used only by the export path for the
 // per-theme assets directory; the tree is shallow in practice but the walk
@@ -234,7 +243,17 @@ func copyAssetsDirIfExists(themesDir, id, dstPath string) error {
 // size-bounded by maxBackgroundAssetBytes (matching the StoreBackgroundAsset
 // ingest cap) so a hostile or accidentally-huge synced asset cannot drive
 // unbounded allocation on export.
-func copyDir(src, dst string) error {
+//
+// Symlinks are NEVER followed: an attacker who can drop a symlink into the
+// assets dir could point it anywhere on disk, and a naive copy would faithfully
+// reproduce the link target's contents into the export (or loop on a cyclic
+// link). Each entry is Lstat'd so symlinks are detected and skipped. The depth
+// bound (maxAssetsCopyDepth) is the cycle / bomb backstop in case a future
+// change reintroduces a follow path.
+func copyDir(src, dst string, depth int) error {
+	if depth > maxAssetsCopyDepth {
+		return fmt.Errorf("assets directory nested too deep (>%d levels): %s", maxAssetsCopyDepth, src)
+	}
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
@@ -245,8 +264,20 @@ func copyDir(src, dst string) error {
 	for _, e := range entries {
 		srcPath := filepath.Join(src, e.Name())
 		dstPath := filepath.Join(dst, e.Name())
-		if e.IsDir() {
-			if err := copyDir(srcPath, dstPath); err != nil {
+		// Lstat (not Stat) so symlinks are visible as symlinks rather
+		// than being transparently resolved to their target. e.IsDir()
+		// calls Stat under the hood and would follow the link, defeating
+		// the guard.
+		info, err := os.Lstat(srcPath)
+		if err != nil {
+			return err
+		}
+		// Skip symlinks rather than following them — see the doc comment.
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if info.IsDir() {
+			if err := copyDir(srcPath, dstPath, depth+1); err != nil {
 				return err
 			}
 			continue

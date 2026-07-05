@@ -397,6 +397,81 @@ func TestTextPrimaryDistinctFromDefault_AllFirstClassThemes(t *testing.T) {
 	}
 }
 
+// TestStatusColorsNonText_AllFirstClassThemes closes the gap that the per-zone
+// text gate covers only TEXT tokens: status.warn/danger/success render chiefly
+// as button fills, badges, and icons (non-text UI), so they must clear the WCAG
+// 1.4.11 non-text 3:1 floor against the app surface they sit on. Reading from
+// the v2 structs (m.Status.*) keeps the guard authoritative even if Flatten's
+// token names change — same anchoring rationale as TestAccentDistinctness.
+func TestStatusColorsNonText_AllFirstClassThemes(t *testing.T) {
+	const min = 3.0
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	for _, th := range all {
+		for _, mode := range []string{"dark", "light"} {
+			var m Mode
+			if mode == "dark" {
+				m = th.Modes.Dark
+			} else {
+				m = th.Modes.Light
+			}
+			flat := th.Flatten(mode)
+			appBG := resolveCSSVar(flat, flat["--color-surface-app"])
+			for _, c := range []struct{ leaf, color string }{
+				{"warn", m.Status.Warn},
+				{"danger", m.Status.Danger},
+				{"success", m.Status.Success},
+			} {
+				if r := approxRatio(t, c.color, appBG); r < min {
+					t.Errorf("%s [%s]: status.%s %s on surface-app %s = %.2f:1, want >= %.1f (AA non-text UI). "+
+						"Bump modes.%s.status.%s lighter (dark) / darker (light) until badges/icons read against the app canvas.",
+						th.ID, mode, c.leaf, c.color, appBG, r, min, mode, c.leaf)
+				}
+			}
+		}
+	}
+}
+
+// TestTextMutedOnInteractionStates_AllFirstClassThemes closes the gap that the
+// static per-zone text gate measures text-muted only against each zone's resting
+// bg: list rows and menu items repaint that bg with the hover/active overlay on
+// interaction, and text-muted (secondary row text, shortcuts) must stay AA-4.5
+// readable on those repainted surfaces. The interaction tokens are opaque
+// zone-agnostic tints, so the text-vs-overlay ratio is measured directly against
+// the resolved hover/active colors (logged with the app+panel surfaces they
+// render on, since the underlying surface does not change the ratio).
+func TestTextMutedOnInteractionStates_AllFirstClassThemes(t *testing.T) {
+	const min = 4.5
+	all, err := EmbeddedThemes()
+	if err != nil {
+		t.Fatalf("EmbeddedThemes: %v", err)
+	}
+	for _, th := range all {
+		for _, mode := range []string{"dark", "light"} {
+			flat := th.Flatten(mode)
+			textMuted := resolveCSSVar(flat, flat["--color-text-muted"])
+			appBG := resolveCSSVar(flat, flat["--color-surface-app"])
+			panelBG := resolveCSSVar(flat, flat["--color-surface-panel"])
+			for _, ix := range []struct{ label, token string }{
+				{"hover", flat["--color-hover"]},
+				{"active", flat["--color-active"]},
+			} {
+				overlay := resolveCSSVar(flat, ix.token)
+				r := approxRatio(t, textMuted, overlay)
+				t.Logf("[%-14s %-5s] text-muted %s on %s overlay %s = %.2f:1 (app %s / panel %s)",
+					th.ID, mode, textMuted, ix.label, overlay, r, appBG, panelBG)
+				if r < min {
+					t.Errorf("%s [%s]: text-muted %s on %s overlay %s = %.2f:1, want >= %.1f (AA text). "+
+						"Adjust modes.%s.text_muted or the %s tint so secondary row text stays readable on interacted rows (app + panel).",
+						th.ID, mode, textMuted, ix.label, overlay, r, min, mode, ix.label)
+				}
+			}
+		}
+	}
+}
+
 // findByID returns the theme with the given id from the slice, or ok=false.
 func findByID(all []*Theme, id string) (*Theme, bool) {
 	for _, th := range all {

@@ -92,6 +92,18 @@ export const themeStatus: ThemeStatus = $state({
   fields: []
 })
 
+/**
+ * The OS color-scheme preference as currently resolved by the cached
+ * `prefers-color-scheme: light` MQL. Reactive so the Appearance tab's
+ * "System" mode label can show which scheme it currently resolves to
+ * (`System · Dark` / `System · Light`) and update live when the OS
+ * scheme flips. Defaults to 'dark' (the no-window / pre-init fallback
+ * matching `osPrefersLight`).
+ */
+export const systemScheme: { mode: 'dark' | 'light' } = $state({
+  mode: 'dark'
+})
+
 /** Replace the status with a fresh message; clear with `clearStatus()`. */
 export function setStatus(s: ThemeStatus): void {
   themeStatus.kind = s.kind
@@ -152,6 +164,7 @@ export function _resetForTests(): void {
   themesState.flatTokens = {}
   themesState.loadError = null
   themesState.loading = false
+  systemScheme.mode = 'dark'
   clearStatus()
 }
 
@@ -194,7 +207,9 @@ export async function initTheme(): Promise<void> {
   // directly; its change listener fires on any dark↔light transition.
   if (typeof window !== 'undefined' && window.matchMedia) {
     schemeMedia = window.matchMedia('(prefers-color-scheme: light)')
+    systemScheme.mode = schemeMedia.matches ? 'light' : 'dark'
     schemeMedia.addEventListener('change', () => {
+      systemScheme.mode = schemeMedia!.matches ? 'light' : 'dark'
       if (themeState.mode === 'system') restoreActiveTheme()
     })
   }

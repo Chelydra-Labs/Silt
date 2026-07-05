@@ -78,6 +78,7 @@ vi.mock('../../theme/store.svelte', () => ({
   themeState: mocks.themeState,
   themesState: mocks.themesState,
   themeStatus: mocks.themeStatus,
+  systemScheme: { mode: 'dark' },
   applyTheme: mocks.applyTheme,
   restoreActiveTheme: mocks.restoreActiveTheme,
   loadThemes: mocks.loadThemes,

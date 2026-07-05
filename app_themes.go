@@ -307,6 +307,18 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 	}
 	themes.InvalidateThemeCache(targetID)
 	if a.ctx != nil {
+		// Emit theme:changed (singular) so the active theme's tokens —
+		// including the freshly-written --silt-bg-<zone>-image — re-inject
+		// immediately. Mirrors ApplyTheme's emission; without it the user
+		// would have to switch theme or mode to see the new background.
+		// targetID is the on-disk theme the asset was written to (a fork
+		// counts as the new active theme — its selection was persisted
+		// above), and settings.ThemeMode is the unchanged current mode.
+		runtime.EventsEmit(a.ctx, "theme:changed", map[string]string{
+			"id": targetID, "mode": settings.ThemeMode,
+		})
+		// themes:changed (plural) refreshes the picker listing so the
+		// forked theme appears / the cached entry is dropped.
 		runtime.EventsEmit(a.ctx, "themes:changed", struct{}{})
 	}
 	log.Printf("themes: PickBackgroundImage(zone=%q) → theme %q forked=%v base64=%v", zone, targetID, forked, isBase64)
