@@ -550,50 +550,35 @@ describe('Tasks view', () => {
   })
 })
 
-describe('Tasks view — quick-add affordance (#399)', () => {
+describe('Tasks view — inline quick-add (#409, replaces #399 toolbar toggle)', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
   })
 
-  it('shows a New task button in the header', async () => {
+  it('renders a persistent inline quick-add input at the bottom (no toolbar button)', async () => {
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    const btn = screen.getByTestId('tasks-new-task-btn')
-    expect(btn).toBeInTheDocument()
-    expect(btn.textContent).toContain('New task')
+    // The old toolbar "New task" button is gone (#409 AC3).
+    expect(screen.queryByTestId('tasks-new-task-btn')).toBeNull()
+    // The inline input is always present at the bottom of the list (#409 AC1).
+    expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
+    expect(screen.getByTestId('tasks-inline-quickadd')).toBeInTheDocument()
   })
 
-  it('clicking New task opens the quick-add input', async () => {
+  it('inline input is present even in the empty state', async () => {
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    await fireEvent.click(screen.getByTestId('tasks-new-task-btn'))
-    await flush()
-
+    expect(screen.getByTestId('tasks-empty')).toBeInTheDocument()
+    // The capture affordance must be visible even when there are no tasks —
+    // it is the primary entry point now that the toolbar button is gone.
     expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
   })
 
-  it('clicking New task when input is already open keeps it open (open-only, no toggle race)', async () => {
+  it('submitting calls ctx.createTask with the typed title', async () => {
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-
-    const btn = screen.getByTestId('tasks-new-task-btn')
-    await fireEvent.click(btn)
-    await flush()
-    expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
-
-    await fireEvent.click(btn)
-    await flush()
-    expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
-  })
-
-  it('submitting calls ctx.createTask with the typed title and closes the inline input', async () => {
-    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-
-    await fireEvent.click(screen.getByTestId('tasks-new-task-btn'))
     await flush()
 
     const input = screen.getByTestId('quick-add-task-input')
@@ -606,29 +591,47 @@ describe('Tasks view — quick-add affordance (#399)', () => {
     expect(call.title).toBe('Ship the feature')
     expect(call.status).toBe('TODO')
     expect(call.dueDate).toBeUndefined()
-    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
   })
 
-  it('Escape cancels without calling createTask', async () => {
+  it('input clears and stays mounted after create for rapid entry (#409 AC2)', async () => {
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    await fireEvent.click(screen.getByTestId('tasks-new-task-btn'))
+    const input = screen.getByTestId('quick-add-task-input') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'first task' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+
+    expect(mocks.createTask).toHaveBeenCalledTimes(1)
+    // keepOpenAfterCreate: the input is still in the DOM and cleared.
+    const inputAfter = screen.getByTestId(
+      'quick-add-task-input'
+    ) as HTMLInputElement
+    expect(inputAfter).toBeInTheDocument()
+    expect(inputAfter.value).toBe('')
+  })
+
+  it('rapid entry: a second create in a row calls createTask twice', async () => {
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
     const input = screen.getByTestId('quick-add-task-input')
-    await fireEvent.keyDown(input, { key: 'Escape' })
+    await fireEvent.input(input, { target: { value: 'one' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
     await flush()
 
-    expect(mocks.createTask).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('quick-add-task-input')).toBeNull()
+    const input2 = screen.getByTestId('quick-add-task-input')
+    await fireEvent.input(input2, { target: { value: 'two' } })
+    await fireEvent.keyDown(input2, { key: 'Enter' })
+    await flush()
+
+    expect(mocks.createTask).toHaveBeenCalledTimes(2)
+    expect(mocks.createTask.mock.calls[0][0].title).toBe('one')
+    expect(mocks.createTask.mock.calls[1][0].title).toBe('two')
   })
 
   it('empty submit is rejected', async () => {
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-
-    await fireEvent.click(screen.getByTestId('tasks-new-task-btn'))
     await flush()
 
     const input = screen.getByTestId('quick-add-task-input')
