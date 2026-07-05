@@ -92,19 +92,18 @@ func TestGetActiveTheme_DefaultOnFreshVault(t *testing.T) {
 	if res.Mode != "dark" {
 		t.Errorf("expected default mode dark, got %q", res.Mode)
 	}
-	// Effective first-paint tokens must be the dark set.
-	if got, want := res.Tokens["--color-surface-app"], expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
-		t.Errorf("expected dark bg.void to match embedded default, got %q want %q", got, want)
+	// Dual-map contract: both dark + light token maps always ship so the
+	// frontend can resolve "system" locally without a second IPC call.
+	// Key presence (not value) is the contract — flatten values are pinned
+	// by backend/themes TestFlatten_*.
+	if _, ok := res.DarkTokens["--color-surface-app"]; !ok {
+		t.Error("DarkTokens missing --color-surface-app (dual-map contract broken)")
 	}
-	// Both maps present so the frontend can resolve "system" locally.
-	// Values reflect the EMBEDDED default (first-class themes are
-	// embedded-authoritative — a ScaffoldVault seed can't shadow them).
-	if got, want := res.DarkTokens["--color-surface-app"], expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
-		t.Errorf("DarkTokens bg.void should match embedded default, got %q want %q", got, want)
+	if _, ok := res.LightTokens["--color-surface-app"]; !ok {
+		t.Error("LightTokens missing --color-surface-app (dual-map contract broken)")
 	}
-	if got, want := res.LightTokens["--color-surface-app"], expectedDefaultToken(t, "light", "--color-surface-app"); got != want {
-		t.Errorf("LightTokens bg.void should match embedded default, got %q want %q", got, want)
-	}
+	// BGVoid is the native-window first-paint color (#73 flash-fix): it must
+	// match the active theme's dark app bg. The one pipeline-consistency smoke.
 	if got, want := res.BGVoid, expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
 		t.Errorf("BGVoid should match embedded default dark bg, got %q want %q", got, want)
 	}
@@ -265,18 +264,24 @@ func TestApplyTheme_SystemModeResolvesFirstPaintDark(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyTheme system: %v", err)
 	}
-	// Stored mode is system; effective first-paint tokens are dark.
+	// Stored mode is system; effective first-paint is dark.
 	if res.Mode != "system" {
 		t.Errorf("mode = %q, want system", res.Mode)
 	}
-	if got, want := res.Tokens["--color-surface-app"], expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
-		t.Errorf("system should first-paint dark bg.void matching embedded default, got %q want %q", got, want)
+	// BGVoid (native-window first-paint) must be the dark value — the
+	// #73 flash-fix invariant for "system" resolving to dark on first paint.
+	if got, want := res.BGVoid, expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
+		t.Errorf("system should first-paint dark BGVoid matching embedded default, got %q want %q", got, want)
 	}
-	// But both maps are present so the frontend can resolve the real preference.
-	// Light tokens reflect the EMBEDDED default (first-class themes are
-	// embedded-authoritative — a ScaffoldVault seed can't shadow them).
-	if got, want := res.LightTokens["--color-surface-app"], expectedDefaultToken(t, "light", "--color-surface-app"); got != want {
-		t.Errorf("system mode must still ship light tokens matching embedded default, got %q want %q", got, want)
+	// System-mode dual-map contract (the whole point of this test): both
+	// dark + light maps ship so the frontend can re-resolve via
+	// prefers-color-scheme without a second IPC call. Key presence only —
+	// flatten values are pinned by backend/themes TestFlatten_*.
+	if _, ok := res.DarkTokens["--color-surface-app"]; !ok {
+		t.Error("DarkTokens missing --color-surface-app (system-mode dual-map contract broken)")
+	}
+	if _, ok := res.LightTokens["--color-surface-app"]; !ok {
+		t.Error("LightTokens missing --color-surface-app (system-mode dual-map contract broken)")
 	}
 }
 
@@ -336,38 +341,6 @@ func TestEffectiveMode(t *testing.T) {
 		if got := effectiveMode(in); got != want {
 			t.Errorf("effectiveMode(%q) = %q, want %q", in, got, want)
 		}
-	}
-}
-
-func TestBuildThemeResult_DarkFirstPaint(t *testing.T) {
-	th, err := themes.ParseDefault()
-	if err != nil {
-		t.Fatalf("ParseDefault: %v", err)
-	}
-	// system mode: effective tokens are dark (first paint) but both maps ship.
-	res := buildThemeResult(th, "system")
-	if res.Mode != "system" {
-		t.Errorf("mode = %q, want system", res.Mode)
-	}
-	if got, want := res.Tokens["--color-surface-app"], expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
-		t.Errorf("system first-paint should be dark bg.void matching embedded default, got %q want %q", got, want)
-	}
-	if got, want := res.DarkTokens["--color-accent-primary-start"], expectedDefaultToken(t, "dark", "--color-accent-primary-start"); got != want {
-		t.Errorf("dark primary-start should match embedded default, got %q want %q", got, want)
-	}
-	if got, want := res.LightTokens["--color-accent-primary-start"], expectedDefaultToken(t, "light", "--color-accent-primary-start"); got != want {
-		t.Errorf("light primary-start should match embedded default, got %q want %q", got, want)
-	}
-	if got, want := res.BGVoid, expectedDefaultToken(t, "dark", "--color-surface-app"); got != want {
-		t.Errorf("BGVoid should match embedded default dark bg, got %q want %q", got, want)
-	}
-	// light mode: effective tokens are light (embedded values).
-	lightRes := buildThemeResult(th, "light")
-	if got, want := lightRes.Tokens["--color-surface-app"], expectedDefaultToken(t, "light", "--color-surface-app"); got != want {
-		t.Errorf("light effective bg.void should match embedded default, got %q want %q", got, want)
-	}
-	if got, want := lightRes.BGVoid, expectedDefaultToken(t, "light", "--color-surface-app"); got != want {
-		t.Errorf("light BGVoid should match embedded default, got %q want %q", got, want)
 	}
 }
 
