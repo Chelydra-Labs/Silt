@@ -192,89 +192,63 @@ func TestValidThemeMode(t *testing.T) {
 	}
 }
 
-// TestScaffoldVault_WritesAllFirstClassThemes: a fresh scaffold writes every
-// embedded first-class theme file into <vault>/.system/themes/ (the default +
-// the four Sprint 8 palettes), so the full first-party set is editable on disk.
-func TestScaffoldVault_WritesAllFirstClassThemes(t *testing.T) {
+// TestScaffoldVault_DoesNotSeedFirstClassThemes: ScaffoldVault creates the
+// .system/themes/ directory (for custom/imported themes) but does NOT write
+// the embedded first-class set onto disk (#406). Post-a1d0cce the loader is
+// embedded-authoritative for first-class ids and ignores same-id vault files,
+// so seeding them would only produce inert, confusing copies.
+func TestScaffoldVault_DoesNotSeedFirstClassThemes(t *testing.T) {
 	vaultPath := t.TempDir()
 	if err := ScaffoldVault(vaultPath); err != nil {
 		t.Fatalf("ScaffoldVault: %v", err)
 	}
+	themesDir := filepath.Join(vaultPath, ".system", "themes")
+	// The directory MUST exist — custom/imported themes land here.
+	info, err := os.Stat(themesDir)
+	if err != nil {
+		t.Fatalf("expected .system/themes/ directory to exist: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf(".system/themes is not a directory")
+	}
+	// No first-class theme file should be seeded.
 	files, err := themes.EmbeddedThemeFiles()
 	if err != nil {
 		t.Fatalf("EmbeddedThemeFiles: %v", err)
 	}
 	for fn := range files {
-		p := filepath.Join(vaultPath, ".system", "themes", fn)
-		if _, err := os.Stat(p); err != nil {
-			t.Errorf("expected scaffolded theme %s: %v", fn, err)
+		p := filepath.Join(themesDir, fn)
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("first-class theme %s should NOT be seeded by ScaffoldVault (loader is embed-authoritative)", fn)
 		}
 	}
 }
 
-// TestScaffoldVault_ThemesIdempotent: re-running ScaffoldVault never
-// overwrites a user's existing theme file (the existence guard). A hand-edited
-// sentinel on disk must survive a second scaffold.
-func TestScaffoldVault_ThemesIdempotent(t *testing.T) {
+// TestScaffoldVault_PreservesUserCustomThemes: re-running ScaffoldVault never
+// overwrites a user's custom theme file (the existence guard on config.yaml
+// carries over to user-authored content). A hand-authored custom theme must
+// survive a second scaffold. (Prior to #406 this tested first-class idempotency;
+// first-class files are no longer seeded, so the guard now covers custom files.)
+func TestScaffoldVault_PreservesUserCustomThemes(t *testing.T) {
 	vaultPath := t.TempDir()
 	if err := ScaffoldVault(vaultPath); err != nil {
 		t.Fatalf("ScaffoldVault first run: %v", err)
 	}
-	// Mutate the on-disk default with a sentinel and re-scaffold.
-	defaultPath := filepath.Join(vaultPath, ".system", "themes", "cyber_forest.json")
+	// Drop a custom theme with a sentinel and re-scaffold.
+	customPath := filepath.Join(vaultPath, ".system", "themes", "my-custom-theme.json")
 	const sentinel = "// user-edit sentinel"
-	if err := os.WriteFile(defaultPath, []byte(sentinel), 0o644); err != nil {
-		t.Fatalf("write sentinel: %v", err)
+	if err := os.WriteFile(customPath, []byte(sentinel), 0o644); err != nil {
+		t.Fatalf("write custom theme: %v", err)
 	}
 	if err := ScaffoldVault(vaultPath); err != nil {
 		t.Fatalf("ScaffoldVault second run: %v", err)
 	}
-	got, err := os.ReadFile(defaultPath)
+	got, err := os.ReadFile(customPath)
 	if err != nil {
-		t.Fatalf("read after re-scaffold: %v", err)
+		t.Fatalf("read custom theme after re-scaffold: %v", err)
 	}
 	if string(got) != sentinel {
-		t.Errorf("ScaffoldVault overwrote an existing user theme; expected sentinel to survive")
-	}
-}
-
-// TestScaffoldVault_ThemeStatErrorPropagates: a stat failure on a
-// scaffolded theme that is not "not exist" (e.g. permission denied on
-// the themes directory) must surface to the caller rather than being
-// silently swallowed. The user has no other way to know the themes
-// dir is in a broken state otherwise.
-func TestScaffoldVault_ThemeStatErrorPropagates(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission bits are bypassed for root; stat always succeeds")
-	}
-	// os.Chmod on Windows only flips the read-only bit; the POSIX mode bits
-	// the test relies on (0o000 = no perms) are not honoured, so the stat
-	// never fails and the regression we're guarding cannot be exercised.
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX permission bits are not enforced on Windows; chmod 0o000 does not revoke stat access")
-	}
-	vaultPath := t.TempDir()
-	// Pre-scaffold so .system/themes exists with real files, then
-	// revoke all perms on the themes dir so the loop's stat fails
-	// with EACCES (a non-IsNotExist error).
-	if err := ScaffoldVault(vaultPath); err != nil {
-		t.Fatalf("ScaffoldVault setup: %v", err)
-	}
-	themesDir := filepath.Join(vaultPath, ".system", "themes")
-	if err := os.Chmod(themesDir, 0o000); err != nil {
-		t.Fatalf("chmod themes dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(themesDir, 0o755) })
-
-	err := ScaffoldVault(vaultPath)
-	if err == nil {
-		t.Fatal("ScaffoldVault: expected error for unreadable themes dir, got nil")
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		t.Errorf("ScaffoldVault: not-exist should be ignored, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "failed to stat theme") {
-		t.Errorf("ScaffoldVault: error %q should wrap the stat failure", err)
+		t.Errorf("ScaffoldVault overwrote a user's custom theme; expected sentinel to survive")
 	}
 }
 
@@ -464,7 +438,10 @@ func TestScaffoldVault_RestrictiveFilePermissions(t *testing.T) {
 	if err := ScaffoldVault(vault); err != nil {
 		t.Fatalf("ScaffoldVault: %v", err)
 	}
-	for _, c := range []struct{ name string; want os.FileMode }{
+	for _, c := range []struct {
+		name string
+		want os.FileMode
+	}{
 		{".system", 0o700},
 		{".system/themes", 0o700},
 		{".system/plugins", 0o700},
@@ -668,4 +645,3 @@ func TestUpdateSettings_PreservesOtherFields(t *testing.T) {
 		t.Errorf("toggle did not land: %v", loaded.AutoCheckUpdates)
 	}
 }
-

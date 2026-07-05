@@ -115,9 +115,9 @@ func TestListThemes_IncludesScaffoldedDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListThemes: %v", err)
 	}
-	// ScaffoldVault wrote cyber_forest.json on disk, but first-class themes
-	// are embedded-authoritative → present as source "default" (the embedded
-	// copy wins over the vault shadow).
+	// First-class themes are embedded-authoritative: the default is served
+	// from the embed regardless of whether a vault file exists (#406 removed
+	// the ScaffoldVault seeding, so on a fresh vault there is no on-disk copy).
 	found := false
 	for _, ti := range res.Themes {
 		if ti.ID == themes.DefaultThemeID {
@@ -231,12 +231,12 @@ func TestApplyTheme_RejectsUnknownID(t *testing.T) {
 func TestApplyTheme_ResolvesFirstClassEmbeddedOffDisk(t *testing.T) {
 	configDirOverride(t)
 	app := newTestApp(t)
-	// Wipe the on-disk file so LoadByID returns not-found and the
-	// embedded-fallback branch is the only path that can succeed.
-	// (A fresh vault's ScaffoldVault writes every first-class id, so we
-	// have to remove it explicitly to simulate a pre-Sprint-8 dir.)
+	// First-class themes are embedded-authoritative and ScaffoldVault no
+	// longer seeds them onto disk (#406), so silt-graphite.json is already
+	// absent. If a prior run or a legacy vault left it on disk, remove it
+	// so this test exercises the pure embedded-fallback branch.
 	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
-	if err := os.Remove(filepath.Join(themesDir, "silt-graphite.json")); err != nil {
+	if err := os.Remove(filepath.Join(themesDir, "silt-graphite.json")); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("remove silt-graphite.json: %v", err)
 	}
 	res, err := app.ApplyTheme("silt-graphite", "dark")
@@ -434,27 +434,13 @@ func TestImportTheme_IPCValidationFailure(t *testing.T) {
 	if !found {
 		t.Errorf("expected error on accent.primary.start, got: %+v", res.ValidationErrors)
 	}
-	// No file written under themes/ beyond the scaffolded first-class set
-	// (the rejected import must add nothing). The scaffold writes every
-	// embedded first-class theme, so those are the expected baseline.
+	// No file written under themes/ — the rejected import must add nothing.
+	// ScaffoldVault no longer seeds first-class themes (#406), so a fresh
+	// vault's themes dir is empty; any file present is an imported one.
 	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
 	entries, _ := os.ReadDir(themesDir)
-	files, err := themes.EmbeddedThemeFiles()
-	if err != nil {
-		t.Fatalf("EmbeddedThemeFiles: %v", err)
-	}
-	scaffolded := make(map[string]bool, len(files))
-	for fn := range files {
-		scaffolded[fn] = true
-	}
-	imported := 0
-	for _, e := range entries {
-		if !scaffolded[e.Name()] {
-			imported++
-		}
-	}
-	if imported != 0 {
-		t.Errorf("expected no imported file, found: %+v", entries)
+	if len(entries) != 0 {
+		t.Errorf("expected no theme file from a rejected import, found: %+v", entries)
 	}
 }
 
@@ -731,9 +717,12 @@ func TestPickBackgroundImage_StorageAndWritePath(t *testing.T) {
 func TestPickBackgroundImage_ForksEmbeddedActiveTheme(t *testing.T) {
 	configDirOverride(t)
 	app := newTestApp(t)
-	// Remove the scaffolded silt-linen.json so the active id is embedded-only.
+	// First-class themes are embed-authoritative and ScaffoldVault no longer
+	// seeds them (#406), so silt-linen.json is already absent (embedded-only).
+	// Remove a stray copy if a legacy run left one, so the fork branch is
+	// the only path that can produce a writable file.
 	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
-	if err := os.Remove(filepath.Join(themesDir, "silt-linen.json")); err != nil {
+	if err := os.Remove(filepath.Join(themesDir, "silt-linen.json")); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("remove silt-linen.json: %v", err)
 	}
 	if _, err := app.ApplyTheme("silt-linen", "dark"); err != nil {

@@ -56,10 +56,10 @@ func TestParseEmbeddedByID(t *testing.T) {
 	}
 }
 
-// TestEmbeddedThemeFiles_UsedByScaffold confirms every embedded theme is keyed
-// by a "<id>.json" filename so ScaffoldVault writes one file per first-class
-// theme with no gaps or extras.
-func TestEmbeddedThemeFiles_UsedByScaffold(t *testing.T) {
+// TestEmbeddedThemeFiles_KeyedByID confirms every embedded theme is keyed by a
+// "<id>.json" filename with no gaps or extras, so the loader and
+// EmbeddedThemes can resolve any first-class id in one file read.
+func TestEmbeddedThemeFiles_KeyedByID(t *testing.T) {
 	files, err := EmbeddedThemeFiles()
 	if err != nil {
 		t.Fatalf("EmbeddedThemeFiles: %v", err)
