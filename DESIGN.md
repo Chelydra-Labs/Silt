@@ -157,7 +157,7 @@ Every first-class theme ships both dark and light variants and its own `typograp
 A dark earth palette: warm near-black canvas with **clay/terracotta** primary (selection guides, active focus, completed checks) and **moss** secondary (in-progress / DOING indicator, metadata chips). Intent: a warmer, organic counterpart to Cyber Forest's cool slate, for users who prefer earth tones over cyber neons.
 
 - Dark: `surfaces.app.bg #100b07` (warm near-black); `surfaces.app.text #ece3d5` (warm white); `accent.primary #e07a3c → #b4421a` (clay); `accent.secondary #84a04a → #5e7d2f` (moss).
-- Light (dual-surface): `surfaces.app.bg #f6efe4` (warm paper); `surfaces.app.text #2a2014`; `surfaces.sidebar.bg #120c06` (warm brown-black with matching dark titlebar and activitybar); `accent.primary #c2511f → #9a3a14`; `accent.secondary #5a7d2a → #44611d`.
+- Light: `surfaces.app.bg #f8f4ed` (warm sand-cream); `surfaces.app.text #2a2014`; `surfaces.sidebar.bg #f1e6d4` (warm wheat-sand sidebar with matching light titlebar and activitybar); `accent.primary #c2511f → #9a3a14`; `accent.secondary #5a7d2a → #44611d`.
 - Tuning: dark `text-muted #8a7860 → #a89478` to clear WCAG AA (4.5:1) on `active` — the binding constraint in dark mode is muted text on the lightest interaction surface.
 
 2.2.2 Linen — woven linen paper

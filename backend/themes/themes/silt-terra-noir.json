@@ -82,17 +82,17 @@
     },
     "light": {
       "surfaces": {
-        "app": { "bg": "#f6efe4", "border": "#9a7e58", "text": "#2a2014" },
+        "app": { "bg": "#f8f4ed", "border": "#dfd2bc", "text": "#2a2014" },
         "sidebar": {
-          "bg": "#120c06",
-          "border": "#241c10",
-          "text": "#ece3d5",
-          "text_muted": "#a89478",
-          "text_disabled": "#5c4c34"
+          "bg": "#f1e6d4",
+          "border": "#dfd2bc",
+          "text": "#2a2014",
+          "text_muted": "#6a5840",
+          "text_disabled": "#988c78"
         },
         "editor": {
-          "bg": "#faf6ee",
-          "border": "#9e825c",
+          "bg": "#fbf9f4",
+          "border": "#e8ddc9",
           "text": "#2a2014",
           "background": {
             "image": "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
@@ -101,19 +101,19 @@
             "blend": "multiply"
           }
         },
-        "panel": { "bg": "#fefcfa", "border": "#a28660", "text": "#2a2014" },
-        "card": { "bg": "#ffffff", "border": "#8a704a", "text": "#2a2014" },
-        "modal": { "bg": "#ffffff", "border": "#6e5638", "text": "#2a2014" },
-        "popover": { "bg": "#ffffff", "border": "#5e4830", "text": "#2a2014" },
-        "titlebar": { "bg": "#0d0905", "border": "#1d1610", "text": "#ece3d5", "text_muted": "#a89478", "text_disabled": "#5c4c34" },
-        "activitybar": { "bg": "#171009", "border": "#2c2014", "text": "#ece3d5", "text_muted": "#a89478", "text_disabled": "#5c4c34" }
+        "panel": { "bg": "#ffffff", "border": "#e2d6c1", "text": "#2a2014" },
+        "card": { "bg": "#ffffff", "border": "#dfd2bc", "text": "#2a2014" },
+        "modal": { "bg": "#ffffff", "border": "#c8bba3", "text": "#2a2014" },
+        "popover": { "bg": "#ffffff", "border": "#b6a78f", "text": "#2a2014" },
+        "titlebar": { "bg": "#ebdcc4", "border": "#dfd2bc", "text": "#2a2014", "text_muted": "#6a5840", "text_disabled": "#988c78" },
+        "activitybar": { "bg": "#e4d3b6", "border": "#dfd2bc", "text": "#2a2014", "text_muted": "#6a5840", "text_disabled": "#988c78" }
       },
-      "hover": "#e0cfb0",
-      "active": "#d0bc98",
-      "border_active": "#8a7448",
-      "border_focus": "#5a4828",
-      "text_muted": "#4a3a26",
-      "text_disabled": "#988466",
+      "hover": "#e8ddc9",
+      "active": "#ebdcc4",
+      "border_active": "#b6a78f",
+      "border_focus": "#8d7b63",
+      "text_muted": "#6a5840",
+      "text_disabled": "#988c78",
       "accent": {
         "primary": {
           "start": "oklch(0.575 0.157 42)",
