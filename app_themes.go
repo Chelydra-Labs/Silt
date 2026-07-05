@@ -100,6 +100,12 @@ func (a *App) GetActiveTheme() (ActiveThemeResult, error) {
 // followed by ResolveActive (reads the directory a second time to find the
 // same theme), so every switch did two directory scans + 2N parses.
 func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
+	// vaultMu.RLock guards the lifecycle read of themesDir/vaultPath so the
+	// path stays valid for the call's duration. It does NOT guard the
+	// settings.json write — UpdateSettings serializes that via
+	// settingsWriteMu (#404). No theme FILE is written here, so
+	// themeWriteMu is not needed. Two concurrent ApplyTheme calls both
+	// pass the RLock, but settingsWriteMu makes each settings write atomic.
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if !vault.ValidThemeMode(mode) {
@@ -198,10 +204,18 @@ func (a *App) PickThemeFile() (string, error) {
 // the new file instead of a stale parse.
 func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
+	if vaultPath == "" {
 		return nil, fmt.Errorf("vault not loaded")
 	}
+	// Serialize the theme-file write so two concurrent imports can't race
+	// on the importer's collision-check-then-write (#404). The validation
+	// step is pure CPU (no disk write) and could run outside the lock, but
+	// keeping the whole import under themeWriteMu ensures the
+	// check-then-write is atomic w.r.t. other theme writers.
+	a.themeWriteMu.Lock()
+	defer a.themeWriteMu.Unlock()
 	res, err := themes.ImportThemeFromPath(a.themesDir(), srcPath)
 	if err != nil {
 		log.Printf("themes: ImportTheme(%q) failed: %v", filepath.Base(srcPath), err)
@@ -244,9 +258,16 @@ type BackgroundImageResult struct {
 // picker (and any future live preview) re-fetches. This is the engine half of
 // #391; the per-zone picker UI is Phase 2 (#401).
 func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
+	// Snapshot the vault path under the lifecycle read lock, then release it
+	// BEFORE opening the native dialog (#404). The dialog blocks indefinitely
+	// (user picks a file, goes for coffee), and holding vaultMu.RLock across
+	// it would block any vaultMu.Lock writer (vault open/close, settings
+	// migration) for the dialog's entire duration. themeWriteMu (acquired
+	// below, after the dialog) serializes the actual file mutations.
 	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
+	if vaultPath == "" {
 		return nil, fmt.Errorf("vault not loaded")
 	}
 	if a.ctx == nil {
@@ -261,8 +282,9 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 		return nil, fmt.Errorf("failed to load settings: %w", err)
 	}
 
-	// Open the picker before any write so a cancel is a pure no-op (no fork,
-	// no settings change). An empty selection means the user cancelled.
+	// Open the picker BEFORE acquiring any write lock so a cancel is a pure
+	// no-op (no fork, no settings change) and the blocking dialog never
+	// holds a lock. An empty selection means the user cancelled.
 	selected, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select a background image",
 		Filters: []runtime.FileFilter{
@@ -276,15 +298,24 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 		return nil, nil
 	}
 
+	// Serialize the theme-file mutations so the fork's stat-then-write and
+	// the background re-marshal can't race a concurrent ImportTheme or a
+	// second PickBackgroundImage (#404). The settings write inside this
+	// section goes through UpdateSettings (settingsWriteMu), so the lock
+	// ordering is themeWriteMu → settingsWriteMu — never reversed.
+	a.themeWriteMu.Lock()
+	defer a.themeWriteMu.Unlock()
+	themesDir := a.themesDir()
+
 	// If the active theme is embedded-only (no on-disk file), fork it so the
 	// background edit targets a writable copy. Mirrors the importer's "user-"
 	// namespace for built-in id collisions; a pre-existing fork is reused.
 	targetID := settings.ActiveTheme
 	forked := false
-	if _, found, err := themes.LoadByID(a.themesDir(), settings.ActiveTheme); err != nil {
+	if _, found, err := themes.LoadByID(themesDir, settings.ActiveTheme); err != nil {
 		return nil, fmt.Errorf("failed to look up theme %q: %w", settings.ActiveTheme, err)
 	} else if !found {
-		forkedID, err := themes.ForkEmbeddedTheme(a.themesDir(), settings.ActiveTheme)
+		forkedID, err := themes.ForkEmbeddedTheme(themesDir, settings.ActiveTheme)
 		if err != nil {
 			return nil, err
 		}
@@ -297,7 +328,7 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 		}
 	}
 
-	ref, isBase64, err := themes.StoreBackgroundAsset(a.themesDir(), targetID, selected)
+	ref, isBase64, err := themes.StoreBackgroundAsset(themesDir, targetID, selected)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +337,7 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 	// writes verbatim and the overlay CSS applies as fully transparent — a
 	// "successful" pick that renders nothing.
 	bg := themes.Background{Image: ref, Size: "cover", Opacity: 1.0}
-	if err := themes.SetThemeBackgroundImage(a.themesDir(), targetID, zone, bg); err != nil {
+	if err := themes.SetThemeBackgroundImage(themesDir, targetID, zone, bg); err != nil {
 		return nil, err
 	}
 	themes.InvalidateThemeCache(targetID)

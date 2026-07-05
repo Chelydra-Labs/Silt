@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -758,5 +759,64 @@ func writeBytes(t *testing.T, path string, b []byte) {
 	}
 	if err := os.WriteFile(path, b, 0o644); err != nil {
 		t.Fatalf("write: %v", err)
+	}
+}
+
+// TestImportTheme_ConcurrentSerializesThemeWrites verifies themeWriteMu
+// serializes concurrent theme-file writes so the importer's collision-check-
+// then-write can't race (#404). N goroutines each import a distinct valid
+// theme; under the race detector (-race) this catches an unsynchronized write
+// path, and without the lock two imports could interleave their check/write
+// and clobber each other's file. All N imports must succeed and produce N
+// distinct on-disk files.
+func TestImportTheme_ConcurrentSerializesThemeWrites(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	const n = 8
+	type result struct {
+		id  string
+		err error
+	}
+	results := make([]result, n)
+	done := make(chan struct{})
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer func() { done <- struct{}{} }()
+			// Each goroutine imports a distinct theme so the importer's
+			// collision guard sees no conflict — the race we're guarding
+			// is the file-write interleaving, not the collision logic.
+			src := filepath.Join(t.TempDir(), "src.json")
+			body := strings.Replace(validCustomThemeJSON, `"terra-test"`, fmt.Sprintf(`"concurrent-%d"`, i), 1)
+			body = strings.Replace(body, `"Terra Test"`, fmt.Sprintf(`"Concurrent %d"`, i), 1)
+			writeFile(t, src, body)
+			res, err := app.ImportTheme(src)
+			if err != nil {
+				results[i] = result{err: err}
+				return
+			}
+			results[i] = result{id: res.Info.ID}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		<-done
+	}
+
+	// Every import must succeed.
+	for i, r := range results {
+		if r.err != nil {
+			t.Errorf("goroutine %d import failed: %v", i, r.err)
+		}
+		if r.id == "" {
+			t.Errorf("goroutine %d produced no theme id", i)
+		}
+	}
+	// Every theme file must exist on disk (no clobbered writes).
+	for i, r := range results {
+		p := filepath.Join(app.vaultPath, ".system", "themes", r.id+".json")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("theme %s (goroutine %d) missing from disk: %v", r.id, i, err)
+		}
 	}
 }
