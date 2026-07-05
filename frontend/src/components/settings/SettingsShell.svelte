@@ -228,15 +228,15 @@
     aria-modal="true"
     aria-label="Settings"
     tabindex="-1"
-    class="relative z-10 w-full max-w-4xl h-[80vh] glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 94%, transparent);"
+    class="relative z-10 w-full max-w-4xl h-[80vh] glass-palette border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-panel) 94%, transparent);"
   >
     <!-- Left rail: tab list. A div (not <nav>) carries role="tablist" because a
          tablist is not a navigation landmark — the WAI-ARIA tab pattern uses a
          generic container, mirroring the main TabStrip. Delegated keyboard nav
          (Arrow/Home/End) lives here with roving tabindex on the buttons. -->
     <div
-      class="w-52 flex-shrink-0 border-r border-border-muted bg-surface/40 flex flex-col py-3"
+      class="w-52 flex-shrink-0 border-r border-surface-modal-border bg-surface-modal/40 flex flex-col py-3"
       aria-label="Settings sections"
       role="tablist"
       tabindex="-1"
@@ -253,8 +253,8 @@
           tabindex={activeTab === tab.id ? 0 : -1}
           class="relative flex items-center gap-3 pl-5 pr-4 py-2.5 mx-2 rounded-lg font-label-sm text-label-sm transition-all border-none cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 {activeTab ===
           tab.id
-            ? 'bg-white/5 text-accent-primary-start'
-            : 'text-text-muted hover:bg-white/[0.02] hover:text-text-primary'}"
+            ? 'bg-active text-accent-primary-start'
+            : 'text-text-muted hover:bg-hover hover:text-text-primary'}"
         >
           <!-- Left rail glowing line -->
           {#if activeTab === tab.id}
@@ -269,9 +269,11 @@
     </div>
 
     <!-- Right: active panel -->
-    <div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-void/5">
+    <div
+      class="flex-1 min-w-0 flex flex-col overflow-hidden bg-surface-modal/5"
+    >
       <div
-        class="flex items-center justify-between px-6 py-4 border-b border-border-muted flex-shrink-0"
+        class="flex items-center justify-between px-6 py-4 border-b border-surface-modal-border flex-shrink-0"
       >
         <h2
           class="font-headline-md text-headline-md text-text-primary capitalize"

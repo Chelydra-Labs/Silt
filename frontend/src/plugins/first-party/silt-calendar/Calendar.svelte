@@ -462,7 +462,9 @@
 </script>
 
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
-  <header class="px-6 py-4 border-b border-border-muted flex flex-col gap-3">
+  <header
+    class="px-6 py-4 border-b border-surface-panel-border flex flex-col gap-3"
+  >
     <!-- Row 1: Icon, Title, Switcher, New Task -->
     <div class="flex items-center gap-3 w-full flex-wrap">
       <span class="material-symbols-outlined text-accent-primary-start">
@@ -484,7 +486,7 @@
 
       <div class="ml-auto flex items-center gap-2">
         <div
-          class="flex items-center gap-0.5 bg-surface border border-border-muted rounded-lg p-0.5"
+          class="flex items-center gap-0.5 bg-surface-panel border border-surface-panel-border rounded-lg p-0.5"
         >
           <button
             onclick={() => (mode = 'month')}
@@ -537,7 +539,7 @@
           </button>
           <button
             onclick={goToday}
-            class="px-2.5 py-1 rounded border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
+            class="px-2.5 py-1 rounded border border-surface-panel-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
             >Today</button
           >
           <button
@@ -556,7 +558,7 @@
 
   {#if getFocusState().activeFilter !== 'all' && mode !== 'agenda'}
     <div
-      class="px-6 py-1.5 border-b border-border-muted bg-accent-primary-glow flex items-center gap-2 text-[12px] font-body-md"
+      class="px-6 py-1.5 border-b border-surface-panel-border bg-accent-primary-glow flex items-center gap-2 text-[12px] font-body-md"
       role="status"
       aria-live="polite"
     >
@@ -613,7 +615,9 @@
   {#if quickAddDate === ''}
     <!-- Toolbar "New task" quick-add: undated. The created task lands in the
          Agenda / un-dated list (#368). -->
-    <div class="px-6 py-2 border-b border-border-muted bg-panel">
+    <div
+      class="px-6 py-2 border-b border-surface-panel-border bg-surface-panel"
+    >
       <div class="max-w-md">
         <QuickAddTask
           {ctx}
@@ -681,13 +685,13 @@
                 ymd(day)
                   ? 'border-accent-primary-glow ring-2 ring-accent-primary-glow/40'
                   : inMonth
-                    ? 'border-border-muted bg-panel'
-                    : 'border-border-muted/30 bg-transparent'}"
+                    ? 'border-surface-panel-border bg-surface-panel'
+                    : 'border-surface-panel-border/30 bg-transparent'}"
               >
                 <span
                   class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
                   class:bg-accent-primary-start={isToday}
-                  class:text-void={isToday}
+                  class:text-surface-app={isToday}
                   class:text-text-muted={!isToday && !inMonth}
                   class:text-text-primary={!isToday && inMonth}
                   >{day.getDate()}</span
@@ -759,7 +763,9 @@
               class:ring-accent-primary-glow={overCellDate === ymd(day)}
               class:rounded-lg={overCellDate === ymd(day)}
             >
-              <div class="text-center pb-2 border-b border-border-muted">
+              <div
+                class="text-center pb-2 border-b border-surface-panel-border"
+              >
                 <div
                   class="text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted"
                 >
@@ -768,7 +774,7 @@
                 <span
                   class="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px] font-label-sm-bold mt-1"
                   class:bg-accent-primary-start={isToday}
-                  class:text-void={isToday}
+                  class:text-surface-app={isToday}
                   class:text-text-primary={!isToday}>{day.getDate()}</span
                 >
               </div>
@@ -780,7 +786,7 @@
                   ondragend={onCardDragEnd}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => openItem(item)}
-                  class="text-left text-[12px] px-2 py-1.5 rounded bg-panel border border-border-muted hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer {dragTaskId ===
+                  class="text-left text-[12px] px-2 py-1.5 rounded bg-surface-panel border border-surface-panel-border hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer {dragTaskId ===
                   item.id
                     ? 'opacity-40'
                     : ''}"

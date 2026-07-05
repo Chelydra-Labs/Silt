@@ -23,6 +23,7 @@
     loadThemes,
     pickAndImportTheme,
     restoreActiveTheme,
+    systemScheme,
     themeState,
     themesState,
     themeStatus,
@@ -214,13 +215,25 @@
   function statusClasses(s: ThemeStatus | null): string {
     if (!s || !s.message) return ''
     if (s.kind === 'error') {
-      return 'bg-error/10 border border-error/30 text-error'
+      return 'bg-error-bg border border-error-border text-error'
     }
     if (s.kind === 'success') {
       return 'bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start'
     }
-    return 'bg-panel border border-border-muted text-text-muted'
+    return 'bg-surface-panel border border-surface-panel-border text-text-muted'
   }
+
+  const effectiveMode = $derived(
+    themeState.mode === 'system' ? systemScheme.mode : themeState.mode
+  )
+
+  // SR companion to the visible `· Dark`/`· Light` suffix (which is
+  // aria-hidden to avoid colliding with the Dark/Light radio names).
+  // Empty outside system mode so the live region stays silent — the
+  // Dark/Light radios already convey their own selection.
+  const systemSchemeAnnouncement = $derived(
+    themeState.mode === 'system' ? `Using ${systemScheme.mode} appearance` : ''
+  )
 </script>
 
 <svelte:window on:keydown={onWindowKey} />
@@ -237,7 +250,7 @@
     <div
       role="radiogroup"
       aria-label="Color mode"
-      class="inline-flex bg-surface border border-border-muted rounded-lg p-1 gap-1"
+      class="inline-flex bg-surface-panel border border-surface-panel-border rounded-lg p-1 gap-1"
     >
       {#each modes as m (m.id)}
         {@const active = themeState.mode === m.id}
@@ -251,9 +264,16 @@
           class:text-accent-primary-start={active}
           class:text-text-muted={!active}
           class:hover:text-text-primary={!active}
+          class:ring-1={active}
+          class:ring-accent-primary-start={active}
         >
           <span class="material-symbols-outlined text-[16px]">{m.icon}</span>
           {m.label}
+          {#if m.id === 'system'}
+            <span class="text-text-muted font-label-sm" aria-hidden="true"
+              >· {systemScheme.mode === 'dark' ? 'Dark' : 'Light'}</span
+            >
+          {/if}
         </button>
       {/each}
     </div>
@@ -261,6 +281,14 @@
       "System" follows your OS appearance preference. Switching mode does not
       change the active theme.
     </p>
+    <!-- SR-only live region: announces the resolved scheme only while
+         System mode is active. The visible `· Dark`/`· Light` suffix
+         is aria-hidden (avoids radio-name collisions), so without this
+         region a System-mode user would never hear which scheme is
+         currently resolved or when the OS flips it. -->
+    <div class="sr-only" aria-live="polite">
+      {systemSchemeAnnouncement}
+    </div>
   </section>
 
   <!-- Active-theme typography overrides (#82) -->
@@ -273,7 +301,7 @@
         Theme typography
       </h3>
       <div
-        class="flex flex-wrap items-start gap-x-4 gap-y-1.5 bg-surface border border-border-muted rounded-lg px-3 py-2.5"
+        class="flex flex-wrap items-start gap-x-4 gap-y-1.5 bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2.5"
       >
         <span class="text-text-muted text-[11px] font-label-sm">
           This theme sets its own fonts:
@@ -315,7 +343,7 @@
       </div>
     {:else if themesState.loadError}
       <div
-        class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md"
+        class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
         role="alert"
       >
         <span class="material-symbols-outlined text-[18px]">error</span>
@@ -331,6 +359,8 @@
       <div role="listbox" aria-label="Available themes" class="space-y-2">
         {#each themesState.items as theme, i (theme.id)}
           {@const active = isActive(theme)}
+          {@const modeTokens =
+            themesState.flatTokens[theme.id]?.[effectiveMode]}
           <button
             type="button"
             id={`theme-row-${theme.id}`}
@@ -350,26 +380,32 @@
             onblur={onRowLeave}
             onkeydown={(e) => onRowKey(e, i)}
             class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border motion-reduce:transition-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 cursor-pointer"
-            class:bg-surface={!active}
-            class:border-border-muted={!active}
+            class:bg-surface-panel={!active}
+            class:border-surface-panel-border={!active}
             class:hover:border-border-active={!active}
             class:border-l-4={active}
             class:border-l-accent-primary-start={active}
             class:bg-accent-primary-glow={active}
             class:border-accent-primary-start={active}
           >
-            <!-- Swatches: data-driven from theme.Swatches; no per-theme branching. -->
+            <!-- Swatches: data-driven from themesState.flatTokens with fallback to theme.swatches -->
             <div class="flex items-center gap-1.5 flex-shrink-0">
               <span
                 aria-hidden="true"
-                class="block w-4 h-8 rounded-sm border border-border-muted"
-                style="background-color: {theme.swatches?.[0] ??
+                class="block w-4 h-8 rounded-sm border border-surface-panel-border"
+                style="background-color: {modeTokens?.[
+                  '--color-accent-primary-start'
+                ] ??
+                  theme.swatches?.[0] ??
                   'var(--color-accent-primary-start)'}"
               ></span>
               <span
                 aria-hidden="true"
-                class="block w-4 h-8 rounded-sm border border-border-muted"
-                style="background-color: {theme.swatches?.[1] ??
+                class="block w-4 h-8 rounded-sm border border-surface-panel-border"
+                style="background-color: {modeTokens?.[
+                  '--color-accent-secondary-start'
+                ] ??
+                  theme.swatches?.[1] ??
                   'var(--color-accent-secondary-start)'}"
               ></span>
             </div>
@@ -428,7 +464,7 @@
         type="button"
         onclick={handleExport}
         disabled={!themeState.id}
-        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border-muted text-text-primary font-label-sm-bold hover:border-accent-primary-start motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
+        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-accent-primary-start motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         <span class="material-symbols-outlined text-[18px]">download</span>
         Export active
@@ -481,3 +517,21 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /* Visually hidden but available to assistive tech. Used by the
+     system-scheme aria-live region. Matches the locally-scoped
+     .sr-only in PluginNoteBanners.svelte / Calendar.svelte (no global
+     utility exists). */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>

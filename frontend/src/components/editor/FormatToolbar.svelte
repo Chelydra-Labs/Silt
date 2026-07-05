@@ -412,7 +412,7 @@
   .toolbar-divider {
     width: 1px;
     height: 20px;
-    background: var(--color-border-muted, #2a2e36);
+    background: var(--color-surface-popover-border);
     margin: 0 4px;
     flex-shrink: 0;
   }
@@ -426,7 +426,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     cursor: pointer;
     transition:
       background 0.1s,
@@ -437,24 +437,24 @@
   .toolbar-btn:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 15%,
+      var(--color-accent-primary-start) 15%,
       transparent
     );
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
   }
 
   .toolbar-btn:focus-visible {
-    outline: 2px solid var(--color-accent-primary-start, #4f7cff);
+    outline: 2px solid var(--color-accent-primary-start);
     outline-offset: -2px;
   }
 
   .toolbar-btn.active {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-glow, #6fa3ff) 20%,
+      var(--color-accent-primary-glow) 20%,
       transparent
     );
-    color: var(--color-accent-primary-glow, #6fa3ff);
+    color: var(--color-accent-primary-glow);
   }
 
   .toolbar-btn .material-symbols-outlined {

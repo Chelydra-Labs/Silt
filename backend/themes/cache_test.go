@@ -3,6 +3,7 @@ package themes
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -224,5 +225,45 @@ func TestCachedThemeByID_PicksUpModTime(t *testing.T) {
 	}
 	if th1 == th2 {
 		t.Errorf("expected reload after mtime bump, got cached pointer")
+	}
+}
+
+// TestCachedThemeByID_FirstClassIgnoresVaultShadow pins the embed-authoritative
+// contract for the launch-path cache: a same-id file in the vault (a legacy
+// ScaffoldVault seed or a manual copy) must NEVER shadow the packaged embedded
+// version of a first-class theme. We write a STALE cyber_forest.json with a
+// clearly different surfaces.app.bg and assert CachedThemeByID returns the
+// embedded copy (embedded bg, NOT the stale on-disk sentinel). Regression
+// guard for the bug where a stale seeded file silently overrode the evolved
+// embedded version on launch.
+func TestCachedThemeByID_FirstClassIgnoresVaultShadow(t *testing.T) {
+	ResetCacheForTests()
+	dir := t.TempDir()
+	// A cyber_forest.json whose dark surfaces.app.bg is a sentinel (#abcdef)
+	// clearly different from the embedded default's bg, so a stale-vault
+	// leak is unambiguous.
+	stale := strings.Replace(minimalValidJSON, `"id": "test-theme"`, `"id": "cyber_forest"`, 1)
+	stale = strings.Replace(stale, `"#0c0c0e"`, `"#abcdef"`, 1) // dark surfaces.app.bg → sentinel
+	mustWriteTheme(t, dir, "cyber_forest.json", stale)
+
+	th, err := CachedThemeByID(dir, "cyber_forest")
+	if err != nil {
+		t.Fatalf("CachedThemeByID(cyber_forest) with vault shadow: %v", err)
+	}
+	if th.ID != "cyber_forest" {
+		t.Fatalf("resolved id = %q, want cyber_forest", th.ID)
+	}
+	// Embedded copy is authoritative: dark surfaces.app.bg must be the
+	// embedded default's value, NOT the stale on-disk sentinel #abcdef.
+	// The expected value is derived from the packaged embedded default so
+	// this assertion survives any future default-theme edit.
+	def, err := ParseDefault()
+	if err != nil {
+		t.Fatalf("ParseDefault: %v", err)
+	}
+	wantBG := def.Modes.Dark.Surfaces.App.BG
+	if got := th.Modes.Dark.Surfaces.App.BG; got != wantBG {
+		t.Errorf("cyber_forest dark surfaces.app.bg = %q, want embedded default %q (vault shadow %q must be ignored)",
+			got, wantBG, "#abcdef")
 	}
 }

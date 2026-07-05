@@ -37,7 +37,7 @@ const mocks = vi.hoisted(() => {
       name: 'Cyber Forest',
       mode: 'dark' as 'dark' | 'light' | 'system',
       darkTokens: {
-        '--color-void': '#0c0c0e',
+        '--color-surface-app': '#0c0c0e',
         '--font-body': "'Plus Jakarta Sans', sans-serif",
         '--font-mono': "'JetBrains Mono', monospace",
         '--font-headline': "'Hanken Grotesk', sans-serif"

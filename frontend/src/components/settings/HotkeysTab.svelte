@@ -98,7 +98,7 @@
 
       <!-- Hotkeys Group Card -->
       <div
-        class="bg-surface/20 border border-border-muted rounded-xl p-5 space-y-4"
+        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
       >
         <div class="flex items-center justify-between">
           <h4
@@ -127,7 +127,7 @@
                   touch()
                 }}
                 type="text"
-                class="bg-surface border border-border-zinc rounded-lg px-3 py-1.5 text-text-primary text-[12px] font-mono outline-none focus:border-accent-primary-start transition-colors w-full"
+                class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-1.5 text-text-primary text-[12px] font-mono outline-none focus:border-accent-primary-start transition-colors w-full"
               />
             </label>
           {/each}
@@ -137,7 +137,7 @@
       <!-- Error banner -->
       {#if settings.error}
         <div
-          class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md"
+          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
         >
           <span class="material-symbols-outlined text-[18px]">error</span>
           <span class="flex-1">{settings.error}</span>
@@ -147,7 +147,7 @@
 
     <!-- Fixed Footer Actions -->
     <div
-      class="flex items-center justify-end gap-2 px-6 py-4 border-t border-border-muted bg-surface/10 flex-shrink-0"
+      class="flex items-center justify-end gap-2 px-6 py-4 border-t border-surface-panel-border bg-surface-panel/10 flex-shrink-0"
     >
       <button
         onclick={handleRevert}

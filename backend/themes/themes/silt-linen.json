@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "silt-linen",
   "name": "Linen",
   "author": "Chelydra Labs",
@@ -7,33 +7,46 @@
   "typography": {
     "font_family": "'Mulish', sans-serif",
     "mono_font_family": "'Fira Code', monospace",
-    "headline_font": "'Sora', sans-serif"
+    "headline_font": "'Sora', sans-serif",
+    "scale": {
+      "size": { "xs": "0.75rem", "sm": "0.875rem", "base": "1.0625rem", "lg": "1.1875rem", "xl": "1.375rem", "2xl": "1.75rem" },
+      "line_height": { "tight": "1.25", "normal": "1.65", "relaxed": "1.85" },
+      "weight": { "normal": "400", "medium": "500", "semibold": "600" }
+    }
   },
   "modes": {
     "dark": {
-      "bg": {
-        "void": "#242220",
-        "surface": "#2b2825",
-        "panel": "#312e2a",
-        "hover": "#383431",
-        "active": "#403c38"
+      "surfaces": {
+        "app": { "bg": "#242220", "border": "#383431", "text": "#e8e3d8" },
+        "editor": {
+          "bg": "#2b2825",
+          "border": "#443f3a",
+          "text": "#e8e3d8",
+          "background": {
+            "image": "repeating-linear-gradient(0deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+            "size": "tile",
+            "opacity": 0.08,
+            "blend": "overlay"
+          }
+        },
+        "panel": { "bg": "#2d2a27", "border": "#443f3a", "text": "#e8e3d8" },
+        "modal": { "bg": "#302c29", "border": "#57504a", "text": "#e8e3d8" },
+        "card": { "bg": "#312e2a", "border": "#443f3a", "text": "#e8e3d8" },
+        "popover": { "bg": "#383431", "border": "#665d54", "text": "#e8e3d8" },
+        "titlebar": { "bg": "#181613", "border": "#2c2925", "text": "#e8e3d8" },
+        "activitybar": { "bg": "#1e1c1a", "border": "#322f2b", "text": "#e8e3d8" }
       },
-      "border": {
-        "muted": "#383431",
-        "zinc": "#443f3a",
-        "active": "#57504a",
-        "focus": "#6e655c"
-      },
-      "text": {
-        "primary": "#e8e3d8",
-        "muted": "#b9b0a1",
-        "disabled": "#574f45"
-      },
+      "hover": "#383431",
+      "active": "#403c38",
+      "border_active": "#57504a",
+      "border_focus": "#6e655c",
+      "text_muted": "#b9b0a1",
+      "text_disabled": "#574f45",
       "accent": {
         "primary": {
           "start": "#7fb3c4",
           "end": "#5d97ab",
-          "glow": "rgba(125, 179, 196, 0.12)"
+          "glow": "rgba(127, 179, 196, 0.12)"
         },
         "secondary": {
           "start": "#a8a3d4",
@@ -44,33 +57,63 @@
       "status": {
         "warn": "#e0b566",
         "danger": "#d27878",
-        "success": "#22c55e"
+        "success": "#7a9a6a"
       },
-      "texture": {
-        "image": "repeating-linear-gradient(0deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
-        "opacity": "0.08",
-        "blend": "overlay"
+      "error": {
+        "fg": "#e09090",
+        "bg": "#2a1715",
+        "border": "#5a3030"
+      },
+      "radius": { "sm": "8px", "md": "12px", "lg": "16px", "xl": "20px", "full": "9999px" },
+      "spacing": { "sm": "8px", "md": "12px", "lg": "20px", "xl": "32px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 35%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 30%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 25%, transparent)"
+      },
+      "editor": {
+        "caret": "#7fb3c4",
+        "selection": "rgba(125,179,196,0.25)",
+        "selection_text": "#e8e3d8",
+        "link": "#a8a3d4",
+        "link_hover": "#847cb0",
+        "highlight": "rgba(224,181,102,0.30)"
       }
     },
     "light": {
-      "bg": {
-        "void": "#faf6ef",
-        "surface": "#ffffff",
-        "panel": "#f3efe6",
-        "hover": "#e9e4d8",
-        "active": "#ddd6c6"
+      "surfaces": {
+        "app": { "bg": "#fdfbf7", "border": "#dfd7c8", "text": "#2b2a27" },
+        "sidebar": {
+          "bg": "#f5ede0",
+          "border": "#dfd7c8",
+          "text": "#2b2a27",
+          "text_muted": "#594c3e",
+          "text_disabled": "#908472"
+        },
+        "editor": {
+          "bg": "#fbfaf6",
+          "border": "#e8dfd0",
+          "text": "#2b2a27",
+          "background": {
+            "image": "repeating-linear-gradient(0deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+            "size": "tile",
+            "opacity": 0.1,
+            "blend": "multiply"
+          }
+        },
+        "panel": { "bg": "#ffffff", "border": "#e2d8c7", "text": "#2b2a27" },
+        "card": { "bg": "#ffffff", "border": "#dfd7c8", "text": "#2b2a27" },
+        "modal": { "bg": "#ffffff", "border": "#cbbfae", "text": "#2b2a27" },
+        "popover": { "bg": "#ffffff", "border": "#bbaea2", "text": "#2b2a27" },
+        "titlebar": { "bg": "#ebdcc4", "border": "#dfd7c8", "text": "#2b2a27", "text_muted": "#594c3e", "text_disabled": "#908472" },
+        "activitybar": { "bg": "#ebdcc4", "border": "#dfd7c8", "text": "#2b2a27", "text_muted": "#594c3e", "text_disabled": "#908472" }
       },
-      "border": {
-        "muted": "#e9e4d8",
-        "zinc": "#ddd6c6",
-        "active": "#b0a99b",
-        "focus": "#8a8270"
-      },
-      "text": {
-        "primary": "#2b2a27",
-        "muted": "#56544a",
-        "disabled": "#a59f8c"
-      },
+      "hover": "#eae2d0",
+      "active": "#decfa9",
+      "border_active": "#bfb094",
+      "border_focus": "#8c7e65",
+      "text_muted": "#594c3e",
+      "text_disabled": "#908472",
       "accent": {
         "primary": {
           "start": "#4a8a9c",
@@ -84,14 +127,29 @@
         }
       },
       "status": {
-        "warn": "#b08428",
+        "warn": "#856018",
         "danger": "#b85555",
-        "success": "#16a34a"
+        "success": "#4a7a4a"
       },
-      "texture": {
-        "image": "repeating-linear-gradient(0deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
-        "opacity": "0.1",
-        "blend": "multiply"
+      "error": {
+        "fg": "#9a3a3a",
+        "bg": "#fbe8e6",
+        "border": "#d6a0a0"
+      },
+      "radius": { "sm": "8px", "md": "12px", "lg": "16px", "xl": "20px", "full": "9999px" },
+      "spacing": { "sm": "8px", "md": "12px", "lg": "20px", "xl": "32px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 22%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 18%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 15%, transparent)"
+      },
+      "editor": {
+        "caret": "#4a8a9c",
+        "selection": "rgba(74,138,156,0.20)",
+        "selection_text": "#2b2a27",
+        "link": "#686da3",
+        "link_hover": "#565b8e",
+        "highlight": "rgba(176,132,40,0.25)"
       }
     }
   }

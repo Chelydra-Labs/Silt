@@ -20,10 +20,25 @@
   const QUICK_BUTTONS = [
     { id: 'bold', icon: 'format_bold', label: 'Bold', mark: 'bold' },
     { id: 'italic', icon: 'format_italic', label: 'Italic', mark: 'italic' },
-    { id: 'strike', icon: 'format_strikethrough', label: 'Strikethrough', mark: 'strike' },
+    {
+      id: 'strike',
+      icon: 'format_strikethrough',
+      label: 'Strikethrough',
+      mark: 'strike'
+    },
     { id: 'code', icon: 'code', label: 'Code', mark: 'code' },
-    { id: 'highlight', icon: 'highlight', label: 'Highlight', mark: 'highlight' },
-    { id: 'underline', icon: 'format_underlined', label: 'Underline', mark: 'underline' },
+    {
+      id: 'highlight',
+      icon: 'highlight',
+      label: 'Highlight',
+      mark: 'highlight'
+    },
+    {
+      id: 'underline',
+      icon: 'format_underlined',
+      label: 'Underline',
+      mark: 'underline'
+    },
     { id: 'link', icon: 'link', label: 'Link', mark: 'link' }
   ]
 
@@ -58,7 +73,9 @@
         role="menuitemcheckbox"
         onclick={() => handleAction(btn.id, btn.mark)}
       >
-        <span class="material-symbols-outlined" aria-hidden="true">{btn.icon}</span>
+        <span class="material-symbols-outlined" aria-hidden="true"
+          >{btn.icon}</span
+        >
       </button>
     {/each}
   </div>
@@ -74,8 +91,8 @@
     gap: 1px;
     padding: 3px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   }
 
@@ -88,18 +105,26 @@
     border: none;
     border-radius: 5px;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     cursor: pointer;
   }
 
   .bubble-btn:hover {
-    background: color-mix(in srgb, var(--color-accent-primary-start, #4f7cff) 20%, transparent);
-    color: var(--color-text-primary, #e6e6e6);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start) 20%,
+      transparent
+    );
+    color: var(--color-text-primary);
   }
 
   .bubble-btn.active {
-    background: color-mix(in srgb, var(--color-accent-primary-glow, #6fa3ff) 25%, transparent);
-    color: var(--color-accent-primary-glow, #6fa3ff);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 25%,
+      transparent
+    );
+    color: var(--color-accent-primary-glow);
   }
 
   .bubble-btn .material-symbols-outlined {

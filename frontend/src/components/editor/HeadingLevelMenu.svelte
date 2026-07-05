@@ -147,7 +147,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     font-size: 0.78rem;
     cursor: pointer;
     transition:
@@ -158,10 +158,10 @@
   .heading-trigger:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 15%,
+      var(--color-accent-primary-start) 15%,
       transparent
     );
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
   }
 
   .chevron {
@@ -176,8 +176,8 @@
     min-width: 160px;
     padding: 4px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     display: flex;
     flex-direction: column;
@@ -192,7 +192,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     font-size: 0.78rem;
     text-align: left;
     cursor: pointer;
@@ -201,22 +201,22 @@
   .menu-item:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 15%,
+      var(--color-accent-primary-start) 15%,
       transparent
     );
   }
 
   .menu-item.active {
-    color: var(--color-accent-primary-glow, #6fa3ff);
+    color: var(--color-accent-primary-glow);
   }
 
   .menu-item .material-symbols-outlined {
     font-size: 16px;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
   }
 
   .menu-item.active .material-symbols-outlined {
-    color: var(--color-accent-primary-glow, #6fa3ff);
+    color: var(--color-accent-primary-glow);
   }
 
   .check {

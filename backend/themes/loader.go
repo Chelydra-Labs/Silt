@@ -93,9 +93,23 @@ func ListThemes(themesDir string) (*ListThemesResult, error) {
 
 	seenIDs := map[string]bool{}
 
+	// Resolve the embedded first-class set once, up front. First-class
+	// themes are embedded-authoritative: a same-id file in the vault (a
+	// legacy ScaffoldVault seed or a manual copy) must never shadow the
+	// packaged version. firstClass lets the vault loop skip those orphans
+	// so the embedded copy below is the one that reaches the picker.
+	embedded, embedErr := EmbeddedThemes()
+	firstClass := map[string]bool{}
+	if embedErr == nil {
+		for _, t := range embedded {
+			firstClass[t.ID] = true
+		}
+	}
+
 	// An empty themesDir means no vault is open yet. Skip the directory read
 	// entirely rather than relying on platform-dependent os.ReadDir("")
-	// behavior; the embedded-default append below still guarantees a result.
+	// behavior; the embedded-first-class append below still guarantees a
+	// result.
 	if themesDir != "" {
 		entries, err := os.ReadDir(themesDir)
 		if err == nil {
@@ -112,8 +126,14 @@ func ListThemes(themesDir string) (*ListThemesResult, error) {
 					})
 					continue
 				}
+				if firstClass[t.ID] {
+					// First-class themes resolve from the embed below; an
+					// on-disk same-id file (legacy seed / manual copy) is
+					// ignored so it can't shadow the packaged version.
+					continue
+				}
 				if seenIDs[t.ID] {
-					continue // first valid definition of an id wins
+					continue // first valid definition of a custom id wins
 				}
 				seenIDs[t.ID] = true
 				res.Themes = append(res.Themes, t.AsInfo("disk"))
@@ -129,12 +149,9 @@ func ListThemes(themesDir string) (*ListThemesResult, error) {
 		}
 	}
 
-	// Always guarantee the embedded first-class themes are selectable. A
-	// theme whose id is already on disk won the dedup above (on-disk wins,
-	// preserving the existing contract); otherwise append the embedded copy
-	// so the picker shows the full first-party set even on an empty/wiped
-	// vault or an existing vault scaffolded before a theme shipped.
-	embedded, embedErr := EmbeddedThemes()
+	// Append the embedded first-class set (always selectable, always
+	// authoritative). Customizing a first-class theme is done by forking to
+	// a "user-" id, which the vault loop above already served as "disk".
 	if embedErr != nil {
 		// An embed corruption is a release-blocking build bug (caught by
 		// EmbeddedThemes tests in CI). Keep the picker usable by falling

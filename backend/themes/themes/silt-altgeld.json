@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "silt-altgeld",
   "name": "Altgeld",
   "author": "Chelydra Labs",
@@ -7,28 +7,31 @@
   "typography": {
     "font_family": "'Public Sans', sans-serif",
     "mono_font_family": "'Martian Mono', monospace",
-    "headline_font": "'Schibsted Grotesk', sans-serif"
+    "headline_font": "'Schibsted Grotesk', sans-serif",
+    "scale": {
+      "size": { "xs": "0.75rem", "sm": "0.875rem", "base": "1rem", "lg": "1.125rem", "xl": "1.3125rem", "2xl": "1.625rem" },
+      "line_height": { "tight": "1.2", "normal": "1.55", "relaxed": "1.75" },
+      "weight": { "normal": "400", "medium": "500", "semibold": "600" }
+    }
   },
   "modes": {
     "dark": {
-      "bg": {
-        "void": "#0d1525",
-        "surface": "#121d35",
-        "panel": "#162540",
-        "hover": "#1c2d4c",
-        "active": "#243658"
+      "surfaces": {
+        "app": { "bg": "#0d1525", "border": "#1a2840", "text": "#e6ecf5" },
+        "editor": { "bg": "#101930", "border": "#1e2d48", "text": "#e6ecf5" },
+        "panel": { "bg": "#121d35", "border": "#243658", "text": "#e6ecf5" },
+        "modal": { "bg": "#162441", "border": "#344d70", "text": "#e6ecf5" },
+        "card": { "bg": "#162540", "border": "#243658", "text": "#e6ecf5" },
+        "popover": { "bg": "#1d2e50", "border": "#3e5680", "text": "#e6ecf5" },
+        "titlebar": { "bg": "#080d18", "border": "#131e30", "text": "#e6ecf5" },
+        "activitybar": { "bg": "#0a101d", "border": "#162438", "text": "#e6ecf5" }
       },
-      "border": {
-        "muted": "#1a2840",
-        "zinc": "#243658",
-        "active": "#344d70",
-        "focus": "#4a6090"
-      },
-      "text": {
-        "primary": "#e6ecf5",
-        "muted": "#94a4bc",
-        "disabled": "#4a5a70"
-      },
+      "hover": "#1c2d4c",
+      "active": "#243658",
+      "border_active": "#344d70",
+      "border_focus": "#4a6090",
+      "text_muted": "#94a4bc",
+      "text_disabled": "#4a5a70",
       "accent": {
         "primary": {
           "start": "#ff5f05",
@@ -42,46 +45,91 @@
         }
       },
       "status": {
-        "warn": "#fbbf24",
-        "danger": "#f43f5e",
-        "success": "#22c55e"
+        "warn": "#ffa840",
+        "danger": "#e85060",
+        "success": "#4cb878"
+      },
+      "error": {
+        "fg": "#ff6a78",
+        "bg": "#1f0d12",
+        "border": "#4a2030"
+      },
+      "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
+      "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 50%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 45%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 40%, transparent)"
+      },
+      "editor": {
+        "caret": "#ff5f05",
+        "selection": "rgba(255,95,5,0.25)",
+        "selection_text": "#e6ecf5",
+        "link": "#4080e0",
+        "link_hover": "#2050a0",
+        "highlight": "rgba(255,168,64,0.30)"
       }
     },
     "light": {
-      "bg": {
-        "void": "#eaf0f6",
-        "surface": "#ffffff",
-        "panel": "#e4eaf2",
-        "hover": "#dae2ee",
-        "active": "#c6d2e2"
+      "surfaces": {
+        "app": { "bg": "#eaf0f6", "border": "#6e88ac", "text": "#13294b" },
+        "sidebar": {
+          "bg": "#0d1525",
+          "border": "#1a2840",
+          "text": "#e6ecf5",
+          "text_muted": "#94a4bc",
+          "text_disabled": "#4a5a70"
+        },
+        "editor": { "bg": "#f0f4f9", "border": "#728cb0", "text": "#13294b" },
+        "panel": { "bg": "#f6f8fb", "border": "#7690b4", "text": "#13294b" },
+        "card": { "bg": "#ffffff", "border": "#5a749c", "text": "#13294b" },
+        "modal": { "bg": "#ffffff", "border": "#486484", "text": "#13294b" },
+        "popover": { "bg": "#ffffff", "border": "#3c5878", "text": "#13294b" },
+        "titlebar": { "bg": "#080d18", "border": "#131e30", "text": "#e6ecf5", "text_muted": "#94a4bc", "text_disabled": "#4a5a70" },
+        "activitybar": { "bg": "#0a101d", "border": "#162438", "text": "#e6ecf5", "text_muted": "#94a4bc", "text_disabled": "#4a5a70" }
       },
-      "border": {
-        "muted": "#dde6f0",
-        "zinc": "#c8d6e6",
-        "active": "#94a8c0",
-        "focus": "#5a7090"
-      },
-      "text": {
-        "primary": "#13294b",
-        "muted": "#3a4a60",
-        "disabled": "#8a9aae"
-      },
+      "hover": "#c2d2e6",
+      "active": "#aec0d8",
+      "border_active": "#607c98",
+      "border_focus": "#324a6c",
+      "text_muted": "#2c4064",
+      "text_disabled": "#7c96b4",
       "accent": {
         "primary": {
           "start": "#c44a00",
           "end": "#9a3800",
-          "glow": "rgba(255,95,5,0.10)"
+          "glow": "rgba(196,74,0,0.10)"
         },
         "secondary": {
           "start": "#1a3677",
           "end": "#0d1f4d",
-          "glow": "rgba(19,41,75,0.08)"
+          "glow": "rgba(26,54,119,0.08)"
         }
       },
       "status": {
-        "warn": "#9a6e1a",
-        "danger": "#b3000c",
-        "success": "#16a34a"
+        "warn": "#8a5a14",
+        "danger": "#a01a20",
+        "success": "#1c7a4a"
+      },
+      "error": {
+        "fg": "#7c141c",
+        "bg": "#fbe6e6",
+        "border": "#d08888"
+      },
+      "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
+      "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 30%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 25%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 20%, transparent)"
+      },
+      "editor": {
+        "caret": "#c44a00",
+        "selection": "rgba(196,74,0,0.20)",
+        "selection_text": "#13294b",
+        "link": "#1a3677",
+        "link_hover": "#0d1f4d",
+        "highlight": "rgba(138,90,20,0.22)"
       }
     }
   }

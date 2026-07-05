@@ -135,7 +135,7 @@
 
 {#if isRecursive}
   <span
-    class="inline-flex items-center gap-1 mx-0.5 text-[0.8em] text-text-muted italic border border-dashed border-border-muted rounded px-1.5 py-0.5"
+    class="inline-flex items-center gap-1 mx-0.5 text-[0.8em] text-text-muted italic border border-dashed border-surface-popover-border rounded px-1.5 py-0.5"
     title="Recursive embed — stopped to avoid a loop"
   >
     <span class="material-symbols-outlined text-[0.9em]">block</span>recursive

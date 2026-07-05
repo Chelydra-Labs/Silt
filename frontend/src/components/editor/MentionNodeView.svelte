@@ -27,7 +27,7 @@
     border-radius: 4px;
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 12%,
+      var(--color-accent-primary-start) 12%,
       transparent
     );
     /* Primary text color (not the accent) keeps the name readable on both dark
@@ -37,7 +37,7 @@
     white-space: nowrap;
   }
   .mention-at {
-    color: var(--color-accent-primary-start, #4f7cff);
+    color: var(--color-accent-primary-start);
     margin-right: 1px;
   }
 </style>

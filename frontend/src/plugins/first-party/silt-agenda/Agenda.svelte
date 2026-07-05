@@ -112,7 +112,7 @@
 
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
   <header
-    class="px-6 py-4 border-b border-border-muted flex items-center gap-3"
+    class="px-6 py-4 border-b border-surface-panel-border flex items-center gap-3"
   >
     <span class="material-symbols-outlined text-accent-primary-start"
       >event_repeat</span

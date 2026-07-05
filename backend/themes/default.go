@@ -73,11 +73,13 @@ func EmbeddedThemeFiles() (map[string][]byte, error) {
 }
 
 // EmbeddedThemes returns the parsed first-class themes embedded in the binary
-// (the default plus every shipped palette). They are the "always-selectable"
-// set: ListThemes appends any not already on disk, and ScaffoldVault writes
-// editable on-disk copies. Every embedded theme is authored at build time, so
-// any validation failure is a release-blocking authoring bug — this function
-// returns it rather than silently dropping a theme (fail loud).
+// (the default plus every shipped palette). They are the authoritative,
+// always-selectable source: ListThemes/CachedThemeByID serve these for any
+// first-class id and IGNORE a same-id file in the vault (a legacy
+// ScaffoldVault seed or manual copy can never shadow the packaged version).
+// Every embedded theme is authored at build time, so any validation failure
+// is a release-blocking authoring bug — this function returns it rather than
+// silently dropping a theme (fail loud).
 func EmbeddedThemes() ([]*Theme, error) {
 	files, err := EmbeddedThemeFiles()
 	if err != nil {

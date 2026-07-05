@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { tokensToShikiTheme } from './useMarkdownHighlighter'
 
 const DARK = {
-  '--color-surface': '#111111',
+  '--color-surface-panel': '#111111',
   '--color-text-primary': '#eeeeee',
   '--color-text-muted': '#888888',
   '--color-accent-primary-start': '#4f7cff',
@@ -16,7 +16,7 @@ const DARK = {
 }
 
 const LIGHT = {
-  '--color-surface': '#fafafa',
+  '--color-surface-panel': '#fafafa',
   '--color-text-primary': '#111111',
   '--color-text-muted': '#666666',
   '--color-accent-primary-start': '#2563eb',

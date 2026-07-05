@@ -118,7 +118,7 @@
     display: block;
   }
   .silt-math:focus-visible {
-    outline: 2px solid var(--color-accent-primary-start, #4f7cff);
+    outline: 2px solid var(--color-accent-primary-start);
     outline-offset: 2px;
     border-radius: 3px;
   }
@@ -130,22 +130,22 @@
     text-align: center;
   }
   .silt-math-err {
-    color: var(--color-error, #ef4444);
+    color: var(--color-error);
     font-family: var(--font-mono, monospace);
     font-size: 0.85em;
   }
   .silt-math-pending {
     font-family: var(--font-mono, monospace);
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     opacity: 0.7;
   }
   .silt-math-empty {
     display: inline-block;
     padding: 0.5em 1em;
-    border: 1px dashed var(--color-border-muted, #444);
+    border: 1px dashed var(--color-surface-card-border);
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     cursor: pointer;
     font-family: inherit;
     font-size: 0.9em;
@@ -163,7 +163,7 @@
     color: var(--color-text-primary, currentColor);
   }
   .silt-math-empty:hover {
-    border-color: var(--color-accent-primary-start, #4f7cff);
-    color: var(--color-accent-primary-start, #4f7cff);
+    border-color: var(--color-accent-primary-start);
+    color: var(--color-accent-primary-start);
   }
 </style>

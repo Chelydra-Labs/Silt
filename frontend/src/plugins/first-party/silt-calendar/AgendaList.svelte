@@ -270,7 +270,7 @@
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden" data-agenda-list>
   {#if activeFilter !== 'all'}
     <div
-      class="px-6 py-1.5 border-b border-border-muted bg-accent-primary-glow flex items-center gap-2 text-[12px] font-body-md"
+      class="px-6 py-1.5 border-b border-surface-panel-border bg-accent-primary-glow flex items-center gap-2 text-[12px] font-body-md"
       role="status"
       aria-live="polite"
       data-testid="agenda-filter-banner"

@@ -42,22 +42,18 @@
     border-radius: 8px;
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-glow, #6fa3ff) 12%,
-      var(--color-surface, #1a1d24)
+      var(--color-accent-primary-glow) 12%,
+      var(--color-surface-card)
     );
     border: 1px solid
-      color-mix(
-        in srgb,
-        var(--color-accent-primary-glow, #6fa3ff) 30%,
-        transparent
-      );
-    color: var(--color-text-primary, #e6e6e6);
+      color-mix(in srgb, var(--color-accent-primary-glow) 30%, transparent);
+    color: var(--color-text-primary);
     font-size: 0.8rem;
   }
 
   .tip-icon {
     font-size: 18px;
-    color: var(--color-accent-primary-glow, #6fa3ff);
+    color: var(--color-accent-primary-glow);
     flex-shrink: 0;
   }
 
@@ -70,9 +66,9 @@
     display: inline-block;
     padding: 1px 5px;
     border-radius: 4px;
-    background: var(--color-panel, #252830);
-    border: 1px solid var(--color-border-muted, #3a3f4b);
-    color: var(--color-text-primary, #e6e6e6);
+    background: var(--color-surface-card);
+    border: 1px solid var(--color-surface-card-border);
+    color: var(--color-text-primary);
     font-family: var(--font-mono, monospace);
     font-size: 0.7rem;
   }
@@ -80,10 +76,10 @@
   .tip-dismiss {
     flex-shrink: 0;
     padding: 3px 10px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-card-border);
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     font-size: 0.75rem;
     cursor: pointer;
     transition:
@@ -94,9 +90,9 @@
   .tip-dismiss:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 15%,
+      var(--color-accent-primary-start) 15%,
       transparent
     );
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
   }
 </style>

@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "silt-frost",
   "name": "Frost",
   "author": "Chelydra Labs",
@@ -7,81 +7,129 @@
   "typography": {
     "font_family": "'DM Sans', sans-serif",
     "mono_font_family": "'Geist Mono', monospace",
-    "headline_font": "'Lexend', sans-serif"
+    "headline_font": "'Lexend', sans-serif",
+    "scale": {
+      "size": { "xs": "0.75rem", "sm": "0.875rem", "base": "1rem", "lg": "1.125rem", "xl": "1.25rem", "2xl": "1.5rem" },
+      "line_height": { "tight": "1.2", "normal": "1.55", "relaxed": "1.75" },
+      "weight": { "normal": "400", "medium": "500", "semibold": "600" }
+    }
   },
   "modes": {
     "dark": {
-      "bg": {
-        "void": "#0a0e14",
-        "surface": "#101620",
-        "panel": "#161e2a",
-        "hover": "#1d2838",
-        "active": "#263348"
+      "surfaces": {
+        "app": { "bg": "#0a0e14", "border": "#1a2433", "text": "#e2eaf2" },
+        "editor": { "bg": "#0d121a", "border": "#1d2838", "text": "#e2eaf2" },
+        "panel": { "bg": "#101620", "border": "#263348", "text": "#e2eaf2" },
+        "modal": { "bg": "#141b28", "border": "#3a4d68", "text": "#e2eaf2" },
+        "card": { "bg": "#161e2a", "border": "#263348", "text": "#e2eaf2" },
+        "popover": { "bg": "#1c2536", "border": "#445068", "text": "#e2eaf2" },
+        "titlebar": { "bg": "#040609", "border": "#101622", "text": "#e2eaf2" },
+        "activitybar": { "bg": "#06090e", "border": "#131a26", "text": "#e2eaf2" }
       },
-      "border": {
-        "muted": "#1a2433",
-        "zinc": "#263348",
-        "active": "#3a4d68",
-        "focus": "#5a7390"
-      },
-      "text": {
-        "primary": "#e2eaf2",
-        "muted": "#94a4b8",
-        "disabled": "#4a5a6e"
-      },
+      "hover": "#1d2838",
+      "active": "#263348",
+      "border_active": "#3a4d68",
+      "border_focus": "#5a7390",
+      "text_muted": "#94a4b8",
+      "text_disabled": "#4a5a6e",
       "accent": {
         "primary": {
-          "start": "#38bdf8",
-          "end": "#0ea5e9",
+          "start": "oklch(0.754 0.139 233)",
+          "end": "oklch(0.685 0.148 237)",
           "glow": "rgba(56,189,248,0.12)"
         },
         "secondary": {
-          "start": "#818cf8",
-          "end": "#6366f1",
+          "start": "oklch(0.68 0.158 277)",
+          "end": "oklch(0.585 0.204 277)",
           "glow": "rgba(129,140,248,0.10)"
         }
       },
       "status": {
-        "warn": "#fbbf24",
-        "danger": "#f43f5e",
-        "success": "#22c55e"
+        "warn": "#e8c45a",
+        "danger": "#e85a7a",
+        "success": "#3ac8a4"
+      },
+      "error": {
+        "fg": "#f4708c",
+        "bg": "#181014",
+        "border": "#4a2a3a"
+      },
+      "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
+      "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 45%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 40%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 35%, transparent)"
+      },
+      "editor": {
+        "caret": "oklch(0.754 0.139 233)",
+        "selection": "rgba(56,189,248,0.25)",
+        "selection_text": "#e2eaf2",
+        "link": "oklch(0.68 0.158 277)",
+        "link_hover": "oklch(0.585 0.204 277)",
+        "highlight": "rgba(232,196,90,0.28)"
       }
     },
     "light": {
-      "bg": {
-        "void": "#f0f4fa",
-        "surface": "#ffffff",
-        "panel": "#e8eef6",
-        "hover": "#dde6f0",
-        "active": "#c8d6e6"
+      "surfaces": {
+        "app": { "bg": "#f4f8fc", "border": "#c4d6eb", "text": "#061020" },
+        "sidebar": {
+          "bg": "#e8eff8",
+          "border": "#c4d6eb",
+          "text": "#0d203d",
+          "text_muted": "#43556d",
+          "text_disabled": "#8fa4bd"
+        },
+        "editor": { "bg": "#fcfdfe", "border": "#d2e2f4", "text": "#061020" },
+        "panel": { "bg": "#ffffff", "border": "#cbdcf0", "text": "#061020" },
+        "card": { "bg": "#ffffff", "border": "#c4d6eb", "text": "#061020" },
+        "modal": { "bg": "#ffffff", "border": "#aec7e4", "text": "#061020" },
+        "popover": { "bg": "#ffffff", "border": "#9dbadc", "text": "#061020" },
+        "titlebar": { "bg": "#dbe5f0", "border": "#c4d6eb", "text": "#0d203d", "text_muted": "#43556d", "text_disabled": "#8fa4bd" },
+        "activitybar": { "bg": "#dbe5f0", "border": "#c4d6eb", "text": "#0d203d", "text_muted": "#43556d", "text_disabled": "#8fa4bd" }
       },
-      "border": {
-        "muted": "#dde6f0",
-        "zinc": "#c8d6e6",
-        "active": "#94a8c0",
-        "focus": "#5a7090"
-      },
-      "text": {
-        "primary": "#061020",
-        "muted": "#3a4a60",
-        "disabled": "#8a9aae"
-      },
+      "hover": "#e2ebf4",
+      "active": "#d4e2f1",
+      "border_active": "#8db4dd",
+      "border_focus": "#4b7db2",
+      "text_muted": "#43556d",
+      "text_disabled": "#8fa4bd",
       "accent": {
         "primary": {
-          "start": "#0284c7",
-          "end": "#0369a1",
+          "start": "oklch(0.588 0.139 242)",
+          "end": "oklch(0.5 0.119 243)",
           "glow": "rgba(2,132,199,0.10)"
         },
         "secondary": {
-          "start": "#4f46e5",
-          "end": "#3730a3",
+          "start": "oklch(0.511 0.23 277)",
+          "end": "oklch(0.398 0.177 277)",
           "glow": "rgba(79,70,229,0.08)"
         }
       },
       "status": {
-        "warn": "#d97706",
-        "danger": "#e11d48",
-        "success": "#16a34a"
+        "warn": "#a8741c",
+        "danger": "#bc3a58",
+        "success": "#137d56"
+      },
+      "error": {
+        "fg": "#a83020",
+        "bg": "#fde6ea",
+        "border": "#e08a9c"
+      },
+      "radius": { "sm": "4px", "md": "8px", "lg": "12px", "xl": "16px", "full": "9999px" },
+      "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 28%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 22%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 18%, transparent)"
+      },
+      "editor": {
+        "caret": "oklch(0.588 0.139 242)",
+        "selection": "rgba(2,132,199,0.20)",
+        "selection_text": "#061020",
+        "link": "oklch(0.511 0.23 277)",
+        "link_hover": "oklch(0.398 0.177 277)",
+        "highlight": "rgba(168,116,28,0.22)"
       }
     }
   }

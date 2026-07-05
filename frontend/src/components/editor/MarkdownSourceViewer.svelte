@@ -177,7 +177,7 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: var(--color-surface, #1a1d24);
+    background: var(--color-surface-panel);
   }
 
   .source-header {
@@ -185,13 +185,13 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 12px;
-    border-bottom: 1px solid var(--color-border-muted, #2a2e36);
+    border-bottom: 1px solid var(--color-surface-panel-border);
     flex-shrink: 0;
   }
 
   .file-path {
     font-size: 0.75rem;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -202,10 +202,10 @@
     align-items: center;
     gap: 4px;
     padding: 3px 8px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-panel-border);
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     font-size: 0.72rem;
     cursor: pointer;
   }
@@ -213,10 +213,10 @@
   .copy-btn:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 15%,
+      var(--color-accent-primary-start) 15%,
       transparent
     );
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
   }
 
   .copy-btn .material-symbols-outlined {
@@ -225,12 +225,12 @@
 
   .copy-status {
     font-size: 0.7rem;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     white-space: nowrap;
   }
 
   .copy-status--err {
-    color: var(--color-status-danger, #f87171);
+    color: var(--color-status-danger);
   }
 
   .source-body {
@@ -245,7 +245,7 @@
     padding: 8px 8px 8px 12px;
     text-align: right;
     user-select: none;
-    border-right: 1px solid var(--color-border-muted, #2a2e36);
+    border-right: 1px solid var(--color-surface-panel-border);
     flex-shrink: 0;
   }
 
@@ -253,7 +253,7 @@
     font-family: var(--font-mono, monospace);
     font-size: 0.75rem;
     line-height: 1.6;
-    color: var(--color-text-muted, #555);
+    color: var(--color-text-muted);
     opacity: 0.5;
   }
 
@@ -263,7 +263,7 @@
     font-family: var(--font-mono, monospace);
     font-size: 0.8rem;
     line-height: 1.6;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     white-space: pre-wrap;
     word-break: break-word;
     flex: 1;

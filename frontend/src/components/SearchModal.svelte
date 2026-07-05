@@ -217,11 +217,11 @@
     aria-modal="true"
     aria-label="Search blocks"
     tabindex="-1"
-    class="relative w-full max-w-2xl glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
+    class="relative w-full max-w-2xl glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
   >
     <!-- Search Input Area -->
     <div
-      class="flex items-center gap-3 px-4 py-4 border-b border-border-muted bg-void/30"
+      class="flex items-center gap-3 px-4 py-4 border-b border-surface-modal-border bg-surface-modal/30"
     >
       <span
         class="material-symbols-outlined text-text-muted text-[22px] select-none"
@@ -260,17 +260,19 @@
          sort. Keyboard-reachable via Tab; the chips drive the `type` filter,
          scope drives VaultOnly, sort drives the SQL ORDER BY. -->
     <div
-      class="flex items-center gap-2 px-4 py-2 border-b border-border-muted bg-void/20 flex-wrap"
+      class="flex items-center gap-2 px-4 py-2 border-b border-surface-modal-border bg-surface-modal/20 flex-wrap"
       role="toolbar"
       aria-label="Search filters"
     >
       <!-- Scope: Vault vs Vault+Linked (segmented). -->
-      <div class="flex rounded-lg overflow-hidden border border-border-muted">
+      <div
+        class="flex rounded-lg overflow-hidden border border-surface-modal-border"
+      >
         <button
           type="button"
           class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={scopeVaultOnly}
-          class:text-void={scopeVaultOnly}
+          class:text-surface-app={scopeVaultOnly}
           class:text-text-muted={!scopeVaultOnly}
           aria-pressed={scopeVaultOnly}
           onclick={() => (scopeVaultOnly = true)}
@@ -280,7 +282,7 @@
           type="button"
           class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={!scopeVaultOnly}
-          class:text-void={!scopeVaultOnly}
+          class:text-surface-app={!scopeVaultOnly}
           class:text-text-muted={scopeVaultOnly}
           aria-pressed={!scopeVaultOnly}
           onclick={() => (scopeVaultOnly = false)}
@@ -295,10 +297,10 @@
             type="button"
             class="px-2 py-1 rounded-md text-[11px] font-label-sm-bold transition-colors border cursor-pointer"
             class:bg-accent-primary-start={typeFilter === chip.id}
-            class:text-void={typeFilter === chip.id}
+            class:text-surface-app={typeFilter === chip.id}
             class:bg-transparent={typeFilter !== chip.id}
             class:text-text-muted={typeFilter !== chip.id}
-            class:border-border-muted={typeFilter !== chip.id}
+            class:border-surface-modal-border={typeFilter !== chip.id}
             aria-pressed={typeFilter === chip.id}
             onclick={() => (typeFilter = chip.id)}>{chip.label}</button
           >
@@ -307,13 +309,13 @@
 
       <!-- Sort: Relevance vs Recent (segmented). -->
       <div
-        class="ml-auto flex rounded-lg overflow-hidden border border-border-muted"
+        class="ml-auto flex rounded-lg overflow-hidden border border-surface-modal-border"
       >
         <button
           type="button"
           class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={sortMode === 'relevance'}
-          class:text-void={sortMode === 'relevance'}
+          class:text-surface-app={sortMode === 'relevance'}
           class:text-text-muted={sortMode !== 'relevance'}
           aria-pressed={sortMode === 'relevance'}
           onclick={() => (sortMode = 'relevance')}>Relevance</button
@@ -322,7 +324,7 @@
           type="button"
           class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={sortMode === 'recency'}
-          class:text-void={sortMode === 'recency'}
+          class:text-surface-app={sortMode === 'recency'}
           class:text-text-muted={sortMode !== 'recency'}
           aria-pressed={sortMode === 'recency'}
           onclick={() => (sortMode = 'recency')}>Recent</button
@@ -436,7 +438,7 @@
     <!-- Result count footer -->
     {#if query.trim() !== '' && total > 0}
       <div
-        class="px-4 py-2 border-t border-border-muted text-[10px] text-text-muted font-label-sm flex items-center justify-between bg-void/30"
+        class="px-4 py-2 border-t border-surface-modal-border text-[10px] text-text-muted font-label-sm flex items-center justify-between bg-surface-modal/30"
       >
         <span>{total} match{total === 1 ? '' : 'es'}</span>
         <span class="opacity-60">↑↓ navigate · ⏎ open · esc close</span>

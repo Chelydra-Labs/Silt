@@ -85,5 +85,5 @@ export function priorityClass(p: number): string {
   if (p <= 1) return 'text-error border-error/20 bg-error/10'
   if (p === 2)
     return 'text-accent-primary-start border-accent-primary-start/20 bg-accent-primary-glow'
-  return 'text-text-muted border-border-muted bg-surface'
+  return 'text-text-muted border-surface-card-border bg-surface-card'
 }

@@ -102,7 +102,7 @@
     aria-describedby="blocked-done-desc"
     tabindex="-1"
     class="relative w-full max-w-md rounded-xl border border-border-active shadow-2xl flex flex-col"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 92%, transparent);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 92%, transparent);"
   >
     <div class="p-5 flex items-start gap-3">
       <span
@@ -137,17 +137,19 @@
         </li>
       {/each}
     </ul>
-    <div class="flex justify-end gap-2 px-5 py-3 border-t border-border-muted">
+    <div
+      class="flex justify-end gap-2 px-5 py-3 border-t border-surface-modal-border"
+    >
       <button
         data-action="cancel"
-        class="px-3 py-1.5 rounded-md text-sm font-label-sm text-text-primary border border-border-zinc hover:bg-hover transition-colors"
+        class="px-3 py-1.5 rounded-md text-sm font-label-sm text-text-primary border border-surface-modal-border hover:bg-hover transition-colors"
         onclick={onCancel}
       >
         Cancel
       </button>
       <button
         data-action="confirm"
-        class="px-3 py-1.5 rounded-md text-sm font-label-sm text-void bg-status-warn hover:opacity-90 transition-opacity"
+        class="px-3 py-1.5 rounded-md text-sm font-label-sm text-surface-app bg-status-warn hover:opacity-90 transition-opacity"
         onclick={onConfirm}
       >
         Complete anyway

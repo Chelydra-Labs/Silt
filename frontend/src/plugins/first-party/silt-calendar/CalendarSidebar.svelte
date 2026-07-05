@@ -440,7 +440,7 @@
               </span>
               <span class="flex-1 truncate">{item.label}</span>
               <span
-                class="text-[10px] text-text-muted bg-surface px-1.5 py-0.5 rounded-sm font-label-sm"
+                class="text-[10px] text-text-muted bg-surface-popover px-1.5 py-0.5 rounded-sm font-label-sm"
                 aria-label="{counts[item.id as keyof Counts]} tasks"
                 data-testid={`count-${item.id}`}
               >
@@ -463,7 +463,7 @@
         type="button"
         onclick={clearFilterAndFocus}
         data-testid="clear-filter"
-        class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-border-muted bg-transparent transition-colors"
+        class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors"
       >
         <span class="material-symbols-outlined text-[12px]">close</span>
         Clear filter
@@ -511,7 +511,7 @@
           onclick={goMiniToday}
           aria-label="Jump mini-calendar to today"
           data-testid="mini-today"
-          class="px-1.5 py-0.5 rounded border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
+          class="px-1.5 py-0.5 rounded border border-surface-popover-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
         >
           Today
         </button>
@@ -566,7 +566,7 @@
           type="button"
           onclick={() => clearFocusDate()}
           data-testid="clear-focus"
-          class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-border-muted bg-transparent transition-colors"
+          class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors"
         >
           <span class="material-symbols-outlined text-[12px]">close</span>
           Clear jump date

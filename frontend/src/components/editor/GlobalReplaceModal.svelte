@@ -379,10 +379,12 @@
     aria-modal="true"
     aria-label="Find and replace across vault"
     tabindex="-1"
-    class="relative w-full max-w-3xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[600px]"
-    style="background: color-mix(in srgb, var(--color-panel) 95%, transparent);"
+    class="relative w-full max-w-3xl glass-palette border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[600px]"
+    style="background: color-mix(in srgb, var(--color-surface-modal) 95%, transparent);"
   >
-    <div class="px-4 py-3 border-b border-border-muted bg-void/30 space-y-2">
+    <div
+      class="px-4 py-3 border-b border-surface-modal-border bg-surface-modal/30 space-y-2"
+    >
       <div class="flex items-center gap-2">
         <input
           bind:value={findText}
@@ -391,7 +393,7 @@
           aria-label="Find"
           autocomplete="off"
           spellcheck="false"
-          class="flex-1 bg-transparent border border-border-muted rounded-lg px-3 py-1.5 text-text-primary text-[14px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+          class="flex-1 bg-transparent border border-surface-modal-border rounded-lg px-3 py-1.5 text-text-primary text-[14px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
         />
         <button
           type="button"
@@ -409,14 +411,14 @@
           aria-label="Replace with"
           autocomplete="off"
           spellcheck="false"
-          class="flex-1 bg-transparent border border-border-muted rounded-lg px-3 py-1.5 text-text-primary text-[14px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+          class="flex-1 bg-transparent border border-surface-modal-border rounded-lg px-3 py-1.5 text-text-primary text-[14px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
         />
         <label
           class="flex items-center gap-1 text-[12px] text-text-muted cursor-pointer"
           ><input
             type="checkbox"
             bind:checked={caseSensitive}
-            class="accent-[#10b981]"
+            class="accent-[var(--color-accent-primary-end)]"
           />Aa</label
         >
         <label
@@ -424,7 +426,7 @@
           ><input
             type="checkbox"
             bind:checked={wholeWord}
-            class="accent-[#10b981]"
+            class="accent-[var(--color-accent-primary-end)]"
           />ab</label
         >
         <label
@@ -432,7 +434,7 @@
           ><input
             type="checkbox"
             bind:checked={regexp}
-            class="accent-[#10b981]"
+            class="accent-[var(--color-accent-primary-end)]"
           />.*</label
         >
         <button
@@ -451,7 +453,7 @@
     <div class="flex-1 overflow-y-auto custom-scrollbar">
       {#if truncatedCount > 0}
         <div
-          class="px-4 py-2 text-[12px] text-text-muted bg-void/20 border-b border-border-muted/60"
+          class="px-4 py-2 text-[12px] text-text-muted bg-surface-modal/20 border-b border-surface-modal-border/60"
           role="status"
           aria-live="polite"
         >
@@ -471,13 +473,13 @@
         </div>
       {:else}
         {#each groups as grp (grp.key)}
-          <div class="border-b border-border-muted/60">
-            <div class="flex items-center gap-2 px-4 py-2 bg-void/20">
+          <div class="border-b border-surface-modal-border/60">
+            <div class="flex items-center gap-2 px-4 py-2 bg-surface-modal/20">
               <input
                 type="checkbox"
                 checked={grp.accepted}
                 onchange={() => togglePageAccept(grp)}
-                class="accent-[#10b981]"
+                class="accent-[var(--color-accent-primary-end)]"
                 aria-label="Accept all on this page"
               />
               <span
@@ -494,7 +496,7 @@
                 <input
                   type="checkbox"
                   bind:checked={m.accepted}
-                  class="accent-[#10b981] mt-0.5"
+                  class="accent-[var(--color-accent-primary-end)] mt-0.5"
                   aria-label="Accept this match"
                 />
                 <div class="flex-1 min-w-0">
@@ -514,7 +516,7 @@
 
     {#if statusMessage}
       <div
-        class="px-4 py-2 text-[12px] font-body-md text-text-muted border-t border-border-muted bg-void/20"
+        class="px-4 py-2 text-[12px] font-body-md text-text-muted border-t border-surface-modal-border bg-surface-modal/20"
         role="status"
         aria-live="polite"
       >
@@ -523,7 +525,7 @@
     {/if}
 
     <div
-      class="flex items-center justify-between gap-2 px-4 py-3 border-t border-border-muted bg-surface/10"
+      class="flex items-center justify-between gap-2 px-4 py-3 border-t border-surface-modal-border bg-surface-modal/10"
     >
       <span class="text-[12px] text-text-muted"
         >{totalAccepted} match{totalAccepted === 1 ? '' : 'es'} selected</span

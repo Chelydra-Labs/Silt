@@ -267,15 +267,11 @@
     border-radius: 8px;
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-glow, #6fa3ff) 12%,
-      var(--color-surface, #1a1d24)
+      var(--color-accent-primary-glow) 12%,
+      var(--color-surface-card)
     );
     border: 1px solid
-      color-mix(
-        in srgb,
-        var(--color-accent-primary-glow, #6fa3ff) 30%,
-        transparent
-      );
+      color-mix(in srgb, var(--color-accent-primary-glow) 30%, transparent);
   }
 
   .banner-collapse-toggle {
@@ -285,17 +281,13 @@
     padding: 6px 10px;
     border-radius: 8px;
     border: 1px solid
-      color-mix(
-        in srgb,
-        var(--color-accent-primary-glow, #6fa3ff) 30%,
-        transparent
-      );
+      color-mix(in srgb, var(--color-accent-primary-glow) 30%, transparent);
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-glow, #6fa3ff) 12%,
-      var(--color-surface, #1a1d24)
+      var(--color-accent-primary-glow) 12%,
+      var(--color-surface-card)
     );
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     font-size: 12px;
     cursor: pointer;
     transition:
@@ -306,8 +298,8 @@
   .banner-collapse-toggle:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-glow, #6fa3ff) 18%,
-      var(--color-surface, #1a1d24)
+      var(--color-accent-primary-glow) 18%,
+      var(--color-surface-card)
     );
   }
 
@@ -317,7 +309,7 @@
 
   .banner-icon {
     font-size: 18px;
-    color: var(--color-accent-primary-glow, #6fa3ff);
+    color: var(--color-accent-primary-glow);
     flex-shrink: 0;
     align-self: flex-start;
     margin-top: 2px;
@@ -342,7 +334,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     cursor: pointer;
     transition:
       background 0.1s,
@@ -353,10 +345,10 @@
   .banner-dismiss:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-start, #4f7cff) 15%,
+      var(--color-accent-primary-start) 15%,
       transparent
     );
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
   }
 
   .banner-dismiss .material-symbols-outlined {

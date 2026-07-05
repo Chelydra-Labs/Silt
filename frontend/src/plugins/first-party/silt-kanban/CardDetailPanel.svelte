@@ -38,7 +38,8 @@
   })
 
   function statusChipClass(s: TaskStatus): string {
-    if (s === 'TODO') return 'text-text-muted border-border-muted bg-surface'
+    if (s === 'TODO')
+      return 'text-text-muted border-surface-card-border bg-surface-card'
     if (s === 'DOING')
       return 'text-accent-secondary-start border-accent-secondary-start/30 bg-accent-secondary-glow'
     return 'text-accent-primary-start border-accent-primary-start/30 bg-accent-primary-glow'
@@ -295,7 +296,7 @@
   <div
     bind:this={panelRef}
     transition:fly={{ x: 320, duration: 200 }}
-    class="fixed right-0 top-14 h-[calc(100vh-56px)] w-96 bg-panel border-l border-border-muted z-40 overflow-y-auto custom-scrollbar focus:outline-none"
+    class="fixed right-0 top-14 h-[calc(100vh-56px)] w-96 bg-surface-card border-l border-surface-card-border z-40 overflow-y-auto custom-scrollbar focus:outline-none"
     role="dialog"
     aria-modal="true"
     aria-labelledby="card-detail-title"
@@ -303,7 +304,7 @@
   >
     <!-- Header -->
     <div
-      class="flex items-start justify-between gap-2 px-5 py-4 border-b border-border-muted sticky top-0 bg-panel"
+      class="flex items-start justify-between gap-2 px-5 py-4 border-b border-surface-card-border sticky top-0 bg-surface-card"
     >
       <div class="flex flex-col gap-1.5 min-w-0">
         {#if card.priority && card.priority <= 3}
@@ -377,7 +378,7 @@
           <div class="flex items-center justify-between">
             <dt class="text-text-muted">Owner</dt>
             <dd
-              class="px-2 py-0.5 border rounded-sm text-text-primary border-border-muted bg-surface"
+              class="px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card"
             >
               {card.owner || '—'}
             </dd>
@@ -439,7 +440,7 @@
           type="button"
           onclick={togglePin}
           disabled={pinPending}
-          class="w-full flex items-center justify-between px-3 py-2 rounded border border-border-muted bg-surface hover:bg-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           aria-pressed={pinState}
         >
           <span
@@ -486,7 +487,7 @@
           class="w-full accent-accent-secondary-start disabled:opacity-50"
         />
         <div
-          class="mt-2 h-1 bg-surface border border-border-muted rounded overflow-hidden"
+          class="mt-2 h-1 bg-surface-card border border-surface-card-border rounded overflow-hidden"
         >
           <div
             class="h-full bg-accent-secondary-start transition-all"
@@ -515,7 +516,7 @@
             aria-haspopup="listbox"
             aria-expanded={recurrenceOpen}
             aria-controls="recurrence-listbox"
-            class="w-full flex items-center justify-between px-3 py-2 rounded border border-border-muted bg-surface hover:bg-hover transition-colors disabled:opacity-50 text-[12px] font-label-sm text-text-primary"
+            class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 text-[12px] font-label-sm text-text-primary"
           >
             <span class="flex items-center gap-2">
               <span
@@ -536,7 +537,7 @@
             onClose={closeRecurrence}
             anchor={recurrenceTrigger}
             matchWidth
-            class="rounded border border-border-muted bg-panel shadow-lg"
+            class="rounded border border-surface-popover-border bg-surface-popover shadow-lg"
           >
             {#snippet content()}
               <div
@@ -547,12 +548,12 @@
                 aria-label="Recurrence options"
               >
                 <!-- Custom free-text input for rules beyond the presets -->
-                <div class="p-2 border-b border-border-muted">
+                <div class="p-2 border-b border-surface-card-border">
                   <input
                     type="text"
                     placeholder="Custom (e.g. every 5 days)"
                     aria-label="Custom recurrence rule"
-                    class="w-full px-2 py-1 text-[12px] font-label-sm bg-surface border border-border-muted rounded text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
+                    class="w-full px-2 py-1 text-[12px] font-label-sm bg-surface-card border border-surface-card-border rounded text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
                     bind:value={customRecurrence}
                     onkeydown={(e) => {
                       if (e.key === 'Enter') {
@@ -591,7 +592,7 @@
                   </button>
                 {/each}
                 {#if recurrenceState}
-                  <div class="border-t border-border-muted">
+                  <div class="border-t border-surface-card-border">
                     <button
                       type="button"
                       role="option"
@@ -661,7 +662,7 @@
       </section>
 
       <!-- Source context breadcrumb -->
-      <section class="pt-2 border-t border-border-muted">
+      <section class="pt-2 border-t border-surface-card-border">
         <p class="text-[10px] font-label-sm text-text-muted break-all">
           {card.notebook} › {card.section} › {card.page}
         </p>

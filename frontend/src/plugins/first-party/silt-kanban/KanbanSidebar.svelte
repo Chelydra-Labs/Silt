@@ -305,7 +305,7 @@
               if (e.key === 'Enter') void commitNewBoard()
               else if (e.key === 'Escape') cancelNewBoard()
             }}
-            class="flex-1 px-1.5 py-1 rounded bg-surface border border-accent-primary-start/40 text-text-primary text-[12px] outline-none focus:border-accent-primary-start"
+            class="flex-1 px-1.5 py-1 rounded bg-surface-sidebar border border-accent-primary-start/40 text-text-primary text-[12px] outline-none focus:border-accent-primary-start"
           />
           <button
             type="button"
@@ -344,7 +344,7 @@
               void tick().then(() => newBoardInput?.focus())
             }}
             data-testid="new-board"
-            class="w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start cursor-pointer border border-dashed border-border-muted bg-transparent transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-text-muted"
+            class="w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start cursor-pointer border border-dashed border-surface-sidebar-border bg-transparent transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-text-muted"
           >
             <span class="material-symbols-outlined text-[12px]">add</span>
             Save current…
@@ -397,7 +397,7 @@
                     {checked}
                     onchange={() => toggleOwner(o)}
                     data-testid={`owner-${o}`}
-                    class="rounded border-border-muted bg-surface"
+                    class="rounded border-surface-sidebar-border bg-surface-sidebar"
                   />
                   <span class="text-text-primary">{o}</span>
                 </label>
@@ -426,7 +426,7 @@
                   {checked}
                   onchange={() => togglePriority(p)}
                   data-testid={`priority-${p}`}
-                  class="rounded border-border-muted bg-surface"
+                  class="rounded border-surface-sidebar-border bg-surface-sidebar"
                 />
                 <span class="text-text-primary"
                   >P{p} · {PRIORITY_LABELS[p] ?? 'Normal'}</span
@@ -466,7 +466,8 @@
                 <span
                   class="w-2 h-2 rounded-full"
                   class:bg-accent-primary-start={liveFilters.dueDate === opt.v}
-                  class:bg-text-muted={liveFilters.dueDate !== opt.v}
+                  class:bg-surface-sidebar-border={liveFilters.dueDate !==
+                    opt.v}
                 ></span>
                 <span class="flex-1">{opt.l}</span>
               </button>
@@ -495,7 +496,7 @@
                     {checked}
                     onchange={() => toggleTag(t)}
                     data-testid={`tag-${t}`}
-                    class="rounded border-border-muted bg-surface"
+                    class="rounded border-surface-sidebar-border bg-surface-sidebar"
                   />
                   <span class="text-text-primary">{t}</span>
                 </label>
@@ -511,7 +512,7 @@
           type="button"
           onclick={clearFilters}
           data-testid="clear-filters"
-          class="w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-border-muted bg-transparent transition-colors"
+          class="w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-sidebar-border bg-transparent transition-colors"
         >
           <span class="material-symbols-outlined text-[12px]">close</span>
           Clear all filters

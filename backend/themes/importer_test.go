@@ -9,35 +9,45 @@ import (
 )
 
 // validCustomThemeJSON mirrors the constant in app_themes_test.go: a
-// structurally-valid canonical theme with id "terra-test" used as the
+// structurally-valid canonical v2 theme with id "terra-test" used as the
 // base for import tests. Defining a local copy here keeps the
 // themes-package tests self-contained.
 const validCustomThemeJSON = `{
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "terra-test",
   "name": "Terra Test",
   "author": "Tester",
   "description": "a second theme",
   "modes": {
     "dark": {
-      "bg": {"void":"#1a0f0a","surface":"#2a1a12","panel":"#33221a","hover":"#3d2a20","active":"#4a3328"},
-      "border": {"muted":"#2a1a12","zinc":"#3d2a20","active":"#5a3d30","focus":"#7a5238"},
-      "text": {"primary":"#f0e6dc","muted":"#a08878","disabled":"#5a4a40"},
+      "surfaces": {"app": {"bg": "#1a0f0a", "border": "#2a1a12", "text": "#f0e6dc"}},
+      "hover": "#3d2a20",
+      "active": "#4a3328",
+      "border_active": "#5a3d30",
+      "border_focus": "#7a5238",
+      "text_muted": "#a08878",
+      "text_disabled": "#5a4a40",
       "accent": {
-        "primary": {"start":"#c2410c","end":"#7c2d12","glow":"rgba(194,65,12,0.15)"},
-        "secondary": {"start":"#4d7c0f","end":"#365314","glow":"rgba(77,124,15,0.12)"}
+        "primary": {"start": "#c2410c", "end": "#7c2d12", "glow": "rgba(194,65,12,0.15)"},
+        "secondary": {"start": "#4d7c0f", "end": "#365314", "glow": "rgba(77,124,15,0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
+      "status": {"warn": "#fbbf24", "danger": "#f43f5e", "success": "#22c55e"},
+      "error": {"fg": "#ffb4ab", "bg": "#5a1a0a", "border": "#7d2a2a"}
     },
     "light": {
-      "bg": {"void":"#faf6f2","surface":"#ffffff","panel":"#f1ebe4","hover":"#e5dccf","active":"#d6c7b4"},
-      "border": {"muted":"#e5dccf","zinc":"#d6c7b4","active":"#a8907a","focus":"#7a6452"},
-      "text": {"primary":"#2a1a12","muted":"#7a6452","disabled":"#a8907a"},
+      "surfaces": {"app": {"bg": "#faf6f2", "border": "#e5dccf", "text": "#2a1a12"}},
+      "hover": "#e5dccf",
+      "active": "#d6c7b4",
+      "border_active": "#a8907a",
+      "border_focus": "#7a6452",
+      "text_muted": "#7a6452",
+      "text_disabled": "#a8907a",
       "accent": {
-        "primary": {"start":"#9a3412","end":"#7c2d12","glow":"rgba(154,52,18,0.10)"},
-        "secondary": {"start":"#3f6212","end":"#365314","glow":"rgba(63,98,18,0.08)"}
+        "primary": {"start": "#9a3412", "end": "#7c2d12", "glow": "rgba(154,52,18,0.10)"},
+        "secondary": {"start": "#3f6212", "end": "#365314", "glow": "rgba(63,98,18,0.08)"}
       },
-      "status": {"warn":"#b45309","danger":"#be123c","success":"#16a34a"}
+      "status": {"warn": "#b45309", "danger": "#be123c", "success": "#16a34a"},
+      "error": {"fg": "#ba1a1a", "bg": "#ffdad6", "border": "#93000a"}
     }
   }
 }`
@@ -140,7 +150,7 @@ func TestImportThemeFromPath_SandboxRejectsNonColor(t *testing.T) {
 		`url(http://evil.example/x)`,
 		`expression(alert(1))`,
 		`<script>alert(1)</script>`,
-		`red`,         // named color — explicitly not accepted by isValidColor
+		`red`,          // named color — explicitly not accepted by isValidColor
 		`hsl(0,0%,0%)`, // also not accepted
 		`not-a-color`,
 	}
@@ -218,11 +228,15 @@ func TestImportThemeFromPath_RejectsDuplicateImportID(t *testing.T) {
 	}
 }
 
-func TestImportThemeFromPath_SanitizesID(t *testing.T) {
+// TestImportThemeFromPath_RejectsInvalidFormatID: v2 Validate enforces the
+// id format ([a-z0-9_-]) directly, so an import whose source id contains
+// spaces / uppercase / punctuation is rejected at validation with an error
+// on the id field — before the importer's sanitize step can run. No file is
+// written. (The sanitizer itself is unit-covered by TestSanitizeThemeID; the
+// only live renaming path through the importer is the namespace step, covered
+// by TestImportThemeFromPath_NamespacesBuiltInID.)
+func TestImportThemeFromPath_RejectsInvalidFormatID(t *testing.T) {
 	themesDir := t.TempDir()
-	// An id with mixed case, spaces, and other invalid chars must be
-	// sanitized to [a-z0-9_-] and the result is what's used for the
-	// filename and the on-disk id.
 	weirdID := "My Theme v2 (final)!"
 	src := filepath.Join(t.TempDir(), "src.json")
 	clone := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"`+weirdID+`"`, 1)
@@ -230,40 +244,55 @@ func TestImportThemeFromPath_SanitizesID(t *testing.T) {
 
 	res, err := ImportThemeFromPath(themesDir, src)
 	if err != nil {
-		t.Fatalf("import: %v", err)
+		t.Fatalf("unexpected hard error: %v", err)
 	}
-	want := "my-theme-v2-final"
-	if res.Info.ID != want {
-		t.Errorf("expected sanitized id %q, got %q", want, res.Info.ID)
+	if len(res.ValidationErrors) == 0 {
+		t.Fatal("expected validation errors for an invalid-format id")
 	}
-	if !res.Renamed {
-		t.Errorf("expected Renamed=true for sanitized id")
+	found := false
+	for _, e := range res.ValidationErrors {
+		if e.Field == "id" {
+			found = true
+		}
 	}
-	if res.RenamedFromID != weirdID {
-		t.Errorf("RenamedFromID = %q, want %q", res.RenamedFromID, weirdID)
+	if !found {
+		t.Errorf("expected an id validation error, got %+v", res.ValidationErrors)
 	}
-	if _, err := os.Stat(filepath.Join(themesDir, want+".json")); err != nil {
-		t.Errorf("expected sanitized filename: %v", err)
+	// No file written.
+	entries, _ := os.ReadDir(themesDir)
+	if len(entries) != 0 {
+		t.Errorf("expected no file written for an invalid-format id, got %+v", entries)
 	}
 }
 
 func TestImportThemeFromPath_RejectsAllInvalidID(t *testing.T) {
 	// A theme whose id consists entirely of invalid characters (e.g.
-	// punctuation) sanitizes to "". Before the fix this slipped past
-	// Validate (non-empty id) and produced a ".json" file with an empty
-	// id. Now the importer must reject it explicitly.
+	// punctuation) is rejected at validation by v2's IsValidThemeID gate
+	// (previously it slipped past Validate, which only checked non-empty,
+	// and produced a ".json" file with an empty id after sanitization).
+	// It now surfaces as a non-fatal ValidationErrors result on the id
+	// field with no file written.
 	themesDir := t.TempDir()
 	badID := "!@#$"
 	clone := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"`+badID+`"`, 1)
 	src := filepath.Join(t.TempDir(), "src.json")
 	mustWriteTheme(t, filepath.Dir(src), filepath.Base(src), clone)
 
-	_, err := ImportThemeFromPath(themesDir, src)
-	if err == nil {
-		t.Fatal("expected error for all-invalid theme ID")
+	res, err := ImportThemeFromPath(themesDir, src)
+	if err != nil {
+		t.Fatalf("unexpected hard error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "invalid after sanitization") {
-		t.Errorf("expected sanitization error, got: %v", err)
+	if len(res.ValidationErrors) == 0 {
+		t.Fatal("expected validation errors for an all-invalid id")
+	}
+	found := false
+	for _, e := range res.ValidationErrors {
+		if e.Field == "id" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an id validation error, got %+v", res.ValidationErrors)
 	}
 	// No file written.
 	entries, _ := os.ReadDir(themesDir)
@@ -366,7 +395,7 @@ func TestSanitizeThemeID(t *testing.T) {
 	// on them). All other invalid chars collapse to single hyphens, and
 	// double-hyphens are collapsed.
 	cases := map[string]string{
-		"My Theme v2 (final)!":  "my-theme-v2-final",
+		"My Theme v2 (final)!":   "my-theme-v2-final",
 		"hello---world":          "hello-world",
 		"-leading-and-trailing-": "leading-and-trailing",
 		"already-clean":          "already-clean",
@@ -489,6 +518,72 @@ func TestNamespaceThemeID_BuiltIn(t *testing.T) {
 	}
 }
 
+// TestNamespaceThemeID_FirstClassIDs pins the B1 fix: ANY embedded first-class
+// id is namespaced, not just DefaultThemeID. The embed-authoritative loader
+// skips on-disk themes whose id matches a first-class id, so namespacing only
+// cyber_forest left the other 10 first-class ids un-importable (the import
+// reported success but the theme never appeared in the picker).
+func TestNamespaceThemeID_FirstClassIDs(t *testing.T) {
+	for _, id := range []string{
+		"silt-stark",
+		"silt-terra-noir",
+		"silt-linen",
+		"silt-graphite",
+	} {
+		got, err := namespaceThemeID(t.TempDir(), id, id)
+		if err != nil {
+			t.Errorf("namespace %q: %v", id, err)
+			continue
+		}
+		if want := userPrefix + id; got != want {
+			t.Errorf("namespace %q = %q, want %q", id, got, want)
+		}
+	}
+}
+
+// TestImport_FirstClassIDNamespaced pins the B1 fix end-to-end: importing a
+// JSON whose source id is a non-default first-class id must rename it under
+// "user-" AND the result must appear in ListThemes. Before the fix the
+// embed-authoritative loader hid the on-disk copy, so the import "succeeded"
+// but was invisible — silently breaking the export→edit→re-import loop for
+// 10/11 themes.
+func TestImport_FirstClassIDNamespaced(t *testing.T) {
+	themesDir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "src.json")
+	clone := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"silt-stark"`, 1)
+	mustWriteTheme(t, filepath.Dir(src), filepath.Base(src), clone)
+
+	res, err := ImportThemeFromPath(themesDir, src)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	want := userPrefix + "silt-stark"
+	if res.Info.ID != want {
+		t.Fatalf("expected renamed id %q, got %q", want, res.Info.ID)
+	}
+	if !res.Renamed || res.RenamedFromID != "silt-stark" {
+		t.Errorf("expected Renamed=true from silt-stark, got Renamed=%v FromID=%q", res.Renamed, res.RenamedFromID)
+	}
+
+	// The original bug: the on-disk file was written but the picker never
+	// showed it because ListThemes serves the embedded copy for any
+	// first-class id and skips the on-disk duplicate.
+	listing, err := ListThemes(themesDir)
+	if err != nil {
+		t.Fatalf("ListThemes: %v", err)
+	}
+	found := false
+	for _, ti := range listing.Themes {
+		if ti.ID == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("namespaced id %q not surfaced by ListThemes: %+v", want, listing.Themes)
+	}
+}
+
 func TestNamespaceThemeID_DuplicateBuiltInSuffixed(t *testing.T) {
 	dir := t.TempDir()
 	// Pre-create user-cyber_forest.json so the next namespace step
@@ -530,4 +625,173 @@ func mustReadFile(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return b
+}
+
+// TestCopyDir_RejectsOversizeAsset pins the export-path size bound: a hostile
+// or accidentally-huge synced asset cannot drive unbounded allocation when the
+// assets dir is copied out. The cap matches StoreBackgroundAsset's ingest cap
+// (maxBackgroundAssetBytes), so an asset that survives ingest cannot crash
+// export, and an asset manually dropped into the dir is still bounded.
+func TestCopyDir_RejectsOversizeAsset(t *testing.T) {
+	src := t.TempDir()
+	// A file exactly at the cap copies fine; one byte over is rejected.
+	atCap := make([]byte, maxBackgroundAssetBytes)
+	overCap := make([]byte, maxBackgroundAssetBytes+1)
+	if err := os.WriteFile(filepath.Join(src, "ok.bin"), atCap, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "huge.bin"), overCap, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("at cap copies", func(t *testing.T) {
+		dst := t.TempDir()
+		singleSrc := t.TempDir()
+		if err := os.WriteFile(filepath.Join(singleSrc, "ok.bin"), atCap, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := copyDir(singleSrc, dst, 0); err != nil {
+			t.Fatalf("copyDir at-cap: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dst, "ok.bin")); err != nil {
+			t.Errorf("expected at-cap file copied: %v", err)
+		}
+	})
+
+	t.Run("over cap rejected", func(t *testing.T) {
+		dst := t.TempDir()
+		err := copyDir(src, dst, 0)
+		if err == nil {
+			t.Fatal("expected copyDir to reject an oversize asset, got nil")
+		}
+		if !strings.Contains(err.Error(), "exceeds the") {
+			t.Errorf("expected the error to mention the cap, got: %v", err)
+		}
+	})
+}
+
+// TestExportThemeToPath_OversizeAssetRejected exercises the full export path:
+// an oversize file placed directly into <id>.assets/ (bypassing the
+// StoreBackgroundAsset ingest gate) must be rejected at export time by the
+// copyDir bound, not silently streamed to disk.
+func TestExportThemeToPath_OversizeAssetRejected(t *testing.T) {
+	themesDir := t.TempDir()
+	id := importCustomTheme(t, themesDir)
+	// Drop a hostile oversize file straight into the assets dir.
+	assetsDir := filepath.Join(themesDir, id+".assets")
+	if err := os.MkdirAll(assetsDir, 0o755); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	huge := make([]byte, maxBackgroundAssetBytes+1)
+	if err := os.WriteFile(filepath.Join(assetsDir, "hostile.png"), huge, 0o644); err != nil {
+		t.Fatalf("write hostile asset: %v", err)
+	}
+	dst := filepath.Join(t.TempDir(), "out.json")
+	err := ExportThemeToPath(themesDir, id, dst)
+	if err == nil {
+		t.Fatal("expected export to reject an oversize asset, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds the") && !strings.Contains(err.Error(), "cap") {
+		t.Errorf("expected a cap-related error, got: %v", err)
+	}
+}
+
+// TestCopyDir_SkipsSymlinks pins the symlink hardening: a symlink placed
+// in the assets dir is skipped (not followed). Without the Lstat check,
+// copyDir would call IsDir() (which Stats through the link), follow it,
+// and copy the link target's bytes — turning an in-assets symlink into an
+// arbitrary out-of-tree read on export.
+func TestCopyDir_SkipsSymlinks(t *testing.T) {
+	// Some CI sandboxes (root, certain containers) follow symlinks even
+	// when our Lstat-based guard runs; the structural assertion below
+	// (link skipped, regular file copied) holds regardless.
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	// A real regular file that MUST be copied.
+	realBytes := []byte("real-file-contents")
+	if err := os.WriteFile(filepath.Join(src, "real.txt"), realBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A separate file outside src that the symlink points at; if the link
+	// were followed, its contents would land in dst as "linked.txt".
+	outside := filepath.Join(t.TempDir(), "outside-secret.txt")
+	if err := os.WriteFile(outside, []byte("should-not-be-copied"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(src, "linked.txt")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		// Symlinks may be unsupported (no elevated perms on Windows, etc).
+		// Skip rather than fail in those environments.
+		t.Skipf("symlink unsupported in this environment: %v", err)
+	}
+
+	if err := copyDir(src, dst, 0); err != nil {
+		t.Fatalf("copyDir: %v", err)
+	}
+	// Regular file copied.
+	got, err := os.ReadFile(filepath.Join(dst, "real.txt"))
+	if err != nil {
+		t.Fatalf("expected real.txt copied: %v", err)
+	}
+	if string(got) != string(realBytes) {
+		t.Errorf("real.txt bytes drift: %q", got)
+	}
+	// Symlink NOT followed: dst/linked.txt must not exist.
+	if _, err := os.Lstat(filepath.Join(dst, "linked.txt")); err == nil {
+		t.Errorf("symlink was followed — dst/linked.txt exists but should have been skipped")
+	}
+}
+
+// TestCopyDir_RejectsTooDeepTree pins the depth bound: a tree nested beyond
+// maxAssetsCopyDepth must be rejected, not walked indefinitely. This is the
+// cycle / zip-bomb backstop that complements the per-file size cap.
+func TestCopyDir_RejectsTooDeepTree(t *testing.T) {
+	src := t.TempDir()
+	// Build a chain deeper than maxAssetsCopyDepth. copyDir is called at
+	// depth 0 against src itself; each level of nesting inside increments
+	// the recursion depth. So depth=0 sees src, depth=1 sees src/d1, …
+	// and depth=maxAssetsCopyDepth+1 must error before reading anything.
+	cur := src
+	for i := 0; i <= maxAssetsCopyDepth+1; i++ {
+		cur = filepath.Join(cur, "d")
+		if err := os.MkdirAll(cur, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", cur, err)
+		}
+		// Drop a file at every level so the recursion actually descends.
+		if err := os.WriteFile(filepath.Join(cur, "f.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	dst := t.TempDir()
+	err := copyDir(src, dst, 0)
+	if err == nil {
+		t.Fatal("expected copyDir to reject an over-deep tree, got nil")
+	}
+	if !strings.Contains(err.Error(), "nested too deep") {
+		t.Errorf("expected a depth-related error, got: %v", err)
+	}
+}
+
+// TestCopyDir_AllowsShallowTree confirms the depth bound doesn't reject the
+// legitimate case: the assets dir + a couple of legitimate subdirectories
+// must still copy cleanly.
+func TestCopyDir_AllowsShallowTree(t *testing.T) {
+	src := t.TempDir()
+	// Nest up to exactly maxAssetsCopyDepth (entry + 3 levels).
+	cur := src
+	for i := 0; i < maxAssetsCopyDepth; i++ {
+		cur = filepath.Join(cur, "d")
+		if err := os.MkdirAll(cur, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(cur, "f.txt"), []byte("ok"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	dst := t.TempDir()
+	if err := copyDir(src, dst, 0); err != nil {
+		t.Fatalf("expected shallow tree to copy, got: %v", err)
+	}
 }

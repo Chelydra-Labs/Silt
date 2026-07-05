@@ -35,7 +35,7 @@ Most digital workspace applications fall into one of two visual extremes: flat, 
 
 Silt implements "Refined Cyber-Ink"—a design framework engineered for deep, distraction-free focus:
 
-Ink-Rich Canvas: The interface relies on an ultra-dark slate base (#0c0c0e) and dark charcoal panels (#121215). This mimics high-grade dark paper, absorbing light emission to protect eyes on OLED, mini-LED, and high-brightness displays.
+Ink-Rich Canvas: The interface relies on an ultra-dark slate base (#0e0f12) and dark charcoal panels (#14151b). This mimics high-grade dark paper, absorbing light emission to protect eyes on OLED, mini-LED, and high-brightness displays.
 
 Surgical Accents: Highly saturated color gradients are constrained to less than 3% of the active viewport area. They act as glowing signposts (for checkboxes, keyboard navigation path markers, and active selection guides). The teal accent sits in the teal-400 → teal-600 range (rather than a fully-saturated sky/cyan) so it stays readable across long sessions without inducing visual fatigue; the indigo "in-progress" gradient remains one notch more vivid so the active state still draws the eye.
 
@@ -47,89 +47,67 @@ This token set maps directly to our Go configuration runtime and Svelte theme-in
 
 2.1 Color Tokens Schema (Cyber Forest — the default / primary theme)
 
-The canonical theme schema is modes-based (`modes.dark` / `modes.light`) with hue-agnostic **semantic accent tokens**. Components reference only the semantic accents (`--accent-primary-*` = the "go / done" hue, `--accent-secondary-*` = the "in progress" hue); each theme maps its concrete hues onto them. This is the single source of truth shared by the theme loader, the runtime CSS injector, and `cyber_forest.json`. **Cyber Forest is the default and primary theme** (embedded as the guaranteed fallback); the additional first-class palettes in §2.2 are alternates.
+The canonical theme schema is **Theme System v2** (RFC `docs/theme-system-v2-rfc.md`; `schema_version: "2.0.0"`, the only supported version): modes-based (`modes.dark` / `modes.light`) with hue-agnostic **semantic accent tokens**, a **9-zone surface model**, a themeable **error family**, optional **geometry / typography-scale / editor** sub-trees, and a unified per-zone **background** block. Components reference only the semantic accents (`--accent-primary-*` = the "go / done" hue, `--accent-secondary-*` = the "in progress" hue); each theme maps its concrete hues onto them. This is the single source of truth shared by the theme loader, the runtime CSS injector, and `cyber_forest.json` — all three follow the token tables here. **Cyber Forest is the default and primary theme** (embedded as the guaranteed fallback); the additional first-class palettes in §2.2 are alternates.
 
+**The surface model (v2).** A mode authors 9 named zones — `app, sidebar, editor, panel, card, modal, popover, titlebar, activitybar` — each `{bg, border, text}`. Only `app` is required; the rest inherit from a parent zone (`popover→modal→panel→app`; `sidebar`/`editor`/`titlebar`/`activitybar`→`app`; `card→panel`) via `var()` fallback chains, so a theme that cares about one canvas (the editor, say) authors just that zone and the rest follow the app root. "Dark chrome + light page" patterns (Daybreak, Bubblegum light) are now expressed as a dark `sidebar` zone against a light `editor`/`app` — the v1 `chrome` block is removed. Color slots accept `#hex`, `rgb()`/`rgba()`, and `oklch(L C H[/ A])`; OKLCH is what lets a theme derive perceptually-uniform hover/active/disabled variants and what lets the CI contrast gate (AA; AAA for Stark) reason exactly.
+
+```
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "cyber_forest",
   "name": "Cyber Forest",
   "author": "Chelydra Labs",
-  "description": "...",
+  "description": "The default Silt dark theme: ink-rich slate canvas with surgical teal primary and indigo secondary accents.",
+  "typography": {
+    "font_family": "'Plus Jakarta Sans', sans-serif",
+    "mono_font_family": "'JetBrains Mono', monospace",
+    "headline_font": "'Hanken Grotesk', sans-serif"
+  },
   "modes": {
     "dark": {
-      "bg": {
-        "void": "#0c0c0e",
-        "surface": "#121215",
-        "panel": "#161619",
-        "hover": "#1c1c21",
-        "active": "#222226"
+      "surfaces": {
+        "app":     { "bg": "#0e0f12", "border": "#1c1d24", "text": "#dee3e6" },
+        "editor":  { "bg": "#111216", "border": "#21232c", "text": "#dee3e6" },
+        "panel":   { "bg": "#14151b", "border": "#272935", "text": "#dee3e6" },
+        "modal":   { "bg": "#1c1d25", "border": "#373a4b", "text": "#dee3e6" },
+        "card":    { "bg": "#181920", "border": "#272935", "text": "#dee3e6" },
+        "popover": { "bg": "#22242e", "border": "#42475b", "text": "#dee3e6" }
       },
-      "border": {
-        "muted": "#1e1e23",
-        "zinc": "#27272a",
-        "active": "#3f3f46",
-        "focus": "#52525b"
-      },
-      "text": {
-        "primary": "#dee3e6",
-        "muted": "#8b8b94",
-        "disabled": "#4b5563"
-      },
+      "hover": "#1c1c21", "active": "#222226",
+      "border_active": "#3f3f46", "border_focus": "#52525b",
+      "text_muted": "#8b8b94", "text_disabled": "#4b5563",
       "accent": {
-        "primary": {
-          "start": "#2dd4bf",
-          "end": "#0d9488",
-          "glow": "rgba(20, 184, 166, 0.15)"
-        },
-        "secondary": {
-          "start": "#6366f1",
-          "end": "#a855f7",
-          "glow": "rgba(168, 85, 247, 0.12)"
-        }
+        "primary":   { "start": "#2dd4bf", "end": "#0d9488", "glow": "rgba(45, 212, 191, 0.15)" },
+        "secondary": { "start": "#6366f1", "end": "#a855f7", "glow": "rgba(99, 102, 241, 0.12)" }
       },
-      "status": {
-        "warn": "#fbbf24",
-        "danger": "#f43f5e"
-      }
+      "status": { "warn": "#e0b04a", "danger": "#dd5a72", "success": "#37b594" },
+      "error":  { "fg": "#e8728a", "bg": "#171015", "border": "#4a2a38" }
     },
     "light": {
-      "bg": {
-        "void": "#f8fafc",
-        "surface": "#ffffff",
-        "panel": "#f1f5f9",
-        "hover": "#e2e8f0",
-        "active": "#cbd5e1"
+      "surfaces": {
+        "app":     { "bg": "#f8fafc", "border": "#e2e8f0", "text": "#0f172a" },
+        "sidebar": { "bg": "#0c0e12", "border": "#1c2028", "text": "#dee3e6", "text_muted": "#8b8b94", "text_disabled": "#4b5563" },
+        "editor":  { "bg": "#fcfdfe", "border": "#d0d7e0", "text": "#0f172a" },
+        "panel":   { "bg": "#ffffff", "border": "#cbd5e1", "text": "#0f172a" },
+        "card":    { "bg": "#f1f5f9", "border": "#cbd5e1", "text": "#0f172a" },
+        "modal":   { "bg": "#ffffff", "border": "#94a3b8", "text": "#0f172a" },
+        "popover": { "bg": "#ffffff", "border": "#64748b", "text": "#0f172a" }
       },
-      "border": {
-        "muted": "#e2e8f0",
-        "zinc": "#cbd5e1",
-        "active": "#94a3b8",
-        "focus": "#64748b"
-      },
-      "text": {
-        "primary": "#0f172a",
-        "muted": "#4d5667",
-        "disabled": "#94a3b8"
-      },
+      "hover": "#e2e8f0", "active": "#cbd5e1",
+      "border_active": "#94a3b8", "border_focus": "#64748b",
+      "text_muted": "#4d5667", "text_disabled": "#94a3b8",
       "accent": {
-        "primary": {
-          "start": "#0d9488",
-          "end": "#115e59",
-          "glow": "rgba(13, 148, 136, 0.10)"
-        },
-        "secondary": {
-          "start": "#4f46e5",
-          "end": "#7c3aed",
-          "glow": "rgba(79, 70, 229, 0.08)"
-        }
+        "primary":   { "start": "#0d9488", "end": "#115e59", "glow": "rgba(13, 148, 136, 0.10)" },
+        "secondary": { "start": "#4f46e5", "end": "#7c3aed", "glow": "rgba(79, 70, 229, 0.08)" }
       },
-      "status": {
-        "warn": "#d97706",
-        "danger": "#e11d48"
-      }
+      "status": { "warn": "#d97706", "danger": "#e11d48", "success": "#16a34a" },
+      "error":  { "fg": "#a83828", "bg": "#ffffff", "border": "#94a3b8" }
     }
   }
 }
+```
+
+Cyber Forest authors only the `app`, `panel`, `modal`, and `card` zones; `sidebar`, `editor`, and `popover` inherit from `app`/`panel`/`modal`. The optional blocks a theme may add on top: `radius` / `spacing` / `shadow` (geometry ramps), `editor` (caret / selection / link / highlight), `typography.scale` (sizes / line-heights / weights), and a per-zone `background` (`image` / `size` / `opacity` / `blend` / `position` / `scrim`) that subsumes the v1 `texture` overlay and powers per-zone background photos. `Flatten` emits sensible defaults for every omitted block, so a minimal theme renders with v1-equivalent geometry and type. The themeable `error` family replaces the static Material-3 error pink; `status.danger` (destructive actions) and `error.fg` (validation / invalid input) are deliberately distinct.
 
 
 **Token usage convention (when to reach for `--color-text-primary` vs `--accent-primary-*`).**
@@ -162,13 +140,13 @@ Silt ships a curated set of first-class themes alongside the default. Each is a 
 | :--- | :--- | :--- |
 | Cyber Forest *(default / primary)* | `cyber_forest` | Ink-rich dark slate, surgical teal primary, indigo secondary. |
 | Terra Noir | `silt-terra-noir` | Warm dark earth: clay primary, moss secondary. |
-| Linen | `silt-linen` | Woven linen paper: warm grey-taupe canvas + woven-grain texture, slate-blue + muted lilac. |
+| Linen | `silt-linen` | Woven linen paper: warm grey-taupe canvas + woven-grain editor background, slate-blue + muted lilac. |
 | Stark | `silt-stark` | High-contrast / accessibility (WCAG AAA): pure black/white extremes, gold + cyan. |
 | Graphite | `silt-graphite` | Calm true-neutral monochrome: pure gray canvas, single restrained blue accent, neutral-steel secondary. |
-| Bubblegum | `silt-bubblegum` | Playful and vibrant: coral-pink primary, teal secondary. Light mode uses dual surfaces (deep raspberry chrome + cream page). |
+| Bubblegum | `silt-bubblegum` | Playful and vibrant: coral-pink primary, teal secondary. Light mode uses dual surfaces (deep raspberry sidebar + cream page). |
 | Frost | `silt-frost` | Clean and airy: crisp blue-tinted winter palette with sky-blue accents. |
 | Synthwave | `silt-synthwave` | 80s retro neon: deep indigo canvas, hot-pink + electric-cyan accents. |
-| Daybreak | `silt-daybreak` | Twilight-blue chrome + warm off-white page: the readability-exception dual-surface theme. |
+| Daybreak | `silt-daybreak` | Twilight-blue sidebar + warm off-white page: the readability-exception dual-surface theme. |
 | Aggie | `silt-aggie` | Heritage split: dark mode = alfalfa green + pumpkin orange; light mode = CSU green + gold. |
 | Altgeld | `silt-altgeld` | Dark navy canvas with bright orange + electric blue — prairie-fire energy. |
 
@@ -178,32 +156,32 @@ Every first-class theme ships both dark and light variants and its own `typograp
 
 A dark earth palette: warm near-black canvas with **clay/terracotta** primary (selection guides, active focus, completed checks) and **moss** secondary (in-progress / DOING indicator, metadata chips). Intent: a warmer, organic counterpart to Cyber Forest's cool slate, for users who prefer earth tones over cyber neons.
 
-- Dark: `bg.void #100b07` (warm near-black); `text.primary #ece3d5` (warm white); `accent.primary #e07a3c → #b4421a` (clay); `accent.secondary #84a04a → #5e7d2f` (moss).
-- Light: `bg.void #f6efe4` (warm paper); `text.primary #2a2014`; `accent.primary #c2511f → #9a3a14`; `accent.secondary #5a7d2a → #44611d`.
-- Tuning: dark `text.muted #8a7860 → #a89478` to clear WCAG AA (4.5:1) on `bg.active` — the binding constraint in dark mode is muted text on the lightest dark surface.
+- Dark: `surfaces.app.bg #100b07` (warm near-black); `surfaces.app.text #ece3d5` (warm white); `accent.primary #e07a3c → #b4421a` (clay); `accent.secondary #84a04a → #5e7d2f` (moss).
+- Light: `surfaces.app.bg #f8f4ed` (warm sand-cream); `surfaces.app.text #2a2014`; `surfaces.sidebar.bg #f1e6d4` (warm wheat-sand sidebar with matching light titlebar and activitybar); `accent.primary #c2511f → #9a3a14`; `accent.secondary #5a7d2a → #44611d`.
+- Tuning: dark `text-muted #8a7860 → #a89478` to clear WCAG AA (4.5:1) on `active` — the binding constraint in dark mode is muted text on the lightest interaction surface.
 
 2.2.2 Linen — woven linen paper
 
-A soft, low-chroma palette modeled on natural linen: a warm grey-taupe canvas in dark mode (the authentic flax/oatmeal tone — grey-dominant with a whisper of warmth, never brown) and warm paper in light, both carrying a subtle **woven-thread + paper-grain texture** overlay (Linen is the only first-class theme that declares a `texture` block; see §2.1). `primary` = muted **slate-blue** (reads as faded fountain-pen ink on paper), `secondary` = muted **lilac**. Intent: long-session comfort — a calm, tactile "paper" surface distinct from Cyber Forest's cool slate and Graphite's flat monochrome.
+A soft, low-chroma palette modeled on natural linen: a warm grey-taupe canvas in dark mode (the authentic flax/oatmeal tone — grey-dominant with a whisper of warmth, never brown) and warm paper in light, both carrying a subtle **woven-thread + paper-grain background** on the editor surface (Linen is the canonical first-class theme that declares a `surfaces.editor.background` block; see §2.1). `primary` = muted **slate-blue** (reads as faded fountain-pen ink on paper), `secondary` = muted **lilac**. Intent: long-session comfort — a calm, tactile "paper" surface distinct from Cyber Forest's cool slate and Graphite's flat monochrome.
 
-- Dark: `bg.void #242220` (warm grey-taupe); `text.primary #e8e3d8` (oatmeal-white); `accent.primary #7fb3c4 → #5d97ab`; `accent.secondary #a8a3d4 → #847cb0`; `texture` overlay = light-thread linen weave + grayscale grain, `overlay` blend, opacity 0.08.
-- Light: `bg.void #faf6ef` (warm paper, not pure white); `text.primary #2b2a27`; `accent.primary #4a8a9c → #3a7383`; `accent.secondary #686da3 → #565b8e`; `texture` overlay = dark-thread weave + grain, `multiply` blend, opacity 0.10.
-- Tuning: dark `text.muted → #b9b0a1` (warm grey) to clear AA on Linen's surfaces.
+- Dark: `surfaces.app.bg #242220` (warm grey-taupe); `surfaces.app.text #e8e3d8` (oatmeal-white); `accent.primary #7fb3c4 → #5d97ab`; `accent.secondary #a8a3d4 → #847cb0`; `surfaces.editor.background` = light-thread linen weave + grayscale grain, `overlay` blend, opacity 0.08, `size: tile`.
+- Light: `surfaces.app.bg #fdfbf7` (warm paper); `surfaces.app.text #2b2a27`; `surfaces.sidebar.bg #f5ede0` (soft warm oatmeal flax sidebar with matching light titlebar and activitybar); `accent.primary #4a8a9c → #3a7383`; `accent.secondary #686da3 → #565b8e`; `surfaces.editor.background` = dark-thread weave + grain, `multiply` blend, opacity 0.10, `size: tile`.
+- Tuning: dark `text-muted → #b9b0a1` (warm grey) to clear AA on Linen's surfaces.
 
 2.2.3 Stark — high-contrast / accessibility (WCAG AAA)
 
 A first-class accessibility theme targeting **WCAG 2.2 AAA** (≥7:1 body text). Pure black/white extremes (21:1), **border-led structure** (because the near-uniform background can't separate panels by fill alone), and maximum-visibility accents: **gold/amber** primary and **cyan** secondary. Intent: an out-of-box option for low-vision and bright-environment users, rather than relying on them authoring a custom theme.
 
-- Dark: `bg.void #000000`; `text.primary #ffffff` (21:1); `border.active #ffffff` / `border.focus #ffd400` (vivid gold focus rings); `accent.primary #ffd400 → #ffb800`; `accent.secondary #00e5ff → #00b8d4`.
-- Light: `bg.void #ffffff`; `text.primary #000000` (21:1); `border.active #000000` / `border.focus #0000cc`; `accent.primary #8a5a00 → #6f4800`; `accent.secondary #005f70 → #00475a`.
-- Exempt / decorative tokens (not WCAG-essential): the `*-glow` halos and `text.disabled`. Focus states are unmistakable in both modes (≥3:1 against adjacent colors per WCAG 2.4.11 / 1.4.11), asserted in the contrast harness.
+- Dark: `surfaces.app.bg #000000`; `surfaces.app.text #ffffff` (21:1); `border.active #ffffff` / `border.focus #ffd400` (vivid gold focus rings); `accent.primary #ffd400 → #ffb800`; `accent.secondary #00e5ff → #00b8d4`.
+- Light: `surfaces.app.bg #ffffff`; `surfaces.app.text #000000` (21:1); `border.active #000000` / `border.focus #0000cc`; `accent.primary #8a5a00 → #6f4800`; `accent.secondary #005f70 → #00475a`.
+- Exempt / decorative tokens (not WCAG-essential): the `*-glow` halos and `text-disabled`. Focus states are unmistakable in both modes (≥3:1 against adjacent colors per WCAG 2.4.11 / 1.4.11), asserted in the contrast harness.
 
 2.2.4 Graphite — calm monochrome / true-dark
 
 For users who find Cyber Forest *too colorful*. Graphite is a **true neutral monochrome**: pure neutral-gray surfaces (zero blue tint, unlike Cyber Forest's blue slate) with a **single restrained blue** accent as the only color and a **neutral steel** secondary. Neutral-white text (`#ebebeb`) reads distinctly cleaner/warmer than Cyber Forest's cool `#dee3e6`. Intent: the "developer dark" / "dimmed" aesthetic — a calm, flat, low-chroma surface. Comfortable AAA contrast, **not** the extreme contrast of Stark.
 
-- Dark: `bg.void #0a0a0a` (true near-black, neutral); `text.primary #ebebeb`; `accent.primary #6f9ad8 → #4d72a0` (restrained blue); `accent.secondary #9aa3ad → #6f7882` (neutral steel).
-- Light: `bg.void #f8f8f8`; `text.primary #1a1a1a`; `accent.primary #4a6fa0 → #374f78`; `accent.secondary #6a737d → #525a63`.
+- Dark: `surfaces.app.bg #0a0a0a` (true near-black, neutral); `surfaces.app.text #ebebeb`; `accent.primary #6f9ad8 → #4d72a0` (restrained blue); `accent.secondary #9aa3ad → #6f7882` (neutral steel).
+- Light (dual-surface): `surfaces.app.bg #f8f8f8`; `surfaces.app.text #1a1a1a`; `surfaces.sidebar.bg #0e0e0e` (neutral dark grey with matching dark titlebar and activitybar); `accent.primary #4a6fa0 → #374f78`; `accent.secondary #6a737d → #525a63`.
 - Distinctness: primary (blue) and secondary (neutral steel) differ in both hue and chroma so go/done and in-progress never blur, while the overall surface stays a calm flat monochrome.
 
 2.2.5 Bubblegum — playful & vibrant
@@ -215,8 +193,8 @@ and Fira Code (mono). Intent: the theme for users who want their workspace to
 feel creative and joyful rather than clinical — a decorated notebook, not a
 spreadsheet.
 
-- Dark: `bg.void #1a0e1e` (warm magenta-tinted near-black); `text.primary #f5ede8` (warm cream-white); `accent.primary #ff6b8a → #e84371` (coral-pink); `accent.secondary #4fd1c5 → #38b2ac` (teal).
-- Light (dual-surface): page `bg.void #fdf6f0` (warm cream), `text.primary #2d1f1a` (warm dark brown); chrome `bg.void #2a1322` (deep raspberry-black), `chrome.text.primary #f5ede8` (cream-white) — the app skeleton is a deep raspberry candy shell framing a warm cream page. Accents deepen to `#e84371` / `#2c7a7b` for readability on white.
+- Dark: `surfaces.app.bg #1a0e1e` (warm magenta-tinted near-black); `surfaces.app.text #f5ede8` (warm cream-white); `accent.primary #ff6b8a → #e84371` (coral-pink); `accent.secondary #4fd1c5 → #38b2ac` (teal).
+- Light: `surfaces.app.bg #fffcf9` (warm cotton-candy cream); `surfaces.app.text #5c2433` (deep raspberry-rose); `surfaces.sidebar.bg #ffeff2` (soft bubblegum-pink with matching light titlebar and activitybar).
 - Tuning: dark `accent.primary.start #ff6b8a` deepened to `#e84371` in light mode for AA non-text (3:1) on the warm cream page; the dark-mode coral glows on the magenta canvas while the light-mode deeper coral reads cleanly on cream.
 
 2.2.6 Frost — clean & airy
@@ -228,34 +206,37 @@ Mono (mono). Dark mode is a moonlit frozen lake (cold steel-blue with icy
 accents); light mode is a brilliant winter morning. Intent: a workspace that
 feels clean, cold, and modern — the visual equivalent of fresh air.
 
-- Dark: `bg.void #0a0e14` (cold blue-black); `text.primary #e2eaf2` (cool ice-white); `accent.primary #38bdf8 → #0ea5e9` (sky-blue — frost on glass); `accent.secondary #818cf8 → #6366f1` (periwinkle).
-- Light: `bg.void #f0f4fa` (pale ice-blue); `text.primary #061020` (deep cold navy); `accent.primary #0284c7 → #0369a1` (deeper sky); `accent.secondary #4f46e5 → #3730a3` (deeper indigo).
-- Tuning: dark `text.muted #8a9aae → #94a4b8` to clear AA on the lightest dark surface (`bg.active #263348`).
+- Dark: `surfaces.app.bg #0a0e14` (cold blue-black); `surfaces.app.text #e2eaf2` (cool ice-white); `accent.primary #38bdf8 → #0ea5e9` (sky-blue — frost on glass); `accent.secondary #818cf8 → #6366f1` (periwinkle).
+- Light: `surfaces.app.bg #f4f8fc` (bright frost-blue white); `surfaces.app.text #061020` (deep cold navy); `surfaces.sidebar.bg #e8eff8` (frosted soft ice-blue sidebar with matching light titlebar and activitybar); `accent.primary #0284c7 → #0369a1` (deeper sky); `accent.secondary #4f46e5 → #3730a3` (deeper indigo).
+- Tuning: dark `text-muted #8a9aae → #94a4b8` to clear AA on the lightest interaction surface (`active #263348`).
 
 2.2.7 Synthwave — 80s retro neon
 
-Deep indigo/near-black canvas with neon-hot accents — the visual language of
-Miami Vice, Tron, and synthwave album art. Typography pairs Figtree (body),
-Bricolage Grotesque (headline — expressive display), and Space Mono (mono —
-retro terminal). Intent: unmistakably distinct from every other theme in the
-roster; the theme for users who want their workspace to feel like a night
-drive.
+Rich purple canvas with hot-pink and electric-cyan neon glow — the visual
+language of Miami Vice, Tron, and synthwave album art. Dark mode is a night
+drive through neon-lit streets; light mode is a Miami sunset — warm
+blush-peach canvas where vivid neon accents pop like signs at golden hour.
+Typography pairs Figtree (body), Bricolage Grotesque (headline — expressive
+display), and Space Mono (mono — retro terminal). Intent: unmistakably
+distinct from every other theme in the roster; the theme for users who want
+their workspace to feel alive with retro-futurist energy.
 
-- Dark: `bg.void #0d0b1a` (deep indigo-black); `text.primary #e8e6f0` (cool lavender-white); `accent.primary #ff2d95 → #e91e63` (hot pink/magenta — the neon sign); `accent.secondary #00f0ff → #00b8d4` (electric cyan — the grid line). Glow values intentionally stronger (0.15–0.18) for a neon-halo effect.
-- Light: `bg.void #f0eef5` (pale lavender — sun-bleached poster); `text.primary #1c1c34` (deep indigo); `accent.primary #c2185b → #880e4f` (deeper magenta); `accent.secondary #00838f → #006064` (deeper cyan).
+- Dark: `surfaces.app.bg #120b24` (rich purple-black — not just dark, visibly purple); `surfaces.app.text #e8e6f0` (cool lavender-white); `accent.primary oklch(0.665 0.249 357)` (hot pink/magenta — the neon sign); `accent.secondary oklch(0.87 0.148 203)` (electric cyan — the grid line). Glow values intentionally strongest in the roster (0.18–0.22) for an unmistakable neon-halo effect. Tron-style cyan/pink grid on the editor canvas (40px cells, overlay blend, opacity 0.10). Elevated surfaces (panel → card → modal → popover) climb a visible purple ladder so modals feel like glowing chrome panels.
+- Light (dual-surface): `surfaces.app.bg #f0e4e8` (warm blush-peach — Miami sunset canvas, not generic lavender); `surfaces.app.text #1c1c34` (deep indigo); `surfaces.sidebar.bg #1a1030` (dark indigo-purple with matching dark titlebar and activitybar); `accent.primary oklch(0.52 0.22 350)` (vivid magenta — still neon-hot against the warm base); `accent.secondary oklch(0.54 0.12 200)` (saturated cyan — electric, not muted). Warm rose-mauve borders throughout. The warm base is what makes this mode read as synthwave rather than generic pastel.
 
-2.2.8 Daybreak — dark chrome + light page (dual surfaces)
+
+2.2.8 Daybreak — dark sidebar + light page (dual surfaces)
 
 The **"readability exception"** theme: a twilight-blue app skeleton
 (sidebar, titlebar, activity bar) framing a warm off-white editor surface.
-Text in the chrome is light; text on the page is dark. Typography pairs Inter
+Text in the sidebar is light; text on the page is dark. Typography pairs Inter
 (body — neutral, highly readable), Hanken Grotesk (headline), and JetBrains
 Mono (mono). Intent: the theme for users who want dark navigation (low glare,
 clear structure) with a bright reading/writing surface — the pattern Notion,
 Readwise, and several code editors use for sustained reading sessions.
 
-- Dark: `bg.void #0c0e14` (dark charcoal-blue); `text.primary #eaeef5` (cool off-white); `accent.primary #f59e0b → #d97706` (warm amber); `accent.secondary #818cf8 → #6366f1` (indigo). Standard single-surface dark mode (no chrome block needed — everything is dark).
-- Light (dual-surface): page `bg.void #faf8f5` (warm off-white — the paper), `text.primary #1c1917` (warm near-black — ink on paper); chrome `bg.void #1c2842` (twilight blue — the pre-dawn sky), `chrome.bg.panel #2c3c5e` (anchor blue), `chrome.text.primary #eaeef5` (cool off-white). Shared accents: `accent.primary #cc7408 → #92400e` (amber — tuned to clear AA non-text on both chrome and page), `accent.secondary #6366f1 → #4f46e5` (indigo — brightened from #4338ca for chrome-surface visibility).
+- Dark: `surfaces.app.bg #131a26` (twilight blue-black); `surfaces.app.text #eaeef5` (cool off-white); `accent.primary #f59e0b → #d97706` (warm amber); `accent.secondary #818cf8 → #6366f1` (indigo). Single-surface dark mode matching the twilight-blue palette of the light mode skeleton.
+- Light (dual-surface): page `surfaces.app.bg #faf8f5` (warm off-white — the paper), `surfaces.app.text #1c1917` (warm near-black — ink on paper); the `sidebar`, `titlebar`, and `activitybar` zones are authored dark — `surfaces.sidebar.bg #1c2842` (twilight blue — the pre-dawn sky with matching dark titlebar and activitybar), `surfaces.sidebar.border #2c3c5e` (anchor blue), `surfaces.sidebar.text #eaeef5` (cool off-white). Shared accents: `accent.primary #cc7408 → #92400e` (amber — tuned to clear AA non-text on both sidebar and page), `accent.secondary #6366f1 → #4f46e5` (indigo — brightened from #4338ca for sidebar-surface visibility).
 
 2.2.9 Aggie — heritage split: alfalfa/pumpkin (dark) → green/gold (light)
 
@@ -267,8 +248,8 @@ day). The dark→light switch mirrors the school's evolution from agricultural
 college to state university. Typography pairs Work Sans (body — humanist,
 warm), Manrope (headline), and IBM Plex Mono (mono).
 
-- Dark (historical — alfalfa green + pumpkin orange): `bg.void #0a1810` (dark alfalfa-green); `text.primary #e8efe0` (sage-white); `accent.primary #e07a30 → #b45a18` (pumpkin orange — derived from CSU Aggie Orange #D9782D); `accent.secondary #6aaa4a → #3a7a2a` (alfalfa green — the living plant color).
-- Light (modern — CSU green + gold): `bg.void #f0f5ee` (pale green meadow); `text.primary #1E4D2B` (CSU Green — the actual school color); `accent.primary #7a6408 → #5f4a06` (deep gold — CSU Gold #C8C372 deepened for readability); `accent.secondary #006144 → #004d36` (CSU Oval Green — the actual school color).
+- Dark (historical — alfalfa green + pumpkin orange): `surfaces.app.bg #0a1810` (dark alfalfa-green); `surfaces.app.text #e8efe0` (sage-white); `accent.primary #e07a30 → #b45a18` (pumpkin orange — derived from CSU Aggie Orange #D9782D); `accent.secondary #6aaa4a → #3a7a2a` (alfalfa green — the living plant color).
+- Light (modern dual-surface): `surfaces.app.bg #f0f5ee` (pale green meadow); `surfaces.app.text #1E4D2B` (CSU Green — the actual school color); `surfaces.sidebar.bg #1E4D2B` (CSU Green with matching dark green titlebar and activitybar); `accent.primary #7a6408 → #5f4a06` (deep gold — CSU Gold #C8C372 deepened for readability); `accent.secondary #006144 → #004d36` (CSU Oval Green — the actual school color).
 
 2.2.10 Altgeld — Illinois Blue + Illini Orange (prairie fire)
 
@@ -279,8 +260,8 @@ Typography pairs Public Sans (body — clean, institutional), Schibsted Grotesk
 (headline — bold, confident), and Martian Mono (mono). Intent: the boldest,
 most color-assertive palette in the roster — unmistakable school identity.
 
-- Dark: `bg.void #0d1525` (Illinois Blue #13294B-tinted near-black — the prairie night); `text.primary #e6ecf5` (cool blue-white — moonlight); `accent.primary #FF5F05 → #cc4a00` (Illini Orange — the actual school color); `accent.secondary #4080e0 → #2050a0` (bright blue — Illinois Blue family, brightened for dark-mode pop).
-- Light: `bg.void #eaf0f6` (pale blue-grey — the dawn sky); `text.primary #13294B` (Illinois Blue — the actual school color); `accent.primary #c44a00 → #9a3800` (deep Illini Orange for readability on white); `accent.secondary #1a3677 → #0d1f4d` (Illinois Blue family).
+- Dark: `surfaces.app.bg #0d1525` (Illinois Blue #13294B-tinted near-black — the prairie night); `surfaces.app.text #e6ecf5` (cool blue-white — moonlight); `accent.primary #FF5F05 → #cc4a00` (Illini Orange — the actual school color); `accent.secondary #4080e0 → #2050a0` (bright blue — Illinois Blue family, brightened for dark-mode pop).
+- Light (dual-surface): `surfaces.app.bg #eaf0f6` (pale blue-grey — the dawn sky); `surfaces.app.text #13294B` (Illinois Blue — the actual school color); `surfaces.sidebar.bg #0d1525` (Illinois Blue-black with matching dark titlebar and activitybar); `accent.primary #c44a00 → #9a3800` (deep Illini Orange for readability on white); `accent.secondary #1a3677 → #0d1f4d` (Illinois Blue family).
 
 
 3. Typography & Spacing Rhythm
@@ -471,7 +452,7 @@ Silt is built for complete hands-on-keyboard efficiency, complying with WCAG 2.2
 
 Contrast Ratios: Text-to-background contrast ratios are maintained at or above WCAG AA (4.5:1 for normal text). Stark additionally maintains AAA (7:1) as its theme-specific requirement.
 
-Dual-Surface Themes: A mode may declare an optional `chrome` block (bg/border/text only) for the app skeleton. When present, the WCAG contrast harness tests chrome text against chrome backgrounds separately from the page/content surfaces — both must independently meet the AA (4.5:1) threshold. This enables "dark chrome + light page" designs (Daybreak, Bubblegum) where the sidebar and titlebar use a dark palette with light text while the editor uses a light palette with dark text, following the "readability exception" pattern documented in leading dark-mode design-systems guides.
+Dual-surface themes: a theme that wants a dark app skeleton against a light reading surface (Daybreak, Bubblegum light) authors the `sidebar` zone dark against a light `editor` / `app` — the v1 `chrome` block is replaced by the `sidebar` surface zone. The WCAG contrast gate tests each zone's text against its own resolved background, so the dark sidebar and the light editor each independently meet the AA (4.5:1) threshold. This is the "readability exception" pattern — dark navigation framing a bright writing surface.
 
 Focus States: Every interactive element features an explicit :focus-visible outline ring of $2\text{px}$ var(--color-border-focus) offset by $1\text{px}$ to prevent overlapping with components.
 

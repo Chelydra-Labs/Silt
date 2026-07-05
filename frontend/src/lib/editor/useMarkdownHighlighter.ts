@@ -40,7 +40,7 @@ export function tokensToShikiTheme(
   tokens: SourceTokens,
   mode: 'dark' | 'light'
 ): SourceShikiTheme {
-  const bg = tokens['--color-surface'] ?? '#1a1d24'
+  const bg = tokens['--color-surface-panel'] ?? '#1a1d24'
   const fg = tokens['--color-text-primary'] ?? '#e6e6e6'
   const muted = tokens['--color-text-muted'] ?? '#8b95a3'
   const accent = tokens['--color-accent-primary-start'] ?? '#4f7cff'

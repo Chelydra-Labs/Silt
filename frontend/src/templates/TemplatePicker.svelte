@@ -33,7 +33,9 @@
     section?: string
     onClose: () => void
     onCreatedPage?: (page: string) => void
-    onInsertBlocks?: (blocks: import('../../wailsjs/go/models').parser.ParsedBlock[]) => void
+    onInsertBlocks?: (
+      blocks: import('../../wailsjs/go/models').parser.ParsedBlock[]
+    ) => void
   }
 
   let {
@@ -109,7 +111,9 @@
   // The selected template's full metadata (from the listing summary —
   // placeholders come from here). The full body is fetched lazily for preview.
   let selectedSummary = $derived(
-    selectedId ? (templatesState.items ?? []).find((t) => t.id === selectedId) ?? null : null
+    selectedId
+      ? ((templatesState.items ?? []).find((t) => t.id === selectedId) ?? null)
+      : null
   )
 
   // Auto-select the first template when the list loads.
@@ -171,7 +175,8 @@
   // Keyboard navigation on the flat filtered list.
   function focusIndex(idx: number): void {
     if (filtered.length === 0) return
-    const clamped = ((idx % filtered.length) + filtered.length) % filtered.length
+    const clamped =
+      ((idx % filtered.length) + filtered.length) % filtered.length
     listRefs[clamped]?.focus()
   }
 
@@ -232,19 +237,29 @@
       if (mode === 'new-page') {
         const name = pageName.trim()
         if (!name) {
-          setTemplateStatus({ kind: 'error', message: 'Please enter a page name.' })
+          setTemplateStatus({
+            kind: 'error',
+            message: 'Please enter a page name.'
+          })
           return
         }
         if (!notebook) {
-          setTemplateStatus({ kind: 'error', message: 'Open a notebook first.' })
+          setTemplateStatus({
+            kind: 'error',
+            message: 'Open a notebook first.'
+          })
           return
         }
-        await CreatePageFromTemplate(notebook, section, name, '', tplId, { ...placeholderValues })
+        await CreatePageFromTemplate(notebook, section, name, '', tplId, {
+          ...placeholderValues
+        })
         window.dispatchEvent(new CustomEvent('focus-page-title'))
         onCreatedPage?.(name)
         onClose()
       } else {
-        const blocks = await RenderTemplateBlocks(tplId, { ...placeholderValues })
+        const blocks = await RenderTemplateBlocks(tplId, {
+          ...placeholderValues
+        })
         onInsertBlocks?.(blocks)
         onClose()
       }
@@ -310,14 +325,19 @@
 >
   <!-- Modal panel -->
   <div
-    class="flex max-h-[85vh] w-[min(900px,92vw)] flex-col overflow-hidden rounded-xl border border-border-zinc bg-surface shadow-2xl"
+    class="flex max-h-[85vh] w-[min(900px,92vw)] flex-col overflow-hidden rounded-xl border border-surface-modal-border bg-surface-modal shadow-2xl"
     role="dialog"
     aria-modal="true"
     aria-label="Template picker"
   >
     <!-- Header -->
-    <div class="flex items-center gap-3 border-b border-border-muted px-5 py-3">
-      <span class="material-symbols-outlined text-[22px] text-accent-primary-start">description</span>
+    <div
+      class="flex items-center gap-3 border-b border-surface-modal-border px-5 py-3"
+    >
+      <span
+        class="material-symbols-outlined text-[22px] text-accent-primary-start"
+        >description</span
+      >
       <h2 class="flex-1 text-sm font-semibold text-text-primary">
         {mode === 'new-page' ? 'New Page from Template' : 'Insert Template'}
       </h2>
@@ -333,14 +353,16 @@
     <!-- Body: list (left) + preview/form (right) -->
     <div class="flex min-h-0 flex-1">
       <!-- Left: search + list -->
-      <div class="flex w-[320px] shrink-0 flex-col border-r border-border-muted">
-        <div class="border-b border-border-muted px-4 py-3">
+      <div
+        class="flex w-[320px] shrink-0 flex-col border-r border-surface-modal-border"
+      >
+        <div class="border-b border-surface-modal-border px-4 py-3">
           <input
             bind:this={searchEl}
             bind:value={searchQuery}
             type="text"
             placeholder="Search templates…"
-            class="w-full rounded-lg border border-border-zinc bg-void px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
+            class="w-full rounded-lg border border-surface-modal-border bg-surface-modal px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
             aria-label="Search templates"
           />
         </div>
@@ -362,14 +384,17 @@
                   <code>&lt;vault&gt;/.system/templates/</code>
                 </p>
                 <p class="mt-2 text-xs text-accent-primary-start">
-                  See the <span class="underline">docs/TEMPLATES.md</span> authoring guide.
+                  See the <span class="underline">docs/TEMPLATES.md</span> authoring
+                  guide.
                 </p>
               {/if}
             </div>
           {/if}
           {#each grouped as group (group.category)}
             <div
-              class="mb-1 px-2 pt-2 text-xs font-medium uppercase tracking-wide {group.category.startsWith('Plugins /')
+              class="mb-1 px-2 pt-2 text-xs font-medium uppercase tracking-wide {group.category.startsWith(
+                'Plugins /'
+              )
                 ? 'text-accent-secondary-start'
                 : 'text-text-muted'}"
             >
@@ -385,21 +410,31 @@
                 role="option"
                 aria-selected={selectedId === t.id}
                 tabindex={selectedId === t.id ? 0 : -1}
-                class="flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left transition-colors {selectedId === t.id
+                class="flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left transition-colors {selectedId ===
+                t.id
                   ? 'bg-active'
                   : 'hover:bg-hover'}"
               >
-                <span class="material-symbols-outlined mt-0.5 text-[18px] text-accent-secondary-start">
+                <span
+                  class="material-symbols-outlined mt-0.5 text-[18px] text-accent-secondary-start"
+                >
                   {t.icon || 'description'}
                 </span>
                 <span class="min-w-0 flex-1">
-                  <span class="block truncate text-sm font-medium text-text-primary">{t.title}</span>
+                  <span
+                    class="block truncate text-sm font-medium text-text-primary"
+                    >{t.title}</span
+                  >
                   {#if t.description}
-                    <span class="block truncate text-xs text-text-muted">{t.description}</span>
+                    <span class="block truncate text-xs text-text-muted"
+                      >{t.description}</span
+                    >
                   {/if}
                 </span>
                 {#if t.source === 'builtin'}
-                  <span class="shrink-0 text-[10px] uppercase text-text-muted">built-in</span>
+                  <span class="shrink-0 text-[10px] uppercase text-text-muted"
+                    >built-in</span
+                  >
                 {/if}
               </button>
             {/each}
@@ -411,18 +446,24 @@
       <div class="flex min-h-0 flex-1 flex-col">
         {#if selectedSummary}
           <!-- Preview pane -->
-          <div class="min-h-0 flex-1 overflow-y-auto border-b border-border-muted px-5 py-4">
+          <div
+            class="min-h-0 flex-1 overflow-y-auto border-b border-surface-modal-border px-5 py-4"
+          >
             {#if previewLoading}
               <p class="text-sm text-text-muted">Rendering preview…</p>
             {/if}
-            <pre class="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-text-primary">{preview}</pre>
+            <pre
+              class="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-text-primary">{preview}</pre>
           </div>
 
           <!-- Placeholder form + page-name -->
           <div class="shrink-0 space-y-3 px-5 py-4">
             {#if mode === 'new-page'}
               <div>
-                <label for="tpl-page-name" class="mb-1 block text-xs font-medium text-text-muted">
+                <label
+                  for="tpl-page-name"
+                  class="mb-1 block text-xs font-medium text-text-muted"
+                >
                   Page name
                 </label>
                 <input
@@ -431,7 +472,7 @@
                   bind:value={pageName}
                   type="text"
                   placeholder="e.g. Sprint Planning"
-                  class="w-full rounded-lg border border-border-zinc bg-void px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
+                  class="w-full rounded-lg border border-surface-modal-border bg-surface-modal px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
                   onkeydown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
@@ -446,17 +487,23 @@
                 <p class="text-xs font-medium text-text-muted">Placeholders</p>
                 {#each selectedSummary.placeholders as ph (ph.name)}
                   <div>
-                    <label for="tpl-ph-{ph.name}" class="mb-0.5 block text-xs text-text-muted">
+                    <label
+                      for="tpl-ph-{ph.name}"
+                      class="mb-0.5 block text-xs text-text-muted"
+                    >
                       {ph.name}{ph.required ? ' *' : ''}
-                      {#if ph.description}<span class="opacity-70"> — {ph.description}</span>{/if}
+                      {#if ph.description}<span class="opacity-70">
+                          — {ph.description}</span
+                        >{/if}
                     </label>
                     <input
                       id="tpl-ph-{ph.name}"
                       type="text"
                       value={placeholderValues[ph.name] ?? ''}
-                      oninput={(e) => (placeholderValues[ph.name] = e.currentTarget.value)}
+                      oninput={(e) =>
+                        (placeholderValues[ph.name] = e.currentTarget.value)}
                       placeholder={ph.default || `{{${ph.name}}}`}
-                      class="w-full rounded-lg border border-border-zinc bg-void px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
+                      class="w-full rounded-lg border border-surface-modal-border bg-surface-modal px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
                     />
                   </div>
                 {/each}
@@ -464,7 +511,8 @@
             {/if}
             <!-- Default placeholders note -->
             <p class="text-xs text-text-muted">
-              <code>{'{{date}}'}</code>, <code>{'{{time}}'}</code>, <code>{'{{weekday}}'}</code> auto-fill with the current date/time.
+              <code>{'{{date}}'}</code>, <code>{'{{time}}'}</code>,
+              <code>{'{{weekday}}'}</code> auto-fill with the current date/time.
             </p>
           </div>
         {:else}
@@ -474,10 +522,16 @@
         {/if}
 
         <!-- Status + action bar -->
-        <div class="flex items-center justify-between gap-3 border-t border-border-muted px-5 py-3">
+        <div
+          class="flex items-center justify-between gap-3 border-t border-surface-modal-border px-5 py-3"
+        >
           <div class="flex-1 text-xs" role="status" aria-live="polite">
             {#if templateStatus.message}
-              <span class={templateStatus.kind === 'error' ? 'text-status-danger' : 'text-text-muted'}>
+              <span
+                class={templateStatus.kind === 'error'
+                  ? 'text-status-danger'
+                  : 'text-text-muted'}
+              >
                 {templateStatus.message}
               </span>
             {/if}
@@ -490,9 +544,11 @@
           </button>
           <button
             onclick={() => void handleConfirm()}
-            disabled={!selectedId || creating || (mode === 'new-page' && !pageName.trim())}
+            disabled={!selectedId ||
+              creating ||
+              (mode === 'new-page' && !pageName.trim())}
             title="Confirm (Enter or Ctrl+Enter)"
-            class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-void transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-surface-app transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {creating ? '…' : confirmLabel}
           </button>

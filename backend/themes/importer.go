@@ -32,10 +32,10 @@ var importMu sync.Mutex
 // to avoid clobbering an existing on-disk theme; the UI can show a "imported
 // as <id>" toast so the user understands why a different id appears.
 type ImportResult struct {
-	Info             ThemeInfo       `json:"info"`
-	RenamedFromID    string          `json:"renamed_from_id,omitempty"`
-	Renamed          bool            `json:"renamed"`
-	Warnings         []string        `json:"warnings,omitempty"`
+	Info             ThemeInfo         `json:"info"`
+	RenamedFromID    string            `json:"renamed_from_id,omitempty"`
+	Renamed          bool              `json:"renamed"`
+	Warnings         []string          `json:"warnings,omitempty"`
 	ValidationErrors []ValidationError `json:"validation_errors,omitempty"`
 }
 
@@ -64,12 +64,14 @@ var ErrImportDuplicate = errors.New("theme id already exists")
 // same call, so any theme that survives an import is exactly the same kind
 // of object ListThemes enumerates.
 //
-// Sandbox by schema, not by string sanitization: the canonical schema accepts
-// only color values (#hex / rgb() / rgba()) at every token slot, so embedded
-// <script>, url(), or expression() values cannot reach the on-disk file
-// even if a hostile author tries. Go's json.Unmarshal ignores unknown fields
-// silently, so a JSON with extra non-color keys is structurally still a
-// theme; the only enforced rejection is the value-format one in Validate.
+// Sandbox by validator, not by string sanitization: every token slot is
+// checked by isSafeBackgroundImage / isValidFontFamily / isSafeCSSValue, which
+// reject <, >, \, and top-level declaration-breakers — so embedded <script>
+// or markup cannot reach the on-disk file even though url() (background
+// images), font-family strings, and color-mix()/var() shadows are accepted.
+// Unknown fields are rejected too (DisallowUnknownFields → structured
+// ValidationErrors), so a JSON with extra keys fails rather than silently
+// becoming a structurally-different theme.
 func ImportThemeFromPath(themesDir, srcPath string) (*ImportResult, error) {
 	if themesDir == "" {
 		return nil, fmt.Errorf("themes directory is empty (vault not loaded)")
@@ -164,6 +166,12 @@ func ExportThemeToPath(themesDir, id, dstPath string) error {
 	if themesDir == "" {
 		return fmt.Errorf("themes directory is empty (vault not loaded)")
 	}
+	// Defense-in-depth: id flows into filepath.Join(themesDir, id+".assets")
+	// via copyAssetsDirIfExists. An empty id resolves to the embedded default
+	// further down; any non-empty id must pass the safe-id check.
+	if id != "" && !IsValidThemeID(id) {
+		return fmt.Errorf("invalid theme id %q", id)
+	}
 	// Guard against silent default-fallback: if the user's active id is a
 	// custom theme but the file is missing/corrupted, ResolveActive would
 	// silently return the embedded default. Error instead so the user knows
@@ -186,6 +194,104 @@ func ExportThemeToPath(themesDir, id, dstPath string) error {
 	if err := parser.WriteFileAtomic(dstPath, canon); err != nil {
 		return fmt.Errorf("failed to write export: %w", err)
 	}
+	// Round-trip the assets directory too: a theme that references
+	// <id>.assets/<file> would point at a missing file after export/import if
+	// only the JSON were copied (RFC §3). No assets dir → nothing to copy.
+	if err := copyAssetsDirIfExists(themesDir, id, dstPath); err != nil {
+		return fmt.Errorf("failed to copy theme assets for export: %w", err)
+	}
+	return nil
+}
+
+// copyAssetsDirIfExists copies <themesDir>/<id>.assets/ to <dstDir>/<id>.assets/
+// (next to the exported JSON) when it exists, so an assets-dir theme round-trips
+// through export/import without broken references. A missing dir is the common
+// case (base64 / embedded-name themes have no assets dir) and is a no-op.
+func copyAssetsDirIfExists(themesDir, id, dstPath string) error {
+	// Defense-in-depth: id flows into filepath.Join(themesDir, id+".assets").
+	// All other id→path sites are guarded upstream; this is the only one that
+	// took an unvalidated id (a caller could pass a path-traversal string).
+	if !IsValidThemeID(id) {
+		return fmt.Errorf("invalid theme id %q", id)
+	}
+	srcAssets := filepath.Join(themesDir, id+".assets")
+	info, err := os.Stat(srcAssets)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	dstAssets := filepath.Join(filepath.Dir(dstPath), id+".assets")
+	return copyDir(srcAssets, dstAssets, 0)
+}
+
+// maxAssetsCopyDepth bounds how deep copyDir will recurse through the
+// per-theme assets directory. The tree is intentionally shallow (one level
+// of <id>.assets/<file>); a deeper tree is either a hostile zip-bomb
+// attempt or an accidentally-synced nested folder, and either way the
+// export should fail loudly instead of walking an unbounded chain of
+// directories. Depth is counted from the entry call (depth 0 = the assets
+// dir itself).
+const maxAssetsCopyDepth = 3
+
+// copyDir recursively copies src to dst. Used only by the export path for the
+// per-theme assets directory; the tree is shallow in practice but the walk
+// handles nested directories defensively. Files are copied read-only (0o644)
+// since the destination is an export target, not the live store. Each file is
+// size-bounded by maxBackgroundAssetBytes (matching the StoreBackgroundAsset
+// ingest cap) so a hostile or accidentally-huge synced asset cannot drive
+// unbounded allocation on export.
+//
+// Symlinks are NEVER followed: an attacker who can drop a symlink into the
+// assets dir could point it anywhere on disk, and a naive copy would faithfully
+// reproduce the link target's contents into the export (or loop on a cyclic
+// link). Each entry is Lstat'd so symlinks are detected and skipped. The depth
+// bound (maxAssetsCopyDepth) is the cycle / bomb backstop in case a future
+// change reintroduces a follow path.
+func copyDir(src, dst string, depth int) error {
+	if depth > maxAssetsCopyDepth {
+		return fmt.Errorf("assets directory nested too deep (>%d levels): %s", maxAssetsCopyDepth, src)
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		// Lstat (not Stat) so symlinks are visible as symlinks rather
+		// than being transparently resolved to their target. e.IsDir()
+		// calls Stat under the hood and would follow the link, defeating
+		// the guard.
+		info, err := os.Lstat(srcPath)
+		if err != nil {
+			return err
+		}
+		// Skip symlinks rather than following them — see the doc comment.
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if info.IsDir() {
+			if err := copyDir(srcPath, dstPath, depth+1); err != nil {
+				return err
+			}
+			continue
+		}
+		data, err := safeio.ReadFileMax(srcPath, maxBackgroundAssetBytes)
+		if err != nil {
+			return fmt.Errorf("asset %s exceeds the %d-byte cap: %w", srcPath, maxBackgroundAssetBytes, err)
+		}
+		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -203,19 +309,21 @@ func sanitizeThemeID(id string) string {
 	return id
 }
 
-// namespaceThemeID ensures the chosen id does not collide with a built-in
-// theme (themes.DefaultThemeID) or with any on-disk theme already present
-// in themesDir. Built-ins get a "user-" prefix; a second collision appends
-// -2, -3, … Collisions with on-disk themes (where the original id is
-// already in the user namespace) are a hard error so the user can rename
-// the source JSON rather than silently overwrite a different theme.
+// namespaceThemeID ensures the chosen id does not collide with an embedded
+// first-class theme or with any on-disk theme already present in themesDir.
+// First-class ids get a "user-" prefix; a second collision appends -2, -3, …
+// Collisions with on-disk themes (where the original id is already in the
+// user namespace) are a hard error so the user can rename the source JSON
+// rather than silently overwrite a different theme.
 func namespaceThemeID(themesDir, id, originalID string) (string, error) {
-	// 1. If the id matches a built-in (DefaultThemeID), namespace it.
-	//    We deliberately do not scan the directory looking for "is this a
-	//    built-in id" because the canonical built-in is the embedded
-	//    default and any disk copy is its own thing — overriding those
-	//    was the bug the namespace step exists to prevent.
-	if id == DefaultThemeID {
+	// 1. If the id matches ANY embedded first-class theme, namespace it.
+	//    The embed-authoritative loader skips on-disk themes whose id
+	//    matches a first-class id and serves the embedded copy instead,
+	//    so an import that keeps the id would silently never appear in
+	//    the picker (the documented export→edit→re-import loop breaks
+	//    for 10/11 themes). ParseEmbeddedByID is the single roster check
+	//    across the full shipped set.
+	if _, ok := ParseEmbeddedByID(id); ok {
 		id = userPrefix + id
 	}
 

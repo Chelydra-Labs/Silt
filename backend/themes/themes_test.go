@@ -46,34 +46,45 @@ func TestLoadTheme_RejectsOversize(t *testing.T) {
 	}
 }
 
-// minimalValidJSON is a structurally-valid canonical theme (two modes, full
-// token set) used as the base for mutation in tests.
+// minimalValidJSON is a structurally-valid canonical v2 theme (both modes,
+// app surface only, required status.success + error family) used as the base
+// for mutation in tests. v2 is hard-enforced: schema_version must be "2.0.0".
 const minimalValidJSON = `{
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "test-theme",
   "name": "Test Theme",
   "author": "Tester",
   "description": "test",
   "modes": {
     "dark": {
-      "bg": {"void":"#000000","surface":"#111111","panel":"#161616","hover":"#1c1c1c","active":"#222222"},
-      "border": {"muted":"#1e1e1e","zinc":"#272727","active":"#3f3f3f","focus":"#525252"},
-      "text": {"primary":"#e4e4e4","muted":"#71717a","disabled":"#4b5563"},
+      "surfaces": {"app": {"bg": "#0c0c0e", "border": "#1e1e23", "text": "#dee3e6"}},
+      "hover": "#1c1c21",
+      "active": "#222226",
+      "border_active": "#3f3f46",
+      "border_focus": "#52525b",
+      "text_muted": "#8b8b94",
+      "text_disabled": "#4b5563",
       "accent": {
-        "primary": {"start":"#2dd4bf","end":"#0d9488","glow":"rgba(20,184,166,0.15)"},
-        "secondary": {"start":"#6366f1","end":"#a855f7","glow":"rgba(168,85,247,0.12)"}
+        "primary": {"start": "#2dd4bf", "end": "#0d9488", "glow": "rgba(20, 184, 166, 0.15)"},
+        "secondary": {"start": "#6366f1", "end": "#a855f7", "glow": "rgba(168, 85, 247, 0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
+      "status": {"warn": "#fbbf24", "danger": "#f43f5e", "success": "#22c55e"},
+      "error": {"fg": "#ffb4ab", "bg": "#93000a", "border": "#7d2a2a"}
     },
     "light": {
-      "bg": {"void":"#ffffff","surface":"#f8fafc","panel":"#f1f5f9","hover":"#e2e8f0","active":"#cbd5e1"},
-      "border": {"muted":"#e2e8f0","zinc":"#cbd5e1","active":"#94a3b8","focus":"#64748b"},
-      "text": {"primary":"#0f172a","muted":"#64748b","disabled":"#94a3b8"},
+      "surfaces": {"app": {"bg": "#f8fafc", "border": "#e2e8f0", "text": "#0f172a"}},
+      "hover": "#e2e8f0",
+      "active": "#cbd5e1",
+      "border_active": "#94a3b8",
+      "border_focus": "#64748b",
+      "text_muted": "#4d5667",
+      "text_disabled": "#94a3b8",
       "accent": {
-        "primary": {"start":"#0d9488","end":"#115e59","glow":"rgba(13,148,136,0.10)"},
-        "secondary": {"start":"#4f46e5","end":"#7c3aed","glow":"rgba(79,70,229,0.08)"}
+        "primary": {"start": "#0d9488", "end": "#115e59", "glow": "rgba(13, 148, 136, 0.10)"},
+        "secondary": {"start": "#4f46e5", "end": "#7c3aed", "glow": "rgba(79, 70, 229, 0.08)"}
       },
-      "status": {"warn":"#d97706","danger":"#e11d48","success":"#16a34a"}
+      "status": {"warn": "#d97706", "danger": "#e11d48", "success": "#16a34a"},
+      "error": {"fg": "#ba1a1a", "bg": "#ffdad6", "border": "#93000a"}
     }
   }
 }`
@@ -85,6 +96,9 @@ func TestValidate_ValidTheme(t *testing.T) {
 	}
 	if th.ID != "test-theme" {
 		t.Errorf("id mismatch: %q", th.ID)
+	}
+	if th.SchemaVersion != SupportedSchemaVersion {
+		t.Errorf("schema_version = %q, want %q", th.SchemaVersion, SupportedSchemaVersion)
 	}
 }
 
@@ -109,11 +123,83 @@ func TestValidate_MissingToken(t *testing.T) {
 	}
 }
 
+// TestValidate_MissingRequiredTokens pins each of the v2-required slots:
+// omitting any one is rejected with the matching field path. v2 made
+// status.success and the entire error family required (the v1 optional
+// paths are retired), so each gets a dedicated case.
+func TestValidate_MissingRequiredTokens(t *testing.T) {
+	cases := []struct {
+		name  string
+		field string // substring expected in the reported Field
+		from  string // exact source token to blank
+	}{
+		{"surfaces.app.bg", "surfaces.app.bg", `"#0c0c0e"`},
+		{"hover", "hover", `"#1c1c21"`},
+		{"border_focus", "border_focus", `"#52525b"`},
+		{"status.success", "status.success", `"#22c55e"`},
+		{"error.fg", "error.fg", `"#ffb4ab"`},
+		{"error.bg", "error.bg", `"#93000a"`},
+		{"error.border", "error.border", `"#7d2a2a"`},
+		{"text_muted", "text_muted", `"#8b8b94"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			bad := strings.Replace(minimalValidJSON, c.from, `""`, 1)
+			_, err := ParseAndValidate([]byte(bad))
+			if err == nil {
+				t.Fatalf("expected validation error for missing %s", c.field)
+			}
+			verrs, ok := err.(ValidationErrors)
+			if !ok {
+				t.Fatalf("expected ValidationErrors, got %T", err)
+			}
+			found := false
+			for _, e := range verrs {
+				if strings.HasSuffix(e.Field, "."+c.field) || strings.HasSuffix(e.Field, c.field) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected an error on %s, got %v", c.field, verrs)
+			}
+		})
+	}
+}
+
 func TestValidate_BadColor(t *testing.T) {
 	bad := strings.Replace(minimalValidJSON, `"#2dd4bf"`, `"not-a-color"`, 1)
 	_, err := ParseAndValidate([]byte(bad))
 	if err == nil {
 		t.Fatalf("expected validation error for bad color, got nil")
+	}
+}
+
+// TestValidate_BadColors covers the malformed-color paths across every
+// accepted grammar: bad hex, malformed oklch, oklch with too few components,
+// and rgb out of range. oklch is now a first-class color form in v2.
+func TestValidate_BadColors(t *testing.T) {
+	cases := map[string]string{
+		"bad hex":              `"#gggggg"`,
+		"short hex":            `"#ff"`,
+		"oklch too few":        `"oklch(0.5)"`,
+		"oklch non-numeric":    `"oklch(a b c)"`,
+		"oklch too many":       `"oklch(0.5 0.1 250 4)"`,
+		"oklch L out of range": `"oklch(-0.5 0.1 250)"`, // H2: rejected, not clamped to black
+		"named color":          `"red"`,
+		"hsl (unsupported)":    `"hsl(0,0%,0%)"`,
+		"rgb out of range":     `"rgb(300,0,0)"`,
+		"rgba alpha > 1":       `"rgba(0,0,0,2)"`,
+		"url() injection":      `"url(http://evil.example/x)"`,
+	}
+	for name, val := range cases {
+		t.Run(name, func(t *testing.T) {
+			bad := strings.Replace(minimalValidJSON, `"#2dd4bf"`, val, 1)
+			_, err := ParseAndValidate([]byte(bad))
+			if err == nil {
+				t.Errorf("expected validation error for %s (%s)", name, val)
+			}
+		})
 	}
 }
 
@@ -135,29 +221,30 @@ func TestValidate_UnparseableJSON(t *testing.T) {
 	}
 }
 
-// TestValidate_SchemaVersionForwardCompat pins the documented forward-
-// compatibility contract: schema_version is informational. A theme
-// whose token set still matches v1 but carries a higher version number
-// keeps loading rather than being rejected outright (validate.go checks
-// only that schema_version is non-empty, not that it equals
-// SupportedSchemaVersion).
-func TestValidate_SchemaVersionForwardCompat(t *testing.T) {
-	future := strings.Replace(minimalValidJSON, `"schema_version": "1.0.0"`, `"schema_version": "9.9.9"`, 1)
-	th, err := ParseAndValidate([]byte(future))
-	if err != nil {
-		t.Fatalf("a higher schema_version should still validate (informational): %v", err)
-	}
-	if th.SchemaVersion != "9.9.9" {
-		t.Errorf("schema_version = %q, want 9.9.9 preserved", th.SchemaVersion)
+// TestValidate_RejectsWrongSchemaVersion pins the v2 hard-enforcement:
+// schema_version is NOT informational anymore. A theme carrying any other
+// version (including the legacy v1 "1.0.0" and a hypothetical future "9.9.9")
+// is rejected outright so a versioned theme never loads as a silently-wrong v2.
+func TestValidate_RejectsWrongSchemaVersion(t *testing.T) {
+	for _, v := range []string{`"1.0.0"`, `"9.9.9"`, `"2.0.1"`, `"1.5.0"`} {
+		t.Run(v, func(t *testing.T) {
+			bad := strings.Replace(minimalValidJSON, `"schema_version": "2.0.0"`, `"schema_version": `+v, 1)
+			_, err := ParseAndValidate([]byte(bad))
+			if err == nil {
+				t.Fatalf("expected schema_version %s to be rejected", v)
+			}
+			if !strings.Contains(err.Error(), "schema_version") {
+				t.Errorf("expected schema_version in error, got: %v", err)
+			}
+		})
 	}
 }
 
-// TestValidate_UnknownSchemaVersionStillRequiresField: a missing
-// schema_version is reported (the field is required even though its
-// value is informational), so a forward-versioned theme can never be
-// confused with a theme that omits the field entirely.
-func TestValidate_UnknownSchemaVersionStillRequiresField(t *testing.T) {
-	bad := strings.Replace(minimalValidJSON, `"schema_version": "1.0.0",`, ``, 1)
+// TestValidate_MissingSchemaVersionRejected: a missing schema_version is an
+// empty string, which is not SupportedSchemaVersion, so it is rejected
+// (rather than silently treated as a default).
+func TestValidate_MissingSchemaVersionRejected(t *testing.T) {
+	bad := strings.Replace(minimalValidJSON, `"schema_version": "2.0.0",`, ``, 1)
 	_, err := ParseAndValidate([]byte(bad))
 	if err == nil {
 		t.Fatal("expected validation error for missing schema_version")
@@ -167,31 +254,91 @@ func TestValidate_UnknownSchemaVersionStillRequiresField(t *testing.T) {
 	}
 }
 
-// darkOnlyJSON is a structurally-valid dark theme with NO light mode
-// object. The validator must report every required token under
-// modes.light as missing (a zero-valued Mode struct has empty token
-// fields, each of which fails the required-token check).
+// TestValidate_RejectsUnknownJSONFields pins the DisallowUnknownFields gate:
+// a typo like "borde" or a leftover v1 key (bg/border/text/texture) is now a
+// hard parse error, not a silently-dropped token. This is the v2 contract
+// that makes "my theme is missing a token" debuggable.
+func TestValidate_RejectsUnknownJSONFields(t *testing.T) {
+	cases := map[string]string{
+		"typo":           strings.Replace(minimalValidJSON, `"border_active": "#3f3f46"`, `"borde_active": "#3f3f46"`, 1),
+		"v1 bg block":    strings.Replace(minimalValidJSON, `"surfaces":`, `"bg": {"void": "#000000"}, "surfaces":`, 1),
+		"v1 texture":     strings.Replace(minimalValidJSON, `"status":`, `"texture": {"image": "url(x)"}, "status":`, 1),
+		"top-level typo": strings.Replace(minimalValidJSON, `"author": "Tester"`, `"authr": "Tester"`, 1),
+	}
+	for name, bad := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseAndValidate([]byte(bad))
+			if err == nil {
+				t.Fatalf("expected unknown-field rejection for %s", name)
+			}
+			if !strings.Contains(err.Error(), "not parseable") && !strings.Contains(err.Error(), "unknown") {
+				t.Errorf("expected a parse/unknown-field error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestParseAndValidate_UnknownFieldStructured pins the H4 fix: an unknown
+// field surfaces as a structured ValidationError (Field + Message) so the
+// picker can render it inline, not as a generic error string the UI can't
+// format. DisallowUnknownFields produces a generic error at the decoder
+// boundary; ParseAndValidate converts it before returning.
+func TestParseAndValidate_UnknownFieldStructured(t *testing.T) {
+	bad := strings.Replace(minimalValidJSON, `"border_active": "#3f3f46"`, `"borde_active": "#3f3f46"`, 1)
+	_, err := ParseAndValidate([]byte(bad))
+	if err == nil {
+		t.Fatal("expected unknown-field rejection")
+	}
+	verrs, ok := err.(ValidationErrors)
+	if !ok {
+		t.Fatalf("expected ValidationErrors for unknown field, got %T: %v", err, err)
+	}
+	found := false
+	for _, e := range verrs {
+		if e.Field == "borde_active" {
+			found = true
+			if !strings.Contains(e.Message, "unknown field") {
+				t.Errorf("expected message to mention 'unknown field', got %q", e.Message)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected a structured error on field %q, got %+v", "borde_active", verrs)
+	}
+}
+
+// darkOnlyJSON is a structurally-valid v2 dark theme with NO light mode
+// object. The validator must report every required token under modes.light
+// as missing (a zero-valued Mode struct has empty token fields, each of
+// which fails the required-token check).
 const darkOnlyJSON = `{
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "test-theme",
   "name": "Test Theme",
   "modes": {
     "dark": {
-      "bg": {"void":"#000000","surface":"#111111","panel":"#161616","hover":"#1c1c1c","active":"#222222"},
-      "border": {"muted":"#1e1e1e","zinc":"#272727","active":"#3f3f3f","focus":"#525252"},
-      "text": {"primary":"#e4e4e4","muted":"#8b8b94","disabled":"#4b5563"},
+      "surfaces": {"app": {"bg": "#0c0c0e", "border": "#1e1e23", "text": "#dee3e6"}},
+      "hover": "#1c1c21",
+      "active": "#222226",
+      "border_active": "#3f3f46",
+      "border_focus": "#52525b",
+      "text_muted": "#8b8b94",
+      "text_disabled": "#4b5563",
       "accent": {
-        "primary": {"start":"#2dd4bf","end":"#0d9488","glow":"rgba(20,184,166,0.15)"},
-        "secondary": {"start":"#6366f1","end":"#a855f7","glow":"rgba(168,85,247,0.12)"}
+        "primary": {"start": "#2dd4bf", "end": "#0d9488", "glow": "rgba(20, 184, 166, 0.15)"},
+        "secondary": {"start": "#6366f1", "end": "#a855f7", "glow": "rgba(168, 85, 247, 0.12)"}
       },
-      "status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}
+      "status": {"warn": "#fbbf24", "danger": "#f43f5e", "success": "#22c55e"},
+      "error": {"fg": "#ffb4ab", "bg": "#93000a", "border": "#7d2a2a"}
     }
   }
 }`
 
-// TestValidate_MissingLightMode: a theme that defines only modes.dark
-// must be rejected with every required modes.light token reported as
-// missing. This is the explicit "missing modes" case from #50.
+// TestValidate_MissingLightMode: a theme that defines only modes.dark must
+// be rejected with every required modes.light token reported as missing.
+// The set of flagged tokens must exactly equal the v2 required set
+// (requiredModeTokens) — no more, no less.
 func TestValidate_MissingLightMode(t *testing.T) {
 	_, err := ParseAndValidate([]byte(darkOnlyJSON))
 	if err == nil {
@@ -201,18 +348,22 @@ func TestValidate_MissingLightMode(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected ValidationErrors, got %T: %v", err, err)
 	}
-	// Every required dark token is present, so all reported errors must
-	// be under modes.light. Count them and confirm the prefix.
-	lightErrs := 0
+	got := map[string]bool{}
 	for _, e := range verrs {
-		if strings.HasPrefix(e.Field, "modes.light.") {
-			lightErrs++
-		} else {
+		if !strings.HasPrefix(e.Field, "modes.light.") {
 			t.Errorf("unexpected non-light error: %+v", e)
+			continue
+		}
+		got[strings.TrimPrefix(e.Field, "modes.light.")] = true
+	}
+	for _, tok := range requiredModeTokens {
+		if !got[tok] {
+			t.Errorf("expected required light token %q to be flagged, got %v", tok, got)
 		}
 	}
-	if lightErrs != len(requiredTokens) {
-		t.Errorf("expected all %d required light tokens flagged, got %d", len(requiredTokens), lightErrs)
+	if len(got) != len(requiredModeTokens) {
+		t.Errorf("expected exactly %d distinct required light tokens flagged, got %d (%v)",
+			len(requiredModeTokens), len(got), got)
 	}
 }
 
@@ -221,6 +372,17 @@ func TestIsValidColor(t *testing.T) {
 		"#fff", "#ffffff", "#ffffffff",
 		"rgba(0,0,0,0.5)", "rgba(0, 0, 0, 0)", "rgba(255,255,255,1)",
 		"rgb(1,2,3)", "rgb(100%, 0%, 0%)",
+		// CSS Color 4 percent alpha.
+		"rgba(0, 0, 0, 50%)", "rgba(0,0,0,100%)",
+		// v2 first-class oklch grammar.
+		"oklch(0.5 0.1 250)",
+		"oklch(0.5 0.1 250 / 0.5)",
+		"oklch(50% 0.1 250)",
+		"oklch(0.8 0 0)",
+		// Comma-separated oklch (CSS Color 4 legacy form, accepted for
+		// resilience — strings.Fields would leave trailing commas attached).
+		"oklch(0.5, 0.1, 250)",
+		"oklch(0.5, 0.1, 250 / 0.5)",
 	}
 	for _, c := range good {
 		if !isValidColor(c) {
@@ -233,9 +395,27 @@ func TestIsValidColor(t *testing.T) {
 		"rgba(999,0,0,0.5)", // rgb component out of range
 		"rgba(0,0,0,2)",     // alpha > 1
 		"rgba(0,0,0,-1)",    // alpha < 0
+		"rgba(0,0,0,150%)",  // percent alpha > 100%
+		"rgba(0,0,0,-5%)",   // percent alpha < 0
 		"rgb(1,2,3,4)",      // too many components
 		"rgb(300,0,0)",      // out of range
 		"rgba(a,b,c,d)",     // non-numeric
+		// Malformed oklch.
+		"oklch(0.5)",           // too few components
+		"oklch(0.5 0.1)",       // too few components
+		"oklch(a b c)",         // non-numeric
+		"oklch(0.5 0.1 250 4)", // too many components
+		// Out-of-range oklch components must be REJECTED, not silently
+		// clamped (H2). A typo like oklch(-0.5 …) would otherwise render
+		// as black (L clamped to 0) — a different color than the JSON
+		// implies. The in-range values the 11 embedded themes use must
+		// keep parsing (covered by TestIsValidColor + EmbeddedThemes).
+		"oklch(-0.5 0.1 250)",       // L < 0
+		"oklch(1.5 0.1 250)",        // L > 1
+		"oklch(0.5 -0.1 250)",       // C < 0
+		"oklch(-50% 0.1 250)",       // L% < 0
+		"oklch(0.5 0.1 250 / 1.5)",  // alpha > 1
+		"oklch(0.5 0.1 250 / -0.1)", // alpha < 0
 		// NaN/Inf: strconv.ParseFloat accepts them with a nil error, and
 		// NaN range comparisons (v < 0 || v > 255) are both false, so
 		// without an explicit non-finite guard these slip through the
@@ -252,6 +432,59 @@ func TestIsValidColor(t *testing.T) {
 	}
 }
 
+func TestParseOKLCH_CommaForm(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		l, c, h float64
+	}{
+		{"comma-separated", "oklch(0.5, 0.1, 250)", 0.5, 0.1, 250},
+		{"comma-separated with alpha", "oklch(0.5, 0.1, 250 / 0.5)", 0.5, 0.1, 250},
+		{"space-separated still works", "oklch(0.5 0.1 250)", 0.5, 0.1, 250},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			lch, ok := parseOKLCH(c.in)
+			if !ok {
+				t.Fatalf("parseOKLCH(%q) = false, want true", c.in)
+			}
+			if lch.L != c.l {
+				t.Errorf("L = %v, want %v", lch.L, c.l)
+			}
+			if lch.C != c.c {
+				t.Errorf("C = %v, want %v", lch.C, c.c)
+			}
+			if lch.H != c.h {
+				t.Errorf("H = %v, want %v", lch.H, c.h)
+			}
+		})
+	}
+}
+
+// TestParseOKLCH_RejectsOutOfRange pins the H2 fix: out-of-range oklch
+// components are rejected at parse time, not silently clamped to a different
+// color. Without this, oklch(-0.5 0.1 250) would have its L clamped to 0 and
+// render as black — masking an author's typo. The in-range oklch values used
+// by the 11 embedded themes (L 0.4–0.87, C ≥ 0) keep parsing (asserted by
+// EmbeddedThemes surviving ParseAndValidate and TestIsValidColor).
+func TestParseOKLCH_RejectsOutOfRange(t *testing.T) {
+	for _, c := range []string{
+		"oklch(-0.5 0.1 250)",       // L < 0
+		"oklch(1.5 0.1 250)",        // L > 1
+		"oklch(0.5 -0.1 250)",       // C < 0
+		"oklch(-50% 0.1 250)",       // L% < 0
+		"oklch(0.5 0.1 250 / 1.5)",  // alpha > 1
+		"oklch(0.5 0.1 250 / -0.1)", // alpha < 0
+	} {
+		if _, ok := parseOKLCH(c); ok {
+			t.Errorf("parseOKLCH(%q) = true, want false (out-of-range must be rejected, not clamped)", c)
+		}
+		if isValidColor(c) {
+			t.Errorf("isValidColor(%q) = true, want false", c)
+		}
+	}
+}
+
 func TestParseDefault_IsValid(t *testing.T) {
 	th, err := ParseDefault()
 	if err != nil {
@@ -260,45 +493,49 @@ func TestParseDefault_IsValid(t *testing.T) {
 	if th.ID != DefaultThemeID {
 		t.Errorf("default id = %q, want %q", th.ID, DefaultThemeID)
 	}
-	// Flatten must produce all 19 canonical CSS tokens.
-	tokens := th.Flatten("dark")
-	expected := []string{
-		"--color-void", "--color-surface", "--color-panel", "--color-hover", "--color-active",
-		"--color-border-muted", "--color-border-zinc", "--color-border-active", "--color-border-focus",
-		"--color-text-primary", "--color-text-muted", "--color-text-disabled",
-		"--color-accent-primary-start", "--color-accent-primary-end", "--color-accent-primary-glow",
-		"--color-accent-secondary-start", "--color-accent-secondary-end", "--color-accent-secondary-glow",
-		"--color-status-warn", "--color-status-danger", "--color-status-success",
+	if th.SchemaVersion != SupportedSchemaVersion {
+		t.Errorf("default schema_version = %q, want %q", th.SchemaVersion, SupportedSchemaVersion)
 	}
-	for _, k := range expected {
+	// Flatten must produce the v2 app surface tokens.
+	tokens := th.Flatten("dark")
+	for _, k := range []string{
+		"--color-surface-app", "--color-surface-app-border", "--color-surface-app-text",
+		"--color-hover", "--color-active", "--color-border-active", "--color-border-focus",
+		"--color-text-primary", "--color-text-muted", "--color-text-disabled",
+		"--color-error", "--color-error-bg", "--color-error-border",
+	} {
 		if _, ok := tokens[k]; !ok {
 			t.Errorf("Flatten missing %s", k)
+		}
+	}
+	// v1 tokens must NOT survive.
+	for _, k := range []string{"--color-void", "--color-surface", "--color-chrome-void"} {
+		if _, ok := tokens[k]; ok {
+			t.Errorf("Flatten must not emit legacy v1 token %s", k)
 		}
 	}
 }
 
 func TestFlatten_DarkLightDiffer(t *testing.T) {
-	th, _ := ParseDefault()
+	th := validV2Theme()
 	dark := th.Flatten("dark")
 	light := th.Flatten("light")
-	if dark["--color-void"] == light["--color-void"] {
-		t.Errorf("dark/light bg.void should differ (dark=%s light=%s)", dark["--color-void"], light["--color-void"])
-	}
-	if dark["--color-void"] != "#0c0c0e" {
-		t.Errorf("dark bg.void = %s, want #0c0c0e (pixel-identity)", dark["--color-void"])
+	if dark["--color-surface-app"] == light["--color-surface-app"] {
+		t.Errorf("dark/light app bg should differ (dark=%s light=%s)",
+			dark["--color-surface-app"], light["--color-surface-app"])
 	}
 }
 
 func TestBGVoid(t *testing.T) {
-	th, _ := ParseDefault()
-	if th.BGVoid("dark") != "#0c0c0e" {
-		t.Errorf("BGVoid dark = %s", th.BGVoid("dark"))
+	th := validV2Theme()
+	if got, want := th.BGVoid("dark"), th.Modes.Dark.Surfaces.App.BG; got != want {
+		t.Errorf("BGVoid dark = %s, want %s", got, want)
 	}
-	if th.BGVoid("light") != "#f8fafc" {
-		t.Errorf("BGVoid light = %s", th.BGVoid("light"))
+	if got, want := th.BGVoid("light"), th.Modes.Light.Surfaces.App.BG; got != want {
+		t.Errorf("BGVoid light = %s, want %s", got, want)
 	}
-	if th.BGVoid("system") != "#0c0c0e" { // system→dark first paint
-		t.Errorf("BGVoid system should resolve to dark: %s", th.BGVoid("system"))
+	if got, want := th.BGVoid("system"), th.Modes.Dark.Surfaces.App.BG; got != want {
+		t.Errorf("BGVoid system should resolve to dark app bg: %s, want %s", got, want)
 	}
 }
 
@@ -357,7 +594,7 @@ func TestListThemes_EmptyDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListThemes empty dir: %v", err)
 	}
-	// Empty dir → the full embedded first-class roster (default + 4 palettes).
+	// Empty dir → the full embedded first-class roster.
 	assertEmbeddedSet(t, res)
 }
 
@@ -390,7 +627,6 @@ func TestListThemes_OnDiskPlusMalformed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListThemes: %v", err)
 	}
-	// custom + the 5 embedded first-class themes = 6; broken.json surfaces in Errors.
 	ids := map[string]bool{}
 	for _, ti := range res.Themes {
 		ids[ti.ID] = true
@@ -471,7 +707,7 @@ func TestHexToRGB(t *testing.T) {
 	}
 }
 
-// --- Typography tests (Sprint 6 extension) ---
+// --- Typography tests (v2 keeps typography as a theme-level optional block) --
 
 func TestValidate_TypographyOptional(t *testing.T) {
 	// A theme without a typography section must still validate (backward compat).
@@ -530,33 +766,27 @@ func TestValidate_TypographyRejectsCSSInjection(t *testing.T) {
 	}
 }
 
-// TestValidate_TextureRejectsCSSInjection covers the validateTexture
-// security barrier — the texture.image value flows verbatim into a CSS
-// background-image (var --silt-texture-image) inside the :root{--name:value;}
-// injection context, so it must reject declaration-breaking characters
-// (;, {, }, raw <, >, and a backslash CSS-escape), out-of-range opacity,
-// and unrecognized blend modes. Mirrors the sibling typography barrier
-// test above. Calls validateTexture directly for precise unit coverage of
-// every rejection path (including the backslash, which JSON-roundtripping
-// cannot express cleanly), then proves the full ParseAndValidate pipeline
-// rejects a crafted theme file end-to-end.
-func TestValidate_TextureRejectsCSSInjection(t *testing.T) {
-	// A valid texture block must pass.
-	valid := &Texture{
-		Image:   "url(data:image/svg+xml,%3Csvg%3E%3C/svg%3E)",
-		Opacity: "0.5",
-		Blend:   "overlay",
+// TestValidate_BackgroundRejectsCSSInjection covers the validateBackground
+// security barrier — the background.image value flows verbatim into a CSS
+// background-image inside the :root{--name:value;} injection context, so it
+// must reject declaration-breaking characters (;, {, }, raw <, >, and a
+// backslash CSS-escape), out-of-range opacity, unrecognized blend modes, a
+// bad scrim color, and an unrecognized size enum. Mirrors the sibling
+// typography barrier. Calls validateBackground directly for precise unit
+// coverage of every rejection path, then proves the full ParseAndValidate
+// pipeline rejects a crafted theme file end-to-end.
+func TestValidate_BackgroundRejectsCSSInjection(t *testing.T) {
+	// A valid background block must pass (cover photo with a scrim).
+	valid := &Background{
+		Image: "url(data:image/svg+xml,%3Csvg%3E%3C/svg%3E)",
+		Size:  "cover", Opacity: 0.5, Blend: "overlay", Scrim: "#000000",
 	}
-	if err := validateTexture("modes.dark.texture", valid); err != nil {
-		t.Fatalf("valid texture should pass, got %v", err)
+	if err := validateBackground("modes.dark.surfaces.app.background", valid); err != nil {
+		t.Fatalf("valid background should pass, got %v", err)
 	}
-	// An empty image is rejected: a texture block is meaningless without one.
-	if err := validateTexture("modes.dark.texture", &Texture{Opacity: "0.5", Blend: "overlay"}); err == nil {
-		t.Errorf("expected validation error for empty texture.image")
-	}
-	// Empty opacity/blend are allowed (they fall back in CSS); image is required.
-	if err := validateTexture("modes.dark.texture", &Texture{Image: "url(data:x)"}); err != nil {
-		t.Errorf("texture with only an image should pass, got %v", err)
+	// Empty image is allowed: a scrim-only or blend-only overlay is meaningful.
+	if err := validateBackground("modes.dark.surfaces.app.background", &Background{Opacity: 0.5, Blend: "overlay", Scrim: "#111111"}); err != nil {
+		t.Errorf("background with no image but a scrim should pass, got %v", err)
 	}
 
 	// image: reject every CSS-injection character.
@@ -568,51 +798,172 @@ func TestValidate_TextureRejectsCSSInjection(t *testing.T) {
 		`url(data:)\escape`,                   // backslash (CSS escape sequence)
 	}
 	for _, img := range badImages {
-		tx := &Texture{Image: img, Opacity: "0.5", Blend: "overlay"}
-		if err := validateTexture("modes.dark.texture", tx); err == nil {
-			t.Errorf("expected validation error for texture.image %q", img)
+		b := &Background{Image: img, Opacity: 0.5, Blend: "overlay"}
+		if err := validateBackground("modes.dark.surfaces.app.background", b); err == nil {
+			t.Errorf("expected validation error for background.image %q", img)
+		}
+	}
+
+	// size: must be a recognized mode (tile/cover/contain).
+	if err := validateBackground("modes.dark.surfaces.app.background", &Background{Image: "url(data:x)", Size: "stretch"}); err == nil {
+		t.Errorf("expected validation error for background.size %q", "stretch")
+	}
+	for _, sz := range []string{"tile", "cover", "contain"} {
+		b := &Background{Image: "url(data:x)", Size: sz, Opacity: 0.5, Blend: "overlay"}
+		if err := validateBackground("modes.dark.surfaces.app.background", b); err != nil {
+			t.Errorf("size %q should pass, got %v", sz, err)
 		}
 	}
 
 	// opacity: must be a number in [0,1].
-	badOpacities := []string{"1.5", "-0.1", "NaN", "Inf", "abc"}
+	badOpacities := []float64{1.5, -0.1}
 	for _, op := range badOpacities {
-		tx := &Texture{Image: "url(data:x)", Opacity: op, Blend: "overlay"}
-		if err := validateTexture("modes.dark.texture", tx); err == nil {
-			t.Errorf("expected validation error for texture.opacity %q", op)
+		b := &Background{Image: "url(data:x)", Opacity: op, Blend: "overlay"}
+		if err := validateBackground("modes.dark.surfaces.app.background", b); err == nil {
+			t.Errorf("expected validation error for background.opacity %v", op)
 		}
 	}
-	// In-range opacity values pass.
-	for _, op := range []string{"0", "0.06", "1"} {
-		tx := &Texture{Image: "url(data:x)", Opacity: op, Blend: "overlay"}
-		if err := validateTexture("modes.dark.texture", tx); err != nil {
-			t.Errorf("opacity %q should pass, got %v", op, err)
+	for _, op := range []float64{0, 0.06, 1} {
+		b := &Background{Image: "url(data:x)", Opacity: op, Blend: "overlay"}
+		if err := validateBackground("modes.dark.surfaces.app.background", b); err != nil {
+			t.Errorf("opacity %v should pass, got %v", op, err)
 		}
 	}
 
 	// blend: must be a recognized mix-blend-mode keyword.
-	tx := &Texture{Image: "url(data:x)", Opacity: "0.5", Blend: "bogus-blend"}
-	if err := validateTexture("modes.dark.texture", tx); err == nil {
-		t.Errorf("expected validation error for texture.blend %q", "bogus-blend")
+	if err := validateBackground("modes.dark.surfaces.app.background", &Background{Image: "url(data:x)", Opacity: 0.5, Blend: "bogus-blend"}); err == nil {
+		t.Errorf("expected validation error for background.blend %q", "bogus-blend")
 	}
-	for _, b := range []string{"overlay", "multiply", "normal", "soft-light"} {
-		tx := &Texture{Image: "url(data:x)", Opacity: "0.5", Blend: b}
-		if err := validateTexture("modes.dark.texture", tx); err != nil {
-			t.Errorf("blend %q should pass, got %v", b, err)
+	for _, bl := range []string{"overlay", "multiply", "normal", "soft-light"} {
+		b := &Background{Image: "url(data:x)", Opacity: 0.5, Blend: bl}
+		if err := validateBackground("modes.dark.surfaces.app.background", b); err != nil {
+			t.Errorf("blend %q should pass, got %v", bl, err)
 		}
 	}
 
-	// End-to-end: a crafted theme JSON file with an injection image is
-	// rejected by the full ParseAndValidate pipeline (not just validateTexture).
-	darkStatus := `"status": {"warn":"#fbbf24","danger":"#f43f5e","success":"#22c55e"}`
+	// scrim: must be a valid color.
+	if err := validateBackground("modes.dark.surfaces.app.background", &Background{Image: "url(data:x)", Opacity: 0.5, Scrim: "not-a-color"}); err == nil {
+		t.Errorf("expected validation error for background.scrim %q", "not-a-color")
+	}
+
+	// End-to-end: a crafted theme JSON with an injection image on the app
+	// surface is rejected by the full ParseAndValidate pipeline.
 	crafted := strings.Replace(
 		minimalValidJSON,
-		darkStatus,
-		`"texture": {"image": "url(x); body{background:red}", "opacity": "0.5", "blend": "overlay"}, `+darkStatus,
+		`{"bg": "#0c0c0e", "border": "#1e1e23", "text": "#dee3e6"}`,
+		`{"bg": "#0c0c0e", "border": "#1e1e23", "text": "#dee3e6", "background": {"image": "url(x); body{background:red}", "size": "cover", "opacity": 0.5, "blend": "overlay"}}`,
 		1,
 	)
 	if _, err := ParseAndValidate([]byte(crafted)); err == nil {
-		t.Errorf("expected ParseAndValidate to reject a crafted theme with an injection texture.image")
+		t.Errorf("expected ParseAndValidate to reject a crafted theme with an injection background.image")
+	}
+}
+
+// TestValidate_TypographyScaleBadKeyRejected pins the scale-key whitelist:
+// keys flow verbatim into CSS custom-property names (out["--font-size-"+k]),
+// so a key like "sm;--color-surface-app" would be CSS injection. The key
+// pattern ^[a-z0-9-]+$ is the only thing that stops it.
+func TestValidate_TypographyScaleBadKeyRejected(t *testing.T) {
+	// Sanity: a clean scale validates.
+	goodScale := strings.Replace(
+		minimalValidJSON,
+		`"modes": {`,
+		`"typography": { "scale": { "size": {"sm": "0.875rem", "base": "1rem"} } },
+    "modes": {`,
+		1,
+	)
+	if _, err := ParseAndValidate([]byte(goodScale)); err != nil {
+		t.Fatalf("clean scale should validate, got %v", err)
+	}
+	// A key with declaration-breaking chars is rejected.
+	for _, badKey := range []string{
+		`sm;--color-surface-app`,
+		`base}body{`,
+		`has space`,
+		`UPPER`,
+		`under_score`,
+	} {
+		bad := strings.Replace(
+			minimalValidJSON,
+			`"modes": {`,
+			`"typography": { "scale": { "size": {"`+badKey+`": "1rem"} } },
+    "modes": {`,
+			1,
+		)
+		_, err := ParseAndValidate([]byte(bad))
+		if err == nil {
+			t.Errorf("expected validation error for scale key %q, got nil", badKey)
+		} else {
+			verrs, ok := err.(ValidationErrors)
+			if !ok {
+				t.Errorf("expected ValidationErrors for scale key %q, got %T: %v", badKey, err, err)
+			} else {
+				found := false
+				for _, e := range verrs {
+					if strings.Contains(e.Message, "scale key") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected 'scale key' error for %q, got %v", badKey, verrs)
+				}
+			}
+		}
+	}
+}
+
+// TestValidate_NavIconsBadKeyRejected pins the nav_icons key whitelist.
+// nav_icons keys flow verbatim into CSS custom-property names
+// (out["--color-nav-icon-"+k]), so a key like "x;--color-error" would let an
+// untrusted imported theme override any --color-* token. The key pattern
+// ^[a-z0-9-]+$ (the same one that gates typography scale keys) is the only
+// thing that stops it.
+func TestValidate_NavIconsBadKeyRejected(t *testing.T) {
+	// Sanity: clean nav_icons keys validate.
+	good := strings.Replace(
+		minimalValidJSON,
+		`"error": {"fg": "#ffb4ab", "bg": "#93000a", "border": "#7d2a2a"}`,
+		`"error": {"fg": "#ffb4ab", "bg": "#93000a", "border": "#7d2a2a"}, "nav_icons": {"notes": "#2dd4bf", "settings": "#94a3b8"}`,
+		1,
+	)
+	if _, err := ParseAndValidate([]byte(good)); err != nil {
+		t.Fatalf("clean nav_icons should validate, got %v", err)
+	}
+	// A key with declaration-breaking chars is rejected.
+	for _, badKey := range []string{
+		`x;--color-error`,
+		`notes}body{`,
+		`has space`,
+		`UPPER`,
+		`under_score`,
+	} {
+		bad := strings.Replace(
+			minimalValidJSON,
+			`"error": {"fg": "#ffb4ab", "bg": "#93000a", "border": "#7d2a2a"}`,
+			`"error": {"fg": "#ffb4ab", "bg": "#93000a", "border": "#7d2a2a"}, "nav_icons": {"`+badKey+`": "#ff0000"}`,
+			1,
+		)
+		_, err := ParseAndValidate([]byte(bad))
+		if err == nil {
+			t.Errorf("expected validation error for nav_icons key %q, got nil", badKey)
+			continue
+		}
+		verrs, ok := err.(ValidationErrors)
+		if !ok {
+			t.Errorf("expected ValidationErrors for nav_icons key %q, got %T: %v", badKey, err, err)
+			continue
+		}
+		found := false
+		for _, e := range verrs {
+			if strings.Contains(e.Message, "nav_icons key") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected 'nav_icons key' error for %q, got %v", badKey, verrs)
+		}
 	}
 }
 
@@ -705,46 +1056,178 @@ func TestIsValidFontFamily(t *testing.T) {
 	}
 }
 
-// TestParseAndValidate_BackfillsMissingSuccess: a legacy theme (exported
-// before the status.success schema change) must still load. status.success is
-// optional (#165): ParseAndValidate no longer backfills it, but validation
-// passes and Flatten simply omits the token so the @theme static fallback
-// (#22c55e / #16a34a) applies.
-func TestParseAndValidate_OptionalSuccess(t *testing.T) {
-	// Strip success from both mode status blocks. Each appears as:
-	//   ,"success":"<color>"   (second key, has leading comma)
-	legacy := strings.ReplaceAll(minimalValidJSON, `,"success":"#22c55e"`, "")
-	legacy = strings.ReplaceAll(legacy, `,"success":"#16a34a"`, "")
+// --- Derivation tests (v2 OKLCH-aware hover/active/disabled) ----------------
 
-	th, err := ParseAndValidate([]byte(legacy))
-	if err != nil {
-		t.Fatalf("legacy theme without success should still load: %v", err)
+// TestDeriveHover_PreservesFormatAndLightens asserts DeriveHover returns the
+// seed's authored format (hex→hex, oklch→oklch) and is perceptibly lighter
+// (delta-L > 0) in the Oklab lightness axis.
+func TestDeriveHover_PreservesFormatAndLightens(t *testing.T) {
+	hexSeed := "#0c0c0e"
+	hexHover := DeriveHover(hexSeed)
+	if !strings.HasPrefix(hexHover, "#") {
+		t.Errorf("DeriveHover(hex) = %q, want hex output", hexHover)
 	}
-	// Success is not backfilled — it stays empty and Flatten omits it.
-	if th.Modes.Dark.Status.Success != "" {
-		t.Errorf("dark success should be empty (optional, no backfill), got %q", th.Modes.Dark.Status.Success)
+	seedL, _ := oklabLightness(hexSeed)
+	hoverL, _ := oklabLightness(hexHover)
+	if hoverL <= seedL {
+		t.Errorf("DeriveHover should lighten: seed L=%.4f, hover L=%.4f (delta %.4f)",
+			seedL, hoverL, hoverL-seedL)
 	}
-	if th.Modes.Light.Status.Success != "" {
-		t.Errorf("light success should be empty (optional, no backfill), got %q", th.Modes.Light.Status.Success)
+
+	oklchSeed := "oklch(0.3 0.05 250)"
+	oklchHover := DeriveHover(oklchSeed)
+	if !strings.HasPrefix(oklchHover, "oklch(") {
+		t.Errorf("DeriveHover(oklch) = %q, want oklch output", oklchHover)
 	}
-	// Flatten must NOT emit --color-status-success when it's empty.
-	dark := th.Flatten("dark")
-	if _, ok := dark["--color-status-success"]; ok {
-		t.Errorf("Flatten should not emit --color-status-success when success is empty")
+	seedL2, _ := oklabLightness(oklchSeed)
+	hoverL2, _ := oklabLightness(oklchHover)
+	if hoverL2 <= seedL2 {
+		t.Errorf("DeriveHover(oklch) should lighten: seed L=%.4f, hover L=%.4f", seedL2, hoverL2)
 	}
 }
 
-// TestParseAndValidate_PreservesExplicitSuccess: when a theme explicitly
-// defines status.success, the backfill must not overwrite it.
-func TestParseAndValidate_PreservesExplicitSuccess(t *testing.T) {
-	th, err := ParseAndValidate([]byte(minimalValidJSON))
-	if err != nil {
-		t.Fatalf("valid theme should load: %v", err)
+// TestDeriveActive_PreservesFormatAndDarkens asserts DeriveActive returns the
+// seed's format and is perceptibly deeper (delta-L < 0).
+func TestDeriveActive_PreservesFormatAndDarkens(t *testing.T) {
+	seed := "#8b8b94"
+	active := DeriveActive(seed)
+	if !strings.HasPrefix(active, "#") {
+		t.Errorf("DeriveActive(hex) = %q, want hex output", active)
 	}
-	if th.Modes.Dark.Status.Success != "#22c55e" {
-		t.Errorf("explicit dark success preserved: want #22c55e, got %q", th.Modes.Dark.Status.Success)
+	seedL, _ := oklabLightness(seed)
+	activeL, _ := oklabLightness(active)
+	if activeL >= seedL {
+		t.Errorf("DeriveActive should darken: seed L=%.4f, active L=%.4f", seedL, activeL)
 	}
-	if th.Modes.Light.Status.Success != "#16a34a" {
-		t.Errorf("explicit light success preserved: want #16a34a, got %q", th.Modes.Light.Status.Success)
+
+	oklchSeed := "oklch(0.6 0.05 250)"
+	oklchActive := DeriveActive(oklchSeed)
+	if !strings.HasPrefix(oklchActive, "oklch(") {
+		t.Errorf("DeriveActive(oklch) = %q, want oklch output", oklchActive)
+	}
+	seedL2, _ := oklabLightness(oklchSeed)
+	activeL2, _ := oklabLightness(oklchActive)
+	if activeL2 >= seedL2 {
+		t.Errorf("DeriveActive(oklch) should darken: seed L=%.4f, active L=%.4f", seedL2, activeL2)
+	}
+}
+
+// TestDeriveDisabled_PreservesFormatAndDesaturates asserts DeriveDisabled
+// keeps the format and lowers chroma (the a/b opponents pulled toward grey).
+func TestDeriveDisabled_PreservesFormatAndDesaturates(t *testing.T) {
+	seed := "#2dd4bf" // a chromatic teal
+	dis := DeriveDisabled(seed)
+	if !strings.HasPrefix(dis, "#") {
+		t.Errorf("DeriveDisabled(hex) = %q, want hex output", dis)
+	}
+	seedC, _ := oklabChroma(seed)
+	disC, _ := oklabChroma(dis)
+	if disC >= seedC {
+		t.Errorf("DeriveDisabled should desaturate: seed C=%.4f, disabled C=%.4f", seedC, disC)
+	}
+
+	oklchSeed := "oklch(0.7 0.15 180)"
+	oklchDis := DeriveDisabled(oklchSeed)
+	if !strings.HasPrefix(oklchDis, "oklch(") {
+		t.Errorf("DeriveDisabled(oklch) = %q, want oklch output", oklchDis)
+	}
+	seedC2, _ := oklabChroma(oklchSeed)
+	disC2, _ := oklabChroma(oklchDis)
+	if disC2 >= seedC2 {
+		t.Errorf("DeriveDisabled(oklch) should desaturate: seed C=%.4f, disabled C=%.4f", seedC2, disC2)
+	}
+}
+
+// --- Flatten structure tests (v2 surface zones + format preservation) --------
+
+// TestFlatten_EmitsSurfaceAppAndAliases pins the v2 canonical surface tokens
+// and the Material-3 aliases that map onto the app zone.
+func TestFlatten_EmitsSurfaceAppAndAliases(t *testing.T) {
+	th := validV2Theme()
+	flat := th.Flatten("dark")
+	if flat["--color-surface-app"] != "#0c0c0e" {
+		t.Errorf("--color-surface-app = %q, want #0c0c0e", flat["--color-surface-app"])
+	}
+	if flat["--color-surface-app-border"] != "#1e1e23" {
+		t.Errorf("--color-surface-app-border = %q", flat["--color-surface-app-border"])
+	}
+	if flat["--color-surface-app-text"] != "#dee3e6" {
+		t.Errorf("--color-surface-app-text = %q", flat["--color-surface-app-text"])
+	}
+	// text-primary is a first-class semantic emphasis token: primary body
+	// text, by definition the app zone's foreground (parallel to text-muted /
+	// text-disabled, which are zone-agnostic emphasis levels).
+	if flat["--color-text-primary"] != "var(--color-surface-app-text)" {
+		t.Errorf("--color-text-primary = %q, want var(--color-surface-app-text)", flat["--color-text-primary"])
+	}
+}
+
+// TestFlatten_OmittedZoneInheritsParent pins the strict-tree inheritance
+// graph emitted by Flatten for zones the author did not set. validV2Theme
+// authors only app, so every other zone falls back to its parent via var().
+func TestFlatten_OmittedZoneInheritsParent(t *testing.T) {
+	th := validV2Theme()
+	flat := th.Flatten("dark")
+	// Direct app children.
+	for _, z := range []string{"sidebar", "editor", "panel"} {
+		if got, want := flat["--color-surface-"+z], "var(--color-surface-app)"; got != want {
+			t.Errorf("--color-surface-%s = %q, want %q", z, got, want)
+		}
+	}
+	// panel's children.
+	if got, want := flat["--color-surface-card"], "var(--color-surface-panel)"; got != want {
+		t.Errorf("--color-surface-card = %q, want %q", got, want)
+	}
+	if got, want := flat["--color-surface-modal"], "var(--color-surface-panel)"; got != want {
+		t.Errorf("--color-surface-modal = %q, want %q", got, want)
+	}
+	// popover inherits modal.
+	if got, want := flat["--color-surface-popover"], "var(--color-surface-modal)"; got != want {
+		t.Errorf("--color-surface-popover = %q, want %q", got, want)
+	}
+}
+
+// TestFlatten_AuthoredZoneEmitsConcreteValue confirms a zone the author DID
+// set emits concrete values (not var()) and the background overlay keys flip.
+func TestFlatten_AuthoredZoneEmitsConcreteValue(t *testing.T) {
+	th := validV2Theme()
+	th.Modes.Dark.Surfaces.Panel = &Surface{
+		BG: "#161619", Border: "#27272a", Text: "#dee3e6",
+		Background: &Background{Image: "url(x)", Size: "cover", Opacity: 0.4, Blend: "overlay"},
+	}
+	flat := th.Flatten("dark")
+	if flat["--color-surface-panel"] != "#161619" {
+		t.Errorf("--color-surface-panel = %q, want #161619", flat["--color-surface-panel"])
+	}
+	if flat["--silt-bg-panel-display"] != "block" {
+		t.Errorf("--silt-bg-panel-display = %q, want block", flat["--silt-bg-panel-display"])
+	}
+	if flat["--silt-bg-panel-image"] != "url(x)" {
+		t.Errorf("--silt-bg-panel-image = %q", flat["--silt-bg-panel-image"])
+	}
+	// card still inherits panel (we only authored panel, not card).
+	if flat["--color-surface-card"] != "var(--color-surface-panel)" {
+		t.Errorf("--color-surface-card = %q, want var(--color-surface-panel)", flat["--color-surface-card"])
+	}
+}
+
+// TestFlatten_OKLCHVerbatimAndHexVerbatim pins the format-preservation rule:
+// OKLCH-authored colors flatten verbatim (the author wrote oklch, Flatten
+// emits oklch), and hex flattens verbatim. Derivation is eager but Flatten
+// itself is a pass-through — no format coercion.
+func TestFlatten_OKLCHVerbatimAndHexVerbatim(t *testing.T) {
+	th := validV2Theme()
+	th.Modes.Dark.Surfaces.App.BG = "oklch(0.3 0.05 250)"
+	th.Modes.Dark.Surfaces.App.Text = "#ffffff"
+	th.Modes.Dark.Accent.Primary.Start = "oklch(0.7 0.15 180)"
+	flat := th.Flatten("dark")
+	if flat["--color-surface-app"] != "oklch(0.3 0.05 250)" {
+		t.Errorf("oklch app bg should flatten verbatim, got %q", flat["--color-surface-app"])
+	}
+	if flat["--color-surface-app-text"] != "#ffffff" {
+		t.Errorf("hex app text should flatten verbatim, got %q", flat["--color-surface-app-text"])
+	}
+	if flat["--color-accent-primary-start"] != "oklch(0.7 0.15 180)" {
+		t.Errorf("oklch accent should flatten verbatim, got %q", flat["--color-accent-primary-start"])
 	}
 }

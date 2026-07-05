@@ -824,7 +824,7 @@
 
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
   <header
-    class="px-6 py-4 border-b border-border-muted flex items-center gap-3 flex-wrap"
+    class="px-6 py-4 border-b border-surface-panel-border flex items-center gap-3 flex-wrap"
   >
     <span class="material-symbols-outlined text-accent-primary-start"
       >view_kanban</span
@@ -837,7 +837,7 @@
          role="radiogroup" is a composite widget that handles arrow-key
          navigation for its radio children per WAI-ARIA APG. -->
     <div
-      class="flex items-center gap-0.5 bg-surface border border-border-muted rounded-lg p-0.5 ml-2"
+      class="flex items-center gap-0.5 bg-surface-panel border border-surface-panel-border rounded-lg p-0.5 ml-2"
       role="radiogroup"
       aria-label="Board scope"
       tabindex="-1"
@@ -865,7 +865,7 @@
     <button
       type="button"
       onclick={addColumn}
-      class="flex items-center gap-1 px-2.5 py-1 rounded border border-border-muted bg-surface text-[12px] font-label-sm text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
+      class="flex items-center gap-1 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
       aria-label="Add column"
     >
       <span class="material-symbols-outlined text-[16px]">add</span>
@@ -881,7 +881,7 @@
           onclick={resetScopeToContext}
           aria-label="Reset board scope to follow navigation"
           title="Follow navigation"
-          class="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
+          class="flex items-center gap-1 px-1.5 py-0.5 rounded border border-surface-panel-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
         >
           <span class="material-symbols-outlined text-[14px]">my_location</span>
           <span class="font-label-sm">Follow</span>
@@ -942,7 +942,7 @@
         {#each columns as col, colIdx (col)}
           {@const laneCards = lanes[col] ?? []}
           <section
-            class="flex flex-col min-w-[280px] flex-1 max-w-[400px] rounded-lg border border-border-muted bg-surface/50 {colDragIndex ===
+            class="flex flex-col min-w-[280px] flex-1 max-w-[400px] rounded-lg border border-surface-panel-border bg-surface-panel/50 {colDragIndex ===
             colIdx
               ? 'opacity-50'
               : ''}"
@@ -958,7 +958,7 @@
                  Column drag-reorder is a pointer-only affordance; the header
                  exposes Rename/Remove via its menu button for keyboard users. -->
             <div
-              class="flex items-center justify-between px-3 py-2.5 border-b border-border-muted"
+              class="flex items-center justify-between px-3 py-2.5 border-b border-surface-panel-border"
               draggable="true"
               ondragstart={(e) => onColDragStart(e, colIdx)}
               ondragover={(e) => onColDragOver(e, colIdx)}
@@ -987,7 +987,7 @@
                       else if (e.key === 'Escape') cancelRename()
                     }}
                     onblur={commitRename}
-                    class="bg-surface border border-accent-primary-start/40 rounded px-1.5 py-0.5 text-[11px] font-label-sm-bold uppercase tracking-widest text-text-primary outline-none w-28"
+                    class="bg-surface-panel border border-accent-primary-start/40 rounded px-1.5 py-0.5 text-[11px] font-label-sm-bold uppercase tracking-widest text-text-primary outline-none w-28"
                     aria-label="Rename column"
                   />
                 {:else}
@@ -1019,7 +1019,7 @@
                 </button>
                 {#if menuCol === col}
                   <div
-                    class="absolute right-0 top-full mt-1 z-50 min-w-[140px] bg-panel border border-border-muted rounded-lg shadow-xl py-1"
+                    class="absolute right-0 top-full mt-1 z-50 min-w-[140px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
                     role="menu"
                   >
                     <button
@@ -1061,7 +1061,7 @@
                   aria-label={`${card.clean_content}, ${laneLabel(col)}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}. Arrow keys change status.`}
                   draggable="true"
                   animate:flip={{ duration: 200, easing: cubicOut }}
-                  class="group relative bg-panel border border-border-muted rounded-lg p-3 cursor-grab transition-all duration-200 hover:bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {card.status ===
+                  class="group relative bg-surface-card border border-surface-card-border rounded-lg p-3 cursor-grab transition-all duration-200 hover:bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {card.status ===
                   'DOING'
                     ? 'border-l-2 border-l-accent-secondary-start'
                     : ''} {draggingId === card.id ? 'opacity-40 rotate-2' : ''}"
@@ -1127,7 +1127,9 @@
                     {card.clean_content}
                   </p>
                   {#if card.progress > 0}
-                    <div class="h-0.5 bg-surface rounded overflow-hidden mb-2">
+                    <div
+                      class="h-0.5 bg-surface-panel rounded overflow-hidden mb-2"
+                    >
                       <div
                         class="h-full bg-accent-secondary-start transition-all"
                         style="width: {card.progress}%"
@@ -1207,7 +1209,7 @@
               {/each}
               {#if laneCards.length === 0}
                 <div
-                  class="text-center text-text-muted text-[11px] font-body-md py-6 border border-dashed border-border-muted rounded-lg"
+                  class="text-center text-text-muted text-[11px] font-body-md py-6 border border-dashed border-surface-panel-border rounded-lg"
                 >
                   No {laneLabel(col).toLowerCase()} tasks
                 </div>
@@ -1220,7 +1222,9 @@
                  backing TaskStatus, so a created card could never land in them;
                  the TODO column doubles as the inbox. -->
             {#if ALL_STATUSES.includes(col as TaskStatus)}
-              <div class="shrink-0 px-2 py-1.5 border-t border-border-muted">
+              <div
+                class="shrink-0 px-2 py-1.5 border-t border-surface-panel-border"
+              >
                 {#if quickAddCol === col}
                   <QuickAddTask
                     {ctx}

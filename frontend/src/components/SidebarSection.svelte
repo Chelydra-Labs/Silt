@@ -147,16 +147,18 @@
       class="material-symbols-outlined text-[16px] transition-transform"
       class:rotate-90={isExpanded}
       class:text-accent-primary-start={activeSection === sectionKey}
-      class:text-text-muted={activeSection !== sectionKey}
+      class:text-surface-sidebar-text-muted={activeSection !== sectionKey}
     >
       chevron_right
     </span>
-    <span class="font-semibold text-[13px] text-text-primary truncate flex-1">
+    <span
+      class="font-semibold text-[13px] text-surface-sidebar-text truncate flex-1"
+    >
       {section.name ? section.name : 'Pages (no section)'}
     </span>
     {#if totalCount > 0}
       <span
-        class="text-[9px] font-label-sm text-text-muted bg-panel border border-border-muted rounded-full px-1.5 py-0.5"
+        class="text-[9px] font-label-sm text-surface-sidebar-text-muted bg-surface-card border border-surface-sidebar-border rounded-full px-1.5 py-0.5"
       >
         {totalCount}
       </span>
@@ -168,7 +170,7 @@
         onCreatePageInline(sectionKey)
       }}
       title="New page in this section"
-      class="opacity-30 group-hover:opacity-100 text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
+      class="opacity-30 group-hover:opacity-100 text-surface-sidebar-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
     >
       <span class="material-symbols-outlined text-[16px]">add</span>
     </button>
@@ -179,11 +181,11 @@
       class="ml-4 border-l pl-1 mt-0.5 mb-1.5 transition-colors duration-200 {activeSection ===
       sectionKey
         ? 'border-accent-primary-start/30'
-        : 'border-border-muted'}"
+        : 'border-surface-sidebar-border'}"
     >
       {#if section.pages.length === 0 && (!section.children || section.children.length === 0)}
         <div
-          class="text-text-muted text-[11px] font-body-md py-1.5 px-2 italic"
+          class="text-surface-sidebar-text-muted text-[11px] font-body-md py-1.5 px-2 italic"
         >
           No pages. Click + to add one.
         </div>
@@ -212,9 +214,10 @@
             ondragend={onDragEnd}
             class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
             class:bg-hover={isActive}
-            class:text-accent-primary-start={isActive}
-            class:text-text-muted={!isActive}
-            class:hover:text-text-primary={!isActive}
+            class:text-surface-sidebar-text={isActive}
+            class:font-medium={isActive}
+            class:text-surface-sidebar-text-muted={!isActive}
+            class:hover:text-surface-sidebar-text={!isActive}
             class:drag-over-top={dropTarget?.level === 'page' &&
               dropTarget.name === pg.name &&
               dropTarget.before}

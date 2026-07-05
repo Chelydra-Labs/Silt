@@ -283,8 +283,8 @@
     flex-direction: column;
     gap: 0.25rem;
     padding: 0.375rem 0.5rem;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #333);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 8px;
     box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.35));
     font-size: 13px;
@@ -295,28 +295,28 @@
     gap: 0.375rem;
   }
   .replace-row {
-    border-top: 1px solid var(--color-border-muted, #333);
+    border-top: 1px solid var(--color-surface-popover-border);
     padding-top: 0.25rem;
   }
   .find-input {
     width: 200px;
     padding: 0.25rem 0.5rem;
-    background: var(--color-surface, #0c0c0e);
-    color: var(--color-text-primary, #e6e6e6);
-    border: 1px solid var(--color-border-muted, #333);
+    background: var(--color-surface-popover);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 4px;
     font: inherit;
   }
   .find-input.no-results {
-    border-color: var(--color-status-danger, #ef4444);
+    border-color: var(--color-status-danger);
   }
   .find-input:focus {
     outline: none;
-    border-color: var(--color-accent-primary-start, #10b981);
+    border-color: var(--color-accent-primary-start);
   }
   .find-status {
     min-width: 70px;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     font-size: 12px;
     text-align: center;
   }
@@ -332,7 +332,7 @@
     height: 26px;
     padding: 0 0.375rem;
     background: transparent;
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     border: 1px solid transparent;
     border-radius: 4px;
     cursor: pointer;
@@ -342,13 +342,13 @@
   .toggle:hover,
   .nav-btn:hover,
   .close-btn:hover {
-    background: var(--color-hover, rgba(255, 255, 255, 0.06));
-    color: var(--color-text-primary, #e6e6e6);
+    background: var(--color-hover);
+    color: var(--color-text-primary);
   }
   .toggle.on {
-    background: var(--color-accent-primary-start, #10b981);
-    color: var(--color-surface, #0c0c0e);
-    border-color: var(--color-accent-primary-start, #10b981);
+    background: var(--color-accent-primary-start);
+    color: var(--color-surface-popover);
+    border-color: var(--color-accent-primary-start);
   }
   .nav-btn:disabled,
   .close-btn:disabled {
@@ -359,28 +359,28 @@
   .nav-btn:focus-visible,
   .close-btn:focus-visible,
   .action-btn:focus-visible {
-    outline: 2px solid var(--color-accent-primary-start, #10b981);
+    outline: 2px solid var(--color-accent-primary-start);
     outline-offset: 1px;
   }
   .action-btn {
     padding: 0.25rem 0.625rem;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
-    border: 1px solid var(--color-border-muted, #333);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 4px;
     cursor: pointer;
     font: inherit;
     line-height: 1;
   }
   .action-btn:hover:not(:disabled) {
-    background: var(--color-hover, rgba(255, 255, 255, 0.06));
+    background: var(--color-hover);
   }
   .action-btn:disabled {
     opacity: 0.4;
     cursor: default;
   }
   .replace-message {
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     font-size: 12px;
   }
 </style>

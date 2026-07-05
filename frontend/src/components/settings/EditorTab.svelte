@@ -125,7 +125,7 @@
 
       <!-- Typography Card -->
       <div
-        class="bg-surface/20 border border-border-muted rounded-xl p-5 space-y-5"
+        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-5"
       >
         <h4
           class="font-label-sm-bold text-text-primary uppercase tracking-wider text-[10px]"
@@ -154,7 +154,7 @@
                     themeBodyFont
                   )})"
                   aria-label="Reset body font to theme default"
-                  class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-surface border border-border-zinc text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
+                  class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
                 >
                   <span class="material-symbols-outlined text-[18px]"
                     >restart_alt</span
@@ -185,7 +185,7 @@
                     themeMonoFont
                   )})"
                   aria-label="Reset monospace font to theme default"
-                  class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-surface border border-border-zinc text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
+                  class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
                 >
                   <span class="material-symbols-outlined text-[18px]"
                     >restart_alt</span
@@ -206,7 +206,7 @@
               type="number"
               min="8"
               max="48"
-              class="bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
           </label>
 
@@ -222,7 +222,7 @@
               step="0.1"
               min="1"
               max="3"
-              class="bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
           </label>
 
@@ -237,7 +237,7 @@
               type="number"
               min="1"
               max="8"
-              class="bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
           </label>
         </div>
@@ -245,7 +245,7 @@
 
       <!-- Preferences Card -->
       <div
-        class="bg-surface/20 border border-border-muted rounded-xl p-5 space-y-5"
+        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-5"
       >
         <h4
           class="font-label-sm-bold text-text-primary uppercase tracking-wider text-[10px]"
@@ -264,7 +264,7 @@
               type="number"
               min="0"
               step="100"
-              class="bg-surface border border-border-zinc rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
           </label>
 
@@ -274,7 +274,7 @@
                 bind:checked={draft.editor.focus_highlight_ancestors}
                 onchange={touch}
                 type="checkbox"
-                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
               <span class="text-text-primary text-[13px] font-body-md">
                 Highlight ancestor blocks on focus
@@ -291,7 +291,7 @@
                   touch()
                 }}
                 type="checkbox"
-                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
               <span class="text-text-primary text-[13px] font-body-md">
                 Show format toolbar
@@ -308,7 +308,7 @@
                   touch()
                 }}
                 type="checkbox"
-                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
               <span class="text-text-primary text-[13px] font-body-md">
                 Smart typography (em-dash, smart quotes)
@@ -325,7 +325,7 @@
                   touch()
                 }}
                 type="checkbox"
-                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
               <span class="text-text-primary text-[13px] font-body-md">
                 Text and background color pickers
@@ -342,7 +342,7 @@
                   touch()
                 }}
                 type="checkbox"
-                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
               <span class="text-text-primary text-[13px] font-body-md">
                 Show word count
@@ -359,7 +359,7 @@
                   touch()
                 }}
                 type="checkbox"
-                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
               <span class="text-text-primary text-[13px] font-body-md">
                 Focus mode (dim inactive paragraphs)
@@ -376,7 +376,7 @@
                   touch()
                 }}
                 type="checkbox"
-                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
               <span class="text-text-primary text-[13px] font-body-md">
                 Open DevTools on startup
@@ -393,7 +393,7 @@
                   touch()
                 }}
                 type="checkbox"
-                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
               <span class="text-text-primary text-[13px] font-body-md">
                 Spellcheck (underline misspelled words)
@@ -410,7 +410,7 @@
                   touch()
                 }}
                 type="checkbox"
-                class="w-4 h-4 accent-[#10b981] cursor-pointer"
+                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
               <span class="text-text-primary text-[13px] font-body-md">
                 Typewriter mode (keep active line centered)
@@ -423,7 +423,7 @@
       <!-- Custom spellcheck dictionary (#196). Vault-scoped; edited via the
            atomic config-RMW IPC in app_spellcheck.go. -->
       <div
-        class="rounded-xl border border-border-muted bg-surface/5 p-4 space-y-3"
+        class="rounded-xl border border-surface-panel-border bg-surface-panel/5 p-4 space-y-3"
       >
         <div class="flex items-center justify-between">
           <div>
@@ -447,7 +447,7 @@
                 void customDictionary.add()
               }
             }}
-            class="flex-1 px-2.5 py-1.5 rounded-lg bg-void border border-border-muted text-text-primary text-[13px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+            class="flex-1 px-2.5 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-[13px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
           />
           <button
             type="button"
@@ -462,7 +462,7 @@
           <input
             bind:value={customDictionary.filter}
             placeholder="Filter words…"
-            class="w-full pl-2.5 pr-8 py-1.5 rounded-lg bg-void border border-border-muted text-text-primary text-[13px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+            class="w-full pl-2.5 pr-8 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-[13px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
           />
           {#if customDictionary.filter}
             <button
@@ -483,7 +483,7 @@
           </p>
         {/if}
         <div
-          class="max-h-48 overflow-y-auto rounded-lg border border-border-muted/60"
+          class="max-h-48 overflow-y-auto rounded-lg border border-surface-panel-border/60"
         >
           {#if customDictionary.filtered.length === 0}
             <p class="text-text-muted text-[12px] font-body-md p-3 text-center">
@@ -496,7 +496,7 @@
           {:else}
             {#each customDictionary.filtered as word (word)}
               <div
-                class="flex items-center justify-between px-2.5 py-1.5 hover:bg-surface/20"
+                class="flex items-center justify-between px-2.5 py-1.5 hover:bg-surface-panel/20"
               >
                 <span class="text-text-primary text-[13px] font-body-md"
                   >{word}</span
@@ -518,7 +518,7 @@
       <!-- Error banner -->
       {#if settings.error}
         <div
-          class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md"
+          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
         >
           <span class="material-symbols-outlined text-[18px]">error</span>
           <span class="flex-1">{settings.error}</span>
@@ -528,7 +528,7 @@
 
     <!-- Fixed Footer Actions -->
     <div
-      class="flex items-center justify-end gap-2 px-6 py-4 border-t border-border-muted bg-surface/10 flex-shrink-0"
+      class="flex items-center justify-end gap-2 px-6 py-4 border-t border-surface-panel-border bg-surface-panel/10 flex-shrink-0"
     >
       <button
         onclick={handleRevert}

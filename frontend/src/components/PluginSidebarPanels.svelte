@@ -23,7 +23,7 @@
 </script>
 
 {#if surfaces.length > 0}
-  <div class="px-1 pt-2 border-t border-border-muted mt-auto space-y-1">
+  <div class="px-1 pt-2 border-t border-surface-panel-border mt-auto space-y-1">
     {#each surfaces as surface (surface.id)}
       <details class="group">
         <summary
@@ -35,18 +35,18 @@
             {surface.icon || 'extension'}
           </span>
           <span
-            class="text-text-primary text-[11px] font-label-sm-bold flex-1 truncate"
+            class="text-surface-sidebar-text text-[11px] font-label-sm-bold flex-1 truncate"
           >
             {surface.label}
           </span>
           <span
-            class="material-symbols-outlined text-text-muted text-[14px] group-open:rotate-180 transition-transform"
+            class="material-symbols-outlined text-surface-sidebar-text-muted text-[14px] group-open:rotate-180 transition-transform"
           >
             expand_more
           </span>
         </summary>
         <div
-          class="h-48 mt-1 rounded-lg overflow-hidden border border-border-muted"
+          class="h-48 mt-1 rounded-lg overflow-hidden border border-surface-panel-border"
         >
           <PluginSurfaceFrame
             {surface}

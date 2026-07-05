@@ -81,8 +81,8 @@
     margin-top: 4px;
     padding: 8px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: center;
@@ -95,23 +95,23 @@
   }
   .ts-label {
     font-size: 10px;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
   }
   .ts-input {
     width: 56px;
     padding: 4px 6px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
-    background: var(--color-surface, #1a1d24);
-    color: var(--color-text-primary, #e6e6e6);
+    background: var(--color-surface-popover);
+    color: var(--color-text-primary);
     font-size: 0.8rem;
     outline: none;
   }
   .ts-input:focus {
-    border-color: var(--color-accent-primary-glow, #6fa3ff);
+    border-color: var(--color-accent-primary-glow);
   }
   .ts-times {
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
     margin-top: 14px;
   }
   .ts-insert {
@@ -119,7 +119,7 @@
     padding: 4px 10px;
     border: none;
     border-radius: 6px;
-    background: var(--color-accent-primary-start, #2dd4bf);
+    background: var(--color-accent-primary-start);
     color: #001813;
     font-size: 0.8rem;
     font-weight: 600;

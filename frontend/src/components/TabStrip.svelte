@@ -295,7 +295,7 @@
     margin-top: 4px;
     border: none;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-surface-sidebar-text-muted);
     font-family: var(--font-body, inherit);
     font-size: 12px;
     cursor: pointer;
@@ -317,7 +317,7 @@
     top: 25%;
     height: 50%;
     width: 1px;
-    background: var(--color-border-muted, #2a2d35);
+    background: var(--color-surface-sidebar-border);
     transition: opacity 120ms ease;
   }
 
@@ -330,21 +330,21 @@
   }
 
   .tab-button:hover {
-    background: var(--color-hover, #1e2128);
-    color: var(--color-text-primary, #e6e6e6);
+    background: var(--color-hover);
+    color: var(--color-surface-sidebar-text);
   }
 
   .tab-button:focus-visible {
-    outline: 2px solid var(--color-accent-primary-start, #2dd4bf);
+    outline: 2px solid var(--color-accent-primary-start);
     outline-offset: -2px;
   }
 
   .tab-button.active {
-    color: var(--color-accent-primary-start, #2dd4bf);
-    background: var(--color-void, #0c0c0e);
+    color: var(--color-accent-primary-start);
+    background: var(--color-surface-app);
     height: 100%;
     margin-top: 0;
-    border: 1px solid var(--color-border-muted, #2a2d35);
+    border: 1px solid var(--color-surface-app-border);
     border-bottom: none;
     z-index: 2;
   }
@@ -373,7 +373,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background-color: var(--color-accent-primary-start, #2dd4bf);
+    background-color: var(--color-accent-primary-start);
     transition:
       transform 120ms ease,
       opacity 120ms ease;
@@ -434,7 +434,7 @@
   /* Hover state directly on the close button */
   .tab-close:hover {
     opacity: 1 !important;
-    background: var(--color-hover, #1e2128);
+    background: var(--color-hover);
   }
 
   /* Tab drag-to-reorder drop indicators (#175). A vertical accent line at
@@ -447,7 +447,7 @@
     top: 4px;
     bottom: 4px;
     width: 2px;
-    background: var(--color-accent-primary-start, #2dd4bf);
+    background: var(--color-accent-primary-start);
     border-radius: 1px;
     z-index: 10;
     opacity: 1 !important;
@@ -461,7 +461,7 @@
     top: 4px;
     bottom: 4px;
     width: 2px;
-    background: var(--color-accent-primary-start, #2dd4bf);
+    background: var(--color-accent-primary-start);
     border-radius: 1px;
     z-index: 10;
   }
@@ -482,7 +482,7 @@
   }
 
   .tab-save-state.error {
-    color: var(--color-status-danger, #f43f5e);
+    color: var(--color-status-danger);
   }
 
   .active-tab-indicator {

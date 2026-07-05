@@ -47,6 +47,13 @@ var globalThemeCache = &themeCache{
 // DefaultThemeID or empty) is always served from ParseDefault — the
 // canonical embedded copy is authoritative and can never be stale
 // relative to the binary.
+//
+// First-class themes are embedded-authoritative: any id that resolves in
+// the embedded set is served from the binary, and a same-id file in the
+// vault (a legacy ScaffoldVault seed or a manual copy) can never shadow
+// it. Only custom ids resolve from the on-disk vault. Customizing a
+// first-class theme is done by forking to a "user-" id (not embedded),
+// which still reads from disk.
 func CachedThemeByID(themesDir, id string) (*Theme, error) {
 	if id == "" || id == DefaultThemeID {
 		return ParseDefault()
@@ -58,29 +65,27 @@ func CachedThemeByID(themesDir, id string) (*Theme, error) {
 	if !IsValidThemeID(id) {
 		return ParseDefault()
 	}
+	// First-class themes resolve from the embed unconditionally — the
+	// packaged copy is the single source of truth. This is the fix for the
+	// shadowing bug where a stale vault file (seeded by an older
+	// ScaffoldVault at vault-creation time) silently overrode the evolved
+	// embedded version.
+	if t, ok := ParseEmbeddedByID(id); ok {
+		return t, nil
+	}
 	if themesDir == "" {
-		// No vault open yet: resolve a first-class id from embed so the
-		// pre-CSS paint matches the active theme rather than flashing the
-		// default; fall back to the default for unknown ids.
-		if t, ok := ParseEmbeddedByID(id); ok {
-			return t, nil
-		}
+		// No vault open and not a first-class id: nothing to resolve from
+		// disk; fall back to the default so the app still launches.
 		return ParseDefault()
 	}
 
-	// Fast path: cache hit with a fresh modtime.
+	// Custom id: resolve from the on-disk vault copy via the mtime-aware
+	// cache (the only path that reaches disk).
 	now := time.Now()
 	path := filepath.Join(themesDir, id+".json")
 	info, err := os.Stat(path)
 	if err != nil {
-		// The id is not on disk. Before falling back to the default, try
-		// the embedded first-class copy: a wiped themes dir (or an existing
-		// vault scaffolded before the theme shipped) should still resolve a
-		// non-default first-class active theme so the first paint matches.
-		// A genuinely unknown id still falls through to the default.
-		if t, ok := ParseEmbeddedByID(id); ok {
-			return t, nil
-		}
+		// Not on disk and not a first-class id → default so the app launches.
 		return ParseDefault()
 	}
 

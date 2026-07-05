@@ -125,7 +125,7 @@
   aria-label={placeholder}
   aria-invalid={!!errorMsg}
   data-testid="quick-add-task-input"
-  class="w-full px-2 py-1 rounded border border-accent-primary-start/40 bg-panel text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[12px] disabled:opacity-60"
+  class="w-full px-2 py-1 rounded border border-accent-primary-start/40 bg-surface-panel text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[12px] disabled:opacity-60"
 />
 {#if errorMsg}
   <div class="text-error text-[11px] mt-1" role="alert">

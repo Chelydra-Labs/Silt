@@ -48,11 +48,11 @@ const sampleResult = {
   name: 'Cyber Forest',
   mode: 'dark',
   dark_tokens: {
-    '--color-void': '#0c0c0e',
+    '--color-surface-app': '#0c0c0e',
     '--color-accent-primary-start': '#2dd4bf'
   },
   light_tokens: {
-    '--color-void': '#f8fafc',
+    '--color-surface-app': '#f8fafc',
     '--color-accent-primary-start': '#0d9488'
   }
 }
@@ -76,7 +76,7 @@ describe('theme store', () => {
     await initTheme()
     expect(getActiveThemeMock).toHaveBeenCalled()
     expect(themeState.id).toBe('cyber_forest')
-    expect(themeState.darkTokens['--color-void']).toBe('#0c0c0e')
+    expect(themeState.darkTokens['--color-surface-app']).toBe('#0c0c0e')
     expect(injectTokensMock).toHaveBeenCalled()
   })
 
@@ -99,7 +99,7 @@ describe('theme store', () => {
     expect(ok).toBe(true)
     expect(themeState.id).toBe('terra-test')
     expect(themeState.mode).toBe('light')
-    expect(themeState.lightTokens['--color-void']).toBe('#f8fafc')
+    expect(themeState.lightTokens['--color-surface-app']).toBe('#f8fafc')
     expect(injectTokensMock).toHaveBeenCalled()
   })
 

@@ -21,8 +21,8 @@ const mocks = vi.hoisted(() => ({
     id: 'cyber_forest',
     name: 'Cyber Forest',
     mode: 'dark' as 'dark' | 'light' | 'system',
-    darkTokens: { '--color-void': '#0c0c0e' } as Record<string, string>,
-    lightTokens: { '--color-void': '#f8fafc' } as Record<string, string>,
+    darkTokens: { '--color-surface-app': '#0c0c0e' } as Record<string, string>,
+    lightTokens: { '--color-surface-app': '#f8fafc' } as Record<string, string>,
     error: null as string | null
   },
   themesState: {
@@ -56,6 +56,9 @@ const mocks = vi.hoisted(() => ({
     message: '',
     fields: [] as { field: string; message: string }[]
   },
+  systemScheme: {
+    mode: 'dark' as 'dark' | 'light'
+  },
   applyTheme: vi.fn(),
   restoreActiveTheme: vi.fn(),
   injectTokens: vi.fn(),
@@ -78,6 +81,7 @@ vi.mock('../../theme/store.svelte', () => ({
   themeState: mocks.themeState,
   themesState: mocks.themesState,
   themeStatus: mocks.themeStatus,
+  systemScheme: mocks.systemScheme,
   applyTheme: mocks.applyTheme,
   restoreActiveTheme: mocks.restoreActiveTheme,
   loadThemes: mocks.loadThemes,
@@ -97,6 +101,10 @@ describe('AppearanceTab picker a11y (#50)', () => {
     // Each test starts with no preview-token data; the Esc test
     // populates this for the focus-driven preview path.
     mocks.themesState.flatTokens = {}
+    // Each test starts from the default dark/system-resolved state so
+    // a prior test's mutation doesn't leak across.
+    mocks.themeState.mode = 'dark'
+    mocks.systemScheme.mode = 'dark'
   })
 
   afterEach(() => {
@@ -211,8 +219,8 @@ describe('AppearanceTab picker a11y (#50)', () => {
     // preview to null, so we must provide data to exercise the path.
     mocks.themesState.flatTokens = {
       'terra-test': {
-        dark: { '--color-void': '#1a0f0a' },
-        light: { '--color-void': '#faf6f2' }
+        dark: { '--color-surface-app': '#1a0f0a' },
+        light: { '--color-surface-app': '#faf6f2' }
       }
     }
     render(AppearanceTab)
@@ -226,7 +234,7 @@ describe('AppearanceTab picker a11y (#50)', () => {
     await tick()
     // The preview theme's dark tokens are injected in place of the active.
     expect(mocks.injectTokens).toHaveBeenCalledWith({
-      '--color-void': '#1a0f0a'
+      '--color-surface-app': '#1a0f0a'
     })
 
     // Escape cancels the preview (onRowKey → previewId = null).
@@ -240,7 +248,7 @@ describe('AppearanceTab picker a11y (#50)', () => {
     // Give the active theme a typography block: the indicator derives from
     // themeState.darkTokens '--font-*' keys (theme-level, both modes).
     mocks.themeState.darkTokens = {
-      '--color-void': '#0c0c0e',
+      '--color-surface-app': '#0c0c0e',
       '--font-body': "'Plus Jakarta Sans', sans-serif",
       '--font-mono': "'JetBrains Mono', monospace",
       '--font-headline': "'Hanken Grotesk', sans-serif"
@@ -258,11 +266,47 @@ describe('AppearanceTab picker a11y (#50)', () => {
 
   it('hides the theme-typography indicator when the theme defines no fonts (#82)', () => {
     // No '--font-*' tokens → no indicator section.
-    mocks.themeState.darkTokens = { '--color-void': '#0c0c0e' }
+    mocks.themeState.darkTokens = { '--color-surface-app': '#0c0c0e' }
     render(AppearanceTab)
 
     expect(
       screen.queryByRole('heading', { name: /Theme typography/i })
     ).toBeNull()
+  })
+
+  describe('system-mode resolved-scheme announcement', () => {
+    // The visible `· Dark`/`· Light` suffix on the System radio is
+    // aria-hidden (avoids colliding with the Dark/Light radio names),
+    // so an SR user on System mode would otherwise never learn which
+    // scheme is resolved. The sr-only aria-live region is the AT
+    // companion. These tests pin the derived expression's contract:
+    // announce only in system mode, with the resolved scheme name.
+
+    it('announces "Using dark appearance" when system mode resolves to dark', () => {
+      mocks.themeState.mode = 'system'
+      mocks.systemScheme.mode = 'dark'
+      render(AppearanceTab)
+
+      const live = screen.getByText('Using dark appearance')
+      expect(live.closest('[aria-live]')).toHaveAttribute('aria-live', 'polite')
+    })
+
+    it('announces "Using light appearance" when system mode resolves to light', () => {
+      mocks.themeState.mode = 'system'
+      mocks.systemScheme.mode = 'light'
+      render(AppearanceTab)
+
+      expect(screen.getByText('Using light appearance')).toBeInTheDocument()
+    })
+
+    it('stays silent (empty region) when an explicit Dark/Light mode is active', () => {
+      mocks.themeState.mode = 'dark'
+      render(AppearanceTab)
+
+      // The region still renders (so future system-mode switches can
+      // announce without re-mounting), but holds no announcement text.
+      const region = document.querySelector('[aria-live="polite"].sr-only')
+      expect(region?.textContent?.trim()).toBe('')
+    })
   })
 })

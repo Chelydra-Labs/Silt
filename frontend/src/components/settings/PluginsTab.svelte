@@ -351,7 +351,7 @@
     </button>
     <button
       onclick={checkForUpdates}
-      class="ml-2 text-text-muted hover:text-accent-primary-start text-[11px] font-label-sm-bold bg-transparent border border-border-muted rounded px-2 py-1 cursor-pointer transition-colors"
+      class="ml-2 text-text-muted hover:text-accent-primary-start text-[11px] font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-1 cursor-pointer transition-colors"
     >
       Check for updates
     </button>
@@ -363,7 +363,9 @@
     {/if}
 
     {#if preview}
-      <div class="mt-3 p-3 rounded-lg bg-surface border border-border-muted">
+      <div
+        class="mt-3 p-3 rounded-lg bg-surface-panel border border-surface-panel-border"
+      >
         <div class="flex items-center gap-2 mb-1">
           <span class="font-label-sm-bold text-text-primary"
             >{preview.manifest.name}</span
@@ -459,7 +461,7 @@
     <div class="space-y-2">
       {#each cards as card (card.id)}
         <div
-          class="rounded-lg border border-border-muted bg-surface/50 overflow-hidden"
+          class="rounded-lg border border-surface-panel-border bg-surface-panel/50 overflow-hidden"
         >
           <!-- Card row -->
           <div class="flex items-center gap-3 px-4 py-3">
@@ -490,13 +492,13 @@
                   class={'text-[9px] rounded px-1.5 py-0.5 uppercase tracking-wider border ' +
                     (card.source === 'first-party'
                       ? 'text-accent-primary-start border-accent-primary-start/40'
-                      : 'text-text-muted border-border-muted')}
+                      : 'text-text-muted border-surface-panel-border')}
                 >
                   {card.source === 'first-party' ? 'Bundled' : 'Installed'}
                 </span>
                 {#if card.disabled}
                   <span
-                    class="text-[9px] text-text-muted bg-panel border border-border-muted rounded px-1.5 py-0.5 uppercase tracking-wider"
+                    class="text-[9px] text-text-muted bg-surface-panel border border-surface-panel-border rounded px-1.5 py-0.5 uppercase tracking-wider"
                     >disabled</span
                   >
                 {/if}
@@ -561,7 +563,7 @@
           {#if expanded === card.id}
             <div
               transition:fade={{ duration: 120 }}
-              class="px-4 py-3 border-t border-border-muted bg-panel/40 space-y-2"
+              class="px-4 py-3 border-t border-surface-panel-border bg-surface-panel/40 space-y-2"
             >
               {#if card.description}
                 <p class="text-text-muted text-[12px] font-body-md">
@@ -642,7 +644,7 @@
                     Plugin settings
                   </div>
                   <pre
-                    class="text-[10px] text-text-primary bg-void/60 border border-border-muted rounded p-2 overflow-x-auto">{JSON.stringify(
+                    class="text-[10px] text-text-primary bg-surface-panel/60 border border-surface-panel-border rounded p-2 overflow-x-auto">{JSON.stringify(
                       pluginSettings(card.id),
                       null,
                       2
@@ -682,7 +684,7 @@
                           <button
                             onclick={() => revoke(card, cap)}
                             disabled={grantBusy === `${card.id}:${cap}`}
-                            class="text-text-muted hover:text-error text-[10px] font-label-sm-bold bg-transparent border border-border-muted rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
+                            class="text-text-muted hover:text-error text-[10px] font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
                             aria-label="Revoke {capabilityLabels[cap] ?? cap}"
                           >
                             Revoke

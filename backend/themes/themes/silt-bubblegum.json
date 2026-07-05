@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "id": "silt-bubblegum",
   "name": "Bubblegum",
   "author": "Chelydra Labs",
@@ -7,28 +7,31 @@
   "typography": {
     "font_family": "'Outfit', sans-serif",
     "mono_font_family": "'Fira Code', monospace",
-    "headline_font": "'Sora', sans-serif"
+    "headline_font": "'Sora', sans-serif",
+    "scale": {
+      "size": { "xs": "0.75rem", "sm": "0.875rem", "base": "1rem", "lg": "1.125rem", "xl": "1.3125rem", "2xl": "1.625rem" },
+      "line_height": { "tight": "1.2", "normal": "1.55", "relaxed": "1.75" },
+      "weight": { "normal": "400", "medium": "500", "semibold": "600" }
+    }
   },
   "modes": {
     "dark": {
-      "bg": {
-        "void": "#1a0e1e",
-        "surface": "#221326",
-        "panel": "#291830",
-        "hover": "#321e3a",
-        "active": "#3b2444"
+      "surfaces": {
+        "app": { "bg": "#1a0e1e", "border": "#2e1a34", "text": "#f5ede8" },
+        "editor": { "bg": "#1d1124", "border": "#34203c", "text": "#f5ede8" },
+        "panel": { "bg": "#221326", "border": "#3d2344", "text": "#f5ede8" },
+        "modal": { "bg": "#271730", "border": "#5a3360", "text": "#f5ede8" },
+        "card": { "bg": "#291830", "border": "#3d2344", "text": "#f5ede8" },
+        "popover": { "bg": "#301c3a", "border": "#6a3a70", "text": "#f5ede8" },
+        "titlebar": { "bg": "#120914", "border": "#24142a", "text": "#f5ede8" },
+        "activitybar": { "bg": "#160c1a", "border": "#281830", "text": "#f5ede8" }
       },
-      "border": {
-        "muted": "#2e1a34",
-        "zinc": "#3d2344",
-        "active": "#5a3360",
-        "focus": "#7a4480"
-      },
-      "text": {
-        "primary": "#f5ede8",
-        "muted": "#c4a8b8",
-        "disabled": "#6a4a58"
-      },
+      "hover": "#321e3a",
+      "active": "#3b2444",
+      "border_active": "#5a3360",
+      "border_focus": "#7a4480",
+      "text_muted": "#c4a8b8",
+      "text_disabled": "#6a4a58",
       "accent": {
         "primary": {
           "start": "#ff6b8a",
@@ -42,30 +45,55 @@
         }
       },
       "status": {
-        "warn": "#fbbf24",
-        "danger": "#f43f5e",
-        "success": "#22c55e"
+        "warn": "#ffc857",
+        "danger": "#ff5a78",
+        "success": "#34d399"
+      },
+      "error": {
+        "fg": "#ff7a92",
+        "bg": "#1f0a14",
+        "border": "#5a1a38"
+      },
+      "radius": { "sm": "6px", "md": "10px", "lg": "14px", "xl": "18px", "full": "9999px" },
+      "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 50%, transparent)",
+        "md": "0 4px 14px color-mix(in oklch, var(--color-surface-app) 45%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 40%, transparent)"
+      },
+      "editor": {
+        "caret": "#ff6b8a",
+        "selection": "rgba(255,107,138,0.28)",
+        "selection_text": "#f5ede8",
+        "link": "#4fd1c5",
+        "link_hover": "#38b2ac",
+        "highlight": "rgba(255,200,87,0.30)"
       }
     },
     "light": {
-      "bg": {
-        "void": "#fdf6f0",
-        "surface": "#ffffff",
-        "panel": "#f7eee6",
-        "hover": "#f0e4d8",
-        "active": "#e4d4c4"
+      "surfaces": {
+        "app": { "bg": "#fffcf9", "border": "#ffd4de", "text": "#5c2433" },
+        "sidebar": {
+          "bg": "#ffeff2",
+          "border": "#ffd4de",
+          "text": "#5c2433",
+          "text_muted": "#8e4b5d",
+          "text_disabled": "#bc8694"
+        },
+        "editor": { "bg": "#fffafb", "border": "#ffe0e6", "text": "#5c2433" },
+        "panel": { "bg": "#ffffff", "border": "#ffd4de", "text": "#5c2433" },
+        "card": { "bg": "#ffffff", "border": "#ffd4de", "text": "#5c2433" },
+        "modal": { "bg": "#ffffff", "border": "#ffb8c9", "text": "#5c2433" },
+        "popover": { "bg": "#ffffff", "border": "#e89caf", "text": "#5c2433" },
+        "titlebar": { "bg": "#ffe5eb", "border": "#ffd4de", "text": "#5c2433", "text_muted": "#8e4b5d", "text_disabled": "#bc8694" },
+        "activitybar": { "bg": "#ffdbe3", "border": "#ffd4de", "text": "#5c2433", "text_muted": "#8e4b5d", "text_disabled": "#bc8694" }
       },
-      "border": {
-        "muted": "#f0e4d8",
-        "zinc": "#e4d4c4",
-        "active": "#c4a494",
-        "focus": "#8a6a5a"
-      },
-      "text": {
-        "primary": "#2d1f1a",
-        "muted": "#6b5048",
-        "disabled": "#b8a098"
-      },
+      "hover": "#ffebef",
+      "active": "#ffdbe3",
+      "border_active": "#ff9ebb",
+      "border_focus": "#d24d6f",
+      "text_muted": "#7c4453",
+      "text_disabled": "#a88891",
       "accent": {
         "primary": {
           "start": "#e84371",
@@ -79,29 +107,29 @@
         }
       },
       "status": {
-        "warn": "#d97706",
-        "danger": "#e11d48",
-        "success": "#16a34a"
+        "warn": "#c46a1a",
+        "danger": "#c8324a",
+        "success": "#0e9466"
       },
-      "chrome": {
-        "bg": {
-          "void": "#2a1322",
-          "surface": "#381a2e",
-          "panel": "#3d1e32",
-          "hover": "#482440",
-          "active": "#552a4a"
-        },
-        "border": {
-          "muted": "#3d1e32",
-          "zinc": "#4d2840",
-          "active": "#6a3a58",
-          "focus": "#8a4d70"
-        },
-        "text": {
-          "primary": "#f5ede8",
-          "muted": "#c4a8b8",
-          "disabled": "#7a5a68"
-        }
+      "error": {
+        "fg": "#aa3422",
+        "bg": "#fce2e8",
+        "border": "#e08aa0"
+      },
+      "radius": { "sm": "6px", "md": "10px", "lg": "14px", "xl": "18px", "full": "9999px" },
+      "spacing": { "sm": "6px", "md": "10px", "lg": "16px", "xl": "24px" },
+      "shadow": {
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 30%, transparent)",
+        "md": "0 4px 14px color-mix(in oklch, var(--color-surface-app) 25%, transparent)",
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 20%, transparent)"
+      },
+      "editor": {
+        "caret": "#e84371",
+        "selection": "rgba(232,67,113,0.20)",
+        "selection_text": "#5c2433",
+        "link": "#2c7a7b",
+        "link_hover": "#234e52",
+        "highlight": "rgba(196,106,26,0.22)"
       }
     }
   }

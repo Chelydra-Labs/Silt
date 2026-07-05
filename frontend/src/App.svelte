@@ -1141,7 +1141,7 @@
 </script>
 
 <main
-  class="w-full h-full flex flex-col bg-void text-text-primary overflow-hidden font-body-md"
+  class="w-full h-full flex flex-col bg-surface-app text-text-primary overflow-hidden font-body-md"
 >
   {#if loading || !isInitialized}
     <Onboarding
@@ -1168,17 +1168,17 @@
         />
       {:else}
         <div
-          class="flex items-center px-4 py-1 text-text-muted text-[11px] uppercase tracking-widest font-label-sm-bold"
+          class="flex items-center px-4 py-1 text-surface-sidebar-text-muted text-[11px] uppercase tracking-widest font-label-sm-bold"
         >
           {views.find((v) => v.id === activeView)?.label ?? activeView}
         </div>
       {/if}
     </TitleBar>
 
-    <div class="flex mt-14 h-[calc(100vh-56px)] w-full relative">
+    <div class="flex-1 flex mt-14 w-full relative min-h-0">
       <!-- Activity Bar -->
       <div
-        class="silt-chrome w-12 bg-surface border-r border-border-muted flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
+        class="w-12 bg-surface-activitybar border-r border-surface-activitybar-border flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
       >
         <div class="flex flex-col gap-4 items-center w-full">
           {#each views as v (v.id)}
@@ -1195,7 +1195,7 @@
               }}
               class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
               class:text-accent-primary-start={activeView === v.id}
-              class:text-text-muted={activeView !== v.id}
+              class:text-surface-activitybar-text-muted={activeView !== v.id}
               aria-label={v.label}
               aria-pressed={activeView === v.id}
               title={v.label}
@@ -1206,7 +1206,11 @@
                   style:opacity={sidebarCollapsed ? '0.5' : '1'}
                 ></div>
               {/if}
-              <span class="material-symbols-outlined text-[20px]">{v.icon}</span
+              <span
+                class="material-symbols-outlined text-[20px]"
+                style:color={activeView === v.id
+                  ? undefined
+                  : `var(--color-nav-icon-${v.id})`}>{v.icon}</span
               >
             </button>
           {/each}
@@ -1214,11 +1218,14 @@
 
         <button
           onclick={() => openSettings('workspace')}
-          class="w-9 h-9 rounded-lg flex items-center justify-center text-text-muted hover:text-accent-primary-start hover:bg-hover hover:scale-105 active:scale-95 transition-all cursor-pointer border-none bg-transparent focus:outline-none"
+          class="w-9 h-9 rounded-lg flex items-center justify-center text-surface-activitybar-text-muted hover:text-accent-primary-start hover:bg-hover hover:scale-105 active:scale-95 transition-all cursor-pointer border-none bg-transparent focus:outline-none"
           aria-label="Settings"
           title="Settings"
         >
-          <span class="material-symbols-outlined text-[20px]">settings</span>
+          <span
+            class="material-symbols-outlined text-[20px]"
+            style:color={`var(--color-nav-icon-settings)`}>settings</span
+          >
         </button>
       </div>
 
@@ -1231,7 +1238,7 @@
           transition:fade={{ duration: 150 }}
           aria-label="Show sidebar"
           title="Show sidebar (Ctrl+B)"
-          class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface/80 backdrop-blur-md border border-border-muted text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
+          class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface-sidebar/80 backdrop-blur-md border border-surface-sidebar-border text-surface-sidebar-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
         >
           <span class="material-symbols-outlined text-[18px]"
             >left_panel_open</span
@@ -1303,7 +1310,9 @@
       {/if}
 
       <!-- Content viewport -->
-      <div class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-void">
+      <div
+        class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-surface-app"
+      >
         {#if settings.config?.ui?.open_devtools_on_startup === true}
           <div
             class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-[10px] font-mono px-2 py-1 rounded opacity-80 pointer-events-none"
@@ -1409,7 +1418,7 @@
                         })
                       )
                     }}
-                    class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-void font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
+                    class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-surface-app font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
                   >
                     <span
                       class="material-symbols-outlined text-[18px]"
@@ -1422,7 +1431,7 @@
                       templatePickerMode = 'new-page'
                       showTemplatePicker = true
                     }}
-                    class="px-4 py-2 rounded-lg bg-transparent border border-border-zinc text-text-primary font-label-sm-bold hover:bg-hover transition-all cursor-pointer flex items-center gap-2"
+                    class="px-4 py-2 rounded-lg bg-transparent border border-surface-panel-border text-text-primary font-label-sm-bold hover:bg-hover transition-all cursor-pointer flex items-center gap-2"
                   >
                     <span
                       class="material-symbols-outlined text-[18px]"
@@ -1493,7 +1502,7 @@
       }}
     >
       <div
-        class="w-full max-w-md glass-palette glass-palette-strong border border-border-zinc rounded-xl shadow-2xl p-5"
+        class="w-full max-w-md glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl p-5"
         transition:fade={{ duration: 120 }}
         role="dialog"
         aria-modal="true"
@@ -1715,10 +1724,10 @@
 
   <!-- Plugin rendered-UI surfaces (#117) -->
   <PluginModalHost />
+  <PluginStatusBar />
 </main>
 
 <ToastContainer />
-<PluginStatusBar />
 
 <style>
   .settings-mismatch-overlay {
@@ -1736,21 +1745,21 @@
     max-width: 460px;
     padding: 28px 32px;
     border-radius: 12px;
-    border: 1px solid var(--color-border-zinc, #27272a);
+    border: 1px solid var(--color-surface-modal-border);
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
   }
 
   .settings-mismatch-modal h2 {
     margin: 0 0 12px;
     font-size: 1.15rem;
-    color: var(--color-text-primary, #dee3e6);
+    color: var(--color-text-primary);
   }
 
   .settings-mismatch-modal p {
     margin: 0 0 20px;
     font-size: 0.9rem;
     line-height: 1.5;
-    color: var(--color-text-muted, #8b8b94);
+    color: var(--color-text-muted);
   }
 
   .settings-mismatch-modal code {
@@ -1783,8 +1792,8 @@
 
   .settings-mismatch-actions .secondary {
     background: transparent;
-    color: var(--color-text-muted, #8b8b94);
-    border: 1px solid var(--color-border-muted, rgba(255, 255, 255, 0.15));
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-surface-modal-border);
   }
 
   .settings-mismatch-actions .secondary:hover {
@@ -1794,8 +1803,8 @@
   }
 
   .settings-mismatch-actions .primary {
-    background: var(--color-accent-primary-start, #4a9eff);
-    color: var(--color-void, #0c0c0e);
+    background: var(--color-accent-primary-start);
+    color: var(--color-surface-app);
     font-weight: 600;
   }
 

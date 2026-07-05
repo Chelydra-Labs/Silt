@@ -79,10 +79,10 @@
     aria-modal="true"
     aria-label="Embed a block"
     tabindex="-1"
-    class="relative w-full max-w-2xl glass-palette border border-border-zinc rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 92%, transparent);"
+    class="relative w-full max-w-2xl glass-palette border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 92%, transparent);"
   >
-    <div class="px-5 py-3 border-b border-border-muted">
+    <div class="px-5 py-3 border-b border-surface-modal-border">
       <h2 class="font-headline-md text-headline-md text-text-primary">
         Embed a block
       </h2>
@@ -90,7 +90,9 @@
         Search for the block to embed live.
       </p>
     </div>
-    <div class="flex items-center gap-3 px-4 py-3 border-b border-border-muted">
+    <div
+      class="flex items-center gap-3 px-4 py-3 border-b border-surface-modal-border"
+    >
       <span class="material-symbols-outlined text-text-muted text-[22px]"
         >search</span
       >

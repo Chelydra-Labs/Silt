@@ -219,6 +219,122 @@ func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	return res, nil
 }
 
+// BackgroundImageResult is the IPC payload returned by PickBackgroundImage.
+// ThemeID is the on-disk theme the background was written to (which may be a
+// freshly-created fork of an embedded theme — see Forked); Reference is the
+// CSS background-image value now stored at surfaces.<zone>.background.image;
+// Base64 reports whether the asset was inlined as a data URI (true) or copied
+// to the theme's <id>.assets/ directory (false).
+type BackgroundImageResult struct {
+	ThemeID   string `json:"theme_id"`
+	Forked    bool   `json:"forked"`
+	Zone      string `json:"zone"`
+	Reference string `json:"reference"`
+	Base64    bool   `json:"base64"`
+}
+
+// PickBackgroundImage opens a native image picker, stores the chosen file via
+// the asset pipeline, and writes it into surfaces.<zone>.background of the
+// active theme. The active theme is the one in AppSettings; if it is an
+// embedded first-class theme (not on disk), it is auto-forked under the
+// "user-" namespace first so the edit lands on a writable copy and the
+// fork becomes the active theme. Cancelling the picker returns (nil, nil).
+//
+// On success the cache is invalidated and "themes:changed" is emitted so the
+// picker (and any future live preview) re-fetches. This is the engine half of
+// #391; the per-zone picker UI is Phase 2 (#401).
+func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	if a.ctx == nil {
+		return nil, fmt.Errorf("application context not ready")
+	}
+	if !themes.IsValidSurfaceZone(zone) {
+		return nil, fmt.Errorf("invalid surface zone %q (valid: %s)", zone, themes.ValidSurfaceZoneNames())
+	}
+
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load settings: %w", err)
+	}
+
+	// Open the picker before any write so a cancel is a pure no-op (no fork,
+	// no settings change). An empty selection means the user cancelled.
+	selected, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select a background image",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Images (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.svg)", Pattern: "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.svg"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file picker: %w", err)
+	}
+	if selected == "" {
+		return nil, nil
+	}
+
+	// If the active theme is embedded-only (no on-disk file), fork it so the
+	// background edit targets a writable copy. Mirrors the importer's "user-"
+	// namespace for built-in id collisions; a pre-existing fork is reused.
+	targetID := settings.ActiveTheme
+	forked := false
+	if _, found, err := themes.LoadByID(a.themesDir(), settings.ActiveTheme); err != nil {
+		return nil, fmt.Errorf("failed to look up theme %q: %w", settings.ActiveTheme, err)
+	} else if !found {
+		forkedID, err := themes.ForkEmbeddedTheme(a.themesDir(), settings.ActiveTheme)
+		if err != nil {
+			return nil, err
+		}
+		targetID = forkedID
+		forked = true
+		if _, err := vault.UpdateSettings(func(s *vault.AppSettings) {
+			s.ActiveTheme = targetID
+		}); err != nil {
+			return nil, fmt.Errorf("failed to persist forked theme selection: %w", err)
+		}
+	}
+
+	ref, isBase64, err := themes.StoreBackgroundAsset(a.themesDir(), targetID, selected)
+	if err != nil {
+		return nil, err
+	}
+	// A picked photo is the common case: cover the surface at full opacity.
+	// Without these defaults Opacity is the zero value (0), which emitBackground
+	// writes verbatim and the overlay CSS applies as fully transparent — a
+	// "successful" pick that renders nothing.
+	bg := themes.Background{Image: ref, Size: "cover", Opacity: 1.0}
+	if err := themes.SetThemeBackgroundImage(a.themesDir(), targetID, zone, bg); err != nil {
+		return nil, err
+	}
+	themes.InvalidateThemeCache(targetID)
+	if a.ctx != nil {
+		// Emit theme:changed (singular) so the active theme's tokens —
+		// including the freshly-written --silt-bg-<zone>-image — re-inject
+		// immediately. Mirrors ApplyTheme's emission; without it the user
+		// would have to switch theme or mode to see the new background.
+		// targetID is the on-disk theme the asset was written to (a fork
+		// counts as the new active theme — its selection was persisted
+		// above), and settings.ThemeMode is the unchanged current mode.
+		runtime.EventsEmit(a.ctx, "theme:changed", map[string]string{
+			"id": targetID, "mode": settings.ThemeMode,
+		})
+		// themes:changed (plural) refreshes the picker listing so the
+		// forked theme appears / the cached entry is dropped.
+		runtime.EventsEmit(a.ctx, "themes:changed", struct{}{})
+	}
+	log.Printf("themes: PickBackgroundImage(zone=%q) → theme %q forked=%v base64=%v", zone, targetID, forked, isBase64)
+	return &BackgroundImageResult{
+		ThemeID:   targetID,
+		Forked:    forked,
+		Zone:      zone,
+		Reference: ref,
+		Base64:    isBase64,
+	}, nil
+}
+
 // PickExportPath opens the native save-file dialog (filtered to *.json)
 // and returns the chosen path. The empty string means the user
 // cancelled. The frontend feeds the returned path to ExportActiveTheme.

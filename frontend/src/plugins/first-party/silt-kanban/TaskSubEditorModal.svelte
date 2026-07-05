@@ -339,11 +339,11 @@
     aria-labelledby="sub-editor-title"
     tabindex="-1"
     class="relative z-10 w-full max-w-3xl h-[80vh] rounded-xl border border-border-active shadow-2xl flex flex-col overflow-hidden"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-panel) 94%, transparent);"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 94%, transparent);"
   >
     <!-- Header: breadcrumbs + parent task title + status -->
     <header
-      class="flex items-center gap-3 px-5 py-3 border-b border-border-muted flex-shrink-0"
+      class="flex items-center gap-3 px-5 py-3 border-b border-surface-modal-border flex-shrink-0"
     >
       <span
         class="material-symbols-outlined text-accent-primary-start text-[20px]"
@@ -391,7 +391,7 @@
 
     <!-- Status footer -->
     <footer
-      class="flex items-center justify-between px-5 py-2 border-t border-border-muted flex-shrink-0"
+      class="flex items-center justify-between px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
     >
       <span
         class="text-[11px] font-label-sm {saveError

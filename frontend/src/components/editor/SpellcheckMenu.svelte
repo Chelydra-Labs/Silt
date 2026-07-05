@@ -144,8 +144,8 @@
     z-index: 100;
     min-width: 180px;
     padding: 4px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #333);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 8px;
     box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.45));
     font-size: 13px;
@@ -156,7 +156,7 @@
     text-align: left;
     padding: 0.375rem 0.625rem;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -164,16 +164,16 @@
   }
   .menu-item:hover:not(.disabled),
   .menu-item:focus-visible {
-    background: var(--color-hover, rgba(255, 255, 255, 0.08));
+    background: var(--color-hover);
     outline: none;
   }
   .menu-item.disabled {
-    color: var(--color-text-muted, #888);
+    color: var(--color-text-muted);
     cursor: default;
   }
   .menu-separator {
     height: 1px;
     margin: 4px 0;
-    background: var(--color-border-muted, #333);
+    background: var(--color-surface-popover-border);
   }
 </style>

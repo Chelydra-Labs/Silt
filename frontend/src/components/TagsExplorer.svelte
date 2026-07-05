@@ -48,9 +48,9 @@
   })
 </script>
 
-<div class="flex-1 flex flex-col min-h-0 bg-void">
+<div class="flex-1 flex flex-col min-h-0 bg-surface-panel">
   <header
-    class="px-6 py-4 border-b border-border-muted flex items-center gap-3"
+    class="px-6 py-4 border-b border-surface-panel-border flex items-center gap-3"
   >
     <span class="material-symbols-outlined text-accent-primary-start"
       >label</span
@@ -94,7 +94,7 @@
           {#each results as res (res.id)}
             <button
               onclick={() => openBlock(res)}
-              class="w-full text-left px-6 py-3 border-b border-border-muted/50 hover:bg-hover transition-colors border-none bg-transparent cursor-pointer flex flex-col gap-1"
+              class="w-full text-left px-6 py-3 border-b border-surface-panel-border/50 hover:bg-hover transition-colors border-none bg-transparent cursor-pointer flex flex-col gap-1"
             >
               <div
                 class="flex items-center gap-1.5 text-[10px] text-text-muted uppercase tracking-widest font-label-sm-bold"

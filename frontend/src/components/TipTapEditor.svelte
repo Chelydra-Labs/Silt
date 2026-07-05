@@ -369,8 +369,7 @@
 
   function onOpenColorPicker(e: Event): void {
     const markType = (e as CustomEvent).detail as
-      | 'textColor'
-      | 'backgroundColor'
+      'textColor' | 'backgroundColor'
     if (markType) openColorPickerPopover(markType)
   }
 
@@ -710,8 +709,7 @@
         : false
       // Update word count from CharacterCount storage (#168 Phase 3).
       const storage = editorInstance?.storage as unknown as
-        | Record<string, unknown>
-        | undefined
+        Record<string, unknown> | undefined
       const cc = storage?.characterCount as { words?: () => number } | undefined
       if (cc?.words) wordCount = cc.words()
       triggerAutoSave()
@@ -873,8 +871,7 @@
     }
     const onOpenBtn = (e: Event) => {
       const detail = (e as CustomEvent).detail as
-        | { x: number; y: number }
-        | undefined
+        { x: number; y: number } | undefined
       const head = editor.state.selection.head
       openSpellMenuAt(editor, head, detail ?? { x: 100, y: 100 }, true)
     }
@@ -1794,24 +1791,24 @@
     margin-top: 4px;
     padding: 4px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   }
 
   .link-input {
     width: 240px;
     padding: 4px 8px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 6px;
-    background: var(--color-surface, #1a1d24);
-    color: var(--color-text-primary, #e6e6e6);
+    background: var(--color-surface-popover);
+    color: var(--color-text-primary);
     font-size: 0.8rem;
     outline: none;
   }
 
   .link-input:focus {
-    border-color: var(--color-accent-primary-glow, #6fa3ff);
+    border-color: var(--color-accent-primary-glow);
   }
 
   .color-picker-popover {
@@ -1820,8 +1817,8 @@
     margin-top: 4px;
     padding: 6px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     display: grid;
     grid-template-columns: repeat(6, 1fr);
@@ -1840,7 +1837,7 @@
   }
 
   .cp-swatch:hover {
-    border-color: var(--color-text-primary, #e6e6e6);
+    border-color: var(--color-text-primary);
   }
 
   .cp-reset {
@@ -1848,7 +1845,7 @@
     align-items: center;
     justify-content: center;
     background: transparent;
-    color: var(--color-text-muted, #8b95a3);
+    color: var(--color-text-muted);
   }
 
   .cp-custom-row {
@@ -1861,7 +1858,7 @@
   .cp-custom-input {
     width: 28px;
     height: 22px;
-    border: 1px solid var(--color-border-muted, #3a3f4b);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 4px;
     background: transparent;
     cursor: pointer;
@@ -1881,8 +1878,8 @@
     margin-top: 4px;
     padding: 4px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     display: flex;
     flex-direction: column;
@@ -1896,15 +1893,15 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     text-align: left;
     cursor: pointer;
     font-family: inherit;
   }
 
   .meta-suggest-item.selected {
-    background: var(--color-accent-primary-start, #4f7cff);
-    color: #fff;
+    background: var(--color-accent-primary-start);
+    color: var(--color-surface-app-text);
   }
 
   .meta-suggest-key {
@@ -1926,8 +1923,8 @@
     margin-top: 4px;
     padding: 4px;
     border-radius: 8px;
-    background: var(--color-surface, #1e1e22);
-    border: 1px solid var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover);
+    border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     display: flex;
     flex-direction: column;
@@ -1941,15 +1938,15 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     text-align: left;
     cursor: pointer;
     font-family: inherit;
   }
 
   .mention-suggest-item.selected {
-    background: var(--color-accent-primary-start, #4f7cff);
-    color: #fff;
+    background: var(--color-accent-primary-start);
+    color: var(--color-surface-app-text);
   }
 
   .mention-suggest-at {
@@ -1957,9 +1954,13 @@
   }
 
   .context-menu-card {
-    background-color: color-mix(in srgb, var(--color-panel) 90%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--color-surface-popover) 90%,
+      transparent
+    );
     backdrop-filter: blur(12px) saturate(140%);
-    border: 1px solid var(--color-border-muted, #33333a);
+    border: 1px solid var(--color-surface-popover-border);
     border-radius: 8px;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
     padding: 4px;
@@ -1975,7 +1976,7 @@
     padding: 6px 12px;
     border: none;
     background: transparent;
-    color: var(--color-text-primary, #e6e6e6);
+    color: var(--color-text-primary);
     font-size: 12px;
     font-family: var(--font-body, inherit);
     text-align: left;
@@ -1985,7 +1986,7 @@
   }
 
   .context-menu-item:hover {
-    background-color: var(--color-hover, #1e2128);
+    background-color: var(--color-hover);
   }
 
   .context-menu-item:disabled {
@@ -1994,24 +1995,24 @@
   }
 
   .context-menu-item.text-status-danger {
-    color: var(--color-status-danger, #e5484d);
+    color: var(--color-status-danger);
   }
 
   .context-menu-item.text-status-danger .material-symbols-outlined {
-    color: var(--color-status-danger, #e5484d);
+    color: var(--color-status-danger);
   }
 
   .context-menu-item:hover.text-status-danger {
     background-color: color-mix(
       in srgb,
-      var(--color-status-danger, #e5484d) 15%,
+      var(--color-status-danger) 15%,
       transparent
     );
   }
 
   .context-menu-separator {
     height: 1px;
-    background: var(--color-border-muted, #33333a);
+    background: var(--color-surface-popover-border);
     margin: 4px;
   }
 </style>
