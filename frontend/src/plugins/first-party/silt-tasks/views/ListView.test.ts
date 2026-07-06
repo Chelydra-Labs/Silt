@@ -17,7 +17,7 @@ import type {
   PluginEventPayload
 } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
-import { resetTaskHubState } from '../state.svelte'
+import { resetTaskHubState, setGroupBy } from '../state.svelte'
 
 // jsdom polyfills: the shared drawer uses Svelte transition:fly (element.
 // animate()); the sub-editor modal's TipTap needs Range.getClientRects +
@@ -894,5 +894,147 @@ describe('Tasks view — truncated footer (#372 hardening)', () => {
     await flush()
 
     expect(screen.queryByTestId('tasks-truncated-notice')).toBeNull()
+  })
+})
+
+describe('Tasks view — grouping engine (#423)', () => {
+  beforeEach(() => {
+    mocks.sqliteQuery.mockReset()
+    mocks.updateBlockState.mockReset().mockResolvedValue(true)
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.blockChangedCallbacks.length = 0
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it("groupBy='none' renders a single flat section with no group headers", async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [
+            task('a', 'task a', { owner: 'Alice' }),
+            task('b', 'task b', { owner: 'Bob' })
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setGroupBy('none')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Both rows live under the single data-group="all" container, and no
+    // group-heading buttons exist (flat list = no per-group headers).
+    const all = document.querySelector('[data-group="all"]')
+    expect(all).toBeInTheDocument()
+    expect(all?.querySelector('[data-block-id="a"]')).toBeInTheDocument()
+    expect(all?.querySelector('[data-block-id="b"]')).toBeInTheDocument()
+    // No per-group toggle buttons (those exist only for the generalized
+    // status/owner/... dimensions).
+    expect(
+      document.querySelectorAll('[data-testid^="tasks-group-toggle-"]')
+    ).toHaveLength(0)
+  })
+
+  it("groupBy='owner' bins rows under per-owner sections with a trailing Unassigned", async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [
+            task('a', 'alice task', { owner: 'Alice', due_date: '' }),
+            task('b', 'bob task', { owner: 'Bob', due_date: '' }),
+            task('c', 'unassigned task', { owner: '', due_date: '' })
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setGroupBy('owner')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Each row lives under its owner-namespaced data-group; the empty owner
+    // lands in the trailing Unassigned section.
+    const aliceSection = document
+      .querySelector('[data-block-id="a"]')
+      ?.closest('[data-group]')
+    expect(aliceSection?.getAttribute('data-group')).toBe('owner-Alice')
+
+    const bobSection = document
+      .querySelector('[data-block-id="b"]')
+      ?.closest('[data-group]')
+    expect(bobSection?.getAttribute('data-group')).toBe('owner-Bob')
+
+    const unassignedSection = document
+      .querySelector('[data-block-id="c"]')
+      ?.closest('[data-group]')
+    expect(unassignedSection?.getAttribute('data-group')).toBe(
+      'owner-__unassigned__'
+    )
+    expect(unassignedSection?.getAttribute('aria-label')).toBe('Unassigned')
+  })
+
+  it("groupBy='status' renders lanes in TODO/DOING/DONE order", async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [
+            task('d', 'doing', { status: 'DOING', due_date: '' }),
+            task('t', 'todo', { status: 'TODO', due_date: '' })
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setGroupBy('status')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const todoSection = document
+      .querySelector('[data-block-id="t"]')
+      ?.closest('[data-group]')
+    expect(todoSection?.getAttribute('data-group')).toBe('TODO')
+    expect(todoSection?.getAttribute('aria-label')).toBe('To Do')
+
+    const doingSection = document
+      .querySelector('[data-block-id="d"]')
+      ?.closest('[data-group]')
+    expect(doingSection?.getAttribute('data-group')).toBe('DOING')
+    expect(doingSection?.getAttribute('aria-label')).toBe('In Progress')
+
+    // Section order: TODO before DOING in the DOM.
+    const keys = Array.from(
+      document.querySelectorAll('section[data-group]')
+    ).map((s) => s.getAttribute('data-group'))
+    expect(keys.indexOf('TODO')).toBeLessThan(keys.indexOf('DOING'))
+  })
+
+  it("default groupBy='dueDate' still renders the legacy time-horizon buckets", async () => {
+    // The default (set by resetTaskHubState) is dueDate per #423.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [task('td', 'today', { due_date: todayStr() })],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const section = document
+      .querySelector('[data-block-id="td"]')
+      ?.closest('[data-group]')
+    expect(section?.getAttribute('data-group')).toBe('today')
   })
 })

@@ -19,13 +19,24 @@
     setDisplayMode,
     setFilters,
     setScope,
+    setGroupBy,
+    setSort,
     clearScopeOverride,
     narrowScopeTo,
     type DisplayMode,
+    type GroupBy,
     type Scope,
+    type SortMode,
     type TaskFilters
   } from './state.svelte'
-  import { loadDefaultDisplayMode, persistDefaultDisplayMode } from './settings'
+  import {
+    loadDefaultDisplayMode,
+    loadDefaultGroupBy,
+    loadDefaultSort,
+    persistDefaultDisplayMode,
+    persistDefaultGroupBy,
+    persistDefaultSort
+  } from './settings'
 
   interface Props {
     ctx: PluginContext
@@ -42,6 +53,25 @@
     { value: 'calendar', label: 'Calendar', icon: 'calendar_month' }
   ]
   const SCOPES: Scope[] = ['vault', 'notebook', 'section', 'page']
+  const GROUP_OPTIONS: { value: GroupBy; label: string }[] = [
+    { value: 'none', label: 'None' },
+    { value: 'status', label: 'Status' },
+    { value: 'owner', label: 'Owner' },
+    { value: 'priority', label: 'Priority' },
+    { value: 'dueDate', label: 'Due date' },
+    { value: 'tag', label: 'Tag' },
+    { value: 'notebook', label: 'Notebook' },
+    { value: 'section', label: 'Section' },
+    { value: 'page', label: 'Page' }
+  ]
+  const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+    { value: 'manual', label: 'Manual' },
+    { value: 'dueDate', label: 'Due date' },
+    { value: 'priority', label: 'Priority' },
+    { value: 'title', label: 'Title' },
+    { value: 'created', label: 'Created' },
+    { value: 'owner', label: 'Owner' }
+  ]
 
   let hubState = $derived(getTaskHubState())
 
@@ -63,6 +93,16 @@
       if (persisted !== getTaskHubState().displayMode) {
         setDisplayMode(persisted)
       }
+      // Group-by + sort hydrate the same way (#423). Independent of display
+      // mode so the user's preferred grouping survives a List → Board hop.
+      const persistedGroup = loadDefaultGroupBy()
+      if (persistedGroup !== getTaskHubState().groupBy) {
+        setGroupBy(persistedGroup)
+      }
+      const persistedSort = loadDefaultSort()
+      if (persistedSort !== getTaskHubState().sort) {
+        setSort(persistedSort)
+      }
     })
     void reloadFacets()
   })
@@ -70,6 +110,16 @@
   function chooseMode(mode: DisplayMode) {
     setDisplayMode(mode)
     void persistDefaultDisplayMode(mode)
+  }
+
+  function chooseGroupBy(g: GroupBy) {
+    setGroupBy(g)
+    void persistDefaultGroupBy(g)
+  }
+
+  function chooseSort(s: SortMode) {
+    setSort(s)
+    void persistDefaultSort(s)
   }
 
   // Ctrl+Shift+V cycles List → Board → Calendar → List.
@@ -276,6 +326,55 @@
       {/each}
     </div>
   </header>
+
+  <!-- Group-by + Sort selectors (#423). Native selects for accessibility
+       (keyboard-operable, option list exposed to AT). Both persist on change. -->
+  <div
+    class="px-6 py-1.5 border-b border-surface-panel-border flex items-center gap-3 flex-wrap"
+  >
+    <label
+      class="flex items-center gap-1.5 text-[12px] font-label-sm text-text-muted"
+    >
+      <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+        >view_module</span
+      >
+      <span>Group by</span>
+      <select
+        data-testid="tasks-hub-group-by"
+        aria-label="Group tasks by"
+        value={hubState.groupBy}
+        onchange={(e) => chooseGroupBy(e.currentTarget.value as GroupBy)}
+        class="bg-surface-panel border border-surface-panel-border rounded px-1.5 py-0.5 text-[12px] font-label-sm text-text-primary cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-primary-start"
+      >
+        {#each GROUP_OPTIONS as opt (opt.value)}
+          <option value={opt.value} selected={hubState.groupBy === opt.value}
+            >{opt.label}</option
+          >
+        {/each}
+      </select>
+    </label>
+    <label
+      class="flex items-center gap-1.5 text-[12px] font-label-sm text-text-muted"
+    >
+      <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
+        >sort</span
+      >
+      <span>Sort</span>
+      <select
+        data-testid="tasks-hub-sort"
+        aria-label="Sort tasks by"
+        value={hubState.sort}
+        onchange={(e) => chooseSort(e.currentTarget.value as SortMode)}
+        class="bg-surface-panel border border-surface-panel-border rounded px-1.5 py-0.5 text-[12px] font-label-sm text-text-primary cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-primary-start"
+      >
+        {#each SORT_OPTIONS as opt (opt.value)}
+          <option value={opt.value} selected={hubState.sort === opt.value}
+            >{opt.label}</option
+          >
+        {/each}
+      </select>
+    </label>
+  </div>
 
   <!-- Scope breadcrumb + follow toggle (shared across modes). -->
   <div

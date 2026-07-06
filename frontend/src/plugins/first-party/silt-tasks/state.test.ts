@@ -10,6 +10,7 @@ import {
   getTaskHubState,
   setDisplayMode,
   setGroupBy,
+  setSort,
   setScope,
   narrowScopeTo,
   clearScopeOverride,
@@ -33,7 +34,11 @@ describe('silt-tasks unified state (#419)', () => {
     it('returns the default state after reset', () => {
       const s = getTaskHubState()
       expect(s.displayMode).toBe('list')
-      expect(s.groupBy).toBe('none')
+      // #423: the default grouping is 'dueDate' so the unmodified list
+      // experience (time-horizon buckets) survives the grouping engine
+      // landing. The default within-group sort is also 'dueDate'.
+      expect(s.groupBy).toBe('dueDate')
+      expect(s.sort).toBe('dueDate')
       expect(s.scope).toBe('vault')
       expect(s.scopeUserOverride).toBe(false)
       expect(s.filters).toEqual({
@@ -63,6 +68,30 @@ describe('silt-tasks unified state (#419)', () => {
     it('writes the grouping dimension', () => {
       setGroupBy('status')
       expect(getTaskHubState().groupBy).toBe('status')
+    })
+
+    it('accepts the high-cardinality dimensions added in #423', () => {
+      setGroupBy('tag')
+      expect(getTaskHubState().groupBy).toBe('tag')
+      setGroupBy('notebook')
+      expect(getTaskHubState().groupBy).toBe('notebook')
+      setGroupBy('section')
+      expect(getTaskHubState().groupBy).toBe('section')
+      setGroupBy('page')
+      expect(getTaskHubState().groupBy).toBe('page')
+    })
+  })
+
+  describe('setSort()', () => {
+    it('writes the within-group sort mode', () => {
+      setSort('priority')
+      expect(getTaskHubState().sort).toBe('priority')
+    })
+
+    it('sort defaults to dueDate after reset', () => {
+      setSort('title')
+      resetTaskHubState()
+      expect(getTaskHubState().sort).toBe('dueDate')
     })
   })
 
@@ -260,6 +289,7 @@ describe('silt-tasks unified state (#419)', () => {
     it('clears every field — scope/filters/focus/group/display/savedViews', () => {
       setDisplayMode('board')
       setGroupBy('status')
+      setSort('title')
       setScope('page') // flips override
       setFilters({
         owners: ['a'],
@@ -275,7 +305,8 @@ describe('silt-tasks unified state (#419)', () => {
 
       const s = getTaskHubState()
       expect(s.displayMode).toBe('list')
-      expect(s.groupBy).toBe('none')
+      expect(s.groupBy).toBe('dueDate')
+      expect(s.sort).toBe('dueDate')
       expect(s.scope).toBe('vault')
       expect(s.scopeUserOverride).toBe(false)
       expect(s.filters).toEqual({

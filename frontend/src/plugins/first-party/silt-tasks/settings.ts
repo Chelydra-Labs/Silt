@@ -12,7 +12,12 @@
 // is owned by the migration issue (#431); this module is the read/write surface.
 
 import { settings, updatePluginSetting } from '../../../settings/store.svelte'
-import type { DisplayMode, CalendarSubMode } from './state.svelte'
+import type {
+  CalendarSubMode,
+  DisplayMode,
+  GroupBy,
+  SortMode
+} from './state.svelte'
 
 export const TASKS_PLUGIN_ID = 'silt-tasks'
 
@@ -32,6 +37,35 @@ function isCalendarSubMode(v: unknown): v is CalendarSubMode {
   return v === 'month' || v === 'week'
 }
 
+const GROUP_BY_VALUES: readonly GroupBy[] = [
+  'none',
+  'status',
+  'priority',
+  'owner',
+  'dueDate',
+  'tag',
+  'notebook',
+  'section',
+  'page'
+]
+
+const SORT_MODE_VALUES: readonly SortMode[] = [
+  'manual',
+  'dueDate',
+  'priority',
+  'title',
+  'created',
+  'owner'
+]
+
+function isGroupBy(v: unknown): v is GroupBy {
+  return typeof v === 'string' && (GROUP_BY_VALUES as string[]).includes(v)
+}
+
+function isSortMode(v: unknown): v is SortMode {
+  return typeof v === 'string' && (SORT_MODE_VALUES as string[]).includes(v)
+}
+
 /** Persisted default display mode; 'list' when unset/invalid. */
 export function loadDefaultDisplayMode(): DisplayMode {
   const v = tasksSettings()['default_display_mode']
@@ -44,6 +78,18 @@ export function loadCalendarSubMode(): CalendarSubMode {
   return isCalendarSubMode(v) ? v : 'month'
 }
 
+/** Persisted default group-by; 'dueDate' when unset/invalid (#423). */
+export function loadDefaultGroupBy(): GroupBy {
+  const v = tasksSettings()['default_group_by']
+  return isGroupBy(v) ? v : 'dueDate'
+}
+
+/** Persisted default sort; 'dueDate' when unset/invalid (#423). */
+export function loadDefaultSort(): SortMode {
+  const v = tasksSettings()['default_sort']
+  return isSortMode(v) ? v : 'dueDate'
+}
+
 /** Atomically write the default display mode to the vault config. */
 export function persistDefaultDisplayMode(mode: DisplayMode): Promise<boolean> {
   return updatePluginSetting(TASKS_PLUGIN_ID, 'default_display_mode', mode)
@@ -54,4 +100,14 @@ export function persistCalendarSubMode(
   mode: CalendarSubMode
 ): Promise<boolean> {
   return updatePluginSetting(TASKS_PLUGIN_ID, 'calendar_sub_mode', mode)
+}
+
+/** Atomically write the default group-by to the vault config. */
+export function persistDefaultGroupBy(g: GroupBy): Promise<boolean> {
+  return updatePluginSetting(TASKS_PLUGIN_ID, 'default_group_by', g)
+}
+
+/** Atomically write the default sort to the vault config. */
+export function persistDefaultSort(s: SortMode): Promise<boolean> {
+  return updatePluginSetting(TASKS_PLUGIN_ID, 'default_sort', s)
 }

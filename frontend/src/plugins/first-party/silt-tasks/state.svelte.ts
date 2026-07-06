@@ -68,8 +68,33 @@ export type CalendarSubMode = 'month' | 'week'
  * The dimension to group rows/columns by. `none` keeps the query's
  * default priority-then-due-date order; the others re-order via the
  * unified query builder (./query.ts) so each group lands contiguous.
+ *
+ * `dueDate` is the canonical time-horizon bucketing (Overdue/Today/
+ * Upcoming/Later/No Date) the legacy Tasks list has always rendered —
+ * it's the default so the unmodified list experience survives the
+ * grouping engine landing. The high-cardinality dimensions (tag/
+ * notebook/section/page) are binned client-side by grouping.ts; the
+ * query builder does not try to ORDER BY them server-side.
  */
-export type GroupBy = 'none' | 'status' | 'priority' | 'owner' | 'dueDate'
+export type GroupBy =
+  | 'none'
+  | 'status'
+  | 'priority'
+  | 'owner'
+  | 'dueDate'
+  | 'tag'
+  | 'notebook'
+  | 'section'
+  | 'page'
+
+/**
+ * The within-group row ordering, picked from the Sort selector (#423).
+ * `manual` honours `[order::]`; the others re-ORDER BY the query (or
+ * re-sort client-side when a re-query isn't triggered). `dueDate` is the
+ * legacy default so the unmodified list experience survives.
+ */
+export type SortMode =
+  'manual' | 'dueDate' | 'priority' | 'title' | 'created' | 'owner'
 
 /**
  * A named saved view for the hub (#323 saved-board lineage, generalized
@@ -95,6 +120,7 @@ export interface SavedView {
 export interface TaskHubState {
   displayMode: DisplayMode
   groupBy: GroupBy
+  sort: SortMode
   scope: Scope
   /** True once the user manually picks a scope (#124). */
   scopeUserOverride: boolean
@@ -118,7 +144,8 @@ const DEFAULT_FILTERS: TaskFilters = {
 function freshDefaults(): TaskHubState {
   return {
     displayMode: 'list',
-    groupBy: 'none',
+    groupBy: 'dueDate',
+    sort: 'dueDate',
     scope: 'vault',
     scopeUserOverride: false,
     filters: { ...DEFAULT_FILTERS },
@@ -149,6 +176,11 @@ export function setCalendarSubMode(mode: CalendarSubMode): void {
 /** Change the grouping dimension. The query builder reads this on re-query. */
 export function setGroupBy(g: GroupBy): void {
   _state.groupBy = g
+}
+
+/** Change the within-group sort. The query builder / ListView reads this. */
+export function setSort(mode: SortMode): void {
+  _state.sort = mode
 }
 
 /**
@@ -256,6 +288,7 @@ export function resetTaskHubState(): void {
   const defaults = freshDefaults()
   _state.displayMode = defaults.displayMode
   _state.groupBy = defaults.groupBy
+  _state.sort = defaults.sort
   _state.scope = defaults.scope
   _state.scopeUserOverride = defaults.scopeUserOverride
   _state.filters = defaults.filters

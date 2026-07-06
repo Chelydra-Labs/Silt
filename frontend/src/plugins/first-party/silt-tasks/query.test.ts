@@ -261,3 +261,97 @@ describe('buildQuery — window lever (new in #419)', () => {
     expect(params).toEqual([])
   })
 })
+
+// ── New: high-cardinality groupBy dimensions (#423) ──────────────────
+
+describe('buildQuery — tag/notebook/section/page groupBy shares the legacy ORDER BY', () => {
+  it.each(['tag', 'notebook', 'section', 'page'] as const)(
+    "groupBy='%s' falls through to the priority-first ORDER BY (client-side binning)",
+    (g) => {
+      const { sql } = buildQuery('vault', emptyFilters, ctx, { groupBy: g })
+      expect(sql).toContain(
+        "ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC"
+      )
+    }
+  )
+})
+
+// ── New: sort lever (#423) ────────────────────────────────────────────
+
+describe('buildQuery — sort lever (new in #423)', () => {
+  it("sort='manual' emits a NULLS-LAST manual_order ORDER BY", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'manual'
+    })
+    expect(sql).toContain('CASE WHEN t.manual_order IS NULL THEN 1 ELSE 0 END')
+    expect(sql).toContain('t.manual_order ASC')
+  })
+
+  it("sort='priority' promotes priority to the leading key", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'priority'
+    })
+    expect(sql).toContain('ORDER BY t.priority ASC,')
+  })
+
+  it("sort='title' orders by clean_content", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'title'
+    })
+    expect(sql).toContain('ORDER BY b.clean_content ASC')
+  })
+
+  it("sort='created' pushes empty created_at to the bottom via CASE WHEN", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'created'
+    })
+    expect(sql).toContain(
+      "CASE WHEN t.created_at IS NULL OR t.created_at = '' THEN '9999' ELSE t.created_at END"
+    )
+  })
+
+  it("sort='owner' uses COALESCE(NULLIF(...)) so empty owners sort last", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'owner'
+    })
+    expect(sql).toContain("COALESCE(NULLIF(t.owner, ''), '~')")
+  })
+
+  it("sort='dueDate' is the canonical tiebreaker-only ORDER BY", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'dueDate'
+    })
+    expect(sql).toContain('ORDER BY COALESCE(t.due_date')
+    expect(sql).not.toContain('ORDER BY t.priority ASC,')
+  })
+
+  it('sort+groupBy compose: status leads so groups stay contiguous', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      groupBy: 'status',
+      sort: 'title'
+    })
+    expect(sql).toContain('ORDER BY t.status ASC,')
+    expect(sql).toContain('b.clean_content ASC')
+  })
+
+  it('sort+groupBy=owner leads with owner grouping, then the sort', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      groupBy: 'owner',
+      sort: 'priority'
+    })
+    expect(sql).toContain("ORDER BY COALESCE(NULLIF(t.owner, ''), '~') ASC,")
+    expect(sql).toContain('t.priority ASC')
+  })
+
+  it('sort absent falls back to the groupBy-driven ORDER BY (backward compatible)', () => {
+    const withSort = buildQuery('vault', emptyFilters, ctx, {
+      groupBy: 'status'
+    }).sql
+    expect(withSort).toContain('ORDER BY t.status ASC,')
+    // The ORDER BY is just the status grouping + due-date tiebreaker;
+    // no manual_order CASE WHEN or clean_content sort leaked in.
+    const orderBy = withSort.slice(withSort.indexOf('ORDER BY'))
+    expect(orderBy).not.toContain('b.clean_content ASC')
+    expect(orderBy).not.toContain('CASE WHEN t.manual_order')
+  })
+})

@@ -19,7 +19,13 @@
 // through `?` placeholders; nothing is string-interpolated into the SQL.
 
 import { plusDaysISO } from '../../sdk'
-import type { DueDateFilter, GroupBy, Scope, TaskFilters } from './state.svelte'
+import type {
+  DueDateFilter,
+  GroupBy,
+  Scope,
+  SortMode,
+  TaskFilters
+} from './state.svelte'
 
 /**
  * The shape `buildQuery` reads from the PluginContext. Pass an explicit
@@ -45,6 +51,14 @@ export interface BuildQueryOptions {
    */
   groupBy?: GroupBy
   /**
+   * Within-group row ordering (#423 Sort selector). When absent, the
+   * groupBy-driven ORDER BY is used unchanged (backward compatible).
+   * When present, it overrides the within-group tiebreaker — the
+   * grouping column (status/owner) still leads so groups stay contiguous,
+   * but rows inside a group respect the chosen sort.
+   */
+  sort?: SortMode
+  /**
    * Bounds the due date to a [start, end] inclusive window. Used by
    * Calendar-style queries (e.g. "this month's grid"). Both bounds
    * are `?`-bound; `null`/empty due dates fall outside any window.
@@ -69,6 +83,13 @@ function inClause(column: string, values: unknown[]): string {
  * 'priority' intentionally shares the 'none' clause — the legacy order
  * already sorts by priority first, so grouping by priority is a no-op
  * on the sort and the hub bins client-side off the leading column.
+ *
+ * The high-cardinality dimensions ('tag'/'notebook'/'section'/'page')
+ * also share the 'none' clause: their groups are derived client-side in
+ * grouping.ts (tag requires a multi-membership split across pipe-delimited
+ * values; notebook/section/page are dimensions of the row's location, not
+ * columns the query needs to surface as a sort key). The row set is the
+ * same either way; only the binning differs.
  */
 function orderByFor(groupBy: GroupBy | undefined): string {
   const tiebreaker = "COALESCE(t.due_date, '9999-12-31') ASC, t.priority ASC"
@@ -81,9 +102,42 @@ function orderByFor(groupBy: GroupBy | undefined): string {
       return ` ORDER BY ${tiebreaker}`
     case 'priority':
     case 'none':
+    case 'tag':
+    case 'notebook':
+    case 'section':
+    case 'page':
     default:
       // Legacy Kanban order: priority first, due date as tiebreaker.
       return ` ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC`
+  }
+}
+
+/**
+ * The within-group ORDER BY clause for a given SortMode. Always ends with
+ * the canonical tiebreaker (due date then priority) so equal-primary-key
+ * rows stay in a deterministic order.
+ *
+ * SQLite has no NULLS LAST syntax; the CASE WHEN ... THEN 1 ELSE 0 trick
+ * emulates it for manual_order, and COALESCE/NULLIF push empty-string
+ * sentinels ('', the SQL row mapper's NULL coercion) to the bottom for
+ * owner / created_at.
+ */
+function sortClauseFor(sort: SortMode): string {
+  const tiebreaker = "COALESCE(t.due_date, '9999-12-31') ASC, t.priority ASC"
+  switch (sort) {
+    case 'manual':
+      return ` ORDER BY CASE WHEN t.manual_order IS NULL THEN 1 ELSE 0 END, t.manual_order ASC, ${tiebreaker}`
+    case 'priority':
+      return ` ORDER BY t.priority ASC, ${tiebreaker}`
+    case 'title':
+      return ` ORDER BY b.clean_content ASC, ${tiebreaker}`
+    case 'created':
+      return ` ORDER BY CASE WHEN t.created_at IS NULL OR t.created_at = '' THEN '9999' ELSE t.created_at END ASC, ${tiebreaker}`
+    case 'owner':
+      return ` ORDER BY COALESCE(NULLIF(t.owner, ''), '~') ASC, ${tiebreaker}`
+    case 'dueDate':
+    default:
+      return ` ORDER BY ${tiebreaker}`
   }
 }
 
@@ -178,9 +232,39 @@ export function buildQuery(
     where.push('t.due_date >= ?', 't.due_date <= ?')
     params.push(options.window.start, options.window.end)
   }
-  const orderBy = orderByFor(options?.groupBy)
+  const orderBy = composeOrderBy(options?.groupBy, options?.sort)
   const whereClause = where.length
     ? ' WHERE ' + where.join(' AND ')
     : ' WHERE 1=1'
   return { sql: baseSelect + whereClause + orderBy, params }
+}
+
+/**
+ * Compose the final ORDER BY. When `sort` is present it always wins for
+ * within-group order; if `groupBy` is also present and is one of the
+ * server-sortable dimensions (status/owner), the grouping column stays
+ * leading so groups remain contiguous, and the sort clause provides the
+ * within-group tiebreaker. If only `groupBy` is present, the legacy
+ * orderByFor clause is used unchanged. If neither is present, the legacy
+ * 'none' priority-first order falls out of orderByFor.
+ */
+function composeOrderBy(
+  groupBy: GroupBy | undefined,
+  sort: SortMode | undefined
+): string {
+  if (!sort) return orderByFor(groupBy)
+  const within = sortClauseFor(sort).replace('ORDER BY ', '')
+  if (groupBy === 'status') {
+    return ` ORDER BY t.status ASC, ${within}`
+  }
+  if (groupBy === 'owner') {
+    // Group by owner: leading key is owner (NULLIF so empty sorts into
+    // the trailing "Unassigned" bucket client-side); within-group uses
+    // the sort clause, but a sort=owner would duplicate the column —
+    // harmless and keeps the code path uniform.
+    return ` ORDER BY COALESCE(NULLIF(t.owner, ''), '~') ASC, ${within}`
+  }
+  // 'none', 'priority', 'dueDate', 'tag', 'notebook', 'section', 'page',
+  // and undefined: the sort clause is the whole ORDER BY.
+  return sortClauseFor(sort)
 }

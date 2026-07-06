@@ -19,7 +19,8 @@
   import TaskSubEditorModal from '../../shared/TaskSubEditorModal.svelte'
   import BlockedDoneDialog from '../../shared/BlockedDoneDialog.svelte'
   import type { TaskDetail } from '../../shared/types'
-  import { getTaskHubState } from '../state.svelte'
+  import { getTaskHubState, type GroupBy, type SortMode } from '../state.svelte'
+  import { binByDimension, type GroupSection } from '../grouping'
 
   interface Props {
     ctx: PluginContext
@@ -217,6 +218,99 @@
   )
   let undated = $derived(filteredOpen.filter((i) => !i.due_date))
 
+  // The hub's current grouping + sort dimensions, read reactively so a
+  // selector change re-bins the rows without a re-query.
+  let hubGroupBy = $derived(getTaskHubState().groupBy)
+  let hubSort = $derived(getTaskHubState().sort)
+
+  // Within-section sort comparator for the active SortMode (#423). Mirrors
+  // the SQL ORDER BY in query.ts so a sort change without a re-query still
+  // produces the same order the next query would. Only called for the
+  // generalized-grouping path; the dueDate path uses the legacy $derived
+  // buckets above unchanged.
+  function rowCompare(a: TaskDetail, b: TaskDetail): number {
+    switch (hubSort) {
+      case 'manual': {
+        const am = a.manual_order ?? 0
+        const bm = b.manual_order ?? 0
+        if ((am === 0) !== (bm === 0)) return am === 0 ? 1 : -1
+        if (am !== bm) return am - bm
+        break
+      }
+      case 'priority': {
+        if (a.priority !== b.priority) return a.priority - b.priority
+        break
+      }
+      case 'title': {
+        const c = (a.clean_content ?? '').localeCompare(b.clean_content ?? '')
+        if (c !== 0) return c
+        break
+      }
+      case 'created': {
+        const ac = a.created_at || '9999'
+        const bc = b.created_at || '9999'
+        if (ac !== bc) return ac.localeCompare(bc)
+        break
+      }
+      case 'owner': {
+        const ao = a.owner || '~'
+        const bo = b.owner || '~'
+        if (ao !== bo) return ao.localeCompare(bo)
+        break
+      }
+      case 'dueDate':
+      default:
+        // Fall through to the due-date tiebreaker below.
+        break
+    }
+    return (a.due_date || '9999-12-31').localeCompare(
+      b.due_date || '9999-12-31'
+    )
+  }
+
+  function sortRows(rows: TaskDetail[]): TaskDetail[] {
+    return [...rows].sort(rowCompare)
+  }
+
+  // Generalized grouping for status/owner/priority/tag/notebook/section/page.
+  // 'none' returns a single flat section; 'dueDate' is handled by the legacy
+  // $derived blocks above so the existing data-group keys + tone classes stay
+  // byte-exact (preserves every ListView test).
+  let groupedSections = $derived.by<GroupSection[]>(() => {
+    if (hubGroupBy === 'dueDate' || hubGroupBy === 'none') return []
+    const sections = binByDimension(filteredOpen, hubGroupBy, { today })
+    // Apply the within-section sort to each non-empty bucket; drop empty
+    // buckets so the list stays compact when the data is sparse.
+    return sections
+      .filter((s) => s.items.length > 0)
+      .map((s) => ({ ...s, items: sortRows(s.items) }))
+  })
+
+  // Collapsed state for the generalized sections. Tail-collapse heuristic:
+  // when there are more than 10 sections, the ones after the 10th start
+  // collapsed so the user isn't buried under a wall of headers. Stored as
+  // a Set of keys so the user expanding one survives a re-bin.
+  let collapsedSections = $state<Set<string>>(new Set())
+  $effect(() => {
+    // Re-run when the groupBy dimension changes (the section keys change
+    // shape with it) and seed the tail-collapse set.
+    void hubGroupBy
+    const next = new Set<string>()
+    if (groupedSections.length > 10) {
+      for (let i = 10; i < groupedSections.length; i++) {
+        next.add(groupedSections[i].key)
+      }
+    }
+    collapsedSections = next
+  })
+  function toggleSection(key: string) {
+    collapsedSections = new Set(
+      collapsedSections.has(key)
+        ? [...collapsedSections].filter((k) => k !== key)
+        : [...collapsedSections, key]
+    )
+  }
+
   async function commitMarkDown(item: TaskDetail) {
     markDownError = ''
     if (markDownTimer) clearTimeout(markDownTimer)
@@ -321,6 +415,77 @@
   })
 </script>
 
+{#snippet taskRow(item: TaskDetail)}
+  <div
+    class="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-hover transition-colors"
+    class:tasks-focused={focusedRowId === item.id}
+    data-block-id={item.id}
+  >
+    <button
+      onclick={(e) => {
+        e.stopPropagation()
+        markDone(item)
+      }}
+      title="Mark done"
+      class="w-5 h-5 rounded todo-check flex-shrink-0 cursor-pointer hover:border-accent-primary-start"
+      role="checkbox"
+      aria-checked="false"
+      aria-label="Mark done"
+    ></button>
+    <button
+      onclick={() => openDrawer(item)}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' && e.shiftKey) {
+          e.preventDefault()
+          e.stopPropagation()
+          openSubEditor(item)
+        }
+      }}
+      class="flex-1 min-w-0 text-left bg-transparent border-none p-0 cursor-pointer"
+      aria-label={`Edit metadata for ${item.clean_content}${item.due_date ? `, due ${item.due_date}` : ', no due date'}`}
+    >
+      <div
+        class="text-text-primary text-sm font-body-md truncate"
+        data-testid="tasks-row-content"
+      >
+        {item.clean_content}
+      </div>
+      <div
+        class="text-[10px] text-text-muted uppercase tracking-widest font-label-sm"
+      >
+        {#if item.notebook === STANDALONE_TASKS_NOTEBOOK}
+          Standalone task
+        {:else}
+          {item.notebook} › {item.section} › {item.page}
+        {/if}
+      </div>
+    </button>
+    <button
+      type="button"
+      title="Open sub-editor (Shift+Enter)"
+      aria-label={`Edit notes for ${item.clean_content}`}
+      onclick={(e) => {
+        e.stopPropagation()
+        openSubEditor(item)
+      }}
+      class="opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-opacity p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0"
+    >
+      <span class="material-symbols-outlined text-[16px]">edit_note</span>
+    </button>
+    {#if item.owner}
+      <span
+        class="text-[10px] text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded px-1.5 py-0.5"
+        >[{item.owner}]</span
+      >
+    {/if}
+    {#if item.due_date}
+      <span class="text-[10px] text-text-muted font-label-sm flex-shrink-0"
+        >{item.due_date}</span
+      >
+    {/if}
+  </div>
+{/snippet}
+
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden" data-tasks-view>
   {#if markDownError}
     <div
@@ -395,102 +560,80 @@
         </div>
       {/if}
 
-      {#each [{ key: 'overdue', label: 'Overdue', list: overdue, tone: 'error' }, { key: 'today', label: 'Today', list: todayItems, tone: 'primary' }, { key: 'upcoming', label: 'Upcoming', list: upcoming, tone: 'muted' }, { key: 'later', label: 'Later', list: later, tone: 'muted' }, { key: 'undated', label: 'No Date', list: undated, tone: 'muted' }] as group (group.key)}
-        {#if group.list.length > 0}
+      {#if hubGroupBy === 'dueDate'}
+        {#each [{ key: 'overdue', label: 'Overdue', list: overdue, tone: 'error' }, { key: 'today', label: 'Today', list: todayItems, tone: 'primary' }, { key: 'upcoming', label: 'Upcoming', list: upcoming, tone: 'muted' }, { key: 'later', label: 'Later', list: later, tone: 'muted' }, { key: 'undated', label: 'No Date', list: undated, tone: 'muted' }] as group (group.key)}
+          {#if group.list.length > 0}
+            <section aria-label={group.label} data-group={group.key}>
+              <h2
+                class="font-label-sm-bold uppercase tracking-widest text-[11px] mb-2 flex items-center gap-2"
+                class:text-error={group.tone === 'error'}
+                class:text-accent-primary-start={group.tone === 'primary'}
+                class:text-text-muted={group.tone === 'muted'}
+              >
+                {group.label}
+                <span
+                  class="text-text-muted/60"
+                  aria-live="polite"
+                  data-testid="tasks-group-count"
+                >
+                  {group.list.length}
+                </span>
+              </h2>
+              <div class="space-y-1">
+                {#each group.list as item (item.id)}
+                  {@render taskRow(item)}
+                {/each}
+              </div>
+            </section>
+          {/if}
+        {/each}
+      {:else if hubGroupBy === 'none'}
+        {#if filteredOpen.length > 0}
+          <div class="space-y-1" data-group="all" aria-label="All Tasks">
+            {#each sortRows(filteredOpen) as item (item.id)}
+              {@render taskRow(item)}
+            {/each}
+          </div>
+        {/if}
+      {:else}
+        {#each groupedSections as group (group.key)}
           <section aria-label={group.label} data-group={group.key}>
             <h2
-              class="font-label-sm-bold uppercase tracking-widest text-[11px] mb-2 flex items-center gap-2"
-              class:text-error={group.tone === 'error'}
-              class:text-accent-primary-start={group.tone === 'primary'}
-              class:text-text-muted={group.tone === 'muted'}
+              class="font-label-sm-bold uppercase tracking-widest text-[11px] mb-2 flex items-center gap-2 text-text-muted"
             >
-              {group.label}
-              <span
-                class="text-text-muted/60"
-                aria-live="polite"
-                data-testid="tasks-group-count"
+              <button
+                type="button"
+                onclick={() => toggleSection(group.key)}
+                aria-expanded={!collapsedSections.has(group.key)}
+                aria-controls={`tasks-group-${group.key}`}
+                class="flex items-center gap-2 bg-transparent border-none p-0 cursor-pointer uppercase tracking-widest text-[11px] font-label-sm-bold text-text-muted hover:text-text-primary"
+                data-testid={`tasks-group-toggle-${group.key}`}
               >
-                {group.list.length}
-              </span>
-            </h2>
-            <div class="space-y-1">
-              {#each group.list as item (item.id)}
-                <div
-                  class="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-hover transition-colors"
-                  class:tasks-focused={focusedRowId === item.id}
-                  data-block-id={item.id}
+                {#if collapsedSections.has(group.key)}
+                  <span class="material-symbols-outlined text-[14px]"
+                    >chevron_right</span
+                  >
+                {:else}
+                  <span class="material-symbols-outlined text-[14px]"
+                    >expand_more</span
+                  >
+                {/if}
+                {group.label}
+                <span class="text-text-muted/60" aria-hidden="true"
+                  >{group.items.length}</span
                 >
-                  <button
-                    onclick={(e) => {
-                      e.stopPropagation()
-                      markDone(item)
-                    }}
-                    title="Mark done"
-                    class="w-5 h-5 rounded todo-check flex-shrink-0 cursor-pointer hover:border-accent-primary-start"
-                    role="checkbox"
-                    aria-checked="false"
-                    aria-label="Mark done"
-                  ></button>
-                  <button
-                    onclick={() => openDrawer(item)}
-                    onkeydown={(e) => {
-                      if (e.key === 'Enter' && e.shiftKey) {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        openSubEditor(item)
-                      }
-                    }}
-                    class="flex-1 min-w-0 text-left bg-transparent border-none p-0 cursor-pointer"
-                    aria-label={`Edit metadata for ${item.clean_content}${item.due_date ? `, due ${item.due_date}` : ', no due date'}`}
-                  >
-                    <div
-                      class="text-text-primary text-sm font-body-md truncate"
-                      data-testid="tasks-row-content"
-                    >
-                      {item.clean_content}
-                    </div>
-                    <div
-                      class="text-[10px] text-text-muted uppercase tracking-widest font-label-sm"
-                    >
-                      {#if item.notebook === STANDALONE_TASKS_NOTEBOOK}
-                        Standalone task
-                      {:else}
-                        {item.notebook} › {item.section} › {item.page}
-                      {/if}
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    title="Open sub-editor (Shift+Enter)"
-                    aria-label={`Edit notes for ${item.clean_content}`}
-                    onclick={(e) => {
-                      e.stopPropagation()
-                      openSubEditor(item)
-                    }}
-                    class="opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-opacity p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0"
-                  >
-                    <span class="material-symbols-outlined text-[16px]"
-                      >edit_note</span
-                    >
-                  </button>
-                  {#if item.owner}
-                    <span
-                      class="text-[10px] text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded px-1.5 py-0.5"
-                      >[{item.owner}]</span
-                    >
-                  {/if}
-                  {#if item.due_date}
-                    <span
-                      class="text-[10px] text-text-muted font-label-sm flex-shrink-0"
-                      >{item.due_date}</span
-                    >
-                  {/if}
-                </div>
-              {/each}
-            </div>
+              </button>
+            </h2>
+            {#if !collapsedSections.has(group.key)}
+              <div id={`tasks-group-${group.key}`} class="space-y-1">
+                {#each group.items as item (item.id)}
+                  {@render taskRow(item)}
+                {/each}
+              </div>
+            {/if}
           </section>
-        {/if}
-      {/each}
+        {/each}
+      {/if}
 
       {#if doneItems.length > 0}
         <section aria-label="Completed" data-group="completed">

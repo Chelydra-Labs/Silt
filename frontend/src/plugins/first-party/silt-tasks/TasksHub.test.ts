@@ -37,7 +37,7 @@ import type {
   PluginEventPayload
 } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
-import { resetTaskHubState } from './state.svelte'
+import { getTaskHubState, resetTaskHubState } from './state.svelte'
 
 // jsdom polyfills: ListView pulls in TaskEditDrawer/TaskSubEditorModal, whose
 // transition:fly + TipTap need Element.animate / elementFromPoint / Range rects.
@@ -308,5 +308,85 @@ describe('Tasks hub shell (#424)', () => {
     const count = screen.getByTestId('tasks-hub-count')
     expect(count.textContent).toContain('1 active')
     expect(count.textContent).toContain('1 done')
+  })
+})
+
+describe('Tasks hub — group-by + sort selectors (#423)', () => {
+  beforeEach(() => {
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+    mocks.settings.config.plugins.plugin_settings = {}
+    mocks.blockChangedCallbacks.length = 0
+    resetTaskHubState()
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('renders Group-by and Sort selects in the header', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const groupBy = screen.getByTestId('tasks-hub-group-by')
+    const sort = screen.getByTestId('tasks-hub-sort')
+    expect(groupBy).toBeInTheDocument()
+    expect(sort).toBeInTheDocument()
+    // Both expose an accessible label.
+    expect(groupBy.getAttribute('aria-label')).toBe('Group tasks by')
+    expect(sort.getAttribute('aria-label')).toBe('Sort tasks by')
+  })
+
+  it('changing Group-by updates state and persists the preference', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.change(screen.getByTestId('tasks-hub-group-by'), {
+      target: { value: 'status' }
+    })
+    await flush()
+
+    expect(getTaskHubState().groupBy).toBe('status')
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'silt-tasks',
+      'default_group_by',
+      'status'
+    )
+  })
+
+  it('changing Sort updates state and persists the preference', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.change(screen.getByTestId('tasks-hub-sort'), {
+      target: { value: 'priority' }
+    })
+    await flush()
+
+    expect(getTaskHubState().sort).toBe('priority')
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'silt-tasks',
+      'default_sort',
+      'priority'
+    )
+  })
+
+  it('hydrates Group-by + Sort from the persisted vault settings on mount', async () => {
+    mocks.settings.config.plugins.plugin_settings['silt-tasks'] = {
+      default_group_by: 'owner',
+      default_sort: 'title'
+    }
+
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(getTaskHubState().groupBy).toBe('owner')
+    expect(getTaskHubState().sort).toBe('title')
+    // The select reflects the hydrated value.
+    const groupBy = screen.getByTestId(
+      'tasks-hub-group-by'
+    ) as HTMLSelectElement
+    expect(groupBy.value).toBe('owner')
   })
 })
