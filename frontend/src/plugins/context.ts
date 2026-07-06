@@ -50,6 +50,8 @@ import {
   PluginDBQuery,
   PluginDBMigrate,
   ClosePluginDB,
+  PluginAIComplete,
+  PluginAIEmbed,
   RegisterPluginSession,
   UnregisterPluginSession,
   AddAttachment,
@@ -538,6 +540,41 @@ export function makePluginContext(
         ),
       migrate: (version, sql) =>
         PluginDBMigrate(pluginID, sessionToken ?? '', version, sql)
+    },
+
+    // --- Core AI service (#216) — capability-gated server-side --------------
+    // The host reads provider credentials server-side and proxies the call, so
+    // the plugin never sees API keys or endpoint URLs. Gated by the `ai`
+    // capability + rate-limited + audit-logged exactly like fetch above. The
+    // Go-side AIError surfaces over IPC as a rejection the caller can branch on.
+    ai: {
+      complete: (req) =>
+        PluginAIComplete(pluginID, sessionToken ?? '', {
+          messages: req.messages,
+          model: req.model ?? '',
+          temperature: req.temperature,
+          max_tokens: req.maxTokens,
+          stream: req.stream ?? false
+          // Wails generates PluginAICompleteInput as a class (it has a nested
+          // struct array), so the strict TS type wants an instance with
+          // convertValues. The runtime binding JSON-serializes a plain object
+          // identically, so a structural cast is correct here.
+        } as any).then((res: any) => ({
+          content: res?.content ?? '',
+          model: res?.model ?? '',
+          usage: res?.usage
+        })),
+      embed: (req) =>
+        PluginAIEmbed(pluginID, sessionToken ?? '', {
+          texts: req.texts,
+          model: req.model ?? '',
+          dimensions: req.dimensions
+        }).then((res: any) => ({
+          embeddings: res?.embeddings ?? [],
+          model: res?.model ?? '',
+          dimensions: res?.dimensions ?? 0,
+          usage: res?.usage
+        }))
     }
   }
 }
