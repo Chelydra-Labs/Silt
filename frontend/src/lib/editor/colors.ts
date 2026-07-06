@@ -162,9 +162,14 @@ export function resolveColor(entry: ColorEntry, isDark: boolean): string {
 }
 
 // FALLBACK_COLOR_PALETTE is used only before the theme has injected its tokens
-// (first paint on a cold start) or if every hue seed fails to parse. It mirrors
-// the prior fixed Tailwind set so the editor is never without a swatch row.
-// Once the theme resolves, deriveColorPalette takes over.
+// (first paint on a cold start) or if every hue seed fails to parse. It is a
+// reduced version of the prior fixed Tailwind set so the editor is never
+// without a swatch row. Once the theme resolves, deriveColorPalette takes over.
+// Brown is intentionally absent: no theme anchor maps to a brown hue, so the
+// derived set also lacks it — keeping both sets consistent avoids a
+// cold-start→theme-load jolt where a swatch appears then vanishes. The old
+// "brown" dark value (#a8a29e) was a warm gray anyway. A user who needs brown
+// can still pick it via the custom color input.
 export const FALLBACK_COLOR_PALETTE: ColorEntry[] = [
   { id: 'red', label: 'Red', dark: '#f87171', light: '#dc2626' },
   { id: 'orange', label: 'Orange', dark: '#fb923c', light: '#ea580c' },
