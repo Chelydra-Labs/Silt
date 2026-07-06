@@ -181,13 +181,16 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
     expect(loadedPlugins.loadersReady).toBe(true)
   })
 
-  it('vault:closing resets first-party shared state (kanban + focus) #326 item 1', async () => {
-    const { getKanbanState, setScope, setFilters } =
-      await import('./first-party/silt-kanban/kanbanSharedState.svelte')
-    const { getFocusState, setFocusDate, setActiveFilter } =
-      await import('./first-party/silt-calendar/focusState.svelte')
+  it('vault:closing resets the unified task hub state #326 item 1', async () => {
+    const {
+      getTaskHubState,
+      setScope,
+      setFilters,
+      setFocusDate,
+      setActiveFilter
+    } = await import('./first-party/silt-tasks/state.svelte')
 
-    // Dirty the shared module-globals as if the previous vault left state.
+    // Dirty the hub module-global as if the previous vault left state.
     setScope('notebook')
     setFilters({
       owners: ['alice'],
@@ -201,17 +204,16 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
     expect(vaultClosingCb).toBeTruthy()
     vaultClosingCb!()
 
-    const k = getKanbanState()
-    expect(k.scope).toBe('vault')
-    expect(k.scopeUserOverride).toBe(false)
-    expect(k.filters).toEqual({
+    const s = getTaskHubState()
+    expect(s.scope).toBe('vault')
+    expect(s.scopeUserOverride).toBe(false)
+    expect(s.filters).toEqual({
       owners: [],
       priorities: [],
       dueDate: '',
       tags: []
     })
-    const f = getFocusState()
-    expect(f.focusDate).toBe('')
-    expect(f.activeFilter).toBe('all')
+    expect(s.focusDate).toBe('')
+    expect(s.activeFilter).toBe('all')
   })
 })

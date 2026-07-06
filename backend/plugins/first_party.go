@@ -17,9 +17,13 @@ package plugins
 // either confuse the user with a duplicate Settings entry or, should the
 // bundle ever drop the id, inherit the first-party grants seeded by
 // seedFirstPartyGrants).
+// FirstPartyPluginIDs is the set of plugin ids reserved for bundled plugins.
+// A third-party archive whose manifest id appears in this set is rejected at
+// install time so an impostor cannot shadow a bundled plugin (which would
+// either confuse the user with a duplicate Settings entry or, should the
+// bundle ever drop the id, inherit the first-party grants seeded by
+// seedFirstPartyGrants).
 var FirstPartyPluginIDs = map[string]bool{
-	"silt-calendar":    true,
-	"silt-kanban":      true,
 	"silt-attachments": true,
 	// silt-tasks (#407): ships as a first-party plugin that creates standalone
 	// tasks via PluginCreateTask, which is gated by content-mutate. Without
@@ -30,7 +34,7 @@ var FirstPartyPluginIDs = map[string]bool{
 }
 
 // IsFirstPartyID reports whether pluginID is a reserved (bundled) plugin id.
-// The match is exact — near-collisions like "silt-kanban2" or "silts-kanban"
+// The match is exact — near-collisions like "silt-tasks2" or "silts-tasks"
 // do NOT match, so the gate does not over-broadly reject legitimate ids that
 // merely share a prefix.
 func IsFirstPartyID(pluginID string) bool {

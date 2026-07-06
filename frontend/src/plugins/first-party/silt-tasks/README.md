@@ -9,8 +9,8 @@ filter out by SQL design.
 ## Interaction model (#410 unified task-edit surface)
 
 Single-click a row opens the shared **non-blocking inspector drawer**
-(`first-party/shared/TaskEditDrawer.svelte`) — the same drawer Kanban
-uses — for inline edits (pin, progress, recurrence, due date, status).
+(`components/TaskEditDrawer.svelte`) for inline edits (pin, progress,
+recurrence, due date, status).
 The pencil affordance on each row (or `Shift+Enter`) opens the shared
 **sub-editor modal** (`TaskSubEditorModal`) for the task's child
 sub-tree. The former single-click behavior (navigate-to-block / open the

@@ -1,18 +1,15 @@
 <script lang="ts">
   import { fly } from 'svelte/transition'
   import { tick } from 'svelte'
-  import type { PluginContext, TaskStatus } from '../../sdk'
-  import { plusDaysISO } from '../../sdk'
-  import type { TaskDetail } from './types'
-  import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
+  import type { PluginContext, TaskStatus } from '../../../sdk'
+  import { plusDaysISO } from '../../../sdk'
+  import type { TaskDetail } from '../types'
+  import { PRIORITY_LABELS, laneLabel, priorityClass } from '../types'
   import DependencyPicker from './DependencyPicker.svelte'
   import BlockedDoneDialog from './BlockedDoneDialog.svelte'
-  // CommentThread lives under silt-tasks/components/ even though this drawer
-  // still lives in shared/ — Phase 10 moves TaskEditDrawer into the same
-  // folder and shortens this import.
-  import CommentThread from '../silt-tasks/components/CommentThread.svelte'
-  import Popover from '../../../components/Popover.svelte'
-  import { STANDALONE_TASKS_NOTEBOOK } from '../../../lib/standaloneTasksNav'
+  import CommentThread from './CommentThread.svelte'
+  import Popover from '../../../../components/Popover.svelte'
+  import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
 
   /**
    * Shared task inspector/edit drawer — the single metadata surface for every

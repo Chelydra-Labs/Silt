@@ -18,7 +18,7 @@
   import { onMount } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import { plusDaysISO, localToday } from '../../sdk'
-  import { PRIORITY_LABELS } from '../shared/types'
+  import { PRIORITY_LABELS } from './types'
   import {
     getTaskHubState,
     setActiveFilter,

@@ -10,12 +10,7 @@ import { firstPartyPlugins } from './registry'
 describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () => {
   // This roster MUST match backend/plugins/first_party.go's FirstPartyPluginIDs.
   // When you add a bundled plugin, add its id to BOTH files.
-  const GO_FIRST_PARTY_IDS = [
-    'silt-calendar',
-    'silt-kanban',
-    'silt-attachments',
-    'silt-tasks'
-  ]
+  const GO_FIRST_PARTY_IDS = ['silt-attachments', 'silt-tasks']
 
   it('frontend registry ids match the Go FirstPartyPluginIDs roster', () => {
     const frontendIds = firstPartyPlugins()
@@ -34,10 +29,10 @@ describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () =>
   })
 
   it('every first-party plugin with a content-mutate need declares it', () => {
-    // silt-calendar, silt-kanban, and silt-tasks all create/mutate tasks via
-    // gated bindings; each must declare content-mutate so the Plugins UI
-    // surfaces the "trusted" label consistently.
-    for (const id of ['silt-calendar', 'silt-kanban', 'silt-tasks']) {
+    // silt-tasks creates/mutates tasks via gated bindings; it must declare
+    // content-mutate so the Plugins UI surfaces the "trusted" label
+    // consistently.
+    for (const id of ['silt-tasks']) {
       const p = firstPartyPlugins().find((plugin) => plugin.manifest.id === id)
       expect(
         p?.manifest.capabilities?.['content-mutate'],

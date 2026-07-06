@@ -11,7 +11,7 @@
   // overlay has no plugin ctx, so it passes `createTask` directly — a thin
   // shim over the app-level CreateStandaloneTask binding. One component, one
   // source of truth for the Enter/Escape/busy/error behavior.
-  import type { PluginContext, TaskStatus } from '../../sdk'
+  import type { PluginContext, TaskStatus } from '../../../sdk'
 
   interface Props {
     /** Plugin context (plugin surfaces). Mutually exclusive with createTask. */

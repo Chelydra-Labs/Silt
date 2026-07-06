@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { PluginContext, SearchHit } from '../../sdk'
-  import Popover from '../../../components/Popover.svelte'
+  import type { PluginContext, SearchHit } from '../../../sdk'
+  import Popover from '../../../../components/Popover.svelte'
 
   /**
    * Dependency picker for the CardDetailPanel (#303). Lists a task's current

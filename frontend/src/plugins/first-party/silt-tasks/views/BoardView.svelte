@@ -21,12 +21,12 @@
   import type { PluginContext, TaskStatus } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
   import { settings } from '../../../../settings/store.svelte'
-  import TaskEditDrawer from '../../shared/TaskEditDrawer.svelte'
-  import TaskSubEditorModal from '../../shared/TaskSubEditorModal.svelte'
-  import BlockedDoneDialog from '../../shared/BlockedDoneDialog.svelte'
-  import QuickAddTask from '../../shared/QuickAddTask.svelte'
-  import type { TaskDetail } from '../../shared/types'
-  import { PRIORITY_LABELS, laneLabel, priorityClass } from '../../shared/types'
+  import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
+  import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
+  import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
+  import QuickAddTask from '../components/QuickAddTask.svelte'
+  import type { TaskDetail } from '../types'
+  import { PRIORITY_LABELS, laneLabel, priorityClass } from '../types'
   import {
     getTaskHubState,
     setDisplayMode,

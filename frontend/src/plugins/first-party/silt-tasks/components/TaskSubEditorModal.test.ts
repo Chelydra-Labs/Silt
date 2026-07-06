@@ -70,14 +70,14 @@ if (!Element.prototype.animate) {
   } as unknown as Element['animate']
 }
 
-vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
+vi.mock('../../../../../wailsjs/runtime/runtime.js', () => ({
   EventsOn: vi.fn(() => () => {})
 }))
 
 import TaskSubEditorModal from './TaskSubEditorModal.svelte'
-import type { PluginContext } from '../../sdk'
-import { v2CtxStubs } from '../../test-helpers'
-import { STANDALONE_TASKS_NOTEBOOK } from '../../../lib/standaloneTasksNav'
+import type { PluginContext } from '../../../sdk'
+import { v2CtxStubs } from '../../../test-helpers'
+import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
 
 const mocks = vi.hoisted(() => ({
   fetchSubtree: vi.fn(),

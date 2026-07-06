@@ -40,8 +40,8 @@ func TestRequireGrant_FirstPartyAlwaysGranted(t *testing.T) {
 		plugins.CapOSOpen,
 		plugins.CapEditorSchema,
 	} {
-		if err := app.requireGrant("silt-kanban", cap); err != nil {
-			t.Errorf("first-party silt-kanban %q: want nil, got %v", cap, err)
+		if err := app.requireGrant("silt-tasks", cap); err != nil {
+			t.Errorf("first-party silt-tasks %q: want nil, got %v", cap, err)
 		}
 	}
 }
@@ -70,7 +70,7 @@ func TestRequireGrant_RejectsPathTraversalPluginID(t *testing.T) {
 // non-first-party ID with no grant entry is denied.
 func TestPluginFetch_FirstPartyIDDeniedWithoutSeededGrant(t *testing.T) {
 	app := newTestApp(t)
-	// Any first-party id (e.g. silt-calendar) works because seedFirstPartyGrants
+	// Any first-party id (e.g. silt-tasks) works because seedFirstPartyGrants
 	// ran in newTestApp.
 	_ = app.RequestCapability("third-party", string(plugins.CapNetwork), "")
 
@@ -184,13 +184,13 @@ func TestRevokeCapability(t *testing.T) {
 // GetGrantedCapabilities excludes first-party plugins (they are implicit).
 func TestGetGrantedCapabilities_ExcludesFirstParty(t *testing.T) {
 	app := newTestApp(t)
-	_ = app.RequestCapability("silt-kanban", string(plugins.CapNetwork), "")
+	_ = app.RequestCapability("silt-tasks", string(plugins.CapNetwork), "")
 	_ = app.RequestCapability("third-party", string(plugins.CapNetwork), "")
 	grants, err := app.GetGrantedCapabilities()
 	if err != nil {
 		t.Fatalf("GetGrantedCapabilities: %v", err)
 	}
-	if _, ok := grants["silt-kanban"]; ok {
+	if _, ok := grants["silt-tasks"]; ok {
 		t.Error("first-party grants should not be surfaced")
 	}
 	if _, ok := grants["third-party"]; !ok {
@@ -418,7 +418,7 @@ func mustReadFile(t *testing.T, path string) []byte {
 // plugins disabled via the config list.
 func TestRequireGrant_DisabledFirstPartyRejected(t *testing.T) {
 	app := newTestApp(t)
-	const pid = "silt-kanban"
+	const pid = "silt-tasks"
 	// Sanity: granted by default.
 	if err := app.requireGrant(pid, plugins.CapWriteFiles); err != nil {
 		t.Fatalf("baseline first-party grant: %v", err)

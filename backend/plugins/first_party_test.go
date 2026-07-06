@@ -24,8 +24,6 @@ import (
 // silently losing its grants at runtime.
 func TestFirstPartyPluginIDs_ExactSet(t *testing.T) {
 	want := []string{
-		"silt-calendar",
-		"silt-kanban",
 		"silt-attachments",
 		"silt-tasks",
 	}
@@ -40,15 +38,5 @@ func TestFirstPartyPluginIDs_ExactSet(t *testing.T) {
 			"Adding a bundled plugin? Add its id here AND in "+
 			"frontend/src/plugins/registry.ts (the parity test there enforces "+
 			"the other direction).", got, want)
-	}
-}
-
-// TestFirstPartyPluginIDs_ContainsTasks is the focused regression for #407:
-// silt-tasks MUST be reserved so its content-mutate grant is seeded.
-func TestFirstPartyPluginIDs_ContainsTasks(t *testing.T) {
-	if !IsFirstPartyID("silt-tasks") {
-		t.Fatal("silt-tasks must be a reserved first-party id; without it " +
-			"seedFirstPartyGrants never seeds content-mutate and the Tasks " +
-			"view quick-add is denied (#407)")
 	}
 }

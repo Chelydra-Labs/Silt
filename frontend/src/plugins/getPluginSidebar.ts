@@ -14,15 +14,20 @@ import { loadedPlugins } from './store.svelte'
 
 /**
  * Map a top-level view id to the plugin id whose sidebar should own the
- * sidebar slot when that view is active. Three views ship compiled
- * sidebar components today: `calendar`, `kanban`, and `tasks`. Tags and
- * Notes return null. The calendar/kanban→silt-tasks alias window lands
- * in Phase 10 (when the standalone plugins are deleted); until then
- * each id maps to its own plugin.
+ * sidebar slot when that view is active. After Phase 10 (#429) only
+ * `tasks` is a live activity-bar entry; Tags and Notes return null.
+ *
+ * One-release alias window: `calendar` and `kanban` no longer have their
+ * own plugins, but saved nav state (or an external `switch-view` event)
+ * may still carry those ids. For one release we route both to the
+ * silt-tasks sidebar so a stale id renders the unified sidebar instead of
+ * the page-tree fallback. An `$effect` in App.svelte also redirects the
+ * activity bar to `'tasks'` and hints the matching display mode. Drop
+ * these two branches in N+1 once the old view-ids are fully removed.
  */
 export function pluginIdForView(activeView: string): string | null {
-  if (activeView === 'calendar') return 'silt-calendar'
-  if (activeView === 'kanban') return 'silt-kanban'
+  if (activeView === 'calendar') return 'silt-tasks' // alias (one release)
+  if (activeView === 'kanban') return 'silt-tasks' // alias (one release)
   if (activeView === 'tasks') return 'silt-tasks'
   return null
 }

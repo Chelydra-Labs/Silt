@@ -366,17 +366,13 @@ func Defaults() SystemConfig {
 			"toggle_typewriter_mode": "Ctrl+Shift+Y",
 		},
 		Plugins: PluginsConfig{
-			// Active includes both legacy ids (silt-calendar, silt-kanban)
-			// and the unified silt-tasks for the one-release transition
-			// window (Phase 9 / #431). Phase 10 collapses this list to
-			// [notes, tags, tasks] once the old plugin ids retire.
-			Active:   []string{"silt-calendar", "silt-kanban", "silt-tasks"},
+			// Phase 10 (#429) retired the standalone silt-calendar and
+			// silt-kanban plugins; silt-tasks is the single active task
+			// surface. Legacy vaults still carrying the old ids are
+			// migrated by task_plugin_migrate.go (Phase 9 / #431).
+			Active:   []string{"silt-tasks"},
 			Disabled: []string{},
 			PluginSettings: map[string]any{
-				"silt-kanban": map[string]any{
-					"default_col": "TODO",
-					"columns":     []any{"TODO", "DOING", "DONE"},
-				},
 				// silt-tasks is the unified hub (Phase 9 / #431). Every key
 				// the frontend loaders read (settings.ts) is seeded so a
 				// fresh vault — or a migrated one — never nil-derefs.

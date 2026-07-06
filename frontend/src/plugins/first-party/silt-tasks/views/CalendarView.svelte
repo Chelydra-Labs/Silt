@@ -20,10 +20,10 @@
   import type { PluginContext } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
   import { settings } from '../../../../settings/store.svelte'
-  import TaskEditDrawer from '../../shared/TaskEditDrawer.svelte'
-  import TaskSubEditorModal from '../../shared/TaskSubEditorModal.svelte'
-  import QuickAddTask from '../../shared/QuickAddTask.svelte'
-  import type { TaskDetail } from '../../shared/types'
+  import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
+  import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
+  import QuickAddTask from '../components/QuickAddTask.svelte'
+  import type { TaskDetail } from '../types'
   import {
     getTaskHubState,
     setCalendarSubMode,

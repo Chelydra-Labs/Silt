@@ -12,13 +12,13 @@ const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn()
 }))
 
-vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
+vi.mock('../../../../../wailsjs/runtime/runtime.js', () => ({
   EventsOn: vi.fn(() => () => {})
 }))
 
 import DependencyPicker from './DependencyPicker.svelte'
-import type { PluginContext } from '../../sdk'
-import { v2CtxStubs } from '../../test-helpers'
+import type { PluginContext } from '../../../sdk'
+import { v2CtxStubs } from '../../../test-helpers'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {

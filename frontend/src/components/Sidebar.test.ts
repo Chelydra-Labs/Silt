@@ -331,36 +331,6 @@ describe('Sidebar', () => {
     expect(document.querySelector('[data-test-tasks-sidebar]')).toBeNull()
   })
 
-  it("activeView='kanban' with no sidebarComponent → page tree fallback (#321)", async () => {
-    // Plugin registered (kanban is bundled) but its sidebarComponent is
-    // intentionally absent in this test (mimics the pre-#321 state).
-    mockPlugins.plugins.set('silt-kanban', {
-      manifest: { id: 'silt-kanban', name: 'Kanban', version: '1.0.0' },
-      component: () => null,
-      source: 'first-party'
-      // NOTE: no sidebarComponent field
-    })
-    render(Sidebar, {
-      props: {
-        activeNotebook: 'Work',
-        activeSection: '',
-        activePage: '',
-        activeView: 'kanban',
-        collapsed: false,
-        onSelectNotebook: () => {},
-        onSelectSection: () => {},
-        onSelectPage: () => {},
-        onPinPage: () => {},
-        onSelectView: () => {}
-      }
-    })
-    await flush()
-    // The plugin's sidebar did NOT take over, so the page-tree branch is
-    // the active one. The notebook selector is the unambiguous marker
-    // (it lives only inside the page-tree branch).
-    expect(screen.getByText('Active Notebook')).toBeInTheDocument()
-  })
-
   it("activeView='notes' always renders the page tree regardless of plugins", async () => {
     // Even with a fake plugin that has a sidebarComponent for notes,
     // activeView='notes' has no plugin mapping so it must fall back.
@@ -388,53 +358,6 @@ describe('Sidebar', () => {
     expect(screen.getByText('Active Notebook')).toBeInTheDocument()
   })
 
-  it("activeView='kanban' with a registered sidebarComponent renders that component (#321)", async () => {
-    // The stub is a real Svelte component (frontend/src/components/__test_helpers__/StubSidebar.svelte).
-    // It renders a marker element and exposes the props it received via
-    // globalThis so the test can assert the ctx + manifest are wired up.
-    delete (globalThis as any).__lastStubSidebarProps
-
-    // Late import so the vi.mock for the loader / context / store above
-    // is already in place before StubSidebar's transitive dependencies
-    // (none in practice) are resolved. The stub itself has no deps.
-    const StubSidebar = (await import('./__test_helpers__/StubSidebar.svelte'))
-      .default
-
-    mockPlugins.plugins.set('silt-kanban', {
-      manifest: { id: 'silt-kanban', name: 'Kanban', version: '1.0.0' },
-      component: () => null,
-      sidebarComponent: StubSidebar,
-      source: 'first-party'
-    })
-    render(Sidebar, {
-      props: {
-        activeNotebook: 'Work',
-        activeSection: '',
-        activePage: '',
-        activeView: 'kanban',
-        collapsed: false,
-        onSelectNotebook: () => {},
-        onSelectSection: () => {},
-        onSelectPage: () => {},
-        onPinPage: () => {},
-        onSelectView: () => {}
-      }
-    })
-    await flush()
-    // The stub marker is present and the page-tree branch (notebook
-    // selector) is absent — the plugin sidebar took over the slot.
-    const stubEl = document.querySelector('[data-test-stub-sidebar]')
-    expect(stubEl).toBeTruthy()
-    expect(stubEl?.getAttribute('data-plugin-id')).toBe('silt-kanban')
-    expect(screen.queryByText('Active Notebook')).toBeNull()
-    // The stub saw a PluginContext with the plugin's id AND the session
-    // token from getSessionToken — i.e. the same plumbing PluginView uses.
-    const seen = (globalThis as any).__lastStubSidebarProps
-    expect(seen).toBeTruthy()
-    expect(seen.ctx.pluginID).toBe('silt-kanban')
-    expect(seen.ctx.sessionToken).toBe('tok-test')
-  })
-
   it('loadersReady=false suspends the plugin sidebar (no ctx built) (#326 item 5)', async () => {
     // During vault:closing's clear→re-register window, getSessionToken
     // returns undefined. Without the gate, Sidebar would build a context
@@ -444,8 +367,8 @@ describe('Sidebar', () => {
     const StubSidebar = (await import('./__test_helpers__/StubSidebar.svelte'))
       .default
 
-    mockPlugins.plugins.set('silt-kanban', {
-      manifest: { id: 'silt-kanban', name: 'Kanban', version: '1.0.0' },
+    mockPlugins.plugins.set('silt-tasks', {
+      manifest: { id: 'silt-tasks', name: 'Tasks', version: '1.0.0' },
       component: () => null,
       sidebarComponent: StubSidebar,
       source: 'first-party'
@@ -456,7 +379,7 @@ describe('Sidebar', () => {
         activeNotebook: 'Work',
         activeSection: '',
         activePage: '',
-        activeView: 'kanban',
+        activeView: 'tasks',
         collapsed: false,
         onSelectNotebook: () => {},
         onSelectSection: () => {},

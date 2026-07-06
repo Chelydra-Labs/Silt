@@ -15,10 +15,10 @@
     UniqueBlockIds,
     blocksToDoc,
     docToBlocks
-  } from '../../../lib/editor'
-  import type { ParsedBlock } from '../../../lib/editor'
-  import type { PluginContext } from '../../sdk'
-  import { STANDALONE_TASKS_NOTEBOOK } from '../../../lib/standaloneTasksNav'
+  } from '../../../../lib/editor'
+  import type { ParsedBlock } from '../../../../lib/editor'
+  import type { PluginContext } from '../../../sdk'
+  import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
 
   /**
    * Focused Task Sub-Editor Modal (#304). Double-clicking a Kanban task card

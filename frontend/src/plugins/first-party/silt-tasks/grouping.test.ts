@@ -3,7 +3,7 @@
 // load-bearing assertions for the generalized list rendering.
 import { describe, it, expect } from 'vitest'
 import { binByDimension, distinctValues, type GroupSection } from './grouping'
-import type { TaskDetail } from '../shared/types'
+import type { TaskDetail } from './types'
 
 function row(overrides: Partial<TaskDetail> & { id: string }): TaskDetail {
   return {

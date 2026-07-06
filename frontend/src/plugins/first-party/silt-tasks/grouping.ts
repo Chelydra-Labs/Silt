@@ -10,8 +10,8 @@
 // binByDimension instead of its own $derived filters.
 
 import { plusDaysISO } from '../../sdk'
-import type { TaskDetail } from '../shared/types'
-import { laneLabel } from '../shared/types'
+import type { TaskDetail } from './types'
+import { laneLabel } from './types'
 import type { GroupBy } from './state.svelte'
 
 export interface GroupSection {

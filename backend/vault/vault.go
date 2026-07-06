@@ -319,14 +319,9 @@ parsing:
 # Plugin Registry
 plugins:
   active:
-    - "silt-calendar"
-    - "silt-kanban"
     - "silt-tasks"
   disabled: []
   plugin_settings:
-    silt-kanban:
-      default_col: "TODO"
-      columns: ["TODO", "DOING", "DONE"]
     silt-tasks:
       default_display_mode: list
       default_group_by: none

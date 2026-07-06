@@ -31,7 +31,7 @@ func resetStandaloneTasks(t *testing.T, app *App) {
 func TestPluginCreateTask_CreatesFileAndIndexesBlock(t *testing.T) {
 	app := newTestApp(t)
 	resetStandaloneTasks(t, app)
-	tok := registerTestSession(t, app, "silt-calendar")
+	tok := registerTestSession(t, app, "silt-tasks")
 
 	// File does not exist yet.
 	tasksFile := filepath.Join(app.vaultPath, ".silt", "tasks.md")
@@ -39,7 +39,7 @@ func TestPluginCreateTask_CreatesFileAndIndexesBlock(t *testing.T) {
 		t.Fatalf("tasks file should not exist before first create: %v", err)
 	}
 
-	id, err := app.PluginCreateTask("silt-calendar", tok, "Write the brief", "2026-07-15", "TODO")
+	id, err := app.PluginCreateTask("silt-tasks", tok, "Write the brief", "2026-07-15", "TODO")
 	if err != nil || id == "" {
 		t.Fatalf("PluginCreateTask: id=%q err=%v", id, err)
 	}
@@ -82,13 +82,13 @@ func TestPluginCreateTask_CreatesFileAndIndexesBlock(t *testing.T) {
 func TestPluginCreateTask_AppendsMultipleTasks(t *testing.T) {
 	app := newTestApp(t)
 	resetStandaloneTasks(t, app)
-	tok := registerTestSession(t, app, "silt-calendar")
+	tok := registerTestSession(t, app, "silt-tasks")
 
-	id1, err := app.PluginCreateTask("silt-calendar", tok, "First task", "", "")
+	id1, err := app.PluginCreateTask("silt-tasks", tok, "First task", "", "")
 	if err != nil {
 		t.Fatalf("create #1: %v", err)
 	}
-	id2, err := app.PluginCreateTask("silt-calendar", tok, "Second task", "", "")
+	id2, err := app.PluginCreateTask("silt-tasks", tok, "Second task", "", "")
 	if err != nil {
 		t.Fatalf("create #2: %v", err)
 	}
@@ -112,15 +112,15 @@ func TestPluginCreateTask_AppendsMultipleTasks(t *testing.T) {
 func TestPluginCreateTask_DefaultsAndValidation(t *testing.T) {
 	app := newTestApp(t)
 	resetStandaloneTasks(t, app)
-	tok := registerTestSession(t, app, "silt-calendar")
+	tok := registerTestSession(t, app, "silt-tasks")
 
-	if _, err := app.PluginCreateTask("silt-calendar", tok, "   ", "", ""); err == nil {
+	if _, err := app.PluginCreateTask("silt-tasks", tok, "   ", "", ""); err == nil {
 		t.Fatal("expected error for empty title")
 	}
-	if _, err := app.PluginCreateTask("silt-calendar", tok, "ok", "", "BOGUS"); err == nil {
+	if _, err := app.PluginCreateTask("silt-tasks", tok, "ok", "", "BOGUS"); err == nil {
 		t.Fatal("expected error for invalid status")
 	}
-	id, err := app.PluginCreateTask("silt-calendar", tok, "default status", "", "")
+	id, err := app.PluginCreateTask("silt-tasks", tok, "default status", "", "")
 	if err != nil {
 		t.Fatalf("create with empty status: %v", err)
 	}
@@ -137,9 +137,9 @@ func TestPluginCreateTask_DefaultsAndValidation(t *testing.T) {
 func TestPluginCreateTask_FileContentHasGFMSyntax(t *testing.T) {
 	app := newTestApp(t)
 	resetStandaloneTasks(t, app)
-	tok := registerTestSession(t, app, "silt-calendar")
+	tok := registerTestSession(t, app, "silt-tasks")
 
-	id, err := app.PluginCreateTask("silt-calendar", tok, "Ship the release", "2026-08-01", "DOING")
+	id, err := app.PluginCreateTask("silt-tasks", tok, "Ship the release", "2026-08-01", "DOING")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -166,9 +166,9 @@ func TestPluginCreateTask_FileContentHasGFMSyntax(t *testing.T) {
 func TestScanStandaloneTasks_IndexesExistingFile(t *testing.T) {
 	app := newTestApp(t)
 	resetStandaloneTasks(t, app)
-	tok := registerTestSession(t, app, "silt-calendar")
+	tok := registerTestSession(t, app, "silt-tasks")
 
-	id, err := app.PluginCreateTask("silt-calendar", tok, "Survives reindex", "", "")
+	id, err := app.PluginCreateTask("silt-tasks", tok, "Survives reindex", "", "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -207,13 +207,13 @@ func TestScanStandaloneTasks_AbsentFileReturnsNil(t *testing.T) {
 // [due::] token for a note-embedded task (#293).
 func TestPluginSetTaskDueDate_SetsReplacesClears(t *testing.T) {
 	app := newTestApp(t)
-	tok := registerTestSession(t, app, "silt-calendar")
+	tok := registerTestSession(t, app, "silt-tasks")
 	taskID := "66666666-6666-6666-6666-666666666666"
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "reschedule me")
 
 	set := func(date string) {
 		t.Helper()
-		ok, err := app.PluginSetTaskDueDate("silt-calendar", tok, taskID, date)
+		ok, err := app.PluginSetTaskDueDate("silt-tasks", tok, taskID, date)
 		if err != nil || !ok {
 			t.Fatalf("PluginSetTaskDueDate(%q): ok=%v err=%v", date, ok, err)
 		}
@@ -247,15 +247,15 @@ func TestPluginSetTaskDueDate_SetsReplacesClears(t *testing.T) {
 // reaches disk.
 func TestPluginSetTaskDueDate_RejectsInvalidDate(t *testing.T) {
 	app := newTestApp(t)
-	tok := registerTestSession(t, app, "silt-calendar")
+	tok := registerTestSession(t, app, "silt-tasks")
 	taskID := "77777777-7777-7777-7777-777777777777"
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "guard me")
 
-	if _, err := app.PluginSetTaskDueDate("silt-calendar", tok, taskID, "not-a-date"); err == nil {
+	if _, err := app.PluginSetTaskDueDate("silt-tasks", tok, taskID, "not-a-date"); err == nil {
 		t.Fatal("expected error for malformed date")
 	}
 	// A near-miss format must also be rejected.
-	if _, err := app.PluginSetTaskDueDate("silt-calendar", tok, taskID, "2026/07/20"); err == nil {
+	if _, err := app.PluginSetTaskDueDate("silt-tasks", tok, taskID, "2026/07/20"); err == nil {
 		t.Fatal("expected error for slash-separated date")
 	}
 }
@@ -264,9 +264,9 @@ func TestPluginSetTaskDueDate_RejectsInvalidDate(t *testing.T) {
 // a due date.
 func TestPluginSetTaskDueDate_RejectsNonTask(t *testing.T) {
 	app := newTestApp(t)
-	tok := registerTestSession(t, app, "silt-calendar")
+	tok := registerTestSession(t, app, "silt-tasks")
 	// writeSamplePage's "# Title" header carries id 11111111...
-	if _, err := app.PluginSetTaskDueDate("silt-calendar", tok, "11111111-1111-1111-1111-111111111111", "2026-07-20"); err == nil {
+	if _, err := app.PluginSetTaskDueDate("silt-tasks", tok, "11111111-1111-1111-1111-111111111111", "2026-07-20"); err == nil {
 		t.Fatal("expected error for non-task block")
 	}
 }
@@ -279,13 +279,13 @@ func TestPluginSetTaskDueDate_RejectsNonTask(t *testing.T) {
 func TestPluginSetTaskDueDate_StandaloneTask(t *testing.T) {
 	app := newTestApp(t)
 	resetStandaloneTasks(t, app)
-	tok := registerTestSession(t, app, "silt-calendar")
+	tok := registerTestSession(t, app, "silt-tasks")
 
-	id, err := app.PluginCreateTask("silt-calendar", tok, "Drag-drop me", "2026-07-10", "TODO")
+	id, err := app.PluginCreateTask("silt-tasks", tok, "Drag-drop me", "2026-07-10", "TODO")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	ok, err := app.PluginSetTaskDueDate("silt-calendar", tok, id, "2026-08-01")
+	ok, err := app.PluginSetTaskDueDate("silt-tasks", tok, id, "2026-08-01")
 	if err != nil || !ok {
 		t.Fatalf("PluginSetTaskDueDate on standalone task: ok=%v err=%v", ok, err)
 	}
@@ -320,8 +320,8 @@ func TestPluginSetTaskDueDate_StandaloneTask(t *testing.T) {
 func TestListNavigation_ExcludesStandaloneTasks(t *testing.T) {
 	app := newTestApp(t)
 	resetStandaloneTasks(t, app)
-	tok := registerTestSession(t, app, "silt-calendar")
-	if _, err := app.PluginCreateTask("silt-calendar", tok, "hidden from nav", "", ""); err != nil {
+	tok := registerTestSession(t, app, "silt-tasks")
+	if _, err := app.PluginCreateTask("silt-tasks", tok, "hidden from nav", "", ""); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	tree, err := app.ListNavigation()

@@ -38,7 +38,7 @@ if (!Element.prototype.animate) {
   } as unknown as Element['animate']
 }
 
-vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
+vi.mock('../../../../../wailsjs/runtime/runtime.js', () => ({
   EventsOn: vi.fn(() => () => {})
 }))
 
@@ -56,15 +56,15 @@ const drawerMocks = vi.hoisted(() => ({
     }
   }
 }))
-vi.mock('../../../settings/store.svelte', () => ({
+vi.mock('../../../../settings/store.svelte', () => ({
   settings: drawerMocks.settings,
   updatePluginSetting: vi.fn().mockResolvedValue(true)
 }))
 
 import TaskEditDrawer from './TaskEditDrawer.svelte'
-import type { PluginContext } from '../../sdk'
-import type { TaskDetail } from './types'
-import { v2CtxStubs } from '../../test-helpers'
+import type { PluginContext } from '../../../sdk'
+import type { TaskDetail } from '../types'
+import { v2CtxStubs } from '../../../test-helpers'
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
