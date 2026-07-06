@@ -151,6 +151,15 @@ func (a *App) CreateStandaloneTask(title, dueDate, status string) (string, error
 		// reflects the block's 1-based position among all TASK blocks.
 	}
 
+	// #417 lifecycle stamp: a task created already-DONE (e.g. logging a
+	// completed item) must carry [completed::] so the drawer, the completed
+	// sort/filter, and the inline-editor path all agree. The parser's
+	// DONE-on-create branch doesn't fire here because this path mints the id
+	// itself and bypasses re-parse minting, so stamp it explicitly.
+	if taskStatus == "DONE" {
+		newBlock.CompletedAt = now.Format("2006-01-02T15:04:05")
+	}
+
 	source := config.LinkedNotebooksVaultSource // ".silt" is an in-vault synthetic notebook.
 
 	var writeErr error

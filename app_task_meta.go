@@ -51,11 +51,16 @@ func (a *App) PluginSetTaskOwner(pluginID, sessionToken, blockID, owner string) 
 	return true, nil
 }
 
-// setTaskOwner is the shared core for the app-level and plugin-level entry
-// points. Structurally identical to how PluginUpdateTaskMeta sets
-// Pinned/Progress: a single field assignment on the target ParsedBlock,
-// then the atomic rewrite + re-index chain.
-func (a *App) setTaskOwner(blockID, owner string) error {
+// mutateTaskBlock is the canonical task write-chain shared by the four
+// single-field setters (SetTaskOwner/Priority/Tags/Title): locate the block,
+// sanity-check its file metadata, then under LockBlockWrite+LockFileWrite
+// read -> parse -> apply `mutate` -> render -> WriteFileAtomic -> re-parse ->
+// IndexFileBlocks -> emit block:changed. `label` prefixes diagnostic log and
+// parse-error messages so failures stay attributable. Callers retain any
+// input validation (empty-title guard, tag dedupe) BEFORE calling; this
+// helper owns only the shared write path so a future cross-cutting guard
+// (e.g. focus-lock, #444) lands in exactly one place.
+func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedBlock)) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -106,13 +111,13 @@ func (a *App) setTaskOwner(blockID, owner string) error {
 			fileDate := fileOrDefaultDate(filePath)
 			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
 			if parseErr != nil {
-				writeErr = fmt.Errorf("failed to parse file for owner update: %w", parseErr)
+				writeErr = fmt.Errorf("failed to parse file for %s: %w", label, parseErr)
 				return
 			}
 			found := false
 			for i := range parsedBlocks {
 				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
-					parsedBlocks[i].Owner = owner
+					mutate(&parsedBlocks[i])
 					found = true
 					break
 				}
@@ -146,7 +151,7 @@ func (a *App) setTaskOwner(blockID, owner string) error {
 					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
 				})
 				if idxErr != nil {
-					log.Printf("SetTaskOwner: IndexFileBlocks failed: %v", idxErr)
+					log.Printf("%s: IndexFileBlocks failed: %v", label, idxErr)
 				}
 				for _, b := range blocks {
 					if b.ID == blockID {
@@ -154,7 +159,7 @@ func (a *App) setTaskOwner(blockID, owner string) error {
 					}
 				}
 			} else {
-				log.Printf("SetTaskOwner: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
+				log.Printf("%s: re-parse of rendered content failed (file written, index stale until next scan): %v", label, err)
 			}
 			if emitFileDate == "" {
 				emitFileDate = fileDate
@@ -168,6 +173,13 @@ func (a *App) setTaskOwner(blockID, owner string) error {
 		a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, emitFileDate)
 	}
 	return nil
+}
+
+// setTaskOwner is the shared core for the app-level and plugin-level entry
+// points. Delegates the shared write-chain to mutateTaskBlock; see that
+// method for the chain.
+func (a *App) setTaskOwner(blockID, owner string) error {
+	return a.mutateTaskBlock(blockID, "SetTaskOwner", func(b *parser.ParsedBlock) { b.Owner = owner })
 }
 
 // SetTaskPriority rewrites the [priority:: N] inline token on a task block
@@ -196,120 +208,10 @@ func (a *App) PluginSetTaskPriority(pluginID, sessionToken, blockID string, prio
 }
 
 // setTaskPriority is the shared core for the app-level and plugin-level entry
-// points. Structurally identical to setTaskOwner with a different field.
+// points. Delegates the shared write-chain to mutateTaskBlock; see that
+// method for the chain.
 func (a *App) setTaskPriority(blockID string, priority int) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.db == nil {
-		return fmt.Errorf("vault database not loaded")
-	}
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	var loc db.BlockLocation
-	err := a.coordinator.WithDBReadResult(func() error {
-		var e error
-		loc, e = a.db.GetBlockLocation(blockID)
-		return e
-	})
-	if err != nil {
-		return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
-	}
-	notebook, section, page, blockType := loc.Notebook, loc.Section, loc.Page, loc.BlockType
-	if blockType != string(parser.BlockTask) {
-		return fmt.Errorf("block %s is not a task", blockID)
-	}
-
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" {
-		return fmt.Errorf("invalid file metadata for block %s", blockID)
-	}
-	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
-	if err != nil {
-		return fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
-	}
-	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, notebookDir) {
-		return fmt.Errorf("resolved file path %q escapes notebook root %q", filePath, notebookDir)
-	}
-
-	var writeErr error
-	var emitFileDate string
-	didWrite := false
-	a.coordinator.LockBlockWrite(blockID, func() {
-		a.coordinator.LockFileWrite(filePath, func() {
-			contentBytes, err := os.ReadFile(filePath)
-			if err != nil {
-				writeErr = err
-				return
-			}
-			fileDate := fileOrDefaultDate(filePath)
-			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
-			if parseErr != nil {
-				writeErr = fmt.Errorf("failed to parse file for priority update: %w", parseErr)
-				return
-			}
-			found := false
-			for i := range parsedBlocks {
-				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
-					parsedBlocks[i].Priority = priority
-					found = true
-					break
-				}
-			}
-			if !found {
-				writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
-				return
-			}
-
-			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
-			if frontmatter == "" {
-				fmDate := meta.Date
-				if fmDate == "" {
-					fmDate = fileDate
-				}
-				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
-				body = string(contentBytes)
-			}
-			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-				writeErr = err
-				return
-			}
-			didWrite = true
-
-			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
-			if err == nil {
-				var idxErr error
-				a.coordinator.WithDBWrite(func() {
-					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
-				})
-				if idxErr != nil {
-					log.Printf("SetTaskPriority: IndexFileBlocks failed: %v", idxErr)
-				}
-				for _, b := range blocks {
-					if b.ID == blockID {
-						emitFileDate = b.FileDate
-					}
-				}
-			} else {
-				log.Printf("SetTaskPriority: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
-			}
-			if emitFileDate == "" {
-				emitFileDate = fileDate
-			}
-		})
-	}) // LockBlockWrite
-	if writeErr != nil {
-		return writeErr
-	}
-	if didWrite {
-		a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, emitFileDate)
-	}
-	return nil
+	return a.mutateTaskBlock(blockID, "SetTaskPriority", func(b *parser.ParsedBlock) { b.Priority = priority })
 }
 
 // SetTaskTags rewrites the hashtag set on a task's CleanText (the prose),
@@ -353,126 +255,15 @@ func (a *App) PluginSetTaskTags(pluginID, sessionToken, blockID string, tags []s
 }
 
 // setTaskTags is the shared core for the app-level and plugin-level entry
-// points. The byte-surgery helpers (stripTagsFromCleanText,
+// points. Delegates the shared write-chain to mutateTaskBlock; see that
+// method for the chain. The byte-surgery helpers (stripTagsFromCleanText,
 // appendTagsToCleanText) preserve every other byte of CleanText.
 func (a *App) setTaskTags(blockID string, tags []string) error {
-	// Normalize: drop empties, de-duplicate preserving order. The indexer
-	// would dedupe on the next re-index anyway; doing it here keeps the
-	// diff + the rendered prose in lockstep with what the user asked for.
+	// Normalize (drop empties, de-dupe, strip leading #) before the write chain.
 	newTags := dedupeTags(tags)
-
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.db == nil {
-		return fmt.Errorf("vault database not loaded")
-	}
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	var loc db.BlockLocation
-	err := a.coordinator.WithDBReadResult(func() error {
-		var e error
-		loc, e = a.db.GetBlockLocation(blockID)
-		return e
+	return a.mutateTaskBlock(blockID, "SetTaskTags", func(b *parser.ParsedBlock) {
+		b.CleanText = rebuildTagSet(b.CleanText, newTags)
 	})
-	if err != nil {
-		return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
-	}
-	notebook, section, page, blockType := loc.Notebook, loc.Section, loc.Page, loc.BlockType
-	if blockType != string(parser.BlockTask) {
-		return fmt.Errorf("block %s is not a task", blockID)
-	}
-
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" {
-		return fmt.Errorf("invalid file metadata for block %s", blockID)
-	}
-	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
-	if err != nil {
-		return fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
-	}
-	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, notebookDir) {
-		return fmt.Errorf("resolved file path %q escapes notebook root %q", filePath, notebookDir)
-	}
-
-	var writeErr error
-	var emitFileDate string
-	didWrite := false
-	a.coordinator.LockBlockWrite(blockID, func() {
-		a.coordinator.LockFileWrite(filePath, func() {
-			contentBytes, err := os.ReadFile(filePath)
-			if err != nil {
-				writeErr = err
-				return
-			}
-			fileDate := fileOrDefaultDate(filePath)
-			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
-			if parseErr != nil {
-				writeErr = fmt.Errorf("failed to parse file for tags update: %w", parseErr)
-				return
-			}
-			found := false
-			for i := range parsedBlocks {
-				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
-					parsedBlocks[i].CleanText = rebuildTagSet(parsedBlocks[i].CleanText, newTags)
-					found = true
-					break
-				}
-			}
-			if !found {
-				writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
-				return
-			}
-
-			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
-			if frontmatter == "" {
-				fmDate := meta.Date
-				if fmDate == "" {
-					fmDate = fileDate
-				}
-				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
-				body = string(contentBytes)
-			}
-			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-				writeErr = err
-				return
-			}
-			didWrite = true
-
-			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
-			if err == nil {
-				var idxErr error
-				a.coordinator.WithDBWrite(func() {
-					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
-				})
-				if idxErr != nil {
-					log.Printf("SetTaskTags: IndexFileBlocks failed: %v", idxErr)
-				}
-				for _, b := range blocks {
-					if b.ID == blockID {
-						emitFileDate = b.FileDate
-					}
-				}
-			} else {
-				log.Printf("SetTaskTags: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
-			}
-			if emitFileDate == "" {
-				emitFileDate = fileDate
-			}
-		})
-	}) // LockBlockWrite
-	if writeErr != nil {
-		return writeErr
-	}
-	if didWrite {
-		a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, emitFileDate)
-	}
-	return nil
 }
 
 // SetTaskTitle rewrites the prose portion of a task's CleanText, the "title"
@@ -508,140 +299,31 @@ func (a *App) PluginSetTaskTitle(pluginID, sessionToken, blockID, title string) 
 }
 
 // setTaskTitle is the shared core for the app-level and plugin-level entry
-// points. The byte-surgery helper (replaceTitleInCleanText) tokenizes
-// CleanText into hashtags, block-refs, and prose, then reassembles the new
-// title + preserved tokens.
+// points. Delegates the shared write-chain to mutateTaskBlock; see that
+// method for the chain. The byte-surgery helper (replaceTitleInCleanText)
+// tokenizes CleanText into hashtags, block-refs, and prose, then reassembles
+// the new title + preserved tokens.
 func (a *App) setTaskTitle(blockID, title string) error {
-	// SDK contract guard: an empty/whitespace-only title would silently strip
-	// ALL prose from the task (replaceTitleInCleanText("", cleanText) leaves
-	// only #tags + ((uuid)) refs — a title-less block that still parses as a
-	// task). The drawer guards client-side, but the backend is the contract
-	// surface for every plugin, so reject here before touching the disk.
+	// SDK contract guard: an empty/whitespace title would silently strip all
+	// prose from the task. Reject before touching disk.
 	if strings.TrimSpace(title) == "" {
 		return fmt.Errorf("task title must not be empty")
 	}
-
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.db == nil {
-		return fmt.Errorf("vault database not loaded")
-	}
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	var loc db.BlockLocation
-	err := a.coordinator.WithDBReadResult(func() error {
-		var e error
-		loc, e = a.db.GetBlockLocation(blockID)
-		return e
+	return a.mutateTaskBlock(blockID, "SetTaskTitle", func(b *parser.ParsedBlock) {
+		b.CleanText = replaceTitleInCleanText(b.CleanText, title)
 	})
-	if err != nil {
-		return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
-	}
-	notebook, section, page, blockType := loc.Notebook, loc.Section, loc.Page, loc.BlockType
-	if blockType != string(parser.BlockTask) {
-		return fmt.Errorf("block %s is not a task", blockID)
-	}
-
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" {
-		return fmt.Errorf("invalid file metadata for block %s", blockID)
-	}
-	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
-	if err != nil {
-		return fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
-	}
-	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, notebookDir) {
-		return fmt.Errorf("resolved file path %q escapes notebook root %q", filePath, notebookDir)
-	}
-
-	var writeErr error
-	var emitFileDate string
-	didWrite := false
-	a.coordinator.LockBlockWrite(blockID, func() {
-		a.coordinator.LockFileWrite(filePath, func() {
-			contentBytes, err := os.ReadFile(filePath)
-			if err != nil {
-				writeErr = err
-				return
-			}
-			fileDate := fileOrDefaultDate(filePath)
-			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
-			if parseErr != nil {
-				writeErr = fmt.Errorf("failed to parse file for title update: %w", parseErr)
-				return
-			}
-			found := false
-			for i := range parsedBlocks {
-				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
-					parsedBlocks[i].CleanText = replaceTitleInCleanText(parsedBlocks[i].CleanText, title)
-					found = true
-					break
-				}
-			}
-			if !found {
-				writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
-				return
-			}
-
-			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
-			if frontmatter == "" {
-				fmDate := meta.Date
-				if fmDate == "" {
-					fmDate = fileDate
-				}
-				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
-				body = string(contentBytes)
-			}
-			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-				writeErr = err
-				return
-			}
-			didWrite = true
-
-			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
-			if err == nil {
-				var idxErr error
-				a.coordinator.WithDBWrite(func() {
-					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
-				})
-				if idxErr != nil {
-					log.Printf("SetTaskTitle: IndexFileBlocks failed: %v", idxErr)
-				}
-				for _, b := range blocks {
-					if b.ID == blockID {
-						emitFileDate = b.FileDate
-					}
-				}
-			} else {
-				log.Printf("SetTaskTitle: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
-			}
-			if emitFileDate == "" {
-				emitFileDate = fileDate
-			}
-		})
-	}) // LockBlockWrite
-	if writeErr != nil {
-		return writeErr
-	}
-	if didWrite {
-		a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, emitFileDate)
-	}
-	return nil
 }
 
 // dedupeTags drops empty entries and de-duplicates a tag slice while
-// preserving first-occurrence order. Mirrors the indexer's dedupe so the
+// preserving first-occurrence order, and strips a single leading "#" so
+// callers may pass "#work" or "work" interchangeably (covers plugin SDK
+// callers, not just the drawer). Mirrors the indexer's dedupe so the
 // rendered prose matches what db.ExtractTags will re-derive.
 func dedupeTags(tags []string) []string {
 	seen := make(map[string]bool, len(tags))
 	out := make([]string, 0, len(tags))
 	for _, t := range tags {
+		t = strings.TrimPrefix(t, "#")
 		if t == "" || seen[t] {
 			continue
 		}

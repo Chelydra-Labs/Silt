@@ -216,3 +216,49 @@ func TestCreateStandaloneTask_MintsCreatedAtAndOrder(t *testing.T) {
 		t.Errorf("expected [order:: 2] for second task, got:\n%s", content2)
 	}
 }
+
+// TestCreateStandaloneTask_DoneStampsCompleted is the F1 asymmetry fix: a
+// standalone task created with status "DONE" must mint [completed::] (and
+// [created::]/[order::]) just like the inline-editor path where - [x] typed
+// fresh gets stamped (TestMinting_CreatedAlreadyDoneStampsCompleted).
+// CreateStandaloneTask bypasses parser minting (it assigns the id itself), so
+// CompletedAt must be stamped explicitly.
+func TestCreateStandaloneTask_DoneStampsCompleted(t *testing.T) {
+	app := newTestApp(t)
+	resetStandaloneTasks(t, app)
+
+	id, err := app.CreateStandaloneTask("already done task", "", "DONE")
+	if err != nil {
+		t.Fatalf("CreateStandaloneTask DONE: %v", err)
+	}
+
+	tasksFile := filepath.Join(app.vaultPath, ".silt", "tasks.md")
+	content, err := os.ReadFile(tasksFile)
+	if err != nil {
+		t.Fatalf("read tasks file: %v", err)
+	}
+	s := string(content)
+	for _, want := range []string{"[created:: ", "[completed:: ", "[order:: 1]"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("expected %q in file, got:\n%s", want, s)
+		}
+	}
+
+	// Index must carry both lifecycle timestamps.
+	var createdAt, completedAt string
+	var manualOrder interface{}
+	if err := app.db.SQLDB().QueryRow(
+		"SELECT created_at, completed_at, manual_order FROM tasks WHERE block_id = ?", id,
+	).Scan(&createdAt, &completedAt, &manualOrder); err != nil {
+		t.Fatalf("query lifecycle: %v", err)
+	}
+	if createdAt == "" {
+		t.Errorf("expected non-empty created_at in index")
+	}
+	if completedAt == "" {
+		t.Errorf("expected non-empty completed_at in index for a DONE task")
+	}
+	if manualOrder == nil {
+		t.Errorf("expected non-null manual_order in index")
+	}
+}

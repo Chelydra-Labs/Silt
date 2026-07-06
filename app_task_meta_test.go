@@ -529,3 +529,21 @@ func sameSet(a, b []string) bool {
 	}
 	return true
 }
+
+// TestDedupeTags_StripsLeadingHashAndDedupes locks the contract-boundary
+// normalization in dedupeTags: a single leading "#" is stripped (so plugin
+// SDK callers may pass "#work" or "work" interchangeably), the dedup runs
+// against the post-strip name (so "#work" + "work" collapse to one entry),
+// and empties are dropped.
+func TestDedupeTags_StripsLeadingHashAndDedupes(t *testing.T) {
+	got := dedupeTags([]string{"#work", "work", "#urgent", ""})
+	want := []string{"work", "urgent"}
+	if len(got) != len(want) {
+		t.Fatalf("dedupeTags = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dedupeTags[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
+		}
+	}
+}

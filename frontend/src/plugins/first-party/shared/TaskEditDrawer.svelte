@@ -514,7 +514,10 @@
 
   function addTag() {
     if (!task || tagsPending) return
-    const t = tagDraft.trim()
+    // Chips render without '#', so users naturally type '#work'. Strip a single
+    // leading '#' so the local dedupe check (tagsState holds bare names) works
+    // and we never send '#work' to a backend that re-prefixes '#'.
+    const t = tagDraft.trim().replace(/^#/, '')
     if (!t || tagsState.includes(t)) {
       tagDraft = ''
       return

@@ -601,6 +601,27 @@ describe('TaskEditDrawer — tags editor (#412)', () => {
     await new Promise((r) => setTimeout(r, 10))
     expect(screen.getByText(/Couldn't save/)).toBeTruthy()
   })
+
+  it('strips a leading # from a typed tag before committing', async () => {
+    const setTaskTags = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskTags })
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({ tags: 'work|urgent' }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+    const input = screen.getByLabelText('Add a tag')
+    await fireEvent.input(input, { target: { value: '#home' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+    expect(setTaskTags).toHaveBeenCalledWith('task-1', [
+      'work',
+      'urgent',
+      'home'
+    ])
+  })
 })
 
 describe('TaskEditDrawer — title editor (#412)', () => {
