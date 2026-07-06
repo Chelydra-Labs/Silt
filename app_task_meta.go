@@ -182,6 +182,42 @@ func (a *App) setTaskOwner(blockID, owner string) error {
 	return a.mutateTaskBlock(blockID, "SetTaskOwner", func(b *parser.ParsedBlock) { b.Owner = owner })
 }
 
+// SetTaskOrder rewrites the [order:: N] inline token on a task block (#426).
+// Pass 0 to clear the token (the renderer omits it when ManualOrder == 0,
+// writer.go ~:1258). A negative value is rejected up front so a UI glitch
+// can't stamp an off-by-one into the file. Follows the canonical write
+// chain (same as SetTaskOwner); the row mapper caches the new value into
+// tasks.manual_order so the next query sees it without re-parsing markdown.
+func (a *App) SetTaskOrder(blockID string, order int) error {
+	return a.setTaskOrder(blockID, order)
+}
+
+// PluginSetTaskOrder is the plugin-SDK wrapper for SetTaskOrder, gated by
+// the standard capability + session checks. Mirrors PluginSetTaskOwner.
+func (a *App) PluginSetTaskOrder(pluginID, sessionToken, blockID string, order int) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
+	if err := a.setTaskOrder(blockID, order); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// setTaskOrder is the shared core for the app-level and plugin-level entry
+// points. Validates the input (negative order is a contract violation —
+// the token is 1-based; 0 is the "unset" sentinel and clears the token)
+// BEFORE entering the write chain so a rejection leaves the file untouched.
+func (a *App) setTaskOrder(blockID string, order int) error {
+	if order < 0 {
+		return fmt.Errorf("task order must be >= 0 (got %d)", order)
+	}
+	return a.mutateTaskBlock(blockID, "SetTaskOrder", func(b *parser.ParsedBlock) { b.ManualOrder = order })
+}
+
 // SetTaskPriority rewrites the [priority:: N] inline token on a task block
 // (#412). Pass 0 (or 3, the renderer's "normal" sentinel) to omit the token.
 // The renderer re-emits from ParsedBlock.Priority (writer.go ~:1198, omit

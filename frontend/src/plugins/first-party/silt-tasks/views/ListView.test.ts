@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updateBlockState: vi.fn(),
   createTask: vi.fn().mockResolvedValue('new-task-id'),
+  setTaskOrder: vi.fn().mockResolvedValue(true),
   blockChangedCallbacks: [] as Array<() => void>
 }))
 
@@ -17,7 +18,7 @@ import type {
   PluginEventPayload
 } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
-import { resetTaskHubState, setGroupBy } from '../state.svelte'
+import { resetTaskHubState, setGroupBy, setSort } from '../state.svelte'
 
 // jsdom polyfills: the shared drawer uses Svelte transition:fly (element.
 // animate()); the sub-editor modal's TipTap needs Range.getClientRects +
@@ -75,6 +76,7 @@ function makeCtx(): PluginContext {
     updateBlockState: mocks.updateBlockState,
     mutateBlock: vi.fn(),
     createTask: mocks.createTask,
+    setTaskOrder: mocks.setTaskOrder,
     updateTaskMeta: vi.fn(),
     getPluginSettings: vi.fn(() => Promise.resolve({})),
     on: <E extends PluginEventName>(
@@ -136,6 +138,7 @@ interface TaskRow {
   due_date: string
   priority: number
   pinned?: boolean
+  manual_order?: number
 }
 
 function task(
@@ -1036,5 +1039,242 @@ describe('Tasks view — grouping engine (#423)', () => {
       .querySelector('[data-block-id="td"]')
       ?.closest('[data-group]')
     expect(section?.getAttribute('data-group')).toBe('today')
+  })
+})
+
+describe('Tasks view — manual ordering (#426)', () => {
+  beforeEach(() => {
+    mocks.sqliteQuery.mockReset()
+    mocks.updateBlockState.mockReset().mockResolvedValue(true)
+    mocks.setTaskOrder.mockReset().mockResolvedValue(true)
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.blockChangedCallbacks.length = 0
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it("sort='manual' renders a drag handle on each row", async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [task('m1', 'manual row', { manual_order: 1 })]
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setSort('manual')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(
+      document.querySelector('[data-testid="tasks-row-drag-handle-m1"]')
+    ).toBeInTheDocument()
+  })
+
+  it("sort='manual' rows are within a role=listitem container with a draggable handle", async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return { rows: [task('m1', 'manual row', { manual_order: 1 })] }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setSort('manual')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const row = document.querySelector('[data-block-id="m1"]')
+    expect(row?.getAttribute('role')).toBe('listitem')
+    const handle = document.querySelector(
+      '[data-testid="tasks-row-drag-handle-m1"]'
+    )
+    expect(handle?.getAttribute('draggable')).toBe('true')
+  })
+
+  it("sort != 'manual' does NOT render a drag handle (rows open drawer on click)", async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return { rows: [task('d1', 'dueDate row', { manual_order: 1 })] }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    // default sort is 'dueDate' (set by resetTaskHubState)
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(
+      document.querySelector('[data-testid="tasks-row-drag-handle-d1"]')
+    ).toBeNull()
+  })
+
+  it('dragging a row within a group renumbers + persists via setTaskOrder', async () => {
+    // Three rows in a single 'none' group with manual_order 1, 2, 3.
+    // Dragging row A (order 1) onto row C (order 3) lands A before C →
+    //   splice [A,B,C] → remove A → [B,C] → insert A before C (idx 1) →
+    //   [B, A, C] → new orders B=1 (was 2 → CHANGE), A=2 (was 1 → CHANGE),
+    //   C=3 (unchanged).
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [
+            task('A', 'task a', { manual_order: 1, due_date: '' }),
+            task('B', 'task b', { manual_order: 2, due_date: '' }),
+            task('C', 'task c', { manual_order: 3, due_date: '' })
+          ]
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setGroupBy('none')
+    setSort('manual')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const handleA = document.querySelector(
+      '[data-testid="tasks-row-drag-handle-A"]'
+    ) as HTMLElement
+    const rowC = document.querySelector('[data-block-id="C"]') as HTMLElement
+    expect(handleA).toBeTruthy()
+    expect(rowC).toBeTruthy()
+
+    await fireEvent.dragStart(handleA)
+    await fireEvent.drop(rowC)
+    await flush()
+
+    // A moved before C → A's new slot is 2; B shifted 2→1. C unchanged.
+    expect(mocks.setTaskOrder).toHaveBeenCalledTimes(2)
+    const calls = mocks.setTaskOrder.mock.calls.map(([id, order]) => ({
+      id,
+      order
+    }))
+    expect(calls).toContainEqual({ id: 'A', order: 2 })
+    expect(calls).toContainEqual({ id: 'B', order: 1 })
+  })
+
+  it('dragging a row preserves order on reload (optimistic state matches persisted)', async () => {
+    // After the optimistic update, the row's data-block-id order in the DOM
+    // reflects the new sequence; the next reload would preserve it because
+    // the persisted manual_order matches the new positions.
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [
+            task('X', 'task x', { manual_order: 1, due_date: '' }),
+            task('Y', 'task y', { manual_order: 2, due_date: '' })
+          ]
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setGroupBy('none')
+    setSort('manual')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Drag Y onto X → Y lands before X → [Y, X].
+    const handleY = document.querySelector(
+      '[data-testid="tasks-row-drag-handle-Y"]'
+    ) as HTMLElement
+    const rowX = document.querySelector('[data-block-id="X"]') as HTMLElement
+
+    await fireEvent.dragStart(handleY)
+    await fireEvent.drop(rowX)
+    await flush()
+
+    const rows = Array.from(
+      document.querySelectorAll('[data-group="all"] [data-block-id]')
+    ).map((el) => el.getAttribute('data-block-id'))
+    expect(rows).toEqual(['Y', 'X'])
+    // Persisted: Y gets order 1 (was 2), X gets order 2 (was 1).
+    expect(mocks.setTaskOrder).toHaveBeenCalledWith('Y', 1)
+    expect(mocks.setTaskOrder).toHaveBeenCalledWith('X', 2)
+  })
+
+  it('cross-group drop is a no-op for setTaskOrder (BoardView owns dimension reassignment)', async () => {
+    // groupBy=owner with two single-task groups; dragging across owners
+    // shouldn't fire setTaskOrder (the List's manual drag is within-group).
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [
+            task('p', 'pat task', {
+              owner: 'Pat',
+              manual_order: 1,
+              due_date: ''
+            }),
+            task('s', 'sam task', {
+              owner: 'Sam',
+              manual_order: 1,
+              due_date: ''
+            })
+          ]
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    setGroupBy('owner')
+    setSort('manual')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const handleP = document.querySelector(
+      '[data-testid="tasks-row-drag-handle-p"]'
+    ) as HTMLElement
+    const rowS = document.querySelector('[data-block-id="s"]') as HTMLElement
+
+    await fireEvent.dragStart(handleP)
+    await fireEvent.drop(rowS)
+    await flush()
+
+    // Cross-group drag in the List is a no-op — no order writes, no
+    // dimension reassignment (the user uses BoardView for that).
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed setTaskOrder via the role="alert" banner', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [
+            task('A', 'task a', { manual_order: 1, due_date: '' }),
+            task('B', 'task b', { manual_order: 2, due_date: '' }),
+            task('C', 'task c', { manual_order: 3, due_date: '' })
+          ]
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    mocks.setTaskOrder.mockReset().mockRejectedValue(new Error('lock held'))
+
+    setGroupBy('none')
+    setSort('manual')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const handleA = document.querySelector(
+      '[data-testid="tasks-row-drag-handle-A"]'
+    ) as HTMLElement
+    const rowC = document.querySelector('[data-block-id="C"]') as HTMLElement
+
+    await fireEvent.dragStart(handleA)
+    await fireEvent.drop(rowC)
+    // Drain the rejection chain through both the per-task .catch (which
+    // flips orderError) and the outer Promise.all .catch (liveMessage).
+    await flush()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const alert = document.querySelector(
+      '[data-testid="tasks-order-error"]'
+    ) as HTMLElement | null
+    expect(alert).toBeTruthy()
+    expect(alert?.getAttribute('role')).toBe('alert')
+    expect(alert?.textContent).toContain("Couldn't reorder task")
   })
 })

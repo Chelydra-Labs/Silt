@@ -7,6 +7,7 @@ import (
 
 	"silt/backend/db"
 	"silt/backend/parser"
+	"silt/backend/plugins"
 )
 
 // taskLineForID returns the rendered line carrying the given block ID, or ""
@@ -545,5 +546,143 @@ func TestDedupeTags_StripsLeadingHashAndDedupes(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("dedupeTags[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SetTaskOrder (#426)
+// ---------------------------------------------------------------------------
+
+// TestSetTaskOrder_RewritesToken stamps a positive [order:: N] onto a task,
+// asserts the rendered line carries the token, the index row re-derives
+// manual_order=N, and a parse → render → parse round trip is byte-stable.
+func TestSetTaskOrder_RewritesToken(t *testing.T) {
+	app := newTestApp(t)
+	const id = "5656aaaa-1111-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "OrderSet", "2026-07-01", content)
+
+	if err := app.SetTaskOrder(id, 7); err != nil {
+		t.Fatalf("SetTaskOrder set: %v", err)
+	}
+	updated, _ := os.ReadFile(filePath)
+	updatedStr := string(updated)
+	line := taskLineForID(updatedStr, id)
+	if !strings.Contains(line, "[order:: 7]") {
+		t.Errorf("set: expected [order:: 7] token in line: %s", line)
+	}
+
+	// Round-trip through the parser yields the value, and a second
+	// parse→render→parse stays byte-stable (the omit-when-0 + fixed token
+	// position let the renderer produce an idempotent file).
+	blocks, _, _, _, perr := parser.ParseFileContent(updatedStr, "W", "S", "OrderSet", "2026-07-01", app.spacesPerTab)
+	if perr != nil {
+		t.Fatalf("re-parse: %v", perr)
+	}
+	var order int
+	for _, b := range blocks {
+		if b.ID == id {
+			order = b.ManualOrder
+		}
+	}
+	if order != 7 {
+		t.Errorf("round-trip: expected manual_order=7, got %d", order)
+	}
+
+	// Render→parse byte-stability: re-rendering the parsed blocks must
+	// produce a file whose task line is unchanged (the token set + order
+	// are deterministic on output).
+	frontmatter, body := parser.SplitFrontmatter(updatedStr)
+	rerendered := parser.RenderFileContent(blocks, body, frontmatter, app.spacesPerTab)
+	rerenderedLine := taskLineForID(rerendered, id)
+	if rerenderedLine != line {
+		t.Errorf("byte-stability: rendered line drifted\n first:  %s\n second: %s", line, rerenderedLine)
+	}
+
+	// Index reflection: the tasks.manual_order cache holds the new value.
+	tasks, err := app.db.QueryTasksWithFilters(parser.TaskQueryFilter{})
+	if err != nil {
+		t.Fatalf("QueryTasks: %v", err)
+	}
+	for _, tk := range tasks {
+		if tk.ID == id {
+			if tk.ManualOrder != 7 {
+				t.Errorf("index: expected manual_order=7, got %d", tk.ManualOrder)
+			}
+			return
+		}
+	}
+	t.Errorf("subject %s not returned by QueryTasks", id)
+}
+
+// TestSetTaskOrder_ClearsToken verifies that passing 0 (the omit-when-0
+// sentinel) strips the [order::] token from the file.
+func TestSetTaskOrder_ClearsToken(t *testing.T) {
+	app := newTestApp(t)
+	const id = "5656bbbb-1111-1111-1111-111111111111"
+	content := "- [ ] ship [order:: 5] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "OrderClear", "2026-07-01", content)
+
+	if err := app.SetTaskOrder(id, 0); err != nil {
+		t.Fatalf("SetTaskOrder clear: %v", err)
+	}
+	updated, _ := os.ReadFile(filePath)
+	line := taskLineForID(string(updated), id)
+	if strings.Contains(line, "[order::") {
+		t.Errorf("clear: [order::] token should be omitted in line: %s", line)
+	}
+}
+
+// TestSetTaskOrder_NegativeRejects is the contract guard: a negative order
+// is a UI bug, not user intent. The backend is the contract surface for
+// every plugin + the in-app reorder, so reject up front and leave the
+// file untouched (no write, no block:changed emission).
+func TestSetTaskOrder_NegativeRejects(t *testing.T) {
+	app := newTestApp(t)
+	const id = "5656cccc-1111-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "OrderNegative", "2026-07-01", content)
+
+	before, _ := os.ReadFile(filePath)
+	if err := app.SetTaskOrder(id, -1); err == nil {
+		t.Fatal("expected error for negative order, got nil")
+	}
+	after, _ := os.ReadFile(filePath)
+	if string(before) != string(after) {
+		t.Errorf("file must NOT be written on rejected order\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
+// TestPluginSetTaskOrder_GatedByCapability mirrors the content-mutate gate
+// pattern: a third-party plugin without the grant is denied; the same
+// plugin with content-mutate succeeds and the file gets the token.
+func TestPluginSetTaskOrder_GatedByCapability(t *testing.T) {
+	app := newTestApp(t)
+	const id = "5656dddd-1111-1111-1111-111111111111"
+	content := "- [ ] gated <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "OrderGated", "2026-07-01", content)
+
+	tok := registerTestSession(t, app, "third-party")
+	// Without the content-mutate grant: rejected, file untouched.
+	before, _ := os.ReadFile(filePath)
+	if _, err := app.PluginSetTaskOrder("third-party", tok, id, 3); err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+	after, _ := os.ReadFile(filePath)
+	if string(before) != string(after) {
+		t.Errorf("file must NOT be written on a denied call\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+
+	// Grant content-mutate; the same call now succeeds and lands the token.
+	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	ok, err := app.PluginSetTaskOrder("third-party", tok, id, 3)
+	if err != nil || !ok {
+		t.Fatalf("PluginSetTaskOrder with grant: ok=%v err=%v", ok, err)
+	}
+	updated, _ := os.ReadFile(filePath)
+	if !strings.Contains(taskLineForID(string(updated), id), "[order:: 3]") {
+		t.Errorf("granted call should have stamped [order:: 3]: %s", taskLineForID(string(updated), id))
 	}
 }

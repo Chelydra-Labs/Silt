@@ -97,6 +97,9 @@
   let dragCard: TaskDetail | null = null
   let dragFromColKey = ''
   let draggingId = $state<string | null>(null)
+  // Within-column manual reorder (#426): the card the pointer is hovering
+  // on; null when not over a valid same-column drop target.
+  let dragOverCardId = $state<string | null>(null)
   let liveMessage = $state('')
 
   // --- Column-management UI state (status dimension only) -----------------
@@ -281,6 +284,21 @@
     liveMessage = announceMove(toCol)
     try {
       await dispatchDrop(card, toCol)
+      // Cross-column manual sort (#426): the moved card joins the
+      // destination column's tail (highest order + 1). The source column
+      // is NOT renumbered (gap-tolerant). Within-column reorder is owned
+      // by commitManualReorder via the card-level drop handler.
+      if (sort === 'manual') {
+        const destLen = prev.find((c) => c.key === toCol.key)?.items.length ?? 0
+        try {
+          await ctx.setTaskOrder(card.id, destLen + 1)
+        } catch (e) {
+          if (my !== moveSeq) return
+          moveError = e instanceof Error ? e.message : String(e)
+          revertTo(prev)
+          liveMessage = 'Move failed — reverted.'
+        }
+      }
     } catch (e) {
       if (my !== moveSeq) return
       moveError = e instanceof Error ? e.message : String(e)
@@ -598,10 +616,89 @@
     cleanupDrag()
     void commitDrop(card, fromKey, col)
   }
+
+  // Within-column manual reorder (#426): when sort='manual', each card is
+  // also a drop target so the user can insert the dragged card BEFORE a
+  // specific sibling. The card-level handler runs first (event bubbles
+  // upward); for same-column manual drops it owns the persist + optimistic
+  // update and stops propagation so the lane handler doesn't double-fire.
+  function onCardDragOver(e: DragEvent, card: TaskDetail, col: BoardColumn) {
+    if (sort !== 'manual' || !dndEnabled || !dragCard) return
+    if (col.key !== dragFromColKey) return
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    dragOverCardId = card.id
+  }
+  function onCardDrop(e: DragEvent, target: TaskDetail, col: BoardColumn) {
+    if (sort !== 'manual' || !dndEnabled || !dragCard) return
+    if (col.key !== dragFromColKey) return
+    e.preventDefault()
+    e.stopPropagation()
+    const src = dragCard
+    const fromKey = dragFromColKey
+    dragOverCardId = null
+    cleanupDrag()
+    if (src.id === target.id) return
+    void commitManualReorder(src, target, col, fromKey)
+  }
+
+  // Renumber the cards in `col` after `src` is moved to the slot just before
+  // `target`. Persists the diffs via setTaskOrder with optimistic update +
+  // revert. Source group/column is not renumbered on cross-column moves
+  // (gap-tolerant) — only the destination column's 1-based sequence changes.
+  async function commitManualReorder(
+    src: TaskDetail,
+    target: TaskDetail,
+    col: BoardColumn,
+    fromKey: string
+  ) {
+    moveError = ''
+    const my = ++moveSeq
+    const prev = snapshotColumns()
+    const cards = col.items
+    const fromIdx = cards.findIndex((c) => c.id === src.id)
+    const toIdx = cards.findIndex((c) => c.id === target.id)
+    if (fromIdx === -1 || toIdx === -1) return
+    const reordered = [...cards]
+    reordered.splice(fromIdx, 1)
+    // Splice-dance for "land BEFORE the target": removing src shifts the
+    // target's index down by one when src was above it, so recompute the
+    // insertion point against the post-removal array.
+    const insertAt = fromIdx < toIdx ? toIdx - 1 : toIdx
+    reordered.splice(insertAt, 0, src)
+
+    const changes: { id: string; order: number }[] = []
+    reordered.forEach((c, i) => {
+      const newOrder = i + 1
+      if ((c.manual_order ?? 0) !== newOrder) {
+        changes.push({ id: c.id, order: newOrder })
+      }
+    })
+    if (changes.length === 0) return
+
+    // Optimistic: patch the column's items so the card snaps to its slot
+    // before the IPC round-trip; revert on failure (mirror commitDrop).
+    columns = columns.map((c) =>
+      c.key === col.key ? { ...c, items: reordered } : c
+    )
+    liveMessage = `Task moved to position ${
+      changes.find((c) => c.id === src.id)?.order ?? ''
+    } in ${col.label}.`
+    try {
+      await Promise.all(changes.map((c) => ctx.setTaskOrder(c.id, c.order)))
+    } catch (e) {
+      if (my !== moveSeq) return
+      moveError = e instanceof Error ? e.message : String(e)
+      revertTo(prev)
+      liveMessage = 'Reorder failed — reverted.'
+    }
+  }
+
   function cleanupDrag() {
     dragCard = null
     dragFromColKey = ''
     draggingId = null
+    dragOverCardId = null
   }
 
   // --- Keyboard parity (a11y) --------------------------------------------
@@ -872,9 +969,13 @@
                     : ''} {dndEnabled ? 'cursor-grab' : ''} {draggingId ===
                   card.id
                     ? 'opacity-40 rotate-2'
+                    : ''} {dragOverCardId === card.id
+                    ? 'ring-2 ring-accent-primary-start/60'
                     : ''}"
                   ondragstart={(e) => onDragStart(e, card, col.key)}
                   ondragend={cleanupDrag}
+                  ondragover={(e) => onCardDragOver(e, card, col)}
+                  ondrop={(e) => onCardDrop(e, card, col)}
                   onkeydown={(e) => onCardKeydown(e, card, col)}
                   onclick={() => (selectedCard = card)}
                 >

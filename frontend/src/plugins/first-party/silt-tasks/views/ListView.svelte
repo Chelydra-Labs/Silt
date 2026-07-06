@@ -11,6 +11,8 @@
   // The header (title + count) lives in TasksHub.svelte; this component
   // reports its open/done counts upward via onCountChange.
   import { onMount, onDestroy } from 'svelte'
+  import { flip } from 'svelte/animate'
+  import { cubicOut } from 'svelte/easing'
   import type { PluginContext, PluginManifest } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
@@ -388,6 +390,148 @@
   let highlightTimer: ReturnType<typeof setTimeout> | null = null
   let focusedRowId = $state('')
 
+  // --- Manual-order DnD (#426) ------------------------------------------
+  // Sort:'manual' turns each row into a drag source with a drag_indicator
+  // handle. The handle is the only draggable element so the row body still
+  // single-clicks into the edit drawer. Within a section/group, dropping a
+  // row splices it into the target slot and renumbers the 1-based positions
+  // for every shifted task; cross-group drops are a no-op here (BoardView
+  // owns the dimension-reassign path; the List is for within-group order).
+  let dragItem = $state<TaskDetail | null>(null)
+  let dragGroupKey = ''
+  let draggingId = $state<string | null>(null)
+  let dragOverId = $state<string | null>(null)
+  let orderError = $state('')
+  let orderErrorTimer: ReturnType<typeof setTimeout> | null = null
+  let liveMessage = $state('')
+
+  function flashOrderError(e: unknown) {
+    orderError = e instanceof Error ? e.message : String(e)
+    if (orderErrorTimer) clearTimeout(orderErrorTimer)
+    orderErrorTimer = setTimeout(() => {
+      orderError = ''
+      orderErrorTimer = null
+    }, 8_000)
+  }
+
+  // Read the live ordered id sequence for a group from the DOM. The rows
+  // are already rendered in their sorted order (filteredOpen + sortRows /
+  // binByDimension), so the DOM is the source of truth for "what the user
+  // sees right now" — including any optimistic in-place reorder.
+  function groupItemIds(groupKey: string): string[] {
+    const section = document.querySelector(
+      `[data-group="${CSS.escape(groupKey)}"]`
+    )
+    if (!section) return []
+    return Array.from(section.querySelectorAll('[data-block-id]'))
+      .map((el) => el.getAttribute('data-block-id') ?? '')
+      .filter(Boolean)
+  }
+
+  function onRowDragStart(e: DragEvent, item: TaskDetail, groupKey: string) {
+    if (hubSort !== 'manual') {
+      e.preventDefault()
+      return
+    }
+    dragItem = item
+    dragGroupKey = groupKey
+    draggingId = item.id
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', item.id)
+    }
+  }
+
+  function onRowDragEnd() {
+    dragItem = null
+    dragGroupKey = ''
+    draggingId = null
+    dragOverId = null
+  }
+
+  function onRowDragOver(e: DragEvent, item: TaskDetail, groupKey: string) {
+    if (hubSort !== 'manual' || !dragItem) return
+    // Only within-group reorder; cross-group is a no-op (see Block above).
+    if (groupKey !== dragGroupKey) return
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    dragOverId = item.id
+  }
+
+  function onRowDrop(e: DragEvent, target: TaskDetail, groupKey: string) {
+    if (hubSort !== 'manual' || !dragItem) return
+    e.preventDefault()
+    e.stopPropagation()
+    const src = dragItem
+    const srcId = src.id
+    const targetId = target.id
+    const wasOverId = dragOverId
+    dragItem = null
+    draggingId = null
+    dragOverId = null
+    if (groupKey !== dragGroupKey) return
+    if (srcId === targetId) return
+
+    const ids = groupItemIds(groupKey)
+    const fromIdx = ids.indexOf(srcId)
+    const toIdx = ids.indexOf(targetId)
+    if (fromIdx === -1 || toIdx === -1) return
+    const reordered = [...ids]
+    reordered.splice(fromIdx, 1)
+    // Splice-dance for "land BEFORE the target": removing src shifts the
+    // target's index down by one when src was above it, so recompute the
+    // insertion point against the post-removal array.
+    const insertAt = fromIdx < toIdx ? toIdx - 1 : toIdx
+    reordered.splice(insertAt, 0, srcId)
+
+    // Renumber 1..N; collect the diffs so we only persist the tasks whose
+    // 1-based position actually changed (typically the moved row + the
+    // shifted rows between old and new positions).
+    const changes: { id: string; order: number }[] = []
+    reordered.forEach((id, i) => {
+      const newOrder = i + 1
+      const row = openItems.find((r) => r.id === id)
+      if (row && (row.manual_order ?? 0) !== newOrder) {
+        changes.push({ id, order: newOrder })
+      }
+    })
+    if (changes.length === 0) return
+
+    // Optimistic: patch local state so the row snaps to its new slot before
+    // the IPC round-trip. Revert on error so a failed persist can't strand
+    // the row at a slot the file doesn't back.
+    const prevOrders = new Map(
+      openItems.map((r) => [r.id, r.manual_order ?? 0])
+    )
+    openItems = openItems.map((r) => {
+      const c = changes.find((x) => x.id === r.id)
+      return c ? { ...r, manual_order: c.order } : r
+    })
+    liveMessage = `Task moved to position ${
+      changes.find((c) => c.id === srcId)?.order ?? ''
+    }.`
+
+    void Promise.all(
+      changes.map((c) =>
+        ctx.setTaskOrder(c.id, c.order).catch((err) => {
+          // Revert just this task's optimistic update; the next reload will
+          // surface the file's actual state. Surface the error once.
+          openItems = openItems.map((r) =>
+            r.id === c.id
+              ? { ...r, manual_order: prevOrders.get(r.id) ?? r.manual_order }
+              : r
+          )
+          flashOrderError(err)
+          throw err
+        })
+      )
+    ).catch(() => {
+      liveMessage = 'Reorder failed — reverted.'
+    })
+    // Prevent the wasOverId leak when the drop fires before dragleave.
+    void wasOverId
+  }
+
   $effect(() => {
     void focusKey
     const target = focusBlockId
@@ -412,15 +556,39 @@
     if (nowInterval) clearInterval(nowInterval)
     if (markDownTimer) clearTimeout(markDownTimer)
     if (highlightTimer) clearTimeout(highlightTimer)
+    if (orderErrorTimer) clearTimeout(orderErrorTimer)
   })
 </script>
 
-{#snippet taskRow(item: TaskDetail)}
+{#snippet taskRow(item: TaskDetail, groupKey: string)}
   <div
     class="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-hover transition-colors"
     class:tasks-focused={focusedRowId === item.id}
+    class:tasks-drag-over={dragOverId === item.id}
+    class:tasks-dragging={draggingId === item.id}
     data-block-id={item.id}
+    data-group-key={groupKey}
+    role="listitem"
+    ondragover={(e) => onRowDragOver(e, item, groupKey)}
+    ondrop={(e) => onRowDrop(e, item, groupKey)}
+    ondragleave={() => {
+      if (dragOverId === item.id) dragOverId = null
+    }}
   >
+    {#if hubSort === 'manual'}
+      <span
+        class="material-symbols-outlined text-[14px] text-text-muted/60 hover:text-text-muted cursor-grab active:cursor-grabbing flex-shrink-0 select-none"
+        draggable="true"
+        role="button"
+        tabindex="0"
+        aria-grabbed={draggingId === item.id ? 'true' : 'false'}
+        aria-label={`Reorder ${item.clean_content}`}
+        title="Drag to reorder"
+        data-testid={`tasks-row-drag-handle-${item.id}`}
+        ondragstart={(e) => onRowDragStart(e, item, groupKey)}
+        ondragend={onRowDragEnd}>drag_indicator</span
+      >
+    {/if}
     <button
       onclick={(e) => {
         e.stopPropagation()
@@ -512,6 +680,34 @@
     </div>
   {/if}
 
+  {#if orderError}
+    <div
+      class="px-6 py-2 bg-error-bg border-b border-error-border text-error text-[12px] font-body-md flex items-center gap-2"
+      role="alert"
+      data-testid="tasks-order-error"
+    >
+      <span class="flex-1">Couldn't reorder task: {orderError}</span>
+      <button
+        type="button"
+        aria-label="Dismiss error"
+        onclick={() => {
+          orderError = ''
+          if (orderErrorTimer) {
+            clearTimeout(orderErrorTimer)
+            orderErrorTimer = null
+          }
+        }}
+        data-testid="tasks-order-error-dismiss"
+        class="p-1 rounded hover:bg-hover text-text-muted hover:text-error border-none bg-transparent cursor-pointer"
+      >
+        <span class="material-symbols-outlined text-[14px]">close</span>
+      </button>
+    </div>
+  {/if}
+
+  <!-- aria-live region for manual-order drag announcements (#426) -->
+  <div class="sr-only" aria-live="polite">{liveMessage}</div>
+
   <div
     class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-6 max-w-4xl w-full"
   >
@@ -581,7 +777,9 @@
               </h2>
               <div class="space-y-1">
                 {#each group.list as item (item.id)}
-                  {@render taskRow(item)}
+                  <div animate:flip={{ duration: 200, easing: cubicOut }}>
+                    {@render taskRow(item, group.key)}
+                  </div>
                 {/each}
               </div>
             </section>
@@ -591,7 +789,9 @@
         {#if filteredOpen.length > 0}
           <div class="space-y-1" data-group="all" aria-label="All Tasks">
             {#each sortRows(filteredOpen) as item (item.id)}
-              {@render taskRow(item)}
+              <div animate:flip={{ duration: 200, easing: cubicOut }}>
+                {@render taskRow(item, 'all')}
+              </div>
             {/each}
           </div>
         {/if}
@@ -627,7 +827,9 @@
             {#if !collapsedSections.has(group.key)}
               <div id={`tasks-group-${group.key}`} class="space-y-1">
                 {#each group.items as item (item.id)}
-                  {@render taskRow(item)}
+                  <div animate:flip={{ duration: 200, easing: cubicOut }}>
+                    {@render taskRow(item, group.key)}
+                  </div>
                 {/each}
               </div>
             {/if}
@@ -794,5 +996,23 @@
     border: solid var(--color-text-primary);
     border-width: 0 2px 2px 0;
     transform: rotate(45deg);
+  }
+  .tasks-drag-over {
+    box-shadow: inset 0 2px 0 var(--color-accent-primary-start);
+    background: var(--color-accent-primary-glow);
+  }
+  .tasks-dragging {
+    opacity: 0.4;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

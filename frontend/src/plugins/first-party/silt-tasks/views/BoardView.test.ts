@@ -89,6 +89,7 @@ const mocks = vi.hoisted(() => ({
   setTaskPriority: vi.fn(),
   setTaskDueDate: vi.fn(),
   setTaskTags: vi.fn(),
+  setTaskOrder: vi.fn(),
   createTask: vi.fn().mockResolvedValue('new-task-id'),
   getTaskBlockers: vi.fn().mockResolvedValue([]),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
@@ -111,7 +112,8 @@ import {
   getTaskHubState,
   resetTaskHubState,
   setGroupBy,
-  setDisplayMode
+  setDisplayMode,
+  setSort
 } from '../state.svelte'
 
 const TODAY = '2026-07-06'
@@ -131,6 +133,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     setTaskPriority: mocks.setTaskPriority,
     setTaskDueDate: mocks.setTaskDueDate,
     setTaskTags: mocks.setTaskTags,
+    setTaskOrder: mocks.setTaskOrder,
     createTask: mocks.createTask,
     getTaskBlockers: mocks.getTaskBlockers,
     getPluginSettings: vi.fn(() => Promise.resolve({})),
@@ -192,6 +195,25 @@ async function renderBoard(
   return { ctx, onCountChange }
 }
 
+// Variant that lets a test pin the sort mode before render (used by the
+// manual-order tests so setTaskOrder fires on cross-column drops).
+async function renderBoardWithSort(
+  g: Parameters<typeof setGroupBy>[0],
+  sort: Parameters<typeof setSort>[0],
+  rows: Record<string, unknown>[] = []
+) {
+  resetTaskHubState()
+  setGroupBy(g)
+  setSort(sort)
+  mocks.sqliteQuery.mockReset()
+  mocks.sqliteQuery.mockResolvedValue({ rows, truncated: false })
+  const ctx = makeCtx()
+  const onCountChange = vi.fn()
+  render(BoardView, { ctx, onCountChange })
+  await flush()
+  return { ctx, onCountChange }
+}
+
 describe('BoardView — dimension-aware Board (#421)', () => {
   beforeEach(() => {
     mocks.settings.config.plugins.plugin_settings = {}
@@ -200,6 +222,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     mocks.setTaskPriority.mockReset().mockResolvedValue(true)
     mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
     mocks.setTaskTags.mockReset().mockResolvedValue(true)
+    mocks.setTaskOrder.mockReset().mockResolvedValue(true)
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
     mocks.getTaskBlockers.mockReset().mockResolvedValue([])
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
@@ -568,5 +591,77 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     const last = onCountChange.mock.calls.at(-1)
     expect(last?.[0]).toBe(2) // open
     expect(last?.[1]).toBe(1) // done
+  })
+
+  // --- Manual ordering (#426) ------------------------------------------
+
+  it('sort=manual: dropping a card onto a sibling in the SAME column renumbers via setTaskOrder', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({ id: 'a', status: 'TODO', clean_content: 'A', manual_order: 1 }),
+      row({ id: 'b', status: 'TODO', clean_content: 'B', manual_order: 2 }),
+      row({ id: 'c', status: 'TODO', clean_content: 'C', manual_order: 3 })
+    ])
+
+    const cards = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelectorAll<HTMLElement>('[data-card]')
+    const cardA = cards[0]!
+    const cardC = cards[2]!
+
+    await fireEvent.dragStart(cardA)
+    await fireEvent.drop(cardC)
+    await flush()
+
+    // Splice-dance "land BEFORE target": [a,b,c] → remove a → [b,c] →
+    // insert a before c (idx 1) → [b, a, c] → new orders b=1 (was 2),
+    // a=2 (was 1), c=3 (unchanged). The two changed rows are persisted.
+    expect(mocks.setTaskOrder).toHaveBeenCalledTimes(2)
+    expect(mocks.setTaskOrder).toHaveBeenCalledWith('b', 1)
+    expect(mocks.setTaskOrder).toHaveBeenCalledWith('a', 2)
+    // The unchanged row (c) is not persisted.
+    expect(mocks.setTaskOrder.mock.calls.some(([id]) => id === 'c')).toBe(false)
+    // The dimension setter did NOT fire (within-column manual is order-only).
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+  })
+
+  it('sort=manual: dropping a card on itself is a no-op', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({ id: 'a', status: 'TODO', clean_content: 'A', manual_order: 1 }),
+      row({ id: 'b', status: 'TODO', clean_content: 'B', manual_order: 2 })
+    ])
+
+    const cardA = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+
+    await fireEvent.dragStart(cardA)
+    await fireEvent.drop(cardA)
+    await flush()
+
+    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+  })
+
+  it('sort=manual: cross-column drop assigns the destination tail order (N+1)', async () => {
+    await renderBoardWithSort('status', 'manual', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A', manual_order: 1 }),
+      row({ id: 't2', status: 'TODO', clean_content: 'B', manual_order: 2 }),
+      row({ id: 'd1', status: 'DOING', clean_content: 'C', manual_order: 1 })
+    ])
+
+    const todoCards = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelectorAll<HTMLElement>('[data-card]')
+    const cardT1 = todoCards[0]!
+    const doingCol = screen.getByRole('group', { name: 'In Progress' })
+
+    await fireEvent.dragStart(cardT1)
+    await fireEvent.drop(doingCol)
+    await flush()
+
+    // The dimension setter (updateBlockState) fires for the cross-column
+    // move, AND setTaskOrder assigns the moved card the destination's
+    // tail order (1 card already in DOING → t1 gets order 2).
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('t1', 'DOING')
+    expect(mocks.setTaskOrder).toHaveBeenCalledWith('t1', 2)
   })
 })

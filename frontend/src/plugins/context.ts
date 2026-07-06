@@ -15,6 +15,7 @@ import {
   PluginSetTaskRecurrence,
   PluginSetTaskBlockedBy,
   PluginSetTaskOwner,
+  PluginSetTaskOrder,
   PluginSetTaskPriority,
   PluginSetTaskTags,
   PluginSetTaskTitle,
@@ -193,6 +194,10 @@ export function makePluginContext(
     // Rewrite a task's [owner:: NAME] token (#412). Empty string clears it.
     setTaskOwner: (id, owner) =>
       PluginSetTaskOwner(pluginID, sessionToken ?? '', id, owner),
+    // Rewrite a task's [order:: N] token (#426). 0 clears it; manual sort
+    // uses 1-based positive ints (the renderer omits the token at 0).
+    setTaskOrder: (id, order) =>
+      PluginSetTaskOrder(pluginID, sessionToken ?? '', id, order),
     // Rewrite a task's [priority:: N] token (#412). 1=Critical, 2=Normal, 3=Low.
     setTaskPriority: (id, priority) =>
       PluginSetTaskPriority(pluginID, sessionToken ?? '', id, priority),

@@ -203,6 +203,14 @@ export interface PluginContext {
    */
   setTaskOwner: (id: string, owner: string) => Promise<boolean>
   /**
+   * Rewrite a task's `[order:: N]` inline token on disk atomically (#426).
+   * 1-based positive int reflects the user's manual sort position; pass 0 to
+   * clear the token (the renderer omits it). Negative values are rejected
+   * server-side. Round-trips through the markdown file, re-indexes, and emits
+   * block:changed. Gated by content-mutate.
+   */
+  setTaskOrder: (id: string, order: number) => Promise<boolean>
+  /**
    * Rewrite a task's `[priority:: N]` inline token on disk atomically (#412).
    * 1=Critical, 2=Normal, 3=Low (matches PRIORITY_LABELS). Round-trips through
    * the markdown file, re-indexes, and emits block:changed. Gated by
