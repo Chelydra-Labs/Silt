@@ -70,7 +70,8 @@ func TestRequireGrant_RejectsPathTraversalPluginID(t *testing.T) {
 // non-first-party ID with no grant entry is denied.
 func TestPluginFetch_FirstPartyIDDeniedWithoutSeededGrant(t *testing.T) {
 	app := newTestApp(t)
-	// "silt-agenda" works because seedFirstPartyGrants ran in newTestApp.
+	// Any first-party id (e.g. silt-calendar) works because seedFirstPartyGrants
+	// ran in newTestApp.
 	_ = app.RequestCapability("third-party", string(plugins.CapNetwork), "")
 
 	// A random non-first-party, non-granted ID is denied.

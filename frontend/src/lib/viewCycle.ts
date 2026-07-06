@@ -7,10 +7,9 @@
  *
  * Note: `'agenda'` is intentionally NOT in the cycle after #322 merged the
  * Agenda view into Calendar as a third mode. The activity bar no longer
- * exposes Agenda as an entry, and routing `activeView === 'agenda'` would
- * send the user to the (now-defunct) silt-agenda plugin's standalone view
- * rather than the unified Calendar with its Agenda mode. Pressing
- * Ctrl+Alt+V from Tags jumps directly to Calendar.
+ * exposes Agenda as an entry — the unified Calendar's Agenda mode is the
+ * successor surface. Pressing Ctrl+Alt+V from Tags jumps directly to
+ * Calendar.
  *
  * Tasks (`'tasks'`) is inserted between Calendar and Kanban (#370) so the
  * cycle visits the date-scoped agenda and the vault-scoped undated-aware

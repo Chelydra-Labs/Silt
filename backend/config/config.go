@@ -366,7 +366,7 @@ func Defaults() SystemConfig {
 			"toggle_typewriter_mode": "Ctrl+Shift+Y",
 		},
 		Plugins: PluginsConfig{
-			Active:   []string{"silt-agenda", "silt-calendar", "silt-kanban"},
+			Active:   []string{"silt-calendar", "silt-kanban"},
 			Disabled: []string{},
 			PluginSettings: map[string]any{
 				"silt-kanban": map[string]any{

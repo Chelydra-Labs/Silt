@@ -181,7 +181,6 @@ When you toggle a bundled plugin off in the Plugin Manager, its id is added to t
 ```yaml
 plugins:
   active:          # informational only; not a whitelist
-    - silt-agenda
     - silt-calendar
     - silt-kanban
   disabled:        # first-party plugins the user has toggled off
@@ -202,7 +201,6 @@ Third-party plugins use a `.disabled` sentinel file inside the plugin folder. Th
 
 Read these to see the SDK used end-to-end:
 
-- `frontend/src/plugins/first-party/silt-agenda/Agenda.svelte` — queries tasks, groups Overdue/Today/Tomorrow/Upcoming, marks done via `updateBlockState`, jumps to source.
 - `frontend/src/plugins/first-party/silt-calendar/Calendar.svelte` — month/week grids over a windowed due-date query, with navigation.
 - `frontend/src/plugins/first-party/silt-kanban/Kanban.svelte` — multi-level scope (vault/notebook/section/page) drag-and-drop board with FLIP animations, filter bar (owner/priority/due/tags), custom columns (add/rename/remove/reorder), card detail panel (pin/progress/comments/links), `updateBlockState` on drop, `updateTaskMeta` for pin/progress, keyboard a11y, and a config-driven column list.
 
@@ -270,7 +268,7 @@ manifest.
 
 ### 7.3 Reserved first-party plugin ids (#240)
 
-The ids in `plugins.FirstPartyPluginIDs` (`silt-agenda`, `silt-calendar`,
+The ids in `plugins.FirstPartyPluginIDs` (`silt-calendar`,
 `silt-kanban`, `silt-attachments`) are reserved for the bundled first-party
 plugins. A `.silt-plugin` archive whose manifest `id` collides with one of
 these is **rejected at install time** with:

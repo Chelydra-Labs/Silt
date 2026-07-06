@@ -1,5 +1,4 @@
 import type { RegisteredPlugin } from './sdk'
-import Agenda from './first-party/silt-agenda/Agenda.svelte'
 import Calendar from './first-party/silt-calendar/Calendar.svelte'
 import CalendarSidebar from './first-party/silt-calendar/CalendarSidebar.svelte'
 import Kanban from './first-party/silt-kanban/Kanban.svelte'
@@ -12,20 +11,8 @@ import AttachmentsPlugin from './first-party/silt-attachments'
 // loader; both go through the identical PluginContext SDK.
 const registry = new Map<string, RegisteredPlugin>()
 
-// Register built-in plugins. Agenda (#17) and Calendar (#18) are built
-// exclusively on the PluginContext SDK, exactly as a third-party plugin would.
-registerPlugin({
-  manifest: {
-    id: 'silt-agenda',
-    name: 'Agenda',
-    version: '1.0.0',
-    author: 'Silt',
-    description: 'Rolling agenda of overdue, today, and upcoming tasks.',
-    icon: 'event_repeat'
-  },
-  component: Agenda,
-  source: 'first-party'
-})
+// Register built-in plugins. Calendar (#18) is built exclusively on the
+// PluginContext SDK, exactly as a third-party plugin would.
 registerPlugin({
   manifest: {
     id: 'silt-calendar',
