@@ -407,23 +407,19 @@
       </button>
     </div>
   {:else if config}
-    <!-- Intro -->
-    <section aria-labelledby="ai-intro-heading">
-      <h3
-        id="ai-intro-heading"
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-2"
-      >
-        AI Provider
-      </h3>
-      <p class="text-text-muted text-[12px] font-body-md">
-        Plugins call
-        <code class="font-mono text-[11px]">ctx.ai.complete()</code> for chat
-        and <code class="font-mono text-[11px]">ctx.ai.embed()</code> for
-        embeddings. Configure which model server handles those calls here.
+    <!-- The shell already renders "AI Provider" as the panel's h2, so this
+         section orients the user rather than repeating the title. The
+         subsections below (Chat model / Embedding model / …) carry their own
+         eyebrows; this intro stays a plain lead paragraph. -->
+    <section aria-label="AI provider overview">
+      <p class="text-text-primary text-[13px] font-body-md">
+        Connect Silt to an AI model so plugins can summarize notes, search your
+        vault semantically, and more. Configure a separate model for each task
+        below.
       </p>
       {#if needsSetup}
         <div
-          class="mt-3 bg-accent-primary-glow border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2.5"
+          class="mt-4 bg-accent-primary-glow border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2.5"
         >
           <span
             class="material-symbols-outlined text-accent-primary-start text-[18px] mt-0.5 flex-shrink-0"
