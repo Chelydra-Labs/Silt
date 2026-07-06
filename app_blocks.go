@@ -161,6 +161,17 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 					}
 					wasDone := parsedBlocks[i].Status == "DONE"
 					parsedBlocks[i].Status = newState
+					// [completed::] lifecycle stamp (#417): set when entering
+					// DONE from a non-DONE state, clear when leaving DONE
+					// (reopen), overwrite on re-complete. The token carries
+					// the time of the MOST RECENT DONE transition, matching
+					// the recurrence-spawn path below (which also lands a
+					// fresh [completed::] on the just-completed original).
+					if newState == "DONE" && !wasDone {
+						parsedBlocks[i].CompletedAt = time.Now().Format("2006-01-02T15:04:05")
+					} else if newState != "DONE" && wasDone {
+						parsedBlocks[i].CompletedAt = ""
+					}
 					// Recurring-task auto-recreation (#296): when a task with a
 					// [recur::] token transitions TO DONE (not already DONE),
 					// spawn the next incomplete instance directly below it in
@@ -174,7 +185,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 					// A malformed recurrence rule is a no-op + log so the DONE
 					// transition never fails because of recurrence.
 					if newState == "DONE" && !wasDone && parsedBlocks[i].Recurrence != "" {
-						if nb, ok := buildNextRecurrence(parsedBlocks[i]); ok {
+						if nb, ok := buildNextRecurrence(parsedBlocks[i], parsedBlocks, i); ok {
 							parsedBlocks[i].Recurrence = ""
 							parsedBlocks = insertBlockAfter(parsedBlocks, i, nb)
 						}
@@ -270,7 +281,12 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 // carries the same recurrence rule so the cycle continues. A malformed rule
 // or unparseable due date returns ok=false so the caller can no-op + log
 // without blocking the DONE transition.
-func buildNextRecurrence(completed parser.ParsedBlock) (parser.ParsedBlock, bool) {
+//
+// `all` and `completedIdx` are the full parsed slice and the completed block's
+// index within it, used to compute the spawned block's ManualOrder (#417): its
+// 1-based position among all TASK blocks (counting the about-to-be-inserted
+// spawn). CreatedAt is stamped to now since the spawn is a genuinely-new task.
+func buildNextRecurrence(completed parser.ParsedBlock, all []parser.ParsedBlock, completedIdx int) (parser.ParsedBlock, bool) {
 	rule, err := recurrence.ParseRule(completed.Recurrence)
 	if err != nil {
 		log.Printf("recurrence: skipping auto-recreation for block %s: %v", completed.ID, err)
@@ -285,23 +301,37 @@ func buildNextRecurrence(completed parser.ParsedBlock) (parser.ParsedBlock, bool
 		}
 	}
 	next := rule.NextFutureInstance(base, time.Now())
-	today := time.Now().Format("2006-01-02")
+	now := time.Now()
+	today := now.Format("2006-01-02")
+	// ManualOrder for the spawned block: count TASK blocks at or before the
+	// insertion point (completedIdx+1 after insertBlockAfter lands the spawn
+	// directly below the completed block). This is the spawn's 1-based
+	// position among all TASK blocks in the file (#417).
+	taskPos := 0
+	for j := 0; j <= completedIdx; j++ {
+		if all[j].Type == parser.BlockTask {
+			taskPos++
+		}
+	}
+	taskPos++ // the spawned block itself
 	return parser.ParsedBlock{
-		ID:         uuid.New().String(),
-		ParentID:   completed.ParentID,
-		Type:       parser.BlockTask,
-		Depth:      completed.Depth,
-		CleanText:  completed.CleanText,
-		Status:     "TODO",
-		Owner:      completed.Owner,
-		StartDate:  completed.StartDate,
-		DueDate:    recurrence.FormatDate(next),
-		Priority:   completed.Priority,
-		Pinned:     completed.Pinned,
-		Progress:   0, // new instance starts fresh
-		Recurrence: completed.Recurrence,
-		LineNumber: completed.LineNumber + 1, // rendered directly below
-		FileDate:   today,
+		ID:          uuid.New().String(),
+		ParentID:    completed.ParentID,
+		Type:        parser.BlockTask,
+		Depth:       completed.Depth,
+		CleanText:   completed.CleanText,
+		Status:      "TODO",
+		Owner:       completed.Owner,
+		StartDate:   completed.StartDate,
+		DueDate:     recurrence.FormatDate(next),
+		Priority:    completed.Priority,
+		Pinned:      completed.Pinned,
+		Progress:    0, // new instance starts fresh
+		Recurrence:  completed.Recurrence,
+		CreatedAt:   now.Format("2006-01-02T15:04:05"),
+		ManualOrder: taskPos,
+		LineNumber:  completed.LineNumber + 1, // rendered directly below
+		FileDate:    today,
 	}, true
 }
 

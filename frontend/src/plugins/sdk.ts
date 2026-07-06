@@ -101,6 +101,12 @@ export interface SubtreeBlock {
   line_number: number
   file_date?: string
   language?: string
+  // Sub-tree task blocks carry the new [created::]/[completed::]/[order::]
+  // tokens (#417). Optional because non-task descendants lack them and
+  // pre-existing tasks predate the columns.
+  created_at?: string
+  completed_at?: string
+  manual_order?: number
 }
 
 /**

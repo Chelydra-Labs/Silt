@@ -65,6 +65,11 @@ function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
     recurrence: '',
     comments_count: 0,
     links_count: 0,
+    // #417: new [created::]/[completed::]/[order::] fields default to
+    // empty/0 (the pre-existing-task case).
+    created_at: '',
+    completed_at: '',
+    manual_order: 0,
     ...overrides
   }
 }
@@ -390,5 +395,58 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
       props: { task: makeTask(), ctx, onClose: () => {} }
     })
     expect(screen.queryByText('Open sub-editor')).toBeNull()
+  })
+})
+
+describe('TaskEditDrawer — created/completed metadata line (#417)', () => {
+  beforeEach(() => cleanup())
+
+  it('hides the Created/Completed line when both timestamps are empty', () => {
+    const ctx = makeCtx()
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose: () => {} }
+    })
+    // The common case for pre-existing tasks — no Created dt in the Details dl.
+    expect(screen.queryByText('Created')).toBeNull()
+    expect(screen.queryByText(/Completed/)).toBeNull()
+  })
+
+  it('renders the Created timestamp when created_at is populated', () => {
+    const ctx = makeCtx()
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({ created_at: '2026-07-06T15:30:00' }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+    // The dt label is present, and the formatted timestamp renders (the
+    // exact localized string varies by TZ/locale, so assert the label is
+    // associated with a dd that contains "Jul" + "6").
+    const createdDt = screen.getByText('Created')
+    const dd = createdDt.parentElement?.querySelector('dd')
+    expect(dd).toBeTruthy()
+    expect(dd?.textContent).toMatch(/Jul/)
+    expect(dd?.textContent).toMatch(/6/)
+  })
+
+  it('renders the Completed line when completed_at is populated', () => {
+    const ctx = makeCtx()
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({
+          status: 'DONE',
+          created_at: '2026-07-01T09:00:00',
+          completed_at: '2026-07-06T15:30:00'
+        }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+    expect(screen.getByText(/Completed/)).toBeTruthy()
+    // Completed renders as a block-level line inside the dd.
+    const completedLine = screen.getByText(/Completed/).parentElement
+    expect(completedLine?.textContent).toMatch(/Jul/)
+    expect(completedLine?.textContent).toMatch(/6/)
   })
 })

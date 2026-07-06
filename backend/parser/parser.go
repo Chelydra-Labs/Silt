@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -198,7 +199,7 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 // Adding a new metadata type is a one-line addition to the switch below.
 // Unknown keys are preserved in extraTokens so the file round-trips
 // without data loss.
-func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, blockedBy []string, extraTokens []string) {
+func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, blockedBy []string, extraTokens []string, createdAt, completedAt string, manualOrder int) {
 	priority = 3 // default; 0 from the regex means "not set"
 	progress = 0
 	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
@@ -263,6 +264,26 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 			// Cycles are prevented at write time by the IPC setter; the
 			// parser only round-trips what's on disk.
 			blockedBy = dependencies.ExtractRefs(val)
+		case "created":
+			// Task lifecycle timestamp (#417): ISO 8601 local
+			// (YYYY-MM-DDTHH:MM:SS), no timezone. Stored verbatim so a
+			// hand-edited value round-trips; only genuinely-new tasks
+			// get the token minted (no backfill of existing tasks).
+			createdAt = val
+		case "completed":
+			// Time of the most recent DONE transition (#417). Cleared on
+			// reopen; overwritten on re-complete. Same format as created.
+			completedAt = val
+		case "order":
+			// 1-based manual sort position among all TASK blocks in the
+			// file (#417). 0 means "not set" and the renderer omits the
+			// token. Parsed like priority/progress: a non-integer value
+			// leaves manualOrder at its zero default.
+			if val != "" {
+				if n, err := strconv.Atoi(val); err == nil {
+					manualOrder = n
+				}
+			}
 		default:
 			// Unrecognised key — preserve the full [key:: value] token
 			// verbatim so it survives the parse → render round-trip.
@@ -305,7 +326,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		}
 
 		// Scan for [key:: value] metadata tokens in the remainder.
-		owner, startDate, dueDate, priority, pinned, progress, recurrence, description, blockedBy, extraTokens := scanTaskTokens(remainder)
+		owner, startDate, dueDate, priority, pinned, progress, recurrence, description, blockedBy, extraTokens, createdAt, completedAt, manualOrder := scanTaskTokens(remainder)
 
 		depth := parseLeadingIndent(indent, spacesPerTab)
 
@@ -324,6 +345,9 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 			Progress:    progress,
 			Recurrence:  recurrence,
 			BlockedBy:   blockedBy,
+			CreatedAt:   createdAt,
+			CompletedAt: completedAt,
+			ManualOrder: manualOrder,
 			ExtraTokens: extraTokens,
 			LineNumber:  lineNumber,
 			FileDate:    blockFileDate,
@@ -791,6 +815,13 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 	// loss for any block past depth 99.
 	activeIDs := []string{}
 
+	// taskCounter is the running 1-based count of TASK blocks seen so far
+	// in the file. It backs ManualOrder for newly-minted tasks (#417): a
+	// genuinely-new task (one whose line lacked a block-identity comment,
+	// flagged by `modified`) is stamped with its 1-based position among all
+	// TASK blocks so the UI has a stable sort key from the first save.
+	taskCounter := 0
+
 	for i := startIndex; i < len(lines); i++ {
 		line := lines[i]
 		lineNumber := i + 1
@@ -839,7 +870,6 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		if modified {
 			modifiedAny = true
 		}
-		outputLines = append(outputLines, newLine)
 
 		if block.ID != "" {
 			// Backward-compat: blocks whose comment predates the per-block
@@ -847,6 +877,22 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			// file-level default date (from frontmatter or path-derived).
 			if block.FileDate == "" {
 				block.FileDate = meta.Date
+			}
+
+			// Task lifecycle minting (#417): a TASK block whose line was just
+			// minted with a fresh id (`modified`) is genuinely new — existing
+			// tasks already carry an id comment and never hit this branch, so
+			// there is NO backfill of pre-existing tasks. Stamp CreatedAt
+			// (ISO 8601 local, no tz) and ManualOrder (1-based position among
+			// all TASK blocks in the file). The Go SDK create paths mint the
+			// id themselves and set these fields directly, so on re-parse the
+			// id is already present and this branch is correctly skipped.
+			if block.Type == BlockTask {
+				taskCounter++
+				if modified {
+					block.CreatedAt = time.Now().Format("2006-01-02T15:04:05")
+					block.ManualOrder = taskCounter
+				}
 			}
 
 			// Resolve Parent ID
@@ -868,6 +914,20 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			}
 
 			blocks = append(blocks, block)
+		}
+
+		// Emit the output line. For a newly-minted TASK block (#417) the
+		// in-memory CreatedAt/ManualOrder must reach the file — the scanner
+		// writes `newContent` back to disk when modified=true, and using the
+		// raw `newLine` (id appended only) would lose the lifecycle tokens
+		// (data loss on next re-scan, since the task now has an id and won't
+		// be re-minted). Re-rendering through renderBlock lands the tokens
+		// in the canonical form. Every other line uses `newLine` verbatim
+		// so non-minted content is preserved byte-for-byte.
+		if block.ID != "" && block.Type == BlockTask && modified {
+			outputLines = append(outputLines, renderBlock(block, spacesPerTab))
+		} else {
+			outputLines = append(outputLines, newLine)
 		}
 	}
 
@@ -1086,8 +1146,9 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		// format — see ARCHITECTURE.md §0 "Storage-of-Truth Tiers").
 		// Each metadata field that is set gets its own [key:: value] token
 		// appended after the description. The order is fixed: priority,
-		// start, due, owner, pin, progress — matching the canonical
-		// field order so a parse → render round trip is stable.
+		// start, due, recur, owner, pin, progress, blocked_by, created,
+		// completed, order — matching the canonical field order so a
+		// parse → render round trip is byte-stable.
 		var tokens []string
 		if block.Priority > 0 && block.Priority != 3 {
 			tokens = append(tokens, fmt.Sprintf("[priority:: %d]", block.Priority))
@@ -1116,6 +1177,22 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		}
 		if refStr := dependencies.FormatRefs(block.BlockedBy); refStr != "" {
 			tokens = append(tokens, fmt.Sprintf("[blocked_by:: %s]", refStr))
+		}
+		// Lifecycle metadata (#417): created/completed timestamps and the
+		// manual sort order. Emitted after blocked_by and before unknown
+		// ExtraTokens so the position is deterministic (scanTaskTokens is
+		// order-independent, but a fixed render order is what makes the
+		// parse → render round-trip byte-identical). Each is omitted when
+		// at its zero value (empty string / 0) so existing tasks without
+		// these tokens stay exactly as they were (no backfill on render).
+		if block.CreatedAt != "" {
+			tokens = append(tokens, fmt.Sprintf("[created:: %s]", block.CreatedAt))
+		}
+		if block.CompletedAt != "" {
+			tokens = append(tokens, fmt.Sprintf("[completed:: %s]", block.CompletedAt))
+		}
+		if block.ManualOrder > 0 {
+			tokens = append(tokens, fmt.Sprintf("[order:: %d]", block.ManualOrder))
 		}
 		// Append unknown Dataview tokens verbatim so they survive the
 		// round-trip (Dataview-compatible interop — SPECS.md §4.1).

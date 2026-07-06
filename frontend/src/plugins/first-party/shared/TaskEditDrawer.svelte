@@ -67,6 +67,25 @@
     return 'text-accent-primary-start border-accent-primary-start/30 bg-accent-primary-glow'
   }
 
+  // Friendly local rendering of the [created::]/[completed::] ISO timestamps
+  // (#417) for the Details metadata line. Falls back to the raw string when
+  // the value isn't a parseable date so a hand-entered timestamp never renders
+  // as "Invalid Date". No shared date formatter exists in the codebase yet
+  // (VirtualScrollContainer.formatDate is local + date-only), so this is a
+  // small inline helper using Intl.DateTimeFormat.
+  const timestampFormatter = new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  })
+  function formatTimestamp(iso: string): string {
+    if (!iso) return ''
+    const parsed = new Date(iso)
+    return isNaN(parsed.getTime()) ? iso : timestampFormatter.format(parsed)
+  }
+
   let tagList = $derived(task?.tags ? task.tags.split('|').filter(Boolean) : [])
   let blockedByList = $derived(
     task?.blocked_by ? task.blocked_by.split('|').filter(Boolean) : []
@@ -838,6 +857,23 @@
                 : '—'}
             </dd>
           </div>
+          {#if task.created_at || task.completed_at}
+            <div class="flex flex-start justify-between gap-2">
+              <dt class="text-text-muted shrink-0">Created</dt>
+              <dd class="text-text-primary text-right">
+                {#if task.created_at}
+                  {formatTimestamp(task.created_at)}
+                {:else}
+                  <span class="text-text-muted">—</span>
+                {/if}
+                {#if task.completed_at}
+                  <span class="block text-text-muted">
+                    Completed {formatTimestamp(task.completed_at)}
+                  </span>
+                {/if}
+              </dd>
+            </div>
+          {/if}
           {#if nextOccurrence}
             <div class="flex items-center justify-between">
               <dt class="text-text-muted">Next occurrence</dt>

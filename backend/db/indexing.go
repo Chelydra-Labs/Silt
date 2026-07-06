@@ -290,7 +290,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer stmtBlock.Close()
 
-	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -355,6 +355,22 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 			if block.Recurrence != "" {
 				recurVal = block.Recurrence
 			}
+			// Lifecycle timestamps + manual order (#417): nullable caches
+			// re-derivable from the [created::], [completed::], [order::]
+			// tokens. Empty/0 → NULL (token absent). The dates are stored
+			// verbatim (ISO 8601 local, no timezone normalization) so the
+			// value round-trips byte-for-byte through markdown.
+			var createdAtVal, completedAtVal interface{}
+			if block.CreatedAt != "" {
+				createdAtVal = block.CreatedAt
+			}
+			if block.CompletedAt != "" {
+				completedAtVal = block.CompletedAt
+			}
+			var manualOrderVal interface{}
+			if block.ManualOrder > 0 {
+				manualOrderVal = block.ManualOrder
+			}
 			// Pin projection (#135): the column accepts NULL/0/1 so the
 			// cache can represent the parser's tri-state — NULL when no
 			// [pin::] token is present (nil), 0 for an explicit [pin::
@@ -368,7 +384,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 				}
 			}
 			linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
-			_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, childNotesByParent[block.ID], linksCount)
+			_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, childNotesByParent[block.ID], linksCount, createdAtVal, completedAtVal, manualOrderVal)
 			if err != nil {
 				return fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 			}
@@ -481,7 +497,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	}
 	defer stmtBlock.Close()
 
-	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -582,6 +598,19 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if block.Recurrence != "" {
 					recurVal = block.Recurrence
 				}
+				// Lifecycle timestamps + manual order (#417) — mirror
+				// IndexFileBlocks: empty/0 → NULL (token absent).
+				var createdAtVal, completedAtVal interface{}
+				if block.CreatedAt != "" {
+					createdAtVal = block.CreatedAt
+				}
+				if block.CompletedAt != "" {
+					completedAtVal = block.CompletedAt
+				}
+				var manualOrderVal interface{}
+				if block.ManualOrder > 0 {
+					manualOrderVal = block.ManualOrder
+				}
 				// Pin projection (#135): tri-state NULL/0/1 mirroring
 				// IndexFileBlocks — NULL=absent, 0=[pin:: false], 1=[pin::
 				// true]. Reproducible cache; markdown is source of truth.
@@ -602,7 +631,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 					}
 				}
 				linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
-				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, commentsCount, linksCount)
+				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, commentsCount, linksCount, createdAtVal, completedAtVal, manualOrderVal)
 				if err != nil {
 					return 0, skipped, fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 				}

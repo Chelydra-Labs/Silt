@@ -109,6 +109,21 @@ type ParsedBlock struct {
 	// (no ((...)) wrapper). Empty = no prerequisites. File-resident user
 	// intent; SQLite caches the graph in task_dependencies for query speed.
 	BlockedBy []string `json:"blocked_by,omitempty"`
+	// CreatedAt is the timestamp this task was created
+	// (`[created:: YYYY-MM-DDTHH:MM:SS]`, ISO 8601 local, no timezone).
+	// Empty = the task predates the field (NO backfill: only genuinely-
+	// new tasks get the token minted at the creation moment). File-resident;
+	// SQLite caches for query speed (#417).
+	CreatedAt string `json:"created_at,omitempty"`
+	// CompletedAt is the timestamp of the most recent DONE transition
+	// (`[completed:: YYYY-MM-DDTHH:MM:SS]`). Empty when not DONE or when
+	// the task was completed before this field shipped (no backfill).
+	// Reopening clears it; re-completing overwrites with the new time (#417).
+	CompletedAt string `json:"completed_at,omitempty"`
+	// ManualOrder is the user-facing sort position (`[order:: N]`, 1-based
+	// among all TASK blocks in the file). 0 = not set (renderer omits the
+	// token). Only genuinely-new tasks get a minted value (#417).
+	ManualOrder int `json:"manual_order,omitempty"`
 	// ExtraTokens preserves unknown [key:: value] Dataview tokens that the
 	// parser doesn't recognise (e.g. `[project:: alpha]`, `[estimate:: 3h]`).
 	// These round-trip through parse → render so files stay interoperable
@@ -323,6 +338,13 @@ type TaskResult struct {
 	// time so the Kanban/Agenda badge and the dependency picker can render
 	// the prerequisite list without re-parsing markdown.
 	BlockedBy []string `json:"blocked_by,omitempty"`
+	// CreatedAt / CompletedAt / ManualOrder mirror the ParsedBlock fields
+	// (#417): task lifecycle metadata cached on the task row so the
+	// Kanban/Tasks/Agenda views can sort and badge without re-parsing
+	// markdown. Markdown stays the source of truth.
+	CreatedAt   string `json:"created_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
+	ManualOrder int    `json:"manual_order,omitempty"`
 	// CommentsCount is the number of indented child NOTE blocks beneath
 	// this task (the "comments on a task" UX from the Stitch reference).
 	// It is computed at index time from `blocks.parent_id` and cached on

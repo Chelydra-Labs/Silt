@@ -46,7 +46,8 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 	rows, err := dm.db.Query(`
 		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
 		       b.file_date,
-		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
+		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
+		       t.created_at, t.completed_at, t.manual_order
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
 		WHERE b.source = ? AND b.notebook = ? AND b.section = ? AND b.page = ?
@@ -64,8 +65,10 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		var parentID sql.NullString
 		var status, owner, start, due string
 		var priority int
+		var createdAt, completedAt sql.NullString
+		var manualOrder sql.NullInt64
 
-		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority); err != nil {
+		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder); err != nil {
 			return nil, err
 		}
 		if parentID.Valid {
@@ -78,6 +81,19 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		b.DueDate = due
 		b.Priority = priority
 		b.FileDate = fileDate
+		// Lifecycle metadata (#417): hydrate the nullable caches so a block
+		// loaded from the DB and re-rendered preserves its [created::],
+		// [completed::], [order::] tokens (otherwise the next save would
+		// silently strip them — a round-trip violation, rule 1).
+		if createdAt.Valid {
+			b.CreatedAt = createdAt.String
+		}
+		if completedAt.Valid {
+			b.CompletedAt = completedAt.String
+		}
+		if manualOrder.Valid {
+			b.ManualOrder = int(manualOrder.Int64)
+		}
 		blocks = append(blocks, b)
 	}
 	if err := rows.Err(); err != nil {
@@ -90,7 +106,7 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) ([]parser.TaskResult, error) {
 	baseQuery := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
-		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned, t.recur
+		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned, t.recur, t.created_at, t.completed_at, t.manual_order
 		FROM blocks b
 		INNER JOIN tasks t ON b.id = t.block_id
 		WHERE 1=1
@@ -158,10 +174,12 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		var status, owner, start, due, recur interface{}
 		var priority int
 		var pinned sql.NullInt64
+		var createdAt, completedAt interface{}
+		var manualOrder sql.NullInt64
 
 		err := rows.Scan(
 			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
-			&status, &owner, &start, &due, &priority, &pinned, &recur,
+			&status, &owner, &start, &due, &priority, &pinned, &recur, &createdAt, &completedAt, &manualOrder,
 		)
 		if err != nil {
 			return nil, err
@@ -192,6 +210,17 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		}
 		if recurStr, ok := recur.(string); ok {
 			r.Recurrence = recurStr
+		}
+		// Lifecycle metadata (#417): the nullable TEXT/INTEGER projections
+		// of [created::], [completed::], [order::]. NULL stays empty/0.
+		if s, ok := createdAt.(string); ok {
+			r.CreatedAt = s
+		}
+		if s, ok := completedAt.(string); ok {
+			r.CompletedAt = s
+		}
+		if manualOrder.Valid {
+			r.ManualOrder = int(manualOrder.Int64)
 		}
 
 		results = append(results, r)
@@ -390,7 +419,8 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 	}
 	query := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
-		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0)
+		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
+		       t.created_at, t.completed_at, t.manual_order
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
 		WHERE b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ?)
@@ -409,9 +439,11 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 		var parentID sql.NullString
 		var status, owner, start, due string
 		var priority int
+		var createdAt, completedAt sql.NullString
+		var manualOrder sql.NullInt64
 		if err := rows.Scan(
 			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
-			&status, &owner, &start, &due, &priority,
+			&status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder,
 		); err != nil {
 			return nil, err
 		}
@@ -423,6 +455,15 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 		r.StartDate = start
 		r.DueDate = due
 		r.Priority = priority
+		if createdAt.Valid {
+			r.CreatedAt = createdAt.String
+		}
+		if completedAt.Valid {
+			r.CompletedAt = completedAt.String
+		}
+		if manualOrder.Valid {
+			r.ManualOrder = int(manualOrder.Int64)
+		}
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {

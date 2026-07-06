@@ -111,6 +111,7 @@
                   t.status, t.owner, t.start_date, t.due_date,
                   t.priority, t.pinned, t.progress,
                   t.recur AS recurrence, t.comments_count, t.links_count,
+                  t.created_at, t.completed_at, t.manual_order,
                   (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags,
                   (SELECT GROUP_CONCAT(blocked_by_id, '|') FROM task_dependencies WHERE block_id = b.id) AS blocked_by,
                   EXISTS (
@@ -132,7 +133,18 @@
            LIMIT 200`
         )
       ])
-      openItems = (openRes.rows as unknown as TaskDetail[]) ?? []
+      // Coerce SQL NULL → '' / 0 for the new nullable #417 columns so
+      // TaskDetail's non-optional created_at/completed_at/manual_order hold;
+      // also coerce pinned INTEGER → boolean (matches Kanban's mapper).
+      openItems = ((openRes.rows as unknown as TaskDetail[]) ?? []).map(
+        (r) => ({
+          ...r,
+          pinned: !!r.pinned,
+          created_at: r.created_at ?? '',
+          completed_at: r.completed_at ?? '',
+          manual_order: r.manual_order ?? 0
+        })
+      )
       doneItems = (doneRes.rows as unknown as CompletedTaskItem[]) ?? []
       // B1: re-resolve the open drawer's task from the fresh open-items so
       // the drawer never shows a stale snapshot after a write or an external
