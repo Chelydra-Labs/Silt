@@ -1129,6 +1129,7 @@ ai:
     # here only as the fallback when the keyring is off/unavailable.
     temperature: 0.7
     max_tokens: 2048
+    reasoning_effort: "medium"         # chat only: none|minimal|low|medium|high|xhigh|max
     timeout_ms: 60000
   embedding:
     provider_type: "local"

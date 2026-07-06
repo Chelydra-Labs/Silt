@@ -165,6 +165,7 @@
       model: b.model,
       temperature: b.temperature,
       max_tokens: b.max_tokens,
+      reasoning_effort: b.reasoning_effort,
       timeout_ms: b.timeout_ms,
       dimensions: b.dimensions
     }
@@ -774,6 +775,36 @@
                 <span class="text-error text-[10px] font-label-sm" role="alert">{advancedFieldError(which, 'timeout_ms')}</span>
               {/if}
             </label>
+            {#if which === 'chat'}
+              <label
+                class="flex flex-col gap-1.5"
+                for="{idPrefix}-reasoning"
+              >
+                <span
+                  class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+                  >Reasoning effort</span
+                >
+                <select
+                  id="{idPrefix}-reasoning"
+                  value={b.reasoning_effort ?? ''}
+                  onchange={(e) => {
+                    const v = (e.currentTarget as HTMLSelectElement).value
+                    b.reasoning_effort = v || undefined
+                    void persistProvider(which)
+                  }}
+                  class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer"
+                >
+                  <option value="">Default</option>
+                  <option value="none">None</option>
+                  <option value="minimal">Minimal</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="xhigh">xHigh</option>
+                  <option value="max">Max</option>
+                </select>
+              </label>
+            {/if}
             {#if which === 'embedding'}
               <label
                 class="flex flex-col gap-1.5"

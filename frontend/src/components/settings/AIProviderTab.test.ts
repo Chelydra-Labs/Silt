@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
       has_key: true,
       temperature: 0.7,
       max_tokens: 2048,
+      reasoning_effort: 'medium',
       timeout_ms: 30000
     },
     embedding: {
@@ -200,6 +201,7 @@ describe('AIProviderTab', () => {
           has_key: false,
           temperature: 0.7,
           max_tokens: 2048,
+          reasoning_effort: 'medium',
           timeout_ms: 30000
         },
         embedding: {

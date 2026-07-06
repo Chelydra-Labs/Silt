@@ -783,9 +783,11 @@ console.log(res.usage)   // { prompt_tokens, completion_tokens, total_tokens }
 
 `messages` follows the OpenAI chat format (`role` ∈ `system` / `user` /
 `assistant`). Optional fields: `model` (override the user's configured chat
-model — use sparingly), `temperature`, `max_tokens`, `stream` (reserved;
-streaming is not yet wired through the bridge). Per-call overrides are merged
-over the user's provider config.
+model — use sparingly), `temperature`, `maxTokens`, `reasoningEffort`
+(`'none'`/`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'` — controls
+thinking on reasoning-capable models; not all providers support every value),
+`stream` (reserved; streaming is not yet wired through the bridge). Per-call
+overrides are merged over the user's provider config.
 
 #### Embeddings
 

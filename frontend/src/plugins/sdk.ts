@@ -547,6 +547,10 @@ export interface PluginAIApi {
     model?: string
     temperature?: number
     maxTokens?: number
+    /** Override the provider's reasoning effort for this call only.
+     *  Values: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'.
+     *  Not all providers support every value. */
+    reasoningEffort?: string
     stream?: boolean
   }) => Promise<PluginAICompleteResult>
   /**

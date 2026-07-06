@@ -61,14 +61,15 @@ type AIConfig struct {
 // dedicated SetAIAPIKey binding is the only write path; a full SaveSystemConfig
 // round-trip preserves the existing key server-side (see SaveSystemConfig).
 type AIProviderConfig struct {
-	ProviderType string   `yaml:"provider_type,omitempty" json:"provider_type"`       // "local" | "openai-compatible"
-	BaseURL      string   `yaml:"base_url,omitempty" json:"base_url"`                 // e.g. http://localhost:11434 (Ollama) or https://openrouter.ai/api/v1
-	APIKey       string   `yaml:"api_key,omitempty" json:"-"`                         // NEVER serialized to JS
-	Model        string   `yaml:"model,omitempty" json:"model"`                       // e.g. qwen3:30b-a3b, nomic-embed-text
-	Temperature  *float64 `yaml:"temperature,omitempty" json:"temperature,omitempty"` // chat only
-	MaxTokens    *int     `yaml:"max_tokens,omitempty" json:"max_tokens,omitempty"`   // chat only
-	TimeoutMs    *int     `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`   // per-call; default 60000
-	Dimensions   *int     `yaml:"dimensions,omitempty" json:"dimensions,omitempty"`   // embeddings only (truncation)
+	ProviderType    string   `yaml:"provider_type,omitempty" json:"provider_type"`                 // "local" | "openai-compatible"
+	BaseURL         string   `yaml:"base_url,omitempty" json:"base_url"`                           // e.g. http://localhost:11434 (Ollama) or https://openrouter.ai/api/v1
+	APIKey          string   `yaml:"api_key,omitempty" json:"-"`                                   // NEVER serialized to JS
+	Model           string   `yaml:"model,omitempty" json:"model"`                                 // e.g. qwen3:30b-a3b, nomic-embed-text
+	Temperature     *float64 `yaml:"temperature,omitempty" json:"temperature,omitempty"`           // chat only
+	MaxTokens       *int     `yaml:"max_tokens,omitempty" json:"max_tokens,omitempty"`             // chat only
+	ReasoningEffort *string  `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"` // chat only: "none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max"
+	TimeoutMs       *int     `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`             // per-call; default 60000
+	Dimensions      *int     `yaml:"dimensions,omitempty" json:"dimensions,omitempty"`             // embeddings only (truncation)
 }
 
 // AI provider type discriminators. "local" targets an Ollama/llama.cpp instance

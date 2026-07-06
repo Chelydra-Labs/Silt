@@ -88,12 +88,13 @@ type ChatMessage struct {
 // CompleteRequest is the input to Complete. Messages is required and non-empty;
 // the rest override the provider's configured defaults for this call only.
 type CompleteRequest struct {
-	Provider    AIProvider    // resolved endpoint + key + model + advanced knobs
-	Messages    []ChatMessage `json:"messages"`
-	Model       string        `json:"model,omitempty"`       // override Provider.Model for this call
-	Temperature *float64      `json:"temperature,omitempty"` // override Provider.Temperature
-	MaxTokens   *int          `json:"max_tokens,omitempty"`  // override Provider.MaxTokens
-	Stream      bool          `json:"stream,omitempty"`      // signature present now; Sprint 22 delivers streaming
+	Provider        AIProvider    // resolved endpoint + key + model + advanced knobs
+	Messages        []ChatMessage `json:"messages"`
+	Model           string        `json:"model,omitempty"`            // override Provider.Model for this call
+	Temperature     *float64      `json:"temperature,omitempty"`      // override Provider.Temperature
+	MaxTokens       *int          `json:"max_tokens,omitempty"`       // override Provider.MaxTokens
+	ReasoningEffort *string       `json:"reasoning_effort,omitempty"` // override Provider.ReasoningEffort ("none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max")
+	Stream          bool          `json:"stream,omitempty"`           // signature present now; Sprint 22 delivers streaming
 }
 
 // CompleteResult is the output of a successful (non-streaming) completion. Usage
@@ -139,11 +140,12 @@ type AIUsage struct {
 // on config (or the keyring) so the service is unit-testable with httptest and
 // no vault.
 type AIProvider struct {
-	ProviderType string // "local" | "openai-compatible"
-	BaseURL      string // e.g. http://localhost:11434
-	APIKey       string // resolved by caller; "" for a keyless local endpoint
-	Model        string
-	TimeoutMs    *int
+	ProviderType    string // "local" | "openai-compatible"
+	BaseURL         string // e.g. http://localhost:11434
+	APIKey          string // resolved by caller; "" for a keyless local endpoint
+	Model           string
+	ReasoningEffort *string // "none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max"; nil = omit
+	TimeoutMs       *int
 }
 
 // AIErrorKind enumerates the normalized failure categories a plugin can act on.
@@ -273,11 +275,12 @@ func classifyStatus(status int) AIErrorKind {
 
 // chatRequest is the OpenAI-compatible /v1/chat/completions request body.
 type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []ChatMessage `json:"messages"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	MaxTokens   *int          `json:"max_tokens,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
+	Model           string        `json:"model"`
+	Messages        []ChatMessage `json:"messages"`
+	Temperature     *float64      `json:"temperature,omitempty"`
+	MaxTokens       *int          `json:"max_tokens,omitempty"`
+	ReasoningEffort *string       `json:"reasoning_effort,omitempty"`
+	Stream          bool          `json:"stream,omitempty"`
 }
 
 // chatResponse is the OpenAI-compatible /v1/chat/completions response body.
@@ -319,12 +322,18 @@ func Complete(ctx context.Context, req CompleteRequest) (CompleteResult, error) 
 	if err := validateBaseURL(baseURL); err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrBadRequest, Message: err.Error()}
 	}
+	// Resolve effective reasoning effort: per-call override, else provider default.
+	reasoning := req.ReasoningEffort
+	if reasoning == nil {
+		reasoning = req.Provider.ReasoningEffort
+	}
 	body, err := json.Marshal(chatRequest{
-		Model:       model,
-		Messages:    req.Messages,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
-		Stream:      false, // see doc comment — streaming lands in Sprint 22
+		Model:           model,
+		Messages:        req.Messages,
+		Temperature:     req.Temperature,
+		MaxTokens:       req.MaxTokens,
+		ReasoningEffort: reasoning,
+		Stream:          false, // see doc comment — streaming lands in Sprint 22
 	})
 	if err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}

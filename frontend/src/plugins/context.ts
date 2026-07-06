@@ -554,6 +554,7 @@ export function makePluginContext(
           model: req.model ?? '',
           temperature: req.temperature,
           max_tokens: req.maxTokens,
+          reasoning_effort: req.reasoningEffort,
           stream: req.stream ?? false
           // Wails generates PluginAICompleteInput as a class (it has a nested
           // struct array), so the strict TS type wants an instance with

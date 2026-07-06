@@ -153,6 +153,30 @@ success or the error message from the server. Use it after changing any field
 to catch typos in the base URL, an unreachable server, an invalid key, or a
 wrong model name.
 
+## Reasoning effort (chat only)
+
+The chat provider card's **Advanced** section has a **Reasoning effort**
+dropdown that controls how much internal reasoning a model does before
+answering. This maps to the OpenAI-compatible `reasoning_effort` request field,
+supported by OpenAI (o-series, GPT-5+), Ollama (Qwen3, DeepSeek-R1, GLM),
+OpenRouter, vLLM, and other compatible servers:
+
+| Value | Behavior |
+| :--- | :--- |
+| Default | Omit the field — use the model's built-in default |
+| None | Thinking OFF — fastest, no reasoning tokens |
+| Minimal | Lowest reasoning (GPT-5 era) |
+| Low | Minimal reasoning for straightforward tasks |
+| Medium | Balanced (default for most models) |
+| High | Maximum reasoning for complex problems |
+| xHigh | Extra high — best results, slowest (GPT-5.1+, GLM-5.2+) |
+| Max | Absolute maximum (GLM-5.2, GPT-5.6, Ollama) |
+
+**Default** (field omitted) is right for most setups. Use **None** with a
+reasoning-capable model when you want a fast, direct answer without a thinking
+phase. Not all providers recognize every value — if a provider rejects one,
+Test connection will surface the error.
+
 ---
 
 ## Troubleshooting

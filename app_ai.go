@@ -73,13 +73,14 @@ func validateAIBaseURL(raw string) error {
 // the dedicated SetAIAPIKey / ClearAIAPIKey bindings so it can be routed to the
 // OS keyring (#218) rather than plaintext config.
 type AIProviderPatch struct {
-	ProviderType string   `json:"provider_type"`
-	BaseURL      string   `json:"base_url"`
-	Model        string   `json:"model"`
-	Temperature  *float64 `json:"temperature,omitempty"`
-	MaxTokens    *int     `json:"max_tokens,omitempty"`
-	TimeoutMs    *int     `json:"timeout_ms,omitempty"`
-	Dimensions   *int     `json:"dimensions,omitempty"`
+	ProviderType    string   `json:"provider_type"`
+	BaseURL         string   `json:"base_url"`
+	Model           string   `json:"model"`
+	Temperature     *float64 `json:"temperature,omitempty"`
+	MaxTokens       *int     `json:"max_tokens,omitempty"`
+	ReasoningEffort *string  `json:"reasoning_effort,omitempty"`
+	TimeoutMs       *int     `json:"timeout_ms,omitempty"`
+	Dimensions      *int     `json:"dimensions,omitempty"`
 }
 
 // AIPublicProvider is the API-key-scrubbed view of one provider block returned
@@ -87,14 +88,15 @@ type AIProviderPatch struct {
 // config-or-keyring in #218) so the page can show "key set" without ever
 // receiving the secret.
 type AIPublicProvider struct {
-	ProviderType string   `json:"provider_type"`
-	BaseURL      string   `json:"base_url"`
-	Model        string   `json:"model"`
-	HasKey       bool     `json:"has_key"`
-	Temperature  *float64 `json:"temperature,omitempty"`
-	MaxTokens    *int     `json:"max_tokens,omitempty"`
-	TimeoutMs    *int     `json:"timeout_ms,omitempty"`
-	Dimensions   *int     `json:"dimensions,omitempty"`
+	ProviderType    string   `json:"provider_type"`
+	BaseURL         string   `json:"base_url"`
+	Model           string   `json:"model"`
+	HasKey          bool     `json:"has_key"`
+	Temperature     *float64 `json:"temperature,omitempty"`
+	MaxTokens       *int     `json:"max_tokens,omitempty"`
+	ReasoningEffort *string  `json:"reasoning_effort,omitempty"`
+	TimeoutMs       *int     `json:"timeout_ms,omitempty"`
+	Dimensions      *int     `json:"dimensions,omitempty"`
 }
 
 // AIPublicConfig is the AI Provider page's full read view: both provider blocks
@@ -120,11 +122,12 @@ type PluginAIChatMessage struct {
 // completion. Stream is accepted (and forwarded as false) so the signature is
 // additive when Sprint 22 delivers streaming.
 type PluginAICompleteInput struct {
-	Messages    []PluginAIChatMessage `json:"messages"`
-	Model       string                `json:"model,omitempty"`
-	Temperature *float64              `json:"temperature,omitempty"`
-	MaxTokens   *int                  `json:"max_tokens,omitempty"`
-	Stream      bool                  `json:"stream,omitempty"`
+	Messages        []PluginAIChatMessage `json:"messages"`
+	Model           string                `json:"model,omitempty"`
+	Temperature     *float64              `json:"temperature,omitempty"`
+	MaxTokens       *int                  `json:"max_tokens,omitempty"`
+	ReasoningEffort *string               `json:"reasoning_effort,omitempty"`
+	Stream          bool                  `json:"stream,omitempty"`
 }
 
 // PluginAIEmbedInput is the plugin-side request envelope for an embedding batch.
@@ -238,13 +241,14 @@ func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 		KeyringAvailable:   a.keyringStore != nil,
 		KeyringUnusableFor: aiUnusableList(chatUnavail, embUnavail),
 		Chat: AIPublicProvider{
-			ProviderType: chat.ProviderType,
-			BaseURL:      chat.BaseURL,
-			Model:        chat.Model,
-			HasKey:       chatKey != "",
-			Temperature:  chat.Temperature,
-			MaxTokens:    chat.MaxTokens,
-			TimeoutMs:    chat.TimeoutMs,
+			ProviderType:    chat.ProviderType,
+			BaseURL:         chat.BaseURL,
+			Model:           chat.Model,
+			HasKey:          chatKey != "",
+			Temperature:     chat.Temperature,
+			MaxTokens:       chat.MaxTokens,
+			ReasoningEffort: chat.ReasoningEffort,
+			TimeoutMs:       chat.TimeoutMs,
 		},
 		Embedding: AIPublicProvider{
 			ProviderType: emb.ProviderType,
@@ -293,13 +297,14 @@ func (a *App) UpdateAIProviderConfig(which string, patch AIProviderPatch) error 
 	// Build the new block from the patch, preserving the live key (the patch
 	// never carries one).
 	patched := config.AIProviderConfig{
-		ProviderType: patch.ProviderType,
-		BaseURL:      patch.BaseURL,
-		Model:        patch.Model,
-		Temperature:  patch.Temperature,
-		MaxTokens:    patch.MaxTokens,
-		TimeoutMs:    patch.TimeoutMs,
-		Dimensions:   patch.Dimensions,
+		ProviderType:    patch.ProviderType,
+		BaseURL:         patch.BaseURL,
+		Model:           patch.Model,
+		Temperature:     patch.Temperature,
+		MaxTokens:       patch.MaxTokens,
+		ReasoningEffort: patch.ReasoningEffort,
+		TimeoutMs:       patch.TimeoutMs,
+		Dimensions:      patch.Dimensions,
 	}
 	if which == "chat" {
 		patched.APIKey = a.cfg.AI.Chat.APIKey
@@ -470,11 +475,12 @@ func (a *App) snapshotAIProvider(which string) (ai.AIProvider, error) {
 	a.vaultMu.RUnlock()
 	key, _ := a.resolveAIKeyUnlocked(user, useKeyring, p.APIKey)
 	return ai.AIProvider{
-		ProviderType: p.ProviderType,
-		BaseURL:      p.BaseURL,
-		APIKey:       key,
-		Model:        p.Model,
-		TimeoutMs:    p.TimeoutMs,
+		ProviderType:    p.ProviderType,
+		BaseURL:         p.BaseURL,
+		APIKey:          key,
+		Model:           p.Model,
+		ReasoningEffort: p.ReasoningEffort,
+		TimeoutMs:       p.TimeoutMs,
 	}, nil
 }
 
@@ -504,11 +510,12 @@ func (a *App) aiPreflightPlugin(pluginID, sessionToken, which string) (ai.AIProv
 	a.vaultMu.RUnlock()
 	key, _ := a.resolveAIKeyUnlocked(user, useKeyring, p.APIKey)
 	return ai.AIProvider{
-		ProviderType: p.ProviderType,
-		BaseURL:      p.BaseURL,
-		APIKey:       key,
-		Model:        p.Model,
-		TimeoutMs:    p.TimeoutMs,
+		ProviderType:    p.ProviderType,
+		BaseURL:         p.BaseURL,
+		APIKey:          key,
+		Model:           p.Model,
+		ReasoningEffort: p.ReasoningEffort,
+		TimeoutMs:       p.TimeoutMs,
 	}, p.Model, nil
 }
 
@@ -530,12 +537,13 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 		messages[i] = ai.ChatMessage{Role: m.Role, Content: m.Content}
 	}
 	result, callErr := ai.Complete(a.aiContext(), ai.CompleteRequest{
-		Provider:    provider,
-		Messages:    messages,
-		Model:       input.Model,
-		Temperature: input.Temperature,
-		MaxTokens:   input.MaxTokens,
-		Stream:      false, // Sprint 22 delivers streaming; signature is additive
+		Provider:        provider,
+		Messages:        messages,
+		Model:           input.Model,
+		Temperature:     input.Temperature,
+		MaxTokens:       input.MaxTokens,
+		ReasoningEffort: input.ReasoningEffort,
+		Stream:          false, // Sprint 22 delivers streaming; signature is additive
 	})
 	status := "ok"
 	if callErr != nil {
