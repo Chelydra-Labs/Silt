@@ -355,6 +355,16 @@ func (a *App) teardownVaultServices() {
 	// goes away. After this returns, every enqueued audit write is on disk.
 	stopNetworkAuditWriter()
 	stopAIAuditWriter()
+	// Clear the in-memory audit slices so a subsequent vault open seeds from
+	// the new vault's on-disk logs, not the closed vault's leftover entries.
+	// Without this, the seed guard (len == 0) would skip reseeding and the
+	// new vault would display the old vault's audit history (#446 hardening).
+	networkAuditMu.Lock()
+	networkAudit = nil
+	networkAuditMu.Unlock()
+	aiAuditMu.Lock()
+	aiAudit = nil
+	aiAuditMu.Unlock()
 	if a.watcher != nil {
 		// Drop every focus lease before tearing the watcher down so a clean
 		// exit can't strand a file under fsnotify suppression (#38).

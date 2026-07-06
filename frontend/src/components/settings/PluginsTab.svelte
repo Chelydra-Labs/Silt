@@ -190,8 +190,11 @@
   function needsAISetup(card: Card): boolean {
     if (card.disabled) return false
     if (!card.requestedCapabilities?.ai) return false
+    // Don't nudge before config has loaded — otherwise the badge flashes on
+    // first paint and disappears once settings.config resolves.
+    if (!settings.config) return false
     // Defensive: config.ai may be absent in hand-edited configs / tests.
-    const chatModel = settings.config?.ai?.chat?.model
+    const chatModel = settings.config.ai?.chat?.model
     return !chatModel
   }
 
@@ -528,13 +531,11 @@
                     type="button"
                     onclick={() => onSwitchTab?.('ai')}
                     disabled={!onSwitchTab}
-                    aria-disabled={!onSwitchTab}
-                    title={onSwitchTab
-                      ? 'Open AI Provider settings'
-                      : 'Open the AI Provider tab'}
-                    class="text-[9px] text-status-warn bg-status-warn/10 border border-status-warn/40 rounded px-1.5 py-0.5 uppercase tracking-wider hover:brightness-110 transition-all motion-reduce:transition-none cursor-pointer disabled:cursor-default disabled:opacity-70"
+                    title="Open AI Provider settings"
+                    class="inline-flex items-center gap-0.5 text-[9px] text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider hover:bg-accent-primary-start/20 hover:border-accent-primary-start/60 transition-all motion-reduce:transition-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:cursor-default disabled:opacity-70"
                   >
                     AI setup needed
+                    <span class="material-symbols-outlined text-[11px]" aria-hidden="true">arrow_forward</span>
                   </button>
                 {/if}
               </div>

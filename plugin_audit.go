@@ -12,12 +12,13 @@ import (
 	"time"
 )
 
-// maxPluginNetworkLogBytes bounds a single per-plugin on-disk network.log so
-// it cannot grow unbounded across a long session. When exceeded, the log is
-// truncated to the most recent maxPluginNetworkLogLines.
+// maxPluginAuditLogBytes bounds a single per-plugin on-disk audit log
+// (network.log / ai.log) so it cannot grow unbounded across a long session.
+// When exceeded, the log is truncated to the most recent
+// maxPluginAuditLogLines.
 const (
-	maxPluginNetworkLogBytes = 1 * 1024 * 1024 // 1 MB
-	maxPluginNetworkLogLines = 200             // keep-lines on truncation
+	maxPluginAuditLogBytes = 1 * 1024 * 1024 // 1 MB
+	maxPluginAuditLogLines = 200             // keep-lines on truncation
 )
 
 // networkAuditMu guards the in-memory network audit log. The log is a simple
@@ -77,8 +78,8 @@ func appendNetworkAuditLine(vaultPath string, entry *NetworkAuditEntry) {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o700)
-	if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginNetworkLogBytes {
-		truncateNetworkLog(logPath, maxPluginNetworkLogLines)
+	if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginAuditLogBytes {
+		truncateNetworkLog(logPath, maxPluginAuditLogLines)
 	}
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err == nil {
@@ -533,8 +534,8 @@ func appendAIAuditLine(vaultPath string, entry *AIAuditEntry) {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o700)
-	if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginNetworkLogBytes {
-		truncateNetworkLog(logPath, maxPluginNetworkLogLines)
+	if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginAuditLogBytes {
+		truncateNetworkLog(logPath, maxPluginAuditLogLines)
 	}
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err == nil {

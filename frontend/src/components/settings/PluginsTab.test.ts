@@ -299,8 +299,7 @@ describe('PluginsTab AI setup nudge', () => {
     })
 
     // No onSwitchTab prop: graceful degradation, badge is discoverable but
-    // non-operable (aria-disabled + disabled, matching the bespoke-settings
-    // fallback pattern at the bottom of PluginsTab.svelte).
+    // non-operable (native disabled).
     render(PluginsTab, {
       activeNotebook: 'Work',
       activeSection: 'Journal',
@@ -312,5 +311,27 @@ describe('PluginsTab AI setup nudge', () => {
       name: /AI setup needed/i
     }) as HTMLButtonElement
     expect(badge.disabled).toBe(true)
+  })
+
+  it('does not render the badge while config is unloaded (null)', async () => {
+    mocks.listPlugins.mockResolvedValue([aiPlugin])
+    mocks.getGrantedCapabilities.mockResolvedValue({
+      'ai-plugin': { ai: 'granted' }
+    })
+    // settings.config is null before initial load completes — the badge must
+    // not flash in spuriously (#447 hardening).
+    mocks.setConfig(null as any)
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily',
+      onSwitchTab: vi.fn()
+    })
+    await flush()
+
+    expect(
+      screen.queryByRole('button', { name: /AI setup needed/i })
+    ).toBeNull()
   })
 })

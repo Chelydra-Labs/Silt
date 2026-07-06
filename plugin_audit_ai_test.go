@@ -291,7 +291,7 @@ func TestAuditAI_UsageFieldsPreservedOnDisk(t *testing.T) {
 
 // TestAIAudit_SizeCapTruncation mirrors TestAuditWriter_TruncatesOversizedLog:
 // when an ai.log exceeds the 1 MB cap, the next append truncates it to the last
-// maxPluginNetworkLogLines (200) lines.
+// maxPluginAuditLogLines (200) lines.
 func TestAIAudit_SizeCapTruncation(t *testing.T) {
 	app := newTestApp(t)
 	resetAIAuditState(t)
@@ -323,9 +323,9 @@ func TestAIAudit_SizeCapTruncation(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	// Truncation keeps the last 200 lines, then the trigger append adds 1.
-	if len(lines) > maxPluginNetworkLogLines+1 {
+	if len(lines) > maxPluginAuditLogLines+1 {
 		t.Errorf("ai.log has %d lines after truncation, want ≤ %d (200 kept + 1 trigger)",
-			len(lines), maxPluginNetworkLogLines+1)
+			len(lines), maxPluginAuditLogLines+1)
 	}
 	// The trigger entry (most recent) must be present.
 	if !strings.Contains(string(data), `"model":"trigger"`) {
@@ -359,5 +359,60 @@ func TestAuditAI_ConcurrentAppendsNoSerialize(t *testing.T) {
 	entries, _ := app.GetAIAudit()
 	if len(entries) != n {
 		t.Errorf("in-memory AI audit has %d entries, want %d", len(entries), n)
+	}
+}
+
+// TestTeardownVaultServices_ClearsInMemoryAudit is the regression test for the
+// cross-vault audit leak: teardownVaultServices must nil both in-memory audit
+// slices (aiAudit + networkAudit) after stopping the writers, so a subsequent
+// vault open seeds from the new vault's on-disk logs rather than the closed
+// vault's leftover entries. Without the clear, the seed guard (len == 0) skips
+// reseeding and the new vault displays the old vault's history (#446).
+func TestTeardownVaultServices_ClearsInMemoryAudit(t *testing.T) {
+	// A bare App with only vaultPath set survives teardownVaultServices: every
+	// service field it touches (db, watcher, etc.) is nil-guarded, and
+	// closeAllPluginDBs is a no-op on a nil pluginDBs map.
+	app := &App{vaultPath: t.TempDir()}
+	resetAIAuditState(t)
+	// Also reset network audit state for a clean baseline.
+	networkAuditMu.Lock()
+	networkAudit = nil
+	networkAuditMu.Unlock()
+
+	startNetworkAuditWriter(app.vaultPath)
+	startAIAuditWriter(app.vaultPath)
+
+	// Populate both in-memory logs + on-disk files via the audit paths.
+	app.auditNetwork("p-net", "GET", "https://api.example.com/v1", 200)
+	app.auditAI("p-ai", "chat", "https://api.example.com/v1", "m", "ok", nil)
+
+	netEntries, _ := app.GetNetworkAudit()
+	aiEntries, _ := app.GetAIAudit()
+	if len(netEntries) != 1 {
+		t.Fatalf("network audit setup: want 1 entry, got %d", len(netEntries))
+	}
+	if len(aiEntries) != 1 {
+		t.Fatalf("AI audit setup: want 1 entry, got %d", len(aiEntries))
+	}
+
+	// Simulate a vault close/switch: teardown must drain the writers AND clear
+	// the in-memory slices so the next open's seed is not skipped.
+	app.teardownVaultServices()
+
+	networkAuditMu.Lock()
+	aiAuditMu.Lock()
+	netLeaked := networkAudit
+	aiLeaked := aiAudit
+	aiAuditMu.Unlock()
+	networkAuditMu.Unlock()
+
+	if netLeaked != nil {
+		t.Errorf("network audit leaked across teardown: %d entries survived", len(netLeaked))
+	}
+	if aiLeaked != nil {
+		t.Errorf("AI audit leaked across teardown: %d entries survived", len(aiLeaked))
+	}
+	if currentAIAuditWriter() != nil || currentNetworkAuditWriter() != nil {
+		t.Errorf("audit writers still running after teardown")
 	}
 }
