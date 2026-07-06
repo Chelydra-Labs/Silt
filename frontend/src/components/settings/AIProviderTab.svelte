@@ -589,7 +589,7 @@
           </div>
           {#if keyringFellBack(which) && b.has_key}
             <p
-              class="text-[11px] font-label-sm text-yellow-300/80 flex items-center gap-1"
+              class="text-[11px] font-label-sm text-status-warn flex items-center gap-1"
             >
               <span
                 class="material-symbols-outlined text-[14px]"
@@ -788,7 +788,7 @@
       >
         {#if !config.keyring_available}
           <div
-            class="flex items-start gap-2 p-3 rounded-lg bg-yellow-300/5 border border-yellow-300/30 text-yellow-300/90 text-[12px] font-body-md"
+            class="flex items-start gap-2 p-3 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-[12px] font-body-md"
             role="alert"
           >
             <span
