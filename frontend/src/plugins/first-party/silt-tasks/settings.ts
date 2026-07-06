@@ -90,6 +90,24 @@ export function loadDefaultSort(): SortMode {
   return isSortMode(v) ? v : 'dueDate'
 }
 
+/**
+ * Persisted Board-mode status columns (#421). The Board is the only surface
+ * with user-managed columns (every other grouping dimension is data-driven).
+ * Defaults to the canonical TODO/DOING/DONE so the status Board matches the
+ * retired silt-kanban experience on first paint.
+ */
+export function loadColumns(): string[] {
+  const v = tasksSettings()['columns']
+  return Array.isArray(v) && v.every((x) => typeof x === 'string') && v.length
+    ? [...v]
+    : ['TODO', 'DOING', 'DONE']
+}
+
+/** Atomically write the Board-mode status columns to the vault config. */
+export function persistColumns(columns: string[]): Promise<boolean> {
+  return updatePluginSetting(TASKS_PLUGIN_ID, 'columns', [...columns])
+}
+
 /** Atomically write the default display mode to the vault config. */
 export function persistDefaultDisplayMode(mode: DisplayMode): Promise<boolean> {
   return updatePluginSetting(TASKS_PLUGIN_ID, 'default_display_mode', mode)

@@ -176,14 +176,16 @@ describe('Tasks hub shell (#424)', () => {
     expect(screen.queryByTestId('tasks-calendar-stub')).toBeNull()
   })
 
-  it('switching to Board renders the Board stub and persists the preference', async () => {
+  it('switching to Board renders the Board renderer and persists the preference', async () => {
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
     await fireEvent.click(screen.getByRole('radio', { name: /Board mode/i }))
     await flush()
 
-    expect(screen.getByTestId('tasks-board-stub')).toBeInTheDocument()
+    // Board is no longer a stub (#421): the real renderer mounts.
+    expect(screen.getByTestId('tasks-board')).toBeInTheDocument()
+    expect(screen.queryByTestId('tasks-board-stub')).toBeNull()
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
       'silt-tasks',
       'default_display_mode',
@@ -250,7 +252,8 @@ describe('Tasks hub shell (#424)', () => {
     )
     await flush()
 
-    expect(screen.getByTestId('tasks-board-stub')).toBeInTheDocument()
+    // Board renderer mounts (no longer a stub, #421).
+    expect(screen.getByTestId('tasks-board')).toBeInTheDocument()
 
     window.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'V', ctrlKey: true, shiftKey: true })
