@@ -55,6 +55,7 @@ Each concern in Silt has a single source of truth. Refer to these documents for 
 | [**docs/PLUGIN_DEVELOPMENT.md**](docs/PLUGIN_DEVELOPMENT.md) | How to build, package (`.silt-plugin`), and distribute plugins. |
 | [**docs/THEMING.md**](docs/THEMING.md) | Guide to authoring, importing, and selecting themes. |
 | [**docs/BACKUP.md**](docs/BACKUP.md) | How to back up, restore, and migrate vaults using `.silt-vault` archives. |
+| [**docs/BRING_YOUR_OWN_MODEL.md**](docs/BRING_YOUR_OWN_MODEL.md) | Configure local (Ollama) or cloud (OpenAI-compatible) AI providers for plugin features. |
 | [**TESTING.md**](TESTING.md) | Test coverage matrix, benchmarks, and verification checklists. |
 | [**CODE_SIGNING.md**](CODE_SIGNING.md) | Windows Authenticode signing policy, verification, and SignPath setup. |
 
