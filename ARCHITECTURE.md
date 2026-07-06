@@ -77,9 +77,12 @@ correctness regression, not a style choice.
    is *delete the index file and relaunch* — the documented, supported
    operation. The core index holds the block↔location projection, FTS5, file
    mtime/size caches, and re-derived per-task caches (comments/links counts,
-   pin, progress — re-derived from markdown `[pin:: true]` / `[progress:: N]`
-   tokens on every re-index). It is **forbidden** to hold user intent *as the
-   source of truth* there: pin state, progress, custom column names, filter
+   pin, progress, lifecycle timestamps/sort position — re-derived from
+   markdown `[pin:: true]` / `[progress:: N]` / `[created::]` / `[completed::]`
+   / `[order:: N]` tokens on every re-index; plus NOTE-block comment
+   attribution `[author::]` / `[ts::]` into the sparse `block_meta`
+   projection). It is **forbidden** to hold user intent *as the source of
+   truth* there: pin state, progress, custom column names, filter
    state, theme id, and hotkey bindings must round-trip through the markdown
    inline syntax (per-block) or YAML/JSON (per-vault/per-user). The cached
    pin/progress columns in the `tasks` table are query-speed projections, not
@@ -180,7 +183,7 @@ within a 300 ms cooldown of our own atomic write. See
 
 Every file ingested is scanned line-by-line using a customized Markdown AST engine built on top of yuin/goldmark (`backend/parser`).
 
-**Block model.** A GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`) is a task; the remainder of any line is scanned for Dataview-style `[key:: value]` metadata tokens (due, start, owner, priority, pin, progress, recur, blocked_by) — order-independent and extensible via the `scanTaskTokens` dispatch. Each parsed line becomes a `ParsedBlock` typed as one of three prose types (`TASK`, `NOTE`, `HEADER`) or one of four multi-line region types (`CODE`, `TABLE`, `DETAILS`, `CALLOUT`).
+**Block model.** A GFM checkbox item (`- [ ]`, `- [/]`, `- [x]`) is a task; the remainder of any line is scanned for Dataview-style `[key:: value]` metadata tokens (due, start, owner, priority, pin, progress, recur, blocked_by, created, completed, order) — order-independent and extensible via the `scanTaskTokens` dispatch. NOTE blocks are scanned separately for two comment-attribution tokens (`author`, `ts`) via `scanNoteTokens`; the TASK and NOTE token spaces are disjoint by design, so comment attribution never leaks into task queries and task metadata never lands on a note. Each parsed line becomes a `ParsedBlock` typed as one of three prose types (`TASK`, `NOTE`, `HEADER`) or one of four multi-line region types (`CODE`, `TABLE`, `DETAILS`, `CALLOUT`).
 
 **Multi-line region blocks.** The parser's `accumulateRegion` detects four region shapes — fenced code, GFM table runs (header + separator), `<details>` HTML (depth-counted), and Obsidian callouts (`> [!variant]` + consecutive `>` lines) — and collapses each into one managed `ParsedBlock` (one `blocks`-table row, one UUID, one FTS5 document). The block-identity comment lives on its own dedicated trailing line after the region so the on-disk format stays strictly GFM/HTML/Obsidian syntax (byte-exact interop with Obsidian/GitHub/VS Code). `ParseFileContent` and `RenderFileContent` share the region-boundary helpers (`detectRegionKind` / `findRegionCloser` / `skipManagedRegion`) so both paths agree. Legacy files with per-line id comments are detected (id comments stripped before matching), migrated to the trailing-id format on first parse, and `((uuid))` references to vanished per-line ids are remapped to the region block's id.
 
@@ -245,6 +248,9 @@ CREATE TABLE tasks (
     recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks; cached from [recur:: RULE] token
     comments_count INTEGER DEFAULT 0, -- derived: child NOTE blocks
     links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body
+    created_at TEXT,                  -- ISO 8601 local [created::] timestamp; NULL when absent (no backfill); reproducible from markdown
+    completed_at TEXT,                -- ISO 8601 local [completed::] timestamp; NULL when not DONE (no backfill); reproducible from markdown
+    manual_order INTEGER,             -- 1-based [order:: N] sort position; NULL when absent (no backfill); reproducible from markdown
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 );
 
@@ -272,6 +278,24 @@ CREATE TABLE task_dependencies (
     FOREIGN KEY(blocked_by_id) REFERENCES blocks(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_task_deps_blocked_by ON task_dependencies(blocked_by_id);
+
+-- Block-meta projection (NOTE-block comment attribution): caches the
+-- [author:: NAME] / [ts:: YYYY-MM-DDTHH:MM:SS] tokens parsed off NOTE
+-- blocks. Sparse — a row exists ONLY for NOTE blocks carrying at least
+-- one of the tokens, so the majority of NOTE blocks and every TASK /
+-- HEADER have no row. Kept in a SEPARATE table from `blocks` so `blocks`
+-- stays the pure block↔location projection; the cache is disposable and
+-- re-derived from markdown on re-index (rule 4). FK ON DELETE CASCADE
+-- mirrors task_dependencies: a deleted block cleans up its meta row.
+-- `author` (comment authorship) is distinct from the task `Owner`
+-- (assignee); `timestamp` is distinct from the date-only block-identity
+-- `file_date`. The TASK and NOTE token spaces are disjoint by design.
+CREATE TABLE block_meta (
+    block_id  TEXT PRIMARY KEY,
+    author    TEXT,
+    timestamp TEXT,
+    FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
+);
 
 -- File-stats cache for incremental re-indexing. Keyed by absolute path;
 -- a renamed file is a new path, with the stale old row pruned by the next
@@ -425,10 +449,17 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
 - **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `UpdateBlockState`
   (task-checkbox transition + atomic file rewrite + re-index),
-  `MutateBlock`, `QueryTasks` (dashboard filter query). **Task dependencies**
-  (#301): `SetTaskBlockedBy` / `PluginSetTaskBlockedBy` (cycle-checked
+  `MutateBlock`, `QueryTasks` (dashboard filter query). **Task dependencies**:
+  `SetTaskBlockedBy` / `PluginSetTaskBlockedBy` (cycle-checked
   `[blocked_by::]` token rewrite) and `GetTaskBlockers` (open-prerequisite
-  read for the DONE-confirm guard). **Sub-editor** (#305): `FetchSubtree`
+  read for the DONE-confirm guard). **Task metadata setters**:
+  `SetTaskOwner` / `SetTaskPriority` / `SetTaskTags` / `SetTaskTitle`
+  (and their `Plugin*` SDK wrappers) follow the same atomic-rewrite +
+  `block:changed` shape as `SetTaskDueDate` / `SetTaskRecurrence`.
+  `SetTaskTags` takes the full new tag set (the backend does the surgical
+  `#hashtag` add/remove on the prose); `SetTaskTitle` rewrites only the
+  prose, preserving `#tags`, `((uuid))` refs, and inline `[key:: value]`
+  tokens. **Sub-editor**: `FetchSubtree`
   (read-only child sub-tree extraction) and `SaveSubtreeBlocks` (atomic
   sub-tree splice through the canonical write chain).
 - **Navigation CRUD** — `CreateNotebook` / `OpenNotebook` /
@@ -673,6 +704,8 @@ The `handleDrop` ProseMirror plugin is deliberately conservative: it returns `tr
 The Kanban board is a first-party plugin (`silt-kanban`, `frontend/src/plugins/first-party/silt-kanban/Kanban.svelte`) that uses the identical `PluginContext` SDK as Agenda and Calendar — no direct `window.go.*` access. It queries tasks via `ctx.sqliteQuery` and shifts status via `ctx.updateBlockState`, preserving the "core feature decoupling" contract (SPECS §8.3).
 
 Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` and animated with Svelte's native `svelte/animate/flip` (200ms cubic-out, per DESIGN.md §6). HTML5 drag-and-drop drives the data; the FLIP animation repositions remaining cards in the same paint frame. Keyboard users change status with ArrowLeft/ArrowRight directly; Enter/click opens the shared non-blocking inspector drawer (`first-party/shared/TaskEditDrawer.svelte` — the same component Tasks uses, #410) and `Shift+Enter` opens the shared scoped sub-editor (`TaskSubEditorModal`). The board supports multi-level scope (vault / notebook / section / page) via a segmented control, with the SQL `WHERE` clause built per scope level.
+
+**Shared task hub foundation.** The forward-looking unified shared-state store (`TaskHubState`) and SQL-query factory (`buildQuery` with `groupBy`/`window` params) live under `first-party/silt-tasks/` as the foundation for a single hub that supersedes the parallel `focusState` / `kanbanSharedState` / Kanban query-builder modules. The modules are additive today; consumer migration is tracked for a later milestone. The `scopeUserOverride` invariant (a user-narrowed scope survives an automatic scope change) is preserved.
 
 5.4 Search & Writing Aids
 

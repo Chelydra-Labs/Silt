@@ -16,11 +16,15 @@
   //   Completed   — status = DONE                (collapsed by default;
   //                                                 expanded on click;
   //                                                 ordered by file_date
-  //                                                 DESC as the best-
-  //                                                 available completion-
-  //                                                 recency proxy until
-  //                                                 a dedicated completed_at
-  //                                                 column is added).
+  //                                                 DESC. A nullable
+  //                                                 completed_at column now
+  //                                                 exists (populated on
+  //                                                 DONE transitions), but
+  //                                                 ordering hasn't cut over
+  //                                                 to it yet — file_date
+  //                                                 stays the sort key until
+  //                                                 existing tasks accrue
+  //                                                 enough populated values.
   //
   // Mark-done via ctx.updateBlockState; the resulting `block:changed`
   // event triggers a reload so the row leaves the active group on the

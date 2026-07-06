@@ -332,6 +332,20 @@ Metadata Tokens (Dataview `[key:: value]` format):
 | `progress` | `[prog:: N]` | `[progress:: N]` (0-100) | `[progress:: 50]` |
 | `recur` | `[recurrence:: RULE]` | `[recur:: RULE]` (natural language) | `[recur:: every week]` |
 | `blocked_by` | — | `[blocked_by:: ((uuid)) …]` (one or more block refs) | `[blocked_by:: ((a)) ((b))]` |
+| `created` | — | `[created:: YYYY-MM-DDTHH:MM:SS]` (ISO 8601 local, no timezone) | `[created:: 2026-08-03T09:15:00]` |
+| `completed` | — | `[completed:: YYYY-MM-DDTHH:MM:SS]` (ISO 8601 local) | `[completed:: 2026-08-04T17:30:00]` |
+| `order` | — | `[order:: N]` (1-based manual sort position) | `[order:: 3]` |
+
+`created` / `completed` / `order` are nullable lifecycle caches — they round-trip through the markdown file like every other task token and are re-derived from it on re-index. The parser mints them only on genuinely-new tasks (a fresh UUID gets `created` + `order`); existing tasks are never backfilled, so an older task simply lacks the tokens until the user (or a UI action) sets them. `completed` is stamped on the DONE transition and cleared on reopen. None of the three affects block identity (still the trailing `<!-- id: uuid @ YYYY-MM-DD -->` comment).
+
+**Comment attribution (NOTE-block tokens).** A child NOTE block indented under a TASK is that task's **comment** — the same parent/child hierarchy that powers the `comments_count` cache. Two Dataview-style tokens attribute the comment, distinct from every TASK token above:
+
+| Key | Format | Example |
+|---|---|---|
+| `author` | `[author:: NAME]` (free-form name) | `[author:: Dana]` |
+| `ts` | `[ts:: YYYY-MM-DDTHH:MM:SS]` (ISO 8601 local) | `[ts:: 2026-08-03T14:22:00]` |
+
+The `author` of a comment is **distinct from the task `Owner` (the assignee)** — a task can be owned by one person and commented on by several others; the two token spaces never overlap (an `[author::]` or `[ts::]` on a TASK line, or an `[owner::]` on a NOTE line, is not picked up by the other scanner). Likewise `ts` (a full timestamp) is **distinct from the date-only `file_date`** that lives in the block-identity comment — `ts` carries wall-clock time, `file_date` carries the day the block was authored. Both are nullable: a NOTE block without the tokens has no attribution row at all (no backfill).
 
 Task dependencies: the `blocked_by` token lists this task's prerequisites as
 space-separated `((uuid))` block references (#301). The Kanban/Agenda boards

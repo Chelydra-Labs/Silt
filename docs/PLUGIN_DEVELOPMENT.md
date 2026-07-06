@@ -63,6 +63,22 @@ const { rows, truncated } = await ctx.sqliteQuery(
 
 `mutateBlock(id, text)` rewrites a block's text in its source file and re-indexes it. `updateBlockState(id, status)` cycles a task's checkbox. `updateTaskMeta(id, {pinned?, progress?})` updates per-task metadata (pin/progress) by round-tripping through the markdown file's `[key:: value]` inline tokens. All three emit a `block:changed` event so live embeds/references update.
 
+### Per-task metadata setters
+
+Beyond `updateTaskMeta` (pin/progress), the SDK exposes dedicated setters that each rewrite one inline token (or, for tags/title, the prose) atomically through the canonical write chain — same lock + atomic rewrite + re-index + `block:changed` shape as `setTaskDueDate` / `setTaskRecurrence` / `setTaskBlockedBy`. All are gated by `content-mutate`.
+
+- **`setTaskOwner(id, owner)`** — rewrites `[owner:: NAME]`. Pass `''` to clear.
+- **`setTaskPriority(id, priority)`** — rewrites `[priority:: N]` (1=Critical, 2=Normal, 3=Low).
+- **`setTaskTags(id, tags)`** — rewrites the task's `#hashtag` set. Pass the **full new tag set** (an empty array clears all); the backend performs the surgical add/remove on the prose, preserving `((uuid))` refs and inline `[key:: value]` tokens.
+- **`setTaskTitle(id, title)`** — rewrites the prose portion of the task line. The backend preserves `#tags`, `((uuid))` references, and every inline `[key:: value]` token during the rewrite — callers edit only the prose.
+
+```ts
+await ctx.setTaskOwner(uuid, 'Alice')   // → `[owner:: Alice]`
+await ctx.setTaskPriority(uuid, 1)      // → `[priority:: 1]`
+await ctx.setTaskTags(uuid, ['work/sprint-4', 'urgent'])  // surgical #hashtag rewrite
+await ctx.setTaskTitle(uuid, 'Ship the v2 theme editor')  // tags + tokens preserved
+```
+
 ### Navigating to a block
 
 To open a block (e.g. when a user clicks a result), dispatch a window event — no SDK call needed:
