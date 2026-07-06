@@ -300,9 +300,17 @@
         (STATUSES.indexOf(statusState) + dir + STATUSES.length) %
         STATUSES.length
     void setStatus(STATUSES[idx])
-    ;(e.currentTarget as HTMLElement)
-      .querySelector<HTMLElement>(`[data-status="${STATUSES[idx]}"]`)
-      ?.focus()
+    // Move focus with the arrow immediately — EXCEPT when landing on DONE
+    // for a blocked task, where setStatus will pause on the guard. Pre-
+    // focusing the (about-to-be-canceled) DONE radio would park focus on an
+    // unchecked tabindex=-1 radio; cancelBlockedDone re-points focus to the
+    // still-checked radio instead.
+    const willGuard = STATUSES[idx] === 'DONE' && !!task?.is_blocked
+    if (!willGuard) {
+      ;(e.currentTarget as HTMLElement)
+        .querySelector<HTMLElement>(`[data-status="${STATUSES[idx]}"]`)
+        ?.focus()
+    }
   }
 
   async function setStatus(s: TaskStatus) {
@@ -352,9 +360,17 @@
     void commitStatus('DONE')
   }
 
-  function cancelBlockedDone() {
+  async function cancelBlockedDone() {
     pendingBlockedDone = null
-    // statusState unchanged — we never optimistically flipped to DONE.
+    // statusState unchanged — we never optimistically flipped to DONE. The
+    // DONE radio (the click/arrow target) holds focus with tabindex=-1
+    // while the checked radio holds tabindex=0. After the guard dialog
+    // unmounts (and restores focus to that DONE radio), re-point focus to
+    // the still-checked radio so roving tabindex stays consistent.
+    await tick()
+    panelRef
+      ?.querySelector<HTMLElement>(`[data-status="${statusState}"]`)
+      ?.focus()
   }
 
   // Computed next-occurrence preview. Reads the LOCAL optimistic mirrors

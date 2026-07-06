@@ -217,6 +217,10 @@
   // prerequisites, pause and surface the shared BlockedDoneDialog before
   // completing. Mirrors AgendaList + the drawer so every DONE path agrees.
   async function markDone(item: TaskDetail) {
+    // A guard dialog is already open (re-entry before the modal scrim absorbs
+    // the event): don't fall through to commit. The !pendingBlockedDone check
+    // below is for the first invocation only.
+    if (pendingBlockedDone) return
     if (item.is_blocked && !pendingBlockedDone) {
       try {
         const blockers = await ctx.getTaskBlockers(item.id)
@@ -510,7 +514,7 @@
                       e.stopPropagation()
                       openSubEditor(item)
                     }}
-                    class="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-opacity p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0"
+                    class="opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-opacity p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0"
                   >
                     <span class="material-symbols-outlined text-[16px]"
                       >edit_note</span

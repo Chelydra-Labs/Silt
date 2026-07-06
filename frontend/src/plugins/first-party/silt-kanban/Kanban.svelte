@@ -11,8 +11,9 @@
   import BlockedDoneDialog from '../shared/BlockedDoneDialog.svelte'
   import TaskSubEditorModal from '../shared/TaskSubEditorModal.svelte'
   import QuickAddTask from '../shared/QuickAddTask.svelte'
-  import type { TaskDetail, KanbanFilters, Scope } from './types'
-  import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
+  import type { KanbanFilters, Scope } from './types'
+  import type { TaskDetail } from '../shared/types'
+  import { PRIORITY_LABELS, laneLabel, priorityClass } from '../shared/types'
   import { buildQuery } from './query'
 
   interface Props {

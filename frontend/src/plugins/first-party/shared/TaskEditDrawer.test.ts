@@ -323,7 +323,13 @@ describe('TaskEditDrawer — status radiogroup', () => {
     await flush()
     await fireEvent.click(screen.getByText('Cancel'))
     await flush()
+    await flush()
     expect(updateBlockState).not.toHaveBeenCalled()
+    // Roving-tabindex stays consistent after the cancel: focus returns to
+    // the still-checked radio (In Progress = DOING), not the canceled DONE
+    // radio that briefly held focus.
+    const doingRadio = screen.getByRole('radio', { name: 'In Progress' })
+    expect(document.activeElement).toBe(doingRadio)
   })
 })
 

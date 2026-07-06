@@ -25,7 +25,7 @@
     clearFilters,
     applySavedBoard
   } from './kanbanSharedState.svelte'
-  import { PRIORITY_LABELS } from './types'
+  import { PRIORITY_LABELS } from '../shared/types'
 
   interface Props {
     ctx: PluginContext

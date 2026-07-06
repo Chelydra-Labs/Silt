@@ -499,6 +499,38 @@ describe('Tasks view', () => {
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
   })
 
+  it('a second mark-done while the guard is open does not fall through to commit', async () => {
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'"))
+        return {
+          rows: [{ ...task('b2', 'Blocked'), is_blocked: 1 }],
+          truncated: false
+        }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, {
+      ctx: { ...makeCtx(), getTaskBlockers },
+      manifest: MANIFEST
+    })
+    await flush()
+
+    const checkbox = document.querySelector(
+      '[data-block-id="b2"] button[role="checkbox"]'
+    ) as HTMLElement
+    await fireEvent.click(checkbox) // opens the guard
+    await flush()
+    await fireEvent.click(checkbox) // re-entry while the guard is open
+    await flush()
+
+    // The guard dialog is still pending and no DONE was committed — the
+    // early `if (pendingBlockedDone) return` prevented the fall-through.
+    expect(screen.getByText('Complete anyway')).toBeInTheDocument()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+  })
+
   it('shows the empty state when no tasks exist', async () => {
     mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
 

@@ -1,17 +1,9 @@
 /**
- * Kanban-scoped types. The task shape + label helpers now live in
- * `../shared/types` (`TaskDetail`) so every task surface consumes one
- * contract; this file keeps the board-scoped filter/board-config types that
- * have no meaning outside Kanban.
+ * Kanban-scoped types — the board filter / saved-board config that has no
+ * meaning outside Kanban. The cross-surface task shape (`TaskDetail`) and
+ * the label helpers (`PRIORITY_LABELS` / `laneLabel` / `priorityClass`) live
+ * in `../shared/types`; import them directly from there.
  */
-
-// Re-export the shared contract + helpers so existing silt-kanban imports
-// (`import { PRIORITY_LABELS, laneLabel } from './types'`) keep resolving
-// during the staged extraction. Phase 5 migrates call sites to import
-// directly from `../shared/types`. `TaskDetail` is a type; the helpers are
-// runtime values, so the two re-exports use separate clauses.
-export type { TaskDetail } from '../shared/types'
-export { PRIORITY_LABELS, laneLabel, priorityClass } from '../shared/types'
 
 // Persisted in config.yaml under plugins.plugin_settings.silt-kanban.filters.
 export interface KanbanFilters {

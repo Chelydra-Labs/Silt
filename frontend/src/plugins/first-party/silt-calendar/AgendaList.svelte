@@ -136,6 +136,8 @@
   )
 
   async function markDone(item: AgendaItem) {
+    // A guard dialog is already open: don't fall through to persist.
+    if (pendingBlockedDone) return
     markDoneError = ''
     if (markDoneTimer) clearTimeout(markDoneTimer)
     // DONE-on-blocked guard (#302): if the task carries open prerequisites,
