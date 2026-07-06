@@ -32,17 +32,24 @@ never see the endpoint URL, model name, or API key.
 pull the models you want:
 
 ```bash
-# A general-purpose chat model:
-ollama pull llama3.1
+# A general-purpose chat model (confirm exact tags with `ollama list`):
+ollama pull qwen3:30b-a3b
 
-# A small, fast embedding model:
+# An embedding model:
 ollama pull nomic-embed-text
 ```
 
 In Silt's AI Provider tab, set:
 
-- **Chat** → Provider: *Local* · Base URL: `http://localhost:11434` · Model: `llama3.1`
+- **Chat** → Provider: *Local* · Base URL: `http://localhost:11434` · Model: `qwen3:30b-a3b`
 - **Embedding** → Provider: *Local* · Base URL: `http://localhost:11434` · Model: `nomic-embed-text`
+
+> **Other model options** (confirm the exact tag with `ollama show` or the
+> provider's catalogue): for chat, `qwen3:30b-a3b` is a good starting point;
+> for embeddings, `nomic-embed-text`, `bge-m3`, `snowflake-arctic-embed2`,
+> `embeddinggemma`, and `qwen3-embedding` are all viable — they differ in
+> dimensionality and language coverage. Set the **Dimensions** field in the
+> Embedding card's Advanced section to match the model's output width.
 
 No API key is needed for local servers. Hit **Test connection** on each card
 to confirm Silt can reach Ollama.

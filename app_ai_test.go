@@ -358,3 +358,15 @@ func indexOf(s, sub string) int {
 
 // Keep context imported (used by future streaming tests; harmless now).
 var _ = context.Background
+
+func TestUpdateAIProviderConfig_RejectsNonHTTPBaseURL(t *testing.T) {
+	app := newTestApp(t)
+	err := app.UpdateAIProviderConfig("chat", AIProviderPatch{
+		ProviderType: "openai-compatible",
+		BaseURL:      "file:///etc/passwd",
+		Model:        "m",
+	})
+	if err == nil || !containsStr(err.Error(), "http://") {
+		t.Errorf("expected scheme-rejection error, got %v", err)
+	}
+}

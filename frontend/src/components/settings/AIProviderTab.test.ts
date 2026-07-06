@@ -41,8 +41,7 @@ const mocks = vi.hoisted(() => {
       base_url: 'http://localhost:11434',
       model: 'nomic-embed-text',
       has_key: false,
-      temperature: 0,
-      max_tokens: 0,
+      // temperature/max_tokens are undefined — embeddings don't use them.
       timeout_ms: 60000,
       dimensions: 768
     },
@@ -208,8 +207,6 @@ describe('AIProviderTab', () => {
           base_url: 'http://localhost:11434',
           model: 'nomic-embed-text',
           has_key: false,
-          temperature: 0,
-          max_tokens: 0,
           timeout_ms: 60000,
           dimensions: 768
         },
@@ -295,6 +292,27 @@ describe('AIProviderTab', () => {
       expect(
         screen.getByText(/leaves your machine/i)
       ).toBeInTheDocument()
+    })
+  })
+
+  describe('Advanced field validation', () => {
+    it('blocks persist when temperature is out of range', async () => {
+      mocks.configState.chat.temperature = 5 // invalid: max is 2
+      // beforeEach captures a clone of configState before this mutation, so
+      // re-seed the mock with the mutated state.
+      mocks.GetAIProviderConfig.mockResolvedValue(
+        structuredClone(mocks.configState)
+      )
+      render(AIProviderTab)
+      await ready()
+
+      // Blurring the chat base URL triggers persistProvider, which should
+      // be gated by the validation check and NOT call UpdateAIProviderConfig.
+      const chatBaseUrl = document.getElementById(
+        'ai-chat-base-url'
+      ) as HTMLInputElement
+      await fireEvent.blur(chatBaseUrl)
+      expect(mocks.UpdateAIProviderConfig).not.toHaveBeenCalled()
     })
   })
 

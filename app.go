@@ -62,6 +62,13 @@ type App struct {
 	// ErrUnavailable rather than failing the AI subsystem.
 	keyringStore keyring.Store
 
+	// aiCtx is the app-lifecycle context for AI HTTP calls. Cancelled in
+	// shutdown() so in-flight completions/embeddings are cancelled on app
+	// exit instead of running to their 60s timeout. nil in tests (the
+	// aiContext() helper falls back to context.Background()).
+	aiCtx       context.Context
+	aiCtxCancel context.CancelFunc
+
 	// grants is the per-host plugin capability grant table (F4). It lives in
 	// <configDir>/silt/grants.json (NOT in vault-scoped config.yaml) so a
 	// vault synced from another host cannot carry the counterpart's grant
@@ -187,6 +194,7 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.aiCtx, a.aiCtxCancel = context.WithCancel(context.Background())
 	settings, err := vault.LoadSettings()
 	if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 		// The settings file exists on disk but is unreadable or
@@ -307,6 +315,10 @@ func (a *App) DeclineGrantsMigration() error {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	// Cancel in-flight AI HTTP calls so they don't outlive the process.
+	if a.aiCtxCancel != nil {
+		a.aiCtxCancel()
+	}
 	// Emit vault:closing so the frontend plugin loader runs every plugin's
 	// onVaultClose/onShutdown hook (#106) before IPC tears down. Best-effort:
 	// a nil ctx (headless test) skips the emit.

@@ -120,8 +120,44 @@
 
   // --- Provider config persistence --------------------------------------
 
+  // validateAdvancedField returns an error message for an out-of-range tuning
+  // value, or null when the value is empty/valid. Empty values are fine — they
+  // mean "use the provider default" (omitempty on the Go side).
+  function advancedFieldError(
+    which: Which,
+    field: 'temperature' | 'max_tokens' | 'timeout_ms' | 'dimensions'
+  ): string | null {
+    if (!config) return null
+    const v = config[which][field]
+    if (v === undefined || v === null || Number.isNaN(v)) return null
+    switch (field) {
+      case 'temperature':
+        if (v < 0 || v > 2) return 'Must be 0–2'
+        break
+      case 'max_tokens':
+        if (v < 1) return 'Must be ≥ 1'
+        break
+      case 'timeout_ms':
+        if (v < 1000) return 'Must be ≥ 1000 ms'
+        break
+      case 'dimensions':
+        if (v < 1) return 'Must be ≥ 1'
+        break
+    }
+    return null
+  }
+
+  function hasAdvancedErrors(which: Which): boolean {
+    const fields: ('temperature' | 'max_tokens' | 'timeout_ms' | 'dimensions')[] =
+      which === 'embedding'
+        ? ['temperature', 'max_tokens', 'timeout_ms', 'dimensions']
+        : ['temperature', 'max_tokens', 'timeout_ms']
+    return fields.some((f) => advancedFieldError(which, f) !== null)
+  }
+
   function persistProvider(which: Which) {
     if (!config) return
+    if (hasAdvancedErrors(which)) return // don't persist invalid tuning values
     const b = config[which]
     const patch: main.AIProviderPatch = {
       provider_type: b.provider_type,
@@ -696,6 +732,9 @@
                 onblur={() => void persistProvider(which)}
                 class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
               />
+              {#if advancedFieldError(which, 'temperature')}
+                <span class="text-error text-[10px] font-label-sm" role="alert">{advancedFieldError(which, 'temperature')}</span>
+              {/if}
             </label>
             <label
               class="flex flex-col gap-1.5"
@@ -713,6 +752,9 @@
                 onblur={() => void persistProvider(which)}
                 class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
               />
+              {#if advancedFieldError(which, 'max_tokens')}
+                <span class="text-error text-[10px] font-label-sm" role="alert">{advancedFieldError(which, 'max_tokens')}</span>
+              {/if}
             </label>
             <label class="flex flex-col gap-1.5" for="{idPrefix}-timeout">
               <span
@@ -728,6 +770,9 @@
                 onblur={() => void persistProvider(which)}
                 class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
               />
+              {#if advancedFieldError(which, 'timeout_ms')}
+                <span class="text-error text-[10px] font-label-sm" role="alert">{advancedFieldError(which, 'timeout_ms')}</span>
+              {/if}
             </label>
             {#if which === 'embedding'}
               <label
@@ -746,6 +791,9 @@
                   onblur={() => void persistProvider(which)}
                   class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
                 />
+                {#if advancedFieldError(which, 'dimensions')}
+                  <span class="text-error text-[10px] font-label-sm" role="alert">{advancedFieldError(which, 'dimensions')}</span>
+                {/if}
               </label>
             {/if}
           </div>

@@ -297,3 +297,48 @@ func (k AIErrorKind) String() string { return string(k) }
 
 // intPtr local helper (the config-package helper isn't visible here).
 func intPtr(i int) *int { return &i }
+
+func TestComplete_RejectsNonHTTPBaseURL(t *testing.T) {
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: "file:///etc/passwd", Model: "m"},
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	e, ok := err.(*AIError)
+	if !ok || e.Kind != ErrBadRequest {
+		t.Errorf("want ErrBadRequest for file:// URL, got %v", err)
+	}
+}
+
+func TestEmbed_RejectsNonHTTPBaseURL(t *testing.T) {
+	_, err := Embed(context.Background(), EmbedRequest{
+		Provider: AIProvider{BaseURL: "ftp://evil.example.com", Model: "m"},
+		Texts:    []string{"hi"},
+	})
+	e, ok := err.(*AIError)
+	if !ok || e.Kind != ErrBadRequest {
+		t.Errorf("want ErrBadRequest for ftp:// URL, got %v", err)
+	}
+}
+
+func TestComplete_CrossHostRedirectRejected(t *testing.T) {
+	// The first server redirects to a second server on a different host:port.
+	// The redirect guard must block it so the Authorization header (if any)
+	// is not sent to the redirect target.
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("redirect target should never be reached")
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: redirector.URL, Model: "m", APIKey: "secret"},
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected cross-host redirect to be rejected, got nil")
+	}
+}

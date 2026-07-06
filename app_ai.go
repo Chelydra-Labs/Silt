@@ -43,6 +43,31 @@ import (
 // two vaults on one machine keep separate keys.
 const keyringService = "Silt"
 
+// aiContext returns the app-lifecycle context for AI HTTP calls, falling back
+// to context.Background() when the App wasn't initialized via startup() (tests).
+// Production sets aiCtx in startup() and cancels it in shutdown() so in-flight
+// completions/embeddings don't outlive the process.
+func (a *App) aiContext() context.Context {
+	if a.aiCtx != nil {
+		return a.aiCtx
+	}
+	return context.Background()
+}
+
+// validateAIBaseURL rejects base URLs that are not http(s) so a file:/// or
+// empty-scheme typo is caught with a clear message instead of a confusing
+// transport error from the HTTP client.
+func validateAIBaseURL(raw string) error {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return nil // empty is allowed (NormalizeAIConfig fills the local default)
+	}
+	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		return fmt.Errorf("base URL must start with http:// or https://")
+	}
+	return nil
+}
+
 // AIProviderPatch is the input to UpdateAIProviderConfig: one provider block
 // MINUS the API key. The key is never part of a generic patch — it moves through
 // the dedicated SetAIAPIKey / ClearAIAPIKey bindings so it can be routed to the
@@ -254,6 +279,9 @@ func (a *App) UpdateAIProviderConfig(which string, patch AIProviderPatch) error 
 	if err := aiValidateWhich(which); err != nil {
 		return err
 	}
+	if err := validateAIBaseURL(patch.BaseURL); err != nil {
+		return err
+	}
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
@@ -415,7 +443,7 @@ func (a *App) TestAIConnection(which string) (AIProbeResult, error) {
 		return AIProbeResult{}, err
 	}
 	// No configMu/vaultMu held during the HTTP probe.
-	if err := ai.Probe(context.Background(), provider, which == "chat"); err != nil {
+	if err := ai.Probe(a.aiContext(), provider, which == "chat"); err != nil {
 		if e, ok := err.(*ai.AIError); ok {
 			return AIProbeResult{OK: false, Kind: string(e.Kind), Message: e.Message}, nil
 		}
@@ -501,7 +529,7 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 	for i, m := range input.Messages {
 		messages[i] = ai.ChatMessage{Role: m.Role, Content: m.Content}
 	}
-	result, callErr := ai.Complete(context.Background(), ai.CompleteRequest{
+	result, callErr := ai.Complete(a.aiContext(), ai.CompleteRequest{
 		Provider:    provider,
 		Messages:    messages,
 		Model:       input.Model,
@@ -533,7 +561,7 @@ func (a *App) PluginAIEmbed(pluginID, sessionToken string, input PluginAIEmbedIn
 	if effectiveModel == "" {
 		effectiveModel = configuredModel
 	}
-	result, callErr := ai.Embed(context.Background(), ai.EmbedRequest{
+	result, callErr := ai.Embed(a.aiContext(), ai.EmbedRequest{
 		Provider:   provider,
 		Texts:      input.Texts,
 		Model:      input.Model,

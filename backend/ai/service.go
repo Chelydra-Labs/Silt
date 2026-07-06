@@ -49,6 +49,35 @@ const MaxResponseBytes = 50 * 1024 * 1024 // 50 MB
 // cannot hang a plugin call indefinitely. Mirrors config.DefaultAITimeoutMs.
 const DefaultTimeout = 60 * time.Second
 
+// httpClient is the dedicated client for all AI provider calls. It carries a
+// CheckRedirect that rejects cross-host redirects so a compromised or
+// misconfigured endpoint cannot redirect the request (bearing the
+// Authorization: Bearer <key> header) to a different host. Same-host redirects
+// are allowed (load balancers, path normalization). A dedicated client (not
+// http.DefaultClient) also isolates AI calls from any global transport changes.
+var httpClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) == 0 {
+			return nil
+		}
+		prevHost := via[len(via)-1].URL.Host
+		if req.URL.Host != prevHost {
+			return fmt.Errorf("ai: refused cross-host redirect from %s to %s", prevHost, req.URL.Host)
+		}
+		return nil
+	},
+}
+
+// validateBaseURL checks the resolved endpoint for a valid http(s) scheme.
+// Called by Complete and Embed as defense in depth (the binding layer also
+// validates before persisting).
+func validateBaseURL(baseURL string) error {
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		return fmt.Errorf("base URL must start with http:// or https://")
+	}
+	return nil
+}
+
 // ChatMessage is one message in a chat-completion conversation. The OpenAI
 // roles "system" / "user" / "assistant" are the only ones every provider honors.
 type ChatMessage struct {
@@ -192,7 +221,7 @@ func httpDo(ctx context.Context, method, url, apiKey string, timeoutMs *int, req
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		// Distinguish timeout from generic transport failure so the UI can hint
 		// "slow model / raise timeout" vs "endpoint unreachable".
@@ -287,6 +316,9 @@ func Complete(ctx context.Context, req CompleteRequest) (CompleteResult, error) 
 	if baseURL == "" {
 		return CompleteResult{}, &AIError{Kind: ErrUnreachable, Message: "no base URL configured"}
 	}
+	if err := validateBaseURL(baseURL); err != nil {
+		return CompleteResult{}, &AIError{Kind: ErrBadRequest, Message: err.Error()}
+	}
 	body, err := json.Marshal(chatRequest{
 		Model:       model,
 		Messages:    req.Messages,
@@ -356,6 +388,9 @@ func Embed(ctx context.Context, req EmbedRequest) (EmbedResult, error) {
 	baseURL := strings.TrimRight(req.Provider.BaseURL, "/")
 	if baseURL == "" {
 		return EmbedResult{}, &AIError{Kind: ErrUnreachable, Message: "no base URL configured"}
+	}
+	if err := validateBaseURL(baseURL); err != nil {
+		return EmbedResult{}, &AIError{Kind: ErrBadRequest, Message: err.Error()}
 	}
 	body, err := json.Marshal(embedRequest{Model: model, Input: req.Texts, Dimensions: req.Dimensions})
 	if err != nil {
