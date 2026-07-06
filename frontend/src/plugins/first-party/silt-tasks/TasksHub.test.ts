@@ -193,14 +193,16 @@ describe('Tasks hub shell (#424)', () => {
     )
   })
 
-  it('switching to Calendar renders the Calendar stub and persists', async () => {
+  it('switching to Calendar renders the Calendar renderer and persists', async () => {
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
     await fireEvent.click(screen.getByRole('radio', { name: /Calendar mode/i }))
     await flush()
 
-    expect(screen.getByTestId('tasks-calendar-stub')).toBeInTheDocument()
+    // Calendar is no longer a stub (#425): the real grid renderer mounts.
+    expect(screen.getByTestId('tasks-calendar')).toBeInTheDocument()
+    expect(screen.queryByTestId('tasks-calendar-stub')).toBeNull()
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
       'silt-tasks',
       'default_display_mode',
@@ -217,7 +219,7 @@ describe('Tasks hub shell (#424)', () => {
     await flush()
 
     // The persisted 'calendar' mode is restored without an explicit click.
-    expect(screen.getByTestId('tasks-calendar-stub')).toBeInTheDocument()
+    expect(screen.getByTestId('tasks-calendar')).toBeInTheDocument()
     expect(
       screen
         .getByRole('radio', { name: /Calendar mode/i })
@@ -260,7 +262,7 @@ describe('Tasks hub shell (#424)', () => {
     )
     await flush()
 
-    expect(screen.getByTestId('tasks-calendar-stub')).toBeInTheDocument()
+    expect(screen.getByTestId('tasks-calendar')).toBeInTheDocument()
   })
 
   it('header count reflects counts reported by the active renderer', async () => {

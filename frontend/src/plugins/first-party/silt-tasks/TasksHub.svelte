@@ -439,7 +439,7 @@
     {:else if hubState.displayMode === 'board'}
       <BoardView {ctx} onCountChange={handleCountChange} />
     {:else}
-      <CalendarView />
+      <CalendarView {ctx} onCountChange={handleCountChange} />
     {/if}
   </div>
 </div>
