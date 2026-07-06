@@ -197,6 +197,34 @@ export interface PluginContext {
    */
   setTaskBlockedBy: (id: string, depIDs: string[]) => Promise<boolean>
   /**
+   * Rewrite a task's `[owner:: NAME]` inline token on disk atomically (#412).
+   * Pass an empty string to clear the owner. Round-trips through the markdown
+   * file, re-indexes, and emits block:changed. Gated by content-mutate.
+   */
+  setTaskOwner: (id: string, owner: string) => Promise<boolean>
+  /**
+   * Rewrite a task's `[priority:: N]` inline token on disk atomically (#412).
+   * 1=Critical, 2=Normal, 3=Low (matches PRIORITY_LABELS). Round-trips through
+   * the markdown file, re-indexes, and emits block:changed. Gated by
+   * content-mutate.
+   */
+  setTaskPriority: (id: string, priority: number) => Promise<boolean>
+  /**
+   * Rewrite a task's `[tags:: a|b|c]` inline token on disk atomically (#412).
+   * Pass an empty array to clear all tags. The pipe-delimited wire format is
+   * the canonical storage; the SDK takes/returns a real array. Round-trips
+   * through the markdown file, re-indexes, and emits block:changed. Gated by
+   * content-mutate.
+   */
+  setTaskTags: (id: string, tags: string[]) => Promise<boolean>
+  /**
+   * Rewrite a task's prose title on disk atomically (#412). The backend
+   * preserves #tags, ((uuid)) refs, and inline tokens during the title
+   * rewrite — callers edit only the prose. Round-trips through the markdown
+   * file, re-indexes, and emits block:changed. Gated by content-mutate.
+   */
+  setTaskTitle: (id: string, title: string) => Promise<boolean>
+  /**
    * Return the open (non-DONE) prerequisites of a task (#302), each with full
    * metadata (owner, due date, breadcrumb) for the DONE-transition confirm
    * dialog. Empty array = the task is actionable.

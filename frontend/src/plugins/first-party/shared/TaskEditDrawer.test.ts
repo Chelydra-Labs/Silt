@@ -450,3 +450,200 @@ describe('TaskEditDrawer — created/completed metadata line (#417)', () => {
     expect(completedLine?.textContent).toMatch(/6/)
   })
 })
+
+describe('TaskEditDrawer — owner editor (#412)', () => {
+  beforeEach(() => cleanup())
+
+  it('typing + Enter commits via ctx.setTaskOwner', async () => {
+    const setTaskOwner = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskOwner })
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose: () => {} }
+    })
+    const input = screen.getByLabelText('Owner')
+    await fireEvent.input(input, { target: { value: 'Alice' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+    expect(setTaskOwner).toHaveBeenCalledWith('task-1', 'Alice')
+  })
+
+  it('blur commits the owner', async () => {
+    const setTaskOwner = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskOwner })
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose: () => {} }
+    })
+    const input = screen.getByLabelText('Owner')
+    await fireEvent.input(input, { target: { value: 'Bob' } })
+    await fireEvent.blur(input)
+    await flush()
+    expect(setTaskOwner).toHaveBeenCalledWith('task-1', 'Bob')
+  })
+
+  it('empty string clears the owner', async () => {
+    const setTaskOwner = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskOwner })
+    render(TaskEditDrawer, {
+      props: { task: makeTask({ owner: 'Alice' }), ctx, onClose: () => {} }
+    })
+    const input = screen.getByLabelText('Owner')
+    await fireEvent.input(input, { target: { value: '' } })
+    await fireEvent.blur(input)
+    await flush()
+    expect(setTaskOwner).toHaveBeenCalledWith('task-1', '')
+  })
+
+  it('reverts local state and shows the error banner on failure', async () => {
+    const setTaskOwner = vi.fn().mockRejectedValue(new Error('disk locked'))
+    const ctx = makeCtx({ setTaskOwner })
+    render(TaskEditDrawer, {
+      props: { task: makeTask({ owner: 'Alice' }), ctx, onClose: () => {} }
+    })
+    const input = screen.getByLabelText('Owner') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Bob' } })
+    await fireEvent.blur(input)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(screen.getByText(/Couldn't save/)).toBeTruthy()
+    // Reverted to the original committed value.
+    expect(input.value).toBe('Alice')
+  })
+})
+
+describe('TaskEditDrawer — priority editor (#412)', () => {
+  beforeEach(() => cleanup())
+
+  it('clicking an option commits via ctx.setTaskPriority', async () => {
+    const setTaskPriority = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskPriority })
+    render(TaskEditDrawer, {
+      props: { task: makeTask({ priority: 3 }), ctx, onClose: () => {} }
+    })
+    await fireEvent.click(screen.getByRole('radio', { name: 'Critical' }))
+    expect(setTaskPriority).toHaveBeenCalledWith('task-1', 1)
+  })
+
+  it('arrow-key navigation changes the selection (WCAG 2.1.1)', async () => {
+    const setTaskPriority = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskPriority })
+    const { container } = render(TaskEditDrawer, {
+      props: { task: makeTask({ priority: 3 }), ctx, onClose: () => {} }
+    })
+    const rg = container.querySelector(
+      '[aria-labelledby="task-priority-label"]'
+    ) as HTMLElement
+    // Start at Low (priority 3, index 2). ArrowLeft → Normal (priority 2).
+    await fireEvent.keyDown(rg, { key: 'ArrowLeft' })
+    expect(setTaskPriority).toHaveBeenCalledWith('task-1', 2)
+    // ArrowRight from Normal wraps forward; here test Home jumps to Critical.
+    await fireEvent.keyDown(rg, { key: 'Home' })
+    expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 1)
+  })
+
+  it('reverts local state and shows the error banner on failure', async () => {
+    const setTaskPriority = vi.fn().mockRejectedValue(new Error('disk locked'))
+    const ctx = makeCtx({ setTaskPriority })
+    render(TaskEditDrawer, {
+      props: { task: makeTask({ priority: 3 }), ctx, onClose: () => {} }
+    })
+    await fireEvent.click(screen.getByRole('radio', { name: 'Critical' }))
+    await new Promise((r) => setTimeout(r, 10))
+    expect(screen.getByText(/Couldn't save/)).toBeTruthy()
+  })
+})
+
+describe('TaskEditDrawer — tags editor (#412)', () => {
+  beforeEach(() => cleanup())
+
+  it('adding a chip commits the full new set via ctx.setTaskTags', async () => {
+    const setTaskTags = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskTags })
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({ tags: 'work|urgent' }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+    const input = screen.getByLabelText('Add a tag')
+    await fireEvent.input(input, { target: { value: 'home' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+    expect(setTaskTags).toHaveBeenCalledWith('task-1', [
+      'work',
+      'urgent',
+      'home'
+    ])
+  })
+
+  it('removing a chip commits the updated set', async () => {
+    const setTaskTags = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskTags })
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({ tags: 'work|urgent' }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+    await fireEvent.click(screen.getByLabelText('Remove tag urgent'))
+    expect(setTaskTags).toHaveBeenCalledWith('task-1', ['work'])
+  })
+
+  it('reverts local state and shows the error banner on failure', async () => {
+    const setTaskTags = vi.fn().mockRejectedValue(new Error('disk locked'))
+    const ctx = makeCtx({ setTaskTags })
+    render(TaskEditDrawer, {
+      props: { task: makeTask({ tags: 'work' }), ctx, onClose: () => {} }
+    })
+    const input = screen.getByLabelText('Add a tag')
+    await fireEvent.input(input, { target: { value: 'home' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(screen.getByText(/Couldn't save/)).toBeTruthy()
+  })
+})
+
+describe('TaskEditDrawer — title editor (#412)', () => {
+  beforeEach(() => cleanup())
+
+  it('editing + Enter commits via ctx.setTaskTitle', async () => {
+    const setTaskTitle = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskTitle })
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose: () => {} }
+    })
+    const input = screen.getByLabelText('Task title')
+    await fireEvent.input(input, { target: { value: 'Water the garden' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+    expect(setTaskTitle).toHaveBeenCalledWith('task-1', 'Water the garden')
+  })
+
+  it('blur commits the title', async () => {
+    const setTaskTitle = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskTitle })
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose: () => {} }
+    })
+    const input = screen.getByLabelText('Task title')
+    await fireEvent.input(input, { target: { value: 'New title' } })
+    await fireEvent.blur(input)
+    await flush()
+    expect(setTaskTitle).toHaveBeenCalledWith('task-1', 'New title')
+  })
+
+  it('reverts local state and shows the error banner on failure', async () => {
+    const setTaskTitle = vi.fn().mockRejectedValue(new Error('disk locked'))
+    const ctx = makeCtx({ setTaskTitle })
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose: () => {} }
+    })
+    const input = screen.getByLabelText('Task title') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'New title' } })
+    await fireEvent.blur(input)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(screen.getByText(/Couldn't save/)).toBeTruthy()
+    // Reverted to the original committed title.
+    expect(input.value).toBe('Water plants')
+  })
+})
