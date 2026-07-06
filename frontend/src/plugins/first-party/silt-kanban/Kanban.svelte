@@ -8,7 +8,7 @@
   import { EventsOn } from '../../../../wailsjs/runtime/runtime.js'
   import FilterBar from './FilterBar.svelte'
   import CardDetailPanel from './CardDetailPanel.svelte'
-  import BlockedDoneDialog from './BlockedDoneDialog.svelte'
+  import BlockedDoneDialog from '../shared/BlockedDoneDialog.svelte'
   import TaskSubEditorModal from '../shared/TaskSubEditorModal.svelte'
   import QuickAddTask from '../shared/QuickAddTask.svelte'
   import type { KanbanCard, KanbanFilters, Scope } from './types'

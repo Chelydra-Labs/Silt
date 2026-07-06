@@ -10,9 +10,10 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import { plusDaysISO } from '../../sdk'
-  // Reuse the Kanban's BlockedDoneDialog so the DONE-on-blocked guard is the
-  // same glassy, focus-trapped surface everywhere (#302 consistency).
-  import BlockedDoneDialog from '../silt-kanban/BlockedDoneDialog.svelte'
+  // BlockedDoneDialog is the shared DONE-on-blocked guard surface (#302) —
+  // the same glassy, focus-trapped dialog Kanban, Agenda, and the task
+  // drawer all use.
+  import BlockedDoneDialog from '../shared/BlockedDoneDialog.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -46,8 +47,8 @@
   let markDoneTimer: ReturnType<typeof setTimeout> | null = null
 
   // DONE-on-blocked confirm (#302): when a blocked task is marked done, pause
-  // and open the BlockedDoneDialog (the same surface the Kanban uses) listing
-  // the open prerequisites. Null = no prompt open.
+  // and open the shared BlockedDoneDialog listing the open prerequisites.
+  // Null = no prompt open.
   let pendingBlockedDone = $state<{
     item: AgendaItem
     blockers: { id: string; clean_content?: string }[]
