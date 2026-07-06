@@ -77,6 +77,7 @@ vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
 import TaskSubEditorModal from './TaskSubEditorModal.svelte'
 import type { PluginContext } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
+import { STANDALONE_TASKS_NOTEBOOK } from '../../../lib/standaloneTasksNav'
 
 const mocks = vi.hoisted(() => ({
   fetchSubtree: vi.fn(),
@@ -134,6 +135,25 @@ describe('TaskSubEditorModal (#304)', () => {
     expect(dialog).toHaveTextContent('Work')
     expect(dialog).toHaveTextContent('Journal')
     expect(dialog).toHaveTextContent('Daily')
+  })
+
+  it('shows "Standalone task" instead of the synthetic .silt path for standalone tasks', async () => {
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      notebook: STANDALONE_TASKS_NOTEBOOK,
+      section: '',
+      page: 'tasks.md',
+      ctx: makeCtx(),
+
+      onClose: () => {}
+    })
+    await flush()
+
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('Standalone task')
+    // The synthetic notebook name + page file must NOT leak into the header.
+    expect(dialog).not.toHaveTextContent('.silt')
+    expect(dialog).not.toHaveTextContent('tasks.md')
   })
 
   it('mounts the TipTap editor once the subtree loads (loading state clears)', async () => {

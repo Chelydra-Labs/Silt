@@ -9,7 +9,7 @@
   import FilterBar from './FilterBar.svelte'
   import CardDetailPanel from './CardDetailPanel.svelte'
   import BlockedDoneDialog from './BlockedDoneDialog.svelte'
-  import TaskSubEditorModal from './TaskSubEditorModal.svelte'
+  import TaskSubEditorModal from '../shared/TaskSubEditorModal.svelte'
   import QuickAddTask from '../shared/QuickAddTask.svelte'
   import type { KanbanCard, KanbanFilters, Scope } from './types'
   import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
