@@ -512,6 +512,15 @@ func (a *App) PluginSetTaskTitle(pluginID, sessionToken, blockID, title string) 
 // CleanText into hashtags, block-refs, and prose, then reassembles the new
 // title + preserved tokens.
 func (a *App) setTaskTitle(blockID, title string) error {
+	// SDK contract guard: an empty/whitespace-only title would silently strip
+	// ALL prose from the task (replaceTitleInCleanText("", cleanText) leaves
+	// only #tags + ((uuid)) refs — a title-less block that still parses as a
+	// task). The drawer guards client-side, but the backend is the contract
+	// surface for every plugin, so reject here before touching the disk.
+	if strings.TrimSpace(title) == "" {
+		return fmt.Errorf("task title must not be empty")
+	}
+
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {

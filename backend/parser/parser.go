@@ -924,18 +924,38 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			}
 
 			// Task lifecycle minting (#417): a TASK block whose line was just
-			// minted with a fresh id (`modified`) is genuinely new — existing
-			// tasks already carry an id comment and never hit this branch, so
-			// there is NO backfill of pre-existing tasks. Stamp CreatedAt
-			// (ISO 8601 local, no tz) and ManualOrder (1-based position among
-			// all TASK blocks in the file). The Go SDK create paths mint the
-			// id themselves and set these fields directly, so on re-parse the
-			// id is already present and this branch is correctly skipped.
+			// minted with a fresh id (`modified`) is treated as new. The minting
+			// path also fires when an external editor/sync stripped the
+			// `<!-- id: ... -->` comment from an existing task while leaving the
+			// `[created::]`/`[order::]` tokens intact in the line — in that case
+			// scanTaskTokens has ALREADY populated the surviving values into the
+			// block, and overwriting them with time.Now()/taskCounter would
+			// silently destroy the original creation timestamp (data-loss bug).
+			// Guard each stamp so an already-present value wins; a truly-new task
+			// has neither token (both empty/0) and gets stamped.
+			//
+			// The Go SDK create paths mint the id themselves and set these fields
+			// directly, so on re-parse the id is already present and this branch
+			// is correctly skipped.
 			if block.Type == BlockTask {
 				taskCounter++
 				if modified {
-					block.CreatedAt = time.Now().Format("2006-01-02T15:04:05")
-					block.ManualOrder = taskCounter
+					if block.CreatedAt == "" {
+						block.CreatedAt = time.Now().Format("2006-01-02T15:04:05")
+					}
+					if block.ManualOrder == 0 {
+						block.ManualOrder = taskCounter
+					}
+					// A freshly-minted task whose checkbox is already DONE (e.g.
+					// the user typed `- [x] ship it`) must also carry
+					// [completed::] — PluginUpdateBlockState only stamps it on a
+					// TODO→DONE *transition*, not on initial DONE detection, so
+					// without this the 'completed' filter would miss the task.
+					// The empty-guard mirrors the created/order guards: a
+					// surviving token wins.
+					if block.Status == "DONE" && block.CompletedAt == "" {
+						block.CompletedAt = time.Now().Format("2006-01-02T15:04:05")
+					}
 				}
 			}
 

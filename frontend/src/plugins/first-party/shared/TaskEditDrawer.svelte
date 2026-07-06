@@ -4,7 +4,7 @@
   import type { PluginContext, TaskStatus } from '../../sdk'
   import { plusDaysISO } from '../../sdk'
   import type { TaskDetail } from './types'
-  import { PRIORITY_LABELS, laneLabel } from './types'
+  import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
   import DependencyPicker from './DependencyPicker.svelte'
   import BlockedDoneDialog from './BlockedDoneDialog.svelte'
   import Popover from '../../../components/Popover.svelte'
@@ -58,14 +58,6 @@
       previouslyFocused = null
     }
   })
-
-  function statusChipClass(s: TaskStatus): string {
-    if (s === 'TODO')
-      return 'text-text-muted border-surface-card-border bg-surface-card'
-    if (s === 'DOING')
-      return 'text-accent-secondary-start border-accent-secondary-start/30 bg-accent-secondary-glow'
-    return 'text-accent-primary-start border-accent-primary-start/30 bg-accent-primary-glow'
-  }
 
   // Friendly local rendering of the [created::]/[completed::] ISO timestamps
   // (#417) for the Details metadata line. Falls back to the raw string when
@@ -508,6 +500,12 @@
       onMetaChanged?.()
     } catch (e) {
       tagsState = prev
+      // Correct the polite region: the optimistic "Added/Removed" was a lie
+      // on failure. Flip it to the matching "Couldn't add/remove" so SR users
+      // hear the truth (the visible banner already shows the error).
+      tagsAnnouncement = announcement
+        .replace('Added tag', "Couldn't add")
+        .replace('Removed tag', "Couldn't remove")
       metaError = e instanceof Error ? e.message : String(e)
     } finally {
       tagsPending = false
@@ -538,7 +536,14 @@
   async function commitTitle() {
     if (!task || titlePending) return
     const trimmed = titleDraft.trim()
-    if (!trimmed || trimmed === titleState) return
+    if (!trimmed) {
+      // Empty title: the backend rejects it. Snap the visible draft back to
+      // the real committed value so the field doesn't lie about state (and
+      // the sr-only dialog name stays in sync with what's shown).
+      titleDraft = titleState
+      return
+    }
+    if (trimmed === titleState) return
     const prev = titleState
     titleState = trimmed
     titlePending = true
@@ -631,8 +636,8 @@
       <div class="flex flex-col gap-1.5 min-w-0 flex-1">
         {#if priorityState >= 1 && priorityState <= 3}
           <span
-            class="self-start px-1.5 py-0.5 border rounded-sm font-label-sm text-[9px] uppercase tracking-wide w-fit {statusChipClass(
-              task.status
+            class="self-start px-1.5 py-0.5 border rounded-sm font-label-sm text-[9px] uppercase tracking-wide w-fit {priorityClass(
+              priorityState
             )}"
           >
             {PRIORITY_LABELS[priorityState] ?? 'Normal'}
@@ -656,11 +661,12 @@
           <span class="sr-only">{titleState}</span>
           <input
             type="text"
-            class="flex-1 min-w-0 bg-transparent border-none outline-none focus:ring-1 focus:ring-accent-primary-start/40 rounded px-1 -mx-1 placeholder:text-text-muted {titlePending
+            class="flex-1 min-w-0 bg-transparent border-none outline-none focus:ring-1 focus:ring-accent-primary-start/40 hover:bg-hover rounded -mx-1 px-1 placeholder:text-text-muted {titlePending
               ? 'opacity-50'
               : ''}"
             bind:value={titleDraft}
-            disabled={titlePending}
+            readonly={titlePending}
+            aria-busy={titlePending}
             aria-label="Task title"
             onblur={commitTitle}
             onkeydown={(e) => {
@@ -1032,10 +1038,13 @@
               <input
                 id="task-owner-input"
                 type="text"
-                class="w-full px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card text-right focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:opacity-50"
+                class="w-full px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card text-right focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {ownerPending
+                  ? 'opacity-50'
+                  : ''}"
                 placeholder="Unassigned"
                 bind:value={ownerDraft}
-                disabled={ownerPending}
+                readonly={ownerPending}
+                aria-busy={ownerPending}
                 onblur={commitOwner}
                 onkeydown={(e) => {
                   if (e.key === 'Enter') {
@@ -1129,7 +1138,7 @@
               <ul class="flex flex-wrap gap-1 justify-end items-center">
                 {#each tagsState as tg (tg)}
                   <li
-                    class="flex items-center gap-0.5 px-1.5 py-0.5 border rounded-sm text-[10px] text-accent-secondary-start border-accent-secondary-start/30 bg-accent-secondary-glow"
+                    class="flex items-center gap-0.5 px-1.5 py-0.5 border rounded-sm text-[12px] text-accent-secondary-start border-accent-secondary-start/30 bg-accent-secondary-glow"
                   >
                     <span>{tg}</span>
                     <button
@@ -1148,7 +1157,7 @@
                   <input
                     id="task-tag-add"
                     type="text"
-                    class="w-20 px-1.5 py-0.5 text-[10px] bg-transparent border border-surface-card-border rounded focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-text-primary placeholder:text-text-muted disabled:opacity-50"
+                    class="flex-1 min-w-[100px] px-1.5 py-0.5 text-[12px] bg-transparent border border-surface-card-border rounded focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-text-primary placeholder:text-text-muted disabled:opacity-50"
                     placeholder="Add…"
                     bind:value={tagDraft}
                     disabled={tagsPending}

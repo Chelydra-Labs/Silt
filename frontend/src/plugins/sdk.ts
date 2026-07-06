@@ -210,10 +210,12 @@ export interface PluginContext {
    */
   setTaskPriority: (id: string, priority: number) => Promise<boolean>
   /**
-   * Rewrite a task's `[tags:: a|b|c]` inline token on disk atomically (#412).
-   * Pass an empty array to clear all tags. The pipe-delimited wire format is
-   * the canonical storage; the SDK takes/returns a real array. Round-trips
-   * through the markdown file, re-indexes, and emits block:changed. Gated by
+   * Rewrite a task's `#tag` hashtags in its prose atomically (#412). Tags are
+   * stored inline as `#namespace/path` hashtags in the task body — there is no
+   * `[tags::]` token. Pass an empty array to clear all tags. The
+   * pipe-delimited form (`a|b|c`) is only the SQL GROUP_CONCAT wire shape used
+   * by the read projections, not on-disk storage. Round-trips through the
+   * markdown file, re-indexes, and emits block:changed. Gated by
    * content-mutate.
    */
   setTaskTags: (id: string, tags: string[]) => Promise<boolean>

@@ -395,6 +395,42 @@ func TestSetTaskTitle_RejectsNonTask(t *testing.T) {
 	}
 }
 
+// TestSetTaskTitle_RejectsEmptyTitle is the C2 SDK contract guard: a plugin
+// calling setTaskTitle(id, "") (or whitespace-only) must NOT silently strip
+// all prose from the task. replaceTitleInCleanText("", cleanText) would leave
+// only #tags + ((uuid)) refs — a title-less block that still parses as a
+// task. The backend is the contract surface for every plugin, so reject up
+// front and leave the file untouched (no write, no block:changed emission).
+func TestSetTaskTitle_RejectsEmptyTitle(t *testing.T) {
+	cases := []struct {
+		name  string
+		title string
+	}{
+		{"empty", ""},
+		{"whitespace only", "   "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestApp(t)
+			const id = "1212dddd-1111-1111-1111-111111111111"
+			content := "- [ ] original prose #tag <!-- id: " + id + " -->\n"
+			filePath := indexTestFile(t, app, "W", "S", "TitleEmpty", "2026-07-01", content)
+
+			before, _ := os.ReadFile(filePath)
+
+			err := app.SetTaskTitle(id, tc.title)
+			if err == nil {
+				t.Fatal("expected error for empty title, got nil")
+			}
+
+			after, _ := os.ReadFile(filePath)
+			if string(before) != string(after) {
+				t.Errorf("file must NOT be written on rejected title\n--- before ---\n%s\n--- after ---\n%s", before, after)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Index reflection: tags + owner + priority round-trip through SQLite.
 // ---------------------------------------------------------------------------

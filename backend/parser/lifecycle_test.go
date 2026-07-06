@@ -325,3 +325,107 @@ func TestMinting_ManualOrderPositionSemantics(t *testing.T) {
 		t.Errorf("task 3 (existing) should NOT be backfilled, got ManualOrder=%d", blocks[2].ManualOrder)
 	}
 }
+
+// TestMinting_IdStrippedButTokensSurvive_PreservesValues is the C1 data-loss
+// guard: an existing TASK whose `<!-- id: ... -->` comment was stripped by an
+// external editor/sync (or hand-edited away) but whose `[created::]` and
+// `[order::]` tokens survived in the line. The parser re-mints the id
+// (`modified=true`), but scanTaskTokens has ALREADY correctly populated
+// CreatedAt/ManualOrder from the surviving tokens — the minting branch must
+// NOT overwrite them with time.Now()/taskCounter, or the original creation
+// timestamp is silently destroyed.
+func TestMinting_IdStrippedButTokensSurvive_PreservesValues(t *testing.T) {
+	// Existing task with id-stripped but tokens intact. No id comment.
+	stripped := "- [ ] survivor [created:: 2025-03-01T09:00:00] [order:: 7]\n"
+	src := "---\nnotebook: \"nb\"\nsection: \"\"\npage: \"pg\"\ndate: \"2026-07-06\"\ntags: []\n---\n" + stripped
+	blocks, _, newContent, modified, err := ParseFileContent(src, "nb", "", "pg", "2026-07-06", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !modified {
+		t.Errorf("expected modification (id re-minted)")
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if blocks[0].CreatedAt != "2025-03-01T09:00:00" {
+		t.Errorf("DATA-LOSS: CreatedAt should be preserved from surviving token, got %q", blocks[0].CreatedAt)
+	}
+	if blocks[0].ManualOrder != 7 {
+		t.Errorf("DATA-LOSS: ManualOrder should be preserved from surviving token, got %d", blocks[0].ManualOrder)
+	}
+	if blocks[0].ID == "" {
+		t.Errorf("expected a re-minted id for the stripped task")
+	}
+	// The surviving values must be re-emitted verbatim (not overwritten).
+	if !strings.Contains(newContent, "[created:: 2025-03-01T09:00:00]") {
+		t.Errorf("expected surviving [created:: 2025-03-01T09:00:00] in rewritten content:\n%s", newContent)
+	}
+	if !strings.Contains(newContent, "[order:: 7]") {
+		t.Errorf("expected surviving [order:: 7] in rewritten content:\n%s", newContent)
+	}
+}
+
+// TestMinting_NewTaskStillMintsWhenNoTokens is the regression guard for the
+// C1 fix: a genuinely-new task (no id comment, no lifecycle tokens) must
+// STILL get CreatedAt + ManualOrder minted after the empty/zero guards landed.
+func TestMinting_NewTaskStillMintsWhenNoTokens(t *testing.T) {
+	src := "---\nnotebook: \"nb\"\nsection: \"\"\npage: \"pg\"\ndate: \"2026-07-06\"\ntags: []\n---\n" +
+		"- [ ] brand new\n"
+	blocks, _, newContent, modified, err := ParseFileContent(src, "nb", "", "pg", "2026-07-06", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !modified {
+		t.Errorf("expected modification (id + lifecycle minted)")
+	}
+	if len(blocks) != 1 || blocks[0].Type != BlockTask {
+		t.Fatalf("expected 1 TASK block, got %+v", blocks)
+	}
+	if blocks[0].CreatedAt == "" {
+		t.Errorf("expected minted CreatedAt for new task, got empty")
+	}
+	if blocks[0].ManualOrder != 1 {
+		t.Errorf("expected ManualOrder=1 for sole task, got %d", blocks[0].ManualOrder)
+	}
+	if !strings.Contains(newContent, "[created:: ") || !strings.Contains(newContent, "[order:: 1]") {
+		t.Errorf("expected minted lifecycle tokens in rewritten content:\n%s", newContent)
+	}
+}
+
+// TestMinting_CreatedAlreadyDoneStampsCompleted is the N1 asymmetry fix: a
+// user typing `- [x] ship it` for the first time triggers id-minting, so the
+// minting branch stamps CreatedAt — but it must ALSO stamp CompletedAt, since
+// the task is already DONE and PluginUpdateBlockState only stamps CompletedAt
+// on a TODO→DONE *transition*, not on initial DONE detection. Without this,
+// the new done task shows "Completed: —" and the 'completed' filter misses it.
+func TestMinting_CreatedAlreadyDoneStampsCompleted(t *testing.T) {
+	src := "---\nnotebook: \"nb\"\nsection: \"\"\npage: \"pg\"\ndate: \"2026-07-06\"\ntags: []\n---\n" +
+		"- [x] done from the start\n"
+	blocks, _, newContent, modified, err := ParseFileContent(src, "nb", "", "pg", "2026-07-06", 4)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !modified {
+		t.Errorf("expected modification (id + lifecycle minted)")
+	}
+	if len(blocks) != 1 || blocks[0].Type != BlockTask {
+		t.Fatalf("expected 1 TASK block, got %+v", blocks)
+	}
+	if blocks[0].Status != "DONE" {
+		t.Errorf("expected Status=DONE, got %q", blocks[0].Status)
+	}
+	if blocks[0].CreatedAt == "" {
+		t.Errorf("expected minted CreatedAt, got empty")
+	}
+	if blocks[0].CompletedAt == "" {
+		t.Errorf("expected minted CompletedAt for already-DONE task, got empty")
+	}
+	// Both tokens must reach the rewritten content.
+	if !strings.Contains(newContent, "[created:: ") {
+		t.Errorf("expected [created:: ...] in rewritten content:\n%s", newContent)
+	}
+	if !strings.Contains(newContent, "[completed:: ") {
+		t.Errorf("expected [completed:: ...] in rewritten content:\n%s", newContent)
+	}
+}
