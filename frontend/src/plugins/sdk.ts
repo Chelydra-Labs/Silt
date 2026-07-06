@@ -107,6 +107,13 @@ export interface SubtreeBlock {
   created_at?: string
   completed_at?: string
   manual_order?: number
+  // Sub-tree NOTE children carry comment attribution (#418):
+  // [author:: NAME] (who wrote the comment) and [ts:: YYYY-MM-DDTHH:MM:SS]
+  // (when). Optional because NOTE blocks without the tokens and every
+  // TASK block lack them. Disjoint from owner (task assignee) — these
+  // fields are NOTE-only by parser construction.
+  author?: string
+  timestamp?: string
 }
 
 /**

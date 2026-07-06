@@ -189,6 +189,29 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create task_dependencies reverse-lookup index: %w", err)
 	}
 
+	// Block Meta Table — caches the NOTE-block comment-attribution tokens
+	// (`[author::]` / `[ts::]`, #418) parsed off NOTE blocks. Sparse
+	// projection: a row exists ONLY for NOTE blocks that carry at least one
+	// of the tokens, so the majority of NOTE blocks (and every TASK /
+	// HEADER / etc.) have no row here. Kept in a SEPARATE table from
+	// `blocks` so `blocks` remains the pure block↔location projection and
+	// the cache stays disposable — re-indexing from the markdown source of
+	// truth reproduces it exactly (rule #4). FK ON DELETE CASCADE mirrors
+	// task_dependencies: a deleted block cleans up its meta row.
+	// `[author::]`/`[ts::]` apply to NOTE blocks only; `scanTaskTokens`
+	// (TASK) has no `author`/`ts` cases, so this table never reflects task
+	// data (disjoint token spaces — see scanNoteTokens).
+	createBlockMetaTable := `
+	CREATE TABLE IF NOT EXISTS block_meta (
+		block_id  TEXT PRIMARY KEY,
+		author    TEXT,
+		timestamp TEXT,
+		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
+	);`
+	if _, err := dm.db.Exec(createBlockMetaTable); err != nil {
+		return fmt.Errorf("failed to create block_meta table: %w", err)
+	}
+
 	// Files Table — records the last-seen mtime + size of every indexed file
 	// so a warm restart can skip re-parsing/re-indexing unchanged files (#29).
 	// Lives in the same (on-disk, WAL) database as the blocks index so it

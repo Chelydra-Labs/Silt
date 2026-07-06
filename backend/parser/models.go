@@ -124,6 +124,19 @@ type ParsedBlock struct {
 	// among all TASK blocks in the file). 0 = not set (renderer omits the
 	// token). Only genuinely-new tasks get a minted value (#417).
 	ManualOrder int `json:"manual_order,omitempty"`
+	// Author is the comment attribution name on a NOTE block
+	// (`[author:: NAME]`, #418). NOTE-only: child NOTE blocks under a TASK
+	// model "comments" and this field records who wrote each one. Distinct
+	// from Owner (the task assignee) — `scanTaskTokens` has no `author` case
+	// by design so task queries never pick up comment attribution (disjoint
+	// token spaces). File-resident; SQLite caches in block_meta (#418).
+	Author string `json:"author,omitempty"`
+	// Timestamp is the comment-attribution time on a NOTE block
+	// (`[ts:: YYYY-MM-DDTHH:MM:SS]`, ISO 8601 local, no timezone, #418).
+	// NOTE-only (paired with Author). Distinct from the block-identity
+	// FileDate, which is date-only and anchors the block to its note file.
+	// File-resident; SQLite caches in block_meta.
+	Timestamp string `json:"timestamp,omitempty"`
 	// ExtraTokens preserves unknown [key:: value] Dataview tokens that the
 	// parser doesn't recognise (e.g. `[project:: alpha]`, `[estimate:: 3h]`).
 	// These round-trip through parse → render so files stay interoperable
@@ -345,6 +358,13 @@ type TaskResult struct {
 	CreatedAt   string `json:"created_at,omitempty"`
 	CompletedAt string `json:"completed_at,omitempty"`
 	ManualOrder int    `json:"manual_order,omitempty"`
+	// Author / Timestamp mirror the ParsedBlock fields (#418): NOTE-block
+	// comment attribution (`[author::]` / `[ts::]`), surfaced on a result
+	// row because FetchSubtree returns ParsedBlock-shaped children and a
+	// child NOTE may carry the tokens. Absent for tasks and for notes
+	// without the tokens (disjoint from the task-only Owner field).
+	Author    string `json:"author,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
 	// CommentsCount is the number of indented child NOTE blocks beneath
 	// this task (the "comments on a task" UX from the Stitch reference).
 	// It is computed at index time from `blocks.parent_id` and cached on

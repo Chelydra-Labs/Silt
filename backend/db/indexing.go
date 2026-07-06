@@ -16,6 +16,17 @@ import (
 // Package-level var so the regex is compiled once, not per ExtractTags call.
 var tagRegex = regexp.MustCompile(`\B#([a-zA-Z][a-zA-Z0-9_/-]*)`)
 
+// nullIfEmpty converts an empty string to a SQL NULL (nil interface), so the
+// block_meta projection stores absent [author::]/[ts::] values as NULL rather
+// than empty strings — mirroring the nullable-cache convention used for task
+// owner/dates/etc. A non-empty string passes through unchanged.
+func nullIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // warnOnDependencyCycle builds the [blocked_by::] edge map for a set of blocks
 // and logs a warning when it contains a cycle (#301). The IPC setter prevents
 // cycles at write time, but a hand-edited or externally-synced file (Obsidian,
@@ -311,6 +322,25 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer stmtTag.Close()
 
+	// block_meta upsert (#418): sparse projection — one row per NOTE block
+	// carrying [author::] and/or [ts::]. UPSERT (ON CONFLICT replace) by
+	// block_id so re-indexing the same block overwrites stale values rather
+	// than accumulating duplicates. The per-block DELETE FROM blocks at the
+	// top of this function cascades to block_meta via FK ON DELETE CASCADE,
+	// so a block whose tokens were REMOVED in the new parse no longer has a
+	// row here after the re-index — handled by the delete-then-insert flow
+	// plus the explicit DELETE for the "tokens cleared" case below.
+	stmtBlockMetaUpsert, err := tx.Prepare("INSERT INTO block_meta (block_id, author, timestamp) VALUES (?, ?, ?) ON CONFLICT(block_id) DO UPDATE SET author=excluded.author, timestamp=excluded.timestamp")
+	if err != nil {
+		return fmt.Errorf("failed to prepare block_meta upsert: %w", err)
+	}
+	defer stmtBlockMetaUpsert.Close()
+	stmtBlockMetaClear, err := tx.Prepare("DELETE FROM block_meta WHERE block_id = ?")
+	if err != nil {
+		return fmt.Errorf("failed to prepare block_meta clear: %w", err)
+	}
+	defer stmtBlockMetaClear.Close()
+
 	// Pre-compute comments_count per task: the number of child NOTE blocks
 	// (indented reply bullets in the Stitch "comments on a task" sense).
 	// A child is any block whose ParentID points at a TASK block AND whose
@@ -434,6 +464,23 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 				continue
 			}
 		}
+
+		// 4. block_meta projection (#418): NOTE blocks carrying
+		// [author::] and/or [ts::] get a sparse projection row. NOTE-only
+		// by construction (scanTaskTokens has no author/ts cases). A NOTE
+		// block whose tokens were cleared since the last index (both now
+		// empty) gets its stale row deleted so the table stays sparse and
+		// matches the markdown source of truth. Non-NOTE blocks never
+		// carry these fields.
+		if block.Type == parser.BlockNote {
+			if block.Author != "" || block.Timestamp != "" {
+				if _, err := stmtBlockMetaUpsert.Exec(block.ID, nullIfEmpty(block.Author), nullIfEmpty(block.Timestamp)); err != nil {
+					return fmt.Errorf("failed to upsert block_meta for block %s: %w", block.ID, err)
+				}
+			} else if _, err := stmtBlockMetaClear.Exec(block.ID); err != nil {
+				return fmt.Errorf("failed to clear block_meta for block %s: %w", block.ID, err)
+			}
+		}
 	}
 
 	// Cache [blocked_by:: ((uuid))] edges in a second pass, AFTER every block
@@ -515,6 +562,19 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		return 0, nil, err
 	}
 	defer stmtTag.Close()
+
+	// block_meta upsert/clear (#418) — mirror IndexFileBlocks (see comment
+	// there). Sparse projection for NOTE blocks with [author::]/[ts::].
+	stmtBlockMetaUpsert, err := tx.Prepare("INSERT INTO block_meta (block_id, author, timestamp) VALUES (?, ?, ?) ON CONFLICT(block_id) DO UPDATE SET author=excluded.author, timestamp=excluded.timestamp")
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to prepare block_meta upsert: %w", err)
+	}
+	defer stmtBlockMetaUpsert.Close()
+	stmtBlockMetaClear, err := tx.Prepare("DELETE FROM block_meta WHERE block_id = ?")
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to prepare block_meta clear: %w", err)
+	}
+	defer stmtBlockMetaClear.Close()
 
 	indexedCount := 0
 	var skipped []string
@@ -673,6 +733,19 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if err != nil {
 					log.Printf("db.IndexScanResults: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
 					continue
+				}
+			}
+
+			// block_meta projection (#418) — mirror IndexFileBlocks: NOTE
+			// blocks with [author::]/[ts::] get a sparse row; a NOTE whose
+			// tokens were cleared has its stale row deleted. NOTE-only.
+			if block.Type == parser.BlockNote {
+				if block.Author != "" || block.Timestamp != "" {
+					if _, err := stmtBlockMetaUpsert.Exec(block.ID, nullIfEmpty(block.Author), nullIfEmpty(block.Timestamp)); err != nil {
+						return 0, skipped, fmt.Errorf("failed to upsert block_meta for block %s: %w", block.ID, err)
+					}
+				} else if _, err := stmtBlockMetaClear.Exec(block.ID); err != nil {
+					return 0, skipped, fmt.Errorf("failed to clear block_meta for block %s: %w", block.ID, err)
 				}
 			}
 		}
