@@ -27,12 +27,21 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"silt/backend/ai"
 	"silt/backend/config"
+	"silt/backend/keyring"
 	"silt/backend/plugins"
 	"strings"
 )
+
+// keyringService is the OS-keyring service name under which Silt stores AI
+// provider keys (#218). The "user" half is vault-scoped (see aiKeyringUser) so
+// two vaults on one machine keep separate keys.
+const keyringService = "Silt"
 
 // AIProviderPatch is the input to UpdateAIProviderConfig: one provider block
 // MINUS the API key. The key is never part of a generic patch — it moves through
@@ -64,11 +73,16 @@ type AIPublicProvider struct {
 }
 
 // AIPublicConfig is the AI Provider page's full read view: both provider blocks
-// (key-scrubbed) plus the keyring toggle.
+// (key-scrubbed) plus the keyring toggle and availability state. KeyringAvailable
+// is false when no keyring store is wired (tests); KeyringUnusableFor lists the
+// provider kinds ("chat"/"embedding") whose keyring lookup reported unavailable
+// (headless Linux / locked session) so the page can show a fallback warning.
 type AIPublicConfig struct {
-	Chat       AIPublicProvider `json:"chat"`
-	Embedding  AIPublicProvider `json:"embedding"`
-	UseKeyring bool             `json:"use_keyring"`
+	Chat               AIPublicProvider `json:"chat"`
+	Embedding          AIPublicProvider `json:"embedding"`
+	UseKeyring         bool             `json:"use_keyring"`
+	KeyringAvailable   bool             `json:"keyring_available"`
+	KeyringUnusableFor []string         `json:"keyring_unusable_for,omitempty"`
 }
 
 // PluginAIChatMessage is one chat message crossing the plugin→service boundary.
@@ -127,53 +141,109 @@ func aiConfigBlock(cfg config.AIConfig, which string) config.AIProviderConfig {
 	return cfg.Chat
 }
 
-// resolveAIKey returns the API key for a provider. Phase 1 (#216): read from
-// config.yaml (the plaintext fallback). Phase 3 (#218) overrides this to consult
-// the OS keyring first and fall back to config. MUST be called under configMu
-// (reads a.cfg-derived values).
-func (a *App) resolveAIKey(_ string, fallback string) (string, error) {
-	return strings.TrimSpace(fallback), nil
+// aiKeyringUser derives the vault-scoped OS-keyring "user" identifier for one
+// provider (#218). It is SHA-8(vaultPath):which — stable for a given vault on a
+// given machine, distinct across vaults, and carries the provider kind. The
+// vault PATH (not a content fingerprint) is the scope on purpose: when a vault
+// moves to a new machine the keys do not travel with it (a documented tradeoff;
+// the user re-enters), and on the original machine the keys survive an index
+// rebuild or content change. Reads a.vaultPath; callers hold vaultMu (or call
+// before the snapshot is released).
+func (a *App) aiKeyringUser(which string) string {
+	h := sha256.Sum256([]byte(filepath.Clean(a.vaultPath)))
+	return fmt.Sprintf("ai:%x:%s", h[:8], which)
+}
+
+// aiUseKeyringLocked reports whether keyring storage is enabled. MUST be called
+// under configMu. nil (unset) reads as the default-true.
+func (a *App) aiUseKeyringLocked() bool {
+	return a.cfg.AI.UseKeyring == nil || *a.cfg.AI.UseKeyring
+}
+
+// resolveAIKeyUnlocked resolves a provider API key with NO configMu/vaultMu held
+// (the caller has already snapshotted what it needs — including the precomputed
+// keyring user key — and released the locks, so a slow/unavailable keyring
+// cannot stall config or vault access). It tries the OS keyring first when
+// enabled + present, and falls back to the config value on not-found OR on
+// keyring-unavailable (headless Linux / locked session). The returned
+// unavailable flag lets the caller surface a one-time warning.
+func (a *App) resolveAIKeyUnlocked(user string, useKeyring bool, configKey string) (key string, unavailable bool) {
+	if !useKeyring || a.keyringStore == nil {
+		return strings.TrimSpace(configKey), false
+	}
+	k, err := a.keyringStore.Get(keyringService, user)
+	if err == nil {
+		return strings.TrimSpace(k), false
+	}
+	if errors.Is(err, keyring.ErrNotFound) {
+		// Normal: key not in the keyring yet (or migrated out). Use config.
+		return strings.TrimSpace(configKey), false
+	}
+	// ErrUnavailable or any other platform error: fall back to config and flag
+	// it so the page can show "OS keyring unavailable; key stored in config".
+	return strings.TrimSpace(configKey), true
 }
 
 // GetAIProviderConfig returns the AI provider configuration with API keys
 // scrubbed (HasKey flags presence). Never returns the raw secret. (#217.)
+// GetAIProviderConfig returns the AI provider configuration with API keys
+// scrubbed (HasKey flags presence, resolved across BOTH the OS keyring and
+// config.yaml). Never returns the raw secret. The keyring lookup happens with
+// no locks held so an unavailable keyring cannot stall the call. (#217.)
 func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
+		a.vaultMu.RUnlock()
 		return AIPublicConfig{}, fmt.Errorf("vault not loaded")
 	}
 	a.configMu.RLock()
-	defer a.configMu.RUnlock()
-	return a.aiPublicConfigLocked(), nil
-}
+	chat := a.cfg.AI.Chat
+	emb := a.cfg.AI.Embedding
+	useKeyring := a.aiUseKeyringLocked()
+	chatUser := a.aiKeyringUser("chat")
+	embUser := a.aiKeyringUser("embedding")
+	a.configMu.RUnlock()
+	a.vaultMu.RUnlock()
 
-// aiPublicConfigLocked builds the key-scrubbed public view. MUST be called under
-// configMu.
-func (a *App) aiPublicConfigLocked() AIPublicConfig {
-	chatKey, _ := a.resolveAIKey("chat", a.cfg.AI.Chat.APIKey)
-	embKey, _ := a.resolveAIKey("embedding", a.cfg.AI.Embedding.APIKey)
-	useKeyring := a.cfg.AI.UseKeyring == nil || *a.cfg.AI.UseKeyring
+	// Resolve whether a key is present (keyring OR config) with no locks held.
+	chatKey, chatUnavail := a.resolveAIKeyUnlocked(chatUser, useKeyring, chat.APIKey)
+	embKey, embUnavail := a.resolveAIKeyUnlocked(embUser, useKeyring, emb.APIKey)
 	return AIPublicConfig{
-		UseKeyring: useKeyring,
+		UseKeyring:         useKeyring,
+		KeyringAvailable:   a.keyringStore != nil,
+		KeyringUnusableFor: aiUnusableList(chatUnavail, embUnavail),
 		Chat: AIPublicProvider{
-			ProviderType: a.cfg.AI.Chat.ProviderType,
-			BaseURL:      a.cfg.AI.Chat.BaseURL,
-			Model:        a.cfg.AI.Chat.Model,
+			ProviderType: chat.ProviderType,
+			BaseURL:      chat.BaseURL,
+			Model:        chat.Model,
 			HasKey:       chatKey != "",
-			Temperature:  a.cfg.AI.Chat.Temperature,
-			MaxTokens:    a.cfg.AI.Chat.MaxTokens,
-			TimeoutMs:    a.cfg.AI.Chat.TimeoutMs,
+			Temperature:  chat.Temperature,
+			MaxTokens:    chat.MaxTokens,
+			TimeoutMs:    chat.TimeoutMs,
 		},
 		Embedding: AIPublicProvider{
-			ProviderType: a.cfg.AI.Embedding.ProviderType,
-			BaseURL:      a.cfg.AI.Embedding.BaseURL,
-			Model:        a.cfg.AI.Embedding.Model,
+			ProviderType: emb.ProviderType,
+			BaseURL:      emb.BaseURL,
+			Model:        emb.Model,
 			HasKey:       embKey != "",
-			Dimensions:   a.cfg.AI.Embedding.Dimensions,
-			TimeoutMs:    a.cfg.AI.Embedding.TimeoutMs,
+			Dimensions:   emb.Dimensions,
+			TimeoutMs:    emb.TimeoutMs,
 		},
+	}, nil
+}
+
+// aiUnusableList returns the provider kinds whose keyring lookup reported
+// unavailable, for the settings page's warning banner. nil/empty when both are
+// fine.
+func aiUnusableList(chat, emb bool) []string {
+	var out []string
+	if chat {
+		out = append(out, "chat")
 	}
+	if emb {
+		out = append(out, "embedding")
+	}
+	return out
 }
 
 // UpdateAIProviderConfig applies a non-key patch to one provider block and
@@ -218,9 +288,13 @@ func (a *App) UpdateAIProviderConfig(which string, patch AIProviderPatch) error 
 	return config.Save(a.vaultPath, a.cfg)
 }
 
-// SetAIAPIKey stores a provider API key. Phase 1 (#216): writes to config.yaml.
-// Phase 3 (#218) overrides the storage target to honor the use_keyring toggle
-// (keyring when on + available, config otherwise). Trims surrounding whitespace.
+// SetAIAPIKey stores a provider API key. When the use_keyring toggle is on AND
+// a keyring store is wired AND it accepts the write, the key is stored ONLY in
+// the OS keyring (and blanked from plaintext config.yaml). If the keyring is off
+// or unavailable, the key falls back to config.yaml so the feature still works
+// on a headless/locked machine. Trims surrounding whitespace. The keyring write
+// happens with no locks held so a D-Bus timeout cannot stall config access.
+// (#218.)
 func (a *App) SetAIAPIKey(which, key string) error {
 	if err := aiValidateWhich(which); err != nil {
 		return err
@@ -230,13 +304,34 @@ func (a *App) SetAIAPIKey(which, key string) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
+	key = strings.TrimSpace(key)
+	// Read the toggle + derive the keyring user under configMu, then release
+	// before any keyring I/O.
+	a.configMu.RLock()
+	useKeyring := a.aiUseKeyringLocked()
+	user := a.aiKeyringUser(which)
+	a.configMu.RUnlock()
+
+	keyringStored := false
+	if useKeyring && a.keyringStore != nil {
+		if err := a.keyringStore.Set(keyringService, user, key); err == nil {
+			keyringStored = true
+		}
+		// On ErrUnavailable (or any error) we fall through to config below.
+	}
+
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
-	key = strings.TrimSpace(key)
+	configKey := ""
+	if !keyringStored {
+		// Keyring off/unavailable: keep the key in config so the feature works.
+		configKey = key
+	}
+	// keyringStored → blank config (the key lives off plaintext disk now).
 	if which == "chat" {
-		a.cfg.AI.Chat.APIKey = key
+		a.cfg.AI.Chat.APIKey = configKey
 	} else {
-		a.cfg.AI.Embedding.APIKey = key
+		a.cfg.AI.Embedding.APIKey = configKey
 	}
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
@@ -244,8 +339,10 @@ func (a *App) SetAIAPIKey(which, key string) error {
 	return config.Save(a.vaultPath, a.cfg)
 }
 
-// ClearAIAPIKey removes a provider API key. Phase 1 (#216): blanks it in
-// config.yaml. Phase 3 (#218) also deletes it from the keyring.
+// ClearAIAPIKey removes a provider API key from BOTH stores (the OS keyring and
+// config.yaml) so a clear is durable regardless of where the key lived. The
+// keyring delete is best-effort (ErrNotFound is the normal "nothing to delete"
+// case and is ignored). (#218.)
 func (a *App) ClearAIAPIKey(which string) error {
 	if err := aiValidateWhich(which); err != nil {
 		return err
@@ -254,6 +351,13 @@ func (a *App) ClearAIAPIKey(which string) error {
 	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
+	}
+	user := a.aiKeyringUser(which)
+	// Keyring delete with no locks held.
+	if a.keyringStore != nil {
+		if err := a.keyringStore.Delete(keyringService, user); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			// Unavailable keyring: nothing to delete there; still clear config.
+		}
 	}
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
@@ -268,11 +372,40 @@ func (a *App) ClearAIAPIKey(which string) error {
 	return config.Save(a.vaultPath, a.cfg)
 }
 
-// TestAIConnection runs the AI Provider page's connection probe for one block
-// (chat: a 1-token completion; embedding: a single short embed). NOT capability-
-// gated — it is a core settings action, not a plugin call. Snapshots the
-// resolved provider under the locks, releases them, then runs the probe so a
-// slow/dead endpoint cannot hold vaultMu. (#217.)
+// SetUseKeyring toggles whether AI provider keys are stored in the OS keyring
+// (default true) vs plaintext config.yaml (#218). When turning keyring ON with
+// a keyring store present and a key already in config, it migrates that key into
+// the keyring immediately so the user sees the plaintext value leave config
+// without a restart. When turning it OFF, it does NOT move keys back to config
+// (the user opted out of keyring storage; a subsequent SetAIAPIKey will land in
+// config, and a key still in the keyring remains resolvable until cleared).
+func (a *App) SetUseKeyring(on bool) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	a.cfg.AI.UseKeyring = boolPtrAI(on)
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	err := config.Save(a.vaultPath, a.cfg)
+	a.configMu.Unlock()
+	if err != nil {
+		return err
+	}
+	// Turning keyring on: opportunistically migrate any plaintext keys now so
+	// the user sees them leave config.yaml without a restart.
+	if on {
+		a.migrateAIKeysToKeyring()
+	}
+	return nil
+}
+
+// boolPtrAI is the *bool helper local to this file (the config package's
+// unexported boolPtr isn't visible here).
+func boolPtrAI(b bool) *bool { return &b }
 func (a *App) TestAIConnection(which string) (AIProbeResult, error) {
 	if err := aiValidateWhich(which); err != nil {
 		return AIProbeResult{}, err
@@ -291,23 +424,23 @@ func (a *App) TestAIConnection(which string) (AIProbeResult, error) {
 	return AIProbeResult{OK: true}, nil
 }
 
-// snapshotAIProvider reads + resolves one provider block under the locks and
-// returns it as a value. Both locks are released before the caller performs any
-// HTTP. MUST be the only place the plugin/test-connection paths read provider
-// config so the "no locks during HTTP" invariant has one source of truth.
+// snapshotAIProvider reads one provider block, resolves its key (keyring-first,
+// config fallback), and returns it as a value. Both locks are released before
+// the keyring lookup so an unavailable keyring cannot stall the call, and the
+// returned value is used by the caller for HTTP with NO locks held.
 func (a *App) snapshotAIProvider(which string) (ai.AIProvider, error) {
 	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
+		a.vaultMu.RUnlock()
 		return ai.AIProvider{}, fmt.Errorf("vault not loaded")
 	}
 	a.configMu.RLock()
-	defer a.configMu.RUnlock()
 	p := aiConfigBlock(a.cfg.AI, which)
-	key, err := a.resolveAIKey(which, p.APIKey)
-	if err != nil {
-		return ai.AIProvider{}, err
-	}
+	useKeyring := a.aiUseKeyringLocked()
+	user := a.aiKeyringUser(which)
+	a.configMu.RUnlock()
+	a.vaultMu.RUnlock()
+	key, _ := a.resolveAIKeyUnlocked(user, useKeyring, p.APIKey)
 	return ai.AIProvider{
 		ProviderType: p.ProviderType,
 		BaseURL:      p.BaseURL,
@@ -319,28 +452,29 @@ func (a *App) snapshotAIProvider(which string) (ai.AIProvider, error) {
 
 // aiPreflightPlugin runs the plugin-side gates (session, capability, rate limit)
 // and returns the resolved provider snapshot + effective model. Locks are
-// released before the caller does any HTTP, exactly like snapshotAIProvider but
-// with the plugin privilege gates prepended.
+// released before the keyring lookup and before the caller does any HTTP.
 func (a *App) aiPreflightPlugin(pluginID, sessionToken, which string) (ai.AIProvider, string, error) {
 	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		a.vaultMu.RUnlock()
 		return ai.AIProvider{}, "", err
 	}
 	if err := a.requireGrant(pluginID, plugins.CapAI); err != nil {
+		a.vaultMu.RUnlock()
 		return ai.AIProvider{}, "", err
 	}
 	if a.rateLimiter != nil && !a.rateLimiter.allow(a.vaultPath, pluginID) {
+		a.vaultMu.RUnlock()
 		rps, burst := resolvePluginRatelimit(a.vaultPath, pluginID)
 		return ai.AIProvider{}, "", fmt.Errorf("plugin %q AI rate limit exceeded (max %.1f rps, burst %d); retry after a short delay", pluginID, rps, burst)
 	}
 	a.configMu.RLock()
-	defer a.configMu.RUnlock()
 	p := aiConfigBlock(a.cfg.AI, which)
-	key, err := a.resolveAIKey(which, p.APIKey)
-	if err != nil {
-		return ai.AIProvider{}, "", err
-	}
+	useKeyring := a.aiUseKeyringLocked()
+	user := a.aiKeyringUser(which)
+	a.configMu.RUnlock()
+	a.vaultMu.RUnlock()
+	key, _ := a.resolveAIKeyUnlocked(user, useKeyring, p.APIKey)
 	return ai.AIProvider{
 		ProviderType: p.ProviderType,
 		BaseURL:      p.BaseURL,
@@ -423,4 +557,70 @@ func aiErrKind(err error) string {
 		return string(e.Kind)
 	}
 	return "error"
+}
+
+// migrateAIKeysToKeyring moves any plaintext AI API keys found in config.yaml
+// into the OS keyring on first run after upgrade (#218). Idempotent: once a key
+// is in the keyring the config field is blanked, so a re-run finds nothing to
+// migrate. Best-effort and silent — if the keyring is unavailable, the plaintext
+// key is LEFT in config (the documented fallback; the provider page surfaces the
+// unavailability). No locks are held during keyring writes so a D-Bus timeout
+// cannot stall startup. Called from initializeVaultServices.
+func (a *App) migrateAIKeysToKeyring() {
+	if a.keyringStore == nil {
+		return
+	}
+	// Snapshot any plaintext keys + the toggle + the keyring user keys.
+	a.vaultMu.RLock()
+	if a.vaultPath == "" {
+		a.vaultMu.RUnlock()
+		return
+	}
+	a.configMu.RLock()
+	useKeyring := a.aiUseKeyringLocked()
+	type pending struct{ which, user, key string }
+	var todo []pending
+	for _, which := range []string{"chat", "embedding"} {
+		if k := strings.TrimSpace(aiConfigBlock(a.cfg.AI, which).APIKey); k != "" {
+			todo = append(todo, pending{which, a.aiKeyringUser(which), k})
+		}
+	}
+	a.configMu.RUnlock()
+	a.vaultMu.RUnlock()
+	if !useKeyring || len(todo) == 0 {
+		return
+	}
+	// Keyring writes with no locks held.
+	migrated := map[string]bool{}
+	for _, p := range todo {
+		if err := a.keyringStore.Set(keyringService, p.user, p.key); err == nil {
+			migrated[p.which] = true
+		}
+	}
+	if len(migrated) == 0 {
+		return
+	}
+	// Blank the migrated config fields and persist once.
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	changed := false
+	for which := range migrated {
+		if aiConfigBlock(a.cfg.AI, which).APIKey != "" {
+			if which == "chat" {
+				a.cfg.AI.Chat.APIKey = ""
+			} else {
+				a.cfg.AI.Embedding.APIKey = ""
+			}
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	_ = config.Save(a.vaultPath, a.cfg)
 }
