@@ -155,12 +155,14 @@
       if (!editorInstance || editorInstance.isDestroyed) return
       suppressUpdate = true
       try {
-        editorInstance.commands.setContent(
-          blocksToDoc(subtree as ParsedBlock[]),
-          {
-            emitUpdate: false
-          }
-        )
+        // `fetchSubtree` can resolve to null when the task has no children
+        // yet (a Go nil slice serializes to JSON null, not []). Treat that
+        // as an empty subtree so the editor opens blank for the user to
+        // add notes, instead of crashing on blocksToDoc(null).map.
+        const safeSubtree = (subtree ?? []) as ParsedBlock[]
+        editorInstance.commands.setContent(blocksToDoc(safeSubtree), {
+          emitUpdate: false
+        })
       } finally {
         // ensure suppressUpdate resets even if setContent throws, so a
         // later failed load can't permanently silence user-typing saves.
