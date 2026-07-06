@@ -36,14 +36,22 @@ interface PaletteSeed {
 
 // The canonical seed set, ordered warm → cool so the swatch row reads
 // naturally. Every first-class theme defines these anchors (they are required
-// by the v2 schema's status/error blocks + the accent block).
+// by the v2 schema's status/error blocks + the accent block). Labels are
+// SEMANTIC ROLES, not pigments — the actual hue is theme-derived, so calling
+// a swatch "Blue" when Terra Noir's primary accent is orange (#c2410c) would
+// feed a screen-reader user the wrong name. The role stays accurate
+// regardless of the theme's hue choice.
 const SEEDS: PaletteSeed[] = [
-  { id: 'danger', label: 'Red', token: '--color-status-danger' },
-  { id: 'error', label: 'Crimson', token: '--color-error' },
-  { id: 'warn', label: 'Amber', token: '--color-status-warn' },
-  { id: 'success', label: 'Green', token: '--color-status-success' },
-  { id: 'secondary', label: 'Teal', token: '--color-accent-secondary-start' },
-  { id: 'primary', label: 'Blue', token: '--color-accent-primary-start' }
+  { id: 'danger', label: 'Danger', token: '--color-status-danger' },
+  { id: 'error', label: 'Error', token: '--color-error' },
+  { id: 'warn', label: 'Warning', token: '--color-status-warn' },
+  { id: 'success', label: 'Success', token: '--color-status-success' },
+  {
+    id: 'secondary',
+    label: 'Secondary',
+    token: '--color-accent-secondary-start'
+  },
+  { id: 'primary', label: 'Primary', token: '--color-accent-primary-start' }
 ]
 
 // The neutral swatches (gray, black/white) are not hue-anchored; they are

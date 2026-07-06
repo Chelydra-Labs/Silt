@@ -108,6 +108,24 @@ describe('deriveColorPalette (#408)', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
+  it('seed labels are semantic roles, not pigments (a11y accuracy)', () => {
+    // The swatch fill is theme-derived, so a label like "Blue" is wrong when
+    // the theme's primary accent is orange (Terra Noir). The label must name
+    // the ROLE so a screen-reader user hears an accurate name regardless of
+    // the theme's hue choice (#408 a11y).
+    const palette = deriveColorPalette(WARM_THEME_TOKENS)
+    const labels = palette.map((e) => e.label)
+    // The six hue seeds carry their role names; only the contrast pair
+    // (black/white) and the neutral (gray) use pigment-style labels.
+    expect(labels).toContain('Danger')
+    expect(labels).toContain('Primary')
+    expect(labels).toContain('Secondary')
+    // No stale pigment names leaked from the old fixed table.
+    expect(labels).not.toContain('Blue')
+    expect(labels).not.toContain('Teal')
+    expect(labels).not.toContain('Crimson')
+  })
+
   it('resolveColor returns dark variant for dark mode, light for light', () => {
     const entry: ColorEntry = {
       id: 'test',
