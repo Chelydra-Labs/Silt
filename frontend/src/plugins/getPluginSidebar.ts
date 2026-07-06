@@ -14,13 +14,16 @@ import { loadedPlugins } from './store.svelte'
 
 /**
  * Map a top-level view id to the plugin id whose sidebar should own the
- * sidebar slot when that view is active. After #322 merged the Agenda
- * view into Calendar, only `calendar` and `kanban` ship compiled
- * sidebar components. Tags and Notes return null.
+ * sidebar slot when that view is active. Three views ship compiled
+ * sidebar components today: `calendar`, `kanban`, and `tasks`. Tags and
+ * Notes return null. The calendar/kanban→silt-tasks alias window lands
+ * in Phase 10 (when the standalone plugins are deleted); until then
+ * each id maps to its own plugin.
  */
 export function pluginIdForView(activeView: string): string | null {
   if (activeView === 'calendar') return 'silt-calendar'
   if (activeView === 'kanban') return 'silt-kanban'
+  if (activeView === 'tasks') return 'silt-tasks'
   return null
 }
 

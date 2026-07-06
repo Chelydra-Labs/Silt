@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   getNavOrder: vi.fn(),
   setNavOrder: vi.fn(),
   movePage: vi.fn(),
-  queryTagHierarchy: vi.fn().mockResolvedValue([])
+  queryTagHierarchy: vi.fn().mockResolvedValue([]),
+  // The silt-tasks sidebar queries counts/facets on mount via ctx.sqliteQuery.
+  // Return empty aggregates so the sidebar renders its empty state cleanly.
+  sqliteQuery: vi.fn().mockResolvedValue({ rows: [], truncated: false })
 }))
 
 // Hoisted plugin-store mock so tests can swap in plugin entries that
@@ -49,11 +52,15 @@ vi.mock('../plugins/context', () => ({
   makePluginContext: (_id: string, token: string) => ({
     __ctxMarker: true,
     pluginID: _id,
-    sessionToken: token
+    sessionToken: token,
+    today: '2026-07-06',
+    sqliteQuery: mocks.sqliteQuery,
+    on: () => () => {}
   })
 }))
 
 import Sidebar from './Sidebar.svelte'
+import TasksSidebar from '../plugins/first-party/silt-tasks/Sidebar.svelte'
 
 const NAV_TREE = {
   notebooks: [
@@ -87,6 +94,9 @@ describe('Sidebar', () => {
     mocks.setNavOrder.mockReset()
     mocks.movePage.mockReset()
     mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    mocks.sqliteQuery
+      .mockReset()
+      .mockResolvedValue({ rows: [], truncated: false })
     mocks.getNavOrder.mockResolvedValue({
       notebooks: [],
       sections: {},
@@ -252,7 +262,14 @@ describe('Sidebar', () => {
     void tagSearch
   })
 
-  it("activeView='tasks' renders the TaskSidebarPanel and hides the notes tree (#380)", async () => {
+  it("activeView='tasks' renders the silt-tasks sidebar and hides the notes tree (#432)", async () => {
+    // Register silt-tasks with the real unified Sidebar component (#432).
+    mockPlugins.plugins.set('silt-tasks', {
+      manifest: { id: 'silt-tasks', name: 'Tasks', version: '1.0.0' },
+      component: () => null,
+      sidebarComponent: TasksSidebar,
+      source: 'first-party'
+    })
     render(Sidebar, {
       props: {
         activeNotebook: 'Work',
@@ -268,17 +285,20 @@ describe('Sidebar', () => {
       }
     })
     await flush()
-    // TaskSidebarPanel renders its own header + helper; the notebook selector
-    // ("Active Notebook") is the unambiguous page-tree marker and must be
-    // absent — the notes nav tree is suppressed in the Tasks view.
-    expect(screen.getByText('Tasks')).toBeInTheDocument()
-    expect(
-      screen.getByText(/Your tasks live in the Tasks view/i)
-    ).toBeInTheDocument()
+    // The unified silt-tasks sidebar mounted; the notebook selector
+    // ("Active Notebook") is the unambiguous page-tree marker and must
+    // be absent — the notes nav tree is suppressed in the Tasks view.
+    expect(document.querySelector('[data-test-tasks-sidebar]')).toBeTruthy()
     expect(screen.queryByText('Active Notebook')).toBeNull()
   })
 
-  it('switching activeView notes→tasks→notes mounts and unmounts the TaskSidebarPanel', async () => {
+  it('switching activeView notes→tasks→notes mounts and unmounts the silt-tasks sidebar', async () => {
+    mockPlugins.plugins.set('silt-tasks', {
+      manifest: { id: 'silt-tasks', name: 'Tasks', version: '1.0.0' },
+      component: () => null,
+      sidebarComponent: TasksSidebar,
+      source: 'first-party'
+    })
     const baseProps = {
       activeNotebook: 'Work',
       activeSection: '',
@@ -296,19 +316,19 @@ describe('Sidebar', () => {
     await flush()
     // Notes view shows the page tree.
     expect(screen.getByText('Active Notebook')).toBeInTheDocument()
-    expect(screen.queryByText('Tasks')).toBeNull()
+    expect(document.querySelector('[data-test-tasks-sidebar]')).toBeNull()
 
     await rerender({ ...baseProps, activeView: 'tasks' })
     await flush()
-    // Tasks view swaps in the panel and drops the tree.
-    expect(screen.getByText('Tasks')).toBeInTheDocument()
+    // Tasks view swaps in the unified sidebar and drops the tree.
+    expect(document.querySelector('[data-test-tasks-sidebar]')).toBeTruthy()
     expect(screen.queryByText('Active Notebook')).toBeNull()
 
     await rerender({ ...baseProps, activeView: 'notes' })
     await flush()
-    // Back to notes — the tree is restored and the panel is gone.
+    // Back to notes — the tree is restored and the sidebar is gone.
     expect(screen.getByText('Active Notebook')).toBeInTheDocument()
-    expect(screen.queryByText('Tasks')).toBeNull()
+    expect(document.querySelector('[data-test-tasks-sidebar]')).toBeNull()
   })
 
   it("activeView='kanban' with no sidebarComponent → page tree fallback (#321)", async () => {

@@ -4,6 +4,7 @@ import CalendarSidebar from './first-party/silt-calendar/CalendarSidebar.svelte'
 import Kanban from './first-party/silt-kanban/Kanban.svelte'
 import KanbanSidebar from './first-party/silt-kanban/KanbanSidebar.svelte'
 import TasksHub from './first-party/silt-tasks/TasksHub.svelte'
+import TasksSidebar from './first-party/silt-tasks/Sidebar.svelte'
 import AttachmentsPlugin from './first-party/silt-attachments'
 
 // First-party plugin registry: bundled Svelte components that ship with the
@@ -81,6 +82,7 @@ registerPlugin({
     capabilities: { 'content-mutate': true }
   },
   component: TasksHub,
+  sidebarComponent: TasksSidebar,
   source: 'first-party'
 })
 

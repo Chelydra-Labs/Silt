@@ -3,7 +3,6 @@
   import SidebarSection from './SidebarSection.svelte'
   import PluginSidebarPanels from './PluginSidebarPanels.svelte'
   import TagSidebarPanel from './TagSidebarPanel.svelte'
-  import TaskSidebarPanel from './TaskSidebarPanel.svelte'
   import {
     ListNavigation,
     CreateNotebook,
@@ -644,11 +643,6 @@
   >
     {#if activeView === 'tags'}
       <TagSidebarPanel bind:selectedTag />
-    {:else if activeView === 'tasks'}
-      <!-- The Tasks view is a full-page plugin surface that owns its own task
-           list/quick-add UX, so the notes navigation tree carries no useful
-           context there. Render a clean panel instead of leaking the tree. -->
-      <TaskSidebarPanel />
     {:else if SidebarCmp && pluginSidebarCtx}
       <!-- Plugin-provided primary sidebar (#321). The active view's plugin
            owns the entire sidebar slot when it registers a sidebarComponent;
