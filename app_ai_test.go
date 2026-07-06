@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"silt/backend/ai"
 	"silt/backend/config"
@@ -444,3 +445,86 @@ func TestPluginAIComplete_RejectsInvalidReasoningEffort(t *testing.T) {
 
 // stringPtrAI is the *string helper local to these tests (mirrors intPtrAI).
 func stringPtrAI(s string) *string { return &s }
+
+// TestPluginAIComplete_TrackedByWaitGroup verifies that an in-flight
+// PluginAIComplete is tracked by a.wg so shutdown's a.wg.Wait() drains it
+// before teardownVaultServices clears the audit state. Without the tracking, a
+// call that completes after teardown repopulates the package-level aiAudit slice
+// with a stale entry, blocking the next vault's seed and/or writing to the wrong
+// vault's ai.log.
+func TestPluginAIComplete_TrackedByWaitGroup(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	// Chat server that signals when the request arrives, then blocks until
+	// released — simulating a slow LLM call that outlives a vault close.
+	requestReceived := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestReceived)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "test",
+			"choices": []map[string]any{{"message": map[string]any{"content": "pong"}}},
+		})
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "test")
+
+	tok, err := app.RegisterPluginSession("silt-kanban")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+
+	// Kick off PluginAIComplete — it will block at the HTTP call.
+	type callResult struct {
+		res ai.CompleteResult
+		err error
+	}
+	callDone := make(chan callResult, 1)
+	go func() {
+		res, err := app.PluginAIComplete("silt-kanban", tok, PluginAICompleteInput{
+			Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
+		})
+		callDone <- callResult{res, err}
+	}()
+
+	// Wait until the call has passed aiPreflightPlugin (released vaultMu) and
+	// reached the blocking HTTP server — deterministic, no timing assumption.
+	select {
+	case <-requestReceived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PluginAIComplete did not reach the HTTP server in time")
+	}
+
+	// a.wg.Wait() must block while PluginAIComplete is in flight (it's tracked).
+	// If the tracking were missing, Wait() would return immediately.
+	wgReturned := make(chan struct{})
+	go func() { app.wg.Wait(); close(wgReturned) }()
+	select {
+	case <-wgReturned:
+		t.Fatal("a.wg.Wait() returned while PluginAIComplete is still in flight — call is not tracked")
+	case <-time.After(200 * time.Millisecond):
+		// Expected: Wait() is still blocking.
+	}
+
+	// Release the HTTP server so the call can complete.
+	close(release)
+
+	// Now a.wg.Wait() should return once PluginAIComplete finishes.
+	select {
+	case <-wgReturned:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a.wg.Wait() did not return after PluginAIComplete completed")
+	}
+
+	// The call should have succeeded.
+	r := <-callDone
+	if r.err != nil {
+		t.Fatalf("PluginAIComplete: %v", r.err)
+	}
+	if r.res.Content != "pong" {
+		t.Errorf("content = %q, want pong", r.res.Content)
+	}
+}

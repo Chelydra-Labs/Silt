@@ -531,6 +531,13 @@ func (a *App) aiPreflightPlugin(pluginID, sessionToken, which string) (ai.AIProv
 // the ai capability; rate-limited and audit-logged exactly like PluginFetch.
 // Credentials are read server-side and never returned to the caller. (#216.)
 func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAICompleteInput) (ai.CompleteResult, error) {
+	// Tracked by a.wg so shutdown's a.wg.Wait() drains in-flight AI calls
+	// before teardownVaultServices clears the audit state. Unlike PluginFetch
+	// (which holds vaultMu.RLock for its whole body), PluginAIComplete releases
+	// vaultMu after aiPreflightPlugin so a long LLM call doesn't hold the vault
+	// lock — which means vaultMu alone can't serialize the call against a close.
+	a.wg.Add(1)
+	defer a.wg.Done()
 	// Validate reasoning_effort BEFORE aiPreflightPlugin so an invalid call
 	// doesn't consume a rate-limit slot or snapshot the provider config.
 	if input.ReasoningEffort != nil {
@@ -576,6 +583,9 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 // PluginFetch. Credentials are read server-side and never returned to the
 // caller. (#216.)
 func (a *App) PluginAIEmbed(pluginID, sessionToken string, input PluginAIEmbedInput) (ai.EmbedResult, error) {
+	// Tracked by a.wg — same rationale as PluginAIComplete (see above).
+	a.wg.Add(1)
+	defer a.wg.Done()
 	provider, configuredModel, err := a.aiPreflightPlugin(pluginID, sessionToken, "embedding")
 	if err != nil {
 		return ai.EmbedResult{}, err
