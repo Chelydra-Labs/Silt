@@ -4,7 +4,7 @@
   import type { PluginContext, TaskStatus } from '../../sdk'
   import type { KanbanCard } from './types'
   import { PRIORITY_LABELS, laneLabel } from './types'
-  import DependencyPicker from './DependencyPicker.svelte'
+  import DependencyPicker from '../shared/DependencyPicker.svelte'
   import Popover from '../../../components/Popover.svelte'
 
   interface Props {
