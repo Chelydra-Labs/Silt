@@ -3,7 +3,7 @@ import Calendar from './first-party/silt-calendar/Calendar.svelte'
 import CalendarSidebar from './first-party/silt-calendar/CalendarSidebar.svelte'
 import Kanban from './first-party/silt-kanban/Kanban.svelte'
 import KanbanSidebar from './first-party/silt-kanban/KanbanSidebar.svelte'
-import Tasks from './first-party/silt-tasks/Tasks.svelte'
+import TasksHub from './first-party/silt-tasks/TasksHub.svelte'
 import AttachmentsPlugin from './first-party/silt-attachments'
 
 // First-party plugin registry: bundled Svelte components that ship with the
@@ -61,14 +61,14 @@ registerPlugin({
   onVaultOpen: AttachmentsPlugin.onVaultOpen,
   source: 'first-party'
 })
-// silt-tasks (#370): vault-scoped Tasks view — every active task (dated
-// and undated) grouped by Overdue / Today / Upcoming / No Date / Completed.
-// Sibling surface to the Calendar's date-scoped agenda; exists so undated
-// tasks (the natural output of the global quick-add) are visible. Built on
-// the same PluginContext SDK surface as AgendaList. Task creation flows
-// through PluginCreateTask, which is gated by content-mutate — so the
-// capability is declared here and seeded by FirstPartyPluginIDs on the Go
-// side (#407).
+// silt-tasks (#370 → #424 unification): the single Tasks surface. Milestone
+// #38 collapses the four overlapping task plugins (Agenda/Calendar/Tasks/
+// Kanban) into one hub with List / Board / Calendar display modes over a
+// grouping-first engine. During the transition the standalone silt-calendar
+// and silt-kanban registrations stay live; the retire issue (#429) removes
+// them once user settings are migrated (#431). Built on the PluginContext SDK;
+// task creation flows through PluginCreateTask, gated by content-mutate and
+// seeded by FirstPartyPluginIDs on the Go side (#407).
 registerPlugin({
   manifest: {
     id: 'silt-tasks',
@@ -76,11 +76,11 @@ registerPlugin({
     version: '1.0.0',
     author: 'Silt',
     description:
-      'Vault-scoped view of every active task grouped by Overdue, Today, Upcoming, No Date, and Completed.',
+      'Unified Tasks hub — List, Board, and Calendar views of every task grouped by any dimension.',
     icon: 'checklist',
     capabilities: { 'content-mutate': true }
   },
-  component: Tasks,
+  component: TasksHub,
   source: 'first-party'
 })
 

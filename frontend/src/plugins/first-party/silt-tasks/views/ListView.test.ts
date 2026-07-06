@@ -9,14 +9,15 @@ const mocks = vi.hoisted(() => ({
   blockChangedCallbacks: [] as Array<() => void>
 }))
 
-import Tasks from './Tasks.svelte'
+import Tasks from './ListView.svelte'
 import type {
   PluginContext,
   PluginManifest,
   PluginEventName,
   PluginEventPayload
-} from '../../sdk'
-import { v2CtxStubs } from '../../test-helpers'
+} from '../../../sdk'
+import { v2CtxStubs } from '../../../test-helpers'
+import { resetTaskHubState } from '../state.svelte'
 
 // jsdom polyfills: the shared drawer uses Svelte transition:fly (element.
 // animate()); the sub-editor modal's TipTap needs Range.getClientRects +
@@ -160,6 +161,12 @@ function task(
   }
 }
 
+// The unified hub state is module-level; reset it before each test so a
+// filter/scope set in one case can't leak into the next.
+beforeEach(() => {
+  resetTaskHubState()
+})
+
 describe('Tasks view', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset()
@@ -289,7 +296,7 @@ describe('Tasks view', () => {
     expect(document.querySelector('[data-block-id="d1"]')).toBeInTheDocument()
   })
 
-  it('header count reflects open tasks only (#370 AC5)', async () => {
+  it('completed toggle reflects done-task count (#370 AC5; open count now hub-owned)', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (sql.includes("status != 'DONE'")) {
         return {
@@ -319,9 +326,8 @@ describe('Tasks view', () => {
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    expect(screen.getByTestId('tasks-open-count').textContent).toContain(
-      '2 active tasks'
-    )
+    // The open-task count moved to the hub header (#424); ListView no longer
+    // renders it. The completed toggle still carries its count.
     expect(screen.getByTestId('tasks-completed-toggle').textContent).toContain(
       '1'
     )

@@ -49,12 +49,20 @@ export type CalendarFilter =
   'all' | 'today' | 'upcoming' | 'overdue' | 'completed'
 
 /**
- * The hub's two rendering modes. `list` is the Calendar/Agenda/Tasks
- * lineage (flat rows grouped by time horizon); `board` is the Kanban
- * lineage (columns by status/priority). Milestone #37 wires the hub;
- * this store carries the value so a future toggle is instant.
+ * The hub's three rendering modes (#424). `list` is the
+ * Calendar/Agenda/Tasks lineage (flat rows grouped by time horizon);
+ * `board` is the Kanban lineage (columns by status/priority);
+ * `calendar` is the month/week grid (#425). Milestone #37 carried
+ * list+board; #38 adds calendar so the segmented switcher can offer
+ * all three even while the Board/Calendar renderers are stubs.
  */
-export type DisplayMode = 'list' | 'board'
+export type DisplayMode = 'list' | 'board' | 'calendar'
+
+/**
+ * The Calendar display mode's sub-layout (#425). `month` (default) is
+ * the full month grid; `week` is the 7-day strip. Ignored by list/board.
+ */
+export type CalendarSubMode = 'month' | 'week'
 
 /**
  * The dimension to group rows/columns by. `none` keeps the query's
@@ -95,6 +103,8 @@ export interface TaskHubState {
   focusDate: string
   /** Active smart-list filter; 'all' means no filter. */
   activeFilter: CalendarFilter
+  /** Calendar display mode's sub-layout (#425); ignored by list/board. */
+  calendarSubMode: CalendarSubMode
   savedViews: SavedView[]
 }
 
@@ -114,6 +124,7 @@ function freshDefaults(): TaskHubState {
     filters: { ...DEFAULT_FILTERS },
     focusDate: '',
     activeFilter: 'all',
+    calendarSubMode: 'month',
     savedViews: []
   }
 }
@@ -128,6 +139,11 @@ export function getTaskHubState(): TaskHubState {
 /** Switch the hub between list and board rendering. */
 export function setDisplayMode(mode: DisplayMode): void {
   _state.displayMode = mode
+}
+
+/** Set the Calendar display mode's sub-layout (month/week). */
+export function setCalendarSubMode(mode: CalendarSubMode): void {
+  _state.calendarSubMode = mode
 }
 
 /** Change the grouping dimension. The query builder reads this on re-query. */
@@ -245,5 +261,6 @@ export function resetTaskHubState(): void {
   _state.filters = defaults.filters
   _state.focusDate = defaults.focusDate
   _state.activeFilter = defaults.activeFilter
+  _state.calendarSubMode = defaults.calendarSubMode
   _state.savedViews = []
 }

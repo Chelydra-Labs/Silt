@@ -6,7 +6,7 @@ import type { TaskStatus } from '../../sdk'
  * edited from one surface behaves identically to one edited from another.
  *
  * Generalized from the former silt-kanban `KanbanCard`; the SQL projections in
- * `silt-kanban/query.ts` and `silt-tasks/Tasks.svelte` produce this shape.
+ * `silt-kanban/query.ts` and `silt-tasks/views/ListView.svelte` produce this shape.
  */
 export interface TaskDetail {
   id: string
