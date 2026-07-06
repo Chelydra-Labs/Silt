@@ -615,6 +615,15 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 	if err := config.ValidateHotkeys(cfg.Hotkeys); err != nil {
 		return err
 	}
+	// Preserve AI provider API keys. AIProviderConfig.APIKey is json:"-", so a
+	// full-config round-trip from the frontend (e.g. saving an editor/hotkey
+	// change) never carries the keys — without this they would be blanked.
+	// Only the dedicated SetAIAPIKey binding mutates keys. Read under configMu
+	// (vaultMu is already held; order is vaultMu → configMu per the invariant).
+	a.configMu.Lock()
+	cfg.AI.Chat.APIKey = a.cfg.AI.Chat.APIKey
+	cfg.AI.Embedding.APIKey = a.cfg.AI.Embedding.APIKey
+	a.configMu.Unlock()
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
 	}

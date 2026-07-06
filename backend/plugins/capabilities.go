@@ -55,6 +55,13 @@ const (
 	// query / migrate. The connection is distinct from the core index and never
 	// ATTACH-able to it (#213).
 	CapPluginDB Capability = "plugin-db"
+	// CapAI — invoke the core AI service (ctx.ai.complete / ctx.ai.embed)
+	// through the Go-side proxy (#216). The host reads provider credentials
+	// server-side; a granted plugin never sees API keys or endpoint URLs.
+	// First-party AI plugins are implicitly granted; a third-party plugin must
+	// declare it and the user grants it via the normal capability flow. The
+	// underlying calls are rate-limited and audit-logged exactly like CapNetwork.
+	CapAI Capability = "ai"
 )
 
 // KnownCapabilities is the set of capabilities recognized by this version of
@@ -73,6 +80,7 @@ var KnownCapabilities = map[Capability]bool{
 	CapEditorSchema:  true,
 	CapContentMutate: true,
 	CapPluginDB:      true,
+	CapAI:            true,
 }
 
 // Qualifier refines a capability grant's scope. The default/whole-scope
