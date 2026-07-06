@@ -366,12 +366,41 @@ func Defaults() SystemConfig {
 			"toggle_typewriter_mode": "Ctrl+Shift+Y",
 		},
 		Plugins: PluginsConfig{
-			Active:   []string{"silt-calendar", "silt-kanban"},
+			// Active includes both legacy ids (silt-calendar, silt-kanban)
+			// and the unified silt-tasks for the one-release transition
+			// window (Phase 9 / #431). Phase 10 collapses this list to
+			// [notes, tags, tasks] once the old plugin ids retire.
+			Active:   []string{"silt-calendar", "silt-kanban", "silt-tasks"},
 			Disabled: []string{},
 			PluginSettings: map[string]any{
 				"silt-kanban": map[string]any{
 					"default_col": "TODO",
 					"columns":     []any{"TODO", "DOING", "DONE"},
+				},
+				// silt-tasks is the unified hub (Phase 9 / #431). Every key
+				// the frontend loaders read (settings.ts) is seeded so a
+				// fresh vault — or a migrated one — never nil-derefs.
+				// saved_views starts empty: SYSTEM_VIEWS are code-derived
+				// on every load (savedViews.ts invariant), and persisted
+				// user views come only from explicit save action. Slice
+				// values use []any (not []string) so they survive a YAML
+				// round-trip — yaml.v3 loads sequences as []any, so a
+				// []string seed would mismatch on Load.
+				"silt-tasks": map[string]any{
+					"default_display_mode": "list",
+					"default_group_by":     "none",
+					"default_sort":         "dueDate",
+					"default_scope":        "vault",
+					"calendar_sub_mode":    "month",
+					"columns":              []any{"TODO", "DOING", "DONE"},
+					"filters": map[string]any{
+						"owners":     []any{},
+						"priorities": []any{},
+						"dueDate":    "",
+						"tags":       []any{},
+					},
+					"saved_views":  []any{},
+					"local_author": "",
 				},
 			},
 		},

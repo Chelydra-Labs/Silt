@@ -321,11 +321,26 @@ plugins:
   active:
     - "silt-calendar"
     - "silt-kanban"
+    - "silt-tasks"
   disabled: []
   plugin_settings:
     silt-kanban:
       default_col: "TODO"
       columns: ["TODO", "DOING", "DONE"]
+    silt-tasks:
+      default_display_mode: list
+      default_group_by: none
+      default_sort: dueDate
+      default_scope: vault
+      calendar_sub_mode: month
+      columns: ["TODO", "DOING", "DONE"]
+      filters:
+        owners: []
+        priorities: []
+        dueDate: ""
+        tags: []
+      saved_views: []
+      local_author: ""
 
 # UI Preferences (per-vault)
 ui:

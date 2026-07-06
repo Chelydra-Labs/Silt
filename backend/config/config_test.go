@@ -267,6 +267,42 @@ func TestNormalize_NeverNil(t *testing.T) {
 	}
 }
 
+// TestDefaults_ContainsSiltTasks pins the Phase 9 (#431) seed: Defaults
+// writes a silt-tasks entry covering every key the frontend loaders
+// (settings.ts) read, and Active includes both legacy ids (silt-calendar,
+// silt-kanban) and the unified silt-tasks for the one-release transition
+// window. Phase 10 collapses Active to [notes, tags, tasks] once the old
+// ids retire.
+func TestDefaults_ContainsSiltTasks(t *testing.T) {
+	d := Defaults()
+	ps, ok := d.Plugins.PluginSettings["silt-tasks"].(map[string]any)
+	if !ok {
+		t.Fatalf("Defaults() missing silt-tasks plugin settings")
+	}
+	for _, key := range []string{
+		"default_display_mode", "default_group_by", "default_sort",
+		"default_scope", "calendar_sub_mode", "columns", "filters",
+		"saved_views", "local_author",
+	} {
+		if _, has := ps[key]; !has {
+			t.Errorf("silt-tasks defaults missing key %q", key)
+		}
+	}
+	activeIncludes := func(id string) bool {
+		for _, a := range d.Plugins.Active {
+			if a == id {
+				return true
+			}
+		}
+		return false
+	}
+	for _, id := range []string{"silt-calendar", "silt-kanban", "silt-tasks"} {
+		if !activeIncludes(id) {
+			t.Errorf("Defaults().Plugins.Active missing %q", id)
+		}
+	}
+}
+
 func TestValidateHotkeys(t *testing.T) {
 	cases := []struct {
 		name    string

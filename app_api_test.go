@@ -2263,6 +2263,88 @@ func TestGetPluginSettingsForNotebook_LinkedMissingFileReturnsVault(t *testing.T
 	}
 }
 
+// TestGetPluginSettingsForNotebook_KanbanFallsBackToTasks covers the Phase 9
+// (#431) one-release compat shim: a vault that has migrated (silt-kanban
+// gone, silt-tasks present) AND a linked notebook in the same state must
+// still answer "silt-kanban" lookups — old frontend code on a stale linked
+// notebook still asks for the legacy id. The shim aliases the request to
+// silt-tasks so the same shape (columns/filters/scope) flows back. Drop in
+// N+1 once the old plugin id retires.
+func TestGetPluginSettingsForNotebook_KanbanFallsBackToTasks(t *testing.T) {
+	app := newTestApp(t)
+
+	// Migrated vault: silt-kanban removed, silt-tasks present with a
+	// recognisable sentinel.
+	app.configMu.Lock()
+	delete(app.cfg.Plugins.PluginSettings, "silt-kanban")
+	app.cfg.Plugins.PluginSettings["silt-tasks"] = map[string]any{
+		"columns":      []any{"Vault-1", "Vault-2"},
+		"vault_marker": "from-vault",
+	}
+	app.configMu.Unlock()
+
+	// Linked notebook in the same migrated state.
+	ext := t.TempDir()
+	cfgPath := config.LinkedConfigPath(ext)
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(
+		"plugins:\n  plugin_settings:\n    silt-tasks:\n      columns: [Linked-1, Linked-2]\n      linked_marker: from-linked\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{
+		{ID: "ext", RootPath: ext, DisplayName: "Ext"},
+	}
+	app.configMu.Unlock()
+
+	got, err := app.GetPluginSettingsForNotebook("silt-kanban", "Ext")
+	if err != nil {
+		t.Fatalf("kanban fallback: %v", err)
+	}
+	// Linked override of columns surfaces — the alias path uses
+	// effectivePluginID for the linked lookup too, so the linked notebook's
+	// silt-tasks entry overlays the vault's.
+	cols, ok := got["columns"].([]any)
+	if !ok || len(cols) != 2 || cols[0] != "Linked-1" {
+		t.Errorf("expected linked silt-tasks columns [Linked-1 Linked-2], got %v", got["columns"])
+	}
+	// Vault-only key survives the alias merge.
+	if got["vault_marker"] != "from-vault" {
+		t.Errorf("expected vault_marker preserved through alias, got %v", got["vault_marker"])
+	}
+	// Linked-only key added through the alias merge.
+	if got["linked_marker"] != "from-linked" {
+		t.Errorf("expected linked_marker added through alias, got %v", got["linked_marker"])
+	}
+}
+
+// TestGetPluginSettingsForNotebook_KanbanNoFallbackWhenKanbanPresent confirms
+// the shim does NOT fire when silt-kanban has a real entry — the alias is a
+// one-release bridge, not a permanent override.
+func TestGetPluginSettingsForNotebook_KanbanNoFallbackWhenKanbanPresent(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.PluginSettings["silt-kanban"] = map[string]any{
+		"columns": []any{"Kanban-Col"},
+	}
+	app.cfg.Plugins.PluginSettings["silt-tasks"] = map[string]any{
+		"columns": []any{"Tasks-Col"},
+	}
+	app.configMu.Unlock()
+
+	got, err := app.GetPluginSettingsForNotebook("silt-kanban", "Work")
+	if err != nil {
+		t.Fatalf("kanban lookup: %v", err)
+	}
+	cols, _ := got["columns"].([]any)
+	if len(cols) != 1 || cols[0] != "Kanban-Col" {
+		t.Errorf("expected kanban's own columns, got %v", got["columns"])
+	}
+}
+
 // TestGetPluginSettingsForNotebook_LinkedUnparseableSurfacesError locks the
 // fail-loud contract: a present-but-broken co-located config yields an error
 // (the user must see their broken file), not a silent fall-through to vault.

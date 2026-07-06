@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"silt/backend/themes"
 )
 
@@ -249,6 +251,69 @@ func TestScaffoldVault_PreservesUserCustomThemes(t *testing.T) {
 	}
 	if string(got) != sentinel {
 		t.Errorf("ScaffoldVault overwrote a user's custom theme; expected sentinel to survive")
+	}
+}
+
+// TestScaffoldVault_SeedsSiltTasksPluginSettings pins the Phase 9 (#431) seed:
+// a brand-new vault's config.yaml must carry a silt-tasks plugin_settings
+// block with the documented defaults so a fresh vault never nil-derefs the
+// frontend loaders. The block is parsed via a partial decode (same shape the
+// migrator's LoadLegacyTaskPluginSettings uses) to keep the test honest
+// against the actual on-disk YAML.
+func TestScaffoldVault_SeedsSiltTasksPluginSettings(t *testing.T) {
+	vaultPath := t.TempDir()
+	if err := ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+	configPath := filepath.Join(vaultPath, ".system", "config.yaml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read scaffolded config.yaml: %v", err)
+	}
+	var partial struct {
+		Plugins struct {
+			Active         []string                  `yaml:"active"`
+			PluginSettings map[string]map[string]any `yaml:"plugin_settings"`
+		} `yaml:"plugins"`
+	}
+	if err := yaml.Unmarshal(data, &partial); err != nil {
+		t.Fatalf("unmarshal scaffolded config.yaml: %v", err)
+	}
+	tasks, ok := partial.Plugins.PluginSettings["silt-tasks"]
+	if !ok {
+		t.Fatalf("scaffolded config.yaml missing silt-tasks plugin_settings entry")
+	}
+	if tasks["default_display_mode"] != "list" {
+		t.Errorf("silt-tasks.default_display_mode: got %v, want list", tasks["default_display_mode"])
+	}
+	if tasks["default_group_by"] != "none" {
+		t.Errorf("silt-tasks.default_group_by: got %v, want none", tasks["default_group_by"])
+	}
+	if tasks["default_sort"] != "dueDate" {
+		t.Errorf("silt-tasks.default_sort: got %v, want dueDate", tasks["default_sort"])
+	}
+	if tasks["default_scope"] != "vault" {
+		t.Errorf("silt-tasks.default_scope: got %v, want vault", tasks["default_scope"])
+	}
+	if tasks["calendar_sub_mode"] != "month" {
+		t.Errorf("silt-tasks.calendar_sub_mode: got %v, want month", tasks["calendar_sub_mode"])
+	}
+	if tasks["local_author"] != "" {
+		t.Errorf("silt-tasks.local_author: got %v, want empty", tasks["local_author"])
+	}
+	// Active list must include both legacy ids and the unified hub for the
+	// one-release transition window.
+	for _, id := range []string{"silt-calendar", "silt-kanban", "silt-tasks"} {
+		found := false
+		for _, a := range partial.Plugins.Active {
+			if a == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("scaffolded plugins.active missing %q (got %v)", id, partial.Plugins.Active)
+		}
 	}
 }
 

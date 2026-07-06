@@ -464,6 +464,36 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		}
 	}
 
+	// Phase 9 (#431): one-time migration of legacy silt-calendar /
+	// silt-kanban plugin settings into the unified silt-tasks schema. The
+	// gate is checked against the RAW on-disk YAML (not the in-memory cfg,
+	// which always has silt-tasks via the Defaults merge) — so once the
+	// migration has written silt-tasks to config.yaml, every subsequent
+	// launch is a no-op. Old keys stay on disk for one release so a
+	// downgrade still sees the user's prior config. Mirrors the F4 grants
+	// migration pattern: read raw YAML → check gate → merge under configMu
+	// → atomic Save + RegisterSelfWrite.
+	rawTaskSettings := vault.LoadLegacyTaskPluginSettings(vaultPath)
+	if migrated := vault.MigrateLegacyTaskPluginSettings(a.cfg, rawTaskSettings); migrated != nil {
+		a.configMu.Lock()
+		if a.cfg.Plugins.PluginSettings == nil {
+			a.cfg.Plugins.PluginSettings = map[string]any{}
+		}
+		a.cfg.Plugins.PluginSettings["silt-tasks"] = migrated
+		if a.configWatcher != nil {
+			a.configWatcher.RegisterSelfWrite()
+		}
+		saveErr := config.Save(a.vaultPath, a.cfg)
+		a.configMu.Unlock()
+		if saveErr != nil {
+			// Best-effort: log and continue. The migration retries on the
+			// next launch (the gate is still "silt-tasks absent in YAML")
+			// and the in-memory cfg already holds the merged settings so
+			// the current session is consistent.
+			log.Printf("[WARN] task plugin migration save failed: %v", saveErr)
+		}
+	}
+
 	// F3: verify linked-notebook fingerprints before the vault scan. Legacy
 	// links (pre-F3, no fingerprint) get one assigned silently; mismatched
 	// links are quarantined (excluded from indexing/reads/writes) and emit
