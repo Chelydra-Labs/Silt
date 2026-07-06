@@ -456,20 +456,12 @@ func TestScaffoldVault_RestrictiveFilePermissions(t *testing.T) {
 			t.Errorf("%s perm = %o, want %o", c.name, got, c.want)
 		}
 	}
-	entries, err := os.ReadDir(filepath.Join(vault, ".system", "themes"))
-	if err != nil {
-		t.Fatalf("read themes dir: %v", err)
-	}
-	if len(entries) == 0 {
-		t.Fatal("expected scaffolded theme files")
-	}
-	tInfo, err := os.Stat(filepath.Join(vault, ".system", "themes", entries[0].Name()))
-	if err != nil {
-		t.Fatalf("stat theme file: %v", err)
-	}
-	if got := tInfo.Mode().Perm(); got != 0o600 {
-		t.Errorf("theme file %s perm = %o, want 0o600", entries[0].Name(), got)
-	}
+	// The .system/themes/ directory exists (checked above at 0o700) but is
+	// empty — first-class themes are no longer seeded onto disk (#406; the
+	// loader is embed-authoritative). The config.yaml + README.md perm checks
+	// above cover the scaffolded-file hardening invariant. A user who drops a
+	// custom theme into the dir still gets 0o600 via the importer's atomic
+	// write path; that is covered by the theme-import tests, not here.
 }
 
 // TestExportVaultTree_ArchiveFile0600Perms pins F7: the exported .silt-vault
