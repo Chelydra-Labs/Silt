@@ -66,7 +66,8 @@
     'os-notify': 'Notifications',
     'ui-surface': 'Render UI surfaces',
     'editor-schema': 'Extend the editor',
-    'content-mutate': 'Create and modify content'
+    'content-mutate': 'Create and modify content',
+    ai: 'AI completions'
   }
 
   function qualifierLabel(q: true | string): string {
@@ -179,6 +180,19 @@
   /** Whether a capability is currently granted on a card. */
   function isGranted(card: Card, cap: string): boolean {
     return !!card.grantedCapabilities?.[cap]
+  }
+
+  // #447: nudge when an enabled AI-capable plugin has no chat model configured.
+  // Every AI plugin needs a chat model (the primary surface); embedding is
+  // feature-specific, and the AI Provider tab the badge links to configures
+  // both — so a single chat.model check keeps the nudge accurate without
+  // false positives on chat-only plugins.
+  function needsAISetup(card: Card): boolean {
+    if (card.disabled) return false
+    if (!card.requestedCapabilities?.ai) return false
+    // Defensive: config.ai may be absent in hand-edited configs / tests.
+    const chatModel = settings.config?.ai?.chat?.model
+    return !chatModel
   }
 
   async function grant(card: Card, cap: string) {
@@ -508,6 +522,20 @@
                     class="text-[9px] text-error bg-error/10 border border-error/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
                     >error</span
                   >
+                {/if}
+                {#if needsAISetup(card)}
+                  <button
+                    type="button"
+                    onclick={() => onSwitchTab?.('ai')}
+                    disabled={!onSwitchTab}
+                    aria-disabled={!onSwitchTab}
+                    title={onSwitchTab
+                      ? 'Open AI Provider settings'
+                      : 'Open the AI Provider tab'}
+                    class="text-[9px] text-status-warn bg-status-warn/10 border border-status-warn/40 rounded px-1.5 py-0.5 uppercase tracking-wider hover:brightness-110 transition-all motion-reduce:transition-none cursor-pointer disabled:cursor-default disabled:opacity-70"
+                  >
+                    AI setup needed
+                  </button>
                 {/if}
               </div>
               <div class="text-[10px] text-text-muted truncate font-label-sm">
