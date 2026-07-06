@@ -497,7 +497,8 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   keyring when `use_keyring` + reachable, else plaintext config), `SetUseKeyring`
   (toggles keyring storage + opportunistically migrates plaintext keys),
   `TestAIConnection` (1-token chat / single-embed probe). `GetAIAudit` /
-  `ClearAIAudit` expose the in-memory plugin-AI-call log. NOT capability-gated
+  `ClearAIAudit` expose the plugin-AI-call log (in-memory, mirrored to per-plugin
+  `ai.log`; `ClearAIAudit` truncates both). NOT capability-gated
   (core cross-cutting settings), but `PluginAIComplete` / `PluginAIEmbed` are.
 
 Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`
@@ -904,6 +905,17 @@ On vault open, `seedNetworkAuditFromDisk` reads the on-disk logs to seed the
 in-memory log (before the writer starts). No SQLite table (audit data is not
 reproducible from markdown; §0 rule 4).
 
+**AI audit log.** `auditAI` mirrors the network audit's design exactly: appends
+to the in-memory log (capped 500 entries) under `aiAuditMu`, then enqueues a
+disk-write op onto its own buffered channel drained by a parallel background
+goroutine (`startAIAuditWriter`, started in `initializeVaultServices`, stopped
+first in `teardownVaultServices`). It writes the per-plugin `ai.log` (one JSON
+object per line, same format as `network.log`) WITHOUT holding the lock, so
+concurrent `PluginAIComplete` / `PluginAIEmbed` calls don't serialize on file
+I/O. On vault open, `seedAIAuditFromDisk` seeds the in-memory log from disk
+(before the writer starts). Logs plugin / kind (chat | embed) / host / model /
+status / token counts — NEVER message content or embedding vectors.
+
 **Runtime integrity.** `Install` computes `sha256(index.js)` and writes
 it into `plugin.json` as `contentSha256`. The frontend loader verifies the hash
 via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
@@ -931,8 +943,8 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
   run, so a 60s LLM completion cannot hold the vault lock. Keys resolve
   keyring-first (`backend/keyring`) with config.yaml as the documented fallback
   (#218); the plugin never receives credentials. Every call is audit-logged
-  (`auditAI`, in-memory, capped) and surfaced in Settings → AI Provider →
-  Recent AI activity.
+  (`auditAI`, in-memory + on-disk `ai.log`, capped) and surfaced in
+  Settings → AI Provider → Recent AI activity.
 - Editor extension points: slash-command registry; generic embedBlock
   node (round-trips through <!-- silt-embed: {json} --> markers).
 - Rendered UI surfaces: sandboxed <iframe srcdoc> + postMessage bridge;
