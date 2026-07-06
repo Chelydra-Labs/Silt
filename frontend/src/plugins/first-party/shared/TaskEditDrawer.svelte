@@ -7,6 +7,10 @@
   import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
   import DependencyPicker from './DependencyPicker.svelte'
   import BlockedDoneDialog from './BlockedDoneDialog.svelte'
+  // CommentThread lives under silt-tasks/components/ even though this drawer
+  // still lives in shared/ — Phase 10 moves TaskEditDrawer into the same
+  // folder and shortens this import.
+  import CommentThread from '../silt-tasks/components/CommentThread.svelte'
   import Popover from '../../../components/Popover.svelte'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../lib/standaloneTasksNav'
 
@@ -1192,6 +1196,16 @@
           <span class="text-[10px] font-label-sm text-text-muted">links</span>
         </div>
       </section>
+
+      <CommentThread
+        taskId={task.id}
+        notebook={task.notebook}
+        section={task.section}
+        page={task.page}
+        fileDate={task.file_date ?? ''}
+        {ctx}
+        onCommentsChanged={onMetaChanged}
+      />
 
       <DependencyPicker
         cardId={task.id}

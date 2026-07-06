@@ -31,6 +31,7 @@ export const v2CtxStubs: Pick<
   | 'setTaskTitle'
   | 'getTaskBlockers'
   | 'fetchSubtree'
+  | 'getLocalAuthor'
   | 'saveSubtreeBlocks'
   | 'deleteBlock'
   | 'moveBlock'
@@ -67,6 +68,7 @@ export const v2CtxStubs: Pick<
   | 'resolveAsset'
   | 'readPluginAsset'
   | 'getNavigationTree'
+  | 'addTaskComment'
 > = {
   queryByTag: () => Promise.resolve(emptyResult),
   queryByDateRange: () => Promise.resolve(emptyResult),
@@ -87,6 +89,7 @@ export const v2CtxStubs: Pick<
   setTaskTitle: () => Promise.resolve(true),
   getTaskBlockers: () => Promise.resolve([]),
   fetchSubtree: () => Promise.resolve([]),
+  getLocalAuthor: () => Promise.resolve(''),
   saveSubtreeBlocks: () => Promise.resolve(true),
   deleteBlock: () => Promise.resolve(true),
   moveBlock: () => Promise.resolve(true),
@@ -133,5 +136,6 @@ export const v2CtxStubs: Pick<
   vaultScratchDir: () => Promise.resolve(''),
   resolveAsset: () => Promise.resolve(''),
   readPluginAsset: () => Promise.resolve(''),
-  getNavigationTree: () => Promise.resolve({ notebooks: [] })
+  getNavigationTree: () => Promise.resolve({ notebooks: [] }),
+  addTaskComment: () => Promise.resolve('')
 }

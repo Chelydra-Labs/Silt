@@ -94,6 +94,22 @@ export function loadDefaultSort(): SortMode {
 }
 
 /**
+ * Persisted local author for the comment composer (#430); '' when unset so
+ * the caller falls back to the OS username via ctx.getLocalAuthor. Seeded
+ * on first comment post so subsequent composers open with the same name
+ * without re-querying the host.
+ */
+export function loadLocalAuthor(): string {
+  const v = tasksSettings()['local_author']
+  return typeof v === 'string' ? v : ''
+}
+
+/** Atomically write the local author pref to the vault config. */
+export function persistLocalAuthor(author: string): Promise<boolean> {
+  return updatePluginSetting(TASKS_PLUGIN_ID, 'local_author', author)
+}
+
+/**
  * Persisted Board-mode status columns (#421). The Board is the only surface
  * with user-managed columns (every other grouping dimension is data-driven).
  * Defaults to the canonical TODO/DOING/DONE so the status Board matches the

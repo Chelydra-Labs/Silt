@@ -248,6 +248,12 @@ export interface PluginContext {
    */
   fetchSubtree: (blockId: string) => Promise<SubtreeBlock[]>
   /**
+   * The host OS username, used as the default for the per-vault local_author
+   * preference (#430). Returns "unknown" if the host can't resolve it. The
+   * user's explicit local_author pref (if set) always wins over this.
+   */
+  getLocalAuthor: () => Promise<string>
+  /**
    * Splice an edited child sub-tree back into the parent task's block,
    * atomically re-rendering the whole page through the canonical write chain
    * (#305). The parent task block and all surrounding content are preserved
@@ -354,6 +360,19 @@ export interface PluginContext {
     section?: string
     page?: string
   }) => Promise<string>
+  /**
+   * Append a timestamped comment to a task (#430). Composes a NOTE block with
+   * the body text plus [author:: NAME] and [ts:: YYYY-MM-DDTHH:MM:SS]
+   * attribution, spliced into the task's child sub-tree (so fetchSubtree
+   * re-hydrates author/timestamp on subsequent loads via the block_meta
+   * projection from #418/#37). Returns the new block's UUID. Gated by
+   * content-mutate (#156).
+   */
+  addTaskComment: (
+    taskId: string,
+    text: string,
+    author?: string
+  ) => Promise<string>
   deleteBlock: (uuid: string) => Promise<boolean>
   moveBlock: (
     uuid: string,

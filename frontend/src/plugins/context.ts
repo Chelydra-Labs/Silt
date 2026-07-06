@@ -21,6 +21,7 @@ import {
   PluginSetTaskTitle,
   GetTaskBlockers,
   FetchSubtree,
+  GetLocalAuthor,
   PluginSaveSubtreeBlocks,
   SearchBlocks,
   SearchBlocksPaged,
@@ -85,6 +86,51 @@ function getPluginSchemaDefault(pluginID: string, key: string): unknown {
   if (!schema) return undefined
   const field = schema.find((f) => f.key === key)
   return field?.default
+}
+
+// newCommentUUID mints the id for a comment NOTE block client-side so
+// addTaskComment can return the exact UUID that lands on disk (saveSubtreeBlocks
+// resolves to boolean, not the id). Prefers the Web Crypto UUID v4; falls back
+// to a hand-rolled RFC 4122 v4 when crypto.randomUUID is unavailable (older
+// embedded webviews / non-secure test contexts).
+function newCommentUUID(): string {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
+    return crypto.randomUUID()
+  }
+  const bytes = new Uint8Array(16)
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const h = (b: number) => b.toString(16).padStart(2, '0')
+  return (
+    h(bytes[0]) +
+    h(bytes[1]) +
+    h(bytes[2]) +
+    h(bytes[3]) +
+    '-' +
+    h(bytes[4]) +
+    h(bytes[5]) +
+    '-' +
+    h(bytes[6]) +
+    h(bytes[7]) +
+    '-' +
+    h(bytes[8]) +
+    h(bytes[9]) +
+    '-' +
+    h(bytes[10]) +
+    h(bytes[11]) +
+    h(bytes[12]) +
+    h(bytes[13]) +
+    h(bytes[14]) +
+    h(bytes[15])
+  )
 }
 
 /**
@@ -217,6 +263,10 @@ export function makePluginContext(
     // CapContentMutate); fetchSubtree/getTaskBlockers/searchBlocks are reads
     // and stay direct (the fullTextSearch precedent).
     fetchSubtree: (blockId) => FetchSubtree(blockId) as Promise<SubtreeBlock[]>,
+    // Host OS username — default for the local_author pref (#430). Direct
+    // read (no capability gate): the value is not secret and every plugin
+    // surface that renders comment attribution needs it.
+    getLocalAuthor: () => GetLocalAuthor(),
     saveSubtreeBlocks: (blockId, children) =>
       PluginSaveSubtreeBlocks(
         pluginID,
@@ -224,6 +274,34 @@ export function makePluginContext(
         blockId,
         children as unknown as Parameters<typeof PluginSaveSubtreeBlocks>[3]
       ),
+    // Append a timestamped comment NOTE to a task's child sub-tree (#430).
+    // Goes through saveSubtreeBlocks rather than createBlock: createBlock's
+    // insertAfter places the new block at Depth 0 (flat sibling), but a
+    // comment must be a CHILD (Depth > parent) so fetchSubtree returns it.
+    // saveSubtreeBlocks' spliceSubtree normalizes the new NOTE's depth to
+    // parentDepth+1. Author/timestamp ride on the SubtreeBlock struct fields
+    // (parser scanNoteTokens + renderBlock round-trip them; createBlock's
+    // text-only signature can't carry them without re-parsing).
+    addTaskComment: async (taskId, text, author) => {
+      const ts = new Date().toISOString().slice(0, 19) // YYYY-MM-DDTHH:MM:SS
+      const existing = (await FetchSubtree(taskId)) as SubtreeBlock[]
+      const newId = newCommentUUID()
+      const comment: SubtreeBlock = {
+        id: newId,
+        type: 'NOTE',
+        depth: 0,
+        line_number: 0,
+        raw_text: '',
+        clean_text: text,
+        author: author && author.length > 0 ? author : undefined,
+        timestamp: ts
+      }
+      await PluginSaveSubtreeBlocks(pluginID, sessionToken ?? '', taskId, [
+        ...existing,
+        comment
+      ] as unknown as Parameters<typeof PluginSaveSubtreeBlocks>[3])
+      return newId
+    },
     // Create a standalone task in <vault>/.silt/tasks.md (#368). title required;
     // dueDate/status optional with TODO + no-due defaults.
     createTask: (opts) =>

@@ -42,6 +42,25 @@ vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
   EventsOn: vi.fn(() => () => {})
 }))
 
+// CommentThread (mounted inside the drawer) reads the local_author pref via
+// the settings store; mock it so its reads resolve to controlled empty
+// values without exercising the real store's reactive plumbing.
+const drawerMocks = vi.hoisted(() => ({
+  settings: {
+    config: {
+      plugins: {
+        active: [],
+        disabled: [],
+        plugin_settings: {} as Record<string, Record<string, unknown>>
+      }
+    }
+  }
+}))
+vi.mock('../../../settings/store.svelte', () => ({
+  settings: drawerMocks.settings,
+  updatePluginSetting: vi.fn().mockResolvedValue(true)
+}))
+
 import TaskEditDrawer from './TaskEditDrawer.svelte'
 import type { PluginContext } from '../../sdk'
 import type { TaskDetail } from './types'
@@ -666,5 +685,23 @@ describe('TaskEditDrawer — title editor (#412)', () => {
     expect(screen.getByText(/Couldn't save/)).toBeTruthy()
     // Reverted to the original committed title.
     expect(input.value).toBe('Water plants')
+  })
+})
+
+describe('TaskEditDrawer — comment thread (#430)', () => {
+  beforeEach(() => cleanup())
+
+  it('renders the Comments section beneath the metadata', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([])
+    })
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose: () => {} }
+    })
+    // CommentThread mounts as a child; its heading + empty state appear once
+    // fetchSubtree resolves. The empty state confirms the wiring (taskId,
+    // notebook/section/page, ctx) reaches the component.
+    expect(await screen.findByText('Comments')).toBeInTheDocument()
+    expect(await screen.findByTestId('comment-empty-state')).toBeInTheDocument()
   })
 })
