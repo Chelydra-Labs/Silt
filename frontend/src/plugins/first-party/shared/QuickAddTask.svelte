@@ -45,6 +45,14 @@
      * pull the cursor away from the list the user came to interact with.
      */
     autofocus?: boolean
+    /**
+     * When true, Escape clears the draft text instead of calling onCancel.
+     * For persistent instances (Tasks bottom bar) that have no onCancel, this
+     * makes Escape mean "discard this draft" rather than being a dead key.
+     * Default false — toggle surfaces (Kanban) pass onCancel to collapse
+     * instead, so Escape hides the input via the cancel path.
+     */
+    clearOnEscape?: boolean
   }
 
   let {
@@ -56,7 +64,8 @@
     onCreated,
     onCancel,
     keepOpenAfterCreate = true,
-    autofocus = true
+    autofocus = true,
+    clearOnEscape = false
   }: Props = $props()
 
   let title = $state('')
@@ -112,7 +121,11 @@
     } else if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
-      onCancel?.()
+      if (clearOnEscape) {
+        title = ''
+      } else {
+        onCancel?.()
+      }
     }
   }
 

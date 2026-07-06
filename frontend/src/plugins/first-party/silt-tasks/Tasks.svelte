@@ -553,6 +553,7 @@
       placeholder="Add a task — Enter to add"
       keepOpenAfterCreate={true}
       autofocus={false}
+      clearOnEscape={true}
     />
   </div>
 </div>

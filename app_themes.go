@@ -316,6 +316,19 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 	// above (#404 hardening).
 	a.themeWriteMu.Lock()
 	defer a.themeWriteMu.Unlock()
+	// Re-check the vault hasn't closed during the (indefinite) native dialog
+	// above. If CloseVault ran while the user was picking a file, vaultPath is
+	// now stale — writing to it + persisting the fork as ActiveTheme would
+	// snap the next launch's theme resolution to a file that no longer exists
+	// on a different vault. The re-check is a brief vaultMu.RLock (not nested
+	// with themeWriteMu — vaultMu is acquired-and-released inside themeWriteMu),
+	// matching the lock layering proven safe above (#404 TOCTOU hardening).
+	a.vaultMu.RLock()
+	closed := a.vaultPath != vaultPath
+	a.vaultMu.RUnlock()
+	if closed {
+		return nil, fmt.Errorf("vault closed during background pick")
+	}
 	themesDir := filepath.Join(vaultPath, ".system", "themes")
 
 	// If the active theme is embedded-only (no on-disk file), fork it so the

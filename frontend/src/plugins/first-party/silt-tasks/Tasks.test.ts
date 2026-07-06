@@ -641,6 +641,25 @@ describe('Tasks view — inline quick-add (#409, replaces #399 toolbar toggle)',
     expect(mocks.createTask).not.toHaveBeenCalled()
     expect(screen.getByTestId('quick-add-task-input')).toBeInTheDocument()
   })
+
+  it('Escape clears the draft without creating or hiding the input', async () => {
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const input = screen.getByTestId('quick-add-task-input') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'half-typed draft' } })
+    await fireEvent.keyDown(input, { key: 'Escape' })
+    await flush()
+
+    // No task created.
+    expect(mocks.createTask).not.toHaveBeenCalled()
+    // The persistent input stays mounted and the draft is cleared.
+    const inputAfter = screen.getByTestId(
+      'quick-add-task-input'
+    ) as HTMLInputElement
+    expect(inputAfter).toBeInTheDocument()
+    expect(inputAfter.value).toBe('')
+  })
 })
 
 describe('Tasks view — truncated footer (#372 hardening)', () => {

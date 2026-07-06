@@ -762,14 +762,17 @@ func writeBytes(t *testing.T, path string, b []byte) {
 	}
 }
 
-// TestImportTheme_ConcurrentSerializesThemeWrites verifies themeWriteMu
-// serializes concurrent theme-file writes so the importer's collision-check-
-// then-write can't race (#404). N goroutines each import a distinct valid
-// theme; under the race detector (-race) this catches an unsynchronized write
-// path, and without the lock two imports could interleave their check/write
-// and clobber each other's file. All N imports must succeed and produce N
-// distinct on-disk files.
-func TestImportTheme_ConcurrentSerializesThemeWrites(t *testing.T) {
+// TestImportTheme_ConcurrentDistinctIDs runs N goroutines importing distinct
+// themes concurrently under -race. NOTE: this does NOT uniquely prove
+// themeWriteMu's value — themes.importMu (importer.go:25) already serializes
+// the import-vs-import check-then-write and would pass this test on its own.
+// themeWriteMu's unique contribution is CROSS-METHOD serialization (import vs
+// PickBackgroundImage's fork+write on a colliding user-<id> path), which
+// importMu does not cover. That cross-method race cannot be unit-tested here
+// because PickBackgroundImage opens a native dialog; the manual TESTING.md
+// matrix covers it. This test remains valuable as a -race guard on the
+// App-level import path and confirms all N distinct imports land on disk.
+func TestImportTheme_ConcurrentDistinctIDs(t *testing.T) {
 	configDirOverride(t)
 	app := newTestApp(t)
 
@@ -821,15 +824,15 @@ func TestImportTheme_ConcurrentSerializesThemeWrites(t *testing.T) {
 	}
 }
 
-// TestImportTheme_ConcurrentSameID exercises the importer's collision-check-
-// then-write under contention (#404 hardening). N goroutines import the SAME
-// custom theme source concurrently. The importer REJECTS a duplicate custom id
-// (ErrImportDuplicate) — it does not rename. Under themeWriteMu the check-
-// then-write is atomic: exactly ONE goroutine wins (passes the check + writes),
-// and the remaining N-1 see the on-disk file and reject. Without the lock,
-// multiple goroutines could race past the check before any write lands and all
-// "succeed" — clobbering the same path and losing data. Asserting exactly one
-// success proves the serialization is working.
+// TestImportTheme_ConcurrentSameID runs N goroutines importing the SAME custom
+// theme concurrently. The importer REJECTS a duplicate custom id
+// (ErrImportDuplicate). Exactly ONE goroutine wins (passes the check + writes),
+// and the remaining N-1 see the on-disk file and reject. NOTE: this proves
+// themes.importMu (importer.go:25) makes the check-then-write atomic — it
+// would pass even if App.themeWriteMu were removed. themeWriteMu's unique
+// value is cross-method serialization (see TestImportTheme_ConcurrentDistinctIDs
+// comment). This test is retained as a focused regression guard on importMu
+// via the App-level path, and as a -race check.
 func TestImportTheme_ConcurrentSameID(t *testing.T) {
 	configDirOverride(t)
 	app := newTestApp(t)
