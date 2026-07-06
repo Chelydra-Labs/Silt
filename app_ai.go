@@ -286,6 +286,13 @@ func (a *App) UpdateAIProviderConfig(which string, patch AIProviderPatch) error 
 	if err := validateAIBaseURL(patch.BaseURL); err != nil {
 		return err
 	}
+	// Reject unknown reasoning_effort values at the gate so they can't persist
+	// and later surface as a provider 400. Empty/nil means "unset" and is allowed.
+	if patch.ReasoningEffort != nil {
+		if re := strings.TrimSpace(*patch.ReasoningEffort); re != "" && !config.IsValidAIReasoningEffort(re) {
+			return fmt.Errorf("invalid reasoning_effort %q: must be one of none, minimal, low, medium, high, xhigh, max", *patch.ReasoningEffort)
+		}
+	}
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
@@ -386,11 +393,11 @@ func (a *App) ClearAIAPIKey(which string) error {
 		return fmt.Errorf("vault not loaded")
 	}
 	user := a.aiKeyringUser(which)
-	// Keyring delete with no locks held.
+	// Best-effort keyring delete with no locks held: ErrNotFound is the normal
+	// "nothing to delete" case and any other error is ignored, since config is
+	// cleared below regardless.
 	if a.keyringStore != nil {
-		if err := a.keyringStore.Delete(keyringService, user); err != nil && !errors.Is(err, keyring.ErrNotFound) {
-			// Unavailable keyring: nothing to delete there; still clear config.
-		}
+		_ = a.keyringStore.Delete(keyringService, user)
 	}
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
@@ -523,6 +530,13 @@ func (a *App) aiPreflightPlugin(pluginID, sessionToken, which string) (ai.AIProv
 // the ai capability; rate-limited and audit-logged exactly like PluginFetch.
 // Credentials are read server-side and never returned to the caller. (#216.)
 func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAICompleteInput) (ai.CompleteResult, error) {
+	// Validate reasoning_effort BEFORE aiPreflightPlugin so an invalid call
+	// doesn't consume a rate-limit slot or snapshot the provider config.
+	if input.ReasoningEffort != nil {
+		if re := strings.TrimSpace(*input.ReasoningEffort); re != "" && !config.IsValidAIReasoningEffort(re) {
+			return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrBadRequest, Message: fmt.Sprintf("invalid reasoning_effort %q: must be one of none, minimal, low, medium, high, xhigh, max", *input.ReasoningEffort)}
+		}
+	}
 	provider, configuredModel, err := a.aiPreflightPlugin(pluginID, sessionToken, "chat")
 	if err != nil {
 		return ai.CompleteResult{}, err

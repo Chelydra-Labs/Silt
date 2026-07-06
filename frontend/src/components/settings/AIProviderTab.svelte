@@ -248,6 +248,9 @@
     // fresh one rather than appearing unchanged to AT.
     testResult[which] = null
     try {
+      // Flush any un-blurred base_url/model edits so the probe tests the values
+      // the user sees on screen, not the last-persisted snapshot.
+      await persistProvider(which)
       const result = await TestAIConnection(which)
       testResult[which] = {
         ok: result.ok,
@@ -321,6 +324,20 @@
   })
 
   // --- Derived + helpers ------------------------------------------------
+
+  // formatAuditTime renders an audit timestamp in the user's locale (short month +
+  // day + time). Falls back to the raw string if the value isn't parseable. The
+  // full ISO is preserved in the cell's title attribute for hover/copy precision.
+  function formatAuditTime(iso: string): string {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return iso
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(d)
+  }
 
   // Show the setup nudge only when both providers are still on their
   // local defaults and no key has been entered for either — i.e. the
@@ -1031,8 +1048,8 @@
                       <tr
                         class="border-b border-surface-panel-border/50 text-text-primary"
                       >
-                        <td class="py-1.5 pr-3 whitespace-nowrap"
-                          >{entry.at}</td
+                        <td class="py-1.5 pr-3 whitespace-nowrap" title={entry.at}
+                          >{formatAuditTime(entry.at)}</td
                         >
                         <td class="py-1.5 pr-3">{entry.plugin}</td>
                         <td class="py-1.5 pr-3 capitalize">{entry.kind}</td>

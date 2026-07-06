@@ -50,19 +50,27 @@ const MaxResponseBytes = 50 * 1024 * 1024 // 50 MB
 const DefaultTimeout = 60 * time.Second
 
 // httpClient is the dedicated client for all AI provider calls. It carries a
-// CheckRedirect that rejects cross-host redirects so a compromised or
-// misconfigured endpoint cannot redirect the request (bearing the
-// Authorization: Bearer <key> header) to a different host. Same-host redirects
-// are allowed (load balancers, path normalization). A dedicated client (not
-// http.DefaultClient) also isolates AI calls from any global transport changes.
+// CheckRedirect that rejects cross-host redirects AND same-host scheme
+// downgrades (https→http), so a compromised or misconfigured endpoint cannot
+// redirect the request (bearing the Authorization: Bearer <key> header) to a
+// different host or carry it over plaintext where it would leak. Same-host
+// same-scheme redirects (and http→https upgrades) are allowed (load balancers,
+// path normalization). A dedicated client (not http.DefaultClient) also
+// isolates AI calls from any global transport changes.
 var httpClient = &http.Client{
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) == 0 {
 			return nil
 		}
-		prevHost := via[len(via)-1].URL.Host
-		if req.URL.Host != prevHost {
-			return fmt.Errorf("ai: refused cross-host redirect from %s to %s", prevHost, req.URL.Host)
+		prev := via[len(via)-1].URL
+		if req.URL.Host != prev.Host {
+			return fmt.Errorf("ai: refused cross-host redirect from %s to %s", prev.Host, req.URL.Host)
+		}
+		// Same host, but never follow an https→http downgrade: the bearer token
+		// must not cross a plaintext hop even if the attacker controls only the
+		// redirect response (e.g. a stripped TLS redirect on a hijacked path).
+		if prev.Scheme == "https" && req.URL.Scheme == "http" {
+			return fmt.Errorf("ai: refused scheme downgrade from https to http on host %s", prev.Host)
 		}
 		return nil
 	},
@@ -179,9 +187,11 @@ const (
 
 // AIError is the structured error returned by the service. It is JSON-
 // serializable so the frontend SDK surfaces an actionable Kind + Message rather
-// than a raw status code. Status is 0 for transport-level failures.
+// than a raw status code. Kind serializes as "code" to match the plugin SDK
+// contract (rejections are keyed by `code`); the Go field name is unchanged.
+// Status is 0 for transport-level failures.
 type AIError struct {
-	Kind    AIErrorKind `json:"kind"`
+	Kind    AIErrorKind `json:"code"`
 	Status  int         `json:"status"`
 	Message string      `json:"message"`
 }
@@ -416,6 +426,11 @@ func Embed(ctx context.Context, req EmbedRequest) (EmbedResult, error) {
 	if len(resp.Data) == 0 {
 		return EmbedResult{}, &AIError{Kind: ErrUnknown, Message: "provider returned no embeddings"}
 	}
+	// Embeddings[i] ↔ Texts[i] is the contract; a partial response would
+	// silently misalign vectors with inputs, so any count mismatch is fatal.
+	if len(resp.Data) != len(req.Texts) {
+		return EmbedResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("provider returned %d embeddings for %d texts", len(resp.Data), len(req.Texts))}
+	}
 	out := EmbedResult{
 		Embeddings: make([][]float64, len(resp.Data)),
 		Model:      resp.Model,
@@ -436,11 +451,13 @@ func Embed(ctx context.Context, req EmbedRequest) (EmbedResult, error) {
 // the probe kind so one binding serves both provider blocks.
 func Probe(ctx context.Context, p AIProvider, isChat bool) error {
 	if isChat {
-		one := 1
+		// No MaxTokens cap: some reasoning endpoints reject an extremely low
+		// token budget (treating it as an impossible request) and would fail
+		// "Test connection" for a config that actually works in normal use.
+		// The provider timeout already bounds the probe's wall-clock cost.
 		_, err := Complete(ctx, CompleteRequest{
-			Provider:  p,
-			Messages:  []ChatMessage{{Role: "user", Content: "ping"}},
-			MaxTokens: &one,
+			Provider: p,
+			Messages: []ChatMessage{{Role: "user", Content: "ping"}},
 		})
 		return err
 	}

@@ -84,6 +84,27 @@ function getPluginSchemaDefault(pluginID: string, key: string): unknown {
   return field?.default
 }
 
+// normalizeAIError coerces whatever shape a Wails IPC rejection arrives in — a
+// structured object (keyed by `code` or legacy `kind`), an Error, or a bare
+// string — into the documented PluginAIError shape. Wails v2 does not guarantee
+// a custom Go error type's fields survive IPC, so this wrapper IS the contract a
+// plugin relies on (`catch(e){ if(e.code==='rate-limited') … }`).
+function normalizeAIError(err: unknown): {
+  code: string
+  status?: number
+  message: string
+} {
+  if (err != null && typeof err === 'object') {
+    const e = err as Record<string, unknown>
+    const code =
+      typeof e.code === 'string' ? e.code : typeof e.kind === 'string' ? e.kind : 'unknown'
+    const message = typeof e.message === 'string' ? e.message : String(err)
+    const status = typeof e.status === 'number' ? (e.status as number) : undefined
+    return { code, status, message }
+  }
+  return { code: 'unknown', message: err == null ? 'unknown error' : String(err) }
+}
+
 /**
  * Build a PluginContext whose `activeNotebook/Section/Page` are live reactive
  * getters backed by the module-scoped $state in location.svelte.ts (#69).
@@ -560,22 +581,30 @@ export function makePluginContext(
           // struct array), so the strict TS type wants an instance with
           // convertValues. The runtime binding JSON-serializes a plain object
           // identically, so a structural cast is correct here.
-        } as any).then((res: any) => ({
-          content: res?.content ?? '',
-          model: res?.model ?? '',
-          usage: res?.usage
-        })),
+        } as any)
+          .then((res: any) => ({
+            content: res?.content ?? '',
+            model: res?.model ?? '',
+            usage: res?.usage
+          }))
+          .catch((err) => {
+            throw normalizeAIError(err)
+          }),
       embed: (req) =>
         PluginAIEmbed(pluginID, sessionToken ?? '', {
           texts: req.texts,
           model: req.model ?? '',
           dimensions: req.dimensions
-        }).then((res: any) => ({
-          embeddings: res?.embeddings ?? [],
-          model: res?.model ?? '',
-          dimensions: res?.dimensions ?? 0,
-          usage: res?.usage
-        }))
+        })
+          .then((res: any) => ({
+            embeddings: res?.embeddings ?? [],
+            model: res?.model ?? '',
+            dimensions: res?.dimensions ?? 0,
+            usage: res?.usage
+          }))
+          .catch((err) => {
+            throw normalizeAIError(err)
+          })
     }
   }
 }

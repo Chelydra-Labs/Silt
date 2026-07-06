@@ -524,6 +524,28 @@ export interface PluginContext {
 }
 
 /**
+ * Normalized AI rejection. `code` matches the backend's AIErrorKind so a plugin
+ * can branch on the failure category. The SDK wrapper coerces whatever shape the
+ * IPC rejection arrives in (structured object keyed by `code`/`kind`, an Error,
+ * or a bare string) into this shape, so the documented contract holds regardless
+ * of transport.
+ */
+export interface PluginAIError {
+  code:
+    | 'unauthorized'
+    | 'rate-limited'
+    | 'model-missing'
+    | 'timeout'
+    | 'unreachable'
+    | 'bad-request'
+    | 'forbidden'
+    | 'server'
+    | 'unknown'
+  status?: number
+  message: string
+}
+
+/**
  * The core AI service API (#216). `complete` targets the configured chat model;
  * `embed` targets the configured embedding model. Both are Go-side proxies: the
  * plugin never handles credentials, and every call is rate-limited + audit-
@@ -538,9 +560,9 @@ export interface PluginAIApi {
    * signature is additive when streaming lands (Sprint 22); the non-streaming
    * buffer is returned regardless.
    *
-   * Rejections carry `code` set to a normalized kind: 'unauthorized',
-   * 'rate-limited', 'model-missing', 'timeout', 'unreachable', 'bad-request',
-   * 'forbidden', 'server', or 'unknown'.
+   * Rejections are normalized to a {@link PluginAIError} carrying `code`
+   * set to a normalized kind: 'unauthorized', 'rate-limited', 'model-missing',
+   * 'timeout', 'unreachable', 'bad-request', 'forbidden', 'server', or 'unknown'.
    */
   complete: (req: {
     messages: PluginAIChatMessage[]

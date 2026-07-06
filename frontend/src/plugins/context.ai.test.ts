@@ -95,9 +95,11 @@ describe('ctx.ai.complete', () => {
     expect(JSON.stringify(input)).not.toMatch(/secret|bearer/i)
   })
 
-  it('propagates binding rejection (the typed AIError surfaces as a throw)', async () => {
+  it('normalizes a legacy `kind`-keyed rejection to PluginAIError shape', async () => {
     mocks.pluginAIComplete.mockRejectedValueOnce({
-      // The Go AIError serializes as a JSON error over IPC; the SDK rethrows it.
+      // The Go AIError serializes as a JSON error over IPC; the SDK wrapper
+      // coerces it into the documented PluginAIError shape so plugin catch
+      // blocks can branch on `code` regardless of IPC transport quirks.
       kind: 'model-missing',
       status: 404,
       message: 'no such model'
@@ -105,7 +107,35 @@ describe('ctx.ai.complete', () => {
     const ctx = makePluginContext('p')
     await expect(
       ctx.ai.complete({ messages: [{ role: 'user', content: 'x' }] })
-    ).rejects.toBeTruthy()
+    ).rejects.toMatchObject({
+      code: 'model-missing',
+      status: 404,
+      message: 'no such model'
+    })
+  })
+
+  it('prefers `code` over legacy `kind` when both shapes are possible', async () => {
+    mocks.pluginAIComplete.mockRejectedValueOnce({
+      code: 'rate-limited',
+      status: 429,
+      message: 'slow down'
+    })
+    const ctx = makePluginContext('p')
+    await expect(
+      ctx.ai.complete({ messages: [{ role: 'user', content: 'x' }] })
+    ).rejects.toMatchObject({
+      code: 'rate-limited',
+      status: 429,
+      message: 'slow down'
+    })
+  })
+
+  it('coerces a bare string rejection to a PluginAIError with code "unknown"', async () => {
+    mocks.pluginAIComplete.mockRejectedValueOnce('boom')
+    const ctx = makePluginContext('p')
+    await expect(
+      ctx.ai.complete({ messages: [{ role: 'user', content: 'x' }] })
+    ).rejects.toMatchObject({ code: 'unknown', message: 'boom' })
   })
 })
 
@@ -138,5 +168,19 @@ describe('ctx.ai.embed', () => {
     expect(input).not.toHaveProperty('apiKey')
     expect(input).not.toHaveProperty('api_key')
     expect(JSON.stringify(input)).not.toMatch(/secret|bearer/i)
+  })
+
+  it('normalizes a binding rejection to PluginAIError shape', async () => {
+    mocks.pluginAIEmbed.mockRejectedValueOnce({
+      kind: 'unauthorized',
+      status: 401,
+      message: 'no key'
+    })
+    const ctx = makePluginContext('p')
+    await expect(ctx.ai.embed({ texts: ['x'] })).rejects.toMatchObject({
+      code: 'unauthorized',
+      status: 401,
+      message: 'no key'
+    })
   })
 })

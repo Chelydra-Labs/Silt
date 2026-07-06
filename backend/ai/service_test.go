@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -340,5 +341,124 @@ func TestComplete_CrossHostRedirectRejected(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected cross-host redirect to be rejected, got nil")
+	}
+}
+
+func TestRedirectGuard_RejectsSchemeDowngradeAndCrossHost(t *testing.T) {
+	// Drive CheckRedirect directly with constructed requests so the policy is
+	// locked independently of any live HTTP hop. Each case's "prev" is the last
+	// entry in `via`; `next` is the candidate redirect target.
+	cases := []struct {
+		name    string
+		prev    *url.URL
+		next    *url.URL
+		wantErr bool
+	}{
+		{
+			name:    "same-host same-scheme https allowed",
+			prev:    &url.URL{Scheme: "https", Host: "a.example"},
+			next:    &url.URL{Scheme: "https", Host: "a.example"},
+			wantErr: false,
+		},
+		{
+			name:    "cross-host rejected",
+			prev:    &url.URL{Scheme: "https", Host: "a.example"},
+			next:    &url.URL{Scheme: "https", Host: "b.example"},
+			wantErr: true,
+		},
+		{
+			name:    "https-to-http same-host rejected",
+			prev:    &url.URL{Scheme: "https", Host: "a.example"},
+			next:    &url.URL{Scheme: "http", Host: "a.example"},
+			wantErr: true,
+		},
+		{
+			name:    "http-to-https same-host allowed",
+			prev:    &url.URL{Scheme: "http", Host: "a.example"},
+			next:    &url.URL{Scheme: "https", Host: "a.example"},
+			wantErr: false,
+		},
+		{
+			name:    "http-to-http same-host allowed",
+			prev:    &url.URL{Scheme: "http", Host: "a.example"},
+			next:    &url.URL{Scheme: "http", Host: "a.example"},
+			wantErr: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := &http.Request{URL: c.next}
+			via := []*http.Request{{URL: c.prev}}
+			err := httpClient.CheckRedirect(req, via)
+			if c.wantErr && err == nil {
+				t.Fatalf("expected rejection, got nil")
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("expected allow, got error: %v", err)
+			}
+		})
+	}
+}
+
+func TestEmbed_CountMismatch(t *testing.T) {
+	// Provider returns a single embedding for a three-text batch — the kind of
+	// partial response that would silently misalign vectors with inputs if the
+	// service did not check the count.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req embedRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Errorf("parse embed request: %v", err)
+		}
+		// Respond with exactly one entry regardless of input length.
+		vec := []float64{0.1, 0.2, 0.3}
+		resp := map[string]any{
+			"model": req.Model,
+			"data":  []map[string]any{{"embedding": vec, "index": 0}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	_, err := Embed(context.Background(), EmbedRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "emb"},
+		Texts:    []string{"one", "two", "three"},
+	})
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrUnknown {
+		t.Errorf("kind = %q, want %q", e.Kind, ErrUnknown)
+	}
+}
+
+func TestProbe_ChatOmitsMaxTokens(t *testing.T) {
+	// Lock the Fix E behavior: the chat probe must not clamp max_tokens, since
+	// some reasoning endpoints reject a tiny cap. The handler asserts the field
+	// is absent and replies with a valid completion.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req chatRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Errorf("parse chat request: %v", err)
+		}
+		if req.MaxTokens != nil {
+			t.Errorf("probe must not set max_tokens, got %d", *req.MaxTokens)
+		}
+		resp := map[string]any{
+			"model": req.Model,
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": "pong"}, "finish_reason": "stop"},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	if err := Probe(context.Background(), AIProvider{BaseURL: srv.URL, Model: "m"}, true); err != nil {
+		t.Errorf("Probe chat: %v", err)
 	}
 }

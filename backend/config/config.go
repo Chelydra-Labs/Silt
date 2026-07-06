@@ -91,6 +91,24 @@ const DefaultAIBaseURL = "http://localhost:11434"
 // cannot hang a plugin call forever.
 const DefaultAITimeoutMs = 60000
 
+// validAIReasoningEfforts is the set of reasoning_effort values accepted across
+// OpenAI-compatible providers (OpenAI, Ollama, vLLM, OpenRouter, …). "none"
+// means "do not send the parameter"; the others ramp the reasoning budget. Kept
+// as the single source of truth so the binding layer can reject a typo at the
+// gate (instead of forwarding it to a provider for a 400) and NormalizeAIConfig
+// can drop a stale/unknown value from a hand-edited config.yaml.
+var validAIReasoningEfforts = map[string]bool{
+	"none": true, "minimal": true, "low": true,
+	"medium": true, "high": true, "xhigh": true, "max": true,
+}
+
+// IsValidAIReasoningEffort reports whether s is a recognized reasoning_effort
+// value. Callers pass a already-trimmed value. Used by the AI binding layer
+// (UpdateAIProviderConfig / PluginAIComplete) to reject unknown values early.
+func IsValidAIReasoningEffort(s string) bool {
+	return validAIReasoningEfforts[s]
+}
+
 // NotebooksConfig holds spatial-mapping defaults.
 type NotebooksConfig struct {
 	Path          string `yaml:"path" json:"path"`
@@ -845,6 +863,17 @@ func normalizeAIProvider(p AIProviderConfig, isChat bool) AIProviderConfig {
 	}
 	p.Model = strings.TrimSpace(p.Model)
 	p.APIKey = strings.TrimSpace(p.APIKey)
+	// Validate reasoning_effort against the documented enum so a stale or
+	// hand-typed unknown value is dropped rather than forwarded to a provider
+	// for a 400. Applies to chat only; normalize drops it for embeddings below.
+	if p.ReasoningEffort != nil {
+		re := strings.TrimSpace(*p.ReasoningEffort)
+		if IsValidAIReasoningEffort(re) {
+			p.ReasoningEffort = &re
+		} else {
+			p.ReasoningEffort = nil
+		}
+	}
 	// Drop advanced knobs that don't apply to this block so a user who flips
 	// chat↔embedding in the UI doesn't leave a stale value behind.
 	if isChat {
@@ -852,6 +881,7 @@ func normalizeAIProvider(p AIProviderConfig, isChat bool) AIProviderConfig {
 	} else {
 		p.Temperature = nil
 		p.MaxTokens = nil
+		p.ReasoningEffort = nil
 	}
 	// Bound the per-call timeout. A negative value is nonsensical; an
 	// absurdly large value would let a dead endpoint hang a plugin call. nil

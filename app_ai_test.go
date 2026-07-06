@@ -370,3 +370,77 @@ func TestUpdateAIProviderConfig_RejectsNonHTTPBaseURL(t *testing.T) {
 		t.Errorf("expected scheme-rejection error, got %v", err)
 	}
 }
+
+// --- Reasoning-effort gate (Fix D) ---------------------------------------
+
+func TestUpdateAIProviderConfig_RejectsInvalidReasoningEffort(t *testing.T) {
+	app := newTestApp(t)
+	bogus := "ultra"
+	err := app.UpdateAIProviderConfig("chat", AIProviderPatch{
+		ProviderType:    "openai-compatible",
+		Model:           "m",
+		ReasoningEffort: stringPtrAI(bogus),
+	})
+	if err == nil || !containsStr(err.Error(), "reasoning_effort") {
+		t.Errorf("expected reasoning_effort rejection error, got %v", err)
+	}
+	// The invalid value must not have persisted: the live block has no
+	// reasoning_effort set (the default) and the model is still unset too,
+	// proving validation aborted before any mutation.
+	app.configMu.RLock()
+	chat := app.cfg.AI.Chat
+	app.configMu.RUnlock()
+	if chat.ReasoningEffort != nil {
+		t.Errorf("invalid reasoning_effort leaked into config: %q", *chat.ReasoningEffort)
+	}
+	if chat.Model != "" {
+		t.Errorf("invalid patch should not partially apply; model = %q", chat.Model)
+	}
+}
+
+func TestUpdateAIProviderConfig_AcceptsValidReasoningEffort(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.UpdateAIProviderConfig("chat", AIProviderPatch{
+		ProviderType:    "openai-compatible",
+		Model:           "m",
+		ReasoningEffort: stringPtrAI("high"),
+	}); err != nil {
+		t.Fatalf("valid reasoning_effort should be accepted, got %v", err)
+	}
+	app.configMu.RLock()
+	chat := app.cfg.AI.Chat
+	app.configMu.RUnlock()
+	if chat.ReasoningEffort == nil || *chat.ReasoningEffort != "high" {
+		t.Errorf("reasoning_effort not applied: %+v", chat.ReasoningEffort)
+	}
+}
+
+// TestPluginAIComplete_RejectsInvalidReasoningEffort verifies the gate fires
+// BEFORE aiPreflightPlugin — the call returns a typed bad-request error without
+// needing a registered session, provider config, or HTTP server. If the
+// validation ran after preflight this would surface a session-denial error
+// instead.
+func TestPluginAIComplete_RejectsInvalidReasoningEffort(t *testing.T) {
+	app := newTestApp(t)
+	bogus := "turbo"
+	_, err := app.PluginAIComplete("silt-kanban", "never-registered", PluginAICompleteInput{
+		Messages:        []PluginAIChatMessage{{Role: "user", Content: "x"}},
+		ReasoningEffort: stringPtrAI(bogus),
+	})
+	if err == nil {
+		t.Fatal("invalid reasoning_effort should be rejected")
+	}
+	e, ok := err.(*ai.AIError)
+	if !ok {
+		t.Fatalf("want *ai.AIError for invalid reasoning_effort, got %T (%v)", err, err)
+	}
+	if e.Kind != ai.ErrBadRequest {
+		t.Errorf("Kind = %q, want %q", e.Kind, ai.ErrBadRequest)
+	}
+	if !containsStr(e.Message, "reasoning_effort") {
+		t.Errorf("error message should mention reasoning_effort, got %q", e.Message)
+	}
+}
+
+// stringPtrAI is the *string helper local to these tests (mirrors intPtrAI).
+func stringPtrAI(s string) *string { return &s }

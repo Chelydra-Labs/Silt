@@ -454,6 +454,31 @@ describe('AIProviderTab', () => {
         ).not.toBeDisabled()
       )
     })
+
+    it('flushes un-blurred edits via UpdateAIProviderConfig before probing', async () => {
+      // Without the pre-probe persist, a user who typed a new base_url/model
+      // and clicked Test without blurring would probe stale backend state.
+      render(AIProviderTab)
+      await ready()
+
+      const testButtons = screen.getAllByRole('button', {
+        name: /Test connection/i
+      })
+      await fireEvent.click(testButtons[0]) // chat
+
+      await waitFor(() =>
+        expect(mocks.TestAIConnection).toHaveBeenCalledWith('chat')
+      )
+      // The probe must be preceded by a persist of the same provider so
+      // the backend tests the values on screen, not a stale snapshot.
+      expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+        'chat',
+        expect.anything()
+      )
+      expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledBefore(
+        mocks.TestAIConnection
+      )
+    })
   })
 
   describe('keyring section', () => {
@@ -562,6 +587,38 @@ describe('AIProviderTab', () => {
       const message = await screen.findByText(/Failed to load audit log/i)
       expect(message.textContent).toContain('db locked')
       expect(message.closest('[role="alert"]')).not.toBeNull()
+    })
+
+    it('renders a localized timestamp instead of the raw ISO string', async () => {
+      // Raw RFC3339 is hard to scan and not locale-aware. The cell should
+      // show a localized short date/time; the full ISO stays on the title
+      // attribute for hover precision. Locale output varies in CI, so assert
+      // the negative (no ISO markers) plus non-empty rendered text.
+      mocks.GetAIAudit.mockResolvedValue([
+        {
+          plugin: 'summarizer',
+          kind: 'chat',
+          host: 'api.openai.com',
+          model: 'gpt-4o',
+          status: 'ok',
+          at: '2026-07-06T14:45:00.000Z',
+          prompt_tokens: 120,
+          completion_tokens: 80,
+          total_tokens: 200
+        }
+      ])
+      render(AIProviderTab)
+      await ready()
+
+      await fireEvent.click(summaryEl())
+      await screen.findByText('summarizer')
+
+      // The "When" cell is the first <td> in the (single) data row.
+      const whenCell = screen.getAllByRole('cell')[0]
+      expect(whenCell).toHaveAttribute('title', '2026-07-06T14:45:00.000Z')
+      expect(whenCell.textContent).not.toContain('T')
+      expect(whenCell.textContent).not.toContain('Z')
+      expect(whenCell.textContent?.trim().length).toBeGreaterThan(0)
     })
   })
 

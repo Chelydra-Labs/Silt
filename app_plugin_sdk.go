@@ -618,22 +618,27 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 	// Preserve AI provider API keys. AIProviderConfig.APIKey is json:"-", so a
 	// full-config round-trip from the frontend (e.g. saving an editor/hotkey
 	// change) never carries the keys — without this they would be blanked.
-	// Only the dedicated SetAIAPIKey binding mutates keys. Read under configMu
-	// (vaultMu is already held; order is vaultMu → configMu per the invariant).
+	// Only the dedicated SetAIAPIKey binding mutates keys. The lock is held
+	// through config.Save so a concurrent SetAIAPIKey cannot land+persist a
+	// new key in the gap between this snapshot and this Save (which would
+	// revert it). Mirrors SetAIAPIKey's hold-through-save discipline.
+	// (vaultMu is already held; order is vaultMu → configMu per the invariant.)
 	a.configMu.Lock()
 	cfg.AI.Chat.APIKey = a.cfg.AI.Chat.APIKey
 	cfg.AI.Embedding.APIKey = a.cfg.AI.Embedding.APIKey
-	a.configMu.Unlock()
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
 	}
-	if err := config.Save(a.vaultPath, cfg); err != nil {
+	err := config.Save(a.vaultPath, cfg)
+	a.configMu.Unlock()
+	if err != nil {
 		return err
 	}
 	// Apply live Go-side knobs without emitting config:changed. The frontend
 	// store already updates optimistically in saveConfig(); emitting here would
 	// race the store's dirty flag and could spuriously flip pendingExternal.
 	// External edits still flow through the watcher → applyConfig (with emit).
+	// applyConfigLocked takes configMu itself, so it runs after the release above.
 	a.applyConfigLocked(cfg)
 	return nil
 }

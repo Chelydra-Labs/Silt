@@ -96,6 +96,40 @@ func TestNormalizeAIConfig(t *testing.T) {
 			t.Errorf("non-positive dimensions should be dropped, got %+v", out.Embedding.Dimensions)
 		}
 	})
+	t.Run("ValidReasoningEffortPreservedAndTrimmed", func(t *testing.T) {
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ReasoningEffort: stringPtr("  high  ")}})
+		if out.Chat.ReasoningEffort == nil || *out.Chat.ReasoningEffort != "high" {
+			t.Errorf("valid reasoning_effort should be trimmed+kept, got %+v", out.Chat.ReasoningEffort)
+		}
+	})
+	t.Run("UnknownReasoningEffortDropped", func(t *testing.T) {
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ReasoningEffort: stringPtr("hig")}})
+		if out.Chat.ReasoningEffort != nil {
+			t.Errorf("unknown reasoning_effort should be dropped, got %+v", out.Chat.ReasoningEffort)
+		}
+	})
+	t.Run("EmbeddingDropsReasoningEffort", func(t *testing.T) {
+		out := NormalizeAIConfig(AIConfig{Embedding: AIProviderConfig{ReasoningEffort: stringPtr("high")}})
+		if out.Embedding.ReasoningEffort != nil {
+			t.Errorf("embedding block should drop reasoning_effort, got %+v", out.Embedding.ReasoningEffort)
+		}
+	})
+}
+
+// TestIsValidAIReasoningEffort locks the documented enum so a value added to
+// the SDK/docs without updating the validator is caught here, not at a provider.
+func TestIsValidAIReasoningEffort(t *testing.T) {
+	valid := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+	for _, v := range valid {
+		if !IsValidAIReasoningEffort(v) {
+			t.Errorf("expected %q to be valid", v)
+		}
+	}
+	for _, v := range []string{"", "hig", "MAX", "ultra", "0", "off"} {
+		if IsValidAIReasoningEffort(v) {
+			t.Errorf("expected %q to be INVALID (exact match, no trim)", v)
+		}
+	}
 }
 
 // TestAI_APIKeyNeverSerializedToJSON verifies the json:"-" tag holds: a config
