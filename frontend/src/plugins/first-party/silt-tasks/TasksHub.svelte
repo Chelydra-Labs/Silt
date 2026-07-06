@@ -8,7 +8,8 @@
   // Phase 1: List is the live renderer (views/ListView.svelte); Board and
   // Calendar render placeholder stubs until their issues land. Group-by /
   // sort selectors arrive with the grouping-engine issue (#423).
-  import { onMount, untrack } from 'svelte'
+  import { onMount, untrack, tick } from 'svelte'
+  import { fly } from 'svelte/transition'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import FilterBar from './components/FilterBar.svelte'
   import ListView from './views/ListView.svelte'
@@ -21,10 +22,15 @@
     setScope,
     setGroupBy,
     setSort,
+    setColumns,
+    saveView,
+    applySavedView,
+    deleteSavedView,
     clearScopeOverride,
     narrowScopeTo,
     type DisplayMode,
     type GroupBy,
+    type SavedView,
     type Scope,
     type SortMode,
     type TaskFilters
@@ -33,10 +39,15 @@
     loadDefaultDisplayMode,
     loadDefaultGroupBy,
     loadDefaultSort,
+    loadColumns,
+    loadSavedViews,
+    persistSavedViews,
     persistDefaultDisplayMode,
     persistDefaultGroupBy,
     persistDefaultSort
   } from './settings'
+  import { fingerprintOf, fingerprintOfState } from './savedViews'
+  import { settings as settingsStore } from '../../../settings/store.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -103,6 +114,27 @@
       if (persistedSort !== getTaskHubState().sort) {
         setSort(persistedSort)
       }
+      // Status columns (#421) hydrate into the unified state so saved
+      // views can snapshot them. BoardView keeps its own local mirror
+      // today; Phase 7 reconciles the two.
+      const persistedCols = loadColumns()
+      if (
+        persistedCols.length &&
+        persistedCols.some((c, i) => c !== getTaskHubState().columns[i])
+      ) {
+        setColumns(persistedCols)
+      }
+      // Saved views (#427): system defaults (code-defined) + user views
+      // (YAML) + legacy Kanban boards (forward-read). Seeded once on
+      // mount; the in-memory list is the single source afterwards.
+      const views = loadSavedViews()
+      if (views.length) {
+        getTaskHubState().savedViews = views
+      }
+      // Mount-time hydration is not a user edit; clear any dirty flag a
+      // stray setter might have flipped during the seed above.
+      getTaskHubState().savedViewsDirty = false
+      getTaskHubState().activeSavedViewId = ''
     })
     void reloadFacets()
   })
@@ -130,9 +162,17 @@
     const idx = order.indexOf(getTaskHubState().displayMode)
     chooseMode(order[(idx + 1) % order.length])
   }
+  // One always-on keydown listener dispatches to both the mode-cycle
+  // shortcut and the saved-view-popover escape (cheaper than two
+  // window-level listeners and avoids an $effect re-run race between
+  // the popover's open/close transitions).
+  function onWindowKeydown(e: KeyboardEvent) {
+    onGlobalKeydown(e)
+    onPopoverKeydown(e)
+  }
   $effect(() => {
-    window.addEventListener('keydown', onGlobalKeydown)
-    return () => window.removeEventListener('keydown', onGlobalKeydown)
+    window.addEventListener('keydown', onWindowKeydown)
+    return () => window.removeEventListener('keydown', onWindowKeydown)
   })
 
   // WAI-ARIA radiogroup keyboard pattern for the mode switcher: ArrowLeft/
@@ -268,6 +308,176 @@
     setFilters(f)
   }
 
+  // --- Saved views (#427) --------------------------------------------------
+  // The bookmark button next to the title has three regimes driven by
+  // (activeSavedViewId, savedViewsDirty):
+  //
+  //   no view active            → click opens the save composer
+  //   view active + dirty       → click opens Update / Save-as-new menu
+  //   view active + clean       → click opens Rename / Delete menu
+  //
+  // The composer is a tiny inline form (name input + Save/Cancel). The
+  // menus are short button lists. Escape closes whichever is open
+  // (mirrors FilterBar's escape pattern).
+  let savedViewPopover = $state<'closed' | 'save' | 'menu' | 'rename'>('closed')
+  let composerName = $state('')
+  let savedViewError = $state('')
+  let savedViewLiveMsg = $state('')
+  let composerInput = $state<HTMLInputElement | null>(null)
+
+  let activeSavedView = $derived(
+    hubState.activeSavedViewId
+      ? hubState.savedViews.find((v) => v.id === hubState.activeSavedViewId)
+      : undefined
+  )
+
+  // When the active view is clean, its fingerprint matches the live state;
+  // when the user diverges, the mismatch is what the dirty flag tracks.
+  // The fingerprint is the source of truth for the bookmark icon (filled
+  // when matching, outline when diverged or no view active).
+  let activeViewMatchesState = $derived(
+    !!activeSavedView &&
+      fingerprintOf(activeSavedView) === fingerprintOfState(hubState)
+  )
+
+  function openSaveComposer() {
+    composerName = ''
+    savedViewError = ''
+    savedViewPopover = 'save'
+    void tick().then(() => composerInput?.focus())
+  }
+
+  function openMenu() {
+    // No-op when there's nothing to act on (defensive; the button itself
+    // is the only entry point and it's not rendered in this state).
+    savedViewError = ''
+    savedViewPopover = 'menu'
+  }
+
+  function closePopover() {
+    savedViewPopover = 'closed'
+    composerName = ''
+    savedViewError = ''
+  }
+
+  // Build a SavedView snapshot from the current hub state. Used by both
+  // "Save current view" and "Update saved view" (the latter reuses the
+  // existing id + name; the former mints a fresh id).
+  function snapshotState(overrides: Partial<SavedView> = {}): SavedView {
+    return {
+      id: overrides.id ?? freshId(),
+      name: overrides.name ?? (composerName.trim() || 'Untitled view'),
+      displayMode: hubState.displayMode,
+      groupBy: hubState.groupBy,
+      sort: hubState.sort,
+      scope: hubState.scope,
+      filters: { ...hubState.filters },
+      calendarSubMode: hubState.calendarSubMode,
+      columns: [...hubState.columns],
+      system: false,
+      ...overrides
+    }
+  }
+
+  function freshId(): string {
+    return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `view-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }
+
+  async function persistAndAnnounce(
+    next: SavedView[],
+    msg: string
+  ): Promise<void> {
+    const ok = await persistSavedViews(next)
+    if (!ok) {
+      savedViewError = settingsStore.error || 'Failed to save view'
+      return
+    }
+    savedViewError = ''
+    savedViewLiveMsg = msg
+    closePopover()
+  }
+
+  // Save current state as a NEW view, then mark it active.
+  async function commitSaveNew() {
+    const name = composerName.trim()
+    if (!name) {
+      savedViewError = 'Enter a view name'
+      return
+    }
+    const view = snapshotState({ name })
+    saveView(view)
+    applySavedView(view)
+    await persistAndAnnounce(
+      getTaskHubState().savedViews,
+      `View "${name}" saved`
+    )
+  }
+
+  // Overwrite the active view's dimensions with the current state.
+  async function commitUpdateActive() {
+    if (!activeSavedView) return
+    const view = snapshotState({
+      id: activeSavedView.id,
+      name: activeSavedView.name,
+      system: activeSavedView.system
+    })
+    saveView(view)
+    applySavedView(view)
+    await persistAndAnnounce(
+      getTaskHubState().savedViews,
+      `View "${view.name}" updated`
+    )
+  }
+
+  async function commitRename() {
+    if (!activeSavedView) return
+    const name = composerName.trim()
+    if (!name) {
+      savedViewError = 'Enter a view name'
+      return
+    }
+    if (activeSavedView.system) {
+      // System views are code-defined; a rename would diverge the
+      // code-derived name on next hydrate (the loader always re-seeds
+      // the SYSTEM_VIEWS name). Refuse rather than fight the seed.
+      savedViewError = 'System views cannot be renamed'
+      return
+    }
+    const view: SavedView = { ...activeSavedView, name }
+    saveView(view)
+    await persistAndAnnounce(
+      getTaskHubState().savedViews,
+      `View renamed to "${name}"`
+    )
+  }
+
+  async function commitDelete() {
+    if (!activeSavedView) return
+    if (activeSavedView.system) return
+    if (!window.confirm(`Delete saved view "${activeSavedView.name}"?`)) return
+    const id = activeSavedView.id
+    const name = activeSavedView.name
+    deleteSavedView(id)
+    await persistAndAnnounce(
+      getTaskHubState().savedViews,
+      `View "${name}" deleted`
+    )
+  }
+
+  // Escape closes the popover (mirrors FilterBar's escape pattern). The
+  // listener is always-attached (like the Ctrl+Shift+V handler below) and
+  // no-ops when the popover is closed — avoids any $effect re-run race
+  // when the popover transitions from closed → open.
+  function onPopoverKeydown(e: KeyboardEvent) {
+    if (savedViewPopover !== 'closed' && e.key === 'Escape') closePopover()
+  }
+
+  // Click-away backdrop closes whichever popover is open (mirrors FilterBar).
+  // Separate from the escape handler so a user tabbing through the form
+  // can still escape via pointer.
+
   let totalCount = $derived(openCount + doneCount)
 </script>
 
@@ -291,7 +501,234 @@
           ? ` · ${doneCount} done`
           : ''}
       </span>
+      {#if activeSavedView}
+        <!-- Active saved view name next to the title; dimmed when the user
+             has diverged from the saved dimensions so the bookmark
+             affordance and the label agree. -->
+        <span
+          class="text-text-muted text-[12px] font-body-md normal-case font-normal ml-2 flex items-center gap-1 {hubState.savedViewsDirty
+            ? 'opacity-60 italic'
+            : ''}"
+          data-testid="tasks-hub-active-view"
+        >
+          <span aria-hidden="true">·</span>
+          <span
+            >{activeSavedView.name}{hubState.savedViewsDirty
+              ? ' (modified)'
+              : ''}</span
+          >
+        </span>
+      {/if}
     </h1>
+
+    <!-- Saved-view bookmark (#427). Three regimes: no view active →
+         save composer; view active + modified → update/save-as menu;
+         view active + clean → rename/delete menu. Popover is a positioned
+         dialog with Escape + click-away close (mirrors FilterBar). -->
+    <div
+      class="relative flex items-center"
+      data-testid="tasks-hub-saved-view-control"
+    >
+      <button
+        type="button"
+        onclick={() => {
+          if (savedViewPopover !== 'closed') {
+            closePopover()
+            return
+          }
+          if (!activeSavedView) openSaveComposer()
+          else openMenu()
+        }}
+        aria-haspopup="dialog"
+        aria-expanded={savedViewPopover !== 'closed'}
+        aria-label={activeSavedView
+          ? hubState.savedViewsDirty
+            ? `Saved view "${activeSavedView.name}" modified — open actions`
+            : `Saved view "${activeSavedView.name}" active — open actions`
+          : 'Save current view'}
+        title={activeSavedView
+          ? hubState.savedViewsDirty
+            ? `"${activeSavedView.name}" (modified) — click for save options`
+            : `"${activeSavedView.name}" — click for rename/delete`
+          : 'Save current view'}
+        data-testid="tasks-hub-bookmark"
+        data-popover-state={savedViewPopover}
+        class="flex items-center gap-1 px-2 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors"
+      >
+        <span
+          class="material-symbols-outlined text-[16px] {activeViewMatchesState
+            ? 'fill-accent-primary-start text-accent-primary-start'
+            : ''}"
+          aria-hidden="true"
+          >{activeSavedView ? 'bookmark' : 'bookmark_add'}</span
+        >
+      </button>
+
+      {#if savedViewPopover === 'save'}
+        <div
+          transition:fly={{ y: -4, duration: 100 }}
+          class="absolute z-50 mt-1 top-full left-0 min-w-[240px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
+          role="dialog"
+          aria-label="Save current view"
+          data-testid="tasks-hub-save-view-popover"
+        >
+          <label class="block text-[11px] font-label-sm text-text-muted mb-1">
+            View name
+            <input
+              type="text"
+              bind:this={composerInput}
+              bind:value={composerName}
+              placeholder="e.g. Sprint 15"
+              data-testid="tasks-hub-save-view-name"
+              onkeydown={(e) => {
+                if (e.key === 'Enter') void commitSaveNew()
+                else if (e.key === 'Escape') closePopover()
+              }}
+              class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-[12px] outline-none focus:border-accent-primary-start"
+            />
+          </label>
+          {#if savedViewError}
+            <p
+              class="mt-1 text-error text-[11px] font-body-md"
+              role="alert"
+              data-testid="tasks-hub-save-view-error"
+            >
+              {savedViewError}
+            </p>
+          {/if}
+          <div class="mt-2 flex items-center justify-end gap-1">
+            <button
+              type="button"
+              onclick={closePopover}
+              data-testid="tasks-hub-save-view-cancel"
+              class="px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
+              >Cancel</button
+            >
+            <button
+              type="button"
+              onclick={() => void commitSaveNew()}
+              data-testid="tasks-hub-save-view-commit"
+              class="px-2 py-1 rounded text-[11px] font-label-sm bg-accent-primary-start text-text-primary border-none cursor-pointer"
+              >Save</button
+            >
+          </div>
+        </div>
+      {:else if savedViewPopover === 'rename'}
+        <div
+          transition:fly={{ y: -4, duration: 100 }}
+          class="absolute z-50 mt-1 top-full left-0 min-w-[240px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
+          role="dialog"
+          aria-label={`Rename ${activeSavedView?.name ?? 'view'}`}
+          data-testid="tasks-hub-rename-view-popover"
+        >
+          <label class="block text-[11px] font-label-sm text-text-muted mb-1">
+            New name
+            <input
+              type="text"
+              bind:this={composerInput}
+              bind:value={composerName}
+              data-testid="tasks-hub-rename-view-name"
+              onkeydown={(e) => {
+                if (e.key === 'Enter') void commitRename()
+                else if (e.key === 'Escape') closePopover()
+              }}
+              class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-[12px] outline-none focus:border-accent-primary-start"
+            />
+          </label>
+          {#if savedViewError}
+            <p class="mt-1 text-error text-[11px] font-body-md" role="alert">
+              {savedViewError}
+            </p>
+          {/if}
+          <div class="mt-2 flex items-center justify-end gap-1">
+            <button
+              type="button"
+              onclick={closePopover}
+              data-testid="tasks-hub-rename-view-cancel"
+              class="px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
+              >Cancel</button
+            >
+            <button
+              type="button"
+              onclick={() => void commitRename()}
+              data-testid="tasks-hub-rename-view-commit"
+              class="px-2 py-1 rounded text-[11px] font-label-sm bg-accent-primary-start text-text-primary border-none cursor-pointer"
+              >Rename</button
+            >
+          </div>
+        </div>
+      {:else if savedViewPopover === 'menu'}
+        <div
+          transition:fly={{ y: -4, duration: 100 }}
+          class="absolute z-50 mt-1 top-full left-0 min-w-[200px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+          role="dialog"
+          aria-label={`Actions for ${activeSavedView?.name ?? 'view'}`}
+          data-testid="tasks-hub-view-menu"
+        >
+          {#if hubState.savedViewsDirty}
+            <button
+              type="button"
+              onclick={() => void commitUpdateActive()}
+              data-testid="tasks-hub-update-view"
+              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
+            >
+              <span
+                class="material-symbols-outlined text-[14px]"
+                aria-hidden="true">save</span
+              >
+              <span>Update “{activeSavedView?.name}”</span>
+            </button>
+            <button
+              type="button"
+              onclick={openSaveComposer}
+              data-testid="tasks-hub-save-as-new"
+              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
+            >
+              <span
+                class="material-symbols-outlined text-[14px]"
+                aria-hidden="true">add</span
+              >
+              <span>Save as new…</span>
+            </button>
+          {:else}
+            <button
+              type="button"
+              onclick={() => {
+                composerName = activeSavedView?.name ?? ''
+                savedViewError = ''
+                savedViewPopover = 'rename'
+                void tick().then(() => composerInput?.focus())
+              }}
+              data-testid="tasks-hub-rename-view"
+              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
+            >
+              <span
+                class="material-symbols-outlined text-[14px]"
+                aria-hidden="true">edit</span
+              >
+              <span>Rename…</span>
+            </button>
+            <button
+              type="button"
+              disabled={activeSavedView?.system}
+              aria-disabled={activeSavedView?.system}
+              title={activeSavedView?.system
+                ? 'System views cannot be deleted'
+                : undefined}
+              onclick={() => void commitDelete()}
+              data-testid="tasks-hub-delete-view"
+              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-error text-left border-none bg-transparent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            >
+              <span
+                class="material-symbols-outlined text-[14px]"
+                aria-hidden="true">delete</span
+              >
+              <span>Delete{activeSavedView?.system ? ' (system)' : ''}</span>
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
 
     <!-- View-mode segmented control (WAI-ARIA radiogroup, roving tabindex). -->
     <div
@@ -441,5 +878,29 @@
     {:else}
       <CalendarView {ctx} onCountChange={handleCountChange} />
     {/if}
+  </div>
+
+  <!-- Saved-view popover click-away backdrop (closes whichever popover
+       is open). Mirrors FilterBar's pattern. -->
+  {#if savedViewPopover !== 'closed'}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div
+      class="fixed inset-0 z-40"
+      role="presentation"
+      onclick={closePopover}
+      tabindex="-1"
+      aria-hidden="true"
+      data-testid="tasks-hub-saved-view-backdrop"
+    ></div>
+  {/if}
+
+  <!-- sr-only live region for saved-view announcements (mirrors
+       KanbanSidebar's pattern). -->
+  <div
+    class="sr-only"
+    aria-live="polite"
+    data-testid="tasks-hub-saved-view-live"
+  >
+    {savedViewLiveMsg}
   </div>
 </div>

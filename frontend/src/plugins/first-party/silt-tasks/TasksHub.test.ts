@@ -395,3 +395,227 @@ describe('Tasks hub — group-by + sort selectors (#423)', () => {
     expect(groupBy.value).toBe('owner')
   })
 })
+
+describe('Tasks hub — saved views bookmark (#427)', () => {
+  beforeEach(() => {
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+    mocks.settings.config.plugins.plugin_settings = {}
+    mocks.blockChangedCallbacks.length = 0
+    resetTaskHubState()
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('renders the bookmark button in the header', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(screen.getByTestId('tasks-hub-bookmark')).toBeInTheDocument()
+  })
+
+  it('hydrates the 3 system views + legacy kanban boards on mount', async () => {
+    mocks.settings.config.plugins.plugin_settings['silt-kanban'] = {
+      boards: [
+        {
+          id: 'b1',
+          name: 'Legacy Board',
+          scope: 'notebook',
+          filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+        }
+      ]
+    }
+
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const views = getTaskHubState().savedViews
+    const ids = views.map((v) => v.id)
+    // 3 system views + 1 legacy board = 4 total.
+    expect(views).toHaveLength(4)
+    expect(ids).toContain('sys-today-board')
+    expect(ids).toContain('sys-by-owner')
+    expect(ids).toContain('sys-week-calendar')
+    expect(ids).toContain('b1')
+    // System views carry the read-only marker.
+    expect(views.find((v) => v.id === 'sys-today-board')?.system).toBe(true)
+    // Legacy board is forward-mapped to a board view.
+    const legacy = views.find((v) => v.id === 'b1')
+    expect(legacy?.displayMode).toBe('board')
+    expect(legacy?.groupBy).toBe('status')
+    expect(legacy?.sort).toBe('manual')
+  })
+
+  it('clicking the bookmark with no active view opens the save composer', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(screen.queryByTestId('tasks-hub-save-view-popover')).toBeNull()
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+
+    expect(
+      screen.getByTestId('tasks-hub-save-view-popover')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('tasks-hub-save-view-name')).toBeInTheDocument()
+  })
+
+  it('submitting the composer saves a view + persists to saved_views', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+
+    const input = screen.getByTestId(
+      'tasks-hub-save-view-name'
+    ) as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Sprint 15' } })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+
+    // The view was added to the in-memory list and marked active.
+    const s = getTaskHubState()
+    const saved = s.savedViews.find((v) => v.name === 'Sprint 15')
+    expect(saved).toBeDefined()
+    expect(saved?.system).toBeFalsy()
+    expect(s.activeSavedViewId).toBe(saved?.id)
+    expect(s.savedViewsDirty).toBe(false)
+
+    // persistSavedViews wrote through to updatePluginSetting under the
+    // silt-tasks / saved_views key. System views are stripped before write
+    // (the persisted array contains only the user view, no `sys-` ids).
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'silt-tasks',
+      'saved_views',
+      expect.arrayContaining([expect.objectContaining({ name: 'Sprint 15' })])
+    )
+    const [, , written] = mocks.updatePluginSetting.mock.calls.find(
+      (c) => c[1] === 'saved_views'
+    )!
+    expect(
+      (written as Array<{ id?: string }>).find((v) => v.id?.startsWith('sys-'))
+    ).toBeUndefined()
+
+    // The aria-live region announces the save.
+    expect(
+      screen.getByTestId('tasks-hub-saved-view-live').textContent
+    ).toContain('Sprint 15')
+    // The active view name shows next to the title.
+    expect(screen.getByTestId('tasks-hub-active-view').textContent).toContain(
+      'Sprint 15'
+    )
+  })
+
+  it('shows the modified (dirty) indicator when the user diverges from the active view', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Save a view (becomes active + clean).
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.input(screen.getByTestId('tasks-hub-save-view-name'), {
+      target: { value: 'My View' }
+    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+
+    // Clean state — no "(modified)" suffix.
+    expect(screen.queryByText(/\(modified\)/)).toBeNull()
+
+    // Switch display mode — diverges from the saved snapshot.
+    await fireEvent.click(screen.getByRole('radio', { name: /Board mode/i }))
+    await flush()
+
+    expect(getTaskHubState().savedViewsDirty).toBe(true)
+    // The active-view label surfaces the divergence.
+    const label = screen.getByTestId('tasks-hub-active-view')
+    expect(label.textContent).toContain('modified')
+    expect(label.className).toContain('opacity-60')
+  })
+
+  it('offers Update / Save-as-new when the active view is dirty', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Save a view.
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.input(screen.getByTestId('tasks-hub-save-view-name'), {
+      target: { value: 'My View' }
+    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+
+    // Diverge.
+    await fireEvent.click(screen.getByRole('radio', { name: /Board mode/i }))
+    await flush()
+
+    // Re-open the bookmark — should be in "menu" mode with Update + Save-as-new.
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+
+    expect(screen.getByTestId('tasks-hub-view-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('tasks-hub-update-view')).toBeInTheDocument()
+    expect(screen.getByTestId('tasks-hub-save-as-new')).toBeInTheDocument()
+  })
+
+  it('clicking Update overwrites the active view dimensions + persists', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Save a view in default list mode.
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.input(screen.getByTestId('tasks-hub-save-view-name'), {
+      target: { value: 'My View' }
+    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+    const savedId = getTaskHubState().activeSavedViewId
+
+    // Switch to Board, then Update.
+    await fireEvent.click(screen.getByRole('radio', { name: /Board mode/i }))
+    await flush()
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('tasks-hub-update-view'))
+    await flush()
+
+    const s = getTaskHubState()
+    expect(s.savedViewsDirty).toBe(false)
+    expect(s.activeSavedViewId).toBe(savedId)
+    // The view's snapshot now carries the Board displayMode.
+    const updated = s.savedViews.find((v) => v.id === savedId)
+    expect(updated?.displayMode).toBe('board')
+  })
+
+  it('Escape closes the open popover (mirrors FilterBar escape pattern)', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    expect(
+      screen.getByTestId('tasks-hub-save-view-popover')
+    ).toBeInTheDocument()
+
+    // The escape handler attaches to window via $effect (same pattern
+    // the Ctrl+Shift+V mode-cycle handler uses). Dispatching a window
+    // keydown is the proven delivery path.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flush()
+
+    // The popover uses transition:fly (defers DOM removal until the fly-out
+    // completes), so assert on the underlying state via the bookmark's
+    // data-popover-state attribute (which updates synchronously with
+    // closePopover) instead of waiting for the transition timer.
+    const bm = screen.getByTestId('tasks-hub-bookmark')
+    expect(bm.getAttribute('data-popover-state')).toBe('closed')
+  })
+})
