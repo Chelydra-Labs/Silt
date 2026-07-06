@@ -117,8 +117,11 @@ type App struct {
 	pluginSessionsMu sync.RWMutex
 	pluginSessions   map[string]string // token → pluginID
 
-	// vaultMu guards the lifecycle of the vault-scoped service pointers (db,
+	// vaultMu guards the LIFECYCLE of the vault-scoped service pointers (db,
 	// coordinator, watcher, tracker, vaultPath) against concurrent IPC access.
+	// It does NOT guard vault content writes (theme files, settings.json) —
+	// those have dedicated serializers so vaultMu.RLock holders are never
+	// blocked by a content write, and vice versa (#404).
 	// Wails dispatches each bound method on its own goroutine, so without this
 	// a lifecycle transition (CloseVault / InitializeVault / MoveVault /
 	// SwitchVault) could nil out a.db while an in-flight reader
@@ -133,8 +136,22 @@ type App struct {
 	//   - Pure-delegation wrappers (PickNotebookFolder, PickLinkedNotebook,
 	//     PluginMutateBlock, PluginUpdateBlockState) take no lock — their
 	//     callee does — so the same goroutine never holds RLock twice.
+	//
+	// themeWriteMu serializes on-disk theme-file mutations (import, fork,
+	// set-background) so two concurrent theme writes can't race on the
+	// stat-then-write in ForkEmbeddedTheme or interleave with a re-marshal
+	// in SetThemeBackgroundImage. It guards theme JSON files ONLY —
+	// settings.json has its own settingsWriteMu (vault.go). A handler that
+	// writes both a theme file and settings.json acquires themeWriteMu FIRST,
+	// then settingsWriteMu (via UpdateSettings) — never the reverse.
+	//
 	// Lock ordering: vaultMu is always acquired BEFORE configMu.
-	vaultMu sync.RWMutex
+	// themeWriteMu is independent of vaultMu/configMu (content write, not a
+	// lifecycle or config read): a handler snapshots vaultPath/themesDir
+	// under vaultMu.RLock, releases vaultMu, then acquires themeWriteMu for
+	// the write — so the two are never held simultaneously.
+	vaultMu      sync.RWMutex
+	themeWriteMu sync.Mutex
 }
 
 // linkedConfigEntry is one slot in App.linkedConfigs. mtime is the on-disk

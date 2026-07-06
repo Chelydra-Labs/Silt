@@ -133,6 +133,12 @@ manually against `wails dev`. Grouped by surface; each item is pass/fail.
       due date.
 - [ ] Quick-add (`Mod+Shift+N`) creates a standalone task; the Tasks view
       lists it (including the No Date group).
+- [ ] Tasks view inline quick-add: type at the bottom input, Enter creates a
+      task; the input clears and stays focused for rapid entry; the new row
+      appears on the next tick via `block:changed`. Confirm on both an empty
+      list (input pinned to viewport bottom) and a long scrolling list.
+- [ ] Tasks view task creation works on a fresh vault AND an existing vault
+      (grants re-seed on launch — no `content-mutate` capability error).
 - [ ] Kanban scope switch (vault/notebook/section/page); drag changes status.
 - [ ] Task dependencies: add/remove via the CardDetailPanel picker; the lock
       badge renders on blocked cards in Kanban + Agenda; completing a blocker
@@ -148,6 +154,12 @@ manually against `wails dev`. Grouped by surface; each item is pass/fail.
 **Themes & templates**
 - [ ] Theme picker: switch, mode toggle (Dark/Light/System), import a JSON
       (rejected if unsafe), export.
+- [ ] Theme-picker swatches show surface identity: warm (Linen), neutral
+      (Graphite), and cool (Frost) themes are distinguishable at a glance by
+      the base chip fill across all 11 themes in both dark and light modes.
+- [ ] Inline color-picker default palette derives from the active theme — no
+      Tailwind clashing on Graphite (monochrome), Terra Noir (earth), or
+      Synthwave (neon). User-stored mark colors survive a theme switch.
 - [ ] No first-paint flash of the wrong palette for a non-default theme.
 - [ ] New page from template; `/template` insert at cursor; placeholders
       resolve.

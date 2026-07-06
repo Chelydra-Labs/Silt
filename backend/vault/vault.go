@@ -344,32 +344,15 @@ ui:
 		}
 	}
 
-	// 3. Scaffold the first-class themes. The canonical content lives in
-	// backend/themes/themes and is embedded in the binary; writing every
-	// embedded file from that single source of truth keeps the scaffolded
-	// copies identical to the runtime fallback set. Each write is guarded
-	// by an existence check so a user who edits (or deletes) one is never
-	// overwritten — only missing files are created.
-	themeFiles, err := themes.EmbeddedThemeFiles()
-	if err != nil {
-		return fmt.Errorf("failed to read embedded first-class themes: %w", err)
-	}
-	for fileName, raw := range themeFiles {
-		themePath := filepath.Join(vaultPath, ".system", "themes", fileName)
-		if _, err := os.Stat(themePath); err != nil {
-			if os.IsNotExist(err) {
-				if err := os.WriteFile(themePath, raw, 0o600); err != nil {
-					return fmt.Errorf("failed to write theme %s: %w", fileName, err)
-				}
-				continue
-			}
-			// Anything other than "not exist" (permission denied,
-			// I/O error, …) is a real fault that the user should
-			// see — silently skipping would leave a half-scaffolded
-			// themes dir with no surfaceable cause.
-			return fmt.Errorf("failed to stat theme %s: %w", fileName, err)
-		}
-	}
+	// 3. First-class themes are NOT scaffolded onto disk. Commit a1d0cce
+	// made first-class theme ids embedded-authoritative: CachedThemeByID
+	// and ListThemes serve the embedded copy for any first-class id and
+	// IGNORE a same-id file in the vault. The .system/themes/ directory is
+	// still created above so custom/imported themes (and user- forks of
+	// embedded themes) have a home, but seeding the first-class set here
+	// would only produce inert, confusing copies (editing them changes
+	// nothing; the loader ignores them). The user- fork path is the sole
+	// consistent customization route. See #406.
 
 	// 4. Plugins folder README (documents the on-disk plugin layout).
 	pluginsReadme := `# Silt Plugins

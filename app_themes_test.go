@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,9 +116,9 @@ func TestListThemes_IncludesScaffoldedDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListThemes: %v", err)
 	}
-	// ScaffoldVault wrote cyber_forest.json on disk, but first-class themes
-	// are embedded-authoritative → present as source "default" (the embedded
-	// copy wins over the vault shadow).
+	// First-class themes are embedded-authoritative: the default is served
+	// from the embed regardless of whether a vault file exists (#406 removed
+	// the ScaffoldVault seeding, so on a fresh vault there is no on-disk copy).
 	found := false
 	for _, ti := range res.Themes {
 		if ti.ID == themes.DefaultThemeID {
@@ -231,12 +232,12 @@ func TestApplyTheme_RejectsUnknownID(t *testing.T) {
 func TestApplyTheme_ResolvesFirstClassEmbeddedOffDisk(t *testing.T) {
 	configDirOverride(t)
 	app := newTestApp(t)
-	// Wipe the on-disk file so LoadByID returns not-found and the
-	// embedded-fallback branch is the only path that can succeed.
-	// (A fresh vault's ScaffoldVault writes every first-class id, so we
-	// have to remove it explicitly to simulate a pre-Sprint-8 dir.)
+	// First-class themes are embedded-authoritative and ScaffoldVault no
+	// longer seeds them onto disk (#406), so silt-graphite.json is already
+	// absent. If a prior run or a legacy vault left it on disk, remove it
+	// so this test exercises the pure embedded-fallback branch.
 	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
-	if err := os.Remove(filepath.Join(themesDir, "silt-graphite.json")); err != nil {
+	if err := os.Remove(filepath.Join(themesDir, "silt-graphite.json")); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("remove silt-graphite.json: %v", err)
 	}
 	res, err := app.ApplyTheme("silt-graphite", "dark")
@@ -434,27 +435,13 @@ func TestImportTheme_IPCValidationFailure(t *testing.T) {
 	if !found {
 		t.Errorf("expected error on accent.primary.start, got: %+v", res.ValidationErrors)
 	}
-	// No file written under themes/ beyond the scaffolded first-class set
-	// (the rejected import must add nothing). The scaffold writes every
-	// embedded first-class theme, so those are the expected baseline.
+	// No file written under themes/ — the rejected import must add nothing.
+	// ScaffoldVault no longer seeds first-class themes (#406), so a fresh
+	// vault's themes dir is empty; any file present is an imported one.
 	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
 	entries, _ := os.ReadDir(themesDir)
-	files, err := themes.EmbeddedThemeFiles()
-	if err != nil {
-		t.Fatalf("EmbeddedThemeFiles: %v", err)
-	}
-	scaffolded := make(map[string]bool, len(files))
-	for fn := range files {
-		scaffolded[fn] = true
-	}
-	imported := 0
-	for _, e := range entries {
-		if !scaffolded[e.Name()] {
-			imported++
-		}
-	}
-	if imported != 0 {
-		t.Errorf("expected no imported file, found: %+v", entries)
+	if len(entries) != 0 {
+		t.Errorf("expected no theme file from a rejected import, found: %+v", entries)
 	}
 }
 
@@ -731,9 +718,12 @@ func TestPickBackgroundImage_StorageAndWritePath(t *testing.T) {
 func TestPickBackgroundImage_ForksEmbeddedActiveTheme(t *testing.T) {
 	configDirOverride(t)
 	app := newTestApp(t)
-	// Remove the scaffolded silt-linen.json so the active id is embedded-only.
+	// First-class themes are embed-authoritative and ScaffoldVault no longer
+	// seeds them (#406), so silt-linen.json is already absent (embedded-only).
+	// Remove a stray copy if a legacy run left one, so the fork branch is
+	// the only path that can produce a writable file.
 	themesDir := filepath.Join(app.vaultPath, ".system", "themes")
-	if err := os.Remove(filepath.Join(themesDir, "silt-linen.json")); err != nil {
+	if err := os.Remove(filepath.Join(themesDir, "silt-linen.json")); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("remove silt-linen.json: %v", err)
 	}
 	if _, err := app.ApplyTheme("silt-linen", "dark"); err != nil {
@@ -769,5 +759,134 @@ func writeBytes(t *testing.T, path string, b []byte) {
 	}
 	if err := os.WriteFile(path, b, 0o644); err != nil {
 		t.Fatalf("write: %v", err)
+	}
+}
+
+// TestImportTheme_ConcurrentDistinctIDs runs N goroutines importing distinct
+// themes concurrently under -race. NOTE: this does NOT uniquely prove
+// themeWriteMu's value — themes.importMu (importer.go:25) already serializes
+// the import-vs-import check-then-write and would pass this test on its own.
+// themeWriteMu's unique contribution is CROSS-METHOD serialization (import vs
+// PickBackgroundImage's fork+write on a colliding user-<id> path), which
+// importMu does not cover. That cross-method race cannot be unit-tested here
+// because PickBackgroundImage opens a native dialog; the manual TESTING.md
+// matrix covers it. This test remains valuable as a -race guard on the
+// App-level import path and confirms all N distinct imports land on disk.
+func TestImportTheme_ConcurrentDistinctIDs(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	const n = 8
+	type result struct {
+		id  string
+		err error
+	}
+	results := make([]result, n)
+	done := make(chan struct{})
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer func() { done <- struct{}{} }()
+			// Each goroutine imports a distinct theme so the importer's
+			// collision guard sees no conflict — the race we're guarding
+			// is the file-write interleaving, not the collision logic.
+			src := filepath.Join(t.TempDir(), "src.json")
+			body := strings.Replace(validCustomThemeJSON, `"terra-test"`, fmt.Sprintf(`"concurrent-%d"`, i), 1)
+			body = strings.Replace(body, `"Terra Test"`, fmt.Sprintf(`"Concurrent %d"`, i), 1)
+			writeFile(t, src, body)
+			res, err := app.ImportTheme(src)
+			if err != nil {
+				results[i] = result{err: err}
+				return
+			}
+			results[i] = result{id: res.Info.ID}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		<-done
+	}
+
+	// Every import must succeed.
+	for i, r := range results {
+		if r.err != nil {
+			t.Errorf("goroutine %d import failed: %v", i, r.err)
+		}
+		if r.id == "" {
+			t.Errorf("goroutine %d produced no theme id", i)
+		}
+	}
+	// Every theme file must exist on disk (no clobbered writes).
+	for i, r := range results {
+		p := filepath.Join(app.vaultPath, ".system", "themes", r.id+".json")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("theme %s (goroutine %d) missing from disk: %v", r.id, i, err)
+		}
+	}
+}
+
+// TestImportTheme_ConcurrentSameID runs N goroutines importing the SAME custom
+// theme concurrently. The importer REJECTS a duplicate custom id
+// (ErrImportDuplicate). Exactly ONE goroutine wins (passes the check + writes),
+// and the remaining N-1 see the on-disk file and reject. NOTE: this proves
+// themes.importMu (importer.go:25) makes the check-then-write atomic — it
+// would pass even if App.themeWriteMu were removed. themeWriteMu's unique
+// value is cross-method serialization (see TestImportTheme_ConcurrentDistinctIDs
+// comment). This test is retained as a focused regression guard on importMu
+// via the App-level path, and as a -race check.
+func TestImportTheme_ConcurrentSameID(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	const n = 6
+	type result struct {
+		id  string
+		err error
+	}
+	results := make([]result, n)
+	done := make(chan struct{})
+
+	// Every goroutine imports the exact same source — same custom id.
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer func() { done <- struct{}{} }()
+			src := filepath.Join(t.TempDir(), "src.json")
+			body := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"collide-me"`, 1)
+			writeFile(t, src, body)
+			res, err := app.ImportTheme(src)
+			if err != nil {
+				results[i] = result{err: err}
+				return
+			}
+			results[i] = result{id: res.Info.ID}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		<-done
+	}
+
+	// Exactly ONE import must succeed (the winner of the serialized race).
+	// The rest reject with the duplicate-id error. Without themeWriteMu,
+	// multiple goroutines could pass the collision check before the first
+	// write lands, producing >1 success and clobbering the same file.
+	successes := 0
+	var winnerID string
+	for _, r := range results {
+		if r.err == nil {
+			successes++
+			winnerID = r.id
+		}
+	}
+	if successes != 1 {
+		t.Errorf("expected exactly 1 successful import under themeWriteMu, got %d — "+
+			"the collision check-then-write is not atomic", successes)
+	}
+
+	// The winner's file exists on disk.
+	if winnerID != "" {
+		p := filepath.Join(app.vaultPath, ".system", "themes", winnerID+".json")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("winner theme %s missing from disk: %v", winnerID, err)
+		}
 	}
 }

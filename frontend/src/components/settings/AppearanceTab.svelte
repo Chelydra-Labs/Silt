@@ -388,26 +388,38 @@
             class:bg-accent-primary-glow={active}
             class:border-accent-primary-start={active}
           >
-            <!-- Swatches: data-driven from themesState.flatTokens with fallback to theme.swatches -->
+            <!-- Swatch: a mini theme card (#405). The dominant visual identity
+                 of a theme is its surface temperature (warm Linen taupe, cool
+                 Frost, neutral Graphite), not its accents — so the base chip
+                 is filled with the theme's app surface bg (read from
+                 flatTokens, the same map the injector writes). The two accent
+                 starts render as dots on the chip so the accents are still
+                 visible but the surface reads first. Data-driven: no per-theme
+                 branching. -->
             <div class="flex items-center gap-1.5 flex-shrink-0">
               <span
                 aria-hidden="true"
-                class="block w-4 h-8 rounded-sm border border-surface-panel-border"
-                style="background-color: {modeTokens?.[
-                  '--color-accent-primary-start'
-                ] ??
-                  theme.swatches?.[0] ??
-                  'var(--color-accent-primary-start)'}"
-              ></span>
-              <span
-                aria-hidden="true"
-                class="block w-4 h-8 rounded-sm border border-surface-panel-border"
-                style="background-color: {modeTokens?.[
-                  '--color-accent-secondary-start'
-                ] ??
-                  theme.swatches?.[1] ??
-                  'var(--color-accent-secondary-start)'}"
-              ></span>
+                class="theme-swatch-chip"
+                style="background-color: {modeTokens?.['--color-surface-app'] ??
+                  'var(--color-surface-app)'}"
+              >
+                <span
+                  class="theme-swatch-dot"
+                  style="background-color: {modeTokens?.[
+                    '--color-accent-primary-start'
+                  ] ??
+                    theme.swatches?.[0] ??
+                    'var(--color-accent-primary-start)'}"
+                ></span>
+                <span
+                  class="theme-swatch-dot"
+                  style="background-color: {modeTokens?.[
+                    '--color-accent-secondary-start'
+                  ] ??
+                    theme.swatches?.[1] ??
+                    'var(--color-accent-secondary-start)'}"
+                ></span>
+              </span>
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
@@ -533,5 +545,32 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+  }
+
+  /* Mini theme-card swatch (#405): a base chip filled with the theme's app
+     surface bg (the dominant temperature signal) with the two accent starts
+     as dots inside it. The chip is wider than the old two-bar swatch so the
+     surface color is the first thing the eye reads — warm Linen taupe vs
+     neutral Graphite grey vs cool Frost are distinguishable at a glance. */
+  .theme-swatch-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    width: 36px;
+    height: 28px;
+    border-radius: 5px;
+    border: 1px solid var(--color-surface-panel-border);
+    flex-shrink: 0;
+  }
+
+  .theme-swatch-dot {
+    display: block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    /* Subtle ring so a dot that matches the surface bg (monochrome themes)
+       is still visible against the chip. */
+    box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 15%, transparent);
   }
 </style>

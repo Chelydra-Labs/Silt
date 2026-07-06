@@ -86,7 +86,6 @@
   // header button; state is runtime-only (not persisted — v1; a future
   // per-plugin setting could remember the user's pref).
   let showCompleted = $state(false)
-  let showQuickAdd = $state(false)
 
   async function reload() {
     loading = true
@@ -289,32 +288,7 @@
         {openItems.length} active task{openItems.length === 1 ? '' : 's'}
       </span>
     </h1>
-    <button
-      type="button"
-      onclick={() => (showQuickAdd = true)}
-      aria-label="New task"
-      data-testid="tasks-new-task-btn"
-      class="ml-auto flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
-    >
-      <span class="material-symbols-outlined text-[16px]">add</span>New task
-    </button>
   </header>
-
-  {#if showQuickAdd}
-    <div
-      class="px-6 py-2 border-b border-surface-panel-border bg-surface-panel"
-    >
-      <div class="max-w-md">
-        <QuickAddTask
-          {ctx}
-          placeholder="New task — Enter to add, Esc to close"
-          keepOpenAfterCreate={false}
-          onCreated={() => (showQuickAdd = false)}
-          onCancel={() => (showQuickAdd = false)}
-        />
-      </div>
-    </div>
-  {/if}
 
   {#if markDoneError}
     <div
@@ -363,7 +337,7 @@
         class="text-text-muted py-10 text-center font-body-md"
         data-testid="tasks-empty"
       >
-        No tasks yet. Click <strong>New task</strong> above or use
+        No tasks yet. Type below or use
         <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
       </div>
     {:else}
@@ -380,7 +354,7 @@
           </h3>
           <p class="text-text-muted text-[13px] font-body-md">
             You have no active tasks. Restore a completed task below to the
-            active list, click <strong>New task</strong> above, or use
+            active list, type in the box below, or use
             <kbd
               class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-[11px]"
               >Ctrl+Shift+N</kbd
@@ -560,6 +534,27 @@
         </p>
       {/if}
     {/if}
+  </div>
+
+  <!-- Persistent inline quick-add, pinned at the bottom of the view (#409).
+       Lives OUTSIDE the scroll container so it stays anchored to the viewport
+       bottom regardless of list length (empty, short, or scrolling). Mirrors
+       the Kanban board's per-column inline-add UX: type a title, Enter creates
+       a standalone task, the input clears and stays focused for rapid capture.
+       keepOpenAfterCreate drives the clear+refocus loop inside QuickAddTask;
+       the block:changed subscription above reloads the list so the new row
+       appears on the next tick. -->
+  <div
+    class="px-6 py-3 border-t border-surface-panel-border bg-surface-panel flex-shrink-0"
+    data-testid="tasks-inline-quickadd"
+  >
+    <QuickAddTask
+      {ctx}
+      placeholder="Add a task — Enter to add"
+      keepOpenAfterCreate={true}
+      autofocus={false}
+      clearOnEscape={true}
+    />
   </div>
 </div>
 

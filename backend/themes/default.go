@@ -3,11 +3,15 @@
 //
 // First-class themes are embedded in the binary so they are always selectable:
 // they work before a vault exists, when the themes directory has been wiped,
-// and when a user-selected theme id is missing or invalid. ScaffoldVault writes
-// these same embedded files when it bootstraps a new vault, so there is a single
-// source of truth for each first-class theme's content (the JSON under
-// backend/themes/themes/). The embedded set today is: the canonical default
-// (cyber_forest) plus Terra Noir, Linen, Stark, and Graphite.
+// and when a user-selected theme id is missing or invalid. The loader serves
+// the embedded copy authoritatively for any first-class id and IGNORES a
+// same-id file in the vault (see #406 — ScaffoldVault no longer seeds
+// first-class files onto disk; the .system/themes/ directory exists only for
+// custom/imported themes and user- forks). The JSON under
+// backend/themes/themes/ is the single source of truth for each first-class
+// theme's content. The embedded set today is: the canonical default
+// (cyber_forest) plus Terra Noir, Linen, Stark, Graphite, and the rest of the
+// shipped palettes.
 package themes
 
 import (
@@ -49,10 +53,11 @@ func DefaultThemeJSON() []byte {
 }
 
 // EmbeddedThemeFiles returns the raw JSON bytes of every embedded first-class
-// theme keyed by its filename (e.g. "cyber_forest.json"). ScaffoldVault uses
-// this to write editable on-disk copies from the single embedded source of
-// truth. The map is the filename→bytes view of the embed; EmbeddedThemes is
-// the parsed view.
+// theme keyed by its filename (e.g. "cyber_forest.json"). This is the
+// filename→bytes view of the embed; EmbeddedThemes is the parsed view.
+// ScaffoldVault no longer calls this (#406: first-class themes are
+// embed-authoritative and not seeded onto disk); it remains the internal
+// helper for EmbeddedThemes and for tests that enumerate the embed.
 func EmbeddedThemeFiles() (map[string][]byte, error) {
 	entries, err := embeddedThemesFS.ReadDir(embeddedThemesDir)
 	if err != nil {

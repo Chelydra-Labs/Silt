@@ -22,6 +22,12 @@ var FirstPartyPluginIDs = map[string]bool{
 	"silt-calendar":    true,
 	"silt-kanban":      true,
 	"silt-attachments": true,
+	// silt-tasks (#407): ships as a first-party plugin that creates standalone
+	// tasks via PluginCreateTask, which is gated by content-mutate. Without
+	// this entry seedFirstPartyGrants never seeds its grants and the Go
+	// requireGrant gate denies every quick-add — even though the frontend grant
+	// cache (grants.svelte.ts) masks it as first-party until the IPC call lands.
+	"silt-tasks": true,
 }
 
 // IsFirstPartyID reports whether pluginID is a reserved (bundled) plugin id.

@@ -78,9 +78,10 @@ registerPlugin({
 // and undated) grouped by Overdue / Today / Upcoming / No Date / Completed.
 // Sibling surface to the Calendar's date-scoped agenda; exists so undated
 // tasks (the natural output of the global quick-add) are visible. Built on
-// the same PluginContext SDK surface as AgendaList; no capabilities
-// (read-only — task mutations go through ctx.updateBlockState which the
-// spec surfaces as a no-grant primitive for first-party plugins).
+// the same PluginContext SDK surface as AgendaList. Task creation flows
+// through PluginCreateTask, which is gated by content-mutate — so the
+// capability is declared here and seeded by FirstPartyPluginIDs on the Go
+// side (#407).
 registerPlugin({
   manifest: {
     id: 'silt-tasks',
@@ -89,7 +90,8 @@ registerPlugin({
     author: 'Silt',
     description:
       'Vault-scoped view of every active task grouped by Overdue, Today, Upcoming, No Date, and Completed.',
-    icon: 'checklist'
+    icon: 'checklist',
+    capabilities: { 'content-mutate': true }
   },
   component: Tasks,
   source: 'first-party'

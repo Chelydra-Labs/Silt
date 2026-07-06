@@ -38,6 +38,21 @@
      * that close on submit.
      */
     keepOpenAfterCreate?: boolean
+    /**
+     * When true (default), the input grabs focus on mount so the user can type
+     * immediately. Set false for persistent (always-mounted) instances like the
+     * Tasks view's bottom bar, where stealing focus on every view-entry would
+     * pull the cursor away from the list the user came to interact with.
+     */
+    autofocus?: boolean
+    /**
+     * When true, Escape clears the draft text instead of calling onCancel.
+     * For persistent instances (Tasks bottom bar) that have no onCancel, this
+     * makes Escape mean "discard this draft" rather than being a dead key.
+     * Default false — toggle surfaces (Kanban) pass onCancel to collapse
+     * instead, so Escape hides the input via the cancel path.
+     */
+    clearOnEscape?: boolean
   }
 
   let {
@@ -48,7 +63,9 @@
     placeholder = 'Add a task…',
     onCreated,
     onCancel,
-    keepOpenAfterCreate = true
+    keepOpenAfterCreate = true,
+    autofocus = true,
+    clearOnEscape = false
   }: Props = $props()
 
   let title = $state('')
@@ -57,8 +74,9 @@
   let inputEl = $state<HTMLInputElement | null>(null)
 
   // Autofocus on mount so the user can type immediately from any entry point.
+  // Gated on the autofocus prop so persistent instances don't steal focus.
   $effect(() => {
-    inputEl?.focus()
+    if (autofocus) inputEl?.focus()
   })
 
   // Resolve the create fn at call time: the explicit app-level shim wins,
@@ -103,7 +121,11 @@
     } else if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
-      onCancel?.()
+      if (clearOnEscape) {
+        title = ''
+      } else {
+        onCancel?.()
+      }
     }
   }
 
