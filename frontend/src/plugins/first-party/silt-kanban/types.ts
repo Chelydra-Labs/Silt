@@ -13,16 +13,6 @@
 export type { TaskDetail } from '../shared/types'
 export { PRIORITY_LABELS, laneLabel, priorityClass } from '../shared/types'
 
-import type { TaskDetail } from '../shared/types'
-
-/**
- * Backwards-compat alias: silt-kanban internals historically reference
- * `KanbanCard`. `TaskDetail` IS the type; this alias keeps Phase 1 a small,
- * compile-clean step. Full call-site migration to `TaskDetail` (and removal
- * of this alias) completes in Phase 5.
- */
-export type KanbanCard = TaskDetail
-
 // Persisted in config.yaml under plugins.plugin_settings.silt-kanban.filters.
 export interface KanbanFilters {
   owners: string[]

@@ -307,7 +307,7 @@ describe('Kanban plugin (#19)', () => {
     expect(dialog.textContent).toContain('Write tests')
   })
 
-  it('detail panel "Open in editor" dispatches navigate-to-block', async () => {
+  it('detail panel "Open source page" dispatches navigate-to-block', async () => {
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
@@ -321,7 +321,7 @@ describe('Kanban plugin (#19)', () => {
     await new Promise((r) => setTimeout(r, 220))
     await tick()
 
-    const openBtn = screen.getByRole('button', { name: /open in editor/i })
+    const openBtn = screen.getByRole('button', { name: /open source page/i })
     await fireEvent.click(openBtn)
 
     expect(handler).toHaveBeenCalledTimes(1)
