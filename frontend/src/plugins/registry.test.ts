@@ -11,7 +11,6 @@ describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () =>
   // This roster MUST match backend/plugins/first_party.go's FirstPartyPluginIDs.
   // When you add a bundled plugin, add its id to BOTH files.
   const GO_FIRST_PARTY_IDS = [
-    'silt-agenda',
     'silt-calendar',
     'silt-kanban',
     'silt-attachments',

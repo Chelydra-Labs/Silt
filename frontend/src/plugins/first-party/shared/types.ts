@@ -38,6 +38,14 @@ export interface TaskDetail {
   // Pipe-delimited raw tag paths from a GROUP_CONCAT subquery; absent
   // when the task has no tags.
   tags?: string
+  // Timestamps + manual order from the [created::]/[completed::]/[order::]
+  // task tokens (#417). Stored as ISO-ish TEXT / INTEGER on the tasks table;
+  // the SQL row mappers coerce SQL NULL → '' / 0 so these non-optional types
+  // hold. Empty/0 means "unknown" — the common case for pre-existing tasks
+  // that predate the columns.
+  created_at: string
+  completed_at: string
+  manual_order: number
 }
 
 export const PRIORITY_LABELS: Record<number, string> = {

@@ -319,7 +319,6 @@ parsing:
 # Plugin Registry
 plugins:
   active:
-    - "silt-agenda"
     - "silt-calendar"
     - "silt-kanban"
   disabled: []

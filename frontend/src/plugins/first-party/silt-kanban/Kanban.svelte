@@ -399,7 +399,16 @@
       for (const r of rows as unknown as TaskDetail[]) {
         // SQLite stores pinned as INTEGER (0/1); coerce to boolean so the
         // card shape matches the interface and `!card.pinned` toggles work.
-        const card: TaskDetail = { ...r, pinned: !!r.pinned }
+        // created_at/completed_at are nullable TEXT and manual_order nullable
+        // INTEGER (#417) — coerce NULL → '' / 0 so TaskDetail's non-optional
+        // types hold downstream.
+        const card: TaskDetail = {
+          ...r,
+          pinned: !!r.pinned,
+          created_at: r.created_at ?? '',
+          completed_at: r.completed_at ?? '',
+          manual_order: r.manual_order ?? 0
+        }
         if (bucket[card.status]) bucket[card.status].push(card)
       }
       lanes = bucket

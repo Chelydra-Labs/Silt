@@ -24,6 +24,10 @@ export const v2CtxStubs: Pick<
   | 'setTaskDueDate'
   | 'setTaskRecurrence'
   | 'setTaskBlockedBy'
+  | 'setTaskOwner'
+  | 'setTaskPriority'
+  | 'setTaskTags'
+  | 'setTaskTitle'
   | 'getTaskBlockers'
   | 'fetchSubtree'
   | 'saveSubtreeBlocks'
@@ -75,6 +79,10 @@ export const v2CtxStubs: Pick<
   setTaskDueDate: () => Promise.resolve(true),
   setTaskRecurrence: () => Promise.resolve(true),
   setTaskBlockedBy: () => Promise.resolve(true),
+  setTaskOwner: () => Promise.resolve(true),
+  setTaskPriority: () => Promise.resolve(true),
+  setTaskTags: () => Promise.resolve(true),
+  setTaskTitle: () => Promise.resolve(true),
   getTaskBlockers: () => Promise.resolve([]),
   fetchSubtree: () => Promise.resolve([]),
   saveSubtreeBlocks: () => Promise.resolve(true),

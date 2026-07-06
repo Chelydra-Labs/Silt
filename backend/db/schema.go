@@ -110,6 +110,9 @@ func (dm *DatabaseManager) initSchema() error {
 		recur TEXT,                         -- recurrence rule (e.g. 'every week'); NULL for one-off tasks (#296)
 		comments_count INTEGER DEFAULT 0,   -- count of child NOTE blocks (derived cache)
 		links_count INTEGER DEFAULT 0,      -- count of ((uuid)) refs in raw_content (derived cache)
+		created_at TEXT,                    -- ISO 8601 local [created::] timestamp; NULL when absent (no backfill) (#417)
+		completed_at TEXT,                  -- ISO 8601 local [completed::] timestamp; NULL when not DONE (no backfill) (#417)
+		manual_order INTEGER,               -- 1-based [order:: N] sort position; NULL when absent (no backfill) (#417)
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
 	if _, err := dm.db.Exec(createTasksTable); err != nil {
@@ -128,6 +131,14 @@ func (dm *DatabaseManager) initSchema() error {
 		{"recur", "TEXT"}, // nullable, no default — NULL for one-off tasks
 		{"comments_count", "INTEGER DEFAULT 0"},
 		{"links_count", "INTEGER DEFAULT 0"},
+		// #417 task lifecycle metadata: nullable caches re-derivable from
+		// the [created::], [completed::], [order::] markdown tokens. NULL
+		// means "token absent" (no backfill of pre-existing tasks). The
+		// cache is disposable — dropping the index and re-indexing rebuilds
+		// these from the markdown source of truth (rule 4).
+		{"created_at", "TEXT"},
+		{"completed_at", "TEXT"},
+		{"manual_order", "INTEGER"},
 	} {
 		alter := fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s", col.name, col.defn)
 		if _, err := dm.db.Exec(alter); err != nil {
@@ -176,6 +187,29 @@ func (dm *DatabaseManager) initSchema() error {
 	}
 	if _, err := dm.db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_deps_blocked_by ON task_dependencies(blocked_by_id)`); err != nil {
 		return fmt.Errorf("failed to create task_dependencies reverse-lookup index: %w", err)
+	}
+
+	// Block Meta Table — caches the NOTE-block comment-attribution tokens
+	// (`[author::]` / `[ts::]`, #418) parsed off NOTE blocks. Sparse
+	// projection: a row exists ONLY for NOTE blocks that carry at least one
+	// of the tokens, so the majority of NOTE blocks (and every TASK /
+	// HEADER / etc.) have no row here. Kept in a SEPARATE table from
+	// `blocks` so `blocks` remains the pure block↔location projection and
+	// the cache stays disposable — re-indexing from the markdown source of
+	// truth reproduces it exactly (rule #4). FK ON DELETE CASCADE mirrors
+	// task_dependencies: a deleted block cleans up its meta row.
+	// `[author::]`/`[ts::]` apply to NOTE blocks only; `scanTaskTokens`
+	// (TASK) has no `author`/`ts` cases, so this table never reflects task
+	// data (disjoint token spaces — see scanNoteTokens).
+	createBlockMetaTable := `
+	CREATE TABLE IF NOT EXISTS block_meta (
+		block_id  TEXT PRIMARY KEY,
+		author    TEXT,
+		timestamp TEXT,
+		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
+	);`
+	if _, err := dm.db.Exec(createBlockMetaTable); err != nil {
+		return fmt.Errorf("failed to create block_meta table: %w", err)
 	}
 
 	// Files Table — records the last-seen mtime + size of every indexed file

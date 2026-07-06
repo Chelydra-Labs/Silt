@@ -26,16 +26,14 @@ export function pluginIdForView(activeView: string): string | null {
 
 /**
  * Resolve the active view's plugin entry. Returns null when:
- *   - the view is not a plugin view (notes / tags / agenda), or
+ *   - the view is not a plugin view (notes / tags), or
  *   - the plugin is not loaded (disabled or not registered), or
  *   - the plugin did not register a `sidebarComponent`.
  *
  * The resolved object is the same `RegisteredPlugin` the main view sees,
  * so `manifest` is available for the sidebar component's `manifest` prop.
  */
-export function getPluginSidebar(
-  activeView: string
-): RegisteredPlugin | null {
+export function getPluginSidebar(activeView: string): RegisteredPlugin | null {
   const id = pluginIdForView(activeView)
   if (!id) return null
   const reg = loadedPlugins.plugins.get(id)

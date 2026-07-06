@@ -101,6 +101,19 @@ export interface SubtreeBlock {
   line_number: number
   file_date?: string
   language?: string
+  // Sub-tree task blocks carry the new [created::]/[completed::]/[order::]
+  // tokens (#417). Optional because non-task descendants lack them and
+  // pre-existing tasks predate the columns.
+  created_at?: string
+  completed_at?: string
+  manual_order?: number
+  // Sub-tree NOTE children carry comment attribution (#418):
+  // [author:: NAME] (who wrote the comment) and [ts:: YYYY-MM-DDTHH:MM:SS]
+  // (when). Optional because NOTE blocks without the tokens and every
+  // TASK block lack them. Disjoint from owner (task assignee) — these
+  // fields are NOTE-only by parser construction.
+  author?: string
+  timestamp?: string
 }
 
 /**
@@ -183,6 +196,36 @@ export interface PluginContext {
    * file, re-indexes, and emits block:changed. Gated by content-mutate.
    */
   setTaskBlockedBy: (id: string, depIDs: string[]) => Promise<boolean>
+  /**
+   * Rewrite a task's `[owner:: NAME]` inline token on disk atomically (#412).
+   * Pass an empty string to clear the owner. Round-trips through the markdown
+   * file, re-indexes, and emits block:changed. Gated by content-mutate.
+   */
+  setTaskOwner: (id: string, owner: string) => Promise<boolean>
+  /**
+   * Rewrite a task's `[priority:: N]` inline token on disk atomically (#412).
+   * 1=Critical, 2=Normal, 3=Low (matches PRIORITY_LABELS). Round-trips through
+   * the markdown file, re-indexes, and emits block:changed. Gated by
+   * content-mutate.
+   */
+  setTaskPriority: (id: string, priority: number) => Promise<boolean>
+  /**
+   * Rewrite a task's `#tag` hashtags in its prose atomically (#412). Tags are
+   * stored inline as `#namespace/path` hashtags in the task body — there is no
+   * `[tags::]` token. Pass an empty array to clear all tags. The
+   * pipe-delimited form (`a|b|c`) is only the SQL GROUP_CONCAT wire shape used
+   * by the read projections, not on-disk storage. Round-trips through the
+   * markdown file, re-indexes, and emits block:changed. Gated by
+   * content-mutate.
+   */
+  setTaskTags: (id: string, tags: string[]) => Promise<boolean>
+  /**
+   * Rewrite a task's prose title on disk atomically (#412). The backend
+   * preserves #tags, ((uuid)) refs, and inline tokens during the title
+   * rewrite — callers edit only the prose. Round-trips through the markdown
+   * file, re-indexes, and emits block:changed. Gated by content-mutate.
+   */
+  setTaskTitle: (id: string, title: string) => Promise<boolean>
   /**
    * Return the open (non-DONE) prerequisites of a task (#302), each with full
    * metadata (owner, due date, breadcrumb) for the DONE-transition confirm

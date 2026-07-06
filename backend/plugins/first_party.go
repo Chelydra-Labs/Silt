@@ -18,7 +18,6 @@ package plugins
 // bundle ever drop the id, inherit the first-party grants seeded by
 // seedFirstPartyGrants).
 var FirstPartyPluginIDs = map[string]bool{
-	"silt-agenda":      true,
 	"silt-calendar":    true,
 	"silt-kanban":      true,
 	"silt-attachments": true,

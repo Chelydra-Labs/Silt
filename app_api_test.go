@@ -788,7 +788,7 @@ func TestPluginUpdateBlockState_WrapsUpdate(t *testing.T) {
 func TestGetPluginRegistry_ParsesConfig(t *testing.T) {
 	app := newTestApp(t)
 	configPath := filepath.Join(app.vaultPath, ".system", "config.yaml")
-	writeFile(t, configPath, "plugins:\n  active:\n    - silt-agenda\n    - silt-calendar\n  disabled: []\n  plugin_settings:\n    silt-agenda:\n      window: 7\n")
+	writeFile(t, configPath, "plugins:\n  active:\n    - silt-kanban\n    - silt-calendar\n  disabled: []\n  plugin_settings:\n    silt-kanban:\n      window: 7\n")
 	// Reload the in-memory config (production uses the hot-reload watcher).
 	loaded, err := config.Load(app.vaultPath)
 	if err != nil {
@@ -800,11 +800,11 @@ func TestGetPluginRegistry_ParsesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPluginRegistry: %v", err)
 	}
-	if len(registry.Active) != 2 || registry.Active[0] != "silt-agenda" {
+	if len(registry.Active) != 2 || registry.Active[0] != "silt-kanban" {
 		t.Errorf("expected 2 active plugins, got %v", registry.Active)
 	}
-	if _, ok := registry.Settings["silt-agenda"]; !ok {
-		t.Errorf("expected silt-agenda settings parsed, got %v", registry.Settings)
+	if _, ok := registry.Settings["silt-kanban"]; !ok {
+		t.Errorf("expected silt-kanban settings parsed, got %v", registry.Settings)
 	}
 }
 
@@ -1465,8 +1465,8 @@ func TestUpdatePluginSetting_PreservesOtherFields(t *testing.T) {
 	cfg := app.cfg
 	cfg.Editor.FontFamily = "MyFont"
 	cfg.Plugins.PluginSettings = map[string]any{
-		"silt-agenda": map[string]any{"interval": 30},
-		"silt-kanban": map[string]any{"columns": []string{"Old"}},
+		"silt-calendar": map[string]any{"interval": 30},
+		"silt-kanban":   map[string]any{"columns": []string{"Old"}},
 	}
 	app.cfg = cfg
 	app.configMu.Unlock()
@@ -1500,9 +1500,9 @@ func TestUpdatePluginSetting_PreservesOtherFields(t *testing.T) {
 	if loaded.Editor.FontFamily != "MyFont" {
 		t.Errorf("Editor.FontFamily not preserved: got %q", loaded.Editor.FontFamily)
 	}
-	agenda, _ := loaded.Plugins.PluginSettings["silt-agenda"].(map[string]any)
-	if fmt.Sprint(agenda["interval"]) != "30" {
-		t.Errorf("silt-agenda.interval not preserved: got %v", agenda["interval"])
+	cal, _ := loaded.Plugins.PluginSettings["silt-calendar"].(map[string]any)
+	if fmt.Sprint(cal["interval"]) != "30" {
+		t.Errorf("silt-calendar.interval not preserved: got %v", cal["interval"])
 	}
 	kanban2, _ := loaded.Plugins.PluginSettings["silt-kanban"].(map[string]any)
 	cols2, _ := kanban2["columns"].([]any)
@@ -2375,7 +2375,7 @@ func TestGetPluginSettingsForNotebook_ConcurrentWithUpdatePluginSetting(t *testi
 			case <-stop:
 				return
 			default:
-				}
+			}
 			s, err := app.GetPluginSettingsForNotebook("silt-kanban", "Work")
 			if err != nil {
 				t.Errorf("Get: %v", err)

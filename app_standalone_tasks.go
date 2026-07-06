@@ -137,7 +137,8 @@ func (a *App) CreateStandaloneTask(title, dueDate, status string) (string, error
 	}
 
 	newID := newUUID()
-	today := time.Now().Format("2006-01-02")
+	now := time.Now()
+	today := now.Format("2006-01-02")
 	newBlock := parser.ParsedBlock{
 		ID:        newID,
 		Type:      parser.BlockTask,
@@ -145,6 +146,18 @@ func (a *App) CreateStandaloneTask(title, dueDate, status string) (string, error
 		CleanText: cleanTitle,
 		DueDate:   dueDate,
 		FileDate:  today,
+		CreatedAt: now.Format("2006-01-02T15:04:05"), // #417 lifecycle stamp
+		// ManualOrder is set after parsing the existing file (below) so it
+		// reflects the block's 1-based position among all TASK blocks.
+	}
+
+	// #417 lifecycle stamp: a task created already-DONE (e.g. logging a
+	// completed item) must carry [completed::] so the drawer, the completed
+	// sort/filter, and the inline-editor path all agree. The parser's
+	// DONE-on-create branch doesn't fire here because this path mints the id
+	// itself and bypasses re-parse minting, so stamp it explicitly.
+	if taskStatus == "DONE" {
+		newBlock.CompletedAt = now.Format("2006-01-02T15:04:05")
 	}
 
 	source := config.LinkedNotebooksVaultSource // ".silt" is an in-vault synthetic notebook.
@@ -172,6 +185,16 @@ func (a *App) CreateStandaloneTask(title, dueDate, status string) (string, error
 			writeErr = fmt.Errorf("parse standalone tasks: %w", perr)
 			return
 		}
+		// #417: ManualOrder = (count of existing TASK blocks) + 1, so the
+		// appended task sorts after every prior task in the file. This
+		// mirrors the parser's position semantics for in-editor minting.
+		existingTasks := 0
+		for _, b := range existing {
+			if b.Type == parser.BlockTask {
+				existingTasks++
+			}
+		}
+		newBlock.ManualOrder = existingTasks + 1
 		existing = append(existing, newBlock)
 		writeErr = a.writePageFileLocked(filePath, source, standaloneTasksNotebook, standaloneTasksSection, standaloneTasksPage, existing)
 	})

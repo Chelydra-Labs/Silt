@@ -166,7 +166,7 @@ func TestLoad_HappyPath_OverridesDefaults(t *testing.T) {
 		"  open_search: Ctrl+K",
 		"plugins:",
 		"  active:",
-		"    - silt-agenda",
+		"    - silt-calendar",
 		"  disabled: []",
 	}, "\n"))
 	cfg, err := Load(tmp)
@@ -197,7 +197,7 @@ func TestLoad_HappyPath_OverridesDefaults(t *testing.T) {
 	if cfg.Hotkeys["indent_block"] != d.Hotkeys["indent_block"] {
 		t.Errorf("absent hotkey should keep default")
 	}
-	if len(cfg.Plugins.Active) != 1 || cfg.Plugins.Active[0] != "silt-agenda" {
+	if len(cfg.Plugins.Active) != 1 || cfg.Plugins.Active[0] != "silt-calendar" {
 		t.Errorf("plugins.active override: %v", cfg.Plugins.Active)
 	}
 }

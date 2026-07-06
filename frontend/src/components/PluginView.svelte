@@ -88,7 +88,8 @@
     </div>
     <p class="text-text-muted font-body-md">
       This plugin slot is reserved for a future plugin. First-party plugins
-      (Agenda, Calendar) are bundled; install others via the plugin manager.
+      (Calendar, Kanban, Tasks) are bundled; install others via the plugin
+      manager.
     </p>
   </div>
 {:else if ctx}

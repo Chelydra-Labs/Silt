@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -198,7 +199,7 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 // Adding a new metadata type is a one-line addition to the switch below.
 // Unknown keys are preserved in extraTokens so the file round-trips
 // without data loss.
-func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, blockedBy []string, extraTokens []string) {
+func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, blockedBy []string, extraTokens []string, createdAt, completedAt string, manualOrder int) {
 	priority = 3 // default; 0 from the regex means "not set"
 	progress = 0
 	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
@@ -263,12 +264,67 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 			// Cycles are prevented at write time by the IPC setter; the
 			// parser only round-trips what's on disk.
 			blockedBy = dependencies.ExtractRefs(val)
+		case "created":
+			// Task lifecycle timestamp (#417): ISO 8601 local
+			// (YYYY-MM-DDTHH:MM:SS), no timezone. Stored verbatim so a
+			// hand-edited value round-trips; only genuinely-new tasks
+			// get the token minted (no backfill of existing tasks).
+			createdAt = val
+		case "completed":
+			// Time of the most recent DONE transition (#417). Cleared on
+			// reopen; overwritten on re-complete. Same format as created.
+			completedAt = val
+		case "order":
+			// 1-based manual sort position among all TASK blocks in the
+			// file (#417). 0 means "not set" and the renderer omits the
+			// token. Parsed like priority/progress: a non-integer value
+			// leaves manualOrder at its zero default.
+			if val != "" {
+				if n, err := strconv.Atoi(val); err == nil {
+					manualOrder = n
+				}
+			}
 		default:
 			// Unrecognised key — preserve the full [key:: value] token
 			// verbatim so it survives the parse → render round-trip.
 			extraTokens = append(extraTokens, m[0])
 		}
 	}
+	return
+}
+
+// scanNoteTokens extracts the NOTE-block comment-attribution tokens from a
+// note line's clean text (#418). It recognises ONLY two keys — `author` and
+// `ts` — and is invoked exclusively from the NOTE branch of ParseLine. The
+// task and NOTE token spaces are DISJOINT BY DESIGN: `scanTaskTokens` (TASK
+// blocks only) has no `author`/`ts` cases, so task queries (the `tasks`
+// table) never pick up comment attribution, and this function has no task
+// keys (owner/due/etc.), so NOTE blocks never absorb task metadata. An
+// `[author::]` or `[ts::]` on a TASK line falls through to ExtraTokens.
+//
+// Returns the parsed fields plus the description with ONLY the two
+// recognized tokens stripped. Other `[key:: value]` text on a NOTE line is
+// left in CleanText verbatim — this matches the pre-#418 behavior (NOTE
+// blocks never ran the task-token scanner) and preserves byte-for-byte
+// round-trip for notes carrying arbitrary Dataview tokens (e.g. a hand-typed
+// `[project:: alpha]` on a note stays in the rendered text, not ExtraTokens,
+// since NOTE has no ExtraTokens path).
+func scanNoteTokens(cleanText string) (author, timestamp, description string) {
+	description = cleanText
+	for _, m := range TaskTokenRegex.FindAllStringSubmatch(cleanText, -1) {
+		key := strings.ToLower(m[1])
+		val := strings.TrimSpace(m[2])
+		switch key {
+		case "author":
+			author = val
+			description = strings.Replace(description, m[0], "", 1)
+		case "ts":
+			timestamp = val
+			description = strings.Replace(description, m[0], "", 1)
+		}
+	}
+	description = strings.TrimSpace(description)
+	description = whitespaceRun.ReplaceAllString(description, " ")
 	return
 }
 
@@ -305,7 +361,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		}
 
 		// Scan for [key:: value] metadata tokens in the remainder.
-		owner, startDate, dueDate, priority, pinned, progress, recurrence, description, blockedBy, extraTokens := scanTaskTokens(remainder)
+		owner, startDate, dueDate, priority, pinned, progress, recurrence, description, blockedBy, extraTokens, createdAt, completedAt, manualOrder := scanTaskTokens(remainder)
 
 		depth := parseLeadingIndent(indent, spacesPerTab)
 
@@ -324,6 +380,9 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 			Progress:    progress,
 			Recurrence:  recurrence,
 			BlockedBy:   blockedBy,
+			CreatedAt:   createdAt,
+			CompletedAt: completedAt,
+			ManualOrder: manualOrder,
 			ExtraTokens: extraTokens,
 			LineNumber:  lineNumber,
 			FileDate:    blockFileDate,
@@ -361,12 +420,21 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		rawCleaned = cleanLineTrimmed[len(m):]
 	}
 
+	// NOTE-block comment attribution (#418): scan the cleaned text for
+	// [author::] / [ts::] tokens (NOTE-only — scanTaskTokens stays
+	// TASK-only, so the token spaces are disjoint). The recognized tokens
+	// are stripped from CleanText and mapped to dedicated fields; they do
+	// NOT fall through to ExtraTokens.
+	author, timestamp, noteDescription := scanNoteTokens(strings.TrimSpace(rawCleaned))
+
 	return ParsedBlock{
 		ID:         blockID,
 		Type:       BlockNote,
 		Depth:      depth,
 		RawText:    newLine,
-		CleanText:  strings.TrimSpace(rawCleaned),
+		CleanText:  noteDescription,
+		Author:     author,
+		Timestamp:  timestamp,
 		LineNumber: lineNumber,
 		FileDate:   blockFileDate,
 	}, newLine, modified
@@ -791,6 +859,13 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 	// loss for any block past depth 99.
 	activeIDs := []string{}
 
+	// taskCounter is the running 1-based count of TASK blocks seen so far
+	// in the file. It backs ManualOrder for newly-minted tasks (#417): a
+	// genuinely-new task (one whose line lacked a block-identity comment,
+	// flagged by `modified`) is stamped with its 1-based position among all
+	// TASK blocks so the UI has a stable sort key from the first save.
+	taskCounter := 0
+
 	for i := startIndex; i < len(lines); i++ {
 		line := lines[i]
 		lineNumber := i + 1
@@ -839,7 +914,6 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		if modified {
 			modifiedAny = true
 		}
-		outputLines = append(outputLines, newLine)
 
 		if block.ID != "" {
 			// Backward-compat: blocks whose comment predates the per-block
@@ -847,6 +921,42 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			// file-level default date (from frontmatter or path-derived).
 			if block.FileDate == "" {
 				block.FileDate = meta.Date
+			}
+
+			// Task lifecycle minting (#417): a TASK block whose line was just
+			// minted with a fresh id (`modified`) is treated as new. The minting
+			// path also fires when an external editor/sync stripped the
+			// `<!-- id: ... -->` comment from an existing task while leaving the
+			// `[created::]`/`[order::]` tokens intact in the line — in that case
+			// scanTaskTokens has ALREADY populated the surviving values into the
+			// block, and overwriting them with time.Now()/taskCounter would
+			// silently destroy the original creation timestamp (data-loss bug).
+			// Guard each stamp so an already-present value wins; a truly-new task
+			// has neither token (both empty/0) and gets stamped.
+			//
+			// The Go SDK create paths mint the id themselves and set these fields
+			// directly, so on re-parse the id is already present and this branch
+			// is correctly skipped.
+			if block.Type == BlockTask {
+				taskCounter++
+				if modified {
+					if block.CreatedAt == "" {
+						block.CreatedAt = time.Now().Format("2006-01-02T15:04:05")
+					}
+					if block.ManualOrder == 0 {
+						block.ManualOrder = taskCounter
+					}
+					// A freshly-minted task whose checkbox is already DONE (e.g.
+					// the user typed `- [x] ship it`) must also carry
+					// [completed::] — PluginUpdateBlockState only stamps it on a
+					// TODO→DONE *transition*, not on initial DONE detection, so
+					// without this the 'completed' filter would miss the task.
+					// The empty-guard mirrors the created/order guards: a
+					// surviving token wins.
+					if block.Status == "DONE" && block.CompletedAt == "" {
+						block.CompletedAt = time.Now().Format("2006-01-02T15:04:05")
+					}
+				}
 			}
 
 			// Resolve Parent ID
@@ -868,6 +978,20 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			}
 
 			blocks = append(blocks, block)
+		}
+
+		// Emit the output line. For a newly-minted TASK block (#417) the
+		// in-memory CreatedAt/ManualOrder must reach the file — the scanner
+		// writes `newContent` back to disk when modified=true, and using the
+		// raw `newLine` (id appended only) would lose the lifecycle tokens
+		// (data loss on next re-scan, since the task now has an id and won't
+		// be re-minted). Re-rendering through renderBlock lands the tokens
+		// in the canonical form. Every other line uses `newLine` verbatim
+		// so non-minted content is preserved byte-for-byte.
+		if block.ID != "" && block.Type == BlockTask && modified {
+			outputLines = append(outputLines, renderBlock(block, spacesPerTab))
+		} else {
+			outputLines = append(outputLines, newLine)
 		}
 	}
 
@@ -1086,8 +1210,9 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		// format — see ARCHITECTURE.md §0 "Storage-of-Truth Tiers").
 		// Each metadata field that is set gets its own [key:: value] token
 		// appended after the description. The order is fixed: priority,
-		// start, due, owner, pin, progress — matching the canonical
-		// field order so a parse → render round trip is stable.
+		// start, due, recur, owner, pin, progress, blocked_by, created,
+		// completed, order — matching the canonical field order so a
+		// parse → render round trip is byte-stable.
 		var tokens []string
 		if block.Priority > 0 && block.Priority != 3 {
 			tokens = append(tokens, fmt.Sprintf("[priority:: %d]", block.Priority))
@@ -1116,6 +1241,22 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		}
 		if refStr := dependencies.FormatRefs(block.BlockedBy); refStr != "" {
 			tokens = append(tokens, fmt.Sprintf("[blocked_by:: %s]", refStr))
+		}
+		// Lifecycle metadata (#417): created/completed timestamps and the
+		// manual sort order. Emitted after blocked_by and before unknown
+		// ExtraTokens so the position is deterministic (scanTaskTokens is
+		// order-independent, but a fixed render order is what makes the
+		// parse → render round-trip byte-identical). Each is omitted when
+		// at its zero value (empty string / 0) so existing tasks without
+		// these tokens stay exactly as they were (no backfill on render).
+		if block.CreatedAt != "" {
+			tokens = append(tokens, fmt.Sprintf("[created:: %s]", block.CreatedAt))
+		}
+		if block.CompletedAt != "" {
+			tokens = append(tokens, fmt.Sprintf("[completed:: %s]", block.CompletedAt))
+		}
+		if block.ManualOrder > 0 {
+			tokens = append(tokens, fmt.Sprintf("[order:: %d]", block.ManualOrder))
 		}
 		// Append unknown Dataview tokens verbatim so they survive the
 		// round-trip (Dataview-compatible interop — SPECS.md §4.1).
@@ -1156,7 +1297,23 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 				prefix = ""
 			}
 		}
-		return fmt.Sprintf("%s%s%s%s", indent, prefix,
-			strings.ReplaceAll(block.CleanText, "\n", " "), idSuffix)
+		// NOTE-block comment attribution (#418): emit [author::]/[ts::]
+		// when populated, omit-when-empty (mirrors the task-token pattern).
+		// Fixed order — author then ts — so the parse → render round-trip
+		// is byte-stable regardless of the order the parser saw. NOTE-only
+		// by construction: TASK blocks use the task render path above.
+		var noteTokens []string
+		if block.Author != "" {
+			noteTokens = append(noteTokens, fmt.Sprintf("[author:: %s]", block.Author))
+		}
+		if block.Timestamp != "" {
+			noteTokens = append(noteTokens, fmt.Sprintf("[ts:: %s]", block.Timestamp))
+		}
+		noteTokenStr := ""
+		if len(noteTokens) > 0 {
+			noteTokenStr = " " + strings.Join(noteTokens, " ")
+		}
+		return fmt.Sprintf("%s%s%s%s%s", indent, prefix,
+			strings.ReplaceAll(block.CleanText, "\n", " "), noteTokenStr, idSuffix)
 	}
 }

@@ -31,6 +31,39 @@ capabilities, no Go bindings, no schema changes:
 - `ctx.updateBlockState(blockId, 'DONE')` — mark-done.
 - `ctx.on('block:changed', reload)` — reflow on any task mutation.
 
+## Unified hub foundation (`state.svelte.ts` + `query.ts`)
+
+This package is also the home of the **forward-looking unified hub
+foundation** (#419, milestone #37 phase 4). Two modules form the carrier
+for a single Tasks hub that supersedes the parallel state/query patterns
+invented independently by sibling surfaces:
+
+- **`state.svelte.ts`** exports `TaskHubState` — a unified store carrying
+  scope + filters (Kanban lineage) AND `focusDate` + `activeFilter`
+  (Calendar lineage) together, plus a `DisplayMode` (`list` | `board`)
+  and `groupBy` dimension. A future hub renders either a list (the
+  Calendar/Agenda/Tasks lineage) or a board (the Kanban lineage) from
+  this one state shape.
+- **`query.ts`** exports `buildQuery` — a pure SQL builder lifted from
+  the Kanban builder (the most capable of the three task surfaces) and
+  extended with two optional levers the hub needs:
+  - `groupBy` — re-orders rows so each group is contiguous (sort
+    concern, not a filter concern).
+  - `window` — adds a due-date `WHERE` window (`{ start, end }`,
+    inclusive) for Calendar-style "just this month" queries without
+    re-deriving the SQL inline.
+
+These two modules are **purely additive** this phase: no existing
+consumer imports them yet. The two legacy modules — `silt-calendar/
+focusState.svelte.ts` and `silt-kanban/kanbanSharedState.svelte.ts` +
+`silt-kanban/query.ts` — stay live until a later milestone migrates
+their consumers, then they are deleted. The shapes were kept identical
+so that migration is a one-for-one import swap.
+
+The `scopeUserOverride` invariant (a user-narrowed scope survives an
+automatic scope change) is preserved verbatim in `TaskHubState`
+(`setScope` / `narrowScopeTo` / `clearScopeOverride`).
+
 ## Groups
 
 | Group | Source | Style |
@@ -50,19 +83,28 @@ if users request more.
 
 The Completed group is ordered by `file_date DESC` — the file's
 modification time as recorded in the `blocks` table when a task line
-was last rewritten. This is the best-available completion-recency
-proxy without introducing a new schema column. Caveats:
+was last rewritten. This is a coarse completion-recency proxy.
+
+The `tasks.completed_at` column shipped (#417 — ISO 8601 local timestamp
+stamped on the DONE transition, cleared on reopen), so a dedicated
+completion-recency sort is now possible. It is **nullable with no
+backfill**: only tasks created after the column landed are guaranteed to
+carry `[completed::]`, and only if they transitioned to DONE after it.
+Older completed tasks (predating the column, or completed before it
+shipped) have `NULL`, so the Tasks view still sorts on the `file_date`
+proxy rather than excluding or pushing those rows to the bottom. Caveats
+of the proxy:
 
 - A bulk-edit that touches a file (e.g. a Markdown reformat of the
   whole `.md`) bumps every completed task in that file up together.
-- The proxy is coarse — two tasks completed minutes apart on the
-  same day may sort arbitrarily.
+- Two tasks completed minutes apart on the same day may sort
+  arbitrarily.
 
-A dedicated `tasks.completed_at` column would cleanly resolve both
-caveats. Tracked as a follow-up; the v1 implementation accepts the
-proxy in exchange for shipping without a schema migration. If a
-follow-up adds the column, the Completed query is the only one to
-update.
+A follow-up can switch the Completed query to `ORDER BY
+completed_at DESC NULLS LAST` (or `COALESCE(completed_at, file_date)
+DESC`) once enough of the backlog carries the token, or once the
+migration explicitly backfills it. Until then, the proxy keeps the
+ordering stable for legacy rows.
 
 ## Focus target prop
 
@@ -85,7 +127,9 @@ file and is the single source of truth on the frontend.
 - **Drag-to-reschedule.** Moving a row between date groups should
   rewrite `[due:: YYYY-MM-DD]` on disk (currently exposed via
   Calendar's drag-and-drop through `ctx.setTaskDueDate`).
-- **Dedicated `completed_at` column.** As noted above.
+- **Switch the Completed sort to `completed_at`.** The column shipped
+  (#417); see "Completion sort" above for why the query still uses the
+  `file_date` proxy and what the cutover looks like.
 - **Typed Go binding (`GetTasksView`).** The current implementation
   uses raw `ctx.sqliteQuery(...)` per the issue's "tradeoff noted"
   — promote to a Go method if the `tasks` schema gains columns we

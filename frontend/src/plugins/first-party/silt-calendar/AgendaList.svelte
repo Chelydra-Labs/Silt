@@ -38,6 +38,11 @@
     recurrence?: string
     /** 1 when the task has an open prerequisite (#301/#302). */
     is_blocked?: number
+    // New [created::]/[completed::]/[order::] tokens (#417). Coerced from
+    // nullable SQL columns to non-optional types by the row mapper below.
+    created_at: string
+    completed_at: string
+    manual_order: number
   }
 
   let items = $state<AgendaItem[]>([])
@@ -62,6 +67,7 @@
         `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
                 b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
                 t.recur AS recurrence,
+                t.created_at, t.completed_at, t.manual_order,
                 EXISTS (
                   SELECT 1 FROM task_dependencies d
                   JOIN tasks bt ON bt.block_id = d.blocked_by_id
@@ -73,7 +79,14 @@
                   t.due_date ASC, t.priority ASC
          LIMIT 1000`
       )
-      items = (rows as unknown as AgendaItem[]) ?? []
+      // Coerce SQL NULL → '' / 0 for the new nullable #417 columns so
+      // AgendaItem's non-optional types hold.
+      items = ((rows as unknown as AgendaItem[]) ?? []).map((r) => ({
+        ...r,
+        created_at: r.created_at ?? '',
+        completed_at: r.completed_at ?? '',
+        manual_order: r.manual_order ?? 0
+      }))
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e)
     } finally {

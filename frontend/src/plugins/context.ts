@@ -14,6 +14,10 @@ import {
   PluginSetTaskDueDate,
   PluginSetTaskRecurrence,
   PluginSetTaskBlockedBy,
+  PluginSetTaskOwner,
+  PluginSetTaskPriority,
+  PluginSetTaskTags,
+  PluginSetTaskTitle,
   GetTaskBlockers,
   FetchSubtree,
   PluginSaveSubtreeBlocks,
@@ -186,6 +190,19 @@ export function makePluginContext(
     // array clears all deps. Cycle prevention is enforced server-side.
     setTaskBlockedBy: (id, depIDs) =>
       PluginSetTaskBlockedBy(pluginID, sessionToken ?? '', id, depIDs),
+    // Rewrite a task's [owner:: NAME] token (#412). Empty string clears it.
+    setTaskOwner: (id, owner) =>
+      PluginSetTaskOwner(pluginID, sessionToken ?? '', id, owner),
+    // Rewrite a task's [priority:: N] token (#412). 1=Critical, 2=Normal, 3=Low.
+    setTaskPriority: (id, priority) =>
+      PluginSetTaskPriority(pluginID, sessionToken ?? '', id, priority),
+    // Rewrite a task's [tags:: a|b|c] token (#412). Empty array clears all tags.
+    setTaskTags: (id, tags) =>
+      PluginSetTaskTags(pluginID, sessionToken ?? '', id, tags),
+    // Rewrite a task's prose title (#412). The backend preserves #tags +
+    // ((uuid)) refs + inline tokens during the title rewrite.
+    setTaskTitle: (id, title) =>
+      PluginSetTaskTitle(pluginID, sessionToken ?? '', id, title),
     // Open (non-DONE) prerequisites for the DONE-confirm dialog (#302).
     getTaskBlockers: (id) => GetTaskBlockers(id),
     // Child sub-tree fetch/splice for the Task Sub-Editor Modal (#305). The

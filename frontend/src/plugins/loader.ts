@@ -19,6 +19,11 @@ import { unregisterPluginDecorations } from '../lib/editor/decorations'
 import { initGrants } from './grants.svelte'
 import { resetKanbanState } from './first-party/silt-kanban/kanbanSharedState.svelte'
 import { resetFocusState } from './first-party/silt-calendar/focusState.svelte'
+// Transitional shim (#419 phase 4): the unified hub state module is the
+// forward-looking replacement for the two reset* functions above. No
+// consumer migrates this phase, but clearing it here means a switched
+// vault can't pick up stale state once #38 starts wiring consumers in.
+import { resetTaskHubState } from './first-party/silt-tasks/state.svelte'
 import DiskPluginNotice from './DiskPluginNotice.svelte'
 
 // Whether the lifecycle wiring (vault:closing subscription) has been installed.
@@ -255,8 +260,13 @@ function wireLifecycleOnce() {
     // item 1). The settings store is reset by the next loadPlugins, but
     // these reactive modules are not — without this a switched vault opens
     // with the previous vault's Kanban scope/filter and Calendar focus.
+    //
+    // Transitional shim (#419 phase 4): resetTaskHubState clears the
+    // unified store that will replace the two above once #38 migrates
+    // consumers. Both old resets stay until the migration completes.
     resetKanbanState()
     resetFocusState()
+    resetTaskHubState()
     // Clear all session tokens so the next vault starts fresh (#151).
     for (const [, token] of sessionTokens) {
       UnregisterPluginSession(token).catch(() => {})
