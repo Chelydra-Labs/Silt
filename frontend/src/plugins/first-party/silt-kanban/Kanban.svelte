@@ -7,12 +7,13 @@
   import { measureFrameBudget } from '../../../lib/perf/frame-budget'
   import { EventsOn } from '../../../../wailsjs/runtime/runtime.js'
   import FilterBar from './FilterBar.svelte'
-  import CardDetailPanel from './CardDetailPanel.svelte'
-  import BlockedDoneDialog from './BlockedDoneDialog.svelte'
-  import TaskSubEditorModal from './TaskSubEditorModal.svelte'
+  import TaskEditDrawer from '../shared/TaskEditDrawer.svelte'
+  import BlockedDoneDialog from '../shared/BlockedDoneDialog.svelte'
+  import TaskSubEditorModal from '../shared/TaskSubEditorModal.svelte'
   import QuickAddTask from '../shared/QuickAddTask.svelte'
-  import type { KanbanCard, KanbanFilters, Scope } from './types'
-  import { PRIORITY_LABELS, laneLabel, priorityClass } from './types'
+  import type { KanbanFilters, Scope } from './types'
+  import type { TaskDetail } from '../shared/types'
+  import { PRIORITY_LABELS, laneLabel, priorityClass } from '../shared/types'
   import { buildQuery } from './query'
 
   interface Props {
@@ -150,7 +151,7 @@
       setScopeShared(defaultScope())
     })
   }
-  let lanes = $state<Record<string, KanbanCard[]>>({})
+  let lanes = $state<Record<string, TaskDetail[]>>({})
   let loading = $state(true)
   let errorMsg = $state('')
   let moveError = $state('')
@@ -305,23 +306,19 @@
   })
 
   // Card selected for the slide-out detail panel (null = closed).
-  let selectedCard = $state<KanbanCard | null>(null)
+  let selectedCard = $state<TaskDetail | null>(null)
 
   // Card opened in the focused Task Sub-Editor Modal (#304). Null = closed.
   // Set by double-clicking a card; single-click still opens the slide-out
   // detail panel so both affordances coexist on the same card.
-  let subEditorCard = $state<KanbanCard | null>(null)
-
-  // Single-click is deferred by a short timer so a dblclick can cancel it,
-  // preventing the slide-out panel from flashing open before the modal opens.
-  let clickTimer: ReturnType<typeof setTimeout> | null = null
+  let subEditorCard = $state<TaskDetail | null>(null)
 
   // DONE-on-blocked confirm (#302): when a blocked card is dragged or keyed
   // into the DONE lane, we pause the optimistic move and ask the user. The
   // pending object carries the original move args so confirm() can resume it
   // and cancel() can revert the optimistic state. Null = no prompt open.
   let pendingBlockedDone = $state<{
-    card: KanbanCard
+    card: TaskDetail
     fromStatus: TaskStatus
     blockers: { id: string; clean_content?: string }[]
   } | null>(null)
@@ -397,15 +394,30 @@
       // A newer reload (e.g. a rapid scope switch) has started; abandon
       // this stale response so it can't clobber the fresh data.
       if (my !== loadSeq) return
-      const bucket: Record<string, KanbanCard[]> = {}
+      const bucket: Record<string, TaskDetail[]> = {}
       for (const col of columns) bucket[col] = []
-      for (const r of rows as unknown as KanbanCard[]) {
+      for (const r of rows as unknown as TaskDetail[]) {
         // SQLite stores pinned as INTEGER (0/1); coerce to boolean so the
         // card shape matches the interface and `!card.pinned` toggles work.
-        const card: KanbanCard = { ...r, pinned: !!r.pinned }
+        const card: TaskDetail = { ...r, pinned: !!r.pinned }
         if (bucket[card.status]) bucket[card.status].push(card)
       }
       lanes = bucket
+      // B1: re-resolve the open drawer's task from the fresh data so the
+      // drawer never shows a stale snapshot after a metadata write, a DnD
+      // move, or an external edit. If the task left the board (filtered out
+      // or deleted), keep the last-known copy rather than snapping closed.
+      if (selectedCard) {
+        let fresh: TaskDetail | null = null
+        for (const lane of Object.values(lanes)) {
+          const found = lane.find((c) => c.id === selectedCard!.id)
+          if (found) {
+            fresh = found
+            break
+          }
+        }
+        if (fresh) selectedCard = fresh
+      }
       truncated = wasTruncated
       loadedCount = (rows as unknown[]).length
     } catch (e) {
@@ -611,7 +623,7 @@
   }
 
   // --- Drag-and-drop state ---
-  let dragCard: KanbanCard | null = null
+  let dragCard: TaskDetail | null = null
   let dragFromStatus: TaskStatus | null = null
   let dragOverStatus: TaskStatus | null = null
   let dragOverIndex = -1
@@ -623,7 +635,7 @@
   // "Open in editor" button so the source jump is an explicit action).
   let liveMessage = $state('')
 
-  function onDragStart(e: DragEvent, card: KanbanCard, fromStatus: TaskStatus) {
+  function onDragStart(e: DragEvent, card: TaskDetail, fromStatus: TaskStatus) {
     dragCard = card
     dragFromStatus = fromStatus
     draggingId = card.id
@@ -691,7 +703,7 @@
   // wiping call #2's move as well. Mirrors loadSeq / progressSeq.
   let moveSeq = 0
   async function commitMove(
-    card: KanbanCard,
+    card: TaskDetail,
     fromStatus: TaskStatus,
     toStatus: TaskStatus,
     targetIndex: number
@@ -706,7 +718,7 @@
     newLanes[fromStatus] = (newLanes[fromStatus] ?? []).filter(
       (c) => c.id !== card.id
     )
-    const updatedCard: KanbanCard = { ...card, status: toStatus }
+    const updatedCard: TaskDetail = { ...card, status: toStatus }
     const targetLane = [...(newLanes[toStatus] ?? [])]
     const insertAt = targetIndex >= 0 ? targetIndex : targetLane.length
     targetLane.splice(insertAt, 0, updatedCard)
@@ -778,7 +790,7 @@
   // the board doesn't show), fall back to TODO (the inbox) so the card can't
   // disappear into an invisible lane key.
   function revertBlockedDone(pending: {
-    card: KanbanCard
+    card: TaskDetail
     fromStatus: TaskStatus
   }) {
     const cardId = pending.card.id
@@ -799,7 +811,7 @@
   // explicitly here. (Pattern mirrors Calendar.svelte onCellKeydown.)
   function onCardKeydown(
     e: KeyboardEvent,
-    card: KanbanCard,
+    card: TaskDetail,
     fromStatus: TaskStatus
   ) {
     const idx = columns.indexOf(fromStatus)
@@ -815,6 +827,11 @@
       if (prev !== idx && ALL_STATUSES.includes(columns[prev] as TaskStatus)) {
         void commitMove(card, fromStatus, columns[prev] as TaskStatus, -1)
       }
+    } else if (e.key === 'Enter' && e.shiftKey) {
+      // Shift+Enter opens the sub-editor directly; plain Enter/Space below
+      // opens the inspector drawer.
+      e.preventDefault()
+      subEditorCard = card
     } else if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       selectedCard = card
@@ -1069,29 +1086,12 @@
                   ondragend={cleanupDrag}
                   onkeydown={(e) => onCardKeydown(e, card, col as TaskStatus)}
                   onclick={() => {
-                    // Defer the single-click open by a tick so a dblclick
-                    // can cancel it — otherwise the slide-out panel flashes
-                    // open for ~200ms before the modal yanks it away.
-                    if (clickTimer) {
-                      clearTimeout(clickTimer)
-                      clickTimer = null
-                      return
-                    }
-                    clickTimer = setTimeout(() => {
-                      selectedCard = card
-                      clickTimer = null
-                    }, 200)
-                  }}
-                  ondblclick={(e) => {
-                    e.stopPropagation()
-                    if (clickTimer) {
-                      clearTimeout(clickTimer)
-                      clickTimer = null
-                    }
-                    // Close any slide-out panel the first click may have
-                    // opened so only the modal is visible while editing.
-                    selectedCard = null
-                    subEditorCard = card
+                    // Single-click opens the non-blocking inspector drawer
+                    // immediately. The drawer is non-modal, so no
+                    // single/double-click disambiguation is needed: the
+                    // sub-editor is reached via the drawer's "Open sub-editor"
+                    // button, or via Shift+Enter on the card.
+                    selectedCard = card
                   }}
                 >
                   {#if card.pinned}
@@ -1258,11 +1258,12 @@
   </div>
 </div>
 
-<CardDetailPanel
-  card={selectedCard}
+<TaskEditDrawer
+  task={selectedCard}
   {ctx}
   onClose={() => (selectedCard = null)}
   onMetaChanged={reload}
+  onOpenSubEditor={() => (subEditorCard = selectedCard)}
 />
 
 {#if menuCol}

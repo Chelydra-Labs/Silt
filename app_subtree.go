@@ -81,10 +81,14 @@ func extractSubtree(blocks []parser.ParsedBlock, parentID string) []parser.Parse
 			break
 		}
 	}
+	// Return an empty (non-nil) slice when there are no children so the
+	// binding serializes to JSON `[]`, not `null`. The SDK contract is
+	// []ParsedBlock; a nil here reaches the frontend as null and crashes
+	// blocksToDoc(null).map in the sub-editor.
+	subtree := []parser.ParsedBlock{}
 	if parentIdx < 0 {
-		return nil
+		return subtree
 	}
-	var subtree []parser.ParsedBlock
 	for i := parentIdx + 1; i < len(blocks); i++ {
 		if blocks[i].Depth <= parentDepth {
 			break

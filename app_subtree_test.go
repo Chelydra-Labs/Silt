@@ -45,6 +45,9 @@ func TestExtractSubtree_NoChildren(t *testing.T) {
 		{ID: "bbbbbbbb-0000-0000-0000-000000000000", Type: parser.BlockTask, Depth: 0},
 	}
 	got := extractSubtree(blocks, "aaaaaaaa-0000-0000-0000-000000000000")
+	if got == nil {
+		t.Fatalf("expected non-nil empty subtree for a childless task, got nil")
+	}
 	if len(got) != 0 {
 		t.Fatalf("expected empty subtree for a childless task, got %d", len(got))
 	}
@@ -52,9 +55,16 @@ func TestExtractSubtree_NoChildren(t *testing.T) {
 
 func TestExtractSubtree_ParentNotFound(t *testing.T) {
 	blocks := []parser.ParsedBlock{{ID: "aaaaaaaa-0000-0000-0000-000000000000", Depth: 0}}
+	// A missing parent returns an empty (non-nil) slice, not nil. The SDK
+	// contract is []ParsedBlock; a nil would serialize to JSON null and
+	// crash the frontend sub-editor's blocksToDoc(null).map. The modal opens
+	// blank either way.
 	got := extractSubtree(blocks, "missing-id")
-	if got != nil {
-		t.Fatalf("expected nil for a missing parent, got %v", got)
+	if got == nil {
+		t.Fatalf("expected non-nil empty subtree for a missing parent, got nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty subtree for a missing parent, got %d", len(got))
 	}
 }
 
@@ -223,6 +233,12 @@ func TestFetchSubtree_NoChildrenReturnsEmpty(t *testing.T) {
 	got, err := app.FetchSubtree(parent)
 	if err != nil {
 		t.Fatalf("FetchSubtree: %v", err)
+	}
+	// Non-nil empty slice (not Go nil) so the binding serializes to JSON `[]`
+	// rather than `null` — the frontend's blocksToDoc would otherwise crash on
+	// .map over null in the sub-editor.
+	if got == nil {
+		t.Fatalf("expected non-nil empty subtree, got nil")
 	}
 	if len(got) != 0 {
 		t.Errorf("expected empty subtree, got %d blocks", len(got))

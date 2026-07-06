@@ -18,6 +18,51 @@ import type {
 } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
 
+// jsdom polyfills: the shared drawer uses Svelte transition:fly (element.
+// animate()); the sub-editor modal's TipTap needs Range.getClientRects +
+// document.elementFromPoint. Without these, rendering either component throws.
+if (!Element.prototype.animate) {
+  Element.prototype.animate = function () {
+    return {
+      cancel() {},
+      finish() {},
+      play() {},
+      pause() {},
+      reverse() {},
+      addEventListener() {},
+      removeEventListener() {},
+      onfinish: null,
+      oncancel: null
+    } as unknown as Animation
+  }
+}
+if (typeof document !== 'undefined' && !document.elementFromPoint) {
+  document.elementFromPoint = () => document.body
+}
+if (
+  typeof window !== 'undefined' &&
+  window.Range &&
+  !Range.prototype.getClientRects
+) {
+  const zeroRect: DOMRect = {
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: 0,
+    height: 0,
+    toJSON() {
+      return this
+    }
+  }
+  Range.prototype.getClientRects = (() => [
+    zeroRect
+  ]) as unknown as typeof Range.prototype.getClientRects
+  Range.prototype.getBoundingClientRect = () => zeroRect
+}
+
 function makeCtx(): PluginContext {
   return {
     ...v2CtxStubs,
@@ -301,10 +346,10 @@ describe('Tasks view', () => {
     expect(mocks.updateBlockState).toHaveBeenCalledWith('m1', 'DONE')
   })
 
-  it('clicking an open row dispatches navigate-to-block', async () => {
+  it('single-clicking an open row opens the inspector drawer (no longer navigates away)', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (sql.includes("status != 'DONE'")) {
-        return { rows: [task('nav1', 'clickable')], truncated: false }
+        return { rows: [task('nav1', 'Drawer task')], truncated: false }
       }
       return { rows: [], truncated: false }
     })
@@ -315,21 +360,175 @@ describe('Tasks view', () => {
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    const row = document.querySelector('[data-block-id="nav1"]')
-    expect(row).toBeInTheDocument()
-    // The row is now a non-interactive container; the click handler
-    // lives on the inner "Open" button. Targeting the button (not
-    // the row div) matches what a keyboard or screen-reader user
-    // would do.
-    const openButton = row?.querySelector('button[aria-label^="Open "]')
-    expect(openButton).toBeInTheDocument()
-    await fireEvent.click(openButton as HTMLElement)
+    const bodyBtn = document.querySelector(
+      '[data-block-id="nav1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    expect(bodyBtn).toBeInTheDocument()
+    await fireEvent.click(bodyBtn)
+    await flush()
 
-    expect(handler).toHaveBeenCalledTimes(1)
-    const detail = (handler.mock.calls[0][0] as CustomEvent).detail
-    expect(detail.blockId).toBe('nav1')
-    expect(detail.notebook).toBe('.silt')
+    // The shared drawer opened with the task title; navigate-to-block did NOT.
+    const drawer = document.querySelector(
+      '[aria-labelledby="task-edit-drawer-title"]'
+    )
+    expect(drawer).toBeInTheDocument()
+    expect(drawer?.textContent).toContain('Drawer task')
+    expect(handler).not.toHaveBeenCalled()
     window.removeEventListener('navigate-to-block', handler)
+  })
+
+  it('clicking the pencil affordance opens the sub-editor modal', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'"))
+        return { rows: [task('p1', 'Pencil task')], truncated: false }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const pencil = screen.getByRole('button', {
+      name: /Edit notes for Pencil task/i
+    })
+    await fireEvent.click(pencil)
+    await flush()
+
+    // The shared sub-editor modal surfaced.
+    expect(
+      document.querySelector('[aria-labelledby="sub-editor-title"]')
+    ).toBeInTheDocument()
+  })
+
+  it('Shift+Enter on a row opens the sub-editor directly', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'"))
+        return { rows: [task('k1', 'Keyboard task')], truncated: false }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const bodyBtn = document.querySelector(
+      '[data-block-id="k1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    await fireEvent.keyDown(bodyBtn, { key: 'Enter', shiftKey: true })
+    await flush()
+
+    expect(
+      document.querySelector('[aria-labelledby="sub-editor-title"]')
+    ).toBeInTheDocument()
+  })
+
+  it('drawer hides "Open source page" for a standalone (.silt) task', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'"))
+        return { rows: [task('s1', 'Standalone')], truncated: false }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const bodyBtn = document.querySelector(
+      '[data-block-id="s1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    await fireEvent.click(bodyBtn)
+    await flush()
+
+    const drawer = document.querySelector(
+      '[aria-labelledby="task-edit-drawer-title"]'
+    )
+    expect(drawer).toBeInTheDocument()
+    // Standalone tasks have no source page: the button is omitted and the
+    // drawer's breadcrumb reads "Standalone task" (not .silt › … › tasks.md).
+    expect(screen.queryByText('Open source page')).toBeNull()
+    expect(drawer?.textContent).toContain('Standalone task')
+  })
+
+  it('drawer shows "Open source page" for an in-page task', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'"))
+        return {
+          rows: [
+            task('ip1', 'In page', {
+              notebook: 'Work',
+              section: 'Journal',
+              page: 'Daily'
+            })
+          ],
+          truncated: false
+        }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const bodyBtn = document.querySelector(
+      '[data-block-id="ip1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    await fireEvent.click(bodyBtn)
+    await flush()
+
+    expect(screen.getByText('Open source page')).toBeInTheDocument()
+  })
+
+  it('mark-done on a blocked task opens the DONE-on-blocked guard', async () => {
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'"))
+        return {
+          rows: [{ ...task('b1', 'Blocked'), is_blocked: 1 }],
+          truncated: false
+        }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, {
+      ctx: { ...makeCtx(), getTaskBlockers },
+      manifest: MANIFEST
+    })
+    await flush()
+
+    const checkbox = document.querySelector(
+      '[data-block-id="b1"] button[role="checkbox"]'
+    ) as HTMLElement
+    await fireEvent.click(checkbox)
+    await flush()
+
+    expect(getTaskBlockers).toHaveBeenCalledWith('b1')
+    expect(screen.getByText('Complete anyway')).toBeInTheDocument()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+  })
+
+  it('a second mark-done while the guard is open does not fall through to commit', async () => {
+    const getTaskBlockers = vi
+      .fn()
+      .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'"))
+        return {
+          rows: [{ ...task('b2', 'Blocked'), is_blocked: 1 }],
+          truncated: false
+        }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, {
+      ctx: { ...makeCtx(), getTaskBlockers },
+      manifest: MANIFEST
+    })
+    await flush()
+
+    const checkbox = document.querySelector(
+      '[data-block-id="b2"] button[role="checkbox"]'
+    ) as HTMLElement
+    await fireEvent.click(checkbox) // opens the guard
+    await flush()
+    await fireEvent.click(checkbox) // re-entry while the guard is open
+    await flush()
+
+    // The guard dialog is still pending and no DONE was committed — the
+    // early `if (pendingBlockedDone) return` prevented the fall-through.
+    expect(screen.getByText('Complete anyway')).toBeInTheDocument()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
   })
 
   it('shows the empty state when no tasks exist', async () => {

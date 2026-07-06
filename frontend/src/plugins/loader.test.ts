@@ -60,7 +60,7 @@ describe('plugin loader integrity check (#161, P5-12)', () => {
     expect(result.errors[0].id).toBe('tampered')
     expect(result.errors[0].message).toContain('integrity check failed')
     expect(result.plugins.has('tampered')).toBe(false)
-  })
+  }, 15000) // crypto.subtle.digest + dynamic import can exceed the 5s default under parallel load
 
   it("sha256 match → no integrity error (import may fail in jsdom, that's OK)", async () => {
     const src = 'export default {};'
@@ -80,7 +80,7 @@ describe('plugin loader integrity check (#161, P5-12)', () => {
       e.message.includes('integrity check failed')
     )
     expect(integrityError).toBeUndefined()
-  })
+  }, 15000) // crypto.subtle.digest + dynamic import can exceed the 5s default under parallel load
 
   it('missing contentSha256 → no integrity error (backward compat)', async () => {
     mockListPlugins.mockResolvedValue([

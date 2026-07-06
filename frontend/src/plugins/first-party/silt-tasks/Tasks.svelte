@@ -30,6 +30,10 @@
   import { plusDaysISO } from '../../sdk'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../lib/standaloneTasksNav'
   import QuickAddTask from '../shared/QuickAddTask.svelte'
+  import TaskEditDrawer from '../shared/TaskEditDrawer.svelte'
+  import TaskSubEditorModal from '../shared/TaskSubEditorModal.svelte'
+  import BlockedDoneDialog from '../shared/BlockedDoneDialog.svelte'
+  import type { TaskDetail } from '../shared/types'
 
   interface Props {
     ctx: PluginContext
@@ -52,24 +56,20 @@
 
   let { ctx, manifest, focusBlockId = '', focusKey = '' }: Props = $props()
 
-  interface TaskItem {
+  // Completed rows are display-only; a narrower shape than the open-task
+  // TaskDetail (which the edit drawer requires).
+  interface CompletedTaskItem {
     id: string
     notebook: string
     section: string
     page: string
     file_date: string
-    line_number?: number
     clean_content: string
     status: string
-    owner: string
-    start_date: string
-    due_date: string
-    priority: number
-    pinned?: boolean
   }
 
-  let openItems = $state<TaskItem[]>([])
-  let doneItems = $state<TaskItem[]>([])
+  let openItems = $state<TaskDetail[]>([])
+  let doneItems = $state<CompletedTaskItem[]>([])
   let loading = $state(true)
   let errorMsg = $state('')
   let markDoneError = $state('')
@@ -87,6 +87,19 @@
   // per-plugin setting could remember the user's pref).
   let showCompleted = $state(false)
 
+  // Unified task-edit surface (#410): single-click opens the shared
+  // non-blocking inspector drawer; the pencil affordance (or Shift+Enter)
+  // opens the sub-editor modal.
+  let selectedTask = $state<TaskDetail | null>(null)
+  let subEditorTask = $state<TaskDetail | null>(null)
+  // DONE-on-blocked guard for the row mark-done checkbox — mirrors the
+  // AgendaList + drawer guards so a blocked task confirms before completing,
+  // regardless of which control the user hits.
+  let pendingBlockedDone = $state<{
+    item: TaskDetail
+    blockers: { id: string; clean_content?: string }[]
+  } | null>(null)
+
   async function reload() {
     loading = true
     errorMsg = ''
@@ -94,9 +107,17 @@
       const [openRes, doneRes] = await Promise.all([
         ctx.sqliteQuery(
           `SELECT b.id, b.notebook, b.section, b.page, b.file_date,
-                  b.line_number, b.clean_content,
+                  b.clean_content,
                   t.status, t.owner, t.start_date, t.due_date,
-                  t.priority, t.pinned
+                  t.priority, t.pinned, t.progress,
+                  t.recur AS recurrence, t.comments_count, t.links_count,
+                  (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags,
+                  (SELECT GROUP_CONCAT(blocked_by_id, '|') FROM task_dependencies WHERE block_id = b.id) AS blocked_by,
+                  EXISTS (
+                    SELECT 1 FROM task_dependencies d
+                    JOIN tasks bt ON bt.block_id = d.blocked_by_id
+                    WHERE d.block_id = b.id AND bt.status != 'DONE'
+                  ) AS is_blocked
            FROM blocks b JOIN tasks t ON b.id = t.block_id
            WHERE t.status != 'DONE'
            ORDER BY t.due_date IS NULL, t.due_date ASC, t.priority ASC
@@ -111,8 +132,16 @@
            LIMIT 200`
         )
       ])
-      openItems = (openRes.rows as unknown as TaskItem[]) ?? []
-      doneItems = (doneRes.rows as unknown as TaskItem[]) ?? []
+      openItems = (openRes.rows as unknown as TaskDetail[]) ?? []
+      doneItems = (doneRes.rows as unknown as CompletedTaskItem[]) ?? []
+      // B1: re-resolve the open drawer's task from the fresh open-items so
+      // the drawer never shows a stale snapshot after a write or an external
+      // edit. A task marked done via the drawer's status editor leaves the
+      // open set; the drawer keeps its last-known full copy in that case.
+      if (selectedTask) {
+        const fresh = openItems.find((i) => i.id === selectedTask!.id)
+        if (fresh) selectedTask = fresh
+      }
       openTruncated = openRes.truncated
       doneTruncated = doneRes.truncated
     } catch (e) {
@@ -169,7 +198,7 @@
   )
   let undated = $derived(openItems.filter((i) => !i.due_date))
 
-  async function markDone(item: TaskItem) {
+  async function commitMarkDone(item: TaskDetail) {
     markDoneError = ''
     if (markDoneTimer) clearTimeout(markDoneTimer)
     try {
@@ -184,18 +213,60 @@
     }
   }
 
-  function openItem(item: TaskItem) {
-    window.dispatchEvent(
-      new CustomEvent('navigate-to-block', {
-        detail: {
-          notebook: item.notebook,
-          section: item.section,
-          page: item.page,
-          date: item.file_date,
-          blockId: item.id
+  // Mark-done with the DONE-on-blocked guard (#302): if the task carries open
+  // prerequisites, pause and surface the shared BlockedDoneDialog before
+  // completing. Mirrors AgendaList + the drawer so every DONE path agrees.
+  async function markDone(item: TaskDetail) {
+    // A guard dialog is already open (re-entry before the modal scrim absorbs
+    // the event): don't fall through to commit. The !pendingBlockedDone check
+    // below is for the first invocation only.
+    if (pendingBlockedDone) return
+    if (item.is_blocked && !pendingBlockedDone) {
+      try {
+        const blockers = await ctx.getTaskBlockers(item.id)
+        if (blockers.length > 0) {
+          pendingBlockedDone = {
+            item,
+            blockers: blockers.map((b) => ({
+              id: b.id,
+              clean_content: b.clean_content
+            }))
+          }
+          return
         }
-      })
-    )
+      } catch (e) {
+        markDoneError = e instanceof Error ? e.message : String(e)
+        markDoneTimer = setTimeout(() => {
+          markDoneError = ''
+          markDoneTimer = null
+        }, 8_000)
+        return
+      }
+    }
+    await commitMarkDone(item)
+  }
+
+  // Confirm the blocked-done guard: complete the pending task directly (don't
+  // re-enter markDone, or the guard would loop).
+  function confirmBlockedDone() {
+    const pending = pendingBlockedDone
+    pendingBlockedDone = null
+    if (pending) void commitMarkDone(pending.item)
+  }
+
+  function cancelBlockedDone() {
+    pendingBlockedDone = null
+  }
+
+  // Single-click opens the shared non-blocking inspector drawer. The former
+  // behavior — dispatching navigate-to-block — moved into the drawer's
+  // "Open source page" button, so navigation is still one click away.
+  function openDrawer(item: TaskDetail) {
+    selectedTask = item
+  }
+
+  function openSubEditor(item: TaskDetail) {
+    subEditorTask = item
   }
 
   // Subscribe to `block:changed` so a task marked done (or a task whose
@@ -406,9 +477,18 @@
                     aria-label="Mark done"
                   ></button>
                   <button
-                    onclick={() => openItem(item)}
+                    onclick={() => openDrawer(item)}
+                    onkeydown={(e) => {
+                      // Shift+Enter opens the sub-editor directly; plain
+                      // Enter/Space falls through to the native click → drawer.
+                      if (e.key === 'Enter' && e.shiftKey) {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        openSubEditor(item)
+                      }
+                    }}
                     class="flex-1 min-w-0 text-left bg-transparent border-none p-0 cursor-pointer"
-                    aria-label={`Open ${item.clean_content}${item.due_date ? `, due ${item.due_date}` : ', no due date'}`}
+                    aria-label={`Edit metadata for ${item.clean_content}${item.due_date ? `, due ${item.due_date}` : ', no due date'}`}
                   >
                     <div
                       class="text-text-primary text-sm font-body-md truncate"
@@ -425,6 +505,20 @@
                         {item.notebook} › {item.section} › {item.page}
                       {/if}
                     </div>
+                  </button>
+                  <button
+                    type="button"
+                    title="Open sub-editor (Shift+Enter)"
+                    aria-label={`Edit notes for ${item.clean_content}`}
+                    onclick={(e) => {
+                      e.stopPropagation()
+                      openSubEditor(item)
+                    }}
+                    class="opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-opacity p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0"
+                  >
+                    <span class="material-symbols-outlined text-[16px]"
+                      >edit_note</span
+                    >
                   </button>
                   {#if item.owner}
                     <span
@@ -557,6 +651,36 @@
     />
   </div>
 </div>
+
+<TaskEditDrawer
+  task={selectedTask}
+  {ctx}
+  onMetaChanged={reload}
+  onOpenSubEditor={() => selectedTask && (subEditorTask = selectedTask)}
+  onClose={() => (selectedTask = null)}
+/>
+{#if subEditorTask}
+  <TaskSubEditorModal
+    blockId={subEditorTask.id}
+    notebook={subEditorTask.notebook}
+    section={subEditorTask.section}
+    page={subEditorTask.page}
+    parentTaskText={subEditorTask.clean_content}
+    {ctx}
+    onClose={() => {
+      reload()
+      subEditorTask = null
+    }}
+  />
+{/if}
+{#if pendingBlockedDone}
+  <BlockedDoneDialog
+    cardText={pendingBlockedDone.item.clean_content}
+    blockers={pendingBlockedDone.blockers}
+    onConfirm={confirmBlockedDone}
+    onCancel={cancelBlockedDone}
+  />
+{/if}
 
 <style>
   /* Transient focus ring driven by data-focused id match — mirrors the

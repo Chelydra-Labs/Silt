@@ -6,6 +6,19 @@ to Calendar's date-scoped agenda, not a replacement — its purpose is
 specifically to surface undated tasks that the existing agenda surfaces
 filter out by SQL design.
 
+## Interaction model (#410 unified task-edit surface)
+
+Single-click a row opens the shared **non-blocking inspector drawer**
+(`first-party/shared/TaskEditDrawer.svelte`) — the same drawer Kanban
+uses — for inline edits (pin, progress, recurrence, due date, status).
+The pencil affordance on each row (or `Shift+Enter`) opens the shared
+**sub-editor modal** (`TaskSubEditorModal`) for the task's child
+sub-tree. The former single-click behavior (navigate-to-block / open the
+source page) is now a button inside the drawer, hidden for standalone
+(`.silt`) tasks. The row mark-done checkbox routes through the shared
+`BlockedDoneDialog` when the task has open prerequisites, matching Kanban
+and Agenda.
+
 ## SDK surface
 
 The component is built exclusively on the PluginContext SDK — no
@@ -86,8 +99,10 @@ file and is the single source of truth on the frontend.
 - overdue tone distinct from Today/Upcoming (AC3)
 - Completed collapsed by default + expands on click (AC4)
 - header count respects open vs. done (AC5)
-- mark-done calls `updateBlockState` + removes the row (AC6)
-- clicking an open row dispatches `navigate-to-block`
+- mark-done calls `updateBlockState` + removes the row (AC6); a blocked
+  task surfaces the DONE-on-blocked guard first
+- single-click opens the inspector drawer; pencil / Shift+Enter open the
+  sub-editor; standalone tasks hide "Open source page"
 - empty state when no tasks exist
 - `focusBlockId` scrolls + highlights (cross-cuts #374 AC4)
 - SQL pushes undated to the tail of the open list

@@ -18,6 +18,7 @@
   } from '../../../lib/editor'
   import type { ParsedBlock } from '../../../lib/editor'
   import type { PluginContext } from '../../sdk'
+  import { STANDALONE_TASKS_NOTEBOOK } from '../../../lib/standaloneTasksNav'
 
   /**
    * Focused Task Sub-Editor Modal (#304). Double-clicking a Kanban task card
@@ -48,6 +49,10 @@
     ctx,
     onClose
   }: Props = $props()
+
+  // Standalone (.silt) tasks have no source page; show a friendly label
+  // instead of the synthetic `.silt › (none) › tasks.md` path.
+  let isStandalone = $derived(notebook === STANDALONE_TASKS_NOTEBOOK)
 
   // --- Editor setup ---
   let editorInstance: Editor | null = $state(null)
@@ -150,12 +155,14 @@
       if (!editorInstance || editorInstance.isDestroyed) return
       suppressUpdate = true
       try {
-        editorInstance.commands.setContent(
-          blocksToDoc(subtree as ParsedBlock[]),
-          {
-            emitUpdate: false
-          }
-        )
+        // `fetchSubtree` can resolve to null when the task has no children
+        // yet (a Go nil slice serializes to JSON null, not []). Treat that
+        // as an empty subtree so the editor opens blank for the user to
+        // add notes, instead of crashing on blocksToDoc(null).map.
+        const safeSubtree = (subtree ?? []) as ParsedBlock[]
+        editorInstance.commands.setContent(blocksToDoc(safeSubtree), {
+          emitUpdate: false
+        })
       } finally {
         // ensure suppressUpdate resets even if setContent throws, so a
         // later failed load can't permanently silence user-typing saves.
@@ -353,13 +360,17 @@
         <div
           class="text-[10px] text-text-muted uppercase tracking-widest font-label-sm-bold truncate"
         >
-          {notebook}<span
-            class="material-symbols-outlined text-[10px] align-middle"
-            >chevron_right</span
-          >{section || '(none)'}<span
-            class="material-symbols-outlined text-[10px] align-middle"
-            >chevron_right</span
-          >{page}
+          {#if isStandalone}
+            Standalone task
+          {:else}
+            {notebook}<span
+              class="material-symbols-outlined text-[10px] align-middle"
+              >chevron_right</span
+            >{section || '(none)'}<span
+              class="material-symbols-outlined text-[10px] align-middle"
+              >chevron_right</span
+            >{page}
+          {/if}
         </div>
         <h2
           id="sub-editor-title"
