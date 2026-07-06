@@ -432,6 +432,22 @@
               OpenAI-compatible
             </button>
           </div>
+          <!-- Privacy notice: local stays on-device; cloud sends content out. -->
+          <p
+            class="text-[11px] font-label-sm mt-2 flex items-center gap-1.5 {isLocal
+              ? 'text-text-muted'
+              : 'text-text-primary'}"
+          >
+            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">
+              {isLocal ? 'shield' : 'arrow_outward'}
+            </span>
+            {#if isLocal}
+              Runs on your machine — content sent to this provider doesn't leave
+              this device.
+            {:else}
+              Content sent to this endpoint leaves your machine.
+            {/if}
+          </p>
         </div>
 
         <!-- Base URL + Model -->

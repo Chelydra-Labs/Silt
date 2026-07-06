@@ -276,6 +276,26 @@ describe('AIProviderTab', () => {
         })
       )
     })
+
+    it('shows the local privacy reassurance for a local provider', async () => {
+      render(AIProviderTab)
+      await ready()
+
+      // The default config has embedding = local; the reassurance must be present.
+      expect(
+        screen.getByText(/doesn't leave this device/i)
+      ).toBeInTheDocument()
+    })
+
+    it('shows the cloud privacy warning for an openai-compatible provider', async () => {
+      // Chat defaults to openai-compatible in the mock config.
+      render(AIProviderTab)
+      await ready()
+
+      expect(
+        screen.getByText(/leaves your machine/i)
+      ).toBeInTheDocument()
+    })
   })
 
   describe('API key management', () => {
