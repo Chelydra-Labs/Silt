@@ -479,6 +479,54 @@ describe('AIProviderTab', () => {
         mocks.TestAIConnection
       )
     })
+
+    it('does not probe stale backend state when advanced validation blocks the pre-probe save', async () => {
+      mocks.configState.chat.max_tokens = 0
+      mocks.GetAIProviderConfig.mockResolvedValue(
+        structuredClone(mocks.configState)
+      )
+      render(AIProviderTab)
+      await ready()
+
+      const testButtons = screen.getAllByRole('button', {
+        name: /Test connection/i
+      })
+      await fireEvent.click(testButtons[0]) // chat
+
+      await waitFor(() =>
+        expect(mocks.TestAIConnection).not.toHaveBeenCalled()
+      )
+      expect(
+        await screen.findByText(/Fix invalid advanced settings before testing/i)
+      ).toBeInTheDocument()
+    })
+
+    it('does not probe stale backend state when the pre-probe save fails', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mocks.UpdateAIProviderConfig.mockRejectedValueOnce(new Error('bad base URL'))
+      try {
+        render(AIProviderTab)
+        await ready()
+
+        const testButtons = screen.getAllByRole('button', {
+          name: /Test connection/i
+        })
+        await fireEvent.click(testButtons[0]) // chat
+
+        await waitFor(() =>
+          expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+            'chat',
+            expect.anything()
+          )
+        )
+        expect(mocks.TestAIConnection).not.toHaveBeenCalled()
+        const alert = await screen.findByRole('alert')
+        expect(alert.textContent).toMatch(/Failed to save provider settings/i)
+        expect(alert.textContent).toContain('bad base URL')
+      } finally {
+        consoleSpy.mockRestore()
+      }
+    })
   })
 
   describe('keyring section', () => {

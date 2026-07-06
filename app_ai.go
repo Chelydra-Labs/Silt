@@ -236,9 +236,10 @@ func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 	// Resolve whether a key is present (keyring OR config) with no locks held.
 	chatKey, chatUnavail := a.resolveAIKeyUnlocked(chatUser, useKeyring, chat.APIKey)
 	embKey, embUnavail := a.resolveAIKeyUnlocked(embUser, useKeyring, emb.APIKey)
+	keyringAvailable := a.keyringStore != nil && a.keyringStore.Available()
 	return AIPublicConfig{
 		UseKeyring:         useKeyring,
-		KeyringAvailable:   a.keyringStore != nil,
+		KeyringAvailable:   keyringAvailable,
 		KeyringUnusableFor: aiUnusableList(chatUnavail, embUnavail),
 		Chat: AIPublicProvider{
 			ProviderType:    chat.ProviderType,

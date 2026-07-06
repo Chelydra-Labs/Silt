@@ -244,6 +244,9 @@ func TestGetAIProviderConfig_HasKeySpansKeyringAndConfig(t *testing.T) {
 	if pub.KeyringUnusableFor != nil {
 		t.Errorf("expected no unusability warning with a working keyring, got %v", pub.KeyringUnusableFor)
 	}
+	if !pub.KeyringAvailable {
+		t.Errorf("working fake keyring should report KeyringAvailable=true")
+	}
 }
 
 func TestGetAIProviderConfig_FlagsKeyringUnusable(t *testing.T) {
@@ -259,6 +262,9 @@ func TestGetAIProviderConfig_FlagsKeyringUnusable(t *testing.T) {
 	}
 	if !pub.Chat.HasKey {
 		t.Errorf("Chat.HasKey should still be true via config fallback")
+	}
+	if pub.KeyringAvailable {
+		t.Errorf("unavailable keyring should report KeyringAvailable=false")
 	}
 	// The page uses this to show the "keyring unavailable" warning banner.
 	found := false

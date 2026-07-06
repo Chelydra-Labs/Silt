@@ -29,6 +29,10 @@ var ErrUnavailable = errors.New("keyring: no keyring available on this system")
 // Store is the credential-store contract. Production uses Default(); tests use
 // NewFake().
 type Store interface {
+	// Available reports whether the backing credential store is reachable right
+	// now. Availability can change while the process is running (locked session,
+	// dropped D-Bus), so UI state must not infer this from Store being non-nil.
+	Available() bool
 	// Set stores (or overwrites) a secret for the service+user pair.
 	Set(service, user, secret string) error
 	// Get retrieves a secret. Returns ErrNotFound when none is stored and
@@ -68,6 +72,8 @@ const (
 
 // osStore is the production Store backed by zalando/go-keyring.
 type osStore struct{}
+
+func (osStore) Available() bool { return Available() }
 
 func (osStore) Set(service, user, secret string) error {
 	if err := gokeyring.Set(service, user, secret); err != nil {
@@ -121,6 +127,8 @@ func NewFake() *Fake {
 
 func key(service, user string) string { return service + "\x00" + user }
 
+func (f *Fake) Available() bool { return true }
+
 func (f *Fake) Set(service, user, secret string) error {
 	if f.data == nil {
 		f.data = map[string]string{}
@@ -151,6 +159,7 @@ func (f *Fake) Delete(service, user string) error {
 // the headless-Linux / locked-session fallback path.
 type UnavailableFake struct{}
 
+func (UnavailableFake) Available() bool                    { return false }
 func (UnavailableFake) Set(string, string, string) error   { return ErrUnavailable }
 func (UnavailableFake) Get(string, string) (string, error) { return "", ErrUnavailable }
 func (UnavailableFake) Delete(string, string) error        { return ErrUnavailable }

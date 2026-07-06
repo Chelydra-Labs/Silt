@@ -155,9 +155,16 @@
     return fields.some((f) => advancedFieldError(which, f) !== null)
   }
 
-  function persistProvider(which: Which) {
-    if (!config) return
-    if (hasAdvancedErrors(which)) return // don't persist invalid tuning values
+  type PersistResult = { ok: true } | { ok: false; message: string }
+
+  async function persistProvider(which: Which): Promise<PersistResult> {
+    if (!config) return { ok: false, message: 'AI provider settings are not loaded.' }
+    if (hasAdvancedErrors(which)) {
+      return {
+        ok: false,
+        message: 'Fix invalid advanced settings before testing the connection.'
+      }
+    }
     const b = config[which]
     const patch: main.AIProviderPatch = {
       provider_type: b.provider_type,
@@ -169,9 +176,16 @@
       timeout_ms: b.timeout_ms,
       dimensions: b.dimensions
     }
-    return UpdateAIProviderConfig(which, patch).catch((e) => {
+    try {
+      await UpdateAIProviderConfig(which, patch)
+      return { ok: true }
+    } catch (e) {
       console.error('UpdateAIProviderConfig failed:', e)
-    })
+      return {
+        ok: false,
+        message: `Failed to save provider settings: ${e instanceof Error ? e.message : String(e)}`
+      }
+    }
   }
 
   // Switching provider type snaps base_url to that type's default
@@ -250,7 +264,11 @@
     try {
       // Flush any un-blurred base_url/model edits so the probe tests the values
       // the user sees on screen, not the last-persisted snapshot.
-      await persistProvider(which)
+      const persisted = await persistProvider(which)
+      if (!persisted.ok) {
+        testResult[which] = { ok: false, message: persisted.message }
+        return
+      }
       const result = await TestAIConnection(which)
       testResult[which] = {
         ok: result.ok,
