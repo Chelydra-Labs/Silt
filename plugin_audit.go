@@ -381,16 +381,12 @@ func (w *networkAuditWriterState) process(op *networkAuditOp) {
 // AI calls are proxied through the Go backend for the same reason network
 // fetches are: so the user can see what a plugin is doing without the plugin
 // ever touching credentials. The AI audit mirrors the network audit's shape and
-// guarantees: in-memory, capped at the last 500 entries, and NEVER logs message
-// content or embedding vectors — only the plugin, the call kind (chat/embed),
-// the model, the outcome status, and a token-usage summary. Surfaced in
-// Settings → Plugins alongside the network audit so a user audits AI traffic in
-// the same place.
-//
-// On-disk persistence (mirroring network.log) is intentionally deferred: the
-// network writer's durability machinery is non-trivial, and the acceptance
-// criterion is "uniform audit logging" (visible + bounded), which in-memory
-// satisfies. Persisting ai.log across restarts is a follow-up, not a regression.
+// guarantees: in-memory, capped at the last 500 entries, persisted to a
+// per-plugin ai.log on disk (one JSON object per line, same format as
+// network.log), and NEVER logs message content or embedding vectors — only the
+// plugin, the call kind (chat/embed), the model, the outcome status, and a
+// token-usage summary. Surfaced in Settings → Plugins alongside the network
+// audit so a user audits AI traffic in the same place.
 
 var (
 	aiAuditMu sync.Mutex
@@ -452,6 +448,21 @@ func (a *App) auditAI(pluginID, kind, host, model, status string, usage *ai.AIUs
 	if len(aiAudit) > maxAIAuditEntries {
 		aiAudit = aiAudit[len(aiAudit)-maxAIAuditEntries:]
 	}
+	// Decouple the on-disk write from the lock: enqueue onto the background
+	// writer's channel (non-blocking — the 256-slot buffer handles burst rates
+	// far beyond any plugin's allotment). If the writer is not running, fall
+	// back to inline I/O so behavior is identical for tests that don't start
+	// the writer (#446, mirrors #235).
+	w := currentAIAuditWriter()
+	if w != nil {
+		select {
+		case w.ch <- &aiAuditOp{entry: &entry}:
+		default:
+			log.Printf("auditAI: writer queue full; dropping on-disk write for plugin %q", pluginID)
+		}
+	} else {
+		appendAIAuditLine(a.vaultPath, &entry)
+	}
 	aiAuditMu.Unlock()
 }
 
@@ -464,11 +475,265 @@ func (a *App) GetAIAudit() ([]AIAuditEntry, error) {
 	return out, nil
 }
 
-// ClearAIAudit empties the in-memory AI audit log (#216). Mirrors
-// ClearNetworkAudit's in-memory reset (on-disk AI persistence is deferred).
+// ClearAIAudit empties the in-memory AI audit log AND truncates the on-disk
+// per-plugin ai.log files so a clear is durable across restarts (#446, mirrors
+// ClearNetworkAudit's #157 contract for network.log). When the background
+// writer is running, the on-disk truncation is enqueued and processed in FIFO
+// order with concurrent auditAI appends so a fetch that fires after the clear
+// click cannot interleave a line into a file we just emptied. When the writer
+// is not running (tests, pre-initialize), the truncation runs inline.
 func (a *App) ClearAIAudit() error {
 	aiAuditMu.Lock()
 	aiAudit = nil
+	w := currentAIAuditWriter()
+	if w == nil {
+		// Writer not running: truncate inline.
+		clearAIAuditFiles(a.vaultPath)
+		aiAuditMu.Unlock()
+		return nil
+	}
+	// The clear op MUST be enqueued while holding aiAuditMu so it is ordered
+	// relative to concurrent auditAI appends. Both producers send on w.ch
+	// under this lock; without it, a concurrent auditAI could enqueue its
+	// entry AFTER our aiAudit = nil but BEFORE our clear op, causing the
+	// writer to append-then-truncate (deleting a post-clear entry from disk —
+	// a restart-persistence regression). The blocking send is safe: the
+	// 256-slot buffer makes it non-blocking in practice (would need >5000 RPS
+	// to fill), and in the degraded case (writer stuck on slow I/O), blocking
+	// is correct backpressure. The wait on op.done happens OUTSIDE the lock
+	// so concurrent fetches can keep appending to the in-memory slice while
+	// the writer truncates.
+	op := &aiAuditOp{clear: true, done: make(chan struct{})}
+	w.ch <- op
 	aiAuditMu.Unlock()
+	<-op.done
 	return nil
+}
+
+// appendAIAuditLine writes one entry to the per-plugin on-disk ai.log file.
+// Mirrors appendNetworkAuditLine; the I/O is identical. Best-effort — errors
+// are logged, never surfaced (the audit log is diagnostic).
+//
+// Concurrency: NOT goroutine-safe — callers must serialize. In production the
+// background writer goroutine (aiAuditWriterState.process) is the sole caller;
+// in the inline fallback path (tests, pre-init) auditAI holds aiAuditMu.
+//
+// The on-disk format is a single-line JSON object per entry (one json.Marshal
+// + trailing newline), matching network.log so the same tooling (jq, SIEM
+// ingest) parses both. Size-capped via the path-parametric truncateNetworkLog
+// (reused — there is no AI-specific truncate).
+func appendAIAuditLine(vaultPath string, entry *AIAuditEntry) {
+	if vaultPath == "" {
+		return
+	}
+	logPath := filepath.Join(vaultPath, ".system", "plugins", entry.Plugin, "ai.log")
+	data, err := json.Marshal(entry)
+	if err != nil {
+		log.Printf("appendAIAuditLine: json.Marshal failed: %v", err)
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(logPath), 0o700)
+	if info, err := os.Stat(logPath); err == nil && info.Size() > maxPluginNetworkLogBytes {
+		truncateNetworkLog(logPath, maxPluginNetworkLogLines)
+	}
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err == nil {
+		_, _ = f.Write(append(data, '\n'))
+		_ = f.Close()
+	}
+}
+
+// clearAIAuditFiles empties every per-plugin on-disk ai.log under the vault's
+// .system/plugins/ tree. Mirrors clearNetworkAuditFiles; best-effort (errors
+// silently ignored).
+func clearAIAuditFiles(vaultPath string) {
+	if vaultPath == "" {
+		return
+	}
+	pluginsDir := filepath.Join(vaultPath, ".system", "plugins")
+	entries, err := os.ReadDir(pluginsDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		logPath := filepath.Join(pluginsDir, e.Name(), "ai.log")
+		if _, err := os.Stat(logPath); err == nil {
+			_ = os.WriteFile(logPath, []byte{}, 0o600)
+		}
+	}
+}
+
+// parseAILogLine parses one JSON-format line from an ai.log file into an
+// AIAuditEntry. Mirrors parseNetworkLogLine. Returns ok=false on any parse
+// failure (best-effort).
+func parseAILogLine(line string) (AIAuditEntry, bool) {
+	var entry AIAuditEntry
+	if err := json.Unmarshal([]byte(line), &entry); err == nil && entry.At != "" {
+		return entry, true
+	}
+	return AIAuditEntry{}, false
+}
+
+// seedAIAuditFromDisk reads every on-disk ai.log file under the vault's
+// .system/plugins/ tree and seeds the in-memory AI audit log so entries survive
+// a restart (#446). Mirrors seedNetworkAuditFromDisk. Called once during
+// initializeVaultServices. The on-disk format is one JSON object per line. The
+// in-memory log is capped at 500 entries (most recent).
+func seedAIAuditFromDisk(vaultPath string) {
+	if vaultPath == "" {
+		return
+	}
+	pluginsDir := filepath.Join(vaultPath, ".system", "plugins")
+	entries, err := os.ReadDir(pluginsDir)
+	if err != nil {
+		return
+	}
+	var seeded []AIAuditEntry
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		logPath := filepath.Join(pluginsDir, e.Name(), "ai.log")
+		data, err := os.ReadFile(logPath)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+		for _, line := range lines {
+			entry, ok := parseAILogLine(line)
+			if ok {
+				seeded = append(seeded, entry)
+			}
+		}
+	}
+	// Sort by timestamp (oldest first) so we can trim to the last 500.
+	sort.Slice(seeded, func(i, j int) bool {
+		return seeded[i].At < seeded[j].At
+	})
+	if len(seeded) > 500 {
+		seeded = seeded[len(seeded)-500:]
+	}
+	aiAuditMu.Lock()
+	// Only seed if the in-memory log is empty (don't overwrite entries that
+	// may have been added between vault open and this call).
+	if len(aiAudit) == 0 {
+		aiAudit = seeded
+	}
+	aiAuditMu.Unlock()
+}
+
+// --- Background AI audit-log writer (#446) --------------------------------
+//
+// The writer drains on-disk AI audit writes off the aiAuditMu lock so
+// concurrent auditAI calls don't serialize on per-plugin file I/O. A single
+// goroutine processes the channel in FIFO order, preserving the "no
+// interleaved line in a file we just emptied" invariant ClearAIAudit relies
+// on. Mirrors the network writer (#235) exactly.
+
+// aiAuditOp is one operation queued to the background writer.
+type aiAuditOp struct {
+	entry *AIAuditEntry // non-nil = append to on-disk log
+	clear bool          // true = truncate on-disk logs
+	done  chan struct{} // optional: closed when this op is fully processed
+}
+
+// aiAuditWriterState is the background writer's mutable state. It is non-nil
+// while the writer goroutine is running.
+type aiAuditWriterState struct {
+	ch        chan *aiAuditOp
+	stop      chan struct{}
+	done      chan struct{} // closed when the goroutine has exited
+	vaultPath string
+}
+
+var (
+	aiAuditWriterMu sync.Mutex // guards aiAuditWriter
+	aiAuditWriter   *aiAuditWriterState
+)
+
+// currentAIAuditWriter returns the active writer state, or nil if the writer
+// is not running. Thread-safe; callers may use the returned pointer without
+// holding aiAuditWriterMu (the state struct is never mutated after creation;
+// only the package-level pointer is swapped).
+func currentAIAuditWriter() *aiAuditWriterState {
+	aiAuditWriterMu.Lock()
+	defer aiAuditWriterMu.Unlock()
+	return aiAuditWriter
+}
+
+// startAIAuditWriter launches the background AI audit-log writer goroutine for
+// the given vault. Idempotent — a second call while the writer is running is a
+// no-op. Mirrors startNetworkAuditWriter.
+func startAIAuditWriter(vaultPath string) {
+	aiAuditWriterMu.Lock()
+	defer aiAuditWriterMu.Unlock()
+	if aiAuditWriter != nil {
+		return
+	}
+	w := &aiAuditWriterState{
+		ch:        make(chan *aiAuditOp, 256),
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
+		vaultPath: vaultPath,
+	}
+	aiAuditWriter = w
+	go w.run()
+}
+
+// stopAIAuditWriter signals the writer to drain remaining ops and exit, then
+// blocks until the goroutine is done. Idempotent. Guarantees no queued entry
+// is lost on vault close (#446 persistent-audit contract). Mirrors
+// stopNetworkAuditWriter.
+func stopAIAuditWriter() {
+	aiAuditWriterMu.Lock()
+	w := aiAuditWriter
+	if w == nil {
+		aiAuditWriterMu.Unlock()
+		return
+	}
+	aiAuditWriter = nil
+	aiAuditWriterMu.Unlock()
+	close(w.stop)
+	<-w.done
+}
+
+// run is the writer goroutine body. It processes ops in FIFO order until stop
+// is closed, then drains every remaining queued op before exiting so no entry
+// is lost on shutdown.
+func (w *aiAuditWriterState) run() {
+	defer close(w.done)
+	for {
+		select {
+		case op := <-w.ch:
+			w.process(op)
+		case <-w.stop:
+			// Drain every queued op before exiting so no entry is lost.
+			for {
+				select {
+				case op := <-w.ch:
+					w.process(op)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+// process handles one op. Entry appends to the per-plugin on-disk ai.log;
+// clear empties every on-disk ai.log. If done is non-nil it is closed after
+// the op completes so the caller (ClearAIAudit) can synchronize.
+func (w *aiAuditWriterState) process(op *aiAuditOp) {
+	if op.entry != nil {
+		appendAIAuditLine(w.vaultPath, op.entry)
+	}
+	if op.clear {
+		clearAIAuditFiles(w.vaultPath)
+	}
+	if op.done != nil {
+		close(op.done)
+	}
 }

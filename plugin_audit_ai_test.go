@@ -1,0 +1,363 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"silt/backend/ai"
+)
+
+// resetAIAuditState clears the package-level in-memory log + writer so tests
+// don't leak state into each other. Tests that start the writer register their
+// own stop via t.Cleanup; this nils the pointer after, so the next test gets
+// the inline-fallback path until it explicitly starts a writer.
+func resetAIAuditState(t *testing.T) {
+	t.Helper()
+	aiAuditMu.Lock()
+	aiAudit = nil
+	aiAuditMu.Unlock()
+	aiAuditWriterMu.Lock()
+	aiAuditWriter = nil
+	aiAuditWriterMu.Unlock()
+}
+
+// withAIAuditWriter starts the background writer for app.vaultPath and stops
+// it (draining) on test cleanup. Mirrors withNetworkAuditWriter.
+func withAIAuditWriter(t *testing.T, app *App) {
+	t.Helper()
+	startAIAuditWriter(app.vaultPath)
+	t.Cleanup(stopAIAuditWriter)
+}
+
+// syncAIAuditWriter enqueues a no-op done op on the writer's channel and waits
+// for it to be processed, so a test can deterministically observe that every
+// prior auditAI call has landed on disk before stopping the writer.
+func syncAIAuditWriter(t *testing.T, w *aiAuditWriterState) {
+	t.Helper()
+	if w == nil {
+		t.Fatal("syncAIAuditWriter: writer is nil")
+	}
+	op := &aiAuditOp{done: make(chan struct{})}
+	w.ch <- op
+	<-op.done
+}
+
+// TestSeedAIAuditFromDisk writes 2 ai.log files under a temp vault with
+// JSON-line AIAuditEntry records and asserts seedAIAuditFromDisk loads them
+// sorted by At.
+func TestSeedAIAuditFromDisk(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	// Two plugins, two ai.log files, entries with out-of-order timestamps
+	// across files so we exercise the cross-plugin sort-by-At.
+	mustWriteAILog := func(plugin, content string) {
+		t.Helper()
+		dir := filepath.Join(app.vaultPath, ".system", "plugins", plugin)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "ai.log"), []byte(content), 0o644); err != nil {
+			t.Fatalf("write ai.log: %v", err)
+		}
+	}
+	mustWriteAILog("p1",
+		`{"plugin":"p1","kind":"chat","host":"api.one.com/v1","model":"m","status":"ok","at":"2026-07-06T10:01:00Z"}`+"\n")
+	mustWriteAILog("p2",
+		`{"plugin":"p2","kind":"embed","host":"api.two.com/v1","model":"e","status":"ok","at":"2026-07-06T10:00:00Z"}`+"\n")
+
+	seedAIAuditFromDisk(app.vaultPath)
+
+	entries, err := app.GetAIAudit()
+	if err != nil {
+		t.Fatalf("GetAIAudit: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 seeded entries, got %d", len(entries))
+	}
+	// Sorted by At ascending: p2 (10:00) before p1 (10:01).
+	if entries[0].Plugin != "p2" || entries[1].Plugin != "p1" {
+		t.Errorf("seeded order = %q then %q; want p2 (older At) before p1", entries[0].Plugin, entries[1].Plugin)
+	}
+}
+
+// TestSeedAIAuditFromDisk_DoesNotClobber asserts the seed only assigns when
+// the in-memory log is empty (mirrors the network seed guard).
+func TestSeedAIAuditFromDisk_DoesNotClobber(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	// Pre-populate in-memory with one entry under the mutex.
+	aiAuditMu.Lock()
+	aiAudit = []AIAuditEntry{{Plugin: "pre-existing", Kind: "chat", At: "2026-07-06T09:00:00Z"}}
+	aiAuditMu.Unlock()
+
+	// Write a disk ai.log that would otherwise seed.
+	dir := filepath.Join(app.vaultPath, ".system", "plugins", "fromdisk")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ai.log"),
+		[]byte(`{"plugin":"fromdisk","kind":"chat","at":"2026-07-06T10:00:00Z"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	seedAIAuditFromDisk(app.vaultPath)
+
+	entries, _ := app.GetAIAudit()
+	if len(entries) != 1 || entries[0].Plugin != "pre-existing" {
+		t.Errorf("seed clobbered pre-existing in-memory entries; got %+v", entries)
+	}
+}
+
+// TestStartAIAuditWriter_Idempotent mirrors TestAuditWriter_IdempotentStartStop:
+// double-start is a no-op, double-stop is safe, start-stop-start runs again.
+func TestStartAIAuditWriter_Idempotent(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	startAIAuditWriter(app.vaultPath)
+	startAIAuditWriter(app.vaultPath) // second is a no-op
+	stopAIAuditWriter()
+	stopAIAuditWriter()               // double-stop must not panic or block
+	startAIAuditWriter(app.vaultPath) // restart works
+	stopAIAuditWriter()
+}
+
+// TestAuditAI_WriterDrainsToDisk asserts an auditAI call with the writer
+// running produces a JSON-line entry on disk after the writer is stopped.
+func TestAuditAI_WriterDrainsToDisk(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	startAIAuditWriter(app.vaultPath)
+	app.auditAI("writer-drain", "chat", "https://api.example.com/v1/chat", "gpt-x", "ok", nil)
+	stopAIAuditWriter() // blocks until the queued op is processed
+
+	logPath := filepath.Join(app.vaultPath, ".system", "plugins", "writer-drain", "ai.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read ai.log: %v", err)
+	}
+	if !strings.Contains(string(data), `"plugin":"writer-drain"`) {
+		t.Errorf("ai.log missing plugin entry; got %q", string(data))
+	}
+	if !strings.Contains(string(data), `"kind":"chat"`) {
+		t.Errorf("ai.log missing kind=chat; got %q", string(data))
+	}
+	if !strings.HasSuffix(string(data), "\n") {
+		t.Errorf("ai.log not newline-terminated; got %q", string(data))
+	}
+}
+
+// TestAuditAI_InlineFallbackWithoutWriter asserts that without the writer
+// (pre-init / test path), auditAI writes the entry inline.
+func TestAuditAI_InlineFallbackWithoutWriter(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+	// Deliberately do NOT start the writer — exercises the inline fallback.
+
+	app.auditAI("inline-fallback", "embed", "https://api.example.com/v1/embeddings", "embed-3", "ok", nil)
+
+	logPath := filepath.Join(app.vaultPath, ".system", "plugins", "inline-fallback", "ai.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read ai.log: %v", err)
+	}
+	if !strings.Contains(string(data), `"plugin":"inline-fallback"`) {
+		t.Errorf("inline ai.log missing entry; got %q", string(data))
+	}
+	if !strings.Contains(string(data), `"kind":"embed"`) {
+		t.Errorf("inline ai.log missing kind=embed; got %q", string(data))
+	}
+}
+
+// TestClearAIAudit_DurableClearWithWriter asserts ClearAIAudit empties BOTH
+// in-memory state AND on-disk ai.log files when the writer is running.
+func TestClearAIAudit_DurableClearWithWriter(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	startAIAuditWriter(app.vaultPath)
+	app.auditAI("clear-dur", "chat", "https://api.example.com/v1/chat", "gpt-x", "ok", nil)
+	// Wait for the audit to land on disk before issuing the clear.
+	syncAIAuditWriter(t, currentAIAuditWriter())
+
+	if err := app.ClearAIAudit(); err != nil {
+		t.Fatalf("ClearAIAudit: %v", err)
+	}
+	stopAIAuditWriter()
+
+	logPath := filepath.Join(app.vaultPath, ".system", "plugins", "clear-dur", "ai.log")
+	data, _ := os.ReadFile(logPath)
+	if len(data) != 0 {
+		t.Errorf("on-disk ai.log should be empty after ClearAIAudit, got %q", string(data))
+	}
+	entries, _ := app.GetAIAudit()
+	if len(entries) != 0 {
+		t.Errorf("in-memory audit should be empty after ClearAIAudit, got %d entries", len(entries))
+	}
+}
+
+// TestClearAIAudit_InlineClearWithoutWriter mirrors
+// TestClearNetworkAudit_TruncatesOnDiskFiles: without the writer the clear
+// runs inline and truncates the on-disk file.
+func TestClearAIAudit_InlineClearWithoutWriter(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+	// No writer — clear must run inline.
+
+	dir := filepath.Join(app.vaultPath, ".system", "plugins", "clear-inline")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	logPath := filepath.Join(dir, "ai.log")
+	if err := os.WriteFile(logPath,
+		[]byte(`{"plugin":"clear-inline","kind":"chat","at":"2026-07-06T10:00:00Z"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := app.ClearAIAudit(); err != nil {
+		t.Fatalf("ClearAIAudit: %v", err)
+	}
+
+	data, _ := os.ReadFile(logPath)
+	if len(data) != 0 {
+		t.Errorf("on-disk ai.log should be empty after inline ClearAIAudit, got %q", string(data))
+	}
+}
+
+// TestStopAIAuditWriter_DrainsQueuedOps mirrors TestAuditWriter_DrainsOnShutdown:
+// the writer MUST process every queued op before exiting so no audit data is
+// lost on vault close.
+func TestStopAIAuditWriter_DrainsQueuedOps(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	startAIAuditWriter(app.vaultPath)
+	const n = 50
+	for i := 0; i < n; i++ {
+		app.auditAI("ai-drain", "chat",
+			fmt.Sprintf("https://api.example.com/v1/chat/%d", i), "gpt-x", "ok", nil)
+	}
+	// A final clear op: must run as part of the drain (no-loss shutdown).
+	if err := app.ClearAIAudit(); err != nil {
+		t.Fatalf("ClearAIAudit: %v", err)
+	}
+	stopAIAuditWriter()
+
+	// After the drain + clear, the on-disk ai.log must be empty (the queued
+	// entries landed, then the clear truncated them).
+	logPath := filepath.Join(app.vaultPath, ".system", "plugins", "ai-drain", "ai.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read ai.log: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("ai.log should be empty after drain+clear, got %q (drain dropped ops OR clear did not run)", string(data))
+	}
+}
+
+// TestAuditAI_UsageFieldsPreservedOnDisk asserts token-usage fields survive
+// the JSON round-trip onto disk.
+func TestAuditAI_UsageFieldsPreservedOnDisk(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	prompt, completion, total := 42, 7, 49
+	usage := &ai.AIUsage{PromptTokens: &prompt, CompletionTokens: &completion, TotalTokens: &total}
+	app.auditAI("usage-plugin", "chat", "https://api.example.com/v1/chat", "gpt-x", "ok", usage)
+
+	logPath := filepath.Join(app.vaultPath, ".system", "plugins", "usage-plugin", "ai.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read ai.log: %v", err)
+	}
+	s := string(data)
+	for _, want := range []string{
+		`"prompt_tokens":42`,
+		`"completion_tokens":7`,
+		`"total_tokens":49`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("ai.log missing %s; got %q", want, s)
+		}
+	}
+}
+
+// TestAIAudit_SizeCapTruncation mirrors TestAuditWriter_TruncatesOversizedLog:
+// when an ai.log exceeds the 1 MB cap, the next append truncates it to the last
+// maxPluginNetworkLogLines (200) lines.
+func TestAIAudit_SizeCapTruncation(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+	pluginID := "ai-trunc"
+	dir := filepath.Join(app.vaultPath, ".system", "plugins", pluginID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	logPath := filepath.Join(dir, "ai.log")
+
+	// Pre-write an ai.log over the 1 MB threshold so the next append triggers
+	// truncation. ~20000 JSON lines × ~60 bytes ≈ 1.2 MB.
+	var sb strings.Builder
+	for i := 0; i < 20000; i++ {
+		// Each line is a valid AIAuditEntry so a future seed would parse it.
+		fmt.Fprintf(&sb, `{"plugin":"ai-trunc","kind":"chat","host":"api.example.com/v1","model":"old","status":"ok","at":"2026-07-06T10:00:%02dZ"}`+"\n", i%60)
+	}
+	if err := os.WriteFile(logPath, []byte(sb.String()), 0o644); err != nil {
+		t.Fatalf("write oversized ai.log: %v", err)
+	}
+
+	// Inline path (no writer) so truncation happens synchronously inside
+	// appendAIAuditLine before we read the file back.
+	app.auditAI(pluginID, "chat", "https://api.example.com/v1/chat", "trigger", "ok", nil)
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read ai.log: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	// Truncation keeps the last 200 lines, then the trigger append adds 1.
+	if len(lines) > maxPluginNetworkLogLines+1 {
+		t.Errorf("ai.log has %d lines after truncation, want ≤ %d (200 kept + 1 trigger)",
+			len(lines), maxPluginNetworkLogLines+1)
+	}
+	// The trigger entry (most recent) must be present.
+	if !strings.Contains(string(data), `"model":"trigger"`) {
+		t.Errorf("trigger entry missing after truncation:\n%s", string(data))
+	}
+}
+
+// TestAuditAI_ConcurrentAppendsNoSerialize is a smoke test mirroring
+// TestAuditNetwork_ConcurrentFetchDoesNotSerialize: concurrent auditAI calls
+// with the writer running must all land in-memory (the synchronous part) and
+// on disk after stop (the drained part).
+func TestAuditAI_ConcurrentAppendsNoSerialize(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	startAIAuditWriter(app.vaultPath)
+	const n = 64
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			app.auditAI(fmt.Sprintf("async-%d", i), "chat",
+				fmt.Sprintf("https://api.example.com/v1/%d", i), "gpt-x", "ok", nil)
+		}(i)
+	}
+	wg.Wait()
+	stopAIAuditWriter()
+
+	// All N entries must land in-memory.
+	entries, _ := app.GetAIAudit()
+	if len(entries) != n {
+		t.Errorf("in-memory AI audit has %d entries, want %d", len(entries), n)
+	}
+}
