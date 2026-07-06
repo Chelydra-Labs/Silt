@@ -16,6 +16,7 @@ import (
 	"silt/backend/config"
 	"silt/backend/core"
 	"silt/backend/db"
+	"silt/backend/keyring"
 	"silt/backend/monitor"
 	"silt/backend/parser"
 	"silt/backend/templates"
@@ -52,6 +53,21 @@ type App struct {
 	// startup load runs before the frontend subscribes to config:error, so
 	// that event is typically lost; GetConfigLoadError surfaces this one-shot.
 	configLoadErr error
+
+	// keyringStore stores AI provider API keys off plaintext config.yaml
+	// (#218). nil in tests (so the AI bindings fall back to config); set to
+	// keyring.Default() in production at startup. Whether the OS keyring is
+	// actually reachable is discovered at call time (a session can lock, a
+	// D-Bus can drop), so callers fall back to config + a warning on
+	// ErrUnavailable rather than failing the AI subsystem.
+	keyringStore keyring.Store
+
+	// aiCtx is the app-lifecycle context for AI HTTP calls. Cancelled in
+	// shutdown() so in-flight completions/embeddings are cancelled on app
+	// exit instead of running to their 60s timeout. nil in tests (the
+	// aiContext() helper falls back to context.Background()).
+	aiCtx       context.Context
+	aiCtxCancel context.CancelFunc
 
 	// grants is the per-host plugin capability grant table (F4). It lives in
 	// <configDir>/silt/grants.json (NOT in vault-scoped config.yaml) so a
@@ -167,11 +183,18 @@ func NewApp() *App {
 		spacesPerTab:   4,
 		rateLimiter:    newPluginRateLimiter(),
 		pluginSessions: make(map[string]string),
+		// keyringStore is the OS credential store for AI provider keys (#218).
+		// Tests leave this nil (so the AI bindings fall back to config.yaml);
+		// production wires the real OS-backed store. Reachability is probed at
+		// call time, not here — a keyring can be present at build/init yet
+		// unavailable at runtime (locked GNOME session, dropped D-Bus).
+		keyringStore: keyring.Default(),
 	}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.aiCtx, a.aiCtxCancel = context.WithCancel(context.Background())
 	settings, err := vault.LoadSettings()
 	if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 		// The settings file exists on disk but is unreadable or
@@ -292,6 +315,10 @@ func (a *App) DeclineGrantsMigration() error {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	// Cancel in-flight AI HTTP calls so they don't outlive the process.
+	if a.aiCtxCancel != nil {
+		a.aiCtxCancel()
+	}
 	// Emit vault:closing so the frontend plugin loader runs every plugin's
 	// onVaultClose/onShutdown hook (#106) before IPC tears down. Best-effort:
 	// a nil ctx (headless test) skips the emit.
@@ -463,6 +490,13 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			runtime.EventsEmit(a.ctx, "grants:migration-required", legacy)
 		}
 	}
+
+	// #218: move any plaintext AI provider keys into the OS keyring on first
+	// run after upgrade. Best-effort + idempotent — if the keyring is off or
+	// unavailable, plaintext keys are left in config (the documented fallback).
+	// Runs AFTER applyConfigLocked so a.cfg is populated, and performs no
+	// keyring I/O under the locks.
+	a.migrateAIKeysToKeyring()
 
 	// F3: verify linked-notebook fingerprints before the vault scan. Legacy
 	// links (pre-F3, no fingerprint) get one assigned silently; mismatched

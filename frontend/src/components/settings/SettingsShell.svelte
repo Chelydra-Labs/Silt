@@ -4,6 +4,7 @@
   import EditorTab from './EditorTab.svelte'
   import HotkeysTab from './HotkeysTab.svelte'
   import AppearanceTab from './AppearanceTab.svelte'
+  import AIProviderTab from './AIProviderTab.svelte'
   import AboutTab from './AboutTab.svelte'
   import PluginsTab from './PluginsTab.svelte'
   import DevTab from './DevTab.svelte'
@@ -86,6 +87,7 @@
     { id: 'workspace', label: 'Workspace', icon: 'folder' },
     { id: 'editor', label: 'Editor', icon: 'edit_note' },
     { id: 'appearance', label: 'Appearance', icon: 'palette' },
+    { id: 'ai', label: 'AI Provider', icon: 'smart_toy' },
     { id: 'hotkeys', label: 'Hotkeys', icon: 'keyboard' },
     { id: 'plugins', label: 'Plugins', icon: 'extension' },
     ...pluginSettingsTabs.map((t) => ({
@@ -299,12 +301,15 @@
         aria-labelledby="silt-settings-tab-{activeTab}"
         tabindex="0"
         class="flex-1 min-h-0 focus:outline-none"
-        class:overflow-y-auto={['appearance', 'plugins', 'about'].includes(
+        class:overflow-y-auto={['appearance', 'ai', 'plugins', 'about'].includes(
           activeTab
         ) || activeTab.startsWith('plugin:')}
-        class:custom-scrollbar={['appearance', 'plugins', 'about'].includes(
-          activeTab
-        ) || activeTab.startsWith('plugin:')}
+        class:custom-scrollbar={[
+          'appearance',
+          'ai',
+          'plugins',
+          'about'
+        ].includes(activeTab) || activeTab.startsWith('plugin:')}
         class:flex={['workspace', 'editor', 'hotkeys'].includes(activeTab)}
         class:flex-col={['workspace', 'editor', 'hotkeys'].includes(activeTab)}
         class:overflow-hidden={['workspace', 'editor', 'hotkeys'].includes(
@@ -330,6 +335,8 @@
           <EditorTab />
         {:else if activeTab === 'appearance'}
           <AppearanceTab />
+        {:else if activeTab === 'ai'}
+          <AIProviderTab />
         {:else if activeTab === 'hotkeys'}
           <HotkeysTab />
         {:else if activeTab === 'plugins'}

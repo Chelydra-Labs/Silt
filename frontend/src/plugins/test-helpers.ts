@@ -62,6 +62,7 @@ export const v2CtxStubs: Pick<
   | 'openAttachment'
   | 'deleteAttachment'
   | 'pluginDb'
+  | 'ai'
   | 'vaultScratchDir'
   | 'resolveAsset'
   | 'readPluginAsset'
@@ -127,6 +128,12 @@ export const v2CtxStubs: Pick<
     exec: () => Promise.resolve(),
     query: () => Promise.resolve({ rows: [], truncated: false }),
     migrate: () => Promise.resolve()
+  },
+  ai: {
+    complete: () =>
+      Promise.resolve({ content: '', model: '', usage: undefined }),
+    embed: () =>
+      Promise.resolve({ embeddings: [], model: '', dimensions: 0, usage: undefined })
   },
   vaultScratchDir: () => Promise.resolve(''),
   resolveAsset: () => Promise.resolve(''),

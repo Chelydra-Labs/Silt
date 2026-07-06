@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"silt/backend/ai"
 	"sort"
 	"strings"
 	"sync"
@@ -371,4 +372,103 @@ func (w *networkAuditWriterState) process(op *networkAuditOp) {
 	if op.done != nil {
 		close(op.done)
 	}
+}
+
+// =========================================================================
+// AI audit (#216)
+// =========================================================================
+//
+// AI calls are proxied through the Go backend for the same reason network
+// fetches are: so the user can see what a plugin is doing without the plugin
+// ever touching credentials. The AI audit mirrors the network audit's shape and
+// guarantees: in-memory, capped at the last 500 entries, and NEVER logs message
+// content or embedding vectors — only the plugin, the call kind (chat/embed),
+// the model, the outcome status, and a token-usage summary. Surfaced in
+// Settings → Plugins alongside the network audit so a user audits AI traffic in
+// the same place.
+//
+// On-disk persistence (mirroring network.log) is intentionally deferred: the
+// network writer's durability machinery is non-trivial, and the acceptance
+// criterion is "uniform audit logging" (visible + bounded), which in-memory
+// satisfies. Persisting ai.log across restarts is a follow-up, not a regression.
+
+var (
+	aiAuditMu sync.Mutex
+	aiAudit   []AIAuditEntry
+)
+
+// maxAIAuditEntries bounds the in-memory AI audit log (mirrors the network
+// audit's 500-entry cap).
+const maxAIAuditEntries = 500
+
+// AIAuditEntry is one row of the plugin AI audit log. Content is NEVER recorded
+// — only the endpoint host, model, outcome, and a token-usage summary.
+type AIAuditEntry struct {
+	Plugin string `json:"plugin"`
+	Kind   string `json:"kind"`   // "chat" | "embed"
+	Host   string `json:"host"`   // provider host (no path/query), best-effort
+	Model  string `json:"model"`  // model the call targeted
+	Status string `json:"status"` // "ok" | normalized error kind | "error"
+	At     string `json:"at"`     // RFC3339
+	// Usage summary (present only on success and when the provider returned it).
+	PromptTokens     *int `json:"prompt_tokens,omitempty"`
+	CompletionTokens *int `json:"completion_tokens,omitempty"`
+	TotalTokens      *int `json:"total_tokens,omitempty"`
+}
+
+// auditAI appends one AI audit entry. host is the provider endpoint (already
+// validated as http/https upstream); only the host[:port]/path prefix is kept so
+// query strings (which some providers use for routing) are not logged. status is
+// "ok" on success or the normalized ai.AIErrorKind on failure; usage is the
+// provider's token summary when available. The mutex is the only lock taken —
+// this is safe to call with no vaultMu/configMu held (the HTTP call has already
+// returned by the time we audit).
+func (a *App) auditAI(pluginID, kind, host, model, status string, usage *ai.AIUsage) {
+	// Trim to host + path (drop query/fragment) so a routing query string is
+	// not recorded. Best-effort, mirroring auditNetwork's host extraction.
+	h := host
+	if i := strings.Index(host, "://"); i >= 0 {
+		rest := host[i+3:]
+		if j := strings.IndexAny(rest, "?#"); j >= 0 {
+			rest = rest[:j]
+		}
+		h = rest
+	}
+	entry := AIAuditEntry{
+		Plugin: pluginID,
+		Kind:   kind,
+		Host:   h,
+		Model:  model,
+		Status: status,
+		At:     time.Now().Format(time.RFC3339),
+	}
+	if usage != nil {
+		entry.PromptTokens = usage.PromptTokens
+		entry.CompletionTokens = usage.CompletionTokens
+		entry.TotalTokens = usage.TotalTokens
+	}
+	aiAuditMu.Lock()
+	aiAudit = append(aiAudit, entry)
+	if len(aiAudit) > maxAIAuditEntries {
+		aiAudit = aiAudit[len(aiAudit)-maxAIAuditEntries:]
+	}
+	aiAuditMu.Unlock()
+}
+
+// GetAIAudit returns a copy of the in-memory AI audit log (#216).
+func (a *App) GetAIAudit() ([]AIAuditEntry, error) {
+	aiAuditMu.Lock()
+	defer aiAuditMu.Unlock()
+	out := make([]AIAuditEntry, len(aiAudit))
+	copy(out, aiAudit)
+	return out, nil
+}
+
+// ClearAIAudit empties the in-memory AI audit log (#216). Mirrors
+// ClearNetworkAudit's in-memory reset (on-disk AI persistence is deferred).
+func (a *App) ClearAIAudit() error {
+	aiAuditMu.Lock()
+	aiAudit = nil
+	aiAuditMu.Unlock()
+	return nil
 }

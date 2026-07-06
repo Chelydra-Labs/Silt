@@ -335,8 +335,8 @@ Plugins that need privileged access declare `capabilities` in the manifest:
 ```
 
 Recognized capabilities: `read-files`, `write-files`, `network`, `os-open`,
-`os-clipboard`, `os-notify`, `ui-surface`, `editor-schema`. (`exec` is
-intentionally deferred.)
+`os-clipboard`, `os-notify`, `ui-surface`, `editor-schema`, `content-mutate`,
+`plugin-db`, `ai`. (`exec` is intentionally deferred.)
 
 > **os-notify limits:** `ctx.notify` caps `title` to 256 characters and `body`
 > to 1024 characters at the binding entry point. Overflow is truncated with a
@@ -763,4 +763,75 @@ are announced; the close button has an accessible name derived from the banner
 label (`aria-label="Dismiss <label>"`). Banner content that is an alert rather
 than a status should set `role="alert"` inside the surface HTML for an
 assertive announcement.
+
+### 8.14 AI — chat completions & embeddings (#216)
+
+Plugins that need AI call the **user-configured** model server through
+`ctx.ai`. Silt routes the request to the provider the user set up in
+**Settings → AI Provider** (see `docs/BRING_YOUR_OWN_MODEL.md`); the plugin
+never sees the endpoint URL, model name, or API key.
+
+Gated by the `ai` capability. Declare it in the manifest:
+
+```json
+{
+  "id": "my-summarizer",
+  "capabilities": { "ai": true }
+}
+```
+
+#### Chat completions
+
+```ts
+const res = await ctx.ai.complete({
+  messages: [
+    { role: 'system', content: 'Summarize the user note in one sentence.' },
+    { role: 'user', content: noteText }
+  ],
+  temperature: 0.3
+})
+console.log(res.content) // the generated text
+console.log(res.model)   // which model actually answered
+console.log(res.usage)   // { prompt_tokens, completion_tokens, total_tokens }
+```
+
+`messages` follows the OpenAI chat format (`role` ∈ `system` / `user` /
+`assistant`). Optional fields: `model` (override the user's configured chat
+model — use sparingly), `temperature`, `maxTokens`, `reasoningEffort`
+(`'none'`/`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'` — controls
+thinking on reasoning-capable models; not all providers support every value),
+`stream` (reserved; streaming is not yet wired through the bridge). Per-call
+overrides are merged over the user's provider config.
+
+#### Embeddings
+
+```ts
+const res = await ctx.ai.embed({
+  texts: ['First passage.', 'Second passage.']
+})
+// res.embeddings: number[][]  — one vector per input text
+// res.dimensions: number      — vector width (matches the model)
+console.log(`${res.embeddings.length} vectors of dim ${res.dimensions}`)
+```
+
+Batch multiple texts in one call — it's cheaper than looping. The returned
+vectors pair naturally with the `sqlite-vec` index in the per-plugin SQLite
+store (§8.11) for semantic search or dedup.
+
+#### What the plugin does NOT control
+
+- **The endpoint.** The user picks local (Ollama) or cloud (OpenAI-compatible).
+  Your code is identical either way.
+- **The API key.** Stored in the OS keyring; never exposed to plugins.
+- **Rate limits / timeouts.** Enforced server-side; a slow or failing endpoint
+  surfaces as a rejected promise with the server's error message.
+
+#### Error handling
+
+A denied capability grant throws a `CapabilityDeniedError` (same shape as the
+other v2 capabilities). A provider misconfiguration (no key set, unreachable
+server, wrong model name) throws an `AIError` whose `message` carries the
+server's response — surface it to the user so they can fix their AI Provider
+settings. Every call is audit-logged (Settings → AI Provider → Recent AI
+activity).
 

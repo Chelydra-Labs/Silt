@@ -24,13 +24,89 @@ const maxConfigYAMLBytes int64 = 256 << 10 // 256 KB
 // SystemConfig is the parsed contents of <vault>/.system/config.yaml. It
 // mirrors the schema documented in SPECS.md §9.1.
 type SystemConfig struct {
-	Notebooks       NotebooksConfig   `yaml:"notebooks" json:"notebooks"`
-	Editor          EditorConfig      `yaml:"editor" json:"editor"`
-	Parsing         ParsingConfig     `yaml:"parsing" json:"parsing"`
-	Hotkeys         map[string]string `yaml:"hotkeys" json:"hotkeys"`
-	Plugins         PluginsConfig     `yaml:"plugins" json:"plugins"`
-	UI              UIConfig          `yaml:"ui" json:"ui"`
-	LinkedNotebooks []LinkedNotebook  `yaml:"linked_notebooks,omitempty" json:"linked_notebooks,omitempty"`
+	Notebooks NotebooksConfig   `yaml:"notebooks" json:"notebooks"`
+	Editor    EditorConfig      `yaml:"editor" json:"editor"`
+	Parsing   ParsingConfig     `yaml:"parsing" json:"parsing"`
+	Hotkeys   map[string]string `yaml:"hotkeys" json:"hotkeys"`
+	Plugins   PluginsConfig     `yaml:"plugins" json:"plugins"`
+	UI        UIConfig          `yaml:"ui" json:"ui"`
+	// AI is the shared provider config consumed by every AI plugin via the
+	// ctx.ai SDK (Sprint 20). Cross-cutting (not plugin-scoped), so it lives
+	// at the top level alongside UI. API keys are never serialized to JS —
+	// see AIProviderConfig.APIKey's `json:"-"` tag.
+	AI              AIConfig         `yaml:"ai,omitempty" json:"ai"`
+	LinkedNotebooks []LinkedNotebook `yaml:"linked_notebooks,omitempty" json:"linked_notebooks,omitempty"`
+}
+
+// AIConfig holds the shared chat-LLM and embedding-model provider configuration
+// (Sprint 20). The two are INDEPENDENT: a user may run a local Ollama chat model
+// and a cloud embedding endpoint, or any other combination. Both chat and
+// embedding call OpenAI-compatible endpoints; providerType only nudges the
+// default base URL + whether a key is expected.
+type AIConfig struct {
+	Chat      AIProviderConfig `yaml:"chat" json:"chat"`
+	Embedding AIProviderConfig `yaml:"embedding" json:"embedding"`
+	// UseKeyring, when true (default), stores provider API keys in the OS
+	// credential store instead of plaintext config.yaml (#218). Tri-state so
+	// "unset" stays distinguishable from "explicitly false" through the Load →
+	// normalize path. nil reads as true downstream.
+	UseKeyring *bool `yaml:"use_keyring,omitempty" json:"use_keyring,omitempty"`
+}
+
+// AIProviderConfig is one provider endpoint (chat OR embedding). It is the unit
+// the AI Provider settings page edits. APIKey carries the yaml tag so the value
+// persists to config.yaml (the migration/fallback slot when the OS keyring is
+// unavailable), but the json tag is "-" so a GetSystemConfig / GetAIProviderConfig
+// round-trip can NEVER leak the secret to plugin JS or the frontend. The
+// dedicated SetAIAPIKey binding is the only write path; a full SaveSystemConfig
+// round-trip preserves the existing key server-side (see SaveSystemConfig).
+type AIProviderConfig struct {
+	ProviderType    string   `yaml:"provider_type,omitempty" json:"provider_type"`                 // "local" | "openai-compatible"
+	BaseURL         string   `yaml:"base_url,omitempty" json:"base_url"`                           // e.g. http://localhost:11434 (Ollama) or https://openrouter.ai/api/v1
+	APIKey          string   `yaml:"api_key,omitempty" json:"-"`                                   // NEVER serialized to JS
+	Model           string   `yaml:"model,omitempty" json:"model"`                                 // e.g. qwen3:30b-a3b, nomic-embed-text
+	Temperature     *float64 `yaml:"temperature,omitempty" json:"temperature,omitempty"`           // chat only
+	MaxTokens       *int     `yaml:"max_tokens,omitempty" json:"max_tokens,omitempty"`             // chat only
+	ReasoningEffort *string  `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"` // chat only: "none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max"
+	TimeoutMs       *int     `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`             // per-call; default 60000
+	Dimensions      *int     `yaml:"dimensions,omitempty" json:"dimensions,omitempty"`             // embeddings only (truncation)
+}
+
+// AI provider type discriminators. "local" targets an Ollama/llama.cpp instance
+// on the same machine (no key expected by default); "openai-compatible" targets
+// a cloud/local OpenAI-compatible endpoint (OpenRouter, LM Studio, OpenAI,
+// llama-server) where a Bearer token is expected. Both build an OpenAI-compatible
+// request body — the type only nudges the default base URL + auth posture.
+const (
+	AIProviderLocal            = "local"
+	AIProviderOpenAICompatible = "openai-compatible"
+)
+
+// DefaultAIBaseURL is the conventional local endpoint (Ollama's default port).
+// Used as the default base URL when providerType is "local" and none is set.
+const DefaultAIBaseURL = "http://localhost:11434"
+
+// DefaultAITimeoutMs is the per-call timeout when AIProviderConfig.TimeoutMs is
+// unset. Generous (LLM completions are slow) but bounded so a dead endpoint
+// cannot hang a plugin call forever.
+const DefaultAITimeoutMs = 60000
+
+// validAIReasoningEfforts is the set of reasoning_effort values accepted across
+// OpenAI-compatible providers (OpenAI, Ollama, vLLM, OpenRouter, …). "none"
+// means "do not send the parameter"; the others ramp the reasoning budget. Kept
+// as the single source of truth so the binding layer can reject a typo at the
+// gate (instead of forwarding it to a provider for a 400) and NormalizeAIConfig
+// can drop a stale/unknown value from a hand-edited config.yaml.
+var validAIReasoningEfforts = map[string]bool{
+	"none": true, "minimal": true, "low": true,
+	"medium": true, "high": true, "xhigh": true, "max": true,
+}
+
+// IsValidAIReasoningEffort reports whether s is a recognized reasoning_effort
+// value. Callers pass a already-trimmed value. Used by the AI binding layer
+// (UpdateAIProviderConfig / PluginAIComplete) to reject unknown values early.
+func IsValidAIReasoningEffort(s string) bool {
+	return validAIReasoningEfforts[s]
 }
 
 // NotebooksConfig holds spatial-mapping defaults.
@@ -408,6 +484,16 @@ func Defaults() SystemConfig {
 				MathEnabled:       boolPtr(true),
 			},
 		},
+		// AI providers ship unconfigured (Sprint 20): no chat model, no
+		// embedding model, no endpoint. The AI Provider page's empty-state
+		// nudge fires until the user configures one. UseKeyring defaults
+		// true so the first key a user enters lands in the OS keyring, not
+		// plaintext config.yaml (#218).
+		AI: AIConfig{
+			Chat:       AIProviderConfig{ProviderType: AIProviderLocal, BaseURL: DefaultAIBaseURL},
+			Embedding:  AIProviderConfig{ProviderType: AIProviderLocal, BaseURL: DefaultAIBaseURL},
+			UseKeyring: boolPtr(true),
+		},
 	}
 }
 
@@ -739,7 +825,84 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.UI.OpenDevtoolsOnStartup == nil {
 		cfg.UI.OpenDevtoolsOnStartup = boolPtr(false)
 	}
+	// AI provider config (Sprint 20). UseKeyring defaults true (#218): keys
+	// belong in the OS credential store, not plaintext config.yaml. Each
+	// provider's type collapses to a known discriminator; an empty base URL
+	// for a local provider falls back to the Ollama default. Keys are never
+	// validated here (they may legitimately be empty for a local endpoint).
+	cfg.AI = NormalizeAIConfig(cfg.AI)
 	return cfg
+}
+
+// normalizeAIConfig applies the AI provider normalization rules. Exported so
+// the dedicated UpdateAIProviderConfig binding can normalize a single patch the
+// same way the full-config normalize path does.
+func NormalizeAIConfig(ai AIConfig) AIConfig {
+	if ai.UseKeyring == nil {
+		ai.UseKeyring = boolPtr(true)
+	}
+	ai.Chat = normalizeAIProvider(ai.Chat, true)
+	ai.Embedding = normalizeAIProvider(ai.Embedding, false)
+	return ai
+}
+
+// normalizeAIProvider coerces one provider block into a canonical form. isChat
+// distinguishes the chat block (Temperature/MaxTokens apply) from the embedding
+// block (Dimensions applies); the unused advanced knob on the wrong block is
+// dropped so a stale value cannot drift in config.yaml.
+func normalizeAIProvider(p AIProviderConfig, isChat bool) AIProviderConfig {
+	p.ProviderType = strings.TrimSpace(p.ProviderType)
+	if p.ProviderType != AIProviderLocal && p.ProviderType != AIProviderOpenAICompatible {
+		// Unknown/empty → local (the safest default — nothing leaves the
+		// machine, no key expected).
+		p.ProviderType = AIProviderLocal
+	}
+	p.BaseURL = strings.TrimSpace(p.BaseURL)
+	if p.BaseURL == "" && p.ProviderType == AIProviderLocal {
+		p.BaseURL = DefaultAIBaseURL
+	}
+	p.Model = strings.TrimSpace(p.Model)
+	p.APIKey = strings.TrimSpace(p.APIKey)
+	// Validate reasoning_effort against the documented enum so a stale or
+	// hand-typed unknown value is dropped rather than forwarded to a provider
+	// for a 400. Applies to chat only; normalize drops it for embeddings below.
+	if p.ReasoningEffort != nil {
+		re := strings.TrimSpace(*p.ReasoningEffort)
+		if IsValidAIReasoningEffort(re) {
+			p.ReasoningEffort = &re
+		} else {
+			p.ReasoningEffort = nil
+		}
+	}
+	// Drop advanced knobs that don't apply to this block so a user who flips
+	// chat↔embedding in the UI doesn't leave a stale value behind.
+	if isChat {
+		p.Dimensions = nil
+	} else {
+		p.Temperature = nil
+		p.MaxTokens = nil
+		p.ReasoningEffort = nil
+	}
+	// Bound the per-call timeout. A negative value is nonsensical; an
+	// absurdly large value would let a dead endpoint hang a plugin call. nil
+	// is left to the service to default at call time.
+	if p.TimeoutMs != nil {
+		t := *p.TimeoutMs
+		if t < 0 {
+			t = 0
+		}
+		if t > 300000 { // 5 min hard cap
+			t = 300000
+		}
+		p.TimeoutMs = intPtr(t)
+	}
+	// Dimensions must be positive when set (a 0/negative would truncate to
+	// nothing). Left as a pointer so "unset" stays distinct from a deliberate
+	// model-native value.
+	if p.Dimensions != nil && *p.Dimensions <= 0 {
+		p.Dimensions = nil
+	}
+	return p
 }
 
 // boolPtr is a small helper for the Defaults() block so *bool fields can be
@@ -753,6 +916,10 @@ func stringPtr(s string) *string { return &s }
 // float64Ptr is a small helper for the Defaults() block so *float64 fields can
 // be initialized inline without a temporary variable.
 func float64Ptr(f float64) *float64 { return &f }
+
+// intPtr is a small helper so *int fields (AI provider advanced knobs) can be
+// initialized inline without a temporary variable.
+func intPtr(i int) *int { return &i }
 
 // writeFileAtomic writes data to a sibling temp file, fsyncs it, then renames
 // it over path. Kept local (rather than reusing parser.WriteFileAtomic) so the
