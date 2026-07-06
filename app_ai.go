@@ -43,6 +43,13 @@ import (
 // two vaults on one machine keep separate keys.
 const keyringService = "Silt"
 
+// errVaultClosing is returned by aiPreflightPlugin when a vault close/switch is
+// in progress. The call is rejected before any HTTP so it can neither strand an
+// audit entry against a torn-down vault nor leak into the next vault (#452).
+// The plugin surfaces it as a transient rejection (normalizeAIError → unknown);
+// the UI is unmounting during a close, so it is rarely observed.
+var errVaultClosing = errors.New("vault is closing; AI call rejected")
+
 // aiContext returns the app-lifecycle context for AI HTTP calls, falling back
 // to context.Background() when the App wasn't initialized via startup() (tests).
 // Production sets aiCtx in startup() and cancels it in shutdown() so in-flight
@@ -497,6 +504,15 @@ func (a *App) snapshotAIProvider(which string) (ai.AIProvider, error) {
 // released before the keyring lookup and before the caller does any HTTP.
 func (a *App) aiPreflightPlugin(pluginID, sessionToken, which string) (ai.AIProvider, string, error) {
 	a.vaultMu.RLock()
+	// Reject new AI calls once a vault close/switch has begun. The check and
+	// the vaultClosingWG.Add below share this RLock hold, so they are atomic
+	// w.r.t. CloseVault/SwitchVault's closing=true + Wait (taken under the
+	// write lock) — no TOCTOU window where a call slips through after the
+	// drain returns (#452).
+	if a.closing {
+		a.vaultMu.RUnlock()
+		return ai.AIProvider{}, "", errVaultClosing
+	}
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		a.vaultMu.RUnlock()
 		return ai.AIProvider{}, "", err
@@ -515,6 +531,14 @@ func (a *App) aiPreflightPlugin(pluginID, sessionToken, which string) (ai.AIProv
 	useKeyring := a.aiUseKeyringLocked()
 	user := a.aiKeyringUser(which)
 	a.configMu.RUnlock()
+	// All gates passed: this call will issue HTTP and outlive the RLock. Add
+	// to the vault-close drain so CloseVault/SwitchVault wait for it before
+	// teardown. Done() is deferred by the caller (PluginAIComplete /
+	// PluginAIEmbed) only on this success path — therefore NOTHING after this
+	// Add may return an error, or it would leak an unbalanced increment. The
+	// remaining steps (keyring resolve + struct return) cannot fail: the key
+	// resolve ignores its error and the return is a value copy.
+	a.vaultClosingWG.Add(1)
 	a.vaultMu.RUnlock()
 	key, _ := a.resolveAIKeyUnlocked(user, useKeyring, p.APIKey)
 	return ai.AIProvider{
@@ -549,6 +573,10 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 	if err != nil {
 		return ai.CompleteResult{}, err
 	}
+	// Preflight registered this call with the vault-close drain (only on the
+	// success path). Balance it now that HTTP + audit will run, so
+	// CloseVault/SwitchVault's drain can't under-count this call.
+	defer a.vaultClosingWG.Done()
 	// Effective model for auditing: the per-call override, else the configured one.
 	effectiveModel := input.Model
 	if effectiveModel == "" {
@@ -590,6 +618,9 @@ func (a *App) PluginAIEmbed(pluginID, sessionToken string, input PluginAIEmbedIn
 	if err != nil {
 		return ai.EmbedResult{}, err
 	}
+	// Preflight registered this call with the vault-close drain (success path
+	// only); balance it so the drain can't under-count. See PluginAIComplete.
+	defer a.vaultClosingWG.Done()
 	effectiveModel := input.Model
 	if effectiveModel == "" {
 		effectiveModel = configuredModel

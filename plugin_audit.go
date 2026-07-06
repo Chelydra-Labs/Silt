@@ -138,20 +138,42 @@ func (a *App) ClearNetworkAudit() error {
 		return nil
 	}
 	// The clear op MUST be enqueued while holding networkAuditMu so it is
-	// ordered relative to concurrent auditNetwork appends. Both producers
-	// send on w.ch under this lock; without it, a concurrent auditNetwork
-	// could enqueue its entry AFTER our networkAudit = nil but BEFORE our
-	// clear op, causing the writer to append-then-truncate (deleting a
-	// post-clear entry from disk — a #157 restart-persistence regression).
-	// The blocking send is safe: the 256-slot buffer makes it non-blocking
-	// in practice (would need >5000 RPS to fill), and in the degraded case
-	// (writer stuck on slow I/O), blocking is correct backpressure. The
-	// wait on op.done happens OUTSIDE the lock so concurrent fetches can
-	// keep appending to the in-memory slice while the writer truncates.
+	// ordered relative to concurrent auditNetwork appends — both producers
+	// send on w.ch under this lock, so without it a concurrent append could
+	// enqueue AFTER our networkAudit = nil but BEFORE our clear op, and the
+	// writer would append-then-truncate (deleting a post-clear entry from
+	// disk — a #157 restart-persistence regression).
+	//
+	// The send is NON-BLOCKING. A blocking send here can deadlock:
+	// currentNetworkAuditWriter may have captured a pointer to a writer whose
+	// goroutine exits before the send completes (stopNetworkAuditWriter nils
+	// the global pointer, closes w.stop, the writer drains its queue and
+	// exits). Because the channel is buffered (256 slots), the send would
+	// STILL succeed after the goroutine is gone — and then <-op.done would
+	// block forever with no goroutine to process it (#451). The default
+	// branch (queue full — astronomically rare given the 256-slot buffer and
+	// that auditNetwork itself drops on full) falls back to inline
+	// truncation, matching auditNetwork's own accept-degradation on a full
+	// queue.
 	op := &networkAuditOp{clear: true, done: make(chan struct{})}
-	w.ch <- op
-	networkAuditMu.Unlock()
-	<-op.done
+	select {
+	case w.ch <- op:
+		networkAuditMu.Unlock()
+		// Wait for the writer to process the clear, but ALSO watch w.stop. If
+		// the op landed in the window between the writer's final drain and its
+		// exit, op.done would never close; w.stop closes as part of stopping,
+		// so on that branch we inline-truncate (idempotent — files are already
+		// empty after the drain) and never hang.
+		select {
+		case <-op.done:
+		case <-w.stop:
+			clearNetworkAuditFiles(a.vaultPath)
+		}
+	default:
+		// Queue full: inline truncation under the lock.
+		clearNetworkAuditFiles(a.vaultPath)
+		networkAuditMu.Unlock()
+	}
 	return nil
 }
 
@@ -494,20 +516,29 @@ func (a *App) ClearAIAudit() error {
 		return nil
 	}
 	// The clear op MUST be enqueued while holding aiAuditMu so it is ordered
-	// relative to concurrent auditAI appends. Both producers send on w.ch
-	// under this lock; without it, a concurrent auditAI could enqueue its
-	// entry AFTER our aiAudit = nil but BEFORE our clear op, causing the
-	// writer to append-then-truncate (deleting a post-clear entry from disk —
-	// a restart-persistence regression). The blocking send is safe: the
-	// 256-slot buffer makes it non-blocking in practice (would need >5000 RPS
-	// to fill), and in the degraded case (writer stuck on slow I/O), blocking
-	// is correct backpressure. The wait on op.done happens OUTSIDE the lock
-	// so concurrent fetches can keep appending to the in-memory slice while
-	// the writer truncates.
+	// relative to concurrent auditAI appends (FIFO clear-vs-append invariant
+	// — see ClearNetworkAudit for the full rationale).
+	//
+	// The send is NON-BLOCKING to avoid a latent deadlock: a blocking send
+	// can succeed on the buffered channel even after the writer goroutine has
+	// exited (stopAIAuditWriter nils the global pointer, closes w.stop, the
+	// writer drains and exits), leaving <-op.done blocked forever (#451). The
+	// default branch (queue full — rare) and the w.stop fallback in the wait
+	// both fall back to inline truncation, which is idempotent.
 	op := &aiAuditOp{clear: true, done: make(chan struct{})}
-	w.ch <- op
-	aiAuditMu.Unlock()
-	<-op.done
+	select {
+	case w.ch <- op:
+		aiAuditMu.Unlock()
+		select {
+		case <-op.done:
+		case <-w.stop:
+			clearAIAuditFiles(a.vaultPath)
+		}
+	default:
+		// Queue full: inline truncation under the lock.
+		clearAIAuditFiles(a.vaultPath)
+		aiAuditMu.Unlock()
+	}
 	return nil
 }
 
