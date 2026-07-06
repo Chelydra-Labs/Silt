@@ -312,10 +312,6 @@
   // detail panel so both affordances coexist on the same card.
   let subEditorCard = $state<TaskDetail | null>(null)
 
-  // Single-click is deferred by a short timer so a dblclick can cancel it,
-  // preventing the slide-out panel from flashing open before the modal opens.
-  let clickTimer: ReturnType<typeof setTimeout> | null = null
-
   // DONE-on-blocked confirm (#302): when a blocked card is dragged or keyed
   // into the DONE lane, we pause the optimistic move and ask the user. The
   // pending object carries the original move args so confirm() can resume it
@@ -830,6 +826,11 @@
       if (prev !== idx && ALL_STATUSES.includes(columns[prev] as TaskStatus)) {
         void commitMove(card, fromStatus, columns[prev] as TaskStatus, -1)
       }
+    } else if (e.key === 'Enter' && e.shiftKey) {
+      // Shift+Enter opens the sub-editor directly; plain Enter/Space below
+      // opens the inspector drawer.
+      e.preventDefault()
+      subEditorCard = card
     } else if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       selectedCard = card
@@ -1084,29 +1085,12 @@
                   ondragend={cleanupDrag}
                   onkeydown={(e) => onCardKeydown(e, card, col as TaskStatus)}
                   onclick={() => {
-                    // Defer the single-click open by a tick so a dblclick
-                    // can cancel it — otherwise the slide-out panel flashes
-                    // open for ~200ms before the modal yanks it away.
-                    if (clickTimer) {
-                      clearTimeout(clickTimer)
-                      clickTimer = null
-                      return
-                    }
-                    clickTimer = setTimeout(() => {
-                      selectedCard = card
-                      clickTimer = null
-                    }, 200)
-                  }}
-                  ondblclick={(e) => {
-                    e.stopPropagation()
-                    if (clickTimer) {
-                      clearTimeout(clickTimer)
-                      clickTimer = null
-                    }
-                    // Close any slide-out panel the first click may have
-                    // opened so only the modal is visible while editing.
-                    selectedCard = null
-                    subEditorCard = card
+                    // Single-click opens the non-blocking inspector drawer
+                    // immediately. The drawer is non-modal, so no
+                    // single/double-click disambiguation is needed: the
+                    // sub-editor is reached via the drawer's "Open sub-editor"
+                    // button, or via Shift+Enter on the card.
+                    selectedCard = card
                   }}
                 >
                   {#if card.pinned}

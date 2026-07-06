@@ -55,6 +55,36 @@ if (!Element.prototype.animate) {
   } as unknown as Element['animate']
 }
 
+// TipTap (the shared sub-editor modal) resolves caret rects via
+// Range.getClientRects and the Placeholder viewport tracker touches
+// document.elementFromPoint — both absent in jsdom.
+if (typeof document !== 'undefined' && !document.elementFromPoint) {
+  document.elementFromPoint = () => document.body
+}
+if (
+  typeof window !== 'undefined' &&
+  window.Range &&
+  !Range.prototype.getClientRects
+) {
+  const zeroRect: DOMRect = {
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: 0,
+    height: 0,
+    toJSON() {
+      return this
+    }
+  }
+  Range.prototype.getClientRects = (() => [
+    zeroRect
+  ]) as unknown as typeof Range.prototype.getClientRects
+  Range.prototype.getBoundingClientRect = () => zeroRect
+}
+
 // Hoisted mutable mock state.
 const mocks = vi.hoisted(() => ({
   settings: {
@@ -193,13 +223,12 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
-// Click a card and wait past the single-click debounce (200ms) so the
-// slide-out detail panel opens. The debounce lets a dblclick cancel the
-// single-click open (avoiding a panel flash before the sub-editor modal).
+// Click a card to open the non-blocking inspector drawer. The legacy 200ms
+// single/double-click debounce is gone — single-click opens the drawer on
+// the next tick; the sub-editor is reached via the drawer's "Open sub-editor"
+// button or Shift+Enter on the card.
 async function clickCard(card: HTMLElement) {
   await fireEvent.click(card)
-  // Advance past the 200ms debounce timer.
-  await new Promise((r) => setTimeout(r, 220))
   await tick()
 }
 
@@ -289,7 +318,7 @@ describe('Kanban plugin (#19)', () => {
     expect(params).toEqual([])
   })
 
-  it('clicking a card opens the detail panel', async () => {
+  it('single-click opens the non-blocking inspector drawer immediately', async () => {
     render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
@@ -298,13 +327,34 @@ describe('Kanban plugin (#19)', () => {
       .querySelector<HTMLElement>('[data-card]')
     expect(todoCard).toBeTruthy()
     await fireEvent.click(todoCard!)
-    await new Promise((r) => setTimeout(r, 220))
-    await tick()
+    // No 200ms wait — the drawer opens on the next tick. The legacy
+    // single/double-click debounce was removed with the dblclick model.
+    await flush()
 
-    // The slide-out detail panel renders as a dialog with the card title.
+    // The shared drawer renders as a NON-BLOCKING dialog (aria-modal="false",
+    // no scrim) carrying the card title — drag-and-drop stays usable while
+    // it's open.
     const dialog = screen.getByRole('dialog')
     expect(dialog).toBeInTheDocument()
+    expect(dialog).toHaveAttribute('aria-modal', 'false')
     expect(dialog.textContent).toContain('Write tests')
+  })
+
+  it('Shift+Enter on a card opens the sub-editor directly', async () => {
+    render(Kanban, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]') as HTMLElement
+    await fireEvent.keyDown(todoCard, { key: 'Enter', shiftKey: true })
+    await flush()
+
+    // The shared sub-editor modal surfaced (aria-modal="true"), scoped to
+    // the task's child sub-tree.
+    expect(
+      document.querySelector('[aria-labelledby="sub-editor-title"]')
+    ).toBeInTheDocument()
   })
 
   it('detail panel "Open source page" dispatches navigate-to-block', async () => {
