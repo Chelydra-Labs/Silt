@@ -1037,4 +1037,18 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(sql).toContain('t.due_date = ?')
     expect(params).toContain(TODAY)
   })
+
+  // #458: a column-shell skeleton renders while the board is loading (replaces
+  // the old bare "Loading board…" text). Keep loading=true by never resolving
+  // the query, then assert the skeleton testid is present.
+  it('renders a column skeleton while loading', async () => {
+    resetTaskHubState()
+    setGroupBy('status')
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockReturnValue(new Promise(() => {})) // never resolves
+    const ctx = makeCtx()
+    render(BoardView, { ctx, onCountChange: vi.fn() })
+    await tick() // initial mount render (loading starts true)
+    expect(screen.getByTestId('tasks-board-loading')).toBeTruthy()
+  })
 })

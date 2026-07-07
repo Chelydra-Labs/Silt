@@ -60,7 +60,7 @@
     createTask,
     dueDate,
     status = 'TODO',
-    placeholder = 'Add a task…',
+    placeholder = 'Add a task — Enter to add',
     onCreated,
     onCancel,
     keepOpenAfterCreate = true,
@@ -136,19 +136,37 @@
   }
 </script>
 
-<input
-  bind:this={inputEl}
-  bind:value={title}
-  type="text"
-  {placeholder}
-  disabled={busy}
-  onkeydown={onKeydown}
-  onblur={onBlur}
-  aria-label={placeholder}
-  aria-invalid={!!errorMsg}
-  data-testid="quick-add-task-input"
-  class="w-full px-2 py-1 rounded border border-accent-primary-start/40 bg-surface-panel text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[12px] disabled:opacity-60"
-/>
+<div class="relative">
+  <input
+    bind:this={inputEl}
+    bind:value={title}
+    type="text"
+    {placeholder}
+    maxlength={500}
+    disabled={busy}
+    onkeydown={onKeydown}
+    onblur={onBlur}
+    aria-label={placeholder}
+    aria-invalid={!!errorMsg}
+    aria-busy={busy}
+    data-testid="quick-add-task-input"
+    class="w-full px-2 py-1 rounded border border-accent-primary-start/40 bg-surface-panel text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[12px] disabled:opacity-60 {busy
+      ? 'pr-7'
+      : ''}"
+  />
+  {#if busy}
+    <!-- Busy spinner: progress_activity is Material's dedicated spin glyph;
+         animate-spin matches the convention used across the app (#461). -->
+    <span
+      class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted"
+      aria-hidden="true"
+    >
+      <span class="material-symbols-outlined text-[14px] animate-spin"
+        >progress_activity</span
+      >
+    </span>
+  {/if}
+</div>
 {#if errorMsg}
   <div class="text-error text-[11px] mt-1" role="alert">
     {errorMsg}

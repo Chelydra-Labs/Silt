@@ -21,6 +21,7 @@
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
   import type { TaskDetail } from '../types'
+  import { dueDateClass, dueDateTextClass } from '../dueDate'
   import { getTaskHubState, type GroupBy, type SortMode } from '../state.svelte'
   import { binByDimension, type GroupSection } from '../grouping'
 
@@ -673,8 +674,12 @@
       >
     {/if}
     {#if item.due_date}
-      <span class="text-[10px] text-text-muted font-label-sm flex-shrink-0"
-        >{item.due_date}</span
+      <span
+        class="text-[10px] {item.status === 'DONE'
+          ? 'text-text-muted'
+          : dueDateTextClass(
+              dueDateClass(item.due_date, today)
+            )} font-label-sm flex-shrink-0">{item.due_date}</span
       >
     {/if}
   </div>

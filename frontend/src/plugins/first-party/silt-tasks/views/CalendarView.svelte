@@ -774,7 +774,7 @@
       <div class="max-w-md">
         <QuickAddTask
           {ctx}
-          placeholder="New task (no due date) — Enter to add, Esc to close"
+          placeholder="New task (no due date) — Enter to add"
           keepOpenAfterCreate={false}
           onCreated={closeQuickAdd}
           onCancel={closeQuickAdd}
@@ -785,7 +785,25 @@
 
   <div class="flex-1 overflow-auto custom-scrollbar p-4">
     {#if loading}
-      <div class="text-text-muted animate-pulse p-6">Loading…</div>
+      <!-- Skeleton: 6×7 day-cell grid mirroring the month layout, so the
+           switch from skeleton to real grid doesn't reflow. Reuses the global
+           .skeleton-text shimmer (gated by prefers-reduced-motion in
+           index.css). -->
+      <div
+        class="grid grid-cols-7 gap-1 min-w-[700px]"
+        data-testid="tasks-calendar-loading"
+        aria-busy="true"
+        aria-label="Loading calendar"
+      >
+        {#each Array(42) as _, i (i)}
+          <div
+            class="min-h-[92px] rounded border border-dashed border-surface-panel-border p-1.5 space-y-1"
+          >
+            <div class="skeleton-text" style="width: 30%"></div>
+            <div class="skeleton-text subtitle"></div>
+          </div>
+        {/each}
+      </div>
     {:else if errorMsg}
       <div class="text-error p-6">{errorMsg}</div>
     {:else if subMode === 'month'}

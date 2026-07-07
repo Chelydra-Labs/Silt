@@ -518,8 +518,9 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
     await flush()
 
-    // Clean state — no "(modified)" suffix.
+    // Clean state — no "(modified)" suffix and no dirty accent dot.
     expect(screen.queryByText(/\(modified\)/)).toBeNull()
+    expect(screen.queryByTestId('tasks-hub-dirty-dot')).toBeNull()
 
     // Switch display mode — diverges from the saved snapshot.
     await fireEvent.click(screen.getByRole('radio', { name: /Board mode/i }))
@@ -529,7 +530,9 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     // The active-view label surfaces the divergence.
     const label = screen.getByTestId('tasks-hub-active-view')
     expect(label.textContent).toContain('modified')
-    expect(label.className).toContain('opacity-60')
+    // #460: the dirty signal is now an accent dot on the bookmark button
+    // (prominent) instead of opacity-60 dimming on the label.
+    expect(screen.getByTestId('tasks-hub-dirty-dot')).toBeTruthy()
   })
 
   it('offers Update / Save-as-new when the active view is dirty', async () => {

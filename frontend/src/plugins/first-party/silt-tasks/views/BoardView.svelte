@@ -27,6 +27,7 @@
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import type { TaskDetail } from '../types'
   import { PRIORITY_LABELS, laneLabel, priorityClass } from '../types'
+  import { dueDateClass, dueDateTextClass } from '../dueDate'
   import {
     getTaskHubState,
     setDisplayMode,
@@ -938,7 +939,30 @@
 
   <div class="flex-1 overflow-hidden">
     {#if loading}
-      <div class="text-text-muted animate-pulse p-6">Loading board…</div>
+      <!-- Skeleton: 5 dashed column shells with shimmering card placeholders,
+           mirroring the rendered flex-gapped column layout closely enough to
+           feel like a preview. Reuses the global .skeleton-text shimmer so the
+           pulse matches ListView's loading rows. -->
+      <div
+        class="h-full flex gap-4 p-4 overflow-x-auto custom-scrollbar"
+        data-testid="tasks-board-loading"
+        aria-busy="true"
+        aria-label="Loading board"
+      >
+        {#each Array(5) as _, i (i)}
+          <div class="flex-1 min-w-[220px] space-y-2">
+            <div class="skeleton-text" style="width: 40%; height: 14px"></div>
+            {#each Array(3) as _, j (j)}
+              <div
+                class="rounded-lg border border-dashed border-surface-panel-border p-3 space-y-1.5"
+              >
+                <div class="skeleton-text" style="width: 75%"></div>
+                <div class="skeleton-text subtitle"></div>
+              </div>
+            {/each}
+          </div>
+        {/each}
+      </div>
     {:else if errorMsg}
       <div class="text-error p-6">{errorMsg}</div>
     {:else}
@@ -1186,7 +1210,11 @@
                       {/if}
                       {#if card.due_date}
                         <span
-                          class="text-[9px] text-text-muted font-label-sm flex items-center gap-0.5"
+                          class="text-[9px] {card.status === 'DONE'
+                            ? 'text-text-muted'
+                            : dueDateTextClass(
+                                dueDateClass(card.due_date, today)
+                              )} font-label-sm flex items-center gap-0.5"
                         >
                           <span class="material-symbols-outlined text-[12px]"
                             >schedule</span
@@ -1240,7 +1268,7 @@
                     status={qa.status}
                     dueDate={qa.dueDate}
                     onCreated={qa.onCreated}
-                    placeholder={`Add to ${col.label}…`}
+                    placeholder={`Add to ${col.label} — Enter to add`}
                     keepOpenAfterCreate={true}
                     onCancel={() => {
                       if (quickAddCol === col.key) quickAddCol = null

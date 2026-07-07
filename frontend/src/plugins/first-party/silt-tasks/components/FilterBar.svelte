@@ -53,6 +53,35 @@
     'scope' | 'group' | 'sort' | 'owner' | 'priority' | 'dueDate' | 'tags'
   let openChip = $state<ChipKey | null>(null)
 
+  // #462: facet-list search. The DISTINCT facet queries (TasksHub.reloadFacets)
+  // cap at 200 rows; with that many owners or tags, finding one is a scroll
+  // hunt. A search field appears at the top of the owner/tag popovers only
+  // when the list exceeds ~10 items (small lists are scannable without it).
+  // Filtering is client-side over the already-fetched array — no debounce
+  // needed at <500 items ($derived recomputes synchronously).
+  const FACET_SEARCH_THRESHOLD = 10
+  let ownerQuery = $state('')
+  let tagQuery = $state('')
+  let filteredOwners = $derived(
+    ownerQuery.trim()
+      ? owners.filter((o) =>
+          o.toLowerCase().includes(ownerQuery.trim().toLowerCase())
+        )
+      : owners
+  )
+  let filteredTags = $derived(
+    tagQuery.trim()
+      ? tags.filter((t) =>
+          t.toLowerCase().includes(tagQuery.trim().toLowerCase())
+        )
+      : tags
+  )
+  // Reset the search drafts when a popover closes so reopening starts fresh.
+  $effect(() => {
+    if (openChip !== 'owner') ownerQuery = ''
+    if (openChip !== 'tags') tagQuery = ''
+  })
+
   function toggleChip(k: ChipKey) {
     openChip = openChip === k ? null : k
   }
@@ -388,31 +417,56 @@
     {#if openChip === 'owner'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
-        onkeydown={handlePopoverKeydown}
         class="absolute z-50 mt-1 min-w-[180px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
-        role="listbox"
+        role="group"
         tabindex="-1"
         aria-label="Filter by owner"
       >
-        {#if owners.length === 0}
-          <div class="px-3 py-2 text-[11px] text-text-muted font-label-sm">
-            No owners
+        {#if owners.length > FACET_SEARCH_THRESHOLD}
+          <div
+            class="px-2 py-1 sticky top-[-4px] bg-surface-popover border-b border-surface-popover-border mb-1"
+          >
+            <input
+              type="text"
+              value={ownerQuery}
+              oninput={(e) => (ownerQuery = e.currentTarget.value)}
+              placeholder="Filter…"
+              aria-label="Filter owners by name"
+              data-testid="owner-facet-search"
+              class="w-full px-2 py-1 rounded border border-surface-popover-border bg-surface-panel text-text-primary placeholder:text-text-muted text-[11px] focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
+            />
           </div>
-        {:else}
-          {#each owners as o (o)}
-            <label
-              class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
-            >
-              <input
-                type="checkbox"
-                checked={filters.owners.includes(o)}
-                onchange={() => toggleOwner(o)}
-                class="accent-accent-primary-start"
-              />
-              <span class="truncate">{o}</span>
-            </label>
-          {/each}
         {/if}
+        <div
+          role="listbox"
+          aria-label="Owners"
+          tabindex="-1"
+          onkeydown={handlePopoverKeydown}
+        >
+          {#if owners.length === 0}
+            <div class="px-3 py-2 text-[11px] text-text-muted font-label-sm">
+              No owners
+            </div>
+          {:else if filteredOwners.length === 0}
+            <div class="px-3 py-2 text-[11px] text-text-muted font-label-sm">
+              No matches
+            </div>
+          {:else}
+            {#each filteredOwners as o (o)}
+              <label
+                class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
+              >
+                <input
+                  type="checkbox"
+                  checked={filters.owners.includes(o)}
+                  onchange={() => toggleOwner(o)}
+                  class="accent-accent-primary-start"
+                />
+                <span class="truncate">{o}</span>
+              </label>
+            {/each}
+          {/if}
+        </div>
       </div>
     {/if}
   </div>
@@ -528,31 +582,56 @@
     {#if openChip === 'tags'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
-        onkeydown={handlePopoverKeydown}
         class="absolute z-50 mt-1 min-w-[200px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
-        role="listbox"
+        role="group"
         tabindex="-1"
         aria-label="Filter by tag"
       >
-        {#if tags.length === 0}
-          <div class="px-3 py-2 text-[11px] text-text-muted font-label-sm">
-            No tags
+        {#if tags.length > FACET_SEARCH_THRESHOLD}
+          <div
+            class="px-2 py-1 sticky top-[-4px] bg-surface-popover border-b border-surface-popover-border mb-1"
+          >
+            <input
+              type="text"
+              value={tagQuery}
+              oninput={(e) => (tagQuery = e.currentTarget.value)}
+              placeholder="Filter…"
+              aria-label="Filter tags by name"
+              data-testid="tag-facet-search"
+              class="w-full px-2 py-1 rounded border border-surface-popover-border bg-surface-panel text-text-primary placeholder:text-text-muted text-[11px] focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
+            />
           </div>
-        {:else}
-          {#each tags as t (t)}
-            <label
-              class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
-            >
-              <input
-                type="checkbox"
-                checked={filters.tags.includes(t)}
-                onchange={() => toggleTag(t)}
-                class="accent-accent-primary-start"
-              />
-              <span class="truncate">{t}</span>
-            </label>
-          {/each}
         {/if}
+        <div
+          role="listbox"
+          aria-label="Tags"
+          tabindex="-1"
+          onkeydown={handlePopoverKeydown}
+        >
+          {#if tags.length === 0}
+            <div class="px-3 py-2 text-[11px] text-text-muted font-label-sm">
+              No tags
+            </div>
+          {:else if filteredTags.length === 0}
+            <div class="px-3 py-2 text-[11px] text-text-muted font-label-sm">
+              No matches
+            </div>
+          {:else}
+            {#each filteredTags as t (t)}
+              <label
+                class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
+              >
+                <input
+                  type="checkbox"
+                  checked={filters.tags.includes(t)}
+                  onchange={() => toggleTag(t)}
+                  class="accent-accent-primary-start"
+                />
+                <span class="truncate">{t}</span>
+              </label>
+            {/each}
+          {/if}
+        </div>
       </div>
     {/if}
   </div>

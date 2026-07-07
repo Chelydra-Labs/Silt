@@ -522,13 +522,12 @@
           : ''}
       </span>
       {#if activeSavedView}
-        <!-- Active saved view name next to the title; dimmed when the user
-             has diverged from the saved dimensions so the bookmark
-             affordance and the label agree. -->
+        <!-- Active saved view name next to the title. The "(modified)" dirty
+             signal is carried by the accent dot on the bookmark button (below)
+             rather than dimming this label, so the dirty state is prominent
+             without making the name harder to read. -->
         <span
-          class="text-text-muted text-[12px] font-body-md normal-case font-normal ml-2 flex items-center gap-1 {hubState.savedViewsDirty
-            ? 'opacity-60 italic'
-            : ''}"
+          class="text-text-muted text-[12px] font-body-md normal-case font-normal ml-2 flex items-center gap-1"
           data-testid="tasks-hub-active-view"
         >
           <span aria-hidden="true">·</span>
@@ -582,6 +581,18 @@
           aria-hidden="true"
           >{activeSavedView ? 'bookmark' : 'bookmark_add'}</span
         >
+        {#if activeSavedView && hubState.savedViewsDirty}
+          <!-- Dirty accent dot: a more prominent signal than the old dimmed
+               italic label alone (#460). Secondary-accent so it reads against
+               the primary bookmark fill and matches the .dirty-dot convention
+               used elsewhere (e.g. TabStrip). Decorative — the aria-label
+               above already announces "modified". -->
+          <span
+            class="w-1.5 h-1.5 rounded-full bg-accent-secondary-start"
+            aria-hidden="true"
+            data-testid="tasks-hub-dirty-dot"
+          ></span>
+        {/if}
       </button>
 
       {#if savedViewPopover === 'save'}
