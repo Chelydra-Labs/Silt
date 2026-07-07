@@ -5,18 +5,52 @@
   // from the unified state module so this component survives the kanban
   // retirement (#429). The sidebar (#432) mirrors these toggles bidirectionally.
   import { fly } from 'svelte/transition'
-  import type { TaskFilters, DueDateFilter } from '../state.svelte'
+  import type {
+    TaskFilters,
+    DueDateFilter,
+    GroupBy,
+    SortMode,
+    Scope
+  } from '../state.svelte'
 
   interface Props {
     filters: TaskFilters
     owners: string[]
     tags: string[]
     onFiltersChange: (f: TaskFilters) => void
+    groupBy: GroupBy
+    onGroupByChange: (g: GroupBy) => void
+    sort: SortMode
+    onSortChange: (s: SortMode) => void
+    scope: Scope
+    onScopeChange: (s: Scope) => void
+    isScopeDisabled: (s: string) => boolean
+    scopeCrumb: string
+    scopeUserOverride: boolean
+    onResetScope: () => void
+    totalCount: number
   }
 
-  let { filters, owners, tags, onFiltersChange }: Props = $props()
+  let {
+    filters,
+    owners,
+    tags,
+    onFiltersChange,
+    groupBy,
+    onGroupByChange,
+    sort,
+    onSortChange,
+    scope,
+    onScopeChange,
+    isScopeDisabled,
+    scopeCrumb,
+    scopeUserOverride,
+    onResetScope,
+    totalCount
+  }: Props = $props()
 
-  type ChipKey = 'owner' | 'priority' | 'dueDate' | 'tags'
+  type ChipKey =
+    'scope' | 'group' | 'sort' | 'owner' | 'priority' | 'dueDate' | 'tags'
   let openChip = $state<ChipKey | null>(null)
 
   function toggleChip(k: ChipKey) {
@@ -37,6 +71,31 @@
     { value: 'today', label: 'Today' },
     { value: 'week', label: 'This Week' },
     { value: 'none', label: 'No Date' }
+  ]
+  const SCOPES: { value: Scope; label: string; icon: string }[] = [
+    { value: 'vault', label: 'Vault', icon: 'database' },
+    { value: 'notebook', label: 'Notebook', icon: 'book' },
+    { value: 'section', label: 'Section', icon: 'tag' },
+    { value: 'page', label: 'Page', icon: 'description' }
+  ]
+  const GROUP_OPTIONS: { value: GroupBy; label: string; icon: string }[] = [
+    { value: 'none', label: 'None', icon: 'grid_off' },
+    { value: 'status', label: 'Status', icon: 'check_circle' },
+    { value: 'owner', label: 'Owner', icon: 'person' },
+    { value: 'priority', label: 'Priority', icon: 'flag' },
+    { value: 'dueDate', label: 'Due date', icon: 'schedule' },
+    { value: 'tag', label: 'Tag', icon: 'label' },
+    { value: 'notebook', label: 'Notebook', icon: 'book' },
+    { value: 'section', label: 'Section', icon: 'tag' },
+    { value: 'page', label: 'Page', icon: 'description' }
+  ]
+  const SORT_OPTIONS: { value: SortMode; label: string; icon: string }[] = [
+    { value: 'manual', label: 'Manual', icon: 'drag_indicator' },
+    { value: 'dueDate', label: 'Due date', icon: 'schedule' },
+    { value: 'priority', label: 'Priority', icon: 'flag' },
+    { value: 'title', label: 'Title', icon: 'title' },
+    { value: 'created', label: 'Created', icon: 'calendar_today' },
+    { value: 'owner', label: 'Owner', icon: 'person' }
   ]
 
   function toggleOwner(o: string) {
@@ -71,6 +130,32 @@
     onFiltersChange({ owners: [], priorities: [], dueDate: '', tags: [] })
   }
 
+  function handlePopoverKeydown(e: KeyboardEvent) {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+    e.preventDefault()
+    const container = e.currentTarget as HTMLElement
+    const items = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        'button, input[type="checkbox"], label'
+      )
+    )
+    if (items.length === 0) return
+    const activeIdx = items.indexOf(document.activeElement as HTMLElement)
+    let nextIdx = activeIdx
+
+    if (e.key === 'ArrowDown') {
+      nextIdx = (activeIdx + 1) % items.length
+    } else if (e.key === 'ArrowUp') {
+      nextIdx = (activeIdx - 1 + items.length) % items.length
+    } else if (e.key === 'Home') {
+      nextIdx = 0
+    } else if (e.key === 'End') {
+      nextIdx = items.length - 1
+    }
+
+    items[nextIdx]?.focus()
+  }
+
   // A chip counts as "active" if it has at least one selection; the Clear-all
   // affordance appears once any chip is active.
   let activeCount = $derived(
@@ -99,6 +184,189 @@
 <div
   class="flex items-center gap-2 px-6 py-2 border-b border-surface-panel-border flex-wrap relative"
 >
+  <!-- Scope Chip -->
+  <div class="relative">
+    <button
+      type="button"
+      data-testid="tasks-hub-scope-toggle"
+      onclick={() => toggleChip('scope')}
+      aria-expanded={openChip === 'scope'}
+      aria-haspopup="listbox"
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
+      'scope'
+        ? 'border-accent-primary-start/40 text-text-primary'
+        : ''}"
+    >
+      <span class="material-symbols-outlined text-[14px]">
+        {scope === 'vault'
+          ? 'database'
+          : scope === 'notebook'
+            ? 'book'
+            : scope === 'section'
+              ? 'tag'
+              : 'description'}
+      </span>
+      <span
+        >Scope: {scope === 'vault'
+          ? 'Vault'
+          : scope[0].toUpperCase() + scope.slice(1)}</span
+      >
+      <span class="material-symbols-outlined text-[12px]">expand_more</span>
+    </button>
+    {#if openChip === 'scope'}
+      <div
+        transition:fly={{ y: -4, duration: 100 }}
+        onkeydown={handlePopoverKeydown}
+        class="absolute z-50 mt-1 min-w-[160px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+        role="listbox"
+        tabindex="-1"
+        aria-label="Filter by scope"
+      >
+        {#each SCOPES as opt (opt.value)}
+          {@const disabled = isScopeDisabled(opt.value)}
+          <button
+            type="button"
+            data-testid={`scope-option-${opt.value}`}
+            {disabled}
+            onclick={() => {
+              onScopeChange(opt.value)
+              close()
+            }}
+            title={disabled ? `Select a ${opt.value} first` : undefined}
+            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent {scope ===
+            opt.value
+              ? 'text-accent-primary-start'
+              : 'text-text-primary'}"
+          >
+            <span class="material-symbols-outlined text-[14px]">{opt.icon}</span
+            >
+            <span>{opt.label}</span>
+            {#if scope === opt.value}
+              <span class="material-symbols-outlined text-[14px] ml-auto"
+                >check</span
+              >
+            {/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
+  <div class="h-4 w-[1px] bg-surface-panel-border mx-2"></div>
+
+  <!-- Group by Chip -->
+  <div class="relative">
+    <button
+      type="button"
+      data-testid="tasks-hub-group-by-toggle"
+      onclick={() => toggleChip('group')}
+      aria-expanded={openChip === 'group'}
+      aria-haspopup="listbox"
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
+        'group' || groupBy !== 'none'
+        ? 'border-accent-primary-start/40 text-text-primary'
+        : ''}"
+    >
+      <span class="material-symbols-outlined text-[14px]">view_module</span>
+      <span
+        >Group: {GROUP_OPTIONS.find((o) => o.value === groupBy)?.label ??
+          'None'}</span
+      >
+      <span class="material-symbols-outlined text-[12px]">expand_more</span>
+    </button>
+    {#if openChip === 'group'}
+      <div
+        transition:fly={{ y: -4, duration: 100 }}
+        onkeydown={handlePopoverKeydown}
+        class="absolute z-50 mt-1 min-w-[160px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
+        role="listbox"
+        tabindex="-1"
+        aria-label="Group tasks by"
+      >
+        {#each GROUP_OPTIONS as opt (opt.value)}
+          <button
+            type="button"
+            data-testid={`group-option-${opt.value}`}
+            onclick={() => {
+              onGroupByChange(opt.value)
+              close()
+            }}
+            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm transition-colors {groupBy ===
+            opt.value
+              ? 'text-accent-primary-start'
+              : 'text-text-primary'}"
+          >
+            <span class="material-symbols-outlined text-[14px]">{opt.icon}</span
+            >
+            <span>{opt.label}</span>
+            {#if groupBy === opt.value}
+              <span class="material-symbols-outlined text-[14px] ml-auto"
+                >check</span
+              >
+            {/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
+  <!-- Sort Chip -->
+  <div class="relative">
+    <button
+      type="button"
+      data-testid="tasks-hub-sort-toggle"
+      onclick={() => toggleChip('sort')}
+      aria-expanded={openChip === 'sort'}
+      aria-haspopup="listbox"
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
+        'sort' || sort !== 'manual'
+        ? 'border-accent-primary-start/40 text-text-primary'
+        : ''}"
+    >
+      <span class="material-symbols-outlined text-[14px]">sort</span>
+      <span
+        >Sort: {SORT_OPTIONS.find((o) => o.value === sort)?.label ??
+          'Manual'}</span
+      >
+      <span class="material-symbols-outlined text-[12px]">expand_more</span>
+    </button>
+    {#if openChip === 'sort'}
+      <div
+        transition:fly={{ y: -4, duration: 100 }}
+        onkeydown={handlePopoverKeydown}
+        class="absolute z-50 mt-1 min-w-[160px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+        role="listbox"
+        tabindex="-1"
+        aria-label="Sort tasks by"
+      >
+        {#each SORT_OPTIONS as opt (opt.value)}
+          <button
+            type="button"
+            data-testid={`sort-option-${opt.value}`}
+            onclick={() => {
+              onSortChange(opt.value)
+              close()
+            }}
+            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm transition-colors {sort ===
+            opt.value
+              ? 'text-accent-primary-start'
+              : 'text-text-primary'}"
+          >
+            <span class="material-symbols-outlined text-[14px]">{opt.icon}</span
+            >
+            <span>{opt.label}</span>
+            {#if sort === opt.value}
+              <span class="material-symbols-outlined text-[14px] ml-auto"
+                >check</span
+              >
+            {/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
+  <div class="h-4 w-[1px] bg-surface-panel-border mx-2"></div>
   <!-- Owner chip -->
   <div class="relative">
     <button
@@ -120,8 +388,10 @@
     {#if openChip === 'owner'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
+        onkeydown={handlePopoverKeydown}
         class="absolute z-50 mt-1 min-w-[180px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
         role="listbox"
+        tabindex="-1"
         aria-label="Filter by owner"
       >
         {#if owners.length === 0}
@@ -170,8 +440,10 @@
     {#if openChip === 'priority'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
+        onkeydown={handlePopoverKeydown}
         class="absolute z-50 mt-1 min-w-[160px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
         role="listbox"
+        tabindex="-1"
         aria-label="Filter by priority"
       >
         {#each PRIORITIES as p (p.value)}
@@ -210,8 +482,10 @@
     {#if openChip === 'dueDate'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
+        onkeydown={handlePopoverKeydown}
         class="absolute z-50 mt-1 min-w-[160px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
         role="listbox"
+        tabindex="-1"
         aria-label="Filter by due date"
       >
         {#each DUE_OPTIONS as opt (opt.value)}
@@ -254,8 +528,10 @@
     {#if openChip === 'tags'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
+        onkeydown={handlePopoverKeydown}
         class="absolute z-50 mt-1 min-w-[200px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
         role="listbox"
+        tabindex="-1"
         aria-label="Filter by tag"
       >
         {#if tags.length === 0}
@@ -293,10 +569,28 @@
   {/if}
 
   {#if activeCount > 0}
-    <span class="ml-auto text-[11px] text-text-muted font-label-sm">
+    <span class="text-[11px] text-text-muted font-label-sm">
       {activeCount} active filter{activeCount === 1 ? '' : 's'}
     </span>
   {/if}
+
+  <div class="ml-auto flex items-center gap-2">
+    <span class="text-text-muted text-[12px] font-body-md">
+      {scopeCrumb} · {totalCount} task{totalCount === 1 ? '' : 's'}
+    </span>
+    {#if scopeUserOverride}
+      <button
+        type="button"
+        onclick={onResetScope}
+        aria-label="Reset Tasks scope to follow navigation"
+        title="Follow navigation"
+        class="flex items-center gap-1 px-1.5 py-0.5 rounded border border-surface-panel-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
+      >
+        <span class="material-symbols-outlined text-[14px]">my_location</span>
+        <span class="font-label-sm">Follow</span>
+      </button>
+    {/if}
+  </div>
 
   <!-- Click-away backdrop: closes whichever chip popover is open. -->
   {#if openChip}

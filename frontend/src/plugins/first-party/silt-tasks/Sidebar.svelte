@@ -65,13 +65,23 @@
     all: 0
   })
   let byDate = $state<Record<string, number>>({})
-  // Owner/tag facet universes — queried directly by this sidebar (mirrors
-  // TasksHub's reloadFacets) so the filter checkboxes have an option list
-  // without depending on the hub to bridge them across.
-  let owners = $state<string[]>([])
-  let tags = $state<string[]>([])
   let loading = $state(true)
   let errorMsg = $state('')
+  let calendarExpanded = $state(
+    typeof localStorage !== 'undefined'
+      ? localStorage.getItem('silt-tasks-mini-cal-expanded') !== 'false'
+      : true
+  )
+
+  function toggleCalendar() {
+    calendarExpanded = !calendarExpanded
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(
+        'silt-tasks-mini-cal-expanded',
+        String(calendarExpanded)
+      )
+    }
+  }
 
   // Mini-calendar cursor (independent of the main view's cursor). Anchored
   // to ctx.today so the visible month tracks the same "today" the smart-
@@ -136,40 +146,16 @@
     byDate = bucket
   }
 
-  async function reloadFacets(): Promise<void> {
-    const [ownerRes, tagRes] = await Promise.all([
-      ctx.sqliteQuery(
-        `SELECT DISTINCT owner FROM tasks WHERE owner IS NOT NULL AND owner != '' ORDER BY owner ASC LIMIT 200`
-      ),
-      ctx.sqliteQuery(
-        `SELECT DISTINCT level_0 FROM tags ORDER BY level_0 ASC LIMIT 200`
-      )
-    ])
-    owners = ((ownerRes.rows as unknown as Array<{ owner: string }>) ?? []).map(
-      (r) => r.owner
-    )
-    tags = ((tagRes.rows as unknown as Array<{ level_0: string }>) ?? []).map(
-      (r) => r.level_0
-    )
-  }
-
   async function reload(): Promise<void> {
     loading = true
     errorMsg = ''
-    // Counts + day-dots fail together (sidebar is unuseable without them);
-    // facets are best-effort so a tags-table hiccup doesn't break the
-    // smart-list counts.
+    // Counts + day-dots fail together (sidebar is unuseable without them)
     try {
       await Promise.all([reloadCounts(), reloadDayDots()])
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e)
     } finally {
       loading = false
-    }
-    try {
-      await reloadFacets()
-    } catch {
-      // Facets are best-effort; leave the universes at their last value.
     }
   }
 
@@ -400,42 +386,6 @@
     }
   }
 
-  // --- Filter quick-toggles (mirror KanbanSidebar bidirectional sync) ----
-
-  function toggleOwner(o: string) {
-    const has = liveFilters.owners.includes(o)
-    setFilters({
-      ...liveFilters,
-      owners: has
-        ? liveFilters.owners.filter((x) => x !== o)
-        : [...liveFilters.owners, o]
-    })
-  }
-
-  function togglePriority(p: number) {
-    const has = liveFilters.priorities.includes(p)
-    setFilters({
-      ...liveFilters,
-      priorities: has
-        ? liveFilters.priorities.filter((x) => x !== p)
-        : [...liveFilters.priorities, p]
-    })
-  }
-
-  function setDueDateChip(d: DueDateFilter) {
-    setFilters({ ...liveFilters, dueDate: d })
-  }
-
-  function toggleTag(t: string) {
-    const has = liveFilters.tags.includes(t)
-    setFilters({
-      ...liveFilters,
-      tags: has
-        ? liveFilters.tags.filter((x) => x !== t)
-        : [...liveFilters.tags, t]
-    })
-  }
-
   // aria-live region announces count + filter changes.
   let liveMessage = $state('')
   let lastMsgJson = ''
@@ -456,14 +406,6 @@
       }. ${hubState.savedViews.length} saved views.`
     }
   })
-
-  const DUE_OPTIONS: { v: DueDateFilter; l: string; testid: string }[] = [
-    { v: '', l: 'All', testid: 'due-all' },
-    { v: 'overdue', l: 'Overdue', testid: 'due-overdue' },
-    { v: 'today', l: 'Today', testid: 'due-today' },
-    { v: 'week', l: 'This Week', testid: 'due-week' },
-    { v: 'none', l: 'No Date', testid: 'due-none' }
-  ]
 </script>
 
 <aside
@@ -599,259 +541,124 @@
   </section>
 
   <!-- Jump-to-Date mini-cal (lifted from CalendarSidebar) -->
-  <section aria-labelledby="tasks-mini-heading">
-    <h3
-      id="tasks-mini-heading"
-      class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
-    >
-      Jump to Date
-    </h3>
-    <div class="mt-1 px-2">
-      <div class="flex items-center justify-between mb-1">
-        <button
-          type="button"
-          onclick={prevMonth}
-          aria-label="Previous month"
-          class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
-        >
-          <span class="material-symbols-outlined text-[14px]">chevron_left</span
-          >
-        </button>
-        <span class="text-text-primary text-[11px] font-label-sm-bold">
-          {MONTHS[miniCursor.getMonth()]}
-          {miniCursor.getFullYear()}
+  <section aria-labelledby="tasks-mini-heading" class="flex flex-col">
+    <div class="flex items-center justify-between px-2">
+      <h3
+        id="tasks-mini-heading"
+        class="font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+      >
+        Jump to Date
+      </h3>
+      <button
+        type="button"
+        data-testid="toggle-mini-calendar"
+        onclick={toggleCalendar}
+        aria-expanded={calendarExpanded}
+        aria-controls="tasks-mini-calendar-content"
+        class="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-hover border-none bg-transparent cursor-pointer flex items-center transition-colors"
+      >
+        <span class="material-symbols-outlined text-[14px]">
+          {calendarExpanded ? 'expand_less' : 'expand_more'}
         </span>
-        <button
-          type="button"
-          onclick={nextMonth}
-          aria-label="Next month"
-          class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
-        >
-          <span class="material-symbols-outlined text-[14px]"
-            >chevron_right</span
-          >
-        </button>
-      </div>
-      <div class="flex justify-end mb-1">
-        <button
-          type="button"
-          onclick={goMiniToday}
-          aria-label="Jump mini-calendar to today"
-          data-testid="mini-today"
-          class="px-1.5 py-0.5 rounded border border-surface-popover-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
-        >
-          Today
-        </button>
-      </div>
-      <div class="grid grid-cols-7 gap-0.5" role="grid">
-        {#each DOW as d}
-          <div
-            class="text-center text-[9px] uppercase tracking-widest font-label-sm-bold text-text-muted py-0.5"
-          >
-            {d}
-          </div>
-        {/each}
-        {#each miniWeeks as week, wi (wi)}
-          {#each week as day, di (di)}
-            {@const inMonth = day.getMonth() === miniCursor.getMonth()}
-            {@const key = ymd(day)}
-            {@const count = byDate[key] ?? 0}
-            {@const flatIdx = wi * 7 + di}
-            <button
-              type="button"
-              role="gridcell"
-              tabindex={flatIdx === miniFocusIdx ? 0 : -1}
-              data-mini-day={flatIdx}
-              data-mini-date={key}
-              data-test-mini-day={key}
-              onclick={() => pickDay(day)}
-              onkeydown={(e) => onDayKeydown(e, flatIdx)}
-              aria-label={`${key}${count ? ', ' + count + ' task' + (count === 1 ? '' : 's') : ''}`}
-              aria-current={key === activeFocusDate ? 'date' : undefined}
-              data-testid={`mini-day-${key}`}
-              class="aspect-square flex flex-col items-center justify-center rounded text-[10px] font-label-sm cursor-pointer border-none bg-transparent
-                {inMonth
-                ? 'text-text-primary hover:bg-hover'
-                : 'text-text-muted/50'}
-                {key === activeFocusDate
-                ? 'ring-1 ring-accent-primary-start bg-accent-primary-glow'
-                : ''}"
-            >
-              <span>{day.getDate()}</span>
-              {#if count > 0}
-                <span
-                  class="w-1 h-1 rounded-full bg-accent-primary-start"
-                  aria-hidden="true"
-                ></span>
-              {/if}
-            </button>
-          {/each}
-        {/each}
-      </div>
-      {#if activeFocusDate}
-        <button
-          type="button"
-          onclick={() => clearFocusDate()}
-          data-testid="clear-focus"
-          class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors"
-        >
-          <span class="material-symbols-outlined text-[12px]">close</span>
-          Clear jump date
-        </button>
-      {/if}
+      </button>
     </div>
-  </section>
-
-  <!-- Active Filters (lifted from KanbanSidebar) -->
-  <section aria-labelledby="tasks-filters-heading">
-    <h3
-      id="tasks-filters-heading"
-      class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
-    >
-      Active Filters
-    </h3>
-    <div class="mt-1 space-y-2">
-      <!-- Owners -->
-      {#if owners.length > 0}
-        <div>
-          <p
-            class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1"
+    {#if calendarExpanded}
+      <div id="tasks-mini-calendar-content" class="mt-1 px-2">
+        <div class="flex items-center justify-between mb-1">
+          <button
+            type="button"
+            onclick={prevMonth}
+            aria-label="Previous month"
+            class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
           >
-            Owners
-          </p>
-          <ul class="space-y-0.5">
-            {#each owners as o (o)}
-              {@const checked = liveFilters.owners.includes(o)}
-              <li>
-                <label
-                  class="flex items-center gap-2 px-2 py-1 rounded text-[12px] font-body-md cursor-pointer hover:bg-hover"
-                >
-                  <input
-                    type="checkbox"
-                    {checked}
-                    onchange={() => toggleOwner(o)}
-                    data-testid={`owner-${o}`}
-                    class="rounded border-surface-sidebar-border bg-surface-sidebar"
-                  />
-                  <span class="text-text-primary">{o}</span>
-                </label>
-              </li>
-            {/each}
-          </ul>
+            <span class="material-symbols-outlined text-[14px]"
+              >chevron_left</span
+            >
+          </button>
+          <span class="text-text-primary text-[11px] font-label-sm-bold">
+            {MONTHS[miniCursor.getMonth()]}
+            {miniCursor.getFullYear()}
+          </span>
+          <button
+            type="button"
+            onclick={nextMonth}
+            aria-label="Next month"
+            class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
+          >
+            <span class="material-symbols-outlined text-[14px]"
+              >chevron_right</span
+            >
+          </button>
         </div>
-      {/if}
-
-      <!-- Priorities -->
-      <div>
-        <p
-          class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1"
-        >
-          Priority
-        </p>
-        <ul class="space-y-0.5">
-          {#each [1, 2, 3] as p (p)}
-            {@const checked = liveFilters.priorities.includes(p)}
-            <li>
-              <label
-                class="flex items-center gap-2 px-2 py-1 rounded text-[12px] font-body-md cursor-pointer hover:bg-hover"
-              >
-                <input
-                  type="checkbox"
-                  {checked}
-                  onchange={() => togglePriority(p)}
-                  data-testid={`priority-${p}`}
-                  class="rounded border-surface-sidebar-border bg-surface-sidebar"
-                />
-                <span class="text-text-primary"
-                  >P{p} · {PRIORITY_LABELS[p] ?? 'Normal'}</span
-                >
-              </label>
-            </li>
+        <div class="flex justify-end mb-1">
+          <button
+            type="button"
+            onclick={goMiniToday}
+            aria-label="Jump mini-calendar to today"
+            data-testid="mini-today"
+            class="px-1.5 py-0.5 rounded border border-surface-popover-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
+          >
+            Today
+          </button>
+        </div>
+        <div class="grid grid-cols-7 gap-0.5" role="grid">
+          {#each DOW as d}
+            <div
+              class="text-center text-[9px] uppercase tracking-widest font-label-sm-bold text-text-muted py-0.5"
+            >
+              {d}
+            </div>
           {/each}
-        </ul>
-      </div>
-
-      <!-- Due-date quick-pick -->
-      <div>
-        <p
-          class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1"
-        >
-          Due
-        </p>
-        <ul
-          role="radiogroup"
-          aria-label="Due-date quick-pick"
-          class="space-y-0.5"
-        >
-          {#each DUE_OPTIONS as opt (opt.v)}
-            <li>
+          {#each miniWeeks as week, wi (wi)}
+            {#each week as day, di (di)}
+              {@const inMonth = day.getMonth() === miniCursor.getMonth()}
+              {@const key = ymd(day)}
+              {@const count = byDate[key] ?? 0}
+              {@const flatIdx = wi * 7 + di}
               <button
                 type="button"
-                role="radio"
-                aria-checked={liveFilters.dueDate === opt.v}
-                data-testid={opt.testid}
-                onclick={() => setDueDateChip(opt.v)}
-                class="w-full flex items-center gap-2 px-2 py-1 rounded text-[12px] font-body-md cursor-pointer border-none bg-transparent text-left
-                  {liveFilters.dueDate === opt.v
-                  ? 'bg-accent-primary-glow text-accent-primary-start'
-                  : 'text-text-primary hover:bg-hover'}"
+                role="gridcell"
+                tabindex={flatIdx === miniFocusIdx ? 0 : -1}
+                data-mini-day={flatIdx}
+                data-mini-date={key}
+                data-test-mini-day={key}
+                onclick={() => pickDay(day)}
+                onkeydown={(e) => onDayKeydown(e, flatIdx)}
+                aria-label={`${key}${count ? ', ' + count + ' task' + (count === 1 ? '' : 's') : ''}`}
+                aria-current={key === activeFocusDate ? 'date' : undefined}
+                data-testid={`mini-day-${key}`}
+                class="aspect-square flex flex-col items-center justify-center rounded text-[10px] font-label-sm cursor-pointer border-none bg-transparent
+                  {inMonth
+                  ? 'text-text-primary hover:bg-hover'
+                  : 'text-text-muted/50'}
+                  {key === activeFocusDate
+                  ? 'ring-1 ring-accent-primary-start bg-accent-primary-glow'
+                  : ''}"
               >
-                <span
-                  class="w-2 h-2 rounded-full"
-                  class:bg-accent-primary-start={liveFilters.dueDate === opt.v}
-                  class:bg-surface-sidebar-border={liveFilters.dueDate !==
-                    opt.v}
-                ></span>
-                <span class="flex-1">{opt.l}</span>
+                <span>{day.getDate()}</span>
+                {#if count > 0}
+                  <span
+                    class="w-1 h-1 rounded-full bg-accent-primary-start"
+                    aria-hidden="true"
+                  ></span>
+                {/if}
               </button>
-            </li>
-          {/each}
-        </ul>
-      </div>
-
-      <!-- Tags -->
-      {#if tags.length > 0}
-        <div>
-          <p
-            class="px-2 text-[10px] font-label-sm-bold text-text-muted uppercase tracking-widest mb-1"
-          >
-            Tags
-          </p>
-          <ul class="space-y-0.5">
-            {#each tags as t (t)}
-              {@const checked = liveFilters.tags.includes(t)}
-              <li>
-                <label
-                  class="flex items-center gap-2 px-2 py-1 rounded text-[12px] font-body-md cursor-pointer hover:bg-hover"
-                >
-                  <input
-                    type="checkbox"
-                    {checked}
-                    onchange={() => toggleTag(t)}
-                    data-testid={`tag-${t}`}
-                    class="rounded border-surface-sidebar-border bg-surface-sidebar"
-                  />
-                  <span class="text-text-primary">{t}</span>
-                </label>
-              </li>
             {/each}
-          </ul>
+          {/each}
         </div>
-      {/if}
-
-      <!-- Clear all -->
-      {#if liveFilters.owners.length || liveFilters.priorities.length || liveFilters.dueDate || liveFilters.tags.length}
-        <button
-          type="button"
-          onclick={() => clearFilters()}
-          data-testid="clear-filters"
-          class="w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-sidebar-border bg-transparent transition-colors"
-        >
-          <span class="material-symbols-outlined text-[12px]">close</span>
-          Clear all filters
-        </button>
-      {/if}
-    </div>
+        {#if activeFocusDate}
+          <button
+            type="button"
+            onclick={() => clearFocusDate()}
+            data-testid="clear-focus"
+            class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors"
+          >
+            <span class="material-symbols-outlined text-[12px]">close</span>
+            Clear jump date
+          </button>
+        {/if}
+      </div>
+    {/if}
   </section>
 
   <!-- aria-live region announces count + filter changes -->

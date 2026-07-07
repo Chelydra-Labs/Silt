@@ -156,10 +156,8 @@ describe('Tasks hub shell (#424)', () => {
     expect(
       screen.getByRole('radio', { name: /Calendar mode/i })
     ).toBeInTheDocument()
-    // Scope breadcrumb radiogroup.
-    expect(
-      screen.getByRole('radiogroup', { name: 'Tasks scope' })
-    ).toBeInTheDocument()
+    // Scope selector toggle.
+    expect(screen.getByTestId('tasks-hub-scope-toggle')).toBeInTheDocument()
     // Shared FilterBar chip row.
     expect(screen.getByRole('button', { name: /Owner/i })).toBeInTheDocument()
   })
@@ -330,26 +328,23 @@ describe('Tasks hub — group-by + sort selectors (#423)', () => {
     cleanup()
   })
 
-  it('renders Group-by and Sort selects in the header', async () => {
+  it('renders Group-by and Sort dropdown toggles in the header', async () => {
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    const groupBy = screen.getByTestId('tasks-hub-group-by')
-    const sort = screen.getByTestId('tasks-hub-sort')
+    const groupBy = screen.getByTestId('tasks-hub-group-by-toggle')
+    const sort = screen.getByTestId('tasks-hub-sort-toggle')
     expect(groupBy).toBeInTheDocument()
     expect(sort).toBeInTheDocument()
-    // Both expose an accessible label.
-    expect(groupBy.getAttribute('aria-label')).toBe('Group tasks by')
-    expect(sort.getAttribute('aria-label')).toBe('Sort tasks by')
   })
 
   it('changing Group-by updates state and persists the preference', async () => {
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    await fireEvent.change(screen.getByTestId('tasks-hub-group-by'), {
-      target: { value: 'status' }
-    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-group-by-toggle'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('group-option-status'))
     await flush()
 
     expect(getTaskHubState().groupBy).toBe('status')
@@ -364,9 +359,9 @@ describe('Tasks hub — group-by + sort selectors (#423)', () => {
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    await fireEvent.change(screen.getByTestId('tasks-hub-sort'), {
-      target: { value: 'priority' }
-    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-sort-toggle'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('sort-option-priority'))
     await flush()
 
     expect(getTaskHubState().sort).toBe('priority')
@@ -388,11 +383,10 @@ describe('Tasks hub — group-by + sort selectors (#423)', () => {
 
     expect(getTaskHubState().groupBy).toBe('owner')
     expect(getTaskHubState().sort).toBe('title')
-    // The select reflects the hydrated value.
-    const groupBy = screen.getByTestId(
-      'tasks-hub-group-by'
-    ) as HTMLSelectElement
-    expect(groupBy.value).toBe('owner')
+
+    // The toggle button reflects the hydrated value.
+    const groupBy = screen.getByTestId('tasks-hub-group-by-toggle')
+    expect(groupBy.textContent).toContain('Group: Owner')
   })
 })
 

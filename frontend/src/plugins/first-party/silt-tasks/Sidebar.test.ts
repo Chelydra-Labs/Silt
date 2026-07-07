@@ -480,81 +480,21 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(screen.queryByTestId('clear-focus')).toBeNull()
   })
 
-  // --- Section 4: Active Filters -----------------------------------------
-
-  it('toggle priority checkbox updates state filters + reflects in checkbox checked', async () => {
+  it('toggle mini calendar collapses and expands the calendar grid', async () => {
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
-    await fireEvent.click(screen.getByTestId('priority-1'))
-    expect(getTaskHubState().filters.priorities).toContain(1)
-    const cb = screen.getByTestId('priority-1') as HTMLInputElement
-    expect(cb.checked).toBe(true)
-    await fireEvent.click(screen.getByTestId('priority-1'))
-    expect(getTaskHubState().filters.priorities).not.toContain(1)
-    expect(cb.checked).toBe(false)
-  })
+    // By default, it is expanded, so mini-today is visible.
+    expect(screen.getByTestId('mini-today')).toBeInTheDocument()
 
-  it('toggle due-date quick-pick sets filters.dueDate', async () => {
-    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    // Click to collapse
+    await fireEvent.click(screen.getByTestId('toggle-mini-calendar'))
     await flush()
-    await fireEvent.click(screen.getByTestId('due-overdue'))
-    expect(getTaskHubState().filters.dueDate).toBe('overdue')
-    await fireEvent.click(screen.getByTestId('due-all'))
-    expect(getTaskHubState().filters.dueDate).toBe('')
-  })
+    expect(screen.queryByTestId('mini-today')).toBeNull()
 
-  it('toggling a filter from outside the sidebar is reflected in the sidebar checkboxes (bidirectional sync)', async () => {
-    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    // Click to expand again
+    await fireEvent.click(screen.getByTestId('toggle-mini-calendar'))
     await flush()
-    setFilters({
-      owners: [],
-      priorities: [2],
-      dueDate: 'today',
-      tags: []
-    })
-    await flush()
-    const checked = screen.getByTestId('priority-2') as HTMLInputElement
-    expect(checked.checked).toBe(true)
-    const dueToday = screen.getByTestId('due-today')
-    expect(dueToday.getAttribute('aria-checked')).toBe('true')
-  })
-
-  it('Clear all filters clears state', async () => {
-    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    await fireEvent.click(screen.getByTestId('priority-3'))
-    await flush()
-    expect(getTaskHubState().filters.priorities).toContain(3)
-    await fireEvent.click(screen.getByTestId('clear-filters'))
-    expect(getTaskHubState().filters.priorities).toEqual([])
-    expect(getTaskHubState().filters.dueDate).toBe('')
-  })
-
-  it('owner checkboxes appear only when owner facet query returns owners', async () => {
-    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
-      if (sql.includes('level_0')) return mockTagRoots([])
-      if (sql.includes('DISTINCT owner'))
-        return mockOwnersOwners(['alice', 'bob'])
-      return mockDayCounts([])
-    })
-    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    expect(screen.getByTestId('owner-alice')).toBeInTheDocument()
-    expect(screen.getByTestId('owner-bob')).toBeInTheDocument()
-  })
-
-  it('tag checkboxes appear only when tag facet query returns tags', async () => {
-    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes('SUM(CASE')) return mockCounts(0, 0, 0, 0, 0)
-      if (sql.includes('level_0')) return mockTagRoots(['work', 'home'])
-      if (sql.includes('DISTINCT owner')) return mockOwnersOwners([])
-      return mockDayCounts([])
-    })
-    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
-    await flush()
-    expect(screen.getByTestId('tag-work')).toBeInTheDocument()
-    expect(screen.getByTestId('tag-home')).toBeInTheDocument()
+    expect(screen.getByTestId('mini-today')).toBeInTheDocument()
   })
 
   // --- Misc: refresh + error paths ---------------------------------------

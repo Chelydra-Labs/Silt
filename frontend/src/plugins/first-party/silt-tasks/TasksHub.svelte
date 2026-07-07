@@ -63,26 +63,6 @@
     { value: 'board', label: 'Board', icon: 'view_kanban' },
     { value: 'calendar', label: 'Calendar', icon: 'calendar_month' }
   ]
-  const SCOPES: Scope[] = ['vault', 'notebook', 'section', 'page']
-  const GROUP_OPTIONS: { value: GroupBy; label: string }[] = [
-    { value: 'none', label: 'None' },
-    { value: 'status', label: 'Status' },
-    { value: 'owner', label: 'Owner' },
-    { value: 'priority', label: 'Priority' },
-    { value: 'dueDate', label: 'Due date' },
-    { value: 'tag', label: 'Tag' },
-    { value: 'notebook', label: 'Notebook' },
-    { value: 'section', label: 'Section' },
-    { value: 'page', label: 'Page' }
-  ]
-  const SORT_OPTIONS: { value: SortMode; label: string }[] = [
-    { value: 'manual', label: 'Manual' },
-    { value: 'dueDate', label: 'Due date' },
-    { value: 'priority', label: 'Priority' },
-    { value: 'title', label: 'Title' },
-    { value: 'created', label: 'Created' },
-    { value: 'owner', label: 'Owner' }
-  ]
 
   let hubState = $derived(getTaskHubState())
 
@@ -245,29 +225,7 @@
     if (s === 'page') return !ctx.activePage
     return false
   }
-  function onScopeKeydown(e: KeyboardEvent) {
-    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
-    e.preventDefault()
-    const dir = e.key === 'ArrowLeft' || e.key === 'End' ? -1 : 1
-    let start: number
-    if (e.key === 'Home') start = 0
-    else if (e.key === 'End') start = SCOPES.length - 1
-    else
-      start =
-        (SCOPES.indexOf(getTaskHubState().scope) + dir + SCOPES.length) %
-        SCOPES.length
-    for (let i = 0; i < SCOPES.length; i++) {
-      const next =
-        (((start + i * dir) % SCOPES.length) + SCOPES.length) % SCOPES.length
-      if (!isScopeDisabled(SCOPES[next])) {
-        setScope(SCOPES[next])
-        ;(e.currentTarget as HTMLElement)
-          .querySelector<HTMLElement>(`[data-scope="${SCOPES[next]}"]`)
-          ?.focus()
-        return
-      }
-    }
-  }
+
   function resetScopeToContext() {
     clearScopeOverride()
     untrack(() => setScope(defaultScope()))
@@ -791,105 +749,22 @@
     </div>
   </header>
 
-  <!-- Group-by + Sort selectors (#423). Native selects for accessibility
-       (keyboard-operable, option list exposed to AT). Both persist on change. -->
-  <div
-    class="px-6 py-1.5 border-b border-surface-panel-border flex items-center gap-3 flex-wrap"
-  >
-    <label
-      class="flex items-center gap-1.5 text-[12px] font-label-sm text-text-muted"
-    >
-      <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-        >view_module</span
-      >
-      <span>Group by</span>
-      <select
-        data-testid="tasks-hub-group-by"
-        aria-label="Group tasks by"
-        value={hubState.groupBy}
-        onchange={(e) => chooseGroupBy(e.currentTarget.value as GroupBy)}
-        class="bg-surface-panel border border-surface-panel-border rounded px-1.5 py-0.5 text-[12px] font-label-sm text-text-primary cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-primary-start"
-      >
-        {#each GROUP_OPTIONS as opt (opt.value)}
-          <option value={opt.value} selected={hubState.groupBy === opt.value}
-            >{opt.label}</option
-          >
-        {/each}
-      </select>
-    </label>
-    <label
-      class="flex items-center gap-1.5 text-[12px] font-label-sm text-text-muted"
-    >
-      <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-        >sort</span
-      >
-      <span>Sort</span>
-      <select
-        data-testid="tasks-hub-sort"
-        aria-label="Sort tasks by"
-        value={hubState.sort}
-        onchange={(e) => chooseSort(e.currentTarget.value as SortMode)}
-        class="bg-surface-panel border border-surface-panel-border rounded px-1.5 py-0.5 text-[12px] font-label-sm text-text-primary cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-primary-start"
-      >
-        {#each SORT_OPTIONS as opt (opt.value)}
-          <option value={opt.value} selected={hubState.sort === opt.value}
-            >{opt.label}</option
-          >
-        {/each}
-      </select>
-    </label>
-  </div>
-
-  <!-- Scope breadcrumb + follow toggle (shared across modes). -->
-  <div
-    class="px-6 py-1.5 border-b border-surface-panel-border flex items-center gap-2 flex-wrap"
-    role="radiogroup"
-    aria-label="Tasks scope"
-    tabindex="-1"
-    onkeydown={onScopeKeydown}
-  >
-    {#each SCOPES as s (s)}
-      <button
-        type="button"
-        role="radio"
-        aria-checked={hubState.scope === s}
-        tabindex={hubState.scope === s ? 0 : -1}
-        data-scope={s}
-        disabled={isScopeDisabled(s)}
-        title={isScopeDisabled(s) ? `Select a ${s} first` : undefined}
-        onclick={() => setScope(s)}
-        class="px-2.5 py-0.5 rounded font-label-sm text-[12px] border-none cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        class:bg-hover={hubState.scope === s}
-        class:text-accent-primary-start={hubState.scope === s}
-        class:text-text-muted={hubState.scope !== s}
-      >
-        {s === 'vault' ? 'Vault' : s[0].toUpperCase() + s.slice(1)}
-      </button>
-    {/each}
-    <span
-      class="text-text-muted text-[12px] font-body-md ml-auto flex items-center gap-2"
-    >
-      <span>{scopeCrumb} · {totalCount} task{totalCount === 1 ? '' : 's'}</span>
-      {#if hubState.scopeUserOverride}
-        <button
-          type="button"
-          onclick={resetScopeToContext}
-          aria-label="Reset Tasks scope to follow navigation"
-          title="Follow navigation"
-          class="flex items-center gap-1 px-1.5 py-0.5 rounded border border-surface-panel-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
-        >
-          <span class="material-symbols-outlined text-[14px]">my_location</span>
-          <span class="font-label-sm">Follow</span>
-        </button>
-      {/if}
-    </span>
-  </div>
-
   <FilterBar
     filters={hubState.filters}
     owners={allOwners}
     tags={allTags}
     onFiltersChange={handleFiltersChange}
+    groupBy={hubState.groupBy}
+    onGroupByChange={chooseGroupBy}
+    sort={hubState.sort}
+    onSortChange={chooseSort}
+    scope={hubState.scope}
+    onScopeChange={(s) => setScope(s)}
+    {isScopeDisabled}
+    {scopeCrumb}
+    scopeUserOverride={hubState.scopeUserOverride}
+    onResetScope={resetScopeToContext}
+    {totalCount}
   />
 
   <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
