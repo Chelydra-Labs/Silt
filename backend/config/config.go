@@ -442,8 +442,11 @@ func Defaults() SystemConfig {
 			"toggle_typewriter_mode": "Ctrl+Shift+Y",
 		},
 		Plugins: PluginsConfig{
-			Active:   []string{"silt-calendar", "silt-kanban"},
-			Disabled: []string{},
+			Active: []string{"silt-calendar", "silt-kanban"},
+			// silt-ai-summary (#220) ships OFF by default: it is the first plugin
+			// that sends note content to an external LLM endpoint, so the user
+			// opts in explicitly (Plugins tab) after configuring a provider.
+			Disabled: []string{"silt-ai-summary"},
 			PluginSettings: map[string]any{
 				"silt-kanban": map[string]any{
 					"default_col": "TODO",

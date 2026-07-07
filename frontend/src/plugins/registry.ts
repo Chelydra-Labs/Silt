@@ -5,6 +5,7 @@ import Kanban from './first-party/silt-kanban/Kanban.svelte'
 import KanbanSidebar from './first-party/silt-kanban/KanbanSidebar.svelte'
 import Tasks from './first-party/silt-tasks/Tasks.svelte'
 import AttachmentsPlugin from './first-party/silt-attachments'
+import AISummaryPlugin from './first-party/silt-ai-summary'
 
 // First-party plugin registry: bundled Svelte components that ship with the
 // app. Third-party plugins live in .system/plugins/ and are loaded by the
@@ -81,6 +82,20 @@ registerPlugin({
     capabilities: { 'content-mutate': true }
   },
   component: Tasks,
+  source: 'first-party'
+})
+// silt-ai-summary (#220–#223): dismissible per-note summary banner. The first
+// AI-capable first-party plugin — gated by `ai` + `plugin-db`, off by default
+// (added to plugins.disabled in config.Defaults). The plugin module exports
+// its component (an informational panel) + onVaultOpen/onVaultClose hooks that
+// wire the controller; the live per-note surface is the SummaryBanner
+// component rendered via the note-banner host (Phase 3).
+registerPlugin({
+  manifest: AISummaryPlugin.manifest,
+  component: AISummaryPlugin.component,
+  onVaultOpen: AISummaryPlugin.onVaultOpen,
+  onVaultClose: AISummaryPlugin.onVaultClose,
+  onShutdown: AISummaryPlugin.onShutdown,
   source: 'first-party'
 })
 
