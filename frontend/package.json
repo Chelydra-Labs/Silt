@@ -67,7 +67,7 @@
     "@tiptap/extension-details": "^3.27.1",
     "@tiptap/extension-floating-menu": "^3.26.1",
     "@tiptap/extension-highlight": "^3.26.1",
-    "@tiptap/extension-link": "^3.26.1",
+    "@tiptap/extension-link": "^3.27.2",
     "@tiptap/extension-placeholder": "^3.26.1",
     "@tiptap/extension-subscript": "^3.26.1",
     "@tiptap/extension-superscript": "^3.26.1",
