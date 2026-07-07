@@ -147,10 +147,26 @@ export function viewMatchesState(view: SavedView, s: TaskHubState): boolean {
   if (view.columns !== undefined && !arrayEqual(view.columns, s.columns))
     return false
   if (view.filters !== undefined) {
-    if (!arrayEqual(view.filters.owners, s.filters.owners)) return false
-    if (!arrayEqual(view.filters.priorities, s.filters.priorities)) return false
-    if (view.filters.dueDate !== s.filters.dueDate) return false
-    if (!arrayEqual(view.filters.tags, s.filters.tags)) return false
+    if (
+      view.filters.owners !== undefined &&
+      !arrayEqual(view.filters.owners, s.filters.owners)
+    )
+      return false
+    if (
+      view.filters.priorities !== undefined &&
+      !arrayEqual(view.filters.priorities, s.filters.priorities)
+    )
+      return false
+    if (
+      view.filters.dueDate !== undefined &&
+      view.filters.dueDate !== s.filters.dueDate
+    )
+      return false
+    if (
+      view.filters.tags !== undefined &&
+      !arrayEqual(view.filters.tags, s.filters.tags)
+    )
+      return false
   }
   return true
 }

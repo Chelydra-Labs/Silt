@@ -346,3 +346,83 @@ func TestLoadLegacyTaskPluginSettings_RoundTripsThroughYAML(t *testing.T) {
 		t.Errorf("partial decode mismatch:\n got  %#v\n want %#v", got, want)
 	}
 }
+
+// TestMigrate_BoardWithOwnFiltersOverridesTopLevel verifies a board
+// carrying its own filters/scope produces a saved view that uses those
+// per-board values, not the kanban top-level filters/default_scope.
+func TestMigrate_BoardWithOwnFiltersOverridesTopLevel(t *testing.T) {
+	raw := map[string]any{
+		"silt-kanban": map[string]any{
+			"columns": []any{"TODO", "DOING", "DONE"},
+			"filters": map[string]any{
+				"owners":     []any{"top-owner"},
+				"priorities": []any{3},
+				"dueDate":    "week",
+				"tags":       []any{"top-tag"},
+			},
+			"scope": "vault",
+			"boards": []any{
+				map[string]any{
+					"id":    "b-with-filters",
+					"name":  "Filtered Board",
+					"scope": "page",
+					"filters": map[string]any{
+						"owners":     []any{"board-owner"},
+						"priorities": []any{1},
+						"dueDate":    "today",
+						"tags":       []any{"board-tag"},
+					},
+				},
+			},
+		},
+	}
+	migrated := MigrateLegacyTaskPluginSettings(config.Defaults(), raw)
+	tasks := tasksEntry(t, migrated)
+
+	views, ok := tasks["saved_views"].([]any)
+	if !ok || len(views) != 1 {
+		t.Fatalf("expected 1 saved view, got %v", tasks["saved_views"])
+	}
+	view := views[0].(map[string]any)
+
+	// Per-board scope wins over top-level.
+	if view["scope"] != "page" {
+		t.Errorf("expected scope=page (per-board), got %v", view["scope"])
+	}
+
+	// Per-board filters win over top-level.
+	filters, ok := view["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected filters map on view, got %T", view["filters"])
+	}
+	owners, _ := filters["owners"].([]any)
+	if len(owners) != 1 || owners[0] != "board-owner" {
+		t.Errorf("expected board-owner, got %v", owners)
+	}
+	if filters["dueDate"] != "today" {
+		t.Errorf("expected dueDate=today (per-board), got %v", filters["dueDate"])
+	}
+
+	// Top-level filters do NOT pollute the view's filters.
+	topOwners, _ := filters["owners"].([]any)
+	for _, o := range topOwners {
+		if o == "top-owner" {
+			t.Error("top-level owner leaked into per-board view")
+		}
+	}
+
+	// Top-level filters land on the tasks map's default filters (not the view).
+	topFilters, ok := tasks["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected top-level filters on tasks map, got %T", tasks["filters"])
+	}
+	topFilterOwners, _ := topFilters["owners"].([]any)
+	if len(topFilterOwners) != 1 || topFilterOwners[0] != "top-owner" {
+		t.Errorf("expected top-owner in tasks filters, got %v", topFilterOwners)
+	}
+
+	// Top-level scope lands on tasks["default_scope"] (not the view).
+	if tasks["default_scope"] != "vault" {
+		t.Errorf("expected default_scope=vault (top-level), got %v", tasks["default_scope"])
+	}
+}

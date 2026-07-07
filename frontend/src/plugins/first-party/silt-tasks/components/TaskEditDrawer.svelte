@@ -53,21 +53,28 @@
   // reassignment (e.g. an onMetaChanged reload) doesn't yank focus back to
   // the panel out of whatever field the user is mid-edit on.
   let drawerOpen = false
+  let lastTaskId = ''
   $effect(() => {
+    const tid = task?.id ?? ''
     if (task && !drawerOpen) {
       drawerOpen = true
       previouslyFocused = document.activeElement as HTMLElement
       // tabindex=-1 lets the panel receive focus without joining the tab order.
       tick().then(() => panelRef?.focus())
+    } else if (task && drawerOpen && tid !== lastTaskId) {
+      // Switching A→B with the drawer open: capture B's trigger so close
+      // returns to the most recently clicked card, not A's (which may be
+      // scrolled out of view). Guard against capturing the panel itself.
+      const active = document.activeElement as HTMLElement | null
+      if (active && !panelRef?.contains(active)) previouslyFocused = active
     } else if (!task && drawerOpen) {
       drawerOpen = false
-      // Guard against a detached node: open A → open B → close can leave
-      // previouslyFocused pointing at a card that re-rendered away.
       if (previouslyFocused?.isConnected) {
         previouslyFocused.focus?.()
       }
       previouslyFocused = null
     }
+    lastTaskId = tid
   })
 
   // Friendly local rendering of the [created::]/[completed::] ISO timestamps

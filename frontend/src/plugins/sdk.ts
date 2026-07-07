@@ -260,6 +260,10 @@ export interface PluginContext {
    * (the comment composer prompts the user on first run rather than seeding
    * YAML with a placeholder). The user's explicit local_author pref (if set)
    * always wins over this.
+   *
+   * Not capability-gated: the OS username is treated as non-secret (it
+   * already appears in audit events). Revisit if Silt ever hosts untrusted
+   * plugins.
    */
   getLocalAuthor: () => Promise<string>
   /**
