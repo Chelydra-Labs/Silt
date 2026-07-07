@@ -139,6 +139,34 @@
     void reloadFacets()
   })
 
+  // Late-loadConfig hydration (#428): loadConfig races with the Svelte mount,
+  // so the mount-time snapshot above can see an empty config and miss the
+  // user's saved_views. Re-hydrate when the on-disk saved_views reference
+  // changes — but only if the user hasn't touched the views since mount (an
+  // in-session edit wins over a stale external snapshot).
+  let lastExternalSavedViews: unknown = undefined
+  let savedViewsHydrated = false
+  $effect(() => {
+    const ref =
+      settingsStore.config?.plugins?.plugin_settings?.['silt-tasks']
+        ?.saved_views
+    if (!savedViewsHydrated) {
+      // First run captures the baseline; the mount block above already did
+      // the initial hydration from the same snapshot.
+      lastExternalSavedViews = ref
+      savedViewsHydrated = true
+      return
+    }
+    if (ref === lastExternalSavedViews) return
+    lastExternalSavedViews = ref
+    // An in-session edit flips savedViewsDirty; don't clobber it.
+    if (getTaskHubState().savedViewsDirty) return
+    const views = loadSavedViews()
+    if (views.length) {
+      getTaskHubState().savedViews = views
+    }
+  })
+
   function chooseMode(mode: DisplayMode) {
     setDisplayMode(mode)
     void persistDefaultDisplayMode(mode)
@@ -496,7 +524,7 @@
         aria-live="polite"
         data-testid="tasks-hub-count"
       >
-        {openCount} active{openCount === 1 ? '' : 's'}{doneCount > 0
+        {openCount} active task{openCount === 1 ? '' : 's'}{doneCount > 0
           ? ` · ${doneCount} done`
           : ''}
       </span>

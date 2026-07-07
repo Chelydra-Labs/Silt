@@ -295,8 +295,11 @@
         } catch (e) {
           if (my !== moveSeq) return
           moveError = e instanceof Error ? e.message : String(e)
-          revertTo(prev)
-          liveMessage = 'Move failed — reverted.'
+          // The dimension change in dispatchDrop already persisted; reverting
+          // the optimistic column placement would desync from disk. Reload to
+          // pick up the on-disk state (new column, stale order value).
+          await reload()
+          liveMessage = 'Move partially failed — reloaded.'
         }
       }
     } catch (e) {
@@ -587,7 +590,9 @@
     const [moved] = next.splice(from, 1)
     next.splice(i, 0, moved)
     statusColumns = next
-    void persistColumns(statusColumns)
+    void persistColumns(statusColumns).then((ok) => {
+      if (!ok) configError = 'Failed to save column order'
+    })
     rebin()
   }
 
@@ -643,9 +648,10 @@
   }
 
   // Renumber the cards in `col` after `src` is moved to the slot just before
-  // `target`. Persists the diffs via setTaskOrder with optimistic update +
-  // revert. Source group/column is not renumbered on cross-column moves
-  // (gap-tolerant) — only the destination column's 1-based sequence changes.
+  // `target`. Persists the diffs via a single batch setTaskOrders call (one
+  // atomic write per file) with optimistic update + revert. Source group/
+  // column is not renumbered on cross-column moves (gap-tolerant) — only the
+  // destination column's 1-based sequence changes.
   async function commitManualReorder(
     src: TaskDetail,
     target: TaskDetail,
@@ -685,7 +691,9 @@
       changes.find((c) => c.id === src.id)?.order ?? ''
     } in ${col.label}.`
     try {
-      await Promise.all(changes.map((c) => ctx.setTaskOrder(c.id, c.order)))
+      await ctx.setTaskOrders(
+        changes.map((c) => ({ id: c.id, order: c.order }))
+      )
     } catch (e) {
       if (my !== moveSeq) return
       moveError = e instanceof Error ? e.message : String(e)
@@ -788,7 +796,7 @@
 
   {#if configError}
     <div
-      class="px-6 py-2 bg-yellow-500/10 border-b border-yellow-500/30 text-yellow-200 text-[12px] font-body-md flex items-center gap-2"
+      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-[12px] font-body-md flex items-center gap-2"
       role="status"
     >
       <span class="material-symbols-outlined text-[16px]">save</span>
@@ -798,7 +806,7 @@
 
   {#if columns.length > 10 && columns.length <= 20}
     <div
-      class="px-6 py-2 bg-yellow-500/10 border-b border-yellow-500/30 text-yellow-200 text-[12px] font-body-md flex items-center gap-2"
+      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-[12px] font-body-md flex items-center gap-2"
       role="status"
     >
       <span class="material-symbols-outlined text-[16px]">info</span>

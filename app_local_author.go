@@ -12,6 +12,15 @@ package main
 // "unknown" when the host can't resolve it (e.g. cross-compiled without cgo
 // on some platforms). Frontend uses this as the default for the local_author
 // preference; the user's explicit pref (if set) always wins.
+//
+// The literal "unknown" placeholder is filtered to "" here so the comment
+// composer prompts the user on first run rather than seeding the YAML with a
+// permanent "unknown" attribution that the user would then have to find and
+// delete.
 func (a *App) GetLocalAuthor() string {
-	return auditActor()
+	name := auditActor()
+	if name == "unknown" {
+		return ""
+	}
+	return name
 }

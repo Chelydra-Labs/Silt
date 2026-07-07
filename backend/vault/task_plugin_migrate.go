@@ -1,12 +1,12 @@
 package vault
 
 import (
-	"os"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 
 	"silt/backend/config"
+	"silt/backend/safeio"
 )
 
 // task_plugin_migrate.go implements the Phase 9 (#431) one-time migration of
@@ -45,7 +45,9 @@ type LegacyTaskPluginSettings struct {
 // path with a real error.
 func LoadLegacyTaskPluginSettings(vaultPath string) map[string]any {
 	configPath := filepath.Join(vaultPath, ".system", "config.yaml")
-	data, err := os.ReadFile(configPath)
+	// Bound the read at 256 KB (mirrors config.Load) so a runaway or hostile
+	// config.yaml can't OOM the partial-decode path.
+	data, err := safeio.ReadFileMax(configPath, 256*1024)
 	if err != nil {
 		return map[string]any{}
 	}

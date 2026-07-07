@@ -26,6 +26,7 @@ export const v2CtxStubs: Pick<
   | 'setTaskBlockedBy'
   | 'setTaskOwner'
   | 'setTaskOrder'
+  | 'setTaskOrders'
   | 'setTaskPriority'
   | 'setTaskTags'
   | 'setTaskTitle'
@@ -85,6 +86,7 @@ export const v2CtxStubs: Pick<
   setTaskBlockedBy: () => Promise.resolve(true),
   setTaskOwner: () => Promise.resolve(true),
   setTaskOrder: () => Promise.resolve(true),
+  setTaskOrders: () => Promise.resolve(true),
   setTaskPriority: () => Promise.resolve(true),
   setTaskTags: () => Promise.resolve(true),
   setTaskTitle: () => Promise.resolve(true),

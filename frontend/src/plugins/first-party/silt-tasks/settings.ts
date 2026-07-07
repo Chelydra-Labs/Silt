@@ -117,9 +117,13 @@ export function persistLocalAuthor(author: string): Promise<boolean> {
  */
 export function loadColumns(): string[] {
   const v = tasksSettings()['columns']
-  return Array.isArray(v) && v.every((x) => typeof x === 'string') && v.length
-    ? [...v]
-    : ['TODO', 'DOING', 'DONE']
+  if (Array.isArray(v) && v.every((x) => typeof x === 'string') && v.length) {
+    // Cap at 50 to bound a runaway or hand-edited YAML (a board with 200
+    // status lanes is not a useful board and would dog the renderer).
+    const cols = v.length > 50 ? v.slice(0, 50) : v
+    return [...cols]
+  }
+  return ['TODO', 'DOING', 'DONE']
 }
 
 /** Atomically write the Board-mode status columns to the vault config. */
@@ -289,7 +293,8 @@ export function loadLegacyKanbanBoardsAsViews(): SavedView[] {
           ? (fr.priorities.filter((x) => typeof x === 'number') as number[])
           : [],
         dueDate:
-          typeof fr.dueDate === 'string'
+          typeof fr.dueDate === 'string' &&
+          ['', 'overdue', 'today', 'week', 'none'].includes(fr.dueDate)
             ? (fr.dueDate as TaskFilters['dueDate'])
             : '',
         tags: Array.isArray(fr.tags)

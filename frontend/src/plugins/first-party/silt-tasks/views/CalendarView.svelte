@@ -161,7 +161,10 @@
 
   let todayKey = $derived.by(() => {
     void nowTick
-    return ymd(new Date())
+    // ctx.today is the SDK's local-day anchor (#118) — same invariant the
+    // Sidebar uses. Avoids any drift between the cell-highlight and the
+    // "today" filter facet.
+    return today
   })
 
   // Overdue open tasks surface into today's cell so they aren't lost in past
@@ -330,6 +333,7 @@
   // --- Sub-mode toggle (Month/Week) --------------------------------------
   let subModeSaveTimer: ReturnType<typeof setTimeout> | null = null
   let subModeError = $state('')
+  const SUBMODES: CalendarSubMode[] = ['month', 'week']
   function chooseSubMode(m: CalendarSubMode) {
     setCalendarSubMode(m)
     if (subModeSaveTimer) clearTimeout(subModeSaveTimer)
@@ -339,6 +343,27 @@
           subModeError = settings.error || "Couldn't save calendar layout"
       })
     }, 200)
+  }
+
+  // WAI-ARIA radiogroup keyboard pattern for the Month/Week submode toggle:
+  // ArrowLeft/Right move between options (wrapping), Home/End jump to the
+  // boundaries. Mirrors the hub mode switcher (TasksHub.svelte).
+  function onSubmodeKeydown(e: KeyboardEvent) {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
+    e.preventDefault()
+    const dir = e.key === 'ArrowLeft' || e.key === 'End' ? -1 : 1
+    let start: number
+    if (e.key === 'Home') start = 0
+    else if (e.key === 'End') start = SUBMODES.length - 1
+    else
+      start =
+        (SUBMODES.indexOf(subMode) + dir + SUBMODES.length) % SUBMODES.length
+    chooseSubMode(SUBMODES[start])
+    ;(e.currentTarget as HTMLElement)
+      .querySelector<HTMLElement>(
+        `[data-testid="calendar-submode-${SUBMODES[start]}"]`
+      )
+      ?.focus()
   }
 
   // --- Group-by one-time notice -----------------------------------------
@@ -568,6 +593,7 @@
         role="radiogroup"
         aria-label="Calendar layout"
         tabindex="-1"
+        onkeydown={onSubmodeKeydown}
       >
         <button
           type="button"
@@ -641,11 +667,11 @@
 
   {#if groupByNotice}
     <div
-      class="px-6 py-1.5 border-b border-yellow-500/30 bg-yellow-500/10 flex items-center gap-2 text-[12px] font-body-md"
+      class="px-6 py-1.5 border-b border-status-warn/30 bg-status-warn/10 flex items-center gap-2 text-[12px] font-body-md"
       role="status"
       data-testid="calendar-groupby-notice"
     >
-      <span class="material-symbols-outlined text-[14px] text-yellow-300"
+      <span class="material-symbols-outlined text-[14px] text-status-warn"
         >info</span
       >
       <span class="text-text-primary"
@@ -664,11 +690,11 @@
 
   {#if subModeError}
     <div
-      class="px-6 py-1.5 border-b border-yellow-500/30 bg-yellow-500/10 flex items-center gap-2 text-[12px] font-body-md"
+      class="px-6 py-1.5 border-b border-status-warn/30 bg-status-warn/10 flex items-center gap-2 text-[12px] font-body-md"
       role="status"
       data-testid="calendar-submode-error"
     >
-      <span class="material-symbols-outlined text-[14px] text-yellow-300"
+      <span class="material-symbols-outlined text-[14px] text-status-warn"
         >save</span
       >
       <span class="text-text-primary">{subModeError}</span>

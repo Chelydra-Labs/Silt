@@ -211,6 +211,17 @@ export interface PluginContext {
    */
   setTaskOrder: (id: string, order: number) => Promise<boolean>
   /**
+   * Batch-renumber `[order:: N]` tokens across multiple tasks in one atomic
+   * write PER FILE (#426). Use this instead of N individual `setTaskOrder`
+   * calls when a drag-reorder shifts multiple tasks in the same file: the Go
+   * side groups the (id, order) pairs by file and performs one
+   * read-parse-render-write-reindex cycle per file, so a mid-batch IPC
+   * failure leaves every file in the batch unchanged on disk (vs. N parallel
+   * `setTaskOrder` calls where a mid-loop failure produces a half-renumbered
+   * sequence). ids and orders are parallel arrays; ids[i] gets orders[i].
+   */
+  setTaskOrders: (items: { id: string; order: number }[]) => Promise<boolean>
+  /**
    * Rewrite a task's `[priority:: N]` inline token on disk atomically (#412).
    * 1=Critical, 2=Normal, 3=Low (matches PRIORITY_LABELS). Round-trips through
    * the markdown file, re-indexes, and emits block:changed. Gated by

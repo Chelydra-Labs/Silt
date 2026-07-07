@@ -511,23 +511,21 @@
       changes.find((c) => c.id === srcId)?.order ?? ''
     }.`
 
-    void Promise.all(
-      changes.map((c) =>
-        ctx.setTaskOrder(c.id, c.order).catch((err) => {
-          // Revert just this task's optimistic update; the next reload will
-          // surface the file's actual state. Surface the error once.
-          openItems = openItems.map((r) =>
-            r.id === c.id
-              ? { ...r, manual_order: prevOrders.get(r.id) ?? r.manual_order }
-              : r
-          )
-          flashOrderError(err)
-          throw err
+    void ctx
+      .setTaskOrders(changes.map((c) => ({ id: c.id, order: c.order })))
+      .catch((err) => {
+        // Revert every optimistic update; the next reload will surface the
+        // file's actual state. One batch write = one revert on failure.
+        openItems = openItems.map((r) => {
+          if (!changes.some((x) => x.id === r.id)) return r
+          return {
+            ...r,
+            manual_order: prevOrders.get(r.id) ?? r.manual_order
+          }
         })
-      )
-    ).catch(() => {
-      liveMessage = 'Reorder failed — reverted.'
-    })
+        flashOrderError(err)
+        liveMessage = 'Reorder failed — reverted.'
+      })
     // Prevent the wasOverId leak when the drop fires before dragleave.
     void wasOverId
   }

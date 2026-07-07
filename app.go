@@ -512,6 +512,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// migration pattern: read raw YAML → check gate → merge under configMu
 	// → atomic Save + RegisterSelfWrite.
 	rawTaskSettings := vault.LoadLegacyTaskPluginSettings(vaultPath)
+	var taskMigrationSaveErr error
 	if migrated := vault.MigrateLegacyTaskPluginSettings(a.cfg, rawTaskSettings); migrated != nil {
 		a.configMu.Lock()
 		if a.cfg.Plugins.PluginSettings == nil {
@@ -529,6 +530,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			// and the in-memory cfg already holds the merged settings so
 			// the current session is consistent.
 			log.Printf("[WARN] task plugin migration save failed: %v", saveErr)
+			taskMigrationSaveErr = saveErr
 		}
 	}
 
@@ -659,6 +661,15 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// Surface walk-level warnings (symlink skips, permission errors) from #32.
 	allWarnings = append(allWarnings, walkWarnings...)
 	allWarnings = append(allWarnings, migrationWarnings...)
+	if taskMigrationSaveErr != nil {
+		// Surface the failure so the user knows their legacy boards/filters
+		// weren't carried forward this session (the migration will retry on
+		// the next launch).
+		allWarnings = append(
+			allWarnings,
+			fmt.Sprintf("task plugin migration save failed: %v", taskMigrationSaveErr),
+		)
+	}
 
 	if indexedCount > 0 {
 		// A checkpoint after the bulk insert keeps the WAL bounded for the

@@ -16,10 +16,11 @@ func TestGetLocalAuthor_MirrorsAuditActor(t *testing.T) {
 		t.Fatalf("GetLocalAuthor = %q, want %q", got, "test-user")
 	}
 
-	// The "unknown" fallback path (host can't resolve the OS user) must also
-	// flow through, since downstream code treats "" as "still unresolved".
+	// The "unknown" placeholder is filtered to "" so the composer prompts the
+	// user on first run rather than seeding the YAML with a permanent
+	// "unknown" attribution. Downstream code treats "" as "still unresolved".
 	auditActor = func() string { return "unknown" }
-	if got := app.GetLocalAuthor(); got != "unknown" {
-		t.Fatalf("GetLocalAuthor fallback = %q, want %q", got, "unknown")
+	if got := app.GetLocalAuthor(); got != "" {
+		t.Fatalf("GetLocalAuthor fallback = %q, want %q", got, "")
 	}
 }

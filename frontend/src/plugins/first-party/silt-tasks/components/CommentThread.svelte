@@ -140,7 +140,11 @@
     void loadAuthor()
     const off = ctx.on('block:changed', () => {
       // External edits (sub-editor, another surface) refresh the thread so
-      // a comment added elsewhere appears without a manual reload.
+      // a comment added elsewhere appears without a manual reload. Skip
+      // while a comment post is in flight: the optimistic entry is already
+      // in `comments`, and a wholesale replace now would flicker out the
+      // pending entry until the post completes and re-triggers block:changed.
+      if (composerPending) return
       void load()
     })
     return () => {

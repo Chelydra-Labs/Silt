@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   updateBlockState: vi.fn(),
   createTask: vi.fn().mockResolvedValue('new-task-id'),
   setTaskOrder: vi.fn().mockResolvedValue(true),
+  setTaskOrders: vi.fn().mockResolvedValue(true),
   blockChangedCallbacks: [] as Array<() => void>
 }))
 
@@ -77,6 +78,7 @@ function makeCtx(): PluginContext {
     mutateBlock: vi.fn(),
     createTask: mocks.createTask,
     setTaskOrder: mocks.setTaskOrder,
+    setTaskOrders: mocks.setTaskOrders,
     updateTaskMeta: vi.fn(),
     getPluginSettings: vi.fn(() => Promise.resolve({})),
     on: <E extends PluginEventName>(
@@ -1047,6 +1049,7 @@ describe('Tasks view — manual ordering (#426)', () => {
     mocks.sqliteQuery.mockReset()
     mocks.updateBlockState.mockReset().mockResolvedValue(true)
     mocks.setTaskOrder.mockReset().mockResolvedValue(true)
+    mocks.setTaskOrders.mockReset().mockResolvedValue(true)
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
     mocks.blockChangedCallbacks.length = 0
   })
@@ -1111,7 +1114,7 @@ describe('Tasks view — manual ordering (#426)', () => {
     ).toBeNull()
   })
 
-  it('dragging a row within a group renumbers + persists via setTaskOrder', async () => {
+  it('dragging a row within a group renumbers + persists via setTaskOrders', async () => {
     // Three rows in a single 'none' group with manual_order 1, 2, 3.
     // Dragging row A (order 1) onto row C (order 3) lands A before C →
     //   splice [A,B,C] → remove A → [B,C] → insert A before C (idx 1) →
@@ -1147,13 +1150,14 @@ describe('Tasks view — manual ordering (#426)', () => {
     await flush()
 
     // A moved before C → A's new slot is 2; B shifted 2→1. C unchanged.
-    expect(mocks.setTaskOrder).toHaveBeenCalledTimes(2)
-    const calls = mocks.setTaskOrder.mock.calls.map(([id, order]) => ({
-      id,
-      order
-    }))
-    expect(calls).toContainEqual({ id: 'A', order: 2 })
-    expect(calls).toContainEqual({ id: 'B', order: 1 })
+    // Persisted in ONE batched setTaskOrders call (one atomic write per file).
+    expect(mocks.setTaskOrders).toHaveBeenCalledTimes(1)
+    const batch = mocks.setTaskOrders.mock.calls[0]![0] as {
+      id: string
+      order: number
+    }[]
+    expect(batch).toContainEqual({ id: 'A', order: 2 })
+    expect(batch).toContainEqual({ id: 'B', order: 1 })
   })
 
   it('dragging a row preserves order on reload (optimistic state matches persisted)', async () => {
@@ -1191,9 +1195,14 @@ describe('Tasks view — manual ordering (#426)', () => {
       document.querySelectorAll('[data-group="all"] [data-block-id]')
     ).map((el) => el.getAttribute('data-block-id'))
     expect(rows).toEqual(['Y', 'X'])
-    // Persisted: Y gets order 1 (was 2), X gets order 2 (was 1).
-    expect(mocks.setTaskOrder).toHaveBeenCalledWith('Y', 1)
-    expect(mocks.setTaskOrder).toHaveBeenCalledWith('X', 2)
+    // Persisted in one batched call: Y gets order 1 (was 2), X gets order 2.
+    expect(mocks.setTaskOrders).toHaveBeenCalledTimes(1)
+    const batch = mocks.setTaskOrders.mock.calls[0]![0] as {
+      id: string
+      order: number
+    }[]
+    expect(batch).toContainEqual({ id: 'Y', order: 1 })
+    expect(batch).toContainEqual({ id: 'X', order: 2 })
   })
 
   it('cross-group drop is a no-op for setTaskOrder (BoardView owns dimension reassignment)', async () => {
@@ -1235,10 +1244,10 @@ describe('Tasks view — manual ordering (#426)', () => {
 
     // Cross-group drag in the List is a no-op — no order writes, no
     // dimension reassignment (the user uses BoardView for that).
-    expect(mocks.setTaskOrder).not.toHaveBeenCalled()
+    expect(mocks.setTaskOrders).not.toHaveBeenCalled()
   })
 
-  it('reports a failed setTaskOrder via the role="alert" banner', async () => {
+  it('reports a failed setTaskOrders via the role="alert" banner', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (sql.includes("status != 'DONE'")) {
         return {
@@ -1251,7 +1260,7 @@ describe('Tasks view — manual ordering (#426)', () => {
       }
       return { rows: [], truncated: false }
     })
-    mocks.setTaskOrder.mockReset().mockRejectedValue(new Error('lock held'))
+    mocks.setTaskOrders.mockReset().mockRejectedValue(new Error('lock held'))
 
     setGroupBy('none')
     setSort('manual')
@@ -1265,8 +1274,8 @@ describe('Tasks view — manual ordering (#426)', () => {
 
     await fireEvent.dragStart(handleA)
     await fireEvent.drop(rowC)
-    // Drain the rejection chain through both the per-task .catch (which
-    // flips orderError) and the outer Promise.all .catch (liveMessage).
+    // Drain the rejection chain through the batch .catch (which flips
+    // orderError via flashOrderError) and the trailing liveMessage setter.
     await flush()
     await new Promise((r) => setTimeout(r, 0))
 

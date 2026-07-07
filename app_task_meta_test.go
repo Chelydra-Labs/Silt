@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -684,5 +685,117 @@ func TestPluginSetTaskOrder_GatedByCapability(t *testing.T) {
 	updated, _ := os.ReadFile(filePath)
 	if !strings.Contains(taskLineForID(string(updated), id), "[order:: 3]") {
 		t.Errorf("granted call should have stamped [order:: 3]: %s", taskLineForID(string(updated), id))
+	}
+}
+
+// TestSetTaskOrders_RewritesMultipleInOneFile stamps [order:: N] on three
+// tasks in the same file in one atomic write. All three tokens must land in
+// the rendered output, the index must reflect all three, and the file must
+// have been written exactly once (one read-modify-write cycle for the group).
+func TestSetTaskOrders_RewritesMultipleInOneFile(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		id1 = "5656e111-1111-1111-1111-111111111111"
+		id2 = "5656e222-1111-1111-1111-111111111111"
+		id3 = "5656e333-1111-1111-1111-111111111111"
+	)
+	content := "- [ ] first <!-- id: " + id1 + " -->\n" +
+		"- [ ] second <!-- id: " + id2 + " -->\n" +
+		"- [ ] third <!-- id: " + id3 + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "OrderBatch", "2026-07-01", content)
+
+	ids := []string{id1, id2, id3}
+	orders := []int{3, 1, 2}
+	if err := app.SetTaskOrders(ids, orders); err != nil {
+		t.Fatalf("SetTaskOrders: %v", err)
+	}
+
+	updated, _ := os.ReadFile(filePath)
+	updatedStr := string(updated)
+	for i, id := range ids {
+		line := taskLineForID(updatedStr, id)
+		want := strings.Contains(line, "[order:: ")
+		if !want {
+			t.Errorf("id[%d] %s: expected [order:: %d] in line: %s", i, id, orders[i], line)
+			continue
+		}
+		expected := fmt.Sprintf("[order:: %d]", orders[i])
+		if !strings.Contains(line, expected) {
+			t.Errorf("id[%d] %s: expected %s in line: %s", i, id, expected, line)
+		}
+	}
+
+	// Index reflects all three.
+	tasks, err := app.db.QueryTasksWithFilters(parser.TaskQueryFilter{})
+	if err != nil {
+		t.Fatalf("QueryTasks: %v", err)
+	}
+	orderByID := make(map[string]int)
+	for _, tk := range tasks {
+		orderByID[tk.ID] = tk.ManualOrder
+	}
+	for i, id := range ids {
+		if orderByID[id] != orders[i] {
+			t.Errorf("index: id %s expected manual_order=%d, got %d", id, orders[i], orderByID[id])
+		}
+	}
+}
+
+// TestSetTaskOrders_MismatchedLengthRejects is the contract guard: parallel
+// slices must have equal length.
+func TestSetTaskOrders_MismatchedLengthRejects(t *testing.T) {
+	app := newTestApp(t)
+	const id = "5656f111-1111-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	indexTestFile(t, app, "W", "S", "OrderBatchMismatch", "2026-07-01", content)
+
+	if err := app.SetTaskOrders([]string{id}, []int{1, 2}); err == nil {
+		t.Fatal("expected error for mismatched lengths, got nil")
+	}
+}
+
+// TestSetTaskOrders_EmptyIsNoOp verifies that empty slices return nil without
+// touching disk.
+func TestSetTaskOrders_EmptyIsNoOp(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.SetTaskOrders(nil, nil); err != nil {
+		t.Fatalf("empty SetTaskOrders should be a no-op: %v", err)
+	}
+	if err := app.SetTaskOrders([]string{}, []int{}); err != nil {
+		t.Fatalf("empty SetTaskOrders should be a no-op: %v", err)
+	}
+}
+
+// TestPluginSetTaskOrders_GatedByCapability mirrors the individual gate test.
+func TestPluginSetTaskOrders_GatedByCapability(t *testing.T) {
+	app := newTestApp(t)
+	const id1 = "5656aaaa-2222-1111-1111-111111111111"
+	const id2 = "5656bbbb-2222-1111-1111-111111111111"
+	content := "- [ ] a <!-- id: " + id1 + " -->\n- [ ] b <!-- id: " + id2 + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "OrderBatchGated", "2026-07-01", content)
+
+	tok := registerTestSession(t, app, "third-party")
+	before, _ := os.ReadFile(filePath)
+	if _, err := app.PluginSetTaskOrders("third-party", tok, []string{id1, id2}, []int{2, 1}); err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+	after, _ := os.ReadFile(filePath)
+	if string(before) != string(after) {
+		t.Errorf("file must NOT be written on a denied call")
+	}
+
+	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	ok, err := app.PluginSetTaskOrders("third-party", tok, []string{id1, id2}, []int{2, 1})
+	if err != nil || !ok {
+		t.Fatalf("PluginSetTaskOrders with grant: ok=%v err=%v", ok, err)
+	}
+	updated, _ := os.ReadFile(filePath)
+	if !strings.Contains(taskLineForID(string(updated), id1), "[order:: 2]") {
+		t.Errorf("granted batch should have stamped [order:: 2] on id1")
+	}
+	if !strings.Contains(taskLineForID(string(updated), id2), "[order:: 1]") {
+		t.Errorf("granted batch should have stamped [order:: 1] on id2")
 	}
 }

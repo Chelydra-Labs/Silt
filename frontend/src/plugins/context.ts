@@ -16,6 +16,7 @@ import {
   PluginSetTaskBlockedBy,
   PluginSetTaskOwner,
   PluginSetTaskOrder,
+  PluginSetTaskOrders,
   PluginSetTaskPriority,
   PluginSetTaskTags,
   PluginSetTaskTitle,
@@ -275,6 +276,15 @@ export function makePluginContext(
     // uses 1-based positive ints (the renderer omits the token at 0).
     setTaskOrder: (id, order) =>
       PluginSetTaskOrder(pluginID, sessionToken ?? '', id, order),
+    // Batch-renumber [order:: N] across many tasks in one atomic write per
+    // file (#426). ids/orders travel as parallel arrays over IPC.
+    setTaskOrders: (items) =>
+      PluginSetTaskOrders(
+        pluginID,
+        sessionToken ?? '',
+        items.map((i) => i.id),
+        items.map((i) => i.order)
+      ).then(() => true),
     // Rewrite a task's [priority:: N] token (#412). 1=Critical, 2=Normal, 3=Low.
     setTaskPriority: (id, priority) =>
       PluginSetTaskPriority(pluginID, sessionToken ?? '', id, priority),

@@ -391,8 +391,13 @@
   async function deleteView(view: SavedView) {
     if (view.system) return
     if (!window.confirm(`Delete saved view "${view.name}"?`)) return
+    errorMsg = ''
     deleteSavedView(view.id)
-    await persistSavedViews(getTaskHubState().savedViews)
+    try {
+      await persistSavedViews(getTaskHubState().savedViews)
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e)
+    }
   }
 
   // --- Filter quick-toggles (mirror KanbanSidebar bidirectional sync) ----
@@ -599,7 +604,7 @@
       id="tasks-mini-heading"
       class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
     >
-      Jump from sidebar
+      Jump to Date
     </h3>
     <div class="mt-1 px-2">
       <div class="flex items-center justify-between mb-1">

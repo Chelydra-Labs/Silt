@@ -287,6 +287,7 @@ export function setColumns(cols: string[]): void {
 /** Clear all active filters. */
 export function clearFilters(): void {
   _state.filters = { ...DEFAULT_FILTERS }
+  markDirtyIfViewActive()
 }
 
 /**
@@ -400,6 +401,9 @@ export function deleteSavedView(id: string): void {
   _state.savedViews = _state.savedViews.filter((x) => x.id !== id)
   if (_state.activeSavedViewId === id) {
     _state.activeSavedViewId = ''
+    // The dirty flag was tracking divergences from the now-deleted view; once
+    // it's gone there's nothing to diverge from, so drop the orphaned flag.
+    _state.savedViewsDirty = false
   }
 }
 

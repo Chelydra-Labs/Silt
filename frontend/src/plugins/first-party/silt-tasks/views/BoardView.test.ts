@@ -90,6 +90,7 @@ const mocks = vi.hoisted(() => ({
   setTaskDueDate: vi.fn(),
   setTaskTags: vi.fn(),
   setTaskOrder: vi.fn(),
+  setTaskOrders: vi.fn(),
   createTask: vi.fn().mockResolvedValue('new-task-id'),
   getTaskBlockers: vi.fn().mockResolvedValue([]),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
@@ -134,6 +135,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     setTaskDueDate: mocks.setTaskDueDate,
     setTaskTags: mocks.setTaskTags,
     setTaskOrder: mocks.setTaskOrder,
+    setTaskOrders: mocks.setTaskOrders,
     createTask: mocks.createTask,
     getTaskBlockers: mocks.getTaskBlockers,
     getPluginSettings: vi.fn(() => Promise.resolve({})),
@@ -223,6 +225,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
     mocks.setTaskTags.mockReset().mockResolvedValue(true)
     mocks.setTaskOrder.mockReset().mockResolvedValue(true)
+    mocks.setTaskOrders.mockReset().mockResolvedValue(true)
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
     mocks.getTaskBlockers.mockReset().mockResolvedValue([])
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
@@ -595,7 +598,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
 
   // --- Manual ordering (#426) ------------------------------------------
 
-  it('sort=manual: dropping a card onto a sibling in the SAME column renumbers via setTaskOrder', async () => {
+  it('sort=manual: dropping a card onto a sibling in the SAME column renumbers via setTaskOrders', async () => {
     await renderBoardWithSort('status', 'manual', [
       row({ id: 'a', status: 'TODO', clean_content: 'A', manual_order: 1 }),
       row({ id: 'b', status: 'TODO', clean_content: 'B', manual_order: 2 }),
@@ -614,12 +617,21 @@ describe('BoardView — dimension-aware Board (#421)', () => {
 
     // Splice-dance "land BEFORE target": [a,b,c] → remove a → [b,c] →
     // insert a before c (idx 1) → [b, a, c] → new orders b=1 (was 2),
-    // a=2 (was 1), c=3 (unchanged). The two changed rows are persisted.
-    expect(mocks.setTaskOrder).toHaveBeenCalledTimes(2)
-    expect(mocks.setTaskOrder).toHaveBeenCalledWith('b', 1)
-    expect(mocks.setTaskOrder).toHaveBeenCalledWith('a', 2)
+    // a=2 (was 1), c=3 (unchanged). The two changed rows are persisted in
+    // ONE batched setTaskOrders call (one atomic write per file).
+    expect(mocks.setTaskOrders).toHaveBeenCalledTimes(1)
+    const batch = mocks.setTaskOrders.mock.calls[0]![0] as {
+      id: string
+      order: number
+    }[]
+    expect(batch).toEqual(
+      expect.arrayContaining([
+        { id: 'b', order: 1 },
+        { id: 'a', order: 2 }
+      ])
+    )
     // The unchanged row (c) is not persisted.
-    expect(mocks.setTaskOrder.mock.calls.some(([id]) => id === 'c')).toBe(false)
+    expect(batch.some((x) => x.id === 'c')).toBe(false)
     // The dimension setter did NOT fire (within-column manual is order-only).
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
   })
