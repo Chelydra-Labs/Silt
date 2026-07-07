@@ -1128,6 +1128,35 @@ plugins:
           columns: ["TODO", "DOING", "DONE"]
           filters: { owners: [], priorities: [], dueDate: "", tags: [] }
 
+# AI Providers (#216, #218)
+# Two independent provider blocks (chat + embedding) that plugins call through
+# ctx.ai.complete / ctx.ai.embed. Silt makes no cloud calls of its own; this
+# points at a model server the user runs (local) or has a key for (cloud).
+# See docs/BRING_YOUR_OWN_MODEL.md.
+ai:
+  # When true (default), API keys live in the OS keyring (Credential Manager /
+  # Keychain / Secret Service) instead of plaintext below. Keys are vault-
+  # scoped (SHA-8 of the vault path) so they don't travel on sync. When the
+  # keyring is unreachable (headless Linux, WSL2), keys fall back to the
+  # api_key field here and the AI Provider tab surfaces a warning.
+  use_keyring: true
+  chat:
+    provider_type: "local"            # "local" | "openai-compatible"
+    base_url: "http://localhost:11434" # local default = Ollama
+    model: ""                          # e.g. "llama3.1", "gpt-4o"
+    # api_key is omitted from version control when use_keyring is on; present
+    # here only as the fallback when the keyring is off/unavailable.
+    temperature: 0.7
+    max_tokens: 2048
+    reasoning_effort: "medium"         # chat only: none|minimal|low|medium|high|xhigh|max
+    timeout_ms: 60000
+  embedding:
+    provider_type: "local"
+    base_url: "http://localhost:11434"
+    model: ""                          # e.g. "nomic-embed-text"
+    dimensions: 0                      # 0 = read from the model's first response
+    timeout_ms: 60000
+
 
 10.2 Hot Reloading Logic
 

@@ -1556,9 +1556,9 @@ func TestAuditWriter_TruncatesOversizedLog(t *testing.T) {
 	// Truncation keeps the last 200 lines, then the trigger append adds 1.
 	// The original 20000-line log was cut to ~1% of its size — the exact
 	// post-truncation + append count is 201 (200 kept + 1 trigger).
-	if len(lines) > maxPluginNetworkLogLines+1 {
+	if len(lines) > maxPluginAuditLogLines+1 {
 		t.Errorf("log has %d lines after truncation, want ≤ %d (200 kept + 1 trigger)",
-			len(lines), maxPluginNetworkLogLines+1)
+			len(lines), maxPluginAuditLogLines+1)
 	}
 	// The trigger entry (most recent) must be present.
 	if !strings.Contains(string(data), "/trigger") {

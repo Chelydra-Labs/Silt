@@ -497,6 +497,16 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 - **UI persistence** — `GetOpenTabs` / `SetOpenTabs` (pinned tabs only,
   pruned against `ListNavigation`); `GetNavOrder` / `SetNavOrder`;
   `GetSidebarWidth` / `SetSidebarWidth`.
+- **AI providers** (#216, #218) — `GetAIProviderConfig` (key-scrubbed read;
+  emits `has_key` flags, never the raw secret), `UpdateAIProviderConfig`
+  (provider type / base URL / model / tuning — never the key),
+  `SetAIAPIKey` / `ClearAIAPIKey` (dedicated key surface: routes to the OS
+  keyring when `use_keyring` + reachable, else plaintext config), `SetUseKeyring`
+  (toggles keyring storage + opportunistically migrates plaintext keys),
+  `TestAIConnection` (1-token chat / single-embed probe). `GetAIAudit` /
+  `ClearAIAudit` expose the plugin-AI-call log (in-memory, mirrored to per-plugin
+  `ai.log`; `ClearAIAudit` truncates both). NOT capability-gated
+  (core cross-cutting settings), but `PluginAIComplete` / `PluginAIEmbed` are.
 
 Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`
 files; this list is the contract surface, not the source.
@@ -867,7 +877,9 @@ requested vs. granted with revoke. First-party plugins are implicitly granted.
 Capabilities: `read-files`, `write-files`, `network`, `os-open`,
 `os-clipboard`, `os-notify`, `ui-surface`, `editor-schema`,
 `content-mutate` (gates block CRUD), `plugin-db` (gates the per-plugin
-SQLite store: `ctx.pluginDb.exec` / `query` / `migrate`).
+SQLite store: `ctx.pluginDb.exec` / `query` / `migrate`), `ai` (gates
+`ctx.ai.complete` / `ctx.ai.embed` — routes to the user-configured model
+server; the plugin never receives credentials).
 
 **Binding identity.** High-risk bindings (fetch, file write/delete,
 block CRUD) also validate a session token: the loader calls
@@ -900,6 +912,17 @@ On vault open, `seedNetworkAuditFromDisk` reads the on-disk logs to seed the
 in-memory log (before the writer starts). No SQLite table (audit data is not
 reproducible from markdown; §0 rule 4).
 
+**AI audit log.** `auditAI` mirrors the network audit's design exactly: appends
+to the in-memory log (capped 500 entries) under `aiAuditMu`, then enqueues a
+disk-write op onto its own buffered channel drained by a parallel background
+goroutine (`startAIAuditWriter`, started in `initializeVaultServices`, stopped
+first in `teardownVaultServices`). It writes the per-plugin `ai.log` (one JSON
+object per line, same format as `network.log`) WITHOUT holding the lock, so
+concurrent `PluginAIComplete` / `PluginAIEmbed` calls don't serialize on file
+I/O. On vault open, `seedAIAuditFromDisk` seeds the in-memory log from disk
+(before the writer starts). Logs plugin / kind (chat | embed) / host / model /
+status / token counts — NEVER message content or embedding vectors.
+
 **Runtime integrity.** `Install` computes `sha256(index.js)` and writes
 it into `plugin.json` as `contentSha256`. The frontend loader verifies the hash
 via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
@@ -919,6 +942,16 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
   dial-time — the custom `DialContext` re-runs `isInternalIP` on every resolved
   IP (DNS-rebinding guard) and fails closed on lookup error so the OS resolver
   cannot bypass the check; audit-logged.
+- AI (#216): `ctx.ai.complete` / `ctx.ai.embed` route to the user-configured
+  model server (Settings → AI Provider) through `backend/ai` — one OpenAI-
+  compatible request shape for both local (Ollama) and cloud providers. The
+  provider config + resolved API key are snapshotted server-side under
+  vaultMu+configMu, the locks are RELEASED, and only then does the HTTP call
+  run, so a 60s LLM completion cannot hold the vault lock. Keys resolve
+  keyring-first (`backend/keyring`) with config.yaml as the documented fallback
+  (#218); the plugin never receives credentials. Every call is audit-logged
+  (`auditAI`, in-memory + on-disk `ai.log`, capped) and surfaced in
+  Settings → AI Provider → Recent AI activity.
 - Editor extension points: slash-command registry; generic embedBlock
   node (round-trips through <!-- silt-embed: {json} --> markers).
 - Rendered UI surfaces: sandboxed <iframe srcdoc> + postMessage bridge;
@@ -976,7 +1009,7 @@ Global settings — editor defaults, parsing rules, hotkeys, and the plugin regi
 
 8.1 Parser (backend/config)
 
-config.SystemConfig mirrors the SPECS §10.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui). The `ui.*` block holds per-vault UI preferences: `sidebar_width`, `nav_order` (explicit section/page ordering for drag-to-reorder), `open_tabs` / `active_tab` (pinned-tab persistence — preview tabs are ephemeral), `enable_preview_tabs`, `max_open_tabs`, `show_format_toolbar`, `show_tab_dirty_indicators` (default true), `dismissed_tips`, and `formatting.*` toggles. Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
+config.SystemConfig mirrors the SPECS §10.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui / ai). The `ai.*` block (#216, #218) carries two provider configs (chat + embedding: provider_type, base_url, model, tuning) plus `use_keyring`. API keys are `json:"-"` (never serialized to the frontend) and, when `use_keyring` is on + the OS keyring is reachable, are stored in the OS credential store (`backend/keyring`) instead of plaintext config — so a synced vault doesn't carry cloud keys. `SaveSystemConfig` preserves live keys server-side so a frontend round-trip doesn't blank them. The `ui.*` block holds per-vault UI preferences: `sidebar_width`, `nav_order` (explicit section/page ordering for drag-to-reorder), `open_tabs` / `active_tab` (pinned-tab persistence — preview tabs are ephemeral), `enable_preview_tabs`, `max_open_tabs`, `show_format_toolbar`, `show_tab_dirty_indicators` (default true), `dismissed_tips`, and `formatting.*` toggles. Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
 
 8.2 Hot-Reload (backend/config.ConfigWatcher)
 

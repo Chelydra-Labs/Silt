@@ -574,6 +574,116 @@ export interface PluginContext {
    * and chooses durability semantics. #213.
    */
   pluginDb: PluginDbApi
+
+  // --- Core AI service (#216) — capability-gated --------------------------
+
+  /**
+   * The core AI service. A plugin calls `ctx.ai.complete` / `ctx.ai.embed` to
+   * run chat completions and embedding batches against the user-configured
+   * provider (Ollama / llama.cpp / OpenRouter / LM Studio / OpenAI). The host
+   * reads provider credentials server-side and proxies the call, so a plugin
+   * NEVER sees API keys or endpoint URLs — it only passes messages/texts and
+   * receives results. Gated by the `ai` capability; rate-limited and
+   * audit-logged exactly like `ctx.fetch`.
+   *
+   * The chat LLM and the embedding model are EACH independently configured by
+   * the user (Settings → AI Provider): a plugin that needs both talks to two
+   * different endpoints through the same two methods.
+   */
+  ai: PluginAIApi
+}
+
+/**
+ * Normalized AI rejection. `code` matches the backend's AIErrorKind so a plugin
+ * can branch on the failure category. The SDK wrapper coerces whatever shape the
+ * IPC rejection arrives in (structured object keyed by `code`/`kind`, an Error,
+ * or a bare string) into this shape, so the documented contract holds regardless
+ * of transport.
+ */
+export interface PluginAIError {
+  code:
+    | 'unauthorized'
+    | 'rate-limited'
+    | 'model-missing'
+    | 'timeout'
+    | 'unreachable'
+    | 'bad-request'
+    | 'forbidden'
+    | 'server'
+    | 'unknown'
+  status?: number
+  message: string
+}
+
+/**
+ * The core AI service API (#216). `complete` targets the configured chat model;
+ * `embed` targets the configured embedding model. Both are Go-side proxies: the
+ * plugin never handles credentials, and every call is rate-limited + audit-
+ * logged. Errors surface as a typed `code` (matching the backend's AIErrorKind)
+ * so a plugin can branch on "unauthorized" vs "rate-limited" vs "model-missing".
+ */
+export interface PluginAIApi {
+  /**
+   * Run a chat completion against the configured chat provider. Returns the
+   * generated content, the model that served it, and (when the provider
+   * reports it) a token-usage summary. `stream` is accepted now so the
+   * signature is additive when streaming lands (Sprint 22); the non-streaming
+   * buffer is returned regardless.
+   *
+   * Rejections are normalized to a {@link PluginAIError} carrying `code`
+   * set to a normalized kind: 'unauthorized', 'rate-limited', 'model-missing',
+   * 'timeout', 'unreachable', 'bad-request', 'forbidden', 'server', or 'unknown'.
+   */
+  complete: (req: {
+    messages: PluginAIChatMessage[]
+    model?: string
+    temperature?: number
+    maxTokens?: number
+    /** Override the provider's reasoning effort for this call only.
+     *  Values: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'.
+     *  Not all providers support every value. */
+    reasoningEffort?: string
+    stream?: boolean
+  }) => Promise<PluginAICompleteResult>
+  /**
+   * Compute embeddings for a batch of texts against the configured embedding
+   * provider. The whole batch is sent in one request; `embeddings[i]`
+   * corresponds to `texts[i]`. `dimensions` overrides the provider's native
+   * vector length (truncation) for this call when supported.
+   */
+  embed: (req: {
+    texts: string[]
+    model?: string
+    dimensions?: number
+  }) => Promise<PluginAIEmbedResult>
+}
+
+/** One message in a chat-completion conversation. */
+export interface PluginAIChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+/** Result of `ctx.ai.complete`. usage is present only when the provider reports it. */
+export interface PluginAICompleteResult {
+  content: string
+  model: string
+  usage?: {
+    promptTokens?: number
+    completionTokens?: number
+    totalTokens?: number
+  }
+}
+
+/** Result of `ctx.ai.embed`. embeddings[i] is the vector for texts[i]. */
+export interface PluginAIEmbedResult {
+  embeddings: number[][]
+  model: string
+  dimensions: number
+  usage?: {
+    promptTokens?: number
+    totalTokens?: number
+  }
 }
 
 /**
@@ -651,6 +761,7 @@ export type Capability =
   | 'editor-schema'
   | 'content-mutate'
   | 'plugin-db'
+  | 'ai'
 
 /** A capability scope qualifier (#113). 'granted' is the default whole-scope. */
 export type CapabilityQualifier = 'granted' | 'notebook' | 'vault'
