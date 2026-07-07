@@ -71,12 +71,20 @@ export async function summarize(ctx: PluginContext, deps: SummarizeDeps): Promis
     }
   }
 
-  await migrateCache(ctx)
+  // Cache failures (a corrupt plugin.db, a locked connection, the migration
+  // not having run) must NOT crash summarization — the cache is disposable
+  // working memory. Each call degrades gracefully: a migration/read failure
+  // is treated as a miss (proceed to extraction); a write failure is logged
+  // and the result still returns. A diagnostics warn surfaces the cause.
+  await safeCache(() => migrateCache(ctx), 'migrate')
   const hash = await computeContentHash(deps.cleanContent)
 
   // Cache hit (exact hash match + same model + not a forced Regenerate).
   if (!deps.force) {
-    const cached = await getCachedSummary(ctx, deps.pageId, hash)
+    const cached = await safeCache(
+      () => getCachedSummary(ctx, deps.pageId, hash),
+      'read'
+    )
     if (cached && cached.model === deps.configuredModel) {
       const result: SummaryResult = {
         summary: cached.summary,
@@ -95,7 +103,7 @@ export async function summarize(ctx: PluginContext, deps: SummarizeDeps): Promis
   // Miss / invalidate / regenerate. The prior snapshot is the page's latest
   // extraction (any hash) so the newItems diff stays stable across content
   // edits AND model switches (the diff is content-relative, not model-relative).
-  const latest = await latestSummaryForPage(ctx, deps.pageId)
+  const latest = await safeCache(() => latestSummaryForPage(ctx, deps.pageId), 'read')
   const prior = latest ? toExtraction(latest) : EMPTY_EXTRACTION
 
   const extracted = await extractSummary({
@@ -109,17 +117,21 @@ export async function summarize(ctx: PluginContext, deps: SummarizeDeps): Promis
   }
 
   const generatedAt = nowIso()
-  await putCachedSummary(ctx, {
-    page_id: deps.pageId,
-    content_hash: hash,
-    summary: extracted.extraction.summary,
-    tasks: extracted.extraction.tasks,
-    risks: extracted.extraction.risks,
-    decisions: extracted.extraction.decisions,
-    prior_snapshot: prior,
-    model: extracted.model,
-    generated_at: generatedAt
-  })
+  await safeCache(
+    () =>
+      putCachedSummary(ctx, {
+        page_id: deps.pageId,
+        content_hash: hash,
+        summary: extracted.extraction.summary,
+        tasks: extracted.extraction.tasks,
+        risks: extracted.extraction.risks,
+        decisions: extracted.extraction.decisions,
+        prior_snapshot: prior,
+        model: extracted.model,
+        generated_at: generatedAt
+      }),
+    'write'
+  )
 
   return {
     ok: true,
@@ -143,6 +155,20 @@ function toExtraction(row: {
   decisions: string[]
 }) {
   return { summary: row.summary, tasks: row.tasks, risks: row.risks, decisions: row.decisions }
+}
+
+/** Run a cache operation, returning null on failure (read/migrate) or void
+ *  (write). The cache is disposable working memory: a corrupt plugin.db or a
+ *  stale connection must not crash summarization — degrade to a miss and let
+ *  extraction proceed. The warn surfaces the cause for diagnostics. */
+async function safeCache<T>(fn: () => Promise<T>, op: string): Promise<T | null> {
+  try {
+    return await fn()
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(`[silt-ai-summary] cache ${op} failed (degrading — cache is disposable):`, e)
+    return null
+  }
 }
 
 function emptyResult(): SummaryOutcome {

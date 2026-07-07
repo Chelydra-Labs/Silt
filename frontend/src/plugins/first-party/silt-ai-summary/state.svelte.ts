@@ -13,6 +13,7 @@
 
 import type { PluginContext } from '../../sdk'
 import { settings } from '../../../settings/store.svelte'
+import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
 import { fetchNoteContent } from './content'
 import { resolveSettings } from './settings'
 import { summarize } from './summarize'
@@ -33,15 +34,17 @@ export interface ProviderInfo {
   configuredModel: string
 }
 
-/** Read provider readiness from the live app settings store. Phase 2 stub of
- *  the #450 aiProviderNeedsSetup gate: a non-empty chat model is treated as
- *  "configured". Phase 3 swaps this for the shared helper (which also accounts
- *  for the local-vs-openai key distinction) without changing the controller's
- *  shape — the controller only consumes { isConfigured, configuredModel }. */
+/** Read provider readiness from the live app settings store, via the SAME
+ *  aiProviderNeedsSetup predicate the Plugins-tab badge, the AI Provider tab
+ *  nudge, and the SummaryBanner's unconfigured state all consume (#450 single
+ *  source of truth). The controller's gate and the banner's gate therefore
+ *  agree by construction — no second predicate to drift. */
 export function readProviderInfo(): ProviderInfo {
   const chat = settings.config?.ai?.chat
-  const model = chat?.model ?? ''
-  return { isConfigured: !!model, configuredModel: model }
+  return {
+    isConfigured: !aiProviderNeedsSetup(chat),
+    configuredModel: chat?.model ?? ''
+  }
 }
 
 export interface SummaryController {

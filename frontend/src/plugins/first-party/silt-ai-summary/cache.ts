@@ -42,16 +42,21 @@ export interface CacheRow {
 
 let migrated = false
 
-/** Idempotently create the summaries table. The flag is per-session (a vault
- *  switch resets it via resetCacheState). ctx.pluginDb.migrate stamps
- *  PRAGMA user_version, so a future v2 migration is forward-only. */
+/** Idempotently create the summaries table. The flag is per-session and is
+ *  reset by the plugin's onVaultClose (index.ts → resetCacheState) so a vault
+ *  switch re-migrates the NEW vault's plugin.db — without that reset the flag
+ *  stays true from the closing vault and every cache query against the new
+ *  connection fails on the missing table (#222 cross-vault regression).
+ *  ctx.pluginDb.migrate stamps PRAGMA user_version, so a future v2 migration
+ *  is forward-only. */
 export async function migrateCache(ctx: PluginContext): Promise<void> {
   if (migrated) return
   await ctx.pluginDb.migrate(MIGRATION_VERSION, MIGRATION_SQL)
   migrated = true
 }
 
-/** Test hook: forget the migrated flag so a fresh vault re-runs the migration. */
+/** Reset the per-session migrated flag. Called from the plugin's onVaultClose
+ *  so the next vault re-runs its migration, and from test beforeEach. */
 export function resetCacheState(): void {
   migrated = false
 }

@@ -1016,7 +1016,9 @@ func (a *App) SwitchVault(path string) error {
 	// for the teardown→reinit cutover. Without it, the same #452 race would
 	// strand an AI call into the newly-switched vault. Lifecycle transitions
 	// are frontend-serialized (the onboarding flow is modal), so no second
-	// transition enters the drain window.
+	// transition enters the brief window between closing=true/Unlock and the
+	// re-Lock for teardown; if that serialization ever changes, add a
+	// closing-flag re-check or a vault-identity guard after the Wait.
 	switchErr := func() error {
 		a.vaultMu.Lock()
 		activePath := a.vaultPath

@@ -83,7 +83,7 @@ describe('AISummarySettings', () => {
     // Currently disabled → toggle is unchecked; enabling removes it from the list.
     await fireEvent.click(toggle)
     expect(mockSaveConfig).toHaveBeenCalledTimes(1)
-    const savedCfg = mockSaveConfig.mock.calls[0][0]
+    const savedCfg = (mockSaveConfig.mock.calls as any[])[0][0]
     expect(savedCfg.plugins.disabled).not.toContain('silt-ai-summary')
     expect(mockLoadPlugins).toHaveBeenCalled()
   })

@@ -9,13 +9,13 @@
 //
 // Off by default. Its output renders via the note-banner surface (the
 // SummaryBanner component, mounted first-party by PluginNoteBanners), with a
-// status-bar re-open affordance for dismissed notes. The bespoke settings
-// page lands in Phase 4.
+// status-bar re-open affordance for dismissed / on-demand notes. The bespoke
+// settings page lands in Phase 4.
 //
 // This module owns the reactive lifecycle: it registers/unregisters the
-// banner vs. the re-open chip per active note (respecting dismissal) and
-// debounces editor:save into the controller. The pure extraction/caching
-// logic lives in sibling modules and is unit-tested directly.
+// banner vs. the re-open chip per active note (respecting dismissal AND
+// on-demand mode) and debounces editor:save into the controller. The pure
+// extraction/caching logic lives in sibling modules and is unit-tested directly.
 
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { registerSurface, unregisterSurface } from '../../surfaces'
@@ -23,6 +23,12 @@ import AISummaryPanel from './AISummaryPanel.svelte'
 import AISummarySettings from './AISummarySettings.svelte'
 import SummaryBanner from './SummaryBanner.svelte'
 import { createSummaryController, type SummaryController } from './state.svelte'
+import { resetCacheState } from './cache'
+import { decideMountKind } from './mountKind'
+
+// Re-exported so callers that already import the entry can reach the decision
+// helper; the pure implementation lives in mountKind.ts (testable in isolation).
+export { decideMountKind }
 
 export const manifest: PluginManifest = {
   id: 'silt-ai-summary',
@@ -62,12 +68,18 @@ function pageIdOf(notebook: string, section: string, page: string): string {
   return `${notebook}/${section}/${page}`
 }
 
-/** Mount the banner (when the page is not dismissed) or the re-open chip
- *  (when it is). Idempotent per page: a no-op when the target kind is already
- *  mounted, so a config:changed re-evaluation that reaches the same decision
- *  doesn't flicker. */
-function mountForPage(ctx: PluginContext, pageId: string, dismissed: boolean) {
-  const want: 'banner' | 'reopen' = dismissed ? 'reopen' : 'banner'
+/** Mount the banner or the re-open chip per {@link decideMountKind}. Idempotent
+ *  per page: a no-op when the target kind is already mounted, so a
+ *  config:changed re-evaluation that reaches the same decision doesn't flicker.
+ *  The chip's onClick clears dismissal + shows the banner + generates (cache
+ *  hit serves instantly, miss generates) — the unified re-show path for both
+ *  dismissed and on-demand. */
+function mountForPage(
+  ctx: PluginContext,
+  pageId: string,
+  opts: { dismissed: boolean; onDemandOnly: boolean }
+) {
+  const want = decideMountKind(opts)
   if (mountedKind === want) return
   // Swap: tear down whichever surface is up, then mount the other.
   unregisterSurface(BANNER_SURFACE_ID)
@@ -86,17 +98,32 @@ function mountForPage(ctx: PluginContext, pageId: string, dismissed: boolean) {
       id: REOPEN_SURFACE_ID,
       pluginID: PLUGIN_ID,
       kind: 'status-bar-item',
-      label: 'Show AI summary',
+      // Label reflects WHY the chip is showing so the affordance is honest.
+      label: opts.onDemandOnly ? 'Generate AI summary' : 'Show AI summary',
       icon: 'auto_awesome',
       onClick: () => {
-        // Un-dismiss the active page, then re-mount the banner. The dismissal
-        // list update persists to config.yaml (config:changed will fire and the
-        // handler below re-evaluates; but we also mount eagerly here for an
-        // instant re-show without waiting on the round-trip).
         if (!controller) return
-        const cur = controller.getSettings().dismissed_notes.filter((p) => p !== pageId)
-        ctx.updatePluginSetting('dismissed_notes', cur)
-          .then(() => mountForPage(ctx, pageId, false))
+        const cur = controller.getSettings()
+        // Clear dismissal first (no-op in the on-demand-only case) so a
+        // future note switch re-evaluates cleanly; persist before showing.
+        const unDismiss = cur.dismissed_notes.filter((p) => p !== pageId)
+        const persist =
+          unDismiss.length !== cur.dismissed_notes.length
+            ? ctx.updatePluginSetting('dismissed_notes', unDismiss)
+            : Promise.resolve(true)
+        persist
+          .then(() => {
+            // Show the banner for this session (onDemandOnly=false forces it
+            // even in on-demand mode — the user explicitly requested).
+            mountForPage(ctx, pageId, { dismissed: false, onDemandOnly: false })
+            // Serve the cache (instant hit) or generate on a miss. Non-force
+            // so a still-valid cached summary isn't needlessly regenerated.
+            void controller!.generateFor(ctx, pageId, {
+              notebook: ctx.activeNotebook,
+              section: ctx.activeSection,
+              page: ctx.activePage
+            })
+          })
           .catch(() => {
             /* best-effort — config:changed will retry the re-evaluation */
           })
@@ -120,11 +147,12 @@ export default {
     offSave = ctx.on('editor:save', (evt) => {
       if (!controller) return
       const id = pageIdOf(evt.notebook, evt.section, evt.page)
-      // Only regenerate when the banner is actually shown for this page — a
-      // dismissed note shouldn't silently re-summarize in the background.
-      if (id !== lastPageId || mountedKind !== 'banner') return
-      const { regenerate_debounce_ms } = controller.getSettings()
-      controller.scheduleGenerate(ctx, id, regenerate_debounce_ms, {
+      const s = controller.getSettings()
+      // Only regenerate when the banner is shown AND the user hasn't chosen
+      // on-demand (on-demand = generate only on explicit click). A dismissed
+      // note (mountedKind === 'reopen') is also skipped.
+      if (id !== lastPageId || mountedKind !== 'banner' || s.on_demand_only) return
+      controller.scheduleGenerate(ctx, id, s.regenerate_debounce_ms, {
         notebook: evt.notebook,
         section: evt.section,
         page: evt.page
@@ -141,8 +169,8 @@ export default {
       lastPageId = id
       const s = controller.getSettings()
       const dismissed = s.dismissed_notes.includes(id)
-      mountForPage(ctx, id, dismissed)
-      if (!dismissed && s.auto_on_open && !s.on_demand_only) {
+      mountForPage(ctx, id, { dismissed, onDemandOnly: s.on_demand_only })
+      if (!dismissed && !s.on_demand_only && s.auto_on_open) {
         void controller.generateFor(ctx, id, {
           notebook: evt.notebook,
           section: evt.section,
@@ -151,13 +179,16 @@ export default {
       }
     })
 
-    // A dismissal / re-open writes dismissed_notes to config.yaml, which fires
+    // A dismissal / re-open / settings tweak writes config.yaml, which fires
     // config:changed. Re-evaluate the active page's surface so the banner↔chip
-    // swap happens without relying on a note switch.
+    // swap (incl. an on-demand toggle) happens without a note switch.
     offConfigChanged = ctx.on('config:changed', () => {
       if (!controller || !lastPageId) return
-      const dismissed = controller.getSettings().dismissed_notes.includes(lastPageId)
-      mountForPage(ctx, lastPageId, dismissed)
+      const s = controller.getSettings()
+      mountForPage(ctx, lastPageId, {
+        dismissed: s.dismissed_notes.includes(lastPageId),
+        onDemandOnly: s.on_demand_only
+      })
     })
   },
   onVaultClose() {
@@ -173,6 +204,11 @@ export default {
     controller = null
     lastPageId = null
     mountedKind = null
+    // Forget the per-vault cache-migration flag so the next vault re-creates
+    // its own summaries table. Without this, a vault switch skips migration
+    // (the flag is still true from the closing vault) and every cache query
+    // against the new vault's plugin.db fails (#222 cross-vault regression).
+    resetCacheState()
   },
   onShutdown() {
     this.onVaultClose()
