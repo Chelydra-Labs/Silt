@@ -104,6 +104,14 @@ func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedB
 	didWrite := false
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			// Don't clobber a file the user is actively editing (the editor
+			// holds a focus lock on the file while focused). Mirrors MutateBlock
+			// so every single-field task-setter refuses consistently; the
+			// frontend surfaces the error via the shared ErrorBanner (#444).
+			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+				writeErr = errBlockBeingEdited
+				return
+			}
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil {
 				writeErr = err
@@ -350,6 +358,14 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 		var emitBlocks []parser.ParsedBlock
 		a.coordinator.LockBlockWrite(first.blockID, func() {
 			a.coordinator.LockFileWrite(filePath, func() {
+				// Don't clobber a file the user is actively editing — a DnD
+				// reorder on a focused file is the highest-risk clobber (#444).
+				// Mirrors mutateTaskBlock / MutateBlock; the frontend surfaces
+				// the error via the shared ErrorBanner.
+				if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+					writeErr = errBlockBeingEdited
+					return
+				}
 				contentBytes, err := os.ReadFile(filePath)
 				if err != nil {
 					writeErr = err
