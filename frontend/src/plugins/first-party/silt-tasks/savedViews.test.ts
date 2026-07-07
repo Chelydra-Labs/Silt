@@ -4,7 +4,12 @@
 // sidebar list highlight; stability across calls is what makes that check
 // reliable, so we assert it directly.
 import { describe, expect, it, beforeEach } from 'vitest'
-import { SYSTEM_VIEWS, fingerprintOf, fingerprintOfState } from './savedViews'
+import {
+  SYSTEM_VIEWS,
+  fingerprintOf,
+  fingerprintOfState,
+  viewMatchesState
+} from './savedViews'
 import {
   getTaskHubState,
   resetTaskHubState,
@@ -157,5 +162,102 @@ describe('fingerprintOfState (#427)', () => {
     // independent of the setter layer).
     s.groupBy = 'status'
     expect(fingerprintOfState(s)).not.toBe(before)
+  })
+})
+
+describe('viewMatchesState (#432 — lenient match for partial-template views)', () => {
+  // Build a default state once; tests clone + mutate. Defaults represent the
+  // hub state AFTER `applySavedView(SYSTEM_VIEWS[1])` (sys-by-owner) has run
+  // against fresh defaults: the view's defined dims (list/owner/priority/
+  // vault/empty-filters) are applied, and the dims it doesn't define
+  // (calendarSubMode, columns) retain their freshDefaults() values. This is
+  // the state in which the bookmark/sidebar active-highlight check runs.
+  function makeState(overrides: Partial<TaskHubState> = {}): TaskHubState {
+    return {
+      displayMode: 'list',
+      groupBy: 'owner',
+      sort: 'priority',
+      scope: 'vault',
+      scopeUserOverride: false,
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] },
+      focusDate: '',
+      activeFilter: 'all',
+      calendarSubMode: 'month',
+      columns: ['TODO', 'DOING', 'DONE'],
+      savedViews: [],
+      activeSavedViewId: '',
+      savedViewsDirty: false,
+      ...overrides
+    }
+  }
+
+  it('system view (sys-by-owner) matches state after applySavedView', () => {
+    // sys-by-owner defines list/owner/priority/vault/empty-filters.
+    // The state has those values PLUS calendarSubMode=month and columns=[TODO,DOING,DONE]
+    // (defaults the view doesn't constrain). Strict fingerprint would mismatch
+    // on those two undefined-by-view dims.
+    expect(viewMatchesState(SYSTEM_VIEWS[1], makeState())).toBe(true)
+  })
+
+  it('system view does NOT match state when a defined dim differs', () => {
+    // sys-today-board wants board/status; state is list/owner.
+    // The view's displayMode + groupBy don't match → not active.
+    expect(viewMatchesState(SYSTEM_VIEWS[0], makeState())).toBe(false)
+  })
+
+  it('changing an UNDEFINED dim (columns) does not disqualify a system view', () => {
+    // sys-by-owner doesn't define columns; user changes columns → still matches.
+    const state = makeState({ columns: ['TODO', 'DOING', 'DONE', 'BLOCKED'] })
+    expect(viewMatchesState(SYSTEM_VIEWS[1], state)).toBe(true)
+  })
+
+  it('changing a DEFINED dim (groupBy) disqualifies the view', () => {
+    const state = makeState({ groupBy: 'status' })
+    expect(viewMatchesState(SYSTEM_VIEWS[1], state)).toBe(false)
+  })
+
+  it('a complete-snapshot user view reduces to the strict check', () => {
+    // A user view that defines every dim behaves like the old strict fingerprint.
+    const state = makeState()
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'mine',
+      system: false,
+      displayMode: state.displayMode,
+      groupBy: state.groupBy,
+      sort: state.sort,
+      scope: state.scope,
+      filters: { ...state.filters },
+      calendarSubMode: state.calendarSubMode,
+      columns: [...state.columns]
+    }
+    expect(viewMatchesState(userView, state)).toBe(true)
+    // Any single-dim change flips it false.
+    expect(viewMatchesState(userView, { ...state, columns: ['X'] })).toBe(false)
+  })
+
+  it('filters defined as empty arrays match state with empty arrays', () => {
+    // The SYSTEM_VIEWS all define filters as empty arrays; default state
+    // also has empty arrays. This is the common matching case.
+    expect(viewMatchesState(SYSTEM_VIEWS[1], makeState())).toBe(true)
+  })
+
+  it('view without filters field matches any state filters', () => {
+    // A view that omits filters entirely doesn't constrain them.
+    const view: SavedView = { id: 'x', name: 'no-filters' }
+    expect(viewMatchesState(view, makeState())).toBe(true)
+    expect(
+      viewMatchesState(
+        view,
+        makeState({
+          filters: {
+            owners: ['alice'],
+            priorities: [1],
+            dueDate: 'today',
+            tags: ['x']
+          }
+        })
+      )
+    ).toBe(true)
   })
 })

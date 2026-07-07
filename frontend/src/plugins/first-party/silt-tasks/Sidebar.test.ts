@@ -40,6 +40,7 @@ import {
   getTaskHubState,
   resetTaskHubState,
   setFilters,
+  applySavedView,
   type SavedView
 } from './state.svelte'
 import { SYSTEM_VIEWS } from './savedViews'
@@ -325,6 +326,43 @@ describe('silt-tasks Sidebar (#432)', () => {
     await flush()
     expect(getTaskHubState().activeSavedViewId).toBe(fullView.id)
     expect(activateBtn!.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('clicking a SYSTEM saved view highlights it as active via viewMatchesState (#432)', async () => {
+    // System views are partial templates — they omit calendarSubMode/columns.
+    // viewMatchesState compares only the dims the view defines, so applying
+    // sys-by-owner to default state highlights it (the previous fingerprint
+    // check would fail because state has calendarSubMode=month but the view
+    // doesn't define it).
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // Seed the system view as the active one (TasksHub does this on mount in
+    // production via applySavedView; here we set it directly to isolate the
+    // sidebar highlight check from the activation path).
+    const state = getTaskHubState()
+    state.savedViews = [...SYSTEM_VIEWS]
+    applySavedView(SYSTEM_VIEWS[1]) // sys-by-owner: list/owner/priority
+    await flush()
+    const activateBtn = document.querySelector<HTMLElement>(
+      '[data-testid="view-sys-by-owner"] button'
+    )
+    expect(activateBtn).toBeTruthy()
+    expect(activateBtn!.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('a system view whose defined dims do NOT match state is not highlighted', async () => {
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const state = getTaskHubState()
+    state.savedViews = [...SYSTEM_VIEWS]
+    // State is default: list/dueDate/dueDate — sys-today-board wants board/status/today.
+    // The view's displayMode + groupBy don't match → not active.
+    await flush()
+    const activateBtn = document.querySelector<HTMLElement>(
+      '[data-testid="view-sys-today-board"] button'
+    )
+    expect(activateBtn).toBeTruthy()
+    expect(activateBtn!.getAttribute('aria-pressed')).toBe('false')
   })
 
   it('delete button on a USER view calls persistSavedViews with the view removed', async () => {

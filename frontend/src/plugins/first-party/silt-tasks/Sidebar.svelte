@@ -34,7 +34,7 @@
     type DueDateFilter,
     type CalendarFilter
   } from './state.svelte'
-  import { fingerprintOf, fingerprintOfState } from './savedViews'
+  import { viewMatchesState } from './savedViews'
   import { persistSavedViews } from './settings'
 
   interface Props {
@@ -554,7 +554,7 @@
     </h3>
     <ul role="list" class="mt-1 space-y-0.5">
       {#each hubState.savedViews as view (view.id)}
-        {@const isActive = fingerprintOf(view) === fingerprintOfState(hubState)}
+        {@const isActive = viewMatchesState(view, hubState)}
         <li>
           <div
             class="flex items-center gap-1 px-1 py-0.5 rounded text-[12px] font-body-md border border-transparent

@@ -46,7 +46,7 @@
     persistDefaultGroupBy,
     persistDefaultSort
   } from './settings'
-  import { fingerprintOf, fingerprintOfState } from './savedViews'
+  import { viewMatchesState } from './savedViews'
   import { settings as settingsStore } from '../../../settings/store.svelte'
 
   interface Props {
@@ -331,13 +331,12 @@
       : undefined
   )
 
-  // When the active view is clean, its fingerprint matches the live state;
-  // when the user diverges, the mismatch is what the dirty flag tracks.
-  // The fingerprint is the source of truth for the bookmark icon (filled
-  // when matching, outline when diverged or no view active).
+  // When the active view is clean, every dim it defines matches the live
+  // state; when the user diverges, the mismatch is what the dirty flag
+  // tracks. viewMatchesState is the source of truth for the bookmark icon
+  // (filled when matching, outline when diverged or no view active).
   let activeViewMatchesState = $derived(
-    !!activeSavedView &&
-      fingerprintOf(activeSavedView) === fingerprintOfState(hubState)
+    !!activeSavedView && viewMatchesState(activeSavedView, hubState)
   )
 
   function openSaveComposer() {

@@ -107,3 +107,58 @@ export function fingerprintOfState(s: TaskHubState): string {
     s.columns.join('|')
   ].join('\u0000')
 }
+
+/**
+ * Lenient "does this view match the current state?" check (#427, #432).
+ *
+ * System views are partial templates — they define only the dims they care
+ * about (e.g. "Today's Board" specifies board/status/today-filters but says
+ * nothing about calendarSubMode or columns). The strict fingerprint
+ * comparison (fingerprintOf === fingerprintOfState) treats undefined view
+ * dims as empty strings, so it never matches a state that has those dims
+ * populated — system views never highlighted as active.
+ *
+ * This function compares ONLY the dims the view defines. A user view that
+ * snapshots every dim reduces to the strict check (all 10 defined → all 10
+ * compared). A system view that omits calendarSubMode/columns matches any
+ * state where its defined dims equal the state's, regardless of what the
+ * state has for the omitted dims. This matches user mental model: a system
+ * view is a starting template, not a complete snapshot.
+ *
+ * Used by the Sidebar active-highlight and the TasksHub bookmark icon. The
+ * `savedViewsDirty` flag (set by every state setter when a view is active)
+ * remains the source of truth for "user has diverged from the saved
+ * snapshot" — it triggers the "Update / Save as new" menu prompt even for
+ * system views when the user changes an omitted dim, which is the right
+ * behavior (the user has personalized the template and may want to save
+ * their version).
+ */
+export function viewMatchesState(view: SavedView, s: TaskHubState): boolean {
+  if (view.displayMode !== undefined && view.displayMode !== s.displayMode)
+    return false
+  if (view.groupBy !== undefined && view.groupBy !== s.groupBy) return false
+  if (view.sort !== undefined && view.sort !== s.sort) return false
+  if (view.scope !== undefined && view.scope !== s.scope) return false
+  if (
+    view.calendarSubMode !== undefined &&
+    view.calendarSubMode !== s.calendarSubMode
+  )
+    return false
+  if (view.columns !== undefined && !arrayEqual(view.columns, s.columns))
+    return false
+  if (view.filters !== undefined) {
+    if (!arrayEqual(view.filters.owners, s.filters.owners)) return false
+    if (!arrayEqual(view.filters.priorities, s.filters.priorities)) return false
+    if (view.filters.dueDate !== s.filters.dueDate) return false
+    if (!arrayEqual(view.filters.tags, s.filters.tags)) return false
+  }
+  return true
+}
+
+function arrayEqual<T>(a: T[], b: T[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
