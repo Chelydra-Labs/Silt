@@ -64,7 +64,7 @@ this matrix records the intent of each area's coverage.
 | `backend/themes` | canonical schema, embed fallback, loader, validator (color/font sandbox) |
 | `backend/updates` | update check, semver compare, download + SHA-256 verify |
 | `backend/vault` | settings durability & theme persistence, vault move/copy/verify, archive manifest |
-| Frontend (Vitest) | editor smoke + converter/schema round-trip identity, sidebar/tabs/titlebar, theme store, plugin surfaces, standalone-tasks router, Kanban blocked-badge + DONE guard, Agenda blocked-badge + guard, DependencyPicker, Task Sub-Editor Modal, a11y |
+| Frontend (Vitest) | editor smoke + converter/schema round-trip identity, sidebar/tabs/titlebar, theme store, plugin surfaces, standalone-tasks router, silt-tasks Board blocked-badge + DONE guard, silt-tasks List blocked-badge + guard, DependencyPicker, Task Sub-Editor Modal, a11y |
 
 ## Benchmarks & budgets
 
@@ -79,7 +79,7 @@ under `-short`), not aspirations.
   WAL replay, with zero stray `*.tmp` files
   (`TestAtomicWrite_KillMidWriteRecoversViaWAL`).
 - **UI frame budget** — a dev-only probe (`?perf=1`, `measureFrameBudget`)
-  instruments the three hottest paths — Kanban drag-settle, editor transaction,
+  instruments the three hottest paths — Board drag-settle, editor transaction,
   theme-token injection — against the 16 ms / 60 FPS budget.
 
 ```sh
@@ -125,26 +125,38 @@ manually against `wails dev`. Grouped by surface; each item is pass/fail.
 - [ ] `{{embed:uuid}}`: live portal; editing the embed updates the source and
       vice-versa.
 
-**Tasks, Kanban, Calendar, Agenda**
+**Tasks (silt-tasks hub)**
 - [ ] Task checkbox cycle (`[ ]`/`[/]`/`[x]`) writes to disk and re-indexes.
 - [ ] Inline metadata tokens (due/start/owner/priority/pin/progress/recur)
       parse and project.
 - [ ] Recurring task: completing it spawns the next instance with an advanced
       due date.
-- [ ] Quick-add (`Mod+Shift+N`) creates a standalone task; the Tasks view
+- [ ] Quick-add (`Mod+Shift+N`) creates a standalone task; the Tasks hub
       lists it (including the No Date group).
-- [ ] Tasks view inline quick-add: type at the bottom input, Enter creates a
+- [ ] Tasks hub inline quick-add: type at the bottom input, Enter creates a
       task; the input clears and stays focused for rapid entry; the new row
       appears on the next tick via `block:changed`. Confirm on both an empty
       list (input pinned to viewport bottom) and a long scrolling list.
-- [ ] Tasks view task creation works on a fresh vault AND an existing vault
+- [ ] Tasks hub task creation works on a fresh vault AND an existing vault
       (grants re-seed on launch — no `content-mutate` capability error).
-- [ ] Kanban scope switch (vault/notebook/section/page); drag changes status.
+- [ ] **Mode switching**: List / Board / Calendar switch from the header;
+      the chosen mode + grouping + sort persists across restarts.
+- [ ] **Grouping**: all 9 dimensions (None/Status/Owner/Priority/Due date/
+      Tag/Notebook/Section/Page) bin correctly; the trailing Unassigned
+      bucket renders for empty values.
+- [ ] **Board scope switch** (vault/notebook/section/page); drag changes
+      status; `sort: manual` cross/same-column drops persist via
+      `setTaskOrder`.
+- [ ] **Saved views**: apply, save-as-new, update an active view, delete;
+      the three system views are present, read-only, and survive a restart.
 - [ ] Task dependencies: add/remove via the CardDetailPanel picker; the lock
-      badge renders on blocked cards in Kanban + Agenda; completing a blocker
+      badge renders on blocked cards in Board + List; completing a blocker
       clears the dependent's badge; completing a blocked task prompts for
       confirmation; a circular dependency is rejected inline.
-- [ ] Task Sub-Editor: double-click a Kanban card opens the modal; nested
+- [ ] Comment threads: add a NOTE-child comment; the `[author::]`/`[ts::]`
+      tokens persist; the composer seeds the author from the OS username on
+      first post and caches it.
+- [ ] Task Sub-Editor: double-click a Board card opens the modal; nested
       notes/sub-tasks edit and save back to the parent file; surrounding
       content is untouched; Esc restores focus to the card.
 - [ ] CardDetailPanel recurrence dropdown and the dependency typeahead results
@@ -167,8 +179,8 @@ manually against `wails dev`. Grouped by surface; each item is pass/fail.
 **Plugins**
 - [ ] Install/enable/disable/uninstall a `.silt-plugin`; capability-grant
       prompts on first use.
-- [ ] First-party Agenda/Calendar/Kanban/Tasks render and respond to
-      navigation.
+- [ ] First-party silt-tasks hub renders and responds to navigation across
+      all three modes (List/Board/Calendar); silt-attachments renders.
 
 **Self-update** (when enabled)
 - [ ] Check for updates; a download is verified against the published SHA-256
@@ -179,7 +191,7 @@ manually against `wails dev`. Grouped by surface; each item is pass/fail.
 - No Wails integration test (requires the `wails dev` runtime) — covered by the
   manual matrix above.
 - No watcher e2e against real fsnotify events.
-- HTML5 drag-drop end-to-end (Kanban, block reorder) has no jsdom equivalent —
+- HTML5 drag-drop end-to-end (Board, block reorder) has no jsdom equivalent —
   manual-only.
 - Cursor-position restore across the Edit↔Source round-trip is not yet
   implemented.

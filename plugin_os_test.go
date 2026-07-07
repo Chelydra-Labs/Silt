@@ -14,7 +14,7 @@ import (
 func TestPluginNotify_TruncatesOversizedTitleBody(t *testing.T) {
 	app := newTestApp(t)
 
-	token, err := app.RegisterPluginSession("silt-kanban")
+	token, err := app.RegisterPluginSession("silt-tasks")
 	if err != nil {
 		t.Fatalf("RegisterPluginSession: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestPluginNotify_TruncatesOversizedTitleBody(t *testing.T) {
 	hugeTitle := strings.Repeat("T", 1024*1024) // 1 MB
 	hugeBody := strings.Repeat("B", 1024*1024)
 
-	if err := app.PluginNotify("silt-kanban", token, hugeTitle, hugeBody); err != nil {
+	if err := app.PluginNotify("silt-tasks", token, hugeTitle, hugeBody); err != nil {
 		t.Fatalf("PluginNotify returned error (should be best-effort, no error): %v", err)
 	}
 
@@ -59,7 +59,7 @@ func TestPluginNotify_TruncatesOversizedTitleBody(t *testing.T) {
 // ellipsis appended.
 func TestPluginNotify_PassesShortStringsUnchanged(t *testing.T) {
 	app := newTestApp(t)
-	token, _ := app.RegisterPluginSession("silt-kanban")
+	token, _ := app.RegisterPluginSession("silt-tasks")
 
 	var gotTitle, gotBody string
 	orig := notifyDesktop
@@ -69,7 +69,7 @@ func TestPluginNotify_PassesShortStringsUnchanged(t *testing.T) {
 	}
 	t.Cleanup(func() { notifyDesktop = orig })
 
-	if err := app.PluginNotify("silt-kanban", token, "Hello", "World"); err != nil {
+	if err := app.PluginNotify("silt-tasks", token, "Hello", "World"); err != nil {
 		t.Fatalf("PluginNotify: %v", err)
 	}
 	if gotTitle != "Hello" || gotBody != "World" {

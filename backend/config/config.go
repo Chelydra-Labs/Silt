@@ -442,15 +442,40 @@ func Defaults() SystemConfig {
 			"toggle_typewriter_mode": "Ctrl+Shift+Y",
 		},
 		Plugins: PluginsConfig{
-			Active: []string{"silt-calendar", "silt-kanban"},
+			// Phase 10 (#429) retired the standalone silt-calendar and
+			// silt-kanban plugins; silt-tasks is the single active task
+			// surface. Legacy vaults still carrying the old ids are
+			// migrated by task_plugin_migrate.go (Phase 9 / #431).
+			Active: []string{"silt-tasks"},
 			// silt-ai-summary (#220) ships OFF by default: it is the first plugin
 			// that sends note content to an external LLM endpoint, so the user
 			// opts in explicitly (Plugins tab) after configuring a provider.
 			Disabled: []string{"silt-ai-summary"},
 			PluginSettings: map[string]any{
-				"silt-kanban": map[string]any{
-					"default_col": "TODO",
-					"columns":     []any{"TODO", "DOING", "DONE"},
+				// silt-tasks is the unified hub (Phase 9 / #431). Every key
+				// the frontend loaders read (settings.ts) is seeded so a
+				// fresh vault — or a migrated one — never nil-derefs.
+				// saved_views starts empty: SYSTEM_VIEWS are code-derived
+				// on every load (savedViews.ts invariant), and persisted
+				// user views come only from explicit save action. Slice
+				// values use []any (not []string) so they survive a YAML
+				// round-trip — yaml.v3 loads sequences as []any, so a
+				// []string seed would mismatch on Load.
+				"silt-tasks": map[string]any{
+					"default_display_mode": "list",
+					"default_group_by":     "dueDate",
+					"default_sort":         "dueDate",
+					"default_scope":        "vault",
+					"calendar_sub_mode":    "month",
+					"columns":              []any{"TODO", "DOING", "DONE"},
+					"filters": map[string]any{
+						"owners":     []any{},
+						"priorities": []any{},
+						"dueDate":    "",
+						"tags":       []any{},
+					},
+					"saved_views":  []any{},
+					"local_author": "",
 				},
 			},
 		},

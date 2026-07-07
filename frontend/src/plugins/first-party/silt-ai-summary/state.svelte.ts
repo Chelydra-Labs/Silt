@@ -57,7 +57,13 @@ export interface SummaryController {
   generateFor(
     ctx: PluginContext,
     pageId: string,
-    opts?: { content?: string; force?: boolean; notebook?: string; section?: string; page?: string }
+    opts?: {
+      content?: string
+      force?: boolean
+      notebook?: string
+      section?: string
+      page?: string
+    }
   ): Promise<SummaryOutcome>
   /** Debounce a generation for a page (editor:save path). Cancels any pending
    *  generation already queued for that page. */
@@ -77,7 +83,9 @@ export interface SummaryController {
 
 /** Create the per-vault controller. `providerInfo` is injectable so tests can
  *  pin the configured/unconfigured branch without the settings store. */
-export function createSummaryController(providerInfo: () => ProviderInfo = readProviderInfo): SummaryController {
+export function createSummaryController(
+  providerInfo: () => ProviderInfo = readProviderInfo
+): SummaryController {
   // $state deep-proxies the Map AND its PageState values, so a component
   // reading `controller.state.get(pageId)` (via $derived) re-runs when the
   // controller mutates a page's status/result/stale. Without $state the banner
@@ -130,7 +138,10 @@ export function createSummaryController(providerInfo: () => ProviderInfo = readP
       cur.status = outcome.ok ? 'ready' : 'error'
       cur.stale = false
     } else {
-      state.set(pageId, { status: outcome.ok ? 'ready' : 'error', result: outcome })
+      state.set(pageId, {
+        status: outcome.ok ? 'ready' : 'error',
+        result: outcome
+      })
     }
     return outcome
   }
@@ -143,9 +154,9 @@ export function createSummaryController(providerInfo: () => ProviderInfo = readP
     // already-cached settings.config snapshot (same source the settings page
     // edits). This keeps the gate synchronous + testable.
     void ctx
-    const raw = settings.config?.plugins?.plugin_settings?.['silt-ai-summary'] as
-      | Record<string, unknown>
-      | undefined
+    const raw = settings.config?.plugins?.plugin_settings?.[
+      'silt-ai-summary'
+    ] as Record<string, unknown> | undefined
     return resolveSettings(raw)
   }
 
@@ -154,8 +165,7 @@ export function createSummaryController(providerInfo: () => ProviderInfo = readP
     getSettings() {
       return resolveSettings(
         settings.config?.plugins?.plugin_settings?.['silt-ai-summary'] as
-          | Record<string, unknown>
-          | undefined
+          Record<string, unknown> | undefined
       )
     },
     async generateFor(ctx, pageId, opts = {}) {

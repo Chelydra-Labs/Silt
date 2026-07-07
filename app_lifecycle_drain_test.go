@@ -297,7 +297,7 @@ func TestCloseVault_DrainsInFlightAICall(t *testing.T) {
 	defer srv.Close()
 	pointAIProviderAt(t, app, "chat", srv.URL, "test")
 
-	tok, err := app.RegisterPluginSession("silt-kanban")
+	tok, err := app.RegisterPluginSession("silt-tasks")
 	if err != nil {
 		t.Fatalf("RegisterPluginSession: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestCloseVault_DrainsInFlightAICall(t *testing.T) {
 	// released vaultMu after preflight and registered with vaultClosingWG.
 	callDone := make(chan error, 1)
 	go func() {
-		_, err := app.PluginAIComplete("silt-kanban", tok, PluginAICompleteInput{
+		_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
 			Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
 		})
 		callDone <- err
@@ -364,7 +364,7 @@ func TestCloseVault_DrainsInFlightAICall(t *testing.T) {
 
 	// The audit entry landed in the CLOSING vault's ai.log (drained before
 	// teardown), proving the call was not lost.
-	oldLog := filepath.Join(oldVault, ".system", "plugins", "silt-kanban", "ai.log")
+	oldLog := filepath.Join(oldVault, ".system", "plugins", "silt-tasks", "ai.log")
 	if data, _ := os.ReadFile(oldLog); len(data) == 0 {
 		t.Errorf("closing vault's ai.log should contain the drained audit entry; file is empty")
 	}
@@ -413,7 +413,7 @@ func TestCloseVault_NewAICallRejectedWhileClosing(t *testing.T) {
 	defer srv.Close()
 	pointAIProviderAt(t, app, "chat", srv.URL, "test")
 
-	tok, err := app.RegisterPluginSession("silt-kanban")
+	tok, err := app.RegisterPluginSession("silt-tasks")
 	if err != nil {
 		t.Fatalf("RegisterPluginSession: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestCloseVault_NewAICallRejectedWhileClosing(t *testing.T) {
 		app.vaultMu.Unlock()
 	})
 
-	_, err = app.PluginAIComplete("silt-kanban", tok, PluginAICompleteInput{
+	_, err = app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
 		Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
 	})
 	if !errors.Is(err, errVaultClosing) {
@@ -470,14 +470,14 @@ func TestSwitchVault_DrainsInFlightAICall(t *testing.T) {
 	defer srv.Close()
 	pointAIProviderAt(t, app, "chat", srv.URL, "test")
 
-	tok, err := app.RegisterPluginSession("silt-kanban")
+	tok, err := app.RegisterPluginSession("silt-tasks")
 	if err != nil {
 		t.Fatalf("RegisterPluginSession: %v", err)
 	}
 
 	callDone := make(chan error, 1)
 	go func() {
-		_, err := app.PluginAIComplete("silt-kanban", tok, PluginAICompleteInput{
+		_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
 			Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
 		})
 		callDone <- err
@@ -531,11 +531,11 @@ func TestSwitchVault_DrainsInFlightAICall(t *testing.T) {
 
 	// The drained audit entry landed in the FIRST vault's ai.log (the call
 	// ran against the first vault before the cutover), not the second's.
-	firstLog := filepath.Join(firstVault, ".system", "plugins", "silt-kanban", "ai.log")
+	firstLog := filepath.Join(firstVault, ".system", "plugins", "silt-tasks", "ai.log")
 	if data, _ := os.ReadFile(firstLog); len(data) == 0 {
 		t.Errorf("first vault's ai.log should contain the drained audit entry; file is empty")
 	}
-	secondLog := filepath.Join(secondVault, ".system", "plugins", "silt-kanban", "ai.log")
+	secondLog := filepath.Join(secondVault, ".system", "plugins", "silt-tasks", "ai.log")
 	if data, _ := os.ReadFile(secondLog); len(data) != 0 {
 		t.Errorf("second vault's ai.log should be empty (no leak); got %q", string(data))
 	}

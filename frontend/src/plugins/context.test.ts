@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   pluginRawQuery: vi.fn(() => Promise.resolve({ rows: [], truncated: false })),
   pluginMutateBlock: vi.fn(() => Promise.resolve(true)),
   pluginUpdateBlockState: vi.fn(() => Promise.resolve(true)),
+  pluginSetTaskOrder: vi.fn(() => Promise.resolve(true)),
   getPluginSettingsForNotebook: vi.fn(() => Promise.resolve({})),
   getActiveLocation: vi.fn(() => ({
     notebook: 'Work',
@@ -25,6 +26,7 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   PluginMutateBlock: mocks.pluginMutateBlock,
   PluginUpdateBlockState: mocks.pluginUpdateBlockState,
   PluginUpdateTaskMeta: mocks.pluginUpdateTaskMeta,
+  PluginSetTaskOrder: mocks.pluginSetTaskOrder,
   GetPluginSettingsForNotebook: mocks.getPluginSettingsForNotebook
 }))
 
@@ -127,6 +129,37 @@ describe('makePluginContext — updateTaskMeta sentinel translation', () => {
   })
 })
 
+// setTaskOrder wiring (#426): the SDK closure must thread pluginID +
+// sessionToken through PluginSetTaskOrder so the Go side can verify the
+// caller's identity (the same F1 contract as updateTaskMeta).
+describe('makePluginContext — setTaskOrder wiring (#426)', () => {
+  beforeEach(() => {
+    mocks.pluginSetTaskOrder.mockClear()
+  })
+
+  it('calls PluginSetTaskOrder with the captured pluginID + token', async () => {
+    const ctx = makePluginContext('silt-tasks', 'tok-xyz')
+    await ctx.setTaskOrder('block-1', 7)
+    expect(mocks.pluginSetTaskOrder).toHaveBeenCalledWith(
+      'silt-tasks',
+      'tok-xyz',
+      'block-1',
+      7
+    )
+  })
+
+  it('passes 0 through verbatim (clears the [order::] token)', async () => {
+    const ctx = makePluginContext('silt-tasks')
+    await ctx.setTaskOrder('block-1', 0)
+    expect(mocks.pluginSetTaskOrder).toHaveBeenCalledWith(
+      'silt-tasks',
+      '',
+      'block-1',
+      0
+    )
+  })
+})
+
 describe('makePluginContext — getPluginSettings (#133)', () => {
   beforeEach(() => {
     mocks.getPluginSettingsForNotebook.mockClear()
@@ -140,10 +173,10 @@ describe('makePluginContext — getPluginSettings (#133)', () => {
     const loc = { notebook: 'Work', section: 'Journal', page: 'Daily' }
     mocks.getActiveLocation.mockReturnValue(loc)
     mocks.getPluginSettingsForNotebook.mockResolvedValue({ columns: ['TODO'] })
-    const ctx = makePluginContext('silt-kanban')
+    const ctx = makePluginContext('silt-tasks')
     const got = await ctx.getPluginSettings()
     expect(mocks.getPluginSettingsForNotebook).toHaveBeenCalledWith(
-      'silt-kanban',
+      'silt-tasks',
       'Work'
     )
     expect(got).toEqual({ columns: ['TODO'] })
@@ -155,7 +188,9 @@ describe('makePluginContext — getPluginSettings (#133)', () => {
       section: '',
       page: ''
     })
-    mocks.getPluginSettingsForNotebook.mockResolvedValue(null as unknown as Record<string, unknown>)
+    mocks.getPluginSettingsForNotebook.mockResolvedValue(
+      null as unknown as Record<string, unknown>
+    )
     const ctx = makePluginContext('p')
     const got = await ctx.getPluginSettings()
     expect(got).toEqual({})
@@ -168,14 +203,14 @@ describe('makePluginContext — getPluginSettings (#133)', () => {
     const loc = { notebook: 'Work', section: 'Journal', page: 'Daily' }
     mocks.getActiveLocation.mockReturnValue(loc)
     mocks.getPluginSettingsForNotebook.mockResolvedValue({})
-    const ctx = makePluginContext('silt-kanban')
+    const ctx = makePluginContext('silt-tasks')
 
     // Navigate to a linked notebook AFTER context construction. The reactive
     // getter must reflect the new value at the next getPluginSettings call.
     loc.notebook = 'Linked'
     await ctx.getPluginSettings()
     expect(mocks.getPluginSettingsForNotebook).toHaveBeenCalledWith(
-      'silt-kanban',
+      'silt-tasks',
       'Linked'
     )
   })

@@ -23,7 +23,9 @@ const mocks = vi.hoisted(() => ({
         category: 'meetings',
         icon: 'group',
         source: 'builtin',
-        placeholders: [{ name: 'meeting_title', description: 'Title', required: true }]
+        placeholders: [
+          { name: 'meeting_title', description: 'Title', required: true }
+        ]
       }
     ],
     loadError: null as string | null,
@@ -87,7 +89,9 @@ describe('TemplatePicker (#55)', () => {
       props: { mode: 'insert', onClose: vi.fn(), onInsertBlocks: vi.fn() }
     })
 
-    expect(screen.getByRole('dialog', { name: 'Template picker' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('dialog', { name: 'Template picker' })
+    ).toBeInTheDocument()
 
     const options = screen.getAllByRole('option')
     expect(options).toHaveLength(2)
@@ -151,7 +155,9 @@ describe('TemplatePicker (#55)', () => {
     const search = screen.getByLabelText('Search templates')
     await fireEvent.input(search, { target: { value: 'zzz-no-match' } })
 
-    expect(screen.getByText('No templates match your search.')).toBeInTheDocument()
+    expect(
+      screen.getByText('No templates match your search.')
+    ).toBeInTheDocument()
   })
 
   it('pre-fills the page-name field in new-page mode (#95)', () => {
@@ -170,8 +176,11 @@ describe('TemplatePicker (#55)', () => {
   })
 
   it('dispatches focus-page-title on successful CreatePageFromTemplate (#95)', async () => {
-    const { CreatePageFromTemplate } = await import('../../wailsjs/go/main/App.js')
-    ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockResolvedValue('2026-06-15')
+    const { CreatePageFromTemplate } =
+      await import('../../wailsjs/go/main/App.js')
+    ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockResolvedValue(
+      '2026-06-15'
+    )
 
     const onCreatedPage = vi.fn()
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
@@ -211,7 +220,8 @@ describe('TemplatePicker (#55)', () => {
   })
 
   it('pushes a toast when CreatePageFromTemplate fails (#94)', async () => {
-    const { CreatePageFromTemplate } = await import('../../wailsjs/go/main/App.js')
+    const { CreatePageFromTemplate } =
+      await import('../../wailsjs/go/main/App.js')
     ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error('disk full')
     )
@@ -240,7 +250,8 @@ describe('TemplatePicker (#55)', () => {
   })
 
   it('pushes a toast when RenderTemplateBlocks fails (#94)', async () => {
-    const { RenderTemplateBlocks } = await import('../../wailsjs/go/main/App.js')
+    const { RenderTemplateBlocks } =
+      await import('../../wailsjs/go/main/App.js')
     ;(RenderTemplateBlocks as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error('IPC lost')
     )
@@ -268,14 +279,14 @@ describe('TemplatePicker (#55)', () => {
       category: 'projects',
       icon: 'sprint',
       source: 'plugin',
-      plugin_id: 'silt-kanban',
+      plugin_id: 'silt-tasks',
       placeholders: []
     } as any)
     render(TemplatePicker, {
       props: { mode: 'insert', onClose: vi.fn(), onInsertBlocks: vi.fn() }
     })
     // The plugin group header appears; the plugin template is rendered.
-    expect(screen.getByText('Plugins / silt-kanban')).toBeInTheDocument()
+    expect(screen.getByText('Plugins / silt-tasks')).toBeInTheDocument()
     expect(screen.getByText('Sprint')).toBeInTheDocument()
   })
 })

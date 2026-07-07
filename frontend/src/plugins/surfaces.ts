@@ -94,7 +94,9 @@ export function registerSurface(surface: PluginSurface): () => void {
   // for the first-party direct-render path (#221). Chrome-rendered kinds
   // (status-bar-item, command-palette-entry) draw from label/icon + onClick.
   if (CONTENT_KINDS.has(surface.kind) && !surface.html && !surface.component) {
-    throw new Error(`Surface ${surface.id} (${surface.kind}) requires html or component`)
+    throw new Error(
+      `Surface ${surface.id} (${surface.kind}) requires html or component`
+    )
   }
   if (!isGranted(surface.pluginID, 'ui-surface')) {
     // eslint-disable-next-line no-console

@@ -17,7 +17,10 @@ const { mockController, mockAppSettings } = vi.hoisted(() => {
   }
   const mockController = {
     state: new Map<string, any>(),
-    getSettings: vi.fn((): SummarySettings => ({ ...defaultSettings, facets: { ...defaultSettings.facets } })),
+    getSettings: vi.fn((): SummarySettings => ({
+      ...defaultSettings,
+      facets: { ...defaultSettings.facets }
+    })),
     generateFor: vi.fn(async () => ({ ok: true, result: {} }))
   }
   const mockAppSettings = {
@@ -191,10 +194,17 @@ describe('SummaryBanner', () => {
     let dismissed = false
     const ctx = makeCtx()
     const { getByRole } = render(SummaryBanner, {
-      props: { ctx, onDismiss: () => { dismissed = true } }
+      props: {
+        ctx,
+        onDismiss: () => {
+          dismissed = true
+        }
+      }
     })
     await fireEvent.click(getByRole('button', { name: /Dismiss AI summary/i }))
-    expect(ctx.updatePluginSetting).toHaveBeenCalledWith('dismissed_notes', [PAGE_ID])
+    expect(ctx.updatePluginSetting).toHaveBeenCalledWith('dismissed_notes', [
+      PAGE_ID
+    ])
     expect(dismissed).toBe(true)
   })
 
@@ -234,7 +244,8 @@ describe('SummaryBanner', () => {
       props: { ctx, onDismiss: () => {} }
     })
     await fireEvent.click(getByRole('button', { name: /Dismiss AI summary/i }))
-    const saved = (ctx.updatePluginSetting as ReturnType<typeof vi.fn>).mock.calls[0][1] as string[]
+    const saved = (ctx.updatePluginSetting as ReturnType<typeof vi.fn>).mock
+      .calls[0][1] as string[]
     expect(saved).toHaveLength(500)
     expect(saved[saved.length - 1]).toBe(PAGE_ID)
     // Oldest entry (p0) was trimmed to make room.
@@ -264,7 +275,9 @@ describe('SummaryBanner', () => {
       props: { ctx, onDismiss: () => {} }
     })
     await fireEvent.click(getByRole('button', { name: /Regenerate summary/i }))
-    expect(mockController.generateFor).toHaveBeenCalledWith(ctx, PAGE_ID, { force: true })
+    expect(mockController.generateFor).toHaveBeenCalledWith(ctx, PAGE_ID, {
+      force: true
+    })
   })
 
   it('hides a facet the user has toggled off in settings', () => {

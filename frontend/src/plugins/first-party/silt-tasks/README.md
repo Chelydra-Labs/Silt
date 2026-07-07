@@ -1,153 +1,114 @@
-# silt-tasks — Tasks view
+# silt-tasks — the unified Tasks hub
 
-The Tasks view is the first-party vault-scoped surface for every active
-task (dated **and** undated), grouped by time horizon. It is a sibling
-to Calendar's date-scoped agenda, not a replacement — its purpose is
-specifically to surface undated tasks that the existing agenda surfaces
-filter out by SQL design.
+The first-party vault-scoped surface for **every** task in the vault. One
+plugin hosts **three display modes — List, Board, and Calendar** — over a
+single grouping-first engine. The activity-bar entry is "Tasks"; a segmented
+switcher in the header flips the projection without re-querying.
 
-## Interaction model (#410 unified task-edit surface)
+## Architecture
 
-Single-click a row opens the shared **non-blocking inspector drawer**
-(`first-party/shared/TaskEditDrawer.svelte`) — the same drawer Kanban
-uses — for inline edits (pin, progress, recurrence, due date, status).
-The pencil affordance on each row (or `Shift+Enter`) opens the shared
-**sub-editor modal** (`TaskSubEditorModal`) for the task's child
-sub-tree. The former single-click behavior (navigate-to-block / open the
-source page) is now a button inside the drawer, hidden for standalone
-(`.silt`) tasks. The row mark-done checkbox routes through the shared
-`BlockedDoneDialog` when the task has open prerequisites, matching Kanban
-and Agenda.
+The package is organized around one reactive state hub that every renderer
+and the sidebar read from and write to. There is no parallel
+state/query module per mode.
 
-## SDK surface
+| File | Role |
+|---|---|
+| `state.svelte.ts` | The unified reactive hub state (`TaskHubState`) — display mode, grouping, sort, scope, filters, focus date, smart-list filter, calendar sub-mode, status columns, saved views, and the active-view + dirty flags. Svelte 5 `$state`. |
+| `query.ts` | Pure SQL builder (`buildQuery`) consuming hub state → `{ sql, params }`. Scope + filter WHERE clauses, groupBy/sort ORDER BY, optional due-date window. All values flow through `?` placeholders. |
+| `grouping.ts` | Pure client-side binning (`binByDimension`) — assigns rows to ordered `GroupSection`s for the 9 grouping dimensions. |
+| `savedViews.ts` | The three code-defined `SYSTEM_VIEWS` + the `fingerprintOf` / `fingerprintOfState` helpers that power the "is the live state the same as this saved view?" check. |
+| `settings.ts` | YAML pref I/O for everything under `plugins.plugin_settings.silt-tasks`. Reads come from the synchronous settings snapshot; writes go through the atomic `updatePluginSetting`. |
+| `TasksHub.svelte` | The shell — title + open/done count header, mode switcher, FilterBar, scope breadcrumb, saved-view bookmark affordance, and the route to the active renderer. |
+| `views/ListView.svelte` | List renderer — time-horizon (or any `groupBy`) sections, inline quick-add, row drag-reorder under `sort: manual`. |
+| `views/BoardView.svelte` | Board renderer — status columns, HTML5 drag-and-drop with FLIP animation, manual `[order::]` reordering, ArrowLeft/Right keyboard parity. |
+| `views/CalendarView.svelte` | Calendar renderer — month/week grids over a windowed due-date query. |
+| `Sidebar.svelte` | The unified sidebar — smart lists, saved views, mini-calendar, and filter controls. Reads + writes the same hub state as the shell. |
+| `components/FilterBar.svelte` | Owner / priority / due-date / tag filter chips (writes `TaskFilters`). |
+| `components/TaskEditDrawer.svelte` | Shared non-blocking inspector drawer (pin, progress, recurrence, due date, status, owner, priority, tags). |
+| `components/CommentThread.svelte` | Comment thread over a task's NOTE-block children (`FetchSubtree` + `block_meta` attribution). |
+| `components/QuickAddTask.svelte` | Shared quick-add input (used by every mode's quick-add surface). |
+| `components/BlockedDoneDialog.svelte` | The DONE-on-blocked confirm guard (matches the lock badge). |
+| `components/DependencyPicker.svelte` | The `[blocked_by::]` typeahead picker. |
+| `components/TaskSubEditorModal.svelte` | Shared scoped sub-tree editor (Shift+Enter from a card/row). |
+| `types.ts` | The `TaskDetail` cross-surface task contract + priority/lane label helpers. |
 
-The component is built exclusively on the PluginContext SDK — no
-capabilities, no Go bindings, no schema changes:
+## Data flow
 
-- `ctx.sqliteQuery(sql)` — two queries: one for the open groups
-  (`status != 'DONE'`, ordered so undated rows go to the tail), one
-  for the Completed group (`status = 'DONE'`, ordered by `file_date
-  DESC`).
-- `ctx.updateBlockState(blockId, 'DONE')` — mark-done.
-- `ctx.on('block:changed', reload)` — reflow on any task mutation.
+```
+  TaskHubState (state.svelte.ts)
+        │  scope · filters · groupBy · sort · displayMode · columns
+        ▼
+  buildQuery (query.ts)  ──►  SQLite (ctx.sqliteQuery)  ──►  TaskDetail[] (types.ts)
+        │                                                              │
+        │                                              binByDimension  │ (grouping.ts)
+        │                                                              ▼
+        └────────────── TasksHub.svelte routes to ──────────► ListView / BoardView / CalendarView
+                                                                   ▲
+  Sidebar.svelte reads + writes the same hub state ────────────────┘
+```
 
-## Unified hub foundation (`state.svelte.ts` + `query.ts`)
+Every dimension setter in `state.svelte.ts` marks the active saved view
+dirty when one is active, so the header bookmark can offer Update /
+Save-as-new instead of just "saved". The sidebar and the header are
+bidirectionally in sync because they read the same `$state` singleton.
 
-This package is also the home of the **forward-looking unified hub
-foundation** (#419, milestone #37 phase 4). Two modules form the carrier
-for a single Tasks hub that supersedes the parallel state/query patterns
-invented independently by sibling surfaces:
+## Configuration
 
-- **`state.svelte.ts`** exports `TaskHubState` — a unified store carrying
-  scope + filters (Kanban lineage) AND `focusDate` + `activeFilter`
-  (Calendar lineage) together, plus a `DisplayMode` (`list` | `board`)
-  and `groupBy` dimension. A future hub renders either a list (the
-  Calendar/Agenda/Tasks lineage) or a board (the Kanban lineage) from
-  this one state shape.
-- **`query.ts`** exports `buildQuery` — a pure SQL builder lifted from
-  the Kanban builder (the most capable of the three task surfaces) and
-  extended with two optional levers the hub needs:
-  - `groupBy` — re-orders rows so each group is contiguous (sort
-    concern, not a filter concern).
-  - `window` — adds a due-date `WHERE` window (`{ start, end }`,
-    inclusive) for Calendar-style "just this month" queries without
-    re-deriving the SQL inline.
+All prefs live under `plugins.plugin_settings.silt-tasks` in the vault
+`config.yaml` (ARCHITECTURE §0 rule 2). The full key set:
 
-These two modules are **purely additive** this phase: no existing
-consumer imports them yet. The two legacy modules — `silt-calendar/
-focusState.svelte.ts` and `silt-kanban/kanbanSharedState.svelte.ts` +
-`silt-kanban/query.ts` — stay live until a later milestone migrates
-their consumers, then they are deleted. The shapes were kept identical
-so that migration is a one-for-one import swap.
+| Key | Meaning |
+|---|---|
+| `default_display_mode` | `list` / `board` / `calendar` (hydrated once on mount; every later switch persists). |
+| `default_group_by` | One of the 9 `GroupBy` values (survives a List → Board hop). |
+| `default_sort` | One of the 6 `SortMode` values. |
+| `calendar_sub_mode` | `month` / `week`. |
+| `columns` | Status-board lane order (defaults to `["TODO","DOING","DONE"]`). |
+| `saved_views[]` | User-defined saved views (system views are re-derived from code, never persisted). |
+| `local_author` | Seeded from the OS username (`ctx.getLocalAuthor`) on first comment; the user's override always wins. |
 
-The `scopeUserOverride` invariant (a user-narrowed scope survives an
-automatic scope change) is preserved verbatim in `TaskHubState`
-(`setScope` / `narrowScopeTo` / `clearScopeOverride`).
+The `filters` shape (`{ owners, priorities, dueDate, tags }`) is held in hub
+state and snapshotted into saved views; it is not separately persisted as a
+default.
 
-## Groups
+## Extending
 
-| Group | Source | Style |
-|---|---|---|
-| **Overdue** | `due_date < today` | error tone |
-| **Today** | `due_date == today` | primary tone |
-| **Upcoming** | `tomorrow <= due_date <= today + 7 days` | muted tone |
-| **No Date** | `due_date` is null or empty | muted tone, expanded by default |
-| **Completed** | `status = 'DONE'` | collapsed by default; click chevron to expand |
+**Add a new grouping dimension.** 1) Extend the `GroupBy` union in
+`state.svelte.ts` and add the option to `GROUP_OPTIONS` in `TasksHub.svelte`
+(+ `GROUP_BY_VALUES` in `settings.ts` for validation). 2) Add a `binByX`
+case to `binByDimension` in `grouping.ts`. 3) If the dimension can sort
+server-side, add an `orderByFor` / `sortClauseFor` branch in `query.ts`;
+high-cardinality dimensions (tag/notebook/section/page) are binned
+client-side and share the default ORDER BY.
 
-The "No Date" label matches the cross-app convention (Things 3 Anytime,
-Todoist no-date filter, Obsidian Tasks `no due date` group, TickTick
-Inbox). The 7-day Upcoming window matches the Things 3 default; revisit
-if users request more.
-
-## Completion sort
-
-The Completed group is ordered by `file_date DESC` — the file's
-modification time as recorded in the `blocks` table when a task line
-was last rewritten. This is a coarse completion-recency proxy.
-
-The `tasks.completed_at` column shipped (#417 — ISO 8601 local timestamp
-stamped on the DONE transition, cleared on reopen), so a dedicated
-completion-recency sort is now possible. It is **nullable with no
-backfill**: only tasks created after the column landed are guaranteed to
-carry `[completed::]`, and only if they transitioned to DONE after it.
-Older completed tasks (predating the column, or completed before it
-shipped) have `NULL`, so the Tasks view still sorts on the `file_date`
-proxy rather than excluding or pushing those rows to the bottom. Caveats
-of the proxy:
-
-- A bulk-edit that touches a file (e.g. a Markdown reformat of the
-  whole `.md`) bumps every completed task in that file up together.
-- Two tasks completed minutes apart on the same day may sort
-  arbitrarily.
-
-A follow-up can switch the Completed query to `ORDER BY
-completed_at DESC NULLS LAST` (or `COALESCE(completed_at, file_date)
-DESC`) once enough of the backlog carries the token, or once the
-migration explicitly backfills it. Until then, the proxy keeps the
-ordering stable for legacy rows.
-
-## Focus target prop
-
-The component accepts a `focusBlockId: string` prop. When set, the
-list scrolls to the matching row (`data-block-id={id}`) and applies
-the `.tasks-focused` class for a transient 3-second visual
-highlight. The `focusKey` prop is a monotonic counter (typically a
-timestamp) that re-fires the focus effect on every navigation even
-when `focusBlockId` is unchanged.
-
-This is the receiving end of the standalone-task navigation router
-(`#374` — `frontend/src/lib/standaloneTasksNav.ts`). Search jumps,
-tag-explorer clicks, and block-reference follows that target a
-`.silt` block get re-routed here automatically; the
-`STANDALONE_TASKS_NOTEBOOK = '.silt'` constant lives in that same
-file and is the single source of truth on the frontend.
-
-## Follow-ups
-
-- **Drag-to-reschedule.** Moving a row between date groups should
-  rewrite `[due:: YYYY-MM-DD]` on disk (currently exposed via
-  Calendar's drag-and-drop through `ctx.setTaskDueDate`).
-- **Switch the Completed sort to `completed_at`.** The column shipped
-  (#417); see "Completion sort" above for why the query still uses the
-  `file_date` proxy and what the cutover looks like.
-- **Typed Go binding (`GetTasksView`).** The current implementation
-  uses raw `ctx.sqliteQuery(...)` per the issue's "tradeoff noted"
-  — promote to a Go method if the `tasks` schema gains columns we
-  want to filter on without bumping every caller.
+**Add a new display mode.** 1) Extend the `DisplayMode` union and add the
+option to `MODES` in `TasksHub.svelte`. 2) Add a `views/<Mode>View.svelte`
+renderer that reads hub state + `ctx.sqliteQuery(buildQuery(...))`. 3) Add
+the route case in the shell's content area. The hub state, query builder,
+grouping, and sidebar need no changes — a new mode is just another renderer
+over the same engine.
 
 ## Tests
 
-`Tasks.test.ts` covers:
-- undated → No Date (AC1)
-- dated → Today, no duplication (AC2)
-- overdue tone distinct from Today/Upcoming (AC3)
-- Completed collapsed by default + expands on click (AC4)
-- header count respects open vs. done (AC5)
-- mark-done calls `updateBlockState` + removes the row (AC6); a blocked
-  task surfaces the DONE-on-blocked guard first
-- single-click opens the inspector drawer; pencil / Shift+Enter open the
-  sub-editor; standalone tasks hide "Open source page"
-- empty state when no tasks exist
-- `focusBlockId` scrolls + highlights (cross-cuts #374 AC4)
-- SQL pushes undated to the tail of the open list
-- Upcoming group is capped at today + 7 days
+Each module has a co-located `*.test.ts`:
+
+- `state.test.ts` — every hub-state setter (ported from the legacy
+  `kanbanSharedState` + `focusState` suites), scope-override invariant,
+  saved-view upsert/apply/delete + the 50-user-view cap, `resetTaskHubState`.
+- `query.test.ts` — scope branches, filter branches, combined scope+filters,
+  groupBy/sort ORDER BY composition (ported from the legacy Kanban builder).
+- `grouping.test.ts` — every `binByDimension` dimension, bucket ordering,
+  the trailing Unassigned bucket, tag multi-membership.
+- `savedViews.test.ts` — the three system views, fingerprint equality,
+  state-vs-view matching.
+- `settings.test.ts` — load/persist round-trips, system-view strip on write,
+  legacy `silt-kanban.boards[]` forward-mapping.
+- `TasksHub.test.ts` — mode switcher, saved-view apply/dirty tracking,
+  hydrate of system + legacy views.
+- `views/{ListView,BoardView,CalendarView}.test.ts` — per-renderer
+  rendering, drag-reorder (`setTaskOrder`), quick-add, blocked-badge +
+  DONE guard.
+- `Sidebar.test.ts` — smart-list pick, saved-view list, mini-cal, filter
+  sync back into hub state.
+- `components/*.test.ts` — drawer, comment thread (incl.
+  `ctx.getLocalAuthor` seeding + persist), dependency picker, sub-editor.

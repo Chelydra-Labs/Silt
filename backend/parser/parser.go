@@ -1302,9 +1302,15 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		// Fixed order — author then ts — so the parse → render round-trip
 		// is byte-stable regardless of the order the parser saw. NOTE-only
 		// by construction: TASK blocks use the task render path above.
+		// Author is sanitized before rendering: a ']' in the value would
+		// truncate the [author::] token, and a newline would split the NOTE
+		// block across lines (breaking the parse on next read).
 		var noteTokens []string
 		if block.Author != "" {
-			noteTokens = append(noteTokens, fmt.Sprintf("[author:: %s]", block.Author))
+			author := strings.ReplaceAll(block.Author, "]", "")
+			author = strings.ReplaceAll(author, "\n", " ")
+			author = strings.ReplaceAll(author, "\r", "")
+			noteTokens = append(noteTokens, fmt.Sprintf("[author:: %s]", author))
 		}
 		if block.Timestamp != "" {
 			noteTokens = append(noteTokens, fmt.Sprintf("[ts:: %s]", block.Timestamp))

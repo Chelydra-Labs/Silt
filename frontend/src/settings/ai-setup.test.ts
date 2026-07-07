@@ -9,25 +9,49 @@ describe('aiProviderNeedsSetup (#450 unified setup predicate)', () => {
   })
 
   it('needs setup when no model is chosen, regardless of provider/key', () => {
-    expect(aiProviderNeedsSetup({ provider_type: 'local', model: '' })).toBe(true)
-    expect(aiProviderNeedsSetup({ provider_type: 'openai-compatible', model: '', has_key: true })).toBe(true)
+    expect(aiProviderNeedsSetup({ provider_type: 'local', model: '' })).toBe(
+      true
+    )
+    expect(
+      aiProviderNeedsSetup({
+        provider_type: 'openai-compatible',
+        model: '',
+        has_key: true
+      })
+    ).toBe(true)
   })
 
   it('local provider with a model is ready (keyless — Ollama)', () => {
-    expect(aiProviderNeedsSetup({ provider_type: 'local', model: 'qwen3:30b' })).toBe(false)
+    expect(
+      aiProviderNeedsSetup({ provider_type: 'local', model: 'qwen3:30b' })
+    ).toBe(false)
     // Even with has_key explicitly false: local runs keyless.
-    expect(aiProviderNeedsSetup({ provider_type: 'local', model: 'qwen3:30b', has_key: false })).toBe(false)
+    expect(
+      aiProviderNeedsSetup({
+        provider_type: 'local',
+        model: 'qwen3:30b',
+        has_key: false
+      })
+    ).toBe(false)
   })
 
   it('openai-compatible with a model + key is ready', () => {
     expect(
-      aiProviderNeedsSetup({ provider_type: 'openai-compatible', model: 'gpt-4o', has_key: true })
+      aiProviderNeedsSetup({
+        provider_type: 'openai-compatible',
+        model: 'gpt-4o',
+        has_key: true
+      })
     ).toBe(false)
   })
 
   it('openai-compatible with a model but KNOWN-absent key needs setup', () => {
     expect(
-      aiProviderNeedsSetup({ provider_type: 'openai-compatible', model: 'gpt-4o', has_key: false })
+      aiProviderNeedsSetup({
+        provider_type: 'openai-compatible',
+        model: 'gpt-4o',
+        has_key: false
+      })
     ).toBe(true)
   })
 
@@ -36,7 +60,10 @@ describe('aiProviderNeedsSetup (#450 unified setup predicate)', () => {
     // set so the badge must not fire; a genuinely-missing key surfaces as a
     // retryable call-time error instead.
     expect(
-      aiProviderNeedsSetup({ provider_type: 'openai-compatible', model: 'gpt-4o' })
+      aiProviderNeedsSetup({
+        provider_type: 'openai-compatible',
+        model: 'gpt-4o'
+      })
     ).toBe(false)
   })
 
@@ -44,7 +71,11 @@ describe('aiProviderNeedsSetup (#450 unified setup predicate)', () => {
     // This is the click-the-badge-lands-on-a-nudge guarantee: when the Plugins
     // badge shows (!model), the AI Provider tab (full view) must also show.
     const pluginsView = { provider_type: 'openai-compatible', model: '' }
-    const providerTabView = { provider_type: 'openai-compatible', model: '', has_key: false }
+    const providerTabView = {
+      provider_type: 'openai-compatible',
+      model: '',
+      has_key: false
+    }
     expect(aiProviderNeedsSetup(pluginsView)).toBe(true)
     expect(aiProviderNeedsSetup(providerTabView)).toBe(true)
   })

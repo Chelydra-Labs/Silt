@@ -277,7 +277,7 @@ func TestPluginSaveSubtreeBlocks_FirstPartySucceeds(t *testing.T) {
 	const parent = "a1b2c3d4-0000-0000-0000-000000000050"
 	content := "- [ ] parent <!-- id: " + parent + " -->\n"
 	filePath := indexTestFile(t, app, "W", "S", "FirstPartySub", "2026-07-01", content)
-	tok := registerTestSession(t, app, "silt-kanban")
+	tok := registerTestSession(t, app, "silt-tasks")
 
 	newChildren := []parser.ParsedBlock{{
 		ID:         "b2c3d4e5-0000-0000-0000-000000000051",
@@ -288,7 +288,7 @@ func TestPluginSaveSubtreeBlocks_FirstPartySucceeds(t *testing.T) {
 		LineNumber: 2,
 		FileDate:   "2026-07-01",
 	}}
-	ok, err := app.PluginSaveSubtreeBlocks("silt-kanban", tok, parent, newChildren)
+	ok, err := app.PluginSaveSubtreeBlocks("silt-tasks", tok, parent, newChildren)
 	if err != nil || !ok {
 		t.Fatalf("PluginSaveSubtreeBlocks (first-party): ok=%v err=%v", ok, err)
 	}

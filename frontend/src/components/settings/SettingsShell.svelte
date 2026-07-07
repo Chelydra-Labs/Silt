@@ -301,9 +301,12 @@
         aria-labelledby="silt-settings-tab-{activeTab}"
         tabindex="0"
         class="flex-1 min-h-0 focus:outline-none"
-        class:overflow-y-auto={['appearance', 'ai', 'plugins', 'about'].includes(
-          activeTab
-        ) || activeTab.startsWith('plugin:')}
+        class:overflow-y-auto={[
+          'appearance',
+          'ai',
+          'plugins',
+          'about'
+        ].includes(activeTab) || activeTab.startsWith('plugin:')}
         class:custom-scrollbar={[
           'appearance',
           'ai',

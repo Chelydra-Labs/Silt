@@ -14,7 +14,14 @@
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  waitFor,
+  within
+} from '@testing-library/svelte'
 
 // Hoisted mock state + IPC function mocks. vi.hoisted keeps these refs
 // available inside the vi.mock factories (which are themselves hoisted
@@ -227,9 +234,7 @@ describe('AIProviderTab', () => {
       render(AIProviderTab)
       await ready()
 
-      expect(
-        screen.queryByText(/Set up an AI provider/i)
-      ).toBeNull()
+      expect(screen.queryByText(/Set up an AI provider/i)).toBeNull()
     })
 
     it('shows the setup nudge when no chat model is configured', async () => {
@@ -265,9 +270,7 @@ describe('AIProviderTab', () => {
       render(AIProviderTab)
       await ready()
 
-      expect(
-        screen.getByText(/Set up an AI provider/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/Set up an AI provider/i)).toBeInTheDocument()
     })
 
     it('shows the setup nudge for an openai-compatible model with no key', async () => {
@@ -303,18 +306,14 @@ describe('AIProviderTab', () => {
       render(AIProviderTab)
       await ready()
 
-      expect(
-        screen.getByText(/Set up an AI provider/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/Set up an AI provider/i)).toBeInTheDocument()
     })
 
     it('hides the setup nudge once a provider has a key', async () => {
       // The default mock config has chat.has_key=true, so no nudge.
       render(AIProviderTab)
       await ready()
-      expect(
-        screen.queryByText(/Set up an AI provider/i)
-      ).toBeNull()
+      expect(screen.queryByText(/Set up an AI provider/i)).toBeNull()
     })
   })
 
@@ -362,9 +361,7 @@ describe('AIProviderTab', () => {
       await ready()
 
       // The default config has embedding = local; the reassurance must be present.
-      expect(
-        screen.getByText(/doesn't leave this device/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/doesn't leave this device/i)).toBeInTheDocument()
     })
 
     it('shows the cloud privacy warning for an openai-compatible provider', async () => {
@@ -372,9 +369,7 @@ describe('AIProviderTab', () => {
       render(AIProviderTab)
       await ready()
 
-      expect(
-        screen.getByText(/leaves your machine/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/leaves your machine/i)).toBeInTheDocument()
     })
   })
 
@@ -574,9 +569,7 @@ describe('AIProviderTab', () => {
       })
       await fireEvent.click(testButtons[0]) // chat
 
-      await waitFor(() =>
-        expect(mocks.TestAIConnection).not.toHaveBeenCalled()
-      )
+      await waitFor(() => expect(mocks.TestAIConnection).not.toHaveBeenCalled())
       expect(
         await screen.findByText(/Fix invalid advanced settings before testing/i)
       ).toBeInTheDocument()
@@ -584,7 +577,9 @@ describe('AIProviderTab', () => {
 
     it('does not probe stale backend state when the pre-probe save fails', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      mocks.UpdateAIProviderConfig.mockRejectedValueOnce(new Error('bad base URL'))
+      mocks.UpdateAIProviderConfig.mockRejectedValueOnce(
+        new Error('bad base URL')
+      )
       try {
         render(AIProviderTab)
         await ready()
@@ -657,9 +652,7 @@ describe('AIProviderTab', () => {
     it('does not render the per-card note for a provider not in keyring_unusable_for', async () => {
       render(AIProviderTab)
       await ready()
-      expect(
-        screen.queryAllByText(/keyring was unreachable/i)
-      ).toHaveLength(0)
+      expect(screen.queryAllByText(/keyring was unreachable/i)).toHaveLength(0)
     })
   })
 
@@ -681,9 +674,7 @@ describe('AIProviderTab', () => {
 
       await waitFor(() => expect(mocks.GetAIAudit).toHaveBeenCalled())
       // Rows render: the table caption + two distinct plugins.
-      expect(
-        await screen.findByText('summarizer')
-      ).toBeInTheDocument()
+      expect(await screen.findByText('summarizer')).toBeInTheDocument()
       expect(screen.getByText('search-index')).toBeInTheDocument()
     })
 
@@ -762,9 +753,7 @@ describe('AIProviderTab', () => {
       expect(message.textContent).toContain('boom')
       // The banner carries the alert role for assertive AT announcement.
       expect(message.closest('[role="alert"]')).not.toBeNull()
-      expect(
-        screen.getByRole('button', { name: /Retry/i })
-      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument()
 
       // Retry re-attempts the load.
       mocks.GetAIProviderConfig.mockResolvedValue(

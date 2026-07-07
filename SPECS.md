@@ -57,11 +57,7 @@ Silt is an uncompromised, local-first desktop application designed to bridge str
 
 The Document View: A seamless, virtualized infinite scrolling page of notes organized by days.
 
-The Agenda Plugin: An automatically rolling list of active schedules.
-
-The Calendar Plugin: A macro spatial tracker for start and due dates.
-
-The Kanban Plugin: An interactive, drag-and-drop workflow status visualizer.
+The silt-tasks Plugin: A single unified Tasks hub exposing the same task set through three internal display modes — **List** (a time-horizon roll-up), **Board** (drag-and-drop status columns), and **Calendar** (a spatial month/week grid) — over one grouping-first engine.
 
 The Sovereign Principle: The local directory structure is the single source of truth. The application runtime acts strictly as a reactive viewport, transforming and writing text mutations safely back to disk without vendor lock-in.
 
@@ -117,7 +113,7 @@ Backend Atomic Mutation: The Go backend locates the precise line in the target M
 
 Index Optimization: The in-memory SQLite database processes the block shift.
 
-Reactive Feedback Loop: The backend broadcasts a UI state event to ensure other views (e.g., Kanban columns or Calendars) update in perfect lockstep.
+Reactive Feedback Loop: The backend broadcasts a UI state event to ensure other views (e.g., Board columns or the Calendar) update in perfect lockstep.
 
 3. File Directory Structure & Storage Engine
 
@@ -140,9 +136,7 @@ VaultRoot/
 ├── .system/
 │   ├── config.yaml
 │   ├── plugins/
-│   │   ├── agenda/
-│   │   ├── calendar/
-│   │   └── kanban/
+│   │   └── tasks/
 │   ├── themes/                     ← first-class themes (embedded + scaffolded)
 │   │   ├── cyber_forest.json       ← the default / primary ("Refined Cyber-Ink")
 │   │   ├── silt-terra-noir.json    ← warm dark earth
@@ -348,14 +342,15 @@ Metadata Tokens (Dataview `[key:: value]` format):
 The `author` of a comment is **distinct from the task `Owner` (the assignee)** — a task can be owned by one person and commented on by several others; the two token spaces never overlap (an `[author::]` or `[ts::]` on a TASK line, or an `[owner::]` on a NOTE line, is not picked up by the other scanner). Likewise `ts` (a full timestamp) is **distinct from the date-only `file_date`** that lives in the block-identity comment — `ts` carries wall-clock time, `file_date` carries the day the block was authored. Both are nullable: a NOTE block without the tokens has no attribution row at all (no backfill).
 
 Task dependencies: the `blocked_by` token lists this task's prerequisites as
-space-separated `((uuid))` block references (#301). The Kanban/Agenda boards
-render a lock badge while any prerequisite is unfinished and prompt for
-confirmation before completing a still-blocked task (#302). Cycles are
-prevented at write time — adding an edge that would close a loop (A→B→A) is
-rejected. Completing a blocker broadcasts `block:changed` to every dependent
-so its derived "blocked" state refreshes. The `links_count` derived cache
-counts `((uuid))` references in `raw_content`, which includes dependency
-refs (a task carrying `[blocked_by:: ((a))]` reports `links_count` ≥ 1).
+space-separated `((uuid))` block references (#301). The silt-tasks List,
+Board, and Calendar display modes render a lock badge while any prerequisite
+is unfinished and prompt for confirmation before completing a still-blocked
+task (#302). Cycles are prevented at write time — adding an edge that would
+close a loop (A→B→A) is rejected. Completing a blocker broadcasts
+`block:changed` to every dependent so its derived "blocked" state refreshes.
+The `links_count` derived cache counts `((uuid))` references in `raw_content`,
+which includes dependency refs (a task carrying `[blocked_by:: ((a))]`
+reports `links_count` ≥ 1).
 
 Recurrence rules: The `recur` token carries a natural-language
 repeat rule. Supported grammar: `every day`, `every weekday` (Mon–Fri),
@@ -375,11 +370,15 @@ Persistent Identifier comment: A hidden HTML comment
 `<!-- id: UUIDv4 @ YYYY-MM-DD -->` automatically generated and appended
 to the block by the parser if one is missing.
 
-**Standalone tasks.** Tasks created from a quick-add surface (a calendar day cell, the calendar toolbar, a Kanban column footer, or the global `Mod+Shift+N` shortcut) that are not attached to a note persist as ordinary GFM checkboxes in a single dedicated file at `<vault>/.silt/tasks.md`. They are indexed under a synthetic, hidden `.silt` notebook and round-trip through the same `[key:: value]` token syntax as any other task — the markdown-source-of-truth invariant is preserved, with no new SQL table. The dot-prefixed notebook is excluded from the page browser; the only user-facing surface for these tasks is the **Tasks view**.
+**Standalone tasks.** Tasks created from a quick-add surface (any silt-tasks quick-add surface — a Calendar day cell, a Board column footer, a List footer, or the global `Mod+Shift+N` shortcut) that are not attached to a note persist as ordinary GFM checkboxes in a single dedicated file at `<vault>/.silt/tasks.md`. They are indexed under a synthetic, hidden `.silt` notebook and round-trip through the same `[key:: value]` token syntax as any other task — the markdown-source-of-truth invariant is preserved, with no new SQL table. The dot-prefixed notebook is excluded from the page browser; the only user-facing surface for these tasks is the **Tasks hub**.
 
-**Tasks view.** A first-party plugin that lists every active task across the vault, grouped into **Overdue / Today / Upcoming (next 7 days) / No Date / Completed**. The "No Date" bucket gives undated tasks (the natural output of the quick-add, which intentionally produces them without a default due date) a first-class surface that the date-scoped Agenda and Calendar views do not provide — without it, a quick-added undated task is invisible. The Completed group is collapsed by default and ordered by completion recency.
+**Tasks hub.** A first-party plugin (`silt-tasks`) that hosts **three display modes — List, Board, and Calendar** over a single grouping-first engine. Rather than three separate plugins each with their own query path, one hub renders the same task set three ways; a segmented switcher in the header flips the projection without re-querying. The engine groups tasks across **nine dimensions** — None, Status, Owner, Priority, Due date, Tag, Notebook, Section, and Page — and sorts within a group across **six modes** — Manual (`[order::]`), Due date, Priority, Title, Created, and Owner. The **List** mode is the time-horizon roll-up (the default `groupBy: dueDate` bins into Overdue / Today / Upcoming / Later / No Date, with Completed folded in), so undated tasks — the natural output of quick-add, which intentionally produces them without a default due date — get a first-class surface that the date-scoped Calendar mode does not provide. **Board** mode lays tasks out in status columns (user-editable; defaults to TODO/DOING/DONE) with drag-and-drop reassignment and manual reordering. **Calendar** mode shows tasks by start/due date with a month/week sub-layout.
 
-Because the `.silt` notebook is hidden, any navigation that would open a `.silt/tasks` tab (search jump, tag click, backlink) routes to the Tasks view instead, scrolling the target task into view.
+Any combination of display mode, grouping, sort, scope, filters, and column set can be persisted as a **saved view** under `plugins.plugin_settings.silt-tasks.saved_views[]`; three code-defined system views (Today's Board, By Owner, This Week's Calendar) are read-only and never persisted. A **unified sidebar** exposes smart lists, saved views, a mini-calendar, and filter controls that stay bidirectionally in sync with the hub header.
+
+**Comment threads.** A child NOTE block indented under a TASK is that task's **comment** (§"Comment attribution" above carries the `[author::]` / `[ts::]` tokens). The Tasks hub renders these as a thread inside the task's edit drawer; adding a comment splices a new NOTE child through the canonical write chain. The `block_meta` projection hydrates the author/timestamp on `FetchSubtree`.
+
+Because the `.silt` notebook is hidden, any navigation that would open a `.silt/tasks` tab (search jump, tag click, backlink) routes to the Tasks hub instead, scrolling the target task into view.
 
 4.2 Editor Input Paths
 
@@ -398,7 +397,7 @@ format:
 
 4.3 Task Token State Matrix
 
-| File Plaintext State | UI Checkbox | Kanban Column | Calendar/Agenda |
+| File Plaintext State | UI Checkbox | Board column | Calendar & List views |
 |---|---|---|---|
 | `- [ ] ...` | Unchecked `[ ]` | "To Do" | Assigned to Due Date |
 | `- [/] ...` | Half-filled `[/]` | "In Progress" | Spans Start to Due |
@@ -499,10 +498,6 @@ Automatically appends `- [ ] ` (empty GFM checkbox) and triggers the `%` metadat
 
 Injects today's date formatted as YYYY-MM-DD.
 
-/kanban
-
-Instantly swaps the active workspace pane into the Kanban board columns.
-
 /embed
 
 Displays a search modal of indexed blocks to select and embed.
@@ -584,7 +579,7 @@ Smart Graph Compatibility: the placeholder grammar (`^[a-z][a-z0-9_]*$`) structu
 
 **Default library.** The full first-class set is embedded so templates are always available — before a vault exists, when the templates directory is empty, and on existing vaults. Built-ins are read-only; user templates are writable (`<vault>/.system/templates/<id>.md`). On-disk templates win on id collisions with a built-in.
 
-**Resolution & insertion.** Templates are resolved from on-disk + embedded (deduped, sorted by Category then Title) and presented in a picker. External edits to the templates directory hot-reload. Inserting a template produces real Silt blocks — tasks (`- [ ] TODO TASK …`) flow into Kanban/Agenda/Calendar, embeds/references resolve, and blocks get fresh UUIDs. Templates are vault-scoped Markdown, read-mostly.
+**Resolution & insertion.** Templates are resolved from on-disk + embedded (deduped, sorted by Category then Title) and presented in a picker. External edits to the templates directory hot-reload. Inserting a template produces real Silt blocks — tasks (`- [ ] TODO TASK …`) flow into the Tasks hub, embeds/references resolve, and blocks get fresh UUIDs. Templates are vault-scoped Markdown, read-mostly.
 
 **Forward compatibility.** `schema_version` is informational (a forward-versioned template keeps loading); the `Source` field has three tiers — `builtin` (embedded, read-only), `disk` (user-authored, writable), and `plugin` (runtime-registered by a plugin); categories are additive (unknown categories warn, never reject); and new built-ins land as a single `.md` file with no engine change.
 
@@ -631,18 +626,18 @@ The Windows NSIS installer MUST satisfy the following:
 
 8. Local-First Plugin Architecture
 
-To support core system extension while retaining a lightweight base engine, Silt abstracts all dynamic dashboards—including the Agenda, Calendar, and Kanban viewports—into explicit plugins. The host application acts strictly as a raw block editor, tree compiler, and IPC router.
+To support core system extension while retaining a lightweight base engine, Silt abstracts all dynamic dashboards—including the unified silt-tasks hub—into explicit plugins. The host application acts strictly as a raw block editor, tree compiler, and IPC router.
 
                   +--------------------------------+
                   |      Silt Core Editor       |
                   +--------------------------------+
                                   │
-          ┌───────────────────────┼───────────────────────┐
-          ▼                       ▼                       ▼
-+───────────────────+   +───────────────────+   +───────────────────+
-|   Agenda Plugin   |   |  Calendar Plugin  |   |   Kanban Plugin   |
-|   (First-Party)   |   |   (First-Party)   |   |   (First-Party)   |
-+───────────────────+   +───────────────────+   +───────────────────+
+                                  ▼
+                  +--------------------------------+
+                  |     silt-tasks Plugin          |
+                  |     (First-Party)             |
+                  | List · Board · Calendar       |
+                  +--------------------------------+
 
 
 8.1 Runtime Sandboxing and Lifecycle
@@ -701,11 +696,11 @@ The active `notebook/section/page` from the navigator is bound into the context 
 
 `rps` must be > 0 and ≤ 10; `burst` must be > 0 and ≤ 100. Out-of-range values are rejected at install; hand-edited manifests are clamped at runtime as defense in depth.
 
-**The first-party dashboards are plugins.** The Calendar, Kanban, and Agenda dashboards use the exact same SDK as any third-party plugin — the UI contains no privileged custom code for them:
+**The first-party dashboards are plugins.** The unified silt-tasks hub uses the exact same SDK as any third-party plugin — the UI contains no privileged custom code for it. The hub hosts three display modes over one grouping-first engine, all scoped to the active navigation level (vault / notebook / section / page), selectable from the hub header:
 
-- **Kanban** — queries tasks scoped to the active navigation level (vault / notebook / section / page), selectable from the board header. A status change writes the new checkbox state to the source markdown and re-indexes the block.
-- **Calendar** — shows tasks by start/due date with interactive timeline components.
-- **Agenda** — rolls overdue, today, and upcoming tasks, carrying unfinished tasks into the current day.
+- **List** — a time-horizon roll-up (Overdue / Today / Upcoming / Later / No Date), carrying unfinished tasks into the current day and giving undated tasks a first-class surface.
+- **Board** — drag-and-drop status columns; a status change writes the new checkbox state to the source markdown and re-indexes the block, and cards support manual reordering.
+- **Calendar** — tasks by start/due date with interactive timeline components and a month/week sub-layout.
 
 8.4 Plugin Packaging & Distribution (.silt-plugin)
 
@@ -721,7 +716,7 @@ index.js      native ESM exporting { manifest, init(ctx) }
 - **Enable/Disable:** a `.disabled` sentinel file inside the plugin folder (the loader skips disabled plugins) — avoids fragile config.yaml edits. Discovery is folder-based, so install "just works" without editing config.
 - **Uninstall:** removes the plugin folder (id sanitized + within-vault check).
 - The in-app **Plugin Manager** (titlebar extension icon) drives validate → preview → install, plus per-plugin enable/disable and uninstall.
-- First-party plugins (Agenda, Calendar) are always available (bundled) regardless of `.system/plugins/` contents.
+- First-party plugins (silt-tasks, silt-attachments) are always available (bundled) regardless of `.system/plugins/` contents.
 
 8.5 Attachments Plugin Convention
 
@@ -730,7 +725,7 @@ The `silt-attachments` plugin lets users attach arbitrary files to notes.
 - **File placement:** Files are copied into `<notebook>/attachments/` (visible placement, per the data-scoping principle). The `attachments/` directory is excluded from the scanner (`WalkMarkdown`), the sidebar navigator (`ListNavigation`), and the fsnotify watcher, so it never appears as an empty section and binary files are never indexed.
 - **Markdown convention:** Images use standard `![alt](attachments/foo.png)` syntax. Non-image files are serialized as an HTML-comment marker `<!-- silt-embed: {"embedType":"attachment","src":"attachments/foo.pdf",...} -->` that round-trips byte for byte through the parser.
 - **Open in native handler:** Activating an attachment embed block opens the file in the OS default handler (Preview / Adobe / `xdg-open` / etc.), not in-app. The path is resolved against the notebook's actual root (in-vault or linked).
-- **Kanban travel:** An attachment embedBlock inserted as a CHILD of a task block (indented under it) automatically travels with its parent when the task is reordered. This is inherent to the block hierarchy — no explicit association model is needed.
+- **Task-block travel:** An attachment embedBlock inserted as a CHILD of a task block (indented under it) automatically travels with its parent when the task is reordered on the Board. This is inherent to the block hierarchy — no explicit association model is needed.
 - **Copy-in semantics:** The source file is copied (not linked/moved) into `attachments/`. Filename collisions are resolved with a counter suffix (`report-1.pdf`, `report-2.pdf`). A 100 MB size limit and an executable filetype blocklist (`.exe`, `.bat`, `.sh`, etc.) prevent the attachment folder from becoming an unbounded executable drop zone.
 
 8.6 Per-plugin SQLite Store
@@ -1113,14 +1108,54 @@ nav_order:
 
 # Plugin Registry
 plugins:
-  active:
-    - "silt-calendar"
-    - "silt-kanban"
+  active:            # informational only; not a whitelist
+    - "silt-tasks"
+    - "silt-attachments"
   disabled: []
   plugin_settings:
-    silt-kanban:
-      default_col: "TODO"
-      columns: ["TODO", "DOING", "DONE"]
+    silt-tasks:
+      default_display_mode: "list"   # list | board | calendar
+      default_group_by: "dueDate"
+      default_sort: "dueDate"
+      columns: ["TODO", "DOING", "DONE"]   # status-board lane order
+      saved_views:
+        - id: "55c1f0...-..."        # client-generated UUID; system views (sys-*) never persist
+          name: "Sprint Board"
+          displayMode: "board"
+          groupBy: "status"
+          sort: "manual"
+          scope: "vault"
+          columns: ["TODO", "DOING", "DONE"]
+          filters: { owners: [], priorities: [], dueDate: "", tags: [] }
+
+# AI Providers (#216, #218)
+# Two independent provider blocks (chat + embedding) that plugins call through
+# ctx.ai.complete / ctx.ai.embed. Silt makes no cloud calls of its own; this
+# points at a model server the user runs (local) or has a key for (cloud).
+# See docs/BRING_YOUR_OWN_MODEL.md.
+ai:
+  # When true (default), API keys live in the OS keyring (Credential Manager /
+  # Keychain / Secret Service) instead of plaintext below. Keys are vault-
+  # scoped (SHA-8 of the vault path) so they don't travel on sync. When the
+  # keyring is unreachable (headless Linux, WSL2), keys fall back to the
+  # api_key field here and the AI Provider tab surfaces a warning.
+  use_keyring: true
+  chat:
+    provider_type: "local"            # "local" | "openai-compatible"
+    base_url: "http://localhost:11434" # local default = Ollama
+    model: ""                          # e.g. "llama3.1", "gpt-4o"
+    # api_key is omitted from version control when use_keyring is on; present
+    # here only as the fallback when the keyring is off/unavailable.
+    temperature: 0.7
+    max_tokens: 2048
+    reasoning_effort: "medium"         # chat only: none|minimal|low|medium|high|xhigh|max
+    timeout_ms: 60000
+  embedding:
+    provider_type: "local"
+    base_url: "http://localhost:11434"
+    model: ""                          # e.g. "nomic-embed-text"
+    dimensions: 0                      # 0 = read from the model's first response
+    timeout_ms: 60000
 
 # AI Providers (#216, #218)
 # Two independent provider blocks (chat + embedding) that plugins call through

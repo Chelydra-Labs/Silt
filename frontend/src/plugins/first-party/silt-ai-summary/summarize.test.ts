@@ -34,13 +34,18 @@ function makeCtx(opts: {
       migrate: vi.fn(async () => {})
     },
     ai: {
-      complete: opts.complete ?? vi.fn(async () => ({ content: '', model: 'm', usage: undefined }))
+      complete:
+        opts.complete ??
+        vi.fn(async () => ({ content: '', model: 'm', usage: undefined }))
     }
   } as unknown as PluginContext
   return { ctx, execCalls }
 }
 
-const settings: SummarySettings = { ...DEFAULT_SETTINGS, facets: { ...DEFAULT_SETTINGS.facets } }
+const settings: SummarySettings = {
+  ...DEFAULT_SETTINGS,
+  facets: { ...DEFAULT_SETTINGS.facets }
+}
 const configured = { configuredModel: 'qwen3:30b', isConfigured: true }
 
 describe('summarize — unconfigured gate (#220 no-network-until-configured)', () => {
@@ -152,7 +157,10 @@ describe('summarize — cache miss generates, diffs against prior, stores', () =
   it('calls the LLM, parses, writes the cache row, and flags new items', async () => {
     const complete = vi
       .fn()
-      .mockResolvedValue({ content: '{"summary":"s","tasks":["new task"]}', model: 'qwen3:30b' })
+      .mockResolvedValue({
+        content: '{"summary":"s","tasks":["new task"]}',
+        model: 'qwen3:30b'
+      })
     const { ctx, execCalls } = makeCtx({ complete, latestRow: null })
     const out = await summarize(ctx, {
       pageId: 'p',
@@ -171,13 +179,18 @@ describe('summarize — cache miss generates, diffs against prior, stores', () =
     const put = execCalls.find((e) => /INSERT INTO summaries/.test(e.sql))
     expect(put).toBeDefined()
     // prior_snapshot stored as empty extraction (no latest row).
-    expect(String(put?.params[6])).toBe('{"summary":"","tasks":[],"risks":[],"decisions":[]}')
+    expect(String(put?.params[6])).toBe(
+      '{"summary":"","tasks":[],"risks":[],"decisions":[]}'
+    )
   })
 
   it('threads the latest extraction as the prior snapshot across regenerations', async () => {
     const complete = vi
       .fn()
-      .mockResolvedValue({ content: '{"summary":"s","tasks":["second"]}', model: 'qwen3:30b' })
+      .mockResolvedValue({
+        content: '{"summary":"s","tasks":["second"]}',
+        model: 'qwen3:30b'
+      })
     const latestRow = {
       content_hash: 'oldhash',
       summary: 'first',
@@ -243,7 +256,10 @@ describe('summarize — invalidation', () => {
     // medium→short and reopening an unchanged note serves the old summary.
     const complete = vi
       .fn()
-      .mockResolvedValue({ content: '{"summary":"fresh at medium"}', model: 'qwen3:30b' })
+      .mockResolvedValue({
+        content: '{"summary":"fresh at medium"}',
+        model: 'qwen3:30b'
+      })
     const cachedRow = {
       summary: 'stale short summary',
       tasks: '[]',
@@ -300,7 +316,9 @@ describe('summarize — invalidation', () => {
 describe('summarize — provider error', () => {
   beforeEach(() => resetCacheState())
   it('surfaces a provider-error outcome without throwing', async () => {
-    const complete = vi.fn().mockRejectedValue({ code: 'server', message: 'down' })
+    const complete = vi
+      .fn()
+      .mockRejectedValue({ code: 'server', message: 'down' })
     const { ctx } = makeCtx({ complete })
     const out = await summarize(ctx, {
       pageId: 'p',

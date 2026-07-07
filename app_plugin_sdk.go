@@ -953,6 +953,21 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 	if vaultEntry == nil {
 		vaultEntry = map[string]any{}
 	}
+	// Phase 9 (#431) one-release fallback: a vault or linked notebook on a
+	// host that has migrated may still request "silt-kanban" because its
+	// frontend hasn't been updated. If silt-kanban has NO vault entry AND
+	// silt-tasks does, transparently alias the lookup to silt-tasks — same
+	// shape, same fields (columns/filters/scope). The effective id is used
+	// for both the vault clone and the linked-notebook overlay so a linked
+	// notebook with only silt-tasks resolves cleanly. Drop this shim in N+1
+	// once the old plugin ids retire.
+	effectivePluginID := pluginID
+	if pluginID == "silt-kanban" && len(vaultEntry) == 0 {
+		if tasksEntry, ok := a.cfg.Plugins.PluginSettings["silt-tasks"].(map[string]any); ok && len(tasksEntry) > 0 {
+			effectivePluginID = "silt-tasks"
+			vaultEntry = tasksEntry
+		}
+	}
 	// Deep-clone under the lock so the returned map is a safe snapshot.
 	vaultClone := config.MergePluginSettings(vaultEntry, nil)
 	source := config.LinkedNotebooksVaultSource
@@ -989,7 +1004,19 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 		// returns Defaults + nil in that case).
 		return nil, fmt.Errorf("linked config for %s: %w", ln.DisplayName, err)
 	}
-	linkedEntry, _ := linkedCfg.Plugins.PluginSettings[pluginID].(map[string]any)
+	linkedEntry, _ := linkedCfg.Plugins.PluginSettings[effectivePluginID].(map[string]any)
+	// When the alias remapped silt-kanban → silt-tasks, the linked config's
+	// silt-tasks may be just Defaults (LoadLinked seeds from Defaults, so the
+	// entry is always non-nil even when the notebook hasn't migrated). An
+	// explicit silt-kanban entry is the user's real co-located override —
+	// silt-kanban is never in Defaults, so its presence means user-authored.
+	// Prefer it so a not-yet-migrated linked notebook's settings aren't
+	// silently dropped.
+	if effectivePluginID != pluginID {
+		if origEntry, _ := linkedCfg.Plugins.PluginSettings[pluginID].(map[string]any); origEntry != nil {
+			linkedEntry = origEntry
+		}
+	}
 	if linkedEntry == nil {
 		linkedEntry = map[string]any{}
 	}

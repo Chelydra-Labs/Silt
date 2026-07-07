@@ -49,7 +49,9 @@ describe('computeContentHash', () => {
     )
   })
   it('differs for different content', async () => {
-    expect(await computeContentHash('a')).not.toBe(await computeContentHash('b'))
+    expect(await computeContentHash('a')).not.toBe(
+      await computeContentHash('b')
+    )
   })
 })
 
@@ -62,9 +64,13 @@ describe('migrateCache', () => {
     await migrateCache(ctx) // idempotent
     expect(migrateCalls).toHaveLength(1)
     expect(migrateCalls[0].version).toBe(2)
-    expect(migrateCalls[0].sql).toContain('CREATE TABLE IF NOT EXISTS summaries')
+    expect(migrateCalls[0].sql).toContain(
+      'CREATE TABLE IF NOT EXISTS summaries'
+    )
     expect(migrateCalls[0].sql).toContain('content_hash')
-    expect(migrateCalls[0].sql).toContain('ALTER TABLE summaries ADD COLUMN summary_length')
+    expect(migrateCalls[0].sql).toContain(
+      'ALTER TABLE summaries ADD COLUMN summary_length'
+    )
   })
 })
 

@@ -172,7 +172,7 @@ func TestPluginAIComplete_DeniesUngantedThirdParty(t *testing.T) {
 func TestPluginAIComplete_DeniesBadSession(t *testing.T) {
 	app := newTestApp(t)
 	// First-party id but a session token that was never registered.
-	_, err := app.PluginAIComplete("silt-kanban", "not-a-real-token", PluginAICompleteInput{
+	_, err := app.PluginAIComplete("silt-tasks", "not-a-real-token", PluginAICompleteInput{
 		Messages: []PluginAIChatMessage{{Role: "user", Content: "x"}},
 	})
 	if err == nil {
@@ -215,11 +215,11 @@ func TestPluginAIComplete_SuccessFirstParty(t *testing.T) {
 	// it before asserting on counts.
 	_ = app.ClearAIAudit()
 
-	tok, err := app.RegisterPluginSession("silt-kanban")
+	tok, err := app.RegisterPluginSession("silt-tasks")
 	if err != nil {
 		t.Fatalf("RegisterPluginSession: %v", err)
 	}
-	res, err := app.PluginAIComplete("silt-kanban", tok, PluginAICompleteInput{
+	res, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
 		Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
 	})
 	if err != nil {
@@ -247,11 +247,11 @@ func TestPluginAIEmbed_SuccessFirstParty(t *testing.T) {
 	defer srv.Close()
 	pointAIProviderAt(t, app, "embedding", srv.URL, "emb")
 
-	tok, err := app.RegisterPluginSession("silt-kanban")
+	tok, err := app.RegisterPluginSession("silt-tasks")
 	if err != nil {
 		t.Fatalf("RegisterPluginSession: %v", err)
 	}
-	res, err := app.PluginAIEmbed("silt-kanban", tok, PluginAIEmbedInput{
+	res, err := app.PluginAIEmbed("silt-tasks", tok, PluginAIEmbedInput{
 		Texts: []string{"hello"},
 	})
 	if err != nil {
@@ -275,8 +275,8 @@ func TestPluginAIComplete_AuditsNormalizedError(t *testing.T) {
 
 	_ = app.ClearAIAudit() // reset the shared global audit log
 
-	tok, _ := app.RegisterPluginSession("silt-kanban")
-	_, err := app.PluginAIComplete("silt-kanban", tok, PluginAICompleteInput{
+	tok, _ := app.RegisterPluginSession("silt-tasks")
+	_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
 		Messages: []PluginAIChatMessage{{Role: "user", Content: "x"}},
 	})
 	if err == nil {
@@ -424,7 +424,7 @@ func TestUpdateAIProviderConfig_AcceptsValidReasoningEffort(t *testing.T) {
 func TestPluginAIComplete_RejectsInvalidReasoningEffort(t *testing.T) {
 	app := newTestApp(t)
 	bogus := "turbo"
-	_, err := app.PluginAIComplete("silt-kanban", "never-registered", PluginAICompleteInput{
+	_, err := app.PluginAIComplete("silt-tasks", "never-registered", PluginAICompleteInput{
 		Messages:        []PluginAIChatMessage{{Role: "user", Content: "x"}},
 		ReasoningEffort: stringPtrAI(bogus),
 	})
@@ -472,7 +472,7 @@ func TestPluginAIComplete_TrackedByWaitGroup(t *testing.T) {
 	defer srv.Close()
 	pointAIProviderAt(t, app, "chat", srv.URL, "test")
 
-	tok, err := app.RegisterPluginSession("silt-kanban")
+	tok, err := app.RegisterPluginSession("silt-tasks")
 	if err != nil {
 		t.Fatalf("RegisterPluginSession: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestPluginAIComplete_TrackedByWaitGroup(t *testing.T) {
 	}
 	callDone := make(chan callResult, 1)
 	go func() {
-		res, err := app.PluginAIComplete("silt-kanban", tok, PluginAICompleteInput{
+		res, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
 			Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
 		})
 		callDone <- callResult{res, err}

@@ -160,7 +160,8 @@ export default {
       // Only regenerate when the banner is shown AND the user hasn't chosen
       // on-demand (on-demand = generate only on explicit click). A dismissed
       // note (mountedKind === 'reopen') is also skipped.
-      if (id !== lastPageId || mountedKind !== 'banner' || s.on_demand_only) return
+      if (id !== lastPageId || mountedKind !== 'banner' || s.on_demand_only)
+        return
       controller.scheduleGenerate(ctx, id, s.regenerate_debounce_ms, {
         notebook: evt.notebook,
         section: evt.section,

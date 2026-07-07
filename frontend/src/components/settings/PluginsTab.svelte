@@ -351,7 +351,7 @@
   }
 
   function openPluginView(id: string) {
-    // First-party view ids map to activeView (silt-calendar → calendar, etc.).
+    // First-party view ids map to activeView (silt-tasks → tasks).
     const viewId = id.replace(/^silt-/, '')
     window.dispatchEvent(new CustomEvent('switch-view', { detail: viewId }))
   }
@@ -539,7 +539,10 @@
                     class="inline-flex items-center gap-0.5 text-[9px] text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider hover:bg-accent-primary-start/20 hover:border-accent-primary-start/60 transition-all motion-reduce:transition-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:cursor-default disabled:opacity-70"
                   >
                     AI setup needed
-                    <span class="material-symbols-outlined text-[11px]" aria-hidden="true">arrow_forward</span>
+                    <span
+                      class="material-symbols-outlined text-[11px]"
+                      aria-hidden="true">arrow_forward</span
+                    >
                   </button>
                 {/if}
               </div>

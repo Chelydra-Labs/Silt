@@ -283,7 +283,7 @@ A UI region maps to exactly one zone (#387 audit):
 | `app` | the root background behind everything |
 | `sidebar` | folders / notebook list |
 | `editor` | the TipTap writing canvas |
-| `panel` | docked panels, settings panes, the kanban/calendar surfaces |
+| `panel` | docked panels, settings panes, the silt-tasks surfaces |
 | `card` | cards, list items, callouts |
 | `modal` | modal dialogs |
 | `popover` | menus, dropdowns, tooltips, toasts |

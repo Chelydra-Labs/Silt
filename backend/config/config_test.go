@@ -166,7 +166,7 @@ func TestLoad_HappyPath_OverridesDefaults(t *testing.T) {
 		"  open_search: Ctrl+K",
 		"plugins:",
 		"  active:",
-		"    - silt-calendar",
+		"    - my-plugin",
 		"  disabled: []",
 	}, "\n"))
 	cfg, err := Load(tmp)
@@ -197,7 +197,7 @@ func TestLoad_HappyPath_OverridesDefaults(t *testing.T) {
 	if cfg.Hotkeys["indent_block"] != d.Hotkeys["indent_block"] {
 		t.Errorf("absent hotkey should keep default")
 	}
-	if len(cfg.Plugins.Active) != 1 || cfg.Plugins.Active[0] != "silt-calendar" {
+	if len(cfg.Plugins.Active) != 1 || cfg.Plugins.Active[0] != "my-plugin" {
 		t.Errorf("plugins.active override: %v", cfg.Plugins.Active)
 	}
 }
@@ -264,6 +264,38 @@ func TestNormalize_NeverNil(t *testing.T) {
 	}
 	if cfg.Hotkeys == nil {
 		t.Errorf("normalize must produce non-nil hotkeys")
+	}
+}
+
+// TestDefaults_ContainsSiltTasks pins the Phase 9 (#431) seed: Defaults
+// writes a silt-tasks entry covering every key the frontend loaders
+// (settings.ts) read, and Active contains silt-tasks (Phase 10 / #429
+// retired the standalone silt-calendar and silt-kanban ids).
+func TestDefaults_ContainsSiltTasks(t *testing.T) {
+	d := Defaults()
+	ps, ok := d.Plugins.PluginSettings["silt-tasks"].(map[string]any)
+	if !ok {
+		t.Fatalf("Defaults() missing silt-tasks plugin settings")
+	}
+	for _, key := range []string{
+		"default_display_mode", "default_group_by", "default_sort",
+		"default_scope", "calendar_sub_mode", "columns", "filters",
+		"saved_views", "local_author",
+	} {
+		if _, has := ps[key]; !has {
+			t.Errorf("silt-tasks defaults missing key %q", key)
+		}
+	}
+	activeIncludes := func(id string) bool {
+		for _, a := range d.Plugins.Active {
+			if a == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !activeIncludes("silt-tasks") {
+		t.Errorf("Defaults().Plugins.Active missing %q", "silt-tasks")
 	}
 }
 
@@ -336,23 +368,23 @@ func TestLoadLinked_ParsesAndOverrides(t *testing.T) {
 	writeFile(t, LinkedConfigPath(tmp), ""+
 		"plugins:\n"+
 		"  plugin_settings:\n"+
-		"    silt-kanban:\n"+
+		"    my-plugin:\n"+
 		"      columns: [Backlog, In Progress, Done]\n"+
 		"      theme: dark\n")
 	cfg, err := LoadLinked(tmp)
 	if err != nil {
 		t.Fatalf("LoadLinked: %v", err)
 	}
-	kanban, ok := cfg.Plugins.PluginSettings["silt-kanban"].(map[string]any)
+	plug, ok := cfg.Plugins.PluginSettings["my-plugin"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected silt-kanban settings map, got %T", cfg.Plugins.PluginSettings["silt-kanban"])
+		t.Fatalf("expected my-plugin settings map, got %T", cfg.Plugins.PluginSettings["my-plugin"])
 	}
-	if kanban["theme"] != "dark" {
-		t.Errorf("theme override: got %v, want dark", kanban["theme"])
+	if plug["theme"] != "dark" {
+		t.Errorf("theme override: got %v, want dark", plug["theme"])
 	}
-	cols, ok := kanban["columns"].([]any)
+	cols, ok := plug["columns"].([]any)
 	if !ok || len(cols) != 3 {
-		t.Errorf("columns override: got %v", kanban["columns"])
+		t.Errorf("columns override: got %v", plug["columns"])
 	}
 }
 

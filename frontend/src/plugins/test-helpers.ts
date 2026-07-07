@@ -25,11 +25,14 @@ export const v2CtxStubs: Pick<
   | 'setTaskRecurrence'
   | 'setTaskBlockedBy'
   | 'setTaskOwner'
+  | 'setTaskOrder'
+  | 'setTaskOrders'
   | 'setTaskPriority'
   | 'setTaskTags'
   | 'setTaskTitle'
   | 'getTaskBlockers'
   | 'fetchSubtree'
+  | 'getLocalAuthor'
   | 'saveSubtreeBlocks'
   | 'deleteBlock'
   | 'moveBlock'
@@ -67,6 +70,7 @@ export const v2CtxStubs: Pick<
   | 'resolveAsset'
   | 'readPluginAsset'
   | 'getNavigationTree'
+  | 'addTaskComment'
 > = {
   queryByTag: () => Promise.resolve(emptyResult),
   queryByDateRange: () => Promise.resolve(emptyResult),
@@ -81,11 +85,14 @@ export const v2CtxStubs: Pick<
   setTaskRecurrence: () => Promise.resolve(true),
   setTaskBlockedBy: () => Promise.resolve(true),
   setTaskOwner: () => Promise.resolve(true),
+  setTaskOrder: () => Promise.resolve(true),
+  setTaskOrders: () => Promise.resolve(true),
   setTaskPriority: () => Promise.resolve(true),
   setTaskTags: () => Promise.resolve(true),
   setTaskTitle: () => Promise.resolve(true),
   getTaskBlockers: () => Promise.resolve([]),
   fetchSubtree: () => Promise.resolve([]),
+  getLocalAuthor: () => Promise.resolve(''),
   saveSubtreeBlocks: () => Promise.resolve(true),
   deleteBlock: () => Promise.resolve(true),
   moveBlock: () => Promise.resolve(true),
@@ -133,10 +140,16 @@ export const v2CtxStubs: Pick<
     complete: () =>
       Promise.resolve({ content: '', model: '', usage: undefined }),
     embed: () =>
-      Promise.resolve({ embeddings: [], model: '', dimensions: 0, usage: undefined })
+      Promise.resolve({
+        embeddings: [],
+        model: '',
+        dimensions: 0,
+        usage: undefined
+      })
   },
   vaultScratchDir: () => Promise.resolve(''),
   resolveAsset: () => Promise.resolve(''),
   readPluginAsset: () => Promise.resolve(''),
-  getNavigationTree: () => Promise.resolve({ notebooks: [] })
+  getNavigationTree: () => Promise.resolve({ notebooks: [] }),
+  addTaskComment: () => Promise.resolve('')
 }

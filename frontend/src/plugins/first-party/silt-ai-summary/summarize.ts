@@ -36,7 +36,10 @@ function nowIso(): string {
 }
 
 /** Run one summary resolution for a page. See module doc for the flow. */
-export async function summarize(ctx: PluginContext, deps: SummarizeDeps): Promise<SummaryOutcome> {
+export async function summarize(
+  ctx: PluginContext,
+  deps: SummarizeDeps
+): Promise<SummaryOutcome> {
   // No provider configured: surface the setup nudge without any network call.
   // The banner (Phase 3) renders a "Configure AI provider" link for this code.
   if (!deps.isConfigured) {
@@ -44,7 +47,8 @@ export async function summarize(ctx: PluginContext, deps: SummarizeDeps): Promis
       ok: false,
       error: {
         code: 'unconfigured',
-        message: 'No AI provider is configured. Add a chat model in Settings → AI Provider to generate summaries.'
+        message:
+          'No AI provider is configured. Add a chat model in Settings → AI Provider to generate summaries.'
       }
     }
   }
@@ -85,7 +89,11 @@ export async function summarize(ctx: PluginContext, deps: SummarizeDeps): Promis
       () => getCachedSummary(ctx, deps.pageId, hash),
       'read'
     )
-    if (cached && cached.model === deps.configuredModel && cached.summary_length === deps.settings.summary_length) {
+    if (
+      cached &&
+      cached.model === deps.configuredModel &&
+      cached.summary_length === deps.settings.summary_length
+    ) {
       const result: SummaryResult = {
         summary: cached.summary,
         tasks: cached.tasks,
@@ -103,7 +111,10 @@ export async function summarize(ctx: PluginContext, deps: SummarizeDeps): Promis
   // Miss / invalidate / regenerate. The prior snapshot is the page's latest
   // extraction (any hash) so the newItems diff stays stable across content
   // edits AND model switches (the diff is content-relative, not model-relative).
-  const latest = await safeCache(() => latestSummaryForPage(ctx, deps.pageId), 'read')
+  const latest = await safeCache(
+    () => latestSummaryForPage(ctx, deps.pageId),
+    'read'
+  )
   const prior = latest ? toExtraction(latest) : EMPTY_EXTRACTION
 
   const extracted = await extractSummary({
@@ -155,19 +166,30 @@ function toExtraction(row: {
   risks: string[]
   decisions: string[]
 }) {
-  return { summary: row.summary, tasks: row.tasks, risks: row.risks, decisions: row.decisions }
+  return {
+    summary: row.summary,
+    tasks: row.tasks,
+    risks: row.risks,
+    decisions: row.decisions
+  }
 }
 
 /** Run a cache operation, returning null on failure (read/migrate) or void
  *  (write). The cache is disposable working memory: a corrupt plugin.db or a
  *  stale connection must not crash summarization — degrade to a miss and let
  *  extraction proceed. The warn surfaces the cause for diagnostics. */
-async function safeCache<T>(fn: () => Promise<T>, op: string): Promise<T | null> {
+async function safeCache<T>(
+  fn: () => Promise<T>,
+  op: string
+): Promise<T | null> {
   try {
     return await fn()
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.warn(`[silt-ai-summary] cache ${op} failed (degrading — cache is disposable):`, e)
+    console.warn(
+      `[silt-ai-summary] cache ${op} failed (degrading — cache is disposable):`,
+      e
+    )
     return null
   }
 }

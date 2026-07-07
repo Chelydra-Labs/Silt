@@ -24,11 +24,18 @@ export const DEFAULT_SETTINGS: SummarySettings = {
 /** Merge stored settings over defaults. Stored values win per-key; nested
  *  `facets` is merged field-by-field so toggling one facet doesn't blank the
  *  others on an upgrade. Unknown keys are ignored (forward-compat). */
-export function resolveSettings(raw: Record<string, unknown> | undefined | null): SummarySettings {
-  if (!raw) return { ...DEFAULT_SETTINGS, facets: { ...DEFAULT_SETTINGS.facets } }
-  const out: SummarySettings = { ...DEFAULT_SETTINGS, facets: { ...DEFAULT_SETTINGS.facets } }
+export function resolveSettings(
+  raw: Record<string, unknown> | undefined | null
+): SummarySettings {
+  if (!raw)
+    return { ...DEFAULT_SETTINGS, facets: { ...DEFAULT_SETTINGS.facets } }
+  const out: SummarySettings = {
+    ...DEFAULT_SETTINGS,
+    facets: { ...DEFAULT_SETTINGS.facets }
+  }
   if (typeof raw.auto_on_open === 'boolean') out.auto_on_open = raw.auto_on_open
-  if (typeof raw.on_demand_only === 'boolean') out.on_demand_only = raw.on_demand_only
+  if (typeof raw.on_demand_only === 'boolean')
+    out.on_demand_only = raw.on_demand_only
   // The two flags are semantically a binary: either summarize automatically on
   // note open, or only on explicit click (on-demand). `!auto_on_open &&
   // !on_demand_only` is incoherent — it would mount the banner but never start a
@@ -38,7 +45,11 @@ export function resolveSettings(raw: Record<string, unknown> | undefined | null)
   if (!out.auto_on_open && !out.on_demand_only) {
     out.on_demand_only = true
   }
-  if (raw.summary_length === 'short' || raw.summary_length === 'medium' || raw.summary_length === 'long') {
+  if (
+    raw.summary_length === 'short' ||
+    raw.summary_length === 'medium' ||
+    raw.summary_length === 'long'
+  ) {
     out.summary_length = raw.summary_length
   }
   if (raw.facets && typeof raw.facets === 'object') {
@@ -47,14 +58,19 @@ export function resolveSettings(raw: Record<string, unknown> | undefined | null)
     if (typeof f.risks === 'boolean') out.facets.risks = f.risks
     if (typeof f.decisions === 'boolean') out.facets.decisions = f.decisions
   }
-  if (typeof raw.regenerate_debounce_ms === 'number' && raw.regenerate_debounce_ms >= 0) {
+  if (
+    typeof raw.regenerate_debounce_ms === 'number' &&
+    raw.regenerate_debounce_ms >= 0
+  ) {
     out.regenerate_debounce_ms = raw.regenerate_debounce_ms
   }
   if (typeof raw.max_note_chars === 'number' && raw.max_note_chars > 0) {
     out.max_note_chars = raw.max_note_chars
   }
   if (Array.isArray(raw.dismissed_notes)) {
-    out.dismissed_notes = raw.dismissed_notes.filter((s): s is string => typeof s === 'string')
+    out.dismissed_notes = raw.dismissed_notes.filter(
+      (s): s is string => typeof s === 'string'
+    )
   }
   return out
 }
@@ -62,7 +78,9 @@ export function resolveSettings(raw: Record<string, unknown> | undefined | null)
 /** Approximate output-token budget per summary_length. Generous enough for the
  *  JSON envelope (summary + up to several facet items) without wasting compute
  *  on a wall of text. Used by extract.ts to size the completion. */
-export function maxTokensForLength(length: SummarySettings['summary_length']): number {
+export function maxTokensForLength(
+  length: SummarySettings['summary_length']
+): number {
   switch (length) {
     case 'short':
       return 300

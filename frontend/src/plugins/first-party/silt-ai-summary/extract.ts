@@ -32,7 +32,10 @@ export function truncateForPrompt(content: string, maxChars: number): string {
 /** Build the structured-extraction prompt. The schema is described as TEXT
  *  (not a JSON-schema object) because prompt-only JSON is the universal
  *  denominator across OpenAI-compatible servers (D1). */
-export function buildSummaryPrompt(content: string, settings: SummarySettings): PluginAIChatMessage[] {
+export function buildSummaryPrompt(
+  content: string,
+  settings: SummarySettings
+): PluginAIChatMessage[] {
   const lengthHint =
     settings.summary_length === 'short'
       ? '2 concise sentences'
@@ -58,13 +61,19 @@ Rules:
 
   return [
     { role: 'system', content: system },
-    { role: 'user', content: truncateForPrompt(content, settings.max_note_chars) }
+    {
+      role: 'user',
+      content: truncateForPrompt(content, settings.max_note_chars)
+    }
   ]
 }
 
 /** The prose-only fallback prompt, used when structured extraction fails twice.
  *  Asks only for a summary so the banner still has something useful to show. */
-function buildProseSummaryPrompt(content: string, settings: SummarySettings): PluginAIChatMessage[] {
+function buildProseSummaryPrompt(
+  content: string,
+  settings: SummarySettings
+): PluginAIChatMessage[] {
   const lengthHint =
     settings.summary_length === 'short'
       ? '2 concise sentences'
@@ -76,7 +85,10 @@ function buildProseSummaryPrompt(content: string, settings: SummarySettings): Pl
       role: 'system',
       content: `Summarize the user's note in ${lengthHint}, in plain prose. Return only the summary text — no JSON, no preamble.`
     },
-    { role: 'user', content: truncateForPrompt(content, settings.max_note_chars) }
+    {
+      role: 'user',
+      content: truncateForPrompt(content, settings.max_note_chars)
+    }
   ]
 }
 
@@ -136,7 +148,7 @@ export function parseSummary(raw: string): SummaryExtraction | null {
   try {
     obj = JSON.parse(jsonText)
   } catch {
-  return null
+    return null
   }
   if (!obj || typeof obj !== 'object') return null
   const o = obj as Record<string, unknown>
@@ -174,7 +186,10 @@ export type ExtractResult =
  *     as an empty-facets extraction so the banner still has a summary.
  *  A provider rejection at any tier short-circuits to a typed error. */
 export async function extractSummary(args: {
-  complete: (messages: PluginAIChatMessage[], maxTokens: number) => Promise<{ content: string; model: string }>
+  complete: (
+    messages: PluginAIChatMessage[],
+    maxTokens: number
+  ) => Promise<{ content: string; model: string }>
   content: string
   settings: SummarySettings
 }): Promise<ExtractResult> {
@@ -203,10 +218,19 @@ export async function extractSummary(args: {
   }
   // Tier 3: summary-only prose fallback.
   try {
-    const prose = await complete(buildProseSummaryPrompt(content, settings), maxTokens)
+    const prose = await complete(
+      buildProseSummaryPrompt(content, settings),
+      maxTokens
+    )
     const summary = prose.content.trim()
     if (!summary) {
-      return { ok: false, error: { code: 'provider-error', message: 'The model returned an empty summary.' } }
+      return {
+        ok: false,
+        error: {
+          code: 'provider-error',
+          message: 'The model returned an empty summary.'
+        }
+      }
     }
     return {
       ok: true,

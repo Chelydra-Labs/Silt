@@ -20,14 +20,14 @@ import (
 
 // Manifest is the plugin.json schema inside a .silt-plugin archive.
 type Manifest struct {
-	ID             string         `json:"id"`
-	Name           string         `json:"name"`
-	Version        string         `json:"version"`
-	Author         string         `json:"author,omitempty"`
-	Description    string         `json:"description,omitempty"`
-	Icon           string         `json:"icon,omitempty"`
-	Main           string         `json:"main,omitempty"` // defaults to "index.js"
-	MinSiltVersion string         `json:"minSiltVersion,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Version        string `json:"version"`
+	Author         string `json:"author,omitempty"`
+	Description    string `json:"description,omitempty"`
+	Icon           string `json:"icon,omitempty"`
+	Main           string `json:"main,omitempty"` // defaults to "index.js"
+	MinSiltVersion string `json:"minSiltVersion,omitempty"`
 	// Capabilities is the v2 SDK capability declaration (#113): a map of
 	// capability id → true | "notebook" | "vault". Normalized at validation
 	// time (unknown capabilities rejected) and surfaced to the user at install
@@ -124,8 +124,8 @@ func Validate(archivePath string) (Manifest, []string, error) {
 		return Manifest{}, warnings, fmt.Errorf("manifest id %q must be lowercase letters, digits, and hyphens only", manifest.ID)
 	}
 	// Reject ids reserved for bundled (first-party) plugins (#240, audit F5).
-	// A third-party archive claiming "silt-kanban" would otherwise install
-	// cleanly into .system/plugins/silt-kanban/ and shadow (or, should the
+	// A third-party archive claiming "silt-tasks" would otherwise install
+	// cleanly into .system/plugins/silt-tasks/ and shadow (or, should the
 	// bundle ever drop the id, inherit the seeded first-party grants of) the
 	// real bundled plugin. The frontend loader's getFirstParty skip is a
 	// secondary defense; this install-time gate is the primary one.

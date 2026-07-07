@@ -203,6 +203,21 @@ export interface PluginContext {
    */
   setTaskOwner: (id: string, owner: string) => Promise<boolean>
   /**
+   * Rewrite a task's `[order:: N]` inline token on disk atomically (#426).
+   * 1-based positive int reflects the user's manual sort position; pass 0 to
+   * clear the token (the renderer omits it). Negative values are rejected
+   * server-side. Round-trips through the markdown file, re-indexes, and emits
+   * block:changed. Gated by content-mutate.
+   */
+  setTaskOrder: (id: string, order: number) => Promise<boolean>
+  /**
+   * Batch-renumber `[order:: N]` tokens across multiple tasks in one atomic
+   * write per file (#426). Each entry in `items` rewrites that task's token.
+   * Server rejects any order outside [0, 1,000,000]. Use this instead of N
+   * individual `setTaskOrder` calls when a drag-reorder shifts multiple tasks.
+   */
+  setTaskOrders: (items: { id: string; order: number }[]) => Promise<boolean>
+  /**
    * Rewrite a task's `[priority:: N]` inline token on disk atomically (#412).
    * 1=Critical, 2=Normal, 3=Low (matches PRIORITY_LABELS). Round-trips through
    * the markdown file, re-indexes, and emits block:changed. Gated by
@@ -239,6 +254,18 @@ export interface PluginContext {
    * shape mirrors the editor's ParsedBlock; see SubtreeBlock.
    */
   fetchSubtree: (blockId: string) => Promise<SubtreeBlock[]>
+  /**
+   * The host OS username, used as the default for the per-vault local_author
+   * preference (#430). Returns an empty string if the host can't resolve it
+   * (the comment composer prompts the user on first run rather than seeding
+   * YAML with a placeholder). The user's explicit local_author pref (if set)
+   * always wins over this.
+   *
+   * Not capability-gated: the OS username is treated as non-secret (it
+   * already appears in audit events). Revisit if Silt ever hosts untrusted
+   * plugins.
+   */
+  getLocalAuthor: () => Promise<string>
   /**
    * Splice an edited child sub-tree back into the parent task's block,
    * atomically re-rendering the whole page through the canonical write chain
@@ -346,6 +373,19 @@ export interface PluginContext {
     section?: string
     page?: string
   }) => Promise<string>
+  /**
+   * Append a timestamped comment to a task (#430). Composes a NOTE block with
+   * the body text plus [author:: NAME] and [ts:: YYYY-MM-DDTHH:MM:SS]
+   * attribution, spliced into the task's child sub-tree (so fetchSubtree
+   * re-hydrates author/timestamp on subsequent loads via the block_meta
+   * projection from #418/#37). Returns the new block's UUID. Gated by
+   * content-mutate (#156).
+   */
+  addTaskComment: (
+    taskId: string,
+    text: string,
+    author?: string
+  ) => Promise<string>
   deleteBlock: (uuid: string) => Promise<boolean>
   moveBlock: (
     uuid: string,

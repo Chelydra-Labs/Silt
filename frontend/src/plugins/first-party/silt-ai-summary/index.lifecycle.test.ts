@@ -5,22 +5,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // index.test.ts; this pins the registerSurface/unregisterSurface call sequence
 // for the banner↔chip transition + the idempotency guard.
 
-const { mockRegister, mockUnregister, mockController, mockSettings } = vi.hoisted(() => ({
-  mockRegister: vi.fn(),
-  mockUnregister: vi.fn(),
-  mockController: {
-    state: new Map<string, unknown>(),
-    getSettings: vi.fn(),
-    generateFor: vi.fn(async () => ({ ok: true, result: {} })),
-    scheduleGenerate: vi.fn(),
-    cancelPending: vi.fn(),
-    clear: vi.fn(),
-    dispose: vi.fn()
-  },
-  mockSettings: {
-    config: { ai: { chat: { model: 'qwen3:30b', provider_type: 'local' } } }
-  }
-}))
+const { mockRegister, mockUnregister, mockController, mockSettings } =
+  vi.hoisted(() => ({
+    mockRegister: vi.fn(),
+    mockUnregister: vi.fn(),
+    mockController: {
+      state: new Map<string, unknown>(),
+      getSettings: vi.fn(),
+      generateFor: vi.fn(async () => ({ ok: true, result: {} })),
+      scheduleGenerate: vi.fn(),
+      cancelPending: vi.fn(),
+      clear: vi.fn(),
+      dispose: vi.fn()
+    },
+    mockSettings: {
+      config: { ai: { chat: { model: 'qwen3:30b', provider_type: 'local' } } }
+    }
+  }))
 
 vi.mock('../../surfaces', () => ({
   registerSurface: mockRegister,
@@ -87,7 +88,10 @@ describe('mountForPage surface swap', () => {
     mockUnregister.mockClear()
     mockController.generateFor.mockClear()
     mockController.getSettings.mockReset()
-    mockController.getSettings.mockReturnValue({ ...BASE_SETTINGS, facets: { ...BASE_SETTINGS.facets } })
+    mockController.getSettings.mockReturnValue({
+      ...BASE_SETTINGS,
+      facets: { ...BASE_SETTINGS.facets }
+    })
     const made = makeCtx()
     ctx = made.ctx
     handlers = made.handlers

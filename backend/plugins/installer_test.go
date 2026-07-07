@@ -131,9 +131,9 @@ func TestValidate_RejectsBadArchives(t *testing.T) {
 			"../evil.txt": "pwned",
 		}},
 		{"absolute path", map[string]string{
-			"plugin.json":  manifestJSON("abs", "x", "1"),
-			"index.js":     "x",
-			"/etc/evil":    "pwned",
+			"plugin.json": manifestJSON("abs", "x", "1"),
+			"index.js":    "x",
+			"/etc/evil":   "pwned",
 		}},
 	}
 	for _, tc := range tests {
@@ -255,10 +255,10 @@ func TestValidate_AcceptsEmptyMain(t *testing.T) {
 // manifestWithCaps builds a plugin.json with a capabilities declaration.
 func manifestWithCaps(id string, caps map[string]any) string {
 	b, _ := json.Marshal(map[string]any{
-		"id":          id,
-		"name":        id,
-		"version":     "1.0.0",
-		"main":        "index.js",
+		"id":           id,
+		"name":         id,
+		"version":      "1.0.0",
+		"main":         "index.js",
 		"capabilities": caps,
 	})
 	return string(b)
@@ -499,10 +499,10 @@ func sha256hex(data []byte) string {
 
 // TestValidate_RejectsFirstPartyIDs verifies that every reserved first-party
 // id is rejected at install time. Without this gate a third-party archive
-// claiming "silt-kanban" would install cleanly into
-// .system/plugins/silt-kanban/ and either confuse the user with a duplicate
-// Settings entry (while the real Kanban runs from the bundle) or, should the
-// bundle ever drop the id, inherit the seeded first-party grants.
+// claiming "silt-tasks" would install cleanly into
+// .system/plugins/silt-tasks/ and either confuse the user with a duplicate
+// Settings entry (while the real Tasks hub runs from the bundle) or, should
+// the bundle ever drop the id, inherit the seeded first-party grants.
 func TestValidate_RejectsFirstPartyIDs(t *testing.T) {
 	for id := range FirstPartyPluginIDs {
 		t.Run(id, func(t *testing.T) {
@@ -528,11 +528,11 @@ func TestValidate_RejectsFirstPartyIDs(t *testing.T) {
 // legitimate plugin ids.
 func TestValidate_AcceptsNearCollisionIDs(t *testing.T) {
 	nearMisses := []string{
-		"silt-kanban2",     // suffix
-		"silt-kanban-evil", // extra segment
-		"silt-agenda2",     // suffix
-		"silts-kanban",     // prefix typo
-		"my-silt-kanban",   // prefix
+		"silt-tasks2",     // suffix
+		"silt-tasks-evil", // extra segment
+		"silt-agenda2",    // suffix
+		"silts-tasks",     // prefix typo
+		"my-silt-tasks",   // prefix
 	}
 	for _, id := range nearMisses {
 		t.Run(id, func(t *testing.T) {
@@ -557,7 +557,7 @@ func TestInstall_RejectsFirstPartyID(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(vault, ".system", "plugins"), 0o755)
 	archive := filepath.Join(t.TempDir(), "impostor.silt-plugin")
 	writeZip(t, archive, map[string]string{
-		"plugin.json": manifestJSON("silt-kanban", "Impostor", "1.0.0"),
+		"plugin.json": manifestJSON("silt-tasks", "Impostor", "1.0.0"),
 		"index.js":    "x",
 	})
 
@@ -565,7 +565,7 @@ func TestInstall_RejectsFirstPartyID(t *testing.T) {
 		t.Fatal("Install must reject a reserved first-party id")
 	}
 	// And critically, no directory was created on disk.
-	if _, err := os.Stat(filepath.Join(vault, ".system", "plugins", "silt-kanban")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(vault, ".system", "plugins", "silt-tasks")); !os.IsNotExist(err) {
 		t.Errorf("Install must not create a directory for a reserved id; stat err=%v", err)
 	}
 }
@@ -580,13 +580,13 @@ func TestInstall_PreservesUnknownManifestFields(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "custom.silt-plugin")
 	// Manifest carries custom metadata the Manifest struct does not model.
 	custom, _ := json.Marshal(map[string]any{
-		"id":        "custom",
-		"name":      "Custom",
-		"version":   "1.0.0",
-		"main":      "index.js",
+		"id":         "custom",
+		"name":       "Custom",
+		"version":    "1.0.0",
+		"main":       "index.js",
 		"repository": "https://example.com/repo",
-		"keywords":  []string{"notes", "demo"},
-		"bugs":      map[string]any{"url": "https://example.com/issues"},
+		"keywords":   []string{"notes", "demo"},
+		"bugs":       map[string]any{"url": "https://example.com/issues"},
 	})
 	writeZip(t, archive, map[string]string{
 		"plugin.json": string(custom),

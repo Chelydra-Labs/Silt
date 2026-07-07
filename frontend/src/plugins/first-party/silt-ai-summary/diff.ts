@@ -39,7 +39,10 @@ export function newItems(current: string[], prior: string[]): string[] {
 
 /** Diff every facet at once. The orchestrator threads this against the prior
  *  snapshot stored alongside the cache row (#222). */
-export function diffFacets(current: SummaryExtraction, prior: SummaryExtraction): FacetDiff {
+export function diffFacets(
+  current: SummaryExtraction,
+  prior: SummaryExtraction
+): FacetDiff {
   return {
     tasks: newItems(current.tasks, prior.tasks),
     risks: newItems(current.risks, prior.risks),

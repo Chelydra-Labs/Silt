@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -180,6 +181,259 @@ func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedB
 // method for the chain.
 func (a *App) setTaskOwner(blockID, owner string) error {
 	return a.mutateTaskBlock(blockID, "SetTaskOwner", func(b *parser.ParsedBlock) { b.Owner = owner })
+}
+
+// SetTaskOrder rewrites the [order:: N] inline token on a task block (#426).
+// Pass 0 to clear the token (the renderer omits it when ManualOrder == 0,
+// writer.go ~:1258). A negative value is rejected up front so a UI glitch
+// can't stamp an off-by-one into the file. Follows the canonical write
+// chain (same as SetTaskOwner); the row mapper caches the new value into
+// tasks.manual_order so the next query sees it without re-parsing markdown.
+func (a *App) SetTaskOrder(blockID string, order int) error {
+	return a.setTaskOrder(blockID, order)
+}
+
+// PluginSetTaskOrder is the plugin-SDK wrapper for SetTaskOrder, gated by
+// the standard capability + session checks. Mirrors PluginSetTaskOwner.
+func (a *App) PluginSetTaskOrder(pluginID, sessionToken, blockID string, order int) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
+	if err := a.setTaskOrder(blockID, order); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// setTaskOrder is the shared core for the app-level and plugin-level entry
+// points. Validates the input (negative order is a contract violation —
+// the token is 1-based; 0 is the "unset" sentinel and clears the token)
+// BEFORE entering the write chain so a rejection leaves the file untouched.
+func (a *App) setTaskOrder(blockID string, order int) error {
+	if order < 0 {
+		return fmt.Errorf("task order must be >= 0 (got %d)", order)
+	}
+	if order > 1_000_000 {
+		return fmt.Errorf("task order must be <= 1,000,000 (got %d)", order)
+	}
+	return a.mutateTaskBlock(blockID, "SetTaskOrder", func(b *parser.ParsedBlock) { b.ManualOrder = order })
+}
+
+// SetTaskOrders batch-renumbers [order:: N] tokens across one or more task
+// blocks in a single atomic write PER FILE (#426). Use this instead of N
+// individual SetTaskOrder calls when a drag-reorder shifts multiple tasks in
+// the same file: one read-parse-render-write-reindex cycle per file, so a
+// mid-batch IPC failure leaves every file in the batch unchanged on disk (vs.
+// N individual calls where a mid-loop failure produces a half-renumbered
+// sequence).
+//
+// ids and orders are parallel slices; ids[i] gets orders[i]. A negative or
+// >1,000,000 order is rejected up front for every entry before touching disk.
+func (a *App) SetTaskOrders(ids []string, orders []int) error {
+	return a.setTaskOrders(ids, orders)
+}
+
+// PluginSetTaskOrders is the plugin-SDK wrapper for SetTaskOrders, gated by
+// the standard capability + session checks. Mirrors PluginSetTaskOrder.
+func (a *App) PluginSetTaskOrders(pluginID, sessionToken string, ids []string, orders []int) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
+	if err := a.setTaskOrders(ids, orders); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// setTaskOrders is the batch core. Groups the (id, order) pairs by file, then
+// performs one canonical write cycle per file (read -> parse -> mutate ALL
+// blocks for that file -> render -> WriteFileAtomic -> re-parse -> reindex).
+// Each file's write is atomic; a failure on file N does NOT roll back files
+// 1..N-1 (they're independent files in independent sections/notebooks).
+func (a *App) setTaskOrders(ids []string, orders []int) error {
+	if len(ids) != len(orders) {
+		return fmt.Errorf("ids and orders must have the same length (got %d and %d)", len(ids), len(orders))
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, o := range orders {
+		if o < 0 {
+			return fmt.Errorf("task order must be >= 0 (got %d)", o)
+		}
+		if o > 1_000_000 {
+			return fmt.Errorf("task order must be <= 1,000,000 (got %d)", o)
+		}
+	}
+
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.db == nil {
+		return fmt.Errorf("vault database not loaded")
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	// Resolve every block's file location + validate it's a task.
+	type pending struct {
+		blockID string
+		order   int
+		loc     db.BlockLocation
+	}
+	all := make([]pending, 0, len(ids))
+	for i, blockID := range ids {
+		var loc db.BlockLocation
+		err := a.coordinator.WithDBReadResult(func() error {
+			var e error
+			loc, e = a.db.GetBlockLocation(blockID)
+			return e
+		})
+		if err != nil {
+			return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
+		}
+		if loc.BlockType != string(parser.BlockTask) {
+			return fmt.Errorf("block %s is not a task", blockID)
+		}
+		all = append(all, pending{blockID, orders[i], loc})
+	}
+
+	// Group by file (source + notebook + section + page = unique file).
+	fileKey := func(loc db.BlockLocation) string {
+		return loc.Source + "\x00" + loc.Notebook + "\x00" + loc.Section + "\x00" + loc.Page
+	}
+	groups := make(map[string][]pending)
+	for _, p := range all {
+		groups[fileKey(p.loc)] = append(groups[fileKey(p.loc)], p)
+	}
+
+	// One write cycle per file. Each group shares the notebook/section/page
+	// of its members (they're in the same file by construction).
+	//
+	// Map iteration order is non-deterministic in Go; sort the keys first so
+	// a partial-failure across files produces reproducible behavior.
+	fileKeys := make([]string, 0, len(groups))
+	for k := range groups {
+		fileKeys = append(fileKeys, k)
+	}
+	sort.Strings(fileKeys)
+	for _, fk := range fileKeys {
+		group := groups[fk]
+		first := group[0]
+		safeNotebook := sanitizePathSegment(first.loc.Notebook)
+		safeSection := sanitizePathSegment(first.loc.Section)
+		safePage := sanitizePathSegment(first.loc.Page)
+		if safeNotebook == "" || safePage == "" {
+			return fmt.Errorf("invalid file metadata for block %s", first.blockID)
+		}
+		notebookDir, err := a.resolveNotebookDir(safeNotebook, first.loc.Source)
+		if err != nil {
+			return fmt.Errorf("resolve notebook dir for block %s: %w", first.blockID, err)
+		}
+		filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+		if !isPathWithinRoot(filePath, notebookDir) {
+			return fmt.Errorf("resolved file path %q escapes notebook root %q", filePath, notebookDir)
+		}
+
+		// Build a lookup so the parse loop can apply the right order per block.
+		orderByID := make(map[string]int, len(group))
+		for _, p := range group {
+			orderByID[p.blockID] = p.order
+		}
+
+		var writeErr error
+		var emitBlocks []parser.ParsedBlock
+		a.coordinator.LockBlockWrite(first.blockID, func() {
+			a.coordinator.LockFileWrite(filePath, func() {
+				contentBytes, err := os.ReadFile(filePath)
+				if err != nil {
+					writeErr = err
+					return
+				}
+				fileDate := fileOrDefaultDate(filePath)
+				parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
+				if parseErr != nil {
+					writeErr = fmt.Errorf("failed to parse file for SetTaskOrders: %w", parseErr)
+					return
+				}
+				found := 0
+				for i := range parsedBlocks {
+					if parsedBlocks[i].Type == parser.BlockTask {
+						if newOrder, ok := orderByID[parsedBlocks[i].ID]; ok {
+							parsedBlocks[i].ManualOrder = newOrder
+							found++
+						}
+					}
+				}
+				if found != len(orderByID) {
+					// Compare against unique-id count, not len(group): a duplicate
+					// id in `ids` produces multiple `pending` entries but only one
+					// block to find, so the old check reported a phantom shortfall.
+					writeErr = fmt.Errorf("SetTaskOrders: expected %d unique task blocks in %s, found %d", len(orderByID), filePath, found)
+					return
+				}
+
+				frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
+				if frontmatter == "" {
+					fmDate := meta.Date
+					if fmDate == "" {
+						fmDate = fileDate
+					}
+					frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
+					body = string(contentBytes)
+				}
+				newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
+				a.tracker.RegisterWrite(filePath)
+				if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+					writeErr = err
+					return
+				}
+
+				blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
+				if err == nil {
+					var idxErr error
+					a.coordinator.WithDBWrite(func() {
+						idxErr = a.db.IndexFileBlocks(first.loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
+					})
+					if idxErr != nil {
+						log.Printf("SetTaskOrders: IndexFileBlocks failed: %v", idxErr)
+					}
+					// Collect the re-parsed blocks for emit. Map IDs once so
+					// this is O(moved) rather than O(moved × blocksInFile).
+					blocksByID := make(map[string]parser.ParsedBlock, len(blocks))
+					for _, b := range blocks {
+						blocksByID[b.ID] = b
+					}
+					for _, p := range group {
+						if b, ok := blocksByID[p.blockID]; ok {
+							emitBlocks = append(emitBlocks, b)
+						}
+					}
+				} else {
+					log.Printf("SetTaskOrders: re-parse failed (file written, index stale until next scan): %v", err)
+					// Mirror mutateTaskBlock: emit even on re-parse failure so the
+					// UI gets a refresh signal. Use the pre-write fileDate as
+					// fallback (emitBlockChanged only reads ID + FileDate).
+					for _, p := range group {
+						emitBlocks = append(emitBlocks, parser.ParsedBlock{ID: p.blockID, FileDate: fileDate})
+					}
+				}
+			})
+		})
+		if writeErr != nil {
+			return writeErr
+		}
+		// Emit block:changed for each task that was moved.
+		for _, b := range emitBlocks {
+			a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)
+		}
+	}
+	return nil
 }
 
 // SetTaskPriority rewrites the [priority:: N] inline token on a task block

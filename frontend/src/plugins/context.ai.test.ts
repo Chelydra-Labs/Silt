@@ -16,14 +16,13 @@ const mocks = vi.hoisted(() => ({
         usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 }
       })
   ),
-  pluginAIEmbed: vi.fn(
-    (_pluginID: string, _token: string, _input: unknown) =>
-      Promise.resolve({
-        embeddings: [[0.1, 0.2, 0.3]],
-        model: 'nomic-embed-text',
-        dimensions: 3,
-        usage: { promptTokens: 1, totalTokens: 1 }
-      })
+  pluginAIEmbed: vi.fn((_pluginID: string, _token: string, _input: unknown) =>
+    Promise.resolve({
+      embeddings: [[0.1, 0.2, 0.3]],
+      model: 'nomic-embed-text',
+      dimensions: 3,
+      usage: { promptTokens: 1, totalTokens: 1 }
+    })
   ),
   getActiveLocation: vi.fn(() => ({
     notebook: 'Work',
@@ -72,13 +71,18 @@ describe('ctx.ai.complete', () => {
   it('defaults model to "" when omitted (provider config supplies it server-side)', async () => {
     const ctx = makePluginContext('p')
     await ctx.ai.complete({ messages: [{ role: 'user', content: 'x' }] })
-    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<string, unknown>
+    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >
     expect(input.model).toBe('')
   })
 
   it('maps the result envelope (content/model/usage)', async () => {
     const ctx = makePluginContext('p')
-    const res = await ctx.ai.complete({ messages: [{ role: 'user', content: 'x' }] })
+    const res = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'x' }]
+    })
     expect(res.content).toBe('pong')
     expect(res.model).toBe('qwen3:30b-a3b')
     expect(res.usage?.totalTokens).toBe(4)
@@ -87,7 +91,10 @@ describe('ctx.ai.complete', () => {
   it('NEVER sends an API key in the plugin payload (credentials are server-side)', async () => {
     const ctx = makePluginContext('p')
     await ctx.ai.complete({ messages: [{ role: 'user', content: 'x' }] })
-    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<string, unknown>
+    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >
     // No key field of any common spelling reaches the binding from the SDK.
     expect(input).not.toHaveProperty('apiKey')
     expect(input).not.toHaveProperty('api_key')
@@ -164,7 +171,10 @@ describe('ctx.ai.embed', () => {
   it('NEVER sends an API key in the plugin payload', async () => {
     const ctx = makePluginContext('p')
     await ctx.ai.embed({ texts: ['x'] })
-    const input = mocks.pluginAIEmbed.mock.calls[0][2] as Record<string, unknown>
+    const input = mocks.pluginAIEmbed.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >
     expect(input).not.toHaveProperty('apiKey')
     expect(input).not.toHaveProperty('api_key')
     expect(JSON.stringify(input)).not.toMatch(/secret|bearer/i)

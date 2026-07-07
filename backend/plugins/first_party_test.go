@@ -24,8 +24,6 @@ import (
 // silently losing its grants at runtime.
 func TestFirstPartyPluginIDs_ExactSet(t *testing.T) {
 	want := []string{
-		"silt-calendar",
-		"silt-kanban",
 		"silt-attachments",
 		"silt-tasks",
 		"silt-ai-summary",

@@ -131,8 +131,8 @@ func TestResolveAIKey_KeyringFirstConfigFallback(t *testing.T) {
 	app.cfg.AI.Chat.Model = "m"
 	app.configMu.Unlock()
 
-	tok, _ := app.RegisterPluginSession("silt-kanban")
-	res, err := app.PluginAIComplete("silt-kanban", tok, PluginAICompleteInput{
+	tok, _ := app.RegisterPluginSession("silt-tasks")
+	res, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
 		Messages: []PluginAIChatMessage{{Role: "user", Content: "x"}},
 	})
 	if err != nil {

@@ -10,15 +10,18 @@
 </script>
 
 <section class="ai-summary-panel" aria-labelledby="ai-summary-title">
-  <span class="material-symbols-outlined icon" aria-hidden="true">auto_awesome</span>
+  <span class="material-symbols-outlined icon" aria-hidden="true"
+    >auto_awesome</span
+  >
   <h2 id="ai-summary-title">AI Summary</h2>
   <p>
-    Summaries appear as a dismissible highlight at the top of each note. Open any note to see a
-    2–3 sentence brief plus any new tasks, risks, and decisions the LLM extracted.
+    Summaries appear as a dismissible highlight at the top of each note. Open
+    any note to see a 2–3 sentence brief plus any new tasks, risks, and
+    decisions the LLM extracted.
   </p>
   <p class="muted">
-    Configure the model in <strong>Settings → AI Provider</strong>. Tune facets, length, and
-    timing in <strong>Settings → AI Summary</strong>.
+    Configure the model in <strong>Settings → AI Provider</strong>. Tune facets,
+    length, and timing in <strong>Settings → AI Summary</strong>.
   </p>
 </section>
 

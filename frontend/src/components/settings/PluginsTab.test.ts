@@ -15,12 +15,12 @@ const mocks = vi.hoisted(() => ({
   firstPartyPluginsFn: vi.fn(() => [
     {
       manifest: {
-        id: 'silt-kanban',
-        name: 'Kanban',
+        id: 'silt-tasks',
+        name: 'Tasks',
         version: '1.0.0',
         author: 'Silt',
         description: '',
-        icon: 'view_kanban'
+        icon: 'checklist'
       }
     }
   ]),
@@ -111,8 +111,8 @@ describe('PluginsTab first-party disable guard', () => {
     })
     await flush()
 
-    // Locate the Kanban card (the only first-party plugin in the mock).
-    const kanbanCard = screen.getByText('Kanban').closest('div')
+    // Locate the Tasks card (the only first-party plugin in the mock).
+    const kanbanCard = screen.getByText('Tasks').closest('div')
     expect(kanbanCard).toBeTruthy()
 
     // The Disable toggle is a button with aria-label="Disable" inside the
@@ -127,7 +127,7 @@ describe('PluginsTab first-party disable guard', () => {
     expect(mocks.saveConfig).toHaveBeenCalledTimes(1)
     const saved = mocks.saveConfig.mock.calls[0][0]
     expect(saved.plugins).toBeTruthy()
-    expect(saved.plugins.disabled).toContain('silt-kanban')
+    expect(saved.plugins.disabled).toContain('silt-tasks')
   })
 })
 
@@ -244,9 +244,7 @@ describe('PluginsTab AI setup nudge', () => {
   })
 
   it('hides the badge for a disabled AI-capable plugin', async () => {
-    mocks.listPlugins.mockResolvedValue([
-      { ...aiPlugin, disabled: true }
-    ])
+    mocks.listPlugins.mockResolvedValue([{ ...aiPlugin, disabled: true }])
     mocks.getGrantedCapabilities.mockResolvedValue({
       'ai-plugin': { ai: 'granted' }
     })

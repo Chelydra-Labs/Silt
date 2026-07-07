@@ -44,9 +44,15 @@ describe('buildSummaryPrompt', () => {
     expect(sys).toContain('[]')
   })
   it('length hint reflects summary_length', () => {
-    const short = buildSummaryPrompt('n', { ...settings, summary_length: 'short' })[0].content
+    const short = buildSummaryPrompt('n', {
+      ...settings,
+      summary_length: 'short'
+    })[0].content
     expect(short).toContain('2 concise sentences')
-    const long = buildSummaryPrompt('n', { ...settings, summary_length: 'long' })[0].content
+    const long = buildSummaryPrompt('n', {
+      ...settings,
+      summary_length: 'long'
+    })[0].content
     expect(long).toContain('3–4 sentences')
   })
   it('truncates oversized note content in the user message', () => {
@@ -79,7 +85,9 @@ describe('extractJsonObject', () => {
 
 describe('parseSummary', () => {
   it('parses a well-formed object', () => {
-    expect(parseSummary('{"summary":"s","tasks":["t"],"risks":[],"decisions":[]}')).toEqual({
+    expect(
+      parseSummary('{"summary":"s","tasks":["t"],"risks":[],"decisions":[]}')
+    ).toEqual({
       summary: 's',
       tasks: ['t'],
       risks: [],
@@ -87,12 +95,14 @@ describe('parseSummary', () => {
     })
   })
   it('strips fences and surrounding prose', () => {
-    expect(parseSummary('Here you go:\n```json\n{"summary":"s"}\n```')).toEqual({
-      summary: 's',
-      tasks: [],
-      risks: [],
-      decisions: []
-    })
+    expect(parseSummary('Here you go:\n```json\n{"summary":"s"}\n```')).toEqual(
+      {
+        summary: 's',
+        tasks: [],
+        risks: [],
+        decisions: []
+      }
+    )
   })
   it('coerces a bare-string facet into a single-element array', () => {
     expect(parseSummary('{"summary":"s","tasks":"one task"}')).toEqual({
@@ -160,7 +170,10 @@ describe('extractSummary', () => {
       .fn()
       .mockResolvedValueOnce({ content: 'garbage1', model: 'm' })
       .mockResolvedValueOnce({ content: 'garbage2', model: 'm' })
-      .mockResolvedValueOnce({ content: 'A clean two-sentence summary.', model: 'm' })
+      .mockResolvedValueOnce({
+        content: 'A clean two-sentence summary.',
+        model: 'm'
+      })
     const r = await extractSummary({ complete, content: 'note', settings })
     expect(r.ok).toBe(true)
     if (r.ok) {
@@ -174,7 +187,9 @@ describe('extractSummary', () => {
   })
 
   it('returns a provider-error when the first call rejects', async () => {
-    const complete = vi.fn().mockRejectedValue({ code: 'server', message: 'down' })
+    const complete = vi
+      .fn()
+      .mockRejectedValue({ code: 'server', message: 'down' })
     const r = await extractSummary({ complete, content: 'note', settings })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe('provider-error')

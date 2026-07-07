@@ -43,8 +43,18 @@ describe('templates store', () => {
   it('loadTemplates populates templatesState.items', async () => {
     mockListTemplates.mockResolvedValue({
       templates: [
-        { id: 'daily-note', title: 'Daily Note', category: 'daily', source: 'builtin' },
-        { id: 'meeting-notes', title: 'Meeting Notes', category: 'meetings', source: 'builtin' }
+        {
+          id: 'daily-note',
+          title: 'Daily Note',
+          category: 'daily',
+          source: 'builtin'
+        },
+        {
+          id: 'meeting-notes',
+          title: 'Meeting Notes',
+          category: 'meetings',
+          source: 'builtin'
+        }
       ],
       errors: [],
       warnings: []
@@ -81,7 +91,10 @@ describe('templates store', () => {
   it('initTemplates subscribes to templates:changed', () => {
     const dispose = initTemplates()
 
-    expect(mockEventsOn).toHaveBeenCalledWith('templates:changed', expect.any(Function))
+    expect(mockEventsOn).toHaveBeenCalledWith(
+      'templates:changed',
+      expect.any(Function)
+    )
 
     dispose()
   })
@@ -94,9 +107,14 @@ describe('templates store', () => {
           title: 'Plugin Tpl',
           category: 'projects',
           source: 'plugin',
-          plugin_id: 'silt-kanban'
+          plugin_id: 'silt-tasks'
         },
-        { id: 'daily-note', title: 'Daily Note', category: 'daily', source: 'builtin' }
+        {
+          id: 'daily-note',
+          title: 'Daily Note',
+          category: 'daily',
+          source: 'builtin'
+        }
       ],
       errors: [],
       warnings: []
@@ -108,6 +126,6 @@ describe('templates store', () => {
     const pluginTpl = templatesState.items.find((t) => t.id === 'plugin-tpl')
     expect(pluginTpl).toBeDefined()
     expect(pluginTpl?.source).toBe('plugin')
-    expect(pluginTpl?.plugin_id).toBe('silt-kanban')
+    expect(pluginTpl?.plugin_id).toBe('silt-tasks')
   })
 })

@@ -210,7 +210,9 @@
       ? cur
       : (() => {
           const next = [...cur, pageId]
-          return next.length > MAX_DISMISSED ? next.slice(next.length - MAX_DISMISSED) : next
+          return next.length > MAX_DISMISSED
+            ? next.slice(next.length - MAX_DISMISSED)
+            : next
         })()
     onDismiss()
     if (!cur.includes(pageId)) {
@@ -343,7 +345,8 @@
           aria-label="Dismiss AI summary"
           title="Dismiss"
         >
-          <span class="material-symbols-outlined" aria-hidden="true">close</span>
+          <span class="material-symbols-outlined" aria-hidden="true">close</span
+          >
         </button>
       {/if}
     </div>
@@ -667,11 +670,7 @@
     cursor: not-allowed;
   }
   .action.close-btn:hover:not(:disabled) {
-    background: color-mix(
-      in srgb,
-      var(--color-text-muted) 18%,
-      transparent
-    );
+    background: color-mix(in srgb, var(--color-text-muted) 18%, transparent);
     color: var(--color-text-primary);
   }
 

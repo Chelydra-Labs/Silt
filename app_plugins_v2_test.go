@@ -60,9 +60,9 @@ func TestPluginCreateBlock_InsertsAndPersists(t *testing.T) {
 	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] existing task <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
-	token := registerTestSession(t, app, "silt-kanban")
+	token := registerTestSession(t, app, "silt-tasks")
 
-	id, err := app.PluginCreateBlock("silt-kanban", token, "", notebook, section, page, "TASK", "new plugin task")
+	id, err := app.PluginCreateBlock("silt-tasks", token, "", notebook, section, page, "TASK", "new plugin task")
 	if err != nil {
 		t.Fatalf("PluginCreateBlock: %v", err)
 	}
@@ -94,9 +94,9 @@ func TestPluginDeleteBlock_RemovesBlock(t *testing.T) {
 	target := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] keep <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->\n- [ ] delete me <!-- id: " + target + " -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
-	token := registerTestSession(t, app, "silt-kanban")
+	token := registerTestSession(t, app, "silt-tasks")
 
-	if err := app.PluginDeleteBlock("silt-kanban", token, target); err != nil {
+	if err := app.PluginDeleteBlock("silt-tasks", token, target); err != nil {
 		t.Fatalf("PluginDeleteBlock: %v", err)
 	}
 	blocks, _ := app.FetchPageBlocks(notebook, section, page)
@@ -116,11 +116,11 @@ func TestPluginMoveBlock_ReordersInPage(t *testing.T) {
 	mover := "22222222-2222-2222-2222-222222222222"
 	content := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-13\"\ntags: []\n---\n# Today\n\n- [ ] first <!-- id: " + first + " -->\n- [ ] second <!-- id: " + mover + " -->\n"
 	writeAndIndexFile(t, app, filePath, content, notebook, section, page)
-	token := registerTestSession(t, app, "silt-kanban")
+	token := registerTestSession(t, app, "silt-tasks")
 
 	// Move the second block after the first — no-op position, but verifies the
 	// path does not error and preserves both blocks.
-	if err := app.PluginMoveBlock("silt-kanban", token, mover, first, "", "", ""); err != nil {
+	if err := app.PluginMoveBlock("silt-tasks", token, mover, first, "", "", ""); err != nil {
 		t.Fatalf("PluginMoveBlock: %v", err)
 	}
 	blocks, _ := app.FetchPageBlocks(notebook, section, page)
@@ -151,9 +151,9 @@ func TestPluginMoveBlock_CrossPageInsertsInTarget(t *testing.T) {
 		"- [ ] existing <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
 	writeAndIndexFile(t, app, dstPath, dstContent, notebook, section, dstPage)
 
-	token := registerTestSession(t, app, "silt-kanban")
+	token := registerTestSession(t, app, "silt-tasks")
 	// Move blockA from Source to Dest (no afterID → append).
-	if err := app.PluginMoveBlock("silt-kanban", token, blockA, "", notebook, section, dstPage); err != nil {
+	if err := app.PluginMoveBlock("silt-tasks", token, blockA, "", notebook, section, dstPage); err != nil {
 		t.Fatalf("PluginMoveBlock cross-page: %v", err)
 	}
 
@@ -193,8 +193,8 @@ func TestPluginMoveBlock_CrossPageInsertsInTarget(t *testing.T) {
 // PluginCreateBlock rejects an invalid block type.
 func TestPluginCreateBlock_RejectsInvalidType(t *testing.T) {
 	app := newTestApp(t)
-	token := registerTestSession(t, app, "silt-kanban")
-	_, err := app.PluginCreateBlock("silt-kanban", token, "", "Work", "", "Daily", "BOGUS", "text")
+	token := registerTestSession(t, app, "silt-tasks")
+	_, err := app.PluginCreateBlock("silt-tasks", token, "", "Work", "", "Daily", "BOGUS", "text")
 	if err == nil {
 		t.Fatal("expected error for invalid block type")
 	}
@@ -869,7 +869,7 @@ func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var err1, err2 error
-	moveToken := registerTestSession(t, app, "silt-kanban")
+	moveToken := registerTestSession(t, app, "silt-tasks")
 	const rounds = 20
 	for i := 0; i < rounds; i++ {
 		// Reset source and destination pages each round.
@@ -880,11 +880,11 @@ func TestPluginMoveBlock_ConcurrentCrossPageNoClobber(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			err1 = app.PluginMoveBlock("silt-kanban", moveToken, blockA, "", notebook, section, dstPage1)
+			err1 = app.PluginMoveBlock("silt-tasks", moveToken, blockA, "", notebook, section, dstPage1)
 		}()
 		go func() {
 			defer wg.Done()
-			err2 = app.PluginMoveBlock("silt-kanban", moveToken, blockB, "", notebook, section, dstPage2)
+			err2 = app.PluginMoveBlock("silt-tasks", moveToken, blockB, "", notebook, section, dstPage2)
 		}()
 		wg.Wait()
 
@@ -1781,7 +1781,7 @@ func TestPluginFetch_RejectsWrongSessionToken(t *testing.T) {
 // PluginCreateBlock without a session token is rejected (#151).
 func TestPluginCreateBlock_RejectsMissingSessionToken(t *testing.T) {
 	app := newTestApp(t)
-	_, err := app.PluginCreateBlock("silt-kanban", "", "", "Work", "", "Daily", "TASK", "text")
+	_, err := app.PluginCreateBlock("silt-tasks", "", "", "Work", "", "Daily", "TASK", "text")
 	if err == nil {
 		t.Fatal("expected rejection: missing session token")
 	}

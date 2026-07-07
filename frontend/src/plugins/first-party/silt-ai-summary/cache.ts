@@ -118,7 +118,10 @@ export async function latestSummaryForPage(
 /** Upsert a summary row keyed by (page_id, content_hash). The prior_snapshot
  *  is the extraction this row's newItems were diffed against (threaded from
  *  the previous latest row by the orchestrator). */
-export async function putCachedSummary(ctx: PluginContext, row: CacheRow): Promise<void> {
+export async function putCachedSummary(
+  ctx: PluginContext,
+  row: CacheRow
+): Promise<void> {
   await ctx.pluginDb.exec(
     `INSERT INTO summaries
        (page_id, content_hash, summary, tasks, risks, decisions, prior_snapshot, model, summary_length, generated_at)

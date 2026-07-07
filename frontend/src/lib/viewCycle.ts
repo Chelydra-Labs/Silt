@@ -5,25 +5,14 @@
  * testable in isolation. If `current` is not in the cycle, `nextView`
  * jumps to `'notes'` as the anchor.
  *
- * Note: `'agenda'` is intentionally NOT in the cycle after #322 merged the
- * Agenda view into Calendar as a third mode. The activity bar no longer
- * exposes Agenda as an entry — the unified Calendar's Agenda mode is the
- * successor surface. Pressing Ctrl+Alt+V from Tags jumps directly to
- * Calendar.
- *
- * Tasks (`'tasks'`) is inserted between Calendar and Kanban (#370) so the
- * cycle visits the date-scoped agenda and the vault-scoped undated-aware
- * task view adjacent to each other — both surfaces are about "what's on
- * the plate right now" but the Tasks view is the only one that surfaces
- * undated tasks.
+ * Phase 10 (#429) collapsed the activity bar from five entries
+ * (notes/tags/calendar/tasks/kanban) to three: Calendar and Kanban are now
+ * display modes of the unified silt-tasks hub. Saved nav state that still
+ * holds `'calendar'`/`'kanban'` is aliased to silt-tasks for one release via
+ * getPluginSidebar + the App.svelte redirect effect; those view-ids are
+ * intentionally NOT in the cycle.
  */
-export const VIEW_CYCLE = [
-  'notes',
-  'tags',
-  'calendar',
-  'tasks',
-  'kanban'
-] as const
+export const VIEW_CYCLE = ['notes', 'tags', 'tasks'] as const
 export type CycleView = (typeof VIEW_CYCLE)[number]
 
 /**

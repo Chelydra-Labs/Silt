@@ -31,7 +31,9 @@ export interface AIProviderReadiness {
 }
 
 /** True when the chat provider is not ready to serve a completion. */
-export function aiProviderNeedsSetup(chat: AIProviderReadiness | null | undefined): boolean {
+export function aiProviderNeedsSetup(
+  chat: AIProviderReadiness | null | undefined
+): boolean {
   if (!chat) return true
   if (!chat.model) return true
   // Local providers run keyless. Cloud/openai-compatible endpoints need a key —

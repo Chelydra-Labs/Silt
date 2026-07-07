@@ -149,7 +149,9 @@
   }
 
   function hasAdvancedErrors(which: Which): boolean {
-    const fields: ('temperature' | 'max_tokens' | 'timeout_ms' | 'dimensions')[] =
+    const fields: (
+      'temperature' | 'max_tokens' | 'timeout_ms' | 'dimensions'
+    )[] =
       which === 'embedding'
         ? ['temperature', 'max_tokens', 'timeout_ms', 'dimensions']
         : ['temperature', 'max_tokens', 'timeout_ms']
@@ -159,7 +161,8 @@
   type PersistResult = { ok: true } | { ok: false; message: string }
 
   async function persistProvider(which: Which): Promise<PersistResult> {
-    if (!config) return { ok: false, message: 'AI provider settings are not loaded.' }
+    if (!config)
+      return { ok: false, message: 'AI provider settings are not loaded.' }
     if (hasAdvancedErrors(which)) {
       return {
         ok: false,
@@ -389,9 +392,7 @@
       <span class="material-symbols-outlined text-[18px]" aria-hidden="true"
         >error</span
       >
-      <span class="flex-1"
-        >Failed to load AI configuration: {loadError}</span
-      >
+      <span class="flex-1">Failed to load AI configuration: {loadError}</span>
       <button
         type="button"
         onclick={() => void reload()}
@@ -424,8 +425,8 @@
               >Set up an AI provider.</strong
             >
             Stay on <em>Local</em> if you run Ollama at the default URL, or
-            switch to <em>OpenAI-compatible</em> and add an API key to use a
-            cloud endpoint.
+            switch to <em>OpenAI-compatible</em> and add an API key to use a cloud
+            endpoint.
           </div>
         </div>
       {/if}
@@ -500,7 +501,10 @@
               ? 'text-text-muted'
               : 'text-text-primary'}"
           >
-            <span class="material-symbols-outlined text-[14px]" aria-hidden="true">
+            <span
+              class="material-symbols-outlined text-[14px]"
+              aria-hidden="true"
+            >
               {isLocal ? 'shield' : 'arrow_outward'}
             </span>
             {#if isLocal}
@@ -657,8 +661,7 @@
                 class="material-symbols-outlined text-[14px]"
                 aria-hidden="true">warning</span
               >
-              The keyring was unreachable; this key was saved to
-              config.yaml instead.
+              The keyring was unreachable; this key was saved to config.yaml instead.
             </p>
           {/if}
           {#if keySavedFlash[which]}
@@ -740,10 +743,7 @@
           <div
             class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-3"
           >
-            <label
-              class="flex flex-col gap-1.5"
-              for="{idPrefix}-temperature"
-            >
+            <label class="flex flex-col gap-1.5" for="{idPrefix}-temperature">
               <span
                 class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
                 >Temperature</span
@@ -759,13 +759,12 @@
                 class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
               />
               {#if advancedFieldError(which, 'temperature')}
-                <span class="text-error text-[10px] font-label-sm" role="alert">{advancedFieldError(which, 'temperature')}</span>
+                <span class="text-error text-[10px] font-label-sm" role="alert"
+                  >{advancedFieldError(which, 'temperature')}</span
+                >
               {/if}
             </label>
-            <label
-              class="flex flex-col gap-1.5"
-              for="{idPrefix}-max-tokens"
-            >
+            <label class="flex flex-col gap-1.5" for="{idPrefix}-max-tokens">
               <span
                 class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
                 >Max tokens</span
@@ -779,7 +778,9 @@
                 class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
               />
               {#if advancedFieldError(which, 'max_tokens')}
-                <span class="text-error text-[10px] font-label-sm" role="alert">{advancedFieldError(which, 'max_tokens')}</span>
+                <span class="text-error text-[10px] font-label-sm" role="alert"
+                  >{advancedFieldError(which, 'max_tokens')}</span
+                >
               {/if}
             </label>
             <label class="flex flex-col gap-1.5" for="{idPrefix}-timeout">
@@ -797,14 +798,13 @@
                 class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
               />
               {#if advancedFieldError(which, 'timeout_ms')}
-                <span class="text-error text-[10px] font-label-sm" role="alert">{advancedFieldError(which, 'timeout_ms')}</span>
+                <span class="text-error text-[10px] font-label-sm" role="alert"
+                  >{advancedFieldError(which, 'timeout_ms')}</span
+                >
               {/if}
             </label>
             {#if which === 'chat'}
-              <label
-                class="flex flex-col gap-1.5"
-                for="{idPrefix}-reasoning"
-              >
+              <label class="flex flex-col gap-1.5" for="{idPrefix}-reasoning">
                 <span
                   class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
                   >Reasoning effort</span
@@ -831,10 +831,7 @@
               </label>
             {/if}
             {#if which === 'embedding'}
-              <label
-                class="flex flex-col gap-1.5"
-                for="{idPrefix}-dimensions"
-              >
+              <label class="flex flex-col gap-1.5" for="{idPrefix}-dimensions">
                 <span
                   class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
                   >Dimensions</span
@@ -848,7 +845,10 @@
                   class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
                 />
                 {#if advancedFieldError(which, 'dimensions')}
-                  <span class="text-error text-[10px] font-label-sm" role="alert">{advancedFieldError(which, 'dimensions')}</span>
+                  <span
+                    class="text-error text-[10px] font-label-sm"
+                    role="alert">{advancedFieldError(which, 'dimensions')}</span
+                  >
                 {/if}
               </label>
             {/if}
@@ -901,8 +901,8 @@
             >
             <span class="flex-1">
               No OS keyring was found on this system. Keys will be stored in
-              <code class="font-mono text-[11px]">config.yaml</code> regardless
-              of this setting.
+              <code class="font-mono text-[11px]">config.yaml</code> regardless of
+              this setting.
             </span>
           </div>
         {/if}
@@ -917,9 +917,7 @@
             checked={config.use_keyring}
             disabled={!config.keyring_available}
             onchange={(e: Event) =>
-              void toggleKeyring(
-                (e.currentTarget as HTMLInputElement).checked
-              )}
+              void toggleKeyring((e.currentTarget as HTMLInputElement).checked)}
           />
           <span
             aria-hidden="true"
@@ -937,8 +935,8 @@
               When on, keys live in the OS keyring instead of the vault's
               <code class="font-mono text-[11px]">config.yaml</code>, so they
               don't travel when the vault syncs. Turning this off leaves
-              existing keyring entries in place until you clear or re-enter
-              each key.
+              existing keyring entries in place until you clear or re-enter each
+              key.
             </span>
           </span>
         </label>
@@ -1004,12 +1002,8 @@
               </p>
             {:else}
               <div class="overflow-x-auto">
-                <table
-                  class="w-full text-[11px] font-body-md border-collapse"
-                >
-                  <caption class="sr-only">
-                    Recent plugin AI calls
-                  </caption>
+                <table class="w-full text-[11px] font-body-md border-collapse">
+                  <caption class="sr-only"> Recent plugin AI calls </caption>
                   <thead>
                     <tr
                       class="text-left text-text-muted border-b border-surface-panel-border"
@@ -1056,8 +1050,9 @@
                       <tr
                         class="border-b border-surface-panel-border/50 text-text-primary"
                       >
-                        <td class="py-1.5 pr-3 whitespace-nowrap" title={entry.at}
-                          >{formatAuditTime(entry.at)}</td
+                        <td
+                          class="py-1.5 pr-3 whitespace-nowrap"
+                          title={entry.at}>{formatAuditTime(entry.at)}</td
                         >
                         <td class="py-1.5 pr-3">{entry.plugin}</td>
                         <td class="py-1.5 pr-3 capitalize">{entry.kind}</td>
@@ -1090,7 +1085,9 @@
                             </span>
                           {/if}
                         </td>
-                        <td class="py-1.5 pr-3 text-text-muted whitespace-nowrap">
+                        <td
+                          class="py-1.5 pr-3 text-text-muted whitespace-nowrap"
+                        >
                           {entry.total_tokens != null
                             ? entry.total_tokens
                             : '—'}
@@ -1126,9 +1123,8 @@
         class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
         role="alert"
       >
-        <span
-          class="material-symbols-outlined text-[18px]"
-          aria-hidden="true">error</span
+        <span class="material-symbols-outlined text-[18px]" aria-hidden="true"
+          >error</span
         >
         <span class="flex-1">{loadError}</span>
         <button

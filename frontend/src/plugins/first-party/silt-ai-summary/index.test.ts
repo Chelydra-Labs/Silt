@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // is controllable. ai-setup runs real (it's the pure predicate under test).
 const { mockSettings } = vi.hoisted(() => ({
   mockSettings: {
-    config: { ai: { chat: { model: '', provider_type: 'local' } as Record<string, unknown> } }
+    config: {
+      ai: {
+        chat: { model: '', provider_type: 'local' } as Record<string, unknown>
+      }
+    }
   }
 }))
 vi.mock('../../../settings/store.svelte', () => ({
@@ -21,19 +25,27 @@ import type { PluginContext } from '../../sdk'
 
 describe('decideMountKind (on-demand + dismissal)', () => {
   it('mounts the banner when not dismissed and not on-demand', () => {
-    expect(decideMountKind({ dismissed: false, onDemandOnly: false })).toBe('banner')
+    expect(decideMountKind({ dismissed: false, onDemandOnly: false })).toBe(
+      'banner'
+    )
   })
   it('mounts the re-open chip when the note is dismissed', () => {
-    expect(decideMountKind({ dismissed: true, onDemandOnly: false })).toBe('reopen')
+    expect(decideMountKind({ dismissed: true, onDemandOnly: false })).toBe(
+      'reopen'
+    )
   })
   it('mounts the re-open chip in on-demand mode even when not dismissed', () => {
     // The #220/#221 fix: on-demand suppresses the auto banner so the user
     // drives every generation. Previously the banner mounted and rendered a
     // perpetual skeleton because no generation fired.
-    expect(decideMountKind({ dismissed: false, onDemandOnly: true })).toBe('reopen')
+    expect(decideMountKind({ dismissed: false, onDemandOnly: true })).toBe(
+      'reopen'
+    )
   })
   it('dismissed + on-demand still mounts the chip (dismissal wins either way)', () => {
-    expect(decideMountKind({ dismissed: true, onDemandOnly: true })).toBe('reopen')
+    expect(decideMountKind({ dismissed: true, onDemandOnly: true })).toBe(
+      'reopen'
+    )
   })
 })
 
@@ -45,15 +57,23 @@ describe('readProviderInfo coherence with aiProviderNeedsSetup (#450)', () => {
   it('treats a local provider with a model as configured (matches the helper)', () => {
     mockSettings.config.ai.chat = { model: 'qwen3:30b', provider_type: 'local' }
     const info = readProviderInfo()
-    expect(info.isConfigured).toBe(!aiProviderNeedsSetup(mockSettings.config.ai.chat))
+    expect(info.isConfigured).toBe(
+      !aiProviderNeedsSetup(mockSettings.config.ai.chat)
+    )
     expect(info.isConfigured).toBe(true)
     expect(info.configuredModel).toBe('qwen3:30b')
   })
 
   it('treats no model as unconfigured (matches the helper)', () => {
-    mockSettings.config.ai.chat = { model: '', provider_type: 'openai-compatible', has_key: true }
+    mockSettings.config.ai.chat = {
+      model: '',
+      provider_type: 'openai-compatible',
+      has_key: true
+    }
     const info = readProviderInfo()
-    expect(info.isConfigured).toBe(!aiProviderNeedsSetup(mockSettings.config.ai.chat))
+    expect(info.isConfigured).toBe(
+      !aiProviderNeedsSetup(mockSettings.config.ai.chat)
+    )
     expect(info.isConfigured).toBe(false)
   })
 
@@ -67,7 +87,9 @@ describe('readProviderInfo coherence with aiProviderNeedsSetup (#450)', () => {
     for (const chat of cases) {
       mockSettings.config.ai.chat = chat
       const info = readProviderInfo()
-      expect(info.isConfigured, `for ${JSON.stringify(chat)}`).toBe(!aiProviderNeedsSetup(chat as any))
+      expect(info.isConfigured, `for ${JSON.stringify(chat)}`).toBe(
+        !aiProviderNeedsSetup(chat as any)
+      )
     }
   })
 })

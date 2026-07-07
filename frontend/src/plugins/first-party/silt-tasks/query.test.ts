@@ -261,3 +261,160 @@ describe('buildQuery — window lever (new in #419)', () => {
     expect(params).toEqual([])
   })
 })
+
+// ── New: high-cardinality groupBy dimensions (#423) ──────────────────
+
+describe('buildQuery — tag/notebook/section/page groupBy shares the legacy ORDER BY', () => {
+  it.each(['tag', 'notebook', 'section', 'page'] as const)(
+    "groupBy='%s' falls through to the priority-first ORDER BY (client-side binning)",
+    (g) => {
+      const { sql } = buildQuery('vault', emptyFilters, ctx, { groupBy: g })
+      expect(sql).toContain(
+        "ORDER BY t.priority ASC, COALESCE(t.due_date, '9999-12-31') ASC"
+      )
+    }
+  )
+})
+
+// ── New: sort lever (#423) ────────────────────────────────────────────
+
+describe('buildQuery — sort lever (new in #423)', () => {
+  it("sort='manual' emits a NULLS-LAST manual_order ORDER BY", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'manual'
+    })
+    expect(sql).toContain('CASE WHEN t.manual_order IS NULL THEN 1 ELSE 0 END')
+    expect(sql).toContain('t.manual_order ASC')
+  })
+
+  it("sort='priority' promotes priority to the leading key", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'priority'
+    })
+    expect(sql).toContain('ORDER BY t.priority ASC,')
+  })
+
+  it("sort='title' orders by clean_content", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'title'
+    })
+    expect(sql).toContain('ORDER BY b.clean_content ASC')
+  })
+
+  it("sort='created' pushes empty created_at to the bottom via CASE WHEN", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'created'
+    })
+    expect(sql).toContain(
+      "CASE WHEN t.created_at IS NULL OR t.created_at = '' THEN '9999' ELSE t.created_at END"
+    )
+  })
+
+  it("sort='owner' uses COALESCE(NULLIF(...)) so empty owners sort last", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'owner'
+    })
+    expect(sql).toContain("COALESCE(NULLIF(t.owner, ''), '~')")
+  })
+
+  it("sort='dueDate' is the canonical tiebreaker-only ORDER BY", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'dueDate'
+    })
+    expect(sql).toContain('ORDER BY COALESCE(t.due_date')
+    expect(sql).not.toContain('ORDER BY t.priority ASC,')
+  })
+
+  it('sort+groupBy compose: status leads so groups stay contiguous', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      groupBy: 'status',
+      sort: 'title'
+    })
+    expect(sql).toContain('ORDER BY t.status ASC,')
+    expect(sql).toContain('b.clean_content ASC')
+  })
+
+  it('sort+groupBy=owner leads with owner grouping, then the sort', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      groupBy: 'owner',
+      sort: 'priority'
+    })
+    expect(sql).toContain("ORDER BY COALESCE(NULLIF(t.owner, ''), '~') ASC,")
+    expect(sql).toContain('t.priority ASC')
+  })
+
+  it('sort absent falls back to the groupBy-driven ORDER BY (backward compatible)', () => {
+    const withSort = buildQuery('vault', emptyFilters, ctx, {
+      groupBy: 'status'
+    }).sql
+    expect(withSort).toContain('ORDER BY t.status ASC,')
+    // The ORDER BY is just the status grouping + due-date tiebreaker;
+    // no manual_order CASE WHEN or clean_content sort leaked in.
+    const orderBy = withSort.slice(withSort.indexOf('ORDER BY'))
+    expect(orderBy).not.toContain('b.clean_content ASC')
+    expect(orderBy).not.toContain('CASE WHEN t.manual_order')
+  })
+})
+
+// ── New: activeFilter lever (sidebar smart-list, #432) ───────────────
+
+describe('buildQuery — activeFilter lever (new in #432)', () => {
+  it("activeFilter='today' adds status!=DONE AND due_date=today", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'today'
+    })
+    expect(sql).toContain("t.status != 'DONE'")
+    expect(sql).toContain('t.due_date = ?')
+    expect(params).toEqual(['2026-06-22'])
+  })
+
+  it("activeFilter='overdue' adds status!=DONE AND due_date<today", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'overdue'
+    })
+    expect(sql).toContain("t.status != 'DONE'")
+    expect(sql).toContain('t.due_date < ?')
+    expect(params).toEqual(['2026-06-22'])
+  })
+
+  it("activeFilter='upcoming' adds status!=DONE AND due_date>today AND due_date<=today+7", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'upcoming'
+    })
+    expect(sql).toContain("t.status != 'DONE'")
+    expect(sql).toContain('t.due_date > ?')
+    expect(sql).toContain('t.due_date <= ?')
+    expect(params).toEqual(['2026-06-22', '2026-06-29'])
+  })
+
+  it("activeFilter='completed' adds status=DONE", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'completed'
+    })
+    expect(sql).toContain("t.status = 'DONE'")
+    expect(params).toEqual([])
+  })
+
+  it("activeFilter='today' overrides filters.dueDate='overdue' (no conflicting clause)", () => {
+    const filters: TaskFilters = { ...emptyFilters, dueDate: 'overdue' }
+    const { sql, params } = buildQuery('vault', filters, ctx, {
+      activeFilter: 'today'
+    })
+    // Smart-list wins: only the today equality, no overdue less-than.
+    expect(sql).toContain('t.due_date = ?')
+    expect(sql).not.toContain('t.due_date < ?')
+    expect(params).toEqual(['2026-06-22'])
+  })
+
+  it("activeFilter='all' is a no-op (no smart-list WHERE added)", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'all'
+    })
+    // No smart-list clause is appended to the WHERE; the body ends with
+    // 'WHERE 1=1' followed directly by the ORDER BY (the EXISTS subquery
+    // for is_blocked references `bt.status != 'DONE'`, so a substring
+    // check on the full SQL would false-positive).
+    expect(sql).toContain('WHERE 1=1 ORDER BY')
+    expect(params).toEqual([])
+  })
+})

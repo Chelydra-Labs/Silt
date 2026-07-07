@@ -74,7 +74,8 @@ export interface SummaryError {
 /** The discriminated outcome the orchestrator returns. Errors are always
  *  surfaced here — never thrown — so the banner can render a non-blocking
  *  inline state instead of propagating a rejection to the UI thread. */
-export type SummaryOutcome = { ok: true; result: SummaryResult } | { ok: false; error: SummaryError }
+export type SummaryOutcome =
+  { ok: true; result: SummaryResult } | { ok: false; error: SummaryError }
 
 /** The orchestrator call signature. Pure given these inputs — no event
  *  subscriptions, no timers, no DOM. The reactive shell (state.svelte.ts) is

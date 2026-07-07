@@ -2,10 +2,12 @@
 
 Silt plugins extend the app with new views and capabilities. There are two kinds:
 
-- **First-party plugins** (Agenda, Calendar, Kanban) are bundled with the app and ship as compiled Svelte components.
+- **First-party plugins** (`silt-tasks`, `silt-attachments`) are bundled with the app and ship as compiled Svelte components.
 - **Third-party plugins** are authored by anyone, packaged as a **`.silt-plugin`** archive, and installed via the in-app **Plugin Manager**.
 
-Both kinds use the **exact same PluginContext SDK** — the built-in Agenda/Calendar/Kanban plugins are reference implementations of the same contract a third-party plugin uses.
+Both kinds use the **exact same PluginContext SDK** — the built-in plugins are reference implementations of the same contract a third-party plugin uses.
+
+> silt-tasks is the **first plugin to define multiple internal display modes** — one semantic surface (tasks) rendered three ways (List / Board / Calendar) over a single grouping-first engine. This is the pattern when a single concern needs multiple visualizations: one plugin, one hub state, and a mode switcher that flips the renderer without re-querying. A unified sidebar swaps its content based on the active mode rather than mounting a separate per-mode sidebar.
 
 > The PluginContext contract lives in `frontend/src/plugins/sdk.ts`; the on-disk loader is `frontend/src/plugins/loader.ts`.
 
@@ -197,10 +199,10 @@ When you toggle a bundled plugin off in the Plugin Manager, its id is added to t
 ```yaml
 plugins:
   active:          # informational only; not a whitelist
-    - silt-calendar
-    - silt-kanban
+    - silt-tasks
+    - silt-attachments
   disabled:        # first-party plugins the user has toggled off
-    - silt-calendar
+    - silt-tasks
 ```
 
 Re-enabling from the Plugin Manager removes the id from the list. You can also edit `config.yaml` directly (the hot-reload watcher picks up the change without a restart).
@@ -217,8 +219,9 @@ Third-party plugins use a `.disabled` sentinel file inside the plugin folder. Th
 
 Read these to see the SDK used end-to-end:
 
-- `frontend/src/plugins/first-party/silt-calendar/Calendar.svelte` — month/week grids over a windowed due-date query, with navigation.
-- `frontend/src/plugins/first-party/silt-kanban/Kanban.svelte` — multi-level scope (vault/notebook/section/page) drag-and-drop board with FLIP animations, filter bar (owner/priority/due/tags), custom columns (add/rename/remove/reorder), card detail panel (pin/progress/comments/links), `updateBlockState` on drop, `updateTaskMeta` for pin/progress, keyboard a11y, and a config-driven column list.
+- `frontend/src/plugins/first-party/silt-tasks/TasksHub.svelte` — the unified hub shell (header + count, mode switcher, FilterBar, scope breadcrumb) that routes to the three display-mode renderers over one `TaskHubState` reactive store.
+- `frontend/src/plugins/first-party/silt-tasks/views/ListView.svelte` / `BoardView.svelte` / `CalendarView.svelte` — the three renderers (time-horizon list, drag-and-drop status board with FLIP animations + manual `[order::]` reordering, month/week date grid). Each owns its own QuickAdd placement but shares the hub state, the `query.ts` SQL builder, and the `grouping.ts` client-side binning.
+- `frontend/src/plugins/first-party/silt-tasks/Sidebar.svelte` — the unified sidebar (smart lists, saved views, mini-calendar, filter controls) that stays bidirectionally in sync with the hub state.
 
 These components receive `{ ctx, manifest }` as props — the same `PluginContext` documented above.
 
@@ -284,17 +287,17 @@ manifest.
 
 ### 7.3 Reserved first-party plugin ids (#240)
 
-The ids in `plugins.FirstPartyPluginIDs` (`silt-calendar`,
-`silt-kanban`, `silt-attachments`) are reserved for the bundled first-party
+The ids in `plugins.FirstPartyPluginIDs` (`silt-tasks`,
+`silt-attachments`) are reserved for the bundled first-party
 plugins. A `.silt-plugin` archive whose manifest `id` collides with one of
 these is **rejected at install time** with:
 
 ```
-id "silt-kanban" is reserved for a bundled plugin
+id "silt-tasks" is reserved for a bundled plugin
 ```
 
 This is a deliberate exact-match gate — near-collision ids like
-`silt-kanban2`, `silt-kanban-evil`, or `silts-kanban` are still accepted.
+`silt-tasks2`, `silt-tasks-evil`, or `silts-tasks` are still accepted.
 The install-time check (in `plugins.Validate`, with a mirror defense-in-depth
 check in `plugins.Install`) is the primary gate; the frontend loader's
 `getFirstParty` skip is a secondary defense that keeps a stray on-disk copy
@@ -522,25 +525,26 @@ to render sidebar content via the iframe bridge in §8.8.
 
 ```ts
 // registry.ts
-import CalendarSidebar from './CalendarSidebar.svelte'
+import TasksHub from './first-party/silt-tasks/TasksHub.svelte'
+import TasksSidebar from './first-party/silt-tasks/Sidebar.svelte'
 registerPlugin({
-  manifest: { id: 'silt-calendar', name: 'Calendar', version: '1.0.0' },
-  component: Calendar,
-  sidebarComponent: CalendarSidebar, // new
+  manifest: { id: 'silt-tasks', name: 'Tasks', version: '1.0.0' },
+  component: TasksHub,
+  sidebarComponent: TasksSidebar,
   source: 'first-party'
 })
 ```
 
 ```svelte
-<!-- CalendarSidebar.svelte -->
+<!-- Sidebar.svelte -->
 <script lang="ts">
   import type { PluginContext, PluginManifest } from '../../sdk'
   interface Props { ctx: PluginContext; manifest?: PluginManifest }
   let { ctx, manifest }: Props = $props()
 </script>
 
-<aside aria-label="Calendar sidebar">
-  <!-- ... -->
+<aside aria-label="Tasks sidebar">
+  <!-- smart lists, saved views, mini-calendar, filter controls -->
 </aside>
 ```
 
@@ -549,6 +553,14 @@ registerPlugin({
 field, the page tree renders as a fallback. The sidebar receives the
 same session-token-attached `ctx` the main view uses, so all
 session-gated SDK calls work transparently.
+
+> **Unified sidebar across modes.** silt-tasks demonstrates a single
+> `sidebarComponent` that swaps its own content (smart lists vs. saved
+> views vs. mini-calendar) based on the active display mode, reading the
+> same `TaskHubState` the hub shell reads. The per-plugin-sidebar
+> assumption (one `sidebarComponent` per plugin) still holds for
+> third-party plugins; silt-tasks simply uses one sidebar across all
+> three of its modes.
 
 ### 8.10 Settings schema (#103)
 
@@ -847,4 +859,65 @@ server, wrong model name) throws an `AIError` whose `message` carries the
 server's response — surface it to the user so they can fix their AI Provider
 settings. Every call is audit-logged (Settings → AI Provider → Recent AI
 activity).
+
+---
+
+## 9. Reference: silt-tasks data model
+
+The unified Tasks hub (`silt-tasks`) persists its configuration under
+`plugins.plugin_settings.silt-tasks` in the vault `config.yaml` (§0 rule 2:
+per-vault plugin prefs → YAML). Two shapes are load-bearing for anyone
+extending or integrating with the hub.
+
+### 9.1 `SavedView` (replaces the former `SavedBoard`)
+
+A saved view snapshots **all** hub dimensions a user can tweak, so re-applying
+one restores the exact configuration. A saved Kanban board is now just a
+`SavedView` with `displayMode: 'board'`.
+
+```ts
+interface SavedView {
+  id: string                         // client-generated UUID (crypto.randomUUID())
+  name: string                       // user-given; shown in sidebar + header
+  displayMode?: 'list' | 'board' | 'calendar'
+  groupBy?: 'none' | 'status' | 'owner' | 'priority' | 'dueDate'
+          | 'tag' | 'notebook' | 'section' | 'page'
+  sort?: 'manual' | 'dueDate' | 'priority' | 'title' | 'created' | 'owner'
+  scope?: 'vault' | 'notebook' | 'section' | 'page'
+  filters?: { owners: string[]; priorities: number[]; dueDate: DueDateFilter; tags: string[] }
+  calendarSubMode?: 'month' | 'week'   // only meaningful in calendar mode
+  columns?: string[]                   // status-board lanes; only when groupBy='status'
+  system?: boolean                     // true for code-defined defaults
+}
+```
+
+**System views.** Three code-defined defaults ship with every install
+(`savedViews.ts` `SYSTEM_VIEWS`): *Today's Board*, *By Owner*, and *This
+Week's Calendar*. They are read-only — hideable but not deletable — and are
+**never persisted to `config.yaml`**: they are re-derived from code on every
+load (the `sys-` id prefix is reserved and stripped on write so a user view
+can never shadow one). User views persist under
+`plugins.plugin_settings.silt-tasks.saved_views[]`; legacy
+`silt-kanban.boards[]` entries are forward-mapped into views on read until
+the one-time migration writes them into `saved_views[]`.
+
+### 9.2 Comment threads
+
+A child NOTE block indented under a TASK is that task's **comment** — the same
+parent/child hierarchy that powers the `comments_count` cache. Two
+Dataview-style tokens attribute the comment:
+
+| Key | Format | Example |
+|---|---|---|
+| `author` | `[author:: NAME]` (free-form name) | `[author:: Dana]` |
+| `ts` | `[ts:: YYYY-MM-DDTHH:MM:SS]` (ISO 8601 local) | `[ts:: 2026-08-03T14:22:00]` |
+
+The Tasks hub renders these NOTE children as a thread inside the task's edit
+drawer (`components/CommentThread.svelte`); adding a comment splices a new
+NOTE child through the canonical write chain (`SaveSubtreeBlocks`). The
+author defaults to the host OS username (`ctx.getLocalAuthor`) on first post
+and is then seeded into the per-vault `local_author` pref so later composers
+open with a stable identity. The `block_meta` SQLite projection hydrates the
+`author`/`ts` tokens on `FetchSubtree` so the thread renders without a second
+round-trip. See SPECS §4.1 ("Comment attribution") for the token contract.
 

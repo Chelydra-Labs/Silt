@@ -218,7 +218,11 @@
                + onDismiss; the component persists its own dismissal state before
                calling onDismiss (the iframe path can't do this in-process, which
                is why third-party banners still use the host chrome below). -->
-          <Banner {...extra} ctx={ctxFor(surface.pluginID)} onDismiss={onDismissFor(surface)} />
+          <Banner
+            {...extra}
+            ctx={ctxFor(surface.pluginID)}
+            onDismiss={onDismissFor(surface)}
+          />
         {:else}
           <div
             class="note-banner"
@@ -226,8 +230,9 @@
             aria-live="polite"
             aria-label={surface.label}
           >
-            <span class="material-symbols-outlined banner-icon" aria-hidden="true"
-              >{surface.icon || 'campaign'}</span
+            <span
+              class="material-symbols-outlined banner-icon"
+              aria-hidden="true">{surface.icon || 'campaign'}</span
             >
             <div class="banner-frame-wrapper">
               <PluginSurfaceFrame

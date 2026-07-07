@@ -22,7 +22,8 @@
     activeSection?: string
     activePage?: string
   }
-  let { ctx, manifest, activeNotebook, activeSection, activePage }: Props = $props()
+  let { ctx, manifest, activeNotebook, activeSection, activePage }: Props =
+    $props()
 
   const PLUGIN_ID = 'silt-ai-summary'
 
@@ -57,7 +58,10 @@
     })
   })
 
-  async function write<K extends keyof SummarySettings>(key: K, value: SummarySettings[K]) {
+  async function write<K extends keyof SummarySettings>(
+    key: K,
+    value: SummarySettings[K]
+  ) {
     draft[key] = value
     try {
       await ctx.updatePluginSetting(key, value as never)
@@ -82,7 +86,11 @@
     cfg.plugins.disabled = [...disabled]
     await saveConfig(cfg)
     // Re-mount the plugin so its lifecycle hooks reflect the new state.
-    await loadPlugins(activeNotebook ?? '', activeSection ?? '', activePage ?? '')
+    await loadPlugins(
+      activeNotebook ?? '',
+      activeSection ?? '',
+      activePage ?? ''
+    )
   }
 
   function writeFacet(key: keyof SummarySettings['facets'], value: boolean) {
@@ -93,7 +101,9 @@
 
 <section class="aisettings" aria-labelledby="aisettings-title">
   <header class="head">
-    <h2 id="aisettings-title" class="title">{manifest?.name ?? 'AI Summary'}</h2>
+    <h2 id="aisettings-title" class="title">
+      {manifest?.name ?? 'AI Summary'}
+    </h2>
     <p class="desc">
       {manifest?.description ??
         'A dismissible highlight at the top of each note with a summary plus new tasks, risks, and decisions.'}
@@ -104,8 +114,8 @@
     <p class="note" role="status">
       <span class="material-symbols-outlined" aria-hidden="true">info</span>
       No AI provider is configured yet. Open
-      <strong>Settings &rarr; AI Provider</strong> to add a chat model —
-      summaries are generated locally or by your own OpenAI-compatible endpoint.
+      <strong>Settings &rarr; AI Provider</strong> to add a chat model — summaries
+      are generated locally or by your own OpenAI-compatible endpoint.
     </p>
   {/if}
 
@@ -118,15 +128,18 @@
         checked={enabled}
         onchange={toggleEnabled}
       />
-      <span>Generate summaries for notes (the banner appears at the top of each note).</span>
+      <span
+        >Generate summaries for notes (the banner appears at the top of each
+        note).</span
+      >
     </label>
   </fieldset>
 
   <p class="privacy">
     <span class="material-symbols-outlined" aria-hidden="true">shield</span>
     <span>
-      Note content is sent only to your configured AI endpoint — local or remote — to generate the
-      summary. No other note data is sent. See <strong
+      Note content is sent only to your configured AI endpoint — local or remote
+      — to generate the summary. No other note data is sent. See <strong
         >Settings &rarr; AI Provider &rarr; Recent AI activity</strong
       > for the call log.
     </span>
@@ -169,7 +182,11 @@
         class="select"
         aria-label="Summary length"
         value={draft.summary_length}
-        onchange={(e) => void write('summary_length', e.currentTarget.value as SummarySettings['summary_length'])}
+        onchange={(e) =>
+          void write(
+            'summary_length',
+            e.currentTarget.value as SummarySettings['summary_length']
+          )}
       >
         <option value="short">Short (2 concise sentences)</option>
         <option value="medium">Medium (2–3 sentences)</option>
@@ -211,7 +228,11 @@
         min="0"
         step="500"
         value={draft.regenerate_debounce_ms}
-        onchange={(e) => void write('regenerate_debounce_ms', Math.max(0, Number(e.currentTarget.value) || 0))}
+        onchange={(e) =>
+          void write(
+            'regenerate_debounce_ms',
+            Math.max(0, Number(e.currentTarget.value) || 0)
+          )}
       />
     </fieldset>
 
@@ -224,11 +245,15 @@
         min="1000"
         step="1000"
         value={draft.max_note_chars}
-        onchange={(e) => void write('max_note_chars', Math.max(1000, Number(e.currentTarget.value) || 0))}
+        onchange={(e) =>
+          void write(
+            'max_note_chars',
+            Math.max(1000, Number(e.currentTarget.value) || 0)
+          )}
       />
       <p class="hint">
-        Notes larger than this are skipped (chunking is a future enhancement). Lower it to cap
-        compute on long notes.
+        Notes larger than this are skipped (chunking is a future enhancement).
+        Lower it to cap compute on long notes.
       </p>
     </fieldset>
   {/if}
@@ -266,8 +291,13 @@
     margin: 0;
     padding: 8px 12px;
     border-radius: 8px;
-    background: color-mix(in srgb, var(--color-accent-primary-glow) 8%, var(--color-surface-card));
-    border: 1px solid color-mix(in srgb, var(--color-accent-primary-glow) 22%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 8%,
+      var(--color-surface-card)
+    );
+    border: 1px solid
+      color-mix(in srgb, var(--color-accent-primary-glow) 22%, transparent);
     color: var(--color-text-primary);
     line-height: 1.5;
   }
@@ -281,8 +311,13 @@
     margin: 0;
     padding: 10px 14px;
     border-radius: 8px;
-    background: color-mix(in srgb, var(--color-accent-primary-glow) 14%, var(--color-surface-card));
-    border: 1px solid color-mix(in srgb, var(--color-accent-primary-glow) 30%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 14%,
+      var(--color-surface-card)
+    );
+    border: 1px solid
+      color-mix(in srgb, var(--color-accent-primary-glow) 30%, transparent);
     border-left: 3px solid var(--color-accent-primary-start);
     color: var(--color-text-primary);
     font-size: 0.85rem;
@@ -328,7 +363,8 @@
   .number {
     padding: 6px 8px;
     border-radius: 6px;
-    border: 1px solid var(--color-border-active, var(--color-surface-panel-border, #444));
+    border: 1px solid
+      var(--color-border-active, var(--color-surface-panel-border, #444));
     background: var(--color-surface-card);
     color: var(--color-text-primary);
     font-size: 0.85rem;
