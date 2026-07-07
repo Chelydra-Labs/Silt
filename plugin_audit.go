@@ -535,7 +535,20 @@ func (a *App) ClearAIAudit() error {
 			clearAIAuditFiles(a.vaultPath)
 		}
 	default:
-		// Queue full: inline truncation under the lock.
+		// Queue full (256-slot saturation — astronomically rare: needs a burst
+		// of 256+ AI calls with the writer stalled, e.g. slow disk). We
+		// truncate inline under the lock rather than block (blocking can
+		// deadlock — see #451) or enqueue (the queue is full).
+		//
+		// KNOWN FIFO TRADE-OFF: the writer goroutine appends queued entries to
+		// disk WITHOUT holding aiAuditMu, so an entry op already in the queue
+		// when this truncation runs can be re-appended by the writer AFTER the
+		// truncation, resurrecting a pre-clear line in the on-disk ai.log. The
+		// in-memory log (cleared at line 510 under the lock) is always correct;
+		// only the on-disk diagnostic file can carry a stale tail. Accepted
+		// because the path is near-unreachable and the data is diagnostic. A
+		// proper FIFO fix needs epoch-marked ops so the writer can distinguish
+		// pre-clear from post-clear entries — out of scope for this rare path.
 		clearAIAuditFiles(a.vaultPath)
 		aiAuditMu.Unlock()
 	}

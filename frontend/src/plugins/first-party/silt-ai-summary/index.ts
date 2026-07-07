@@ -105,8 +105,9 @@ function mountForPage(
       label: opts.onDemandOnly ? 'Generate AI summary' : 'Show AI summary',
       icon: 'auto_awesome',
       onClick: () => {
-        if (!controller) return
-        const cur = controller.getSettings()
+        const ctl = controller
+        if (!ctl) return
+        const cur = ctl.getSettings()
         // Clear dismissal first (no-op in the on-demand-only case) so a
         // future note switch re-evaluates cleanly; persist before showing.
         const unDismiss = cur.dismissed_notes.filter((p) => p !== pageId)
@@ -116,12 +117,17 @@ function mountForPage(
             : Promise.resolve(true)
         persist
           .then(() => {
+            // The vault may close/switch between the click and the IPC
+            // resolving — re-check controller identity so we never dereference
+            // a nulled (onVaultClose) controller or mount into a torn-down
+            // vault.
+            if (controller !== ctl) return
             // Show the banner for this session (onDemandOnly=false forces it
             // even in on-demand mode — the user explicitly requested).
             mountForPage(ctx, pageId, { dismissed: false, onDemandOnly: false })
             // Serve the cache (instant hit) or generate on a miss. Non-force
             // so a still-valid cached summary isn't needlessly regenerated.
-            void controller!.generateFor(ctx, pageId, {
+            void ctl.generateFor(ctx, pageId, {
               notebook: ctx.activeNotebook,
               section: ctx.activeSection,
               page: ctx.activePage

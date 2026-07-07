@@ -183,7 +183,11 @@
 
   // --- Actions --------------------------------------------------------------
   async function handleRegenerate() {
-    if (isLoading && !isStale) return
+    // Block while ANY generation is in flight — fresh loading OR a stale
+    // update. The generation counter protects state correctness, but without
+    // this gate rapid clicks during isStale would stack wasted LLM calls
+    // (local models are slow; each force-click burns a full completion).
+    if (isLoading || isStale) return
     await controller?.generateFor(ctx, pageId, { force: true })
   }
 
@@ -192,19 +196,26 @@
     // pageId:contentHash note. ctx.updatePluginSetting is the SDK's 2-arg
     // (key, value) form — the pluginID is captured in the ctx closure.
     const cur = settings.dismissed_notes ?? []
+    // Compute the bounded list up front (reads settings/pageId while the
+    // component is still mounted), then dismiss visually FIRST so the IPC
+    // round-trip doesn't add perceptible lag to the close interaction. The
+    // host's dismiss path is idempotent and persistence is best-effort (the
+    // catch below), so there's no correctness reason to gate the visual on
+    // the write.
+    const bounded = cur.includes(pageId)
+      ? cur
+      : (() => {
+          const next = [...cur, pageId]
+          return next.length > MAX_DISMISSED ? next.slice(next.length - MAX_DISMISSED) : next
+        })()
+    onDismiss()
     if (!cur.includes(pageId)) {
-      // Keep the most-recent MAX_DISMISSED; drop the oldest so config stays
-      // bounded. The new pageId is appended last (most recent).
-      const next = [...cur, pageId]
-      const bounded =
-        next.length > MAX_DISMISSED ? next.slice(next.length - MAX_DISMISSED) : next
       try {
         await ctx.updatePluginSetting('dismissed_notes', bounded)
       } catch {
-        /* best-effort — host tears down regardless via onDismiss */
+        /* best-effort — the banner is already torn down via onDismiss */
       }
     }
-    onDismiss()
   }
 
   function errorMessage(e: SummaryError | undefined): string {
@@ -283,7 +294,7 @@
           type="button"
           class="action regenerate"
           onclick={handleRegenerate}
-          disabled={isLoading && !isStale}
+          disabled={isLoading || isStale}
           aria-label="Regenerate summary"
           title="Regenerate summary"
         >
