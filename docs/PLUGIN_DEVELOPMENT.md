@@ -776,6 +776,19 @@ label (`aria-label="Dismiss <label>"`). Banner content that is an alert rather
 than a status should set `role="alert"` inside the surface HTML for an
 assertive announcement.
 
+**First-party component path (#221).** A first-party plugin may register a
+banner with a compiled Svelte `component` instead of `html`. The host mounts
+the component directly in the main webview (no iframe isolation — first-party
+plugins already run there), passing `{ ctx, onDismiss }` props. The component
+owns its full chrome — region semantics, aria-live, icon, content, regenerate,
+and a close button carrying `data-banner-close` (so the host's cross-banner
+focus management still works). The `onDismiss` prop unregisters the surface;
+the component persists its own dismissal state in-process before calling it
+(no host→iframe `dismiss` postMessage is needed for the first-party path).
+Use this for rich, interactive banners; the `html` path remains for
+third-party isolation. **Reference consumer: `silt-ai-summary`**
+(`SummaryBanner.svelte`).
+
 ### 8.14 AI — chat completions & embeddings (#216)
 
 Plugins that need AI call the **user-configured** model server through

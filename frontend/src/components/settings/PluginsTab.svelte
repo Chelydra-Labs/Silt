@@ -20,6 +20,7 @@
   import { loadedPlugins } from '../../plugins/store.svelte'
   import { getSurfaces } from '../../plugins/surfaces'
   import { settings, saveConfig } from '../../settings/store.svelte'
+  import { aiProviderNeedsSetup } from '../../settings/ai-setup'
   import SettingsForm from './SettingsForm.svelte'
   import NetworkAuditViewer from './NetworkAuditViewer.svelte'
   import type { SettingSchema } from '../../plugins/sdk'
@@ -187,15 +188,18 @@
   // feature-specific, and the AI Provider tab the badge links to configures
   // both — so a single chat.model check keeps the nudge accurate without
   // false positives on chat-only plugins.
+  // Unified with the AI Provider tab's nudge via aiProviderNeedsSetup (#450)
+  // so clicking this badge always lands on a visible nudge there. The Plugins
+  // tab reads SystemConfig, where API keys are scrubbed — has_key is omitted so
+  // the predicate is model-gated here (a genuinely-missing key surfaces as a
+  // retryable call-time error in the plugin, not a stale badge).
   function needsAISetup(card: Card): boolean {
     if (card.disabled) return false
     if (!card.requestedCapabilities?.ai) return false
     // Don't nudge before config has loaded — otherwise the badge flashes on
     // first paint and disappears once settings.config resolves.
     if (!settings.config) return false
-    // Defensive: config.ai may be absent in hand-edited configs / tests.
-    const chatModel = settings.config.ai?.chat?.model
-    return !chatModel
+    return aiProviderNeedsSetup(settings.config.ai?.chat)
   }
 
   async function grant(card: Card, cap: string) {

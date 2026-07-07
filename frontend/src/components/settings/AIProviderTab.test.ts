@@ -199,12 +199,89 @@ describe('AIProviderTab', () => {
       expect(chatOpenAI[1]).toHaveAttribute('aria-checked', 'false')
     })
 
-    it('shows a setup nudge when both providers are on local defaults with no key', async () => {
+    it('hides the setup nudge when a local chat model is set (Ollama runs keyless)', async () => {
+      // #450: the nudge now follows the unified aiProviderNeedsSetup predicate.
+      // A LOCAL provider with a model chosen is ready to serve completions —
+      // Ollama/llama.cpp need no key — so the nudge must not show even with
+      // has_key=false. (The legacy "both providers untouched" heuristic would
+      // have shown it here, which is exactly the incoherence #450 fixes.)
       mocks.configState = {
         chat: {
           provider_type: 'local',
           base_url: 'http://localhost:11434',
           model: 'llama3.1',
+          has_key: false,
+          temperature: 0.7,
+          max_tokens: 2048,
+          reasoning_effort: 'medium',
+          timeout_ms: 30000
+        },
+        embedding: {
+          provider_type: 'local',
+          base_url: 'http://localhost:11434',
+          model: 'nomic-embed-text',
+          has_key: false,
+          timeout_ms: 60000,
+          dimensions: 768
+        },
+        use_keyring: true,
+        keyring_available: true,
+        keyring_unusable_for: []
+      }
+      mocks.GetAIProviderConfig.mockResolvedValue(
+        structuredClone(mocks.configState)
+      )
+      render(AIProviderTab)
+      await ready()
+
+      expect(screen.queryByText(/Set up an AI provider/i)).toBeNull()
+    })
+
+    it('shows the setup nudge when no chat model is configured', async () => {
+      // The unified predicate's primary trigger: no chat model ⇒ not ready,
+      // regardless of provider type or key. This is the case the Plugins-tab
+      // badge and this nudge must agree on (click-the-badge-lands-on-a-nudge).
+      mocks.configState = {
+        chat: {
+          provider_type: 'openai-compatible',
+          base_url: 'https://openrouter.ai/api/v1',
+          model: '',
+          has_key: true,
+          temperature: 0.7,
+          max_tokens: 2048,
+          reasoning_effort: 'medium',
+          timeout_ms: 30000
+        },
+        embedding: {
+          provider_type: 'local',
+          base_url: 'http://localhost:11434',
+          model: 'nomic-embed-text',
+          has_key: false,
+          timeout_ms: 60000,
+          dimensions: 768
+        },
+        use_keyring: true,
+        keyring_available: true,
+        keyring_unusable_for: []
+      }
+      mocks.GetAIProviderConfig.mockResolvedValue(
+        structuredClone(mocks.configState)
+      )
+      render(AIProviderTab)
+      await ready()
+
+      expect(screen.getByText(/Set up an AI provider/i)).toBeInTheDocument()
+    })
+
+    it('shows the setup nudge for an openai-compatible model with no key', async () => {
+      // The key-aware branch: a cloud provider needs a key. The local-only
+      // Plugins-tab badge cannot see this (keys are scrubbed from SystemConfig),
+      // but this tab can, so it nudges.
+      mocks.configState = {
+        chat: {
+          provider_type: 'openai-compatible',
+          base_url: 'https://openrouter.ai/api/v1',
+          model: 'gpt-4o',
           has_key: false,
           temperature: 0.7,
           max_tokens: 2048,

@@ -2,6 +2,7 @@ import type { RegisteredPlugin } from './sdk'
 import TasksHub from './first-party/silt-tasks/TasksHub.svelte'
 import TasksSidebar from './first-party/silt-tasks/Sidebar.svelte'
 import AttachmentsPlugin from './first-party/silt-attachments'
+import AISummaryPlugin from './first-party/silt-ai-summary'
 
 // First-party plugin registry: bundled Svelte components that ship with the
 // app. Third-party plugins live in .system/plugins/ and are loaded by the
@@ -36,6 +37,21 @@ registerPlugin({
   },
   component: TasksHub,
   sidebarComponent: TasksSidebar,
+  source: 'first-party'
+})
+// silt-ai-summary (#220–#223): dismissible per-note summary banner. The first
+// AI-capable first-party plugin — gated by `ai` + `plugin-db`, off by default
+// (added to plugins.disabled in config.Defaults). The plugin module exports
+// its component (an informational panel) + onVaultOpen/onVaultClose hooks that
+// wire the controller; the live per-note surface is the SummaryBanner
+// component rendered via the note-banner host (Phase 3).
+registerPlugin({
+  manifest: AISummaryPlugin.manifest,
+  component: AISummaryPlugin.component,
+  settingsPageComponent: AISummaryPlugin.settingsPageComponent,
+  onVaultOpen: AISummaryPlugin.onVaultOpen,
+  onVaultClose: AISummaryPlugin.onVaultClose,
+  onShutdown: AISummaryPlugin.onShutdown,
   source: 'first-party'
 })
 

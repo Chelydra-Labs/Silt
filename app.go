@@ -168,6 +168,25 @@ type App struct {
 	// the write — so the two are never held simultaneously.
 	vaultMu      sync.RWMutex
 	themeWriteMu sync.Mutex
+
+	// closing + vaultClosingWG form the vault-close drain for IPC handlers
+	// that release vaultMu mid-call. a.wg tracks every Wails-bound handler
+	// for shutdown()'s a.wg.Wait(), but CloseVault/SwitchVault do a.wg.Add(1)
+	// themselves (so shutdown can wait for an in-flight close/switch) — so
+	// a.wg.Wait() can't be reused from inside them without self-deadlock.
+	// vaultClosingWG tracks ONLY handlers that drop vaultMu before finishing
+	// (today: PluginAIComplete/PluginAIEmbed, which release the lock after
+	// preflight so a 60s LLM call can't hold it). The close path sets closing
+	// under vaultMu.Lock, then Waits outside the lock before teardown —
+	// draining those calls so a close can't strand an AI call that would
+	// otherwise write a stale audit entry or leak into the next vault (#452).
+	// aiPreflightPlugin checks closing + Add(1) under one RLock hold, making
+	// the gate atomic w.r.t. the close path's set+Wait (no TOCTOU window).
+	// Both closing and the WG are guarded by vaultMu (closing is read/written
+	// only while holding it); the WG is Add'd under RLock and Done'd with no
+	// lock held.
+	closing        bool
+	vaultClosingWG sync.WaitGroup
 }
 
 // linkedConfigEntry is one slot in App.linkedConfigs. mtime is the on-disk
@@ -419,33 +438,60 @@ func (a *App) teardownVaultServices() {
 // After it returns, IsVaultInitialized is false so the UI re-shows the
 // onboarding screen. It does NOT clear the saved settings.json path — the
 // user can re-open the same vault via InitializeVault / a new selection.
-// Idempotent: safe to call when no vault is open. Waits on any in-flight
-// Wails-bound calls (a.wg) so a close can't race an in-progress write.
+// Idempotent: safe to call when no vault is open. DRAINS in-flight AI calls
+// (PluginAIComplete/PluginAIEmbed) before teardown via the closing flag +
+// vaultClosingWG, so a close can't strand an AI call that would otherwise
+// append a stale audit entry or write into the next vault (#452). The drain
+// is distinct from a.wg (which tracks every handler for shutdown) because
+// CloseVault does a.wg.Add(1) itself, so a.wg.Wait() here would self-deadlock.
 func (a *App) CloseVault() error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	// Hold the write lock across the teardown so concurrent readers can't
-	// dereference a service pointer mid-close. The fast nil-check is also
-	// taken under the lock so the "nothing to close" decision can't race a
-	// concurrent Initialize.
+	// Fast nil-check under the lock so the "nothing to close" decision can't
+	// race a concurrent Initialize.
 	a.vaultMu.Lock()
-	defer a.vaultMu.Unlock()
 	if a.vaultPath == "" && a.db == nil {
-		return nil // nothing to close
+		a.vaultMu.Unlock()
+		return nil
 	}
+	// Set the closing flag under the exclusive lock so aiPreflightPlugin's
+	// RLock-hold check+Add becomes atomic w.r.t. this set. New AI calls now
+	// reject (errVaultClosing) before issuing HTTP; calls already past
+	// preflight are tracked in vaultClosingWG and drained next.
+	a.closing = true
+	a.vaultMu.Unlock()
+
+	// Drain in-flight AI calls OUTSIDE the lock. They released vaultMu after
+	// preflight (the HTTP call doesn't hold it), so the lock can't serialize
+	// them — and holding it across the (potentially long) completion would
+	// block every reader IPC. This wait is bounded by the provider timeout
+	// (aiCtxCancel on shutdown cancels it immediately).
+	a.vaultClosingWG.Wait()
+
 	// Emit vault:closing BEFORE teardown so the frontend plugin loader can run
 	// every plugin's onVaultClose hook (#106) while IPC is still live. The
-	// event is best-effort: if no frontend is mounted (e.g. headless test), the
-	// emit is a no-op (a.ctx == nil guard).
+	// event is best-effort: if no frontend is mounted (e.g. headless test),
+	// the emit is a no-op (a.ctx == nil guard).
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "vault:closing", struct{}{})
 	}
+	// Hold the write lock across the teardown so concurrent readers can't
+	// dereference a service pointer mid-close.
+	a.vaultMu.Lock()
 	a.teardownVaultServices()
+	a.closing = false
+	a.vaultMu.Unlock()
 	return nil
 }
 
 func (a *App) initializeVaultServices(vaultPath string) error {
+	// Caller (InitializeVault / SwitchVault / rollbackMove) holds vaultMu.Lock.
+	// Reopen the vault for AI calls: a prior CloseVault/SwitchVault set
+	// closing=true and would have reset it on teardown, but a reinit reaching
+	// here after a failed/partial close must not inherit a stuck flag, or AI
+	// calls would reject forever (#452).
+	a.closing = false
 	// Load system config first: its editor.tab_indent_spaces drives
 	// ScanWorkspace and every subsequent parse, so it must be applied before
 	// the initial index is built. A missing/invalid config is non-fatal —
@@ -499,38 +545,6 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		}
 		if hasThirdParty && a.ctx != nil {
 			runtime.EventsEmit(a.ctx, "grants:migration-required", legacy)
-		}
-	}
-
-	// Phase 9 (#431): one-time migration of legacy silt-calendar /
-	// silt-kanban plugin settings into the unified silt-tasks schema. The
-	// gate is checked against the RAW on-disk YAML (not the in-memory cfg,
-	// which always has silt-tasks via the Defaults merge) — so once the
-	// migration has written silt-tasks to config.yaml, every subsequent
-	// launch is a no-op. Old keys stay on disk for one release so a
-	// downgrade still sees the user's prior config. Mirrors the F4 grants
-	// migration pattern: read raw YAML → check gate → merge under configMu
-	// → atomic Save + RegisterSelfWrite.
-	rawTaskSettings := vault.LoadLegacyTaskPluginSettings(vaultPath)
-	var taskMigrationSaveErr error
-	if migrated := vault.MigrateLegacyTaskPluginSettings(a.cfg, rawTaskSettings); migrated != nil {
-		a.configMu.Lock()
-		if a.cfg.Plugins.PluginSettings == nil {
-			a.cfg.Plugins.PluginSettings = map[string]any{}
-		}
-		a.cfg.Plugins.PluginSettings["silt-tasks"] = migrated
-		if a.configWatcher != nil {
-			a.configWatcher.RegisterSelfWrite()
-		}
-		saveErr := config.Save(a.vaultPath, a.cfg)
-		a.configMu.Unlock()
-		if saveErr != nil {
-			// Best-effort: log and continue. The migration retries on the
-			// next launch (the gate is still "silt-tasks absent in YAML")
-			// and the in-memory cfg already holds the merged settings so
-			// the current session is consistent.
-			log.Printf("[WARN] task plugin migration save failed: %v", saveErr)
-			taskMigrationSaveErr = saveErr
 		}
 	}
 
@@ -661,15 +675,6 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// Surface walk-level warnings (symlink skips, permission errors) from #32.
 	allWarnings = append(allWarnings, walkWarnings...)
 	allWarnings = append(allWarnings, migrationWarnings...)
-	if taskMigrationSaveErr != nil {
-		// Surface the failure so the user knows their legacy boards/filters
-		// weren't carried forward this session (the migration will retry on
-		// the next launch).
-		allWarnings = append(
-			allWarnings,
-			fmt.Sprintf("task plugin migration save failed: %v", taskMigrationSaveErr),
-		)
-	}
 
 	if indexedCount > 0 {
 		// A checkpoint after the bulk insert keeps the WAL bounded for the
@@ -1005,11 +1010,26 @@ func (a *App) SwitchVault(path string) error {
 	// commit a change that the cutover overwrites with a stale snapshot.
 	// activePath is captured under the lock (before teardown nils it) for
 	// rollback. rollbackMove runs under this same lock.
+	//
+	// The drain mirrors CloseVault: set closing, release the lock, wait for
+	// in-flight AI calls (which don't hold vaultMu during HTTP), then re-lock
+	// for the teardown→reinit cutover. Without it, the same #452 race would
+	// strand an AI call into the newly-switched vault. Lifecycle transitions
+	// are frontend-serialized (the onboarding flow is modal), so no second
+	// transition enters the brief window between closing=true/Unlock and the
+	// re-Lock for teardown; if that serialization ever changes, add a
+	// closing-flag re-check or a vault-identity guard after the Wait.
 	switchErr := func() error {
 		a.vaultMu.Lock()
-		defer a.vaultMu.Unlock()
 		activePath := a.vaultPath
 		prior, _ := vault.LoadSettings()
+		a.closing = true
+		a.vaultMu.Unlock()
+
+		a.vaultClosingWG.Wait()
+
+		a.vaultMu.Lock()
+		defer a.vaultMu.Unlock()
 		a.teardownVaultServices()
 
 		if _, err := vault.UpdateSettings(func(s *vault.AppSettings) {
@@ -1018,12 +1038,17 @@ func (a *App) SwitchVault(path string) error {
 			if prior != nil {
 				_ = a.rollbackMove(activePath, prior)
 			}
+			a.closing = false
 			return fmt.Errorf("switch vault: save settings: %w", err)
 		}
+		// initializeVaultServices resets closing=false at the top, but if it
+		// fails partway, mirror the UpdateSettings failure path (line 1041)
+		// so the flag can never be left stuck on an init failure.
 		if err := a.initializeVaultServices(abs); err != nil {
 			if prior != nil {
 				_ = a.rollbackMove(activePath, prior)
 			}
+			a.closing = false
 			return fmt.Errorf("switch vault: init services: %w", err)
 		}
 		return nil

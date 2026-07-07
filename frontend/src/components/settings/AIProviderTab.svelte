@@ -14,6 +14,7 @@
   // the secret ever lives in the DOM, and it is cleared the instant
   // Save lands so the value is never left client-side.
   import { onMount } from 'svelte'
+  import { aiProviderNeedsSetup } from '../../settings/ai-setup'
   import {
     GetAIProviderConfig,
     UpdateAIProviderConfig,
@@ -360,21 +361,14 @@
     }).format(d)
   }
 
-  // Show the setup nudge only when both providers are still on their
-  // local defaults and no key has been entered for either — i.e. the
-  // user has made no move yet. Once they touch anything we get out of
-  // their way.
+  // Unified "chat provider not ready" nudge (#450). Shared with the Plugins-tab
+  // badge via aiProviderNeedsSetup so the two surfaces stay coherent: clicking
+  // the badge always lands on a visible nudge here. The predicate is about the
+  // CHAT provider (what completions / silt-ai-summary need); embedding is a
+  // separate concern and does not gate this nudge.
   let needsSetup = $derived.by(() => {
     if (!config) return false
-    const stillLocal = (b: main.AIPublicProvider) =>
-      b.provider_type === 'local' &&
-      (!b.base_url || b.base_url === LOCAL_DEFAULT)
-    return (
-      stillLocal(config.chat) &&
-      stillLocal(config.embedding) &&
-      !config.chat.has_key &&
-      !config.embedding.has_key
-    )
+    return aiProviderNeedsSetup(config.chat)
   })
 
   function keyringFellBack(which: Which): boolean {

@@ -16,6 +16,7 @@ const mockUnregisterSession = vi.hoisted(() =>
   vi.fn(() => Promise.resolve(undefined))
 )
 const mockEventsOn = vi.hoisted(() => vi.fn())
+const mockEventsOff = vi.hoisted(() => vi.fn())
 
 vi.mock('../../wailsjs/go/main/App.js', () => ({
   ListPlugins: mockListPlugins,
@@ -23,8 +24,13 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   RegisterPluginSession: mockRegisterSession,
   UnregisterPluginSession: mockUnregisterSession
 }))
+// EventsOff is exercised by first-party plugins that unsubscribe their ctx.on
+// listeners on onVaultClose (silt-ai-summary unsubscribes editor:save,
+// active-notebook:changed, and config:changed). The mock must support it so
+// plugin cleanup doesn't throw.
 vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: mockEventsOn
+  EventsOn: mockEventsOn,
+  EventsOff: mockEventsOff
 }))
 
 async function sha256Hex(text: string): Promise<string> {

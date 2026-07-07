@@ -128,30 +128,62 @@ func (a *App) GetNetworkAudit() ([]NetworkAuditEntry, error) {
 // we just emptied. When the writer is not running (tests, pre-initialize),
 // the truncation runs inline — the pre-#235 behavior.
 func (a *App) ClearNetworkAudit() error {
+	// Snapshot vaultPath under vaultMu BEFORE acquiring networkAuditMu so the
+	// w==nil inline path never reads a.vaultPath unsynchronized (a concurrent
+	// SwitchVault/ImportVault may flip it). The writer branches use w.vaultPath
+	// (the vault the writer was created for) instead — see the <-w.stop branch.
+	a.vaultMu.RLock()
+	vaultPathSnapshot := a.vaultPath
+	a.vaultMu.RUnlock()
 	networkAuditMu.Lock()
 	networkAudit = nil
 	w := currentNetworkAuditWriter()
 	if w == nil {
 		// Writer not running: truncate inline (pre-#235 path).
-		clearNetworkAuditFiles(a.vaultPath)
+		clearNetworkAuditFiles(vaultPathSnapshot)
 		networkAuditMu.Unlock()
 		return nil
 	}
 	// The clear op MUST be enqueued while holding networkAuditMu so it is
-	// ordered relative to concurrent auditNetwork appends. Both producers
-	// send on w.ch under this lock; without it, a concurrent auditNetwork
-	// could enqueue its entry AFTER our networkAudit = nil but BEFORE our
-	// clear op, causing the writer to append-then-truncate (deleting a
-	// post-clear entry from disk — a #157 restart-persistence regression).
-	// The blocking send is safe: the 256-slot buffer makes it non-blocking
-	// in practice (would need >5000 RPS to fill), and in the degraded case
-	// (writer stuck on slow I/O), blocking is correct backpressure. The
-	// wait on op.done happens OUTSIDE the lock so concurrent fetches can
-	// keep appending to the in-memory slice while the writer truncates.
+	// ordered relative to concurrent auditNetwork appends — both producers
+	// send on w.ch under this lock, so without it a concurrent append could
+	// enqueue AFTER our networkAudit = nil but BEFORE our clear op, and the
+	// writer would append-then-truncate (deleting a post-clear entry from
+	// disk — a #157 restart-persistence regression).
+	//
+	// The send is NON-BLOCKING. A blocking send here can deadlock:
+	// currentNetworkAuditWriter may have captured a pointer to a writer whose
+	// goroutine exits before the send completes (stopNetworkAuditWriter nils
+	// the global pointer, closes w.stop, the writer drains its queue and
+	// exits). Because the channel is buffered (256 slots), the send would
+	// STILL succeed after the goroutine is gone — and then <-op.done would
+	// block forever with no goroutine to process it (#451).
 	op := &networkAuditOp{clear: true, done: make(chan struct{})}
-	w.ch <- op
-	networkAuditMu.Unlock()
-	<-op.done
+	select {
+	case w.ch <- op:
+		networkAuditMu.Unlock()
+		// Wait for the writer to process the clear, but ALSO watch w.stop. If
+		// the writer exits before processing the op (or if the select
+		// spuriously picks w.stop when both are ready), we must still guarantee
+		// the truncation runs against the WRITER's vault — never a.vaultPath,
+		// which a concurrent SwitchVault may have already moved to a different
+		// vault (#452 cross-vault data-loss regression). Waiting on w.done
+		// ensures the writer's drain completes first (our op is in the buffer
+		// and the drain processes every buffered op before returning).
+		select {
+		case <-op.done:
+		case <-w.stop:
+			<-w.done
+			clearNetworkAuditFiles(w.vaultPath)
+		}
+	default:
+		// Queue full (astronomically rare). Truncate the WRITER's vault — not
+		// a.vaultPath — so a concurrent switch can't redirect the truncation
+		// to the new vault. Same FIFO trade-off as ClearAIAudit's default
+		// branch (see comment there).
+		clearNetworkAuditFiles(w.vaultPath)
+		networkAuditMu.Unlock()
+	}
 	return nil
 }
 
@@ -484,30 +516,64 @@ func (a *App) GetAIAudit() ([]AIAuditEntry, error) {
 // click cannot interleave a line into a file we just emptied. When the writer
 // is not running (tests, pre-initialize), the truncation runs inline.
 func (a *App) ClearAIAudit() error {
+	// Snapshot vaultPath under vaultMu BEFORE acquiring aiAuditMu so the
+	// w==nil inline path never reads a.vaultPath unsynchronized (a concurrent
+	// SwitchVault/ImportVault may flip it). The writer branches use w.vaultPath
+	// instead — see the <-w.stop branch.
+	a.vaultMu.RLock()
+	vaultPathSnapshot := a.vaultPath
+	a.vaultMu.RUnlock()
 	aiAuditMu.Lock()
 	aiAudit = nil
 	w := currentAIAuditWriter()
 	if w == nil {
 		// Writer not running: truncate inline.
-		clearAIAuditFiles(a.vaultPath)
+		clearAIAuditFiles(vaultPathSnapshot)
 		aiAuditMu.Unlock()
 		return nil
 	}
 	// The clear op MUST be enqueued while holding aiAuditMu so it is ordered
-	// relative to concurrent auditAI appends. Both producers send on w.ch
-	// under this lock; without it, a concurrent auditAI could enqueue its
-	// entry AFTER our aiAudit = nil but BEFORE our clear op, causing the
-	// writer to append-then-truncate (deleting a post-clear entry from disk —
-	// a restart-persistence regression). The blocking send is safe: the
-	// 256-slot buffer makes it non-blocking in practice (would need >5000 RPS
-	// to fill), and in the degraded case (writer stuck on slow I/O), blocking
-	// is correct backpressure. The wait on op.done happens OUTSIDE the lock
-	// so concurrent fetches can keep appending to the in-memory slice while
-	// the writer truncates.
+	// relative to concurrent auditAI appends (FIFO clear-vs-append invariant
+	// — see ClearNetworkAudit for the full rationale).
+	//
+	// The send is NON-BLOCKING to avoid a latent deadlock: a blocking send
+	// can succeed on the buffered channel even after the writer goroutine has
+	// exited (stopAIAuditWriter nils the global pointer, closes w.stop, the
+	// writer drains and exits), leaving <-op.done blocked forever (#451).
 	op := &aiAuditOp{clear: true, done: make(chan struct{})}
-	w.ch <- op
-	aiAuditMu.Unlock()
-	<-op.done
+	select {
+	case w.ch <- op:
+		aiAuditMu.Unlock()
+		// Wait for the writer to process the clear, but ALSO watch w.stop. If
+		// the writer exits before processing the op (or the select picks
+		// w.stop when both are ready), we must still guarantee the truncation
+		// runs against the WRITER's vault — never a.vaultPath, which a
+		// concurrent SwitchVault may have moved to a different vault (#452
+		// cross-vault data-loss regression). Waiting on w.done ensures the
+		// writer's drain completes first (our op is in the buffer and the
+		// drain processes every buffered op before returning).
+		select {
+		case <-op.done:
+		case <-w.stop:
+			<-w.done
+			clearAIAuditFiles(w.vaultPath)
+		}
+	default:
+		// Queue full (256-slot saturation — astronomically rare: needs a burst
+		// of 256+ AI calls with the writer stalled, e.g. slow disk). We
+		// truncate the WRITER's vault inline — not a.vaultPath — so a
+		// concurrent switch can't redirect the truncation to the new vault.
+		//
+		// KNOWN FIFO TRADE-OFF: the writer goroutine appends queued entries to
+		// disk WITHOUT holding aiAuditMu, so an entry op already in the queue
+		// when this truncation runs can be re-appended by the writer AFTER the
+		// truncation, resurrecting a pre-clear line in the on-disk ai.log. The
+		// in-memory log (cleared above under the lock) is always correct; only
+		// the on-disk diagnostic file can carry a stale tail. Accepted because
+		// the path is near-unreachable and the data is diagnostic.
+		clearAIAuditFiles(w.vaultPath)
+		aiAuditMu.Unlock()
+	}
 	return nil
 }
 

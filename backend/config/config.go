@@ -446,8 +446,11 @@ func Defaults() SystemConfig {
 			// silt-kanban plugins; silt-tasks is the single active task
 			// surface. Legacy vaults still carrying the old ids are
 			// migrated by task_plugin_migrate.go (Phase 9 / #431).
-			Active:   []string{"silt-tasks"},
-			Disabled: []string{},
+			Active: []string{"silt-tasks"},
+			// silt-ai-summary (#220) ships OFF by default: it is the first plugin
+			// that sends note content to an external LLM endpoint, so the user
+			// opts in explicitly (Plugins tab) after configuring a provider.
+			Disabled: []string{"silt-ai-summary"},
 			PluginSettings: map[string]any{
 				// silt-tasks is the unified hub (Phase 9 / #431). Every key
 				// the frontend loaders read (settings.ts) is seeded so a
