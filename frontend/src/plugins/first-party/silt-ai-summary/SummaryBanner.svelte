@@ -156,11 +156,14 @@
     )
   }
 
-  // Polite live-region announcement. Empty when only the visible content
-  // (which reads naturally to a SR via the section's role=region) needs to be
-  // heard — this region exists to actively announce transitions + new counts.
-  // Inline IIFE so the derivation reads other runes (unconfigured, isError,
-  // isLoading, isStale, isReady, result) naturally and stays reactive.
+  // Polite live-region announcement. Empty only when the visible content
+  // alone is enough (loading-skeleton first paint, unconfigured). Ready-with-
+  // content always speaks — either new counts or a bare "Summary ready." so a
+  // screen-reader user gets an audible completion signal even when nothing is
+  // new (the common first-open case where the diff is empty because there's no
+  // prior snapshot to diff against). Inline IIFE so the derivation reads other
+  // runes (unconfigured, isError, isLoading, isStale, isReady, result)
+  // naturally and stays reactive.
   const announcement = $derived.by(() => {
     if (unconfigured) return ''
     if (isError) {
@@ -176,7 +179,8 @@
         const n = newCount(result, f.key)
         if (n > 0) parts.push(`${n} new ${f.label.toLowerCase()}`)
       }
-      return parts.length ? parts.join(', ') + '.' : ''
+      if (parts.length) return parts.join(', ') + '.'
+      return summaryText ? 'Summary ready.' : ''
     }
     return ''
   })
@@ -223,10 +227,30 @@
     if (e.code === 'unconfigured')
       return 'Configure an AI provider in Settings → AI Provider to generate summaries.'
     if (e.code === 'oversized')
-      return 'This note is too long to summarize in one pass.'
+      // The note hasn't shrunk, so a retry deterministically fails the same
+      // way — point at the setting by name instead of implying retryability.
+      return 'This note exceeds the "Max note size" limit (Settings → AI Summary). Split the note or raise the limit.'
     if (e.code === 'fetch-failed')
       return "Couldn't read this note's content. The vault may be busy — try again."
     return `Couldn't generate a summary. ${e.message ?? ''}`.trim()
+  }
+
+  // Minimal relative-time formatter for the freshness line. The repo has no
+  // shared time util, so keep this local and dependency-free. Output is
+  // computed at render time only — no ticking timer; a banner left open for an
+  // hour simply reads "5m ago" until something triggers a re-render.
+  function formatFreshness(iso: string): string {
+    const ts = new Date(iso).getTime()
+    if (!Number.isFinite(ts)) return ''
+    const diffSec = Math.max(0, (Date.now() - ts) / 1000)
+    if (diffSec < 60) return 'Generated just now'
+    if (diffSec < 3600) return `Generated ${Math.floor(diffSec / 60)}m ago`
+    if (diffSec < 86400) return `Generated ${Math.floor(diffSec / 3600)}h ago`
+    if (diffSec < 604800) return `Generated ${Math.floor(diffSec / 86400)}d ago`
+    return `Generated ${new Date(iso).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric'
+    })}`
   }
 </script>
 
@@ -256,17 +280,19 @@
           <p class="line error-text" role="status">
             {errorMessage(errorOutcome)}
           </p>
-          <button
-            type="button"
-            class="retry-btn"
-            onclick={handleRegenerate}
-            aria-label="Retry summary generation"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true"
-              >refresh</span
+          {#if errorOutcome?.code !== 'oversized'}
+            <button
+              type="button"
+              class="retry-btn"
+              onclick={handleRegenerate}
+              aria-label="Retry"
             >
-            Retry
-          </button>
+              <span class="material-symbols-outlined" aria-hidden="true"
+                >refresh</span
+              >
+              Retry
+            </button>
+          {/if}
         </div>
       {:else if isLoading && !isStale}
         <div class="skeleton" aria-hidden="true">
@@ -278,6 +304,9 @@
       {:else if isReady}
         {#if summaryText}
           <p class="line summary-text">{summaryText}</p>
+        {/if}
+        {#if !isStale && result?.generatedAt}
+          <p class="freshness-line">{formatFreshness(result.generatedAt)}</p>
         {/if}
         {#if isStale}
           <p class="updating-line" role="status">
@@ -305,16 +334,18 @@
           >
         </button>
       {/if}
-      <button
-        type="button"
-        class="action close-btn"
-        data-banner-close={BANNER_SURFACE_ID}
-        onclick={handleClose}
-        aria-label="Dismiss AI summary"
-        title="Dismiss"
-      >
-        <span class="material-symbols-outlined" aria-hidden="true">close</span>
-      </button>
+      {#if !unconfigured}
+        <button
+          type="button"
+          class="action close-btn"
+          data-banner-close={BANNER_SURFACE_ID}
+          onclick={handleClose}
+          aria-label="Dismiss AI summary"
+          title="Dismiss"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">close</span>
+        </button>
+      {/if}
     </div>
   </header>
 
@@ -436,6 +467,15 @@
     );
   }
 
+  /* Stale: dim the prior-pass text + facets so they read as provisional while
+     a regen runs. Actions stay full-opacity so the spinning refresh icon stays
+     the primary "this is active" signal; the dimming is an additional cue. */
+  .summary-banner.is-stale .body,
+  .summary-banner.is-stale .facets {
+    opacity: 0.6;
+    transition: opacity 0.28s ease;
+  }
+
   .head {
     display: flex;
     align-items: flex-start;
@@ -550,6 +590,15 @@
     animation: pulse 1.4s ease-in-out infinite;
   }
 
+  /* Freshness stamp under the summary — muted like the updating line, but
+     static. Lives in .body (read naturally with the section), not in the live
+     region — the announcement handles the ready signal. */
+  .freshness-line {
+    margin: 0;
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+  }
+
   /* Loading skeleton — two shimmer lines stand in for the summary sentence. */
   .skeleton {
     display: flex;
@@ -618,8 +667,12 @@
     cursor: not-allowed;
   }
   .action.close-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-status-danger) 16%, transparent);
-    color: var(--color-status-danger);
+    background: color-mix(
+      in srgb,
+      var(--color-text-muted) 18%,
+      transparent
+    );
+    color: var(--color-text-primary);
   }
 
   /* Facets: auto-fit grid so 1/2/3 facets each get a balanced column. Indented
@@ -703,6 +756,10 @@
     font-size: 0.8rem;
     line-height: 1.4;
     color: var(--color-text-primary);
+    /* Reserve a 2px rail so the accent border on has-new doesn't shift the
+       item relative to non-new siblings in the same list. */
+    border-left: 2px solid transparent;
+    padding-left: 6px;
   }
   /* Tiny bullet marker via ::before so it survives list-style: none and stays
      aligned with the first text line. */
@@ -720,6 +777,11 @@
     box-shadow: 0 0 0 2px
       color-mix(in srgb, var(--color-accent-primary-start) 22%, transparent);
   }
+  /* Glanceable left-rail signal — the established callout idiom (3px on
+     .silt-callout, trimmed to 2px here for the denser facet-item density). */
+  .facet-item.has-new {
+    border-left-color: var(--color-accent-primary-start);
+  }
   .item-text {
     flex: 1;
     min-width: 0;
@@ -727,7 +789,7 @@
   }
   .new-pill {
     flex-shrink: 0;
-    font-size: 0.6rem;
+    font-size: 0.7rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;

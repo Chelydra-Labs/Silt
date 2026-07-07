@@ -301,4 +301,143 @@ describe('SummaryBanner', () => {
     expect(getByText('Decisions')).toBeTruthy()
     expect(queryByText('Risks')).toBeNull() // toggled off
   })
+
+  // --- Stale state (finding 3: dimming + freshness hidden) -----------------
+  it('applies the is-stale class and hides the freshness line during a regen', () => {
+    setPageState({
+      status: 'ready',
+      stale: true,
+      result: {
+        ok: true,
+        result: {
+          summary: 'Prior summary still readable.',
+          tasks: ['Old task'],
+          risks: [],
+          decisions: [],
+          newItems: { tasks: [], risks: [], decisions: [] },
+          fromCache: true,
+          model: 'm',
+          generatedAt: '2026-07-06T10:00:00Z'
+        }
+      }
+    })
+    const { container } = render(SummaryBanner, {
+      props: { ctx: makeCtx(), onDismiss: () => {} }
+    })
+    // The stale class drives the opacity dimming (CSS-scoped to .is-stale).
+    expect(container.querySelector('.summary-banner.is-stale')).toBeTruthy()
+    // The "Updating…" affordance replaces the freshness line during stale.
+    expect(container.querySelector('.updating-line')).toBeTruthy()
+    expect(container.querySelector('.freshness-line')).toBeNull()
+  })
+
+  // --- Live-region announcements (finding 1: SR completion signal) ---------
+  it('announces "Summary ready." when the result has no new diff items', () => {
+    setPageState({
+      status: 'ready',
+      stale: false,
+      result: {
+        ok: true,
+        result: {
+          summary: 'A summary with no new items.',
+          tasks: ['Existing task'],
+          risks: [],
+          decisions: [],
+          newItems: { tasks: [], risks: [], decisions: [] },
+          fromCache: true,
+          model: 'm',
+          generatedAt: '2026-07-06T10:00:00Z'
+        }
+      }
+    })
+    const { container } = render(SummaryBanner, {
+      props: { ctx: makeCtx(), onDismiss: () => {} }
+    })
+    const liveRegion = container.querySelector('[aria-live="polite"]')
+    expect(liveRegion?.textContent).toMatch(/Summary ready/i)
+  })
+
+  it('announces "Summarizing…" during a fresh load', () => {
+    setPageState({ status: 'loading' })
+    const { container } = render(SummaryBanner, {
+      props: { ctx: makeCtx(), onDismiss: () => {} }
+    })
+    const liveRegion = container.querySelector('[aria-live="polite"]')
+    expect(liveRegion?.textContent).toMatch(/Summarizing/i)
+  })
+
+  // --- Error branches (finding 4: oversized dead-end + fetch-failed) -------
+  it('hides Retry and points at the setting for oversized errors', () => {
+    setPageState({
+      status: 'error',
+      result: {
+        ok: false,
+        error: { code: 'oversized', message: 'too long' }
+      }
+    })
+    const { queryByRole, getByText } = render(SummaryBanner, {
+      props: { ctx: makeCtx(), onDismiss: () => {} }
+    })
+    // Retry is hidden — the note hasn't shrunk, so it would deterministically
+    // fail again.
+    expect(queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(getByText(/Max note size/i)).toBeTruthy()
+  })
+
+  it('shows Retry for fetch-failed errors (transient/retryable)', () => {
+    setPageState({
+      status: 'error',
+      result: {
+        ok: false,
+        error: { code: 'fetch-failed', message: 'vault busy' }
+      }
+    })
+    const { getByRole, getByText } = render(SummaryBanner, {
+      props: { ctx: makeCtx(), onDismiss: () => {} }
+    })
+    expect(getByRole('button', { name: 'Retry' })).toBeTruthy()
+    expect(getByText(/read this note's content/i)).toBeTruthy()
+  })
+
+  // --- Show-more collapse (aria-expanded + count contract) -----------------
+  it('expands a facet list past the preview limit on Show-more click', async () => {
+    setPageState({
+      status: 'ready',
+      stale: false,
+      result: {
+        ok: true,
+        result: {
+          summary: 's',
+          tasks: ['t1', 't2', 't3', 't4', 't5'],
+          risks: [],
+          decisions: [],
+          newItems: { tasks: [], risks: [], decisions: [] },
+          fromCache: false,
+          model: 'm',
+          generatedAt: '2026-07-06T10:00:00Z'
+        }
+      }
+    })
+    const { getByRole, container } = render(SummaryBanner, {
+      props: { ctx: makeCtx(), onDismiss: () => {} }
+    })
+    // FACET_PREVIEW_LIMIT is 3 → 2 hidden, only 3 .facet-item rendered.
+    expect(container.querySelectorAll('.facet-item')).toHaveLength(3)
+    const moreBtn = getByRole('button', { name: /Show 2 more/i })
+    expect(moreBtn.getAttribute('aria-expanded')).toBe('false')
+    await fireEvent.click(moreBtn)
+    expect(container.querySelectorAll('.facet-item')).toHaveLength(5)
+    expect(moreBtn.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  // --- Finding 2: unconfigured nudge is not dismissible per-note -----------
+  it('hides the close button when unconfigured (nudge is global, not per-note)', () => {
+    mockAppSettings.config.ai.chat.model = ''
+    const { queryByRole } = render(SummaryBanner, {
+      props: { ctx: makeCtx(), onDismiss: () => {} }
+    })
+    // No dismiss — the nudge must persist until a provider is configured so it
+    // can't poison dismissed_notes with a nudge dismissal.
+    expect(queryByRole('button', { name: /Dismiss AI summary/i })).toBeNull()
+  })
 })

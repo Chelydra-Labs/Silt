@@ -44,6 +44,24 @@ func resetNetworkAuditState(t *testing.T) {
 
 // --- #451: Clear*Audit must not deadlock when the writer exits mid-call -----
 
+// waitWithTimeout wraps wg.Wait so a deadlocked Clear/audit goroutine fails
+// the test with a clear, fast diagnostic instead of wedging until Go's global
+// 10-min timeout (which yields a generic "panic: test timed out" with no
+// indication of WHICH goroutine hung).
+func waitWithTimeout(t *testing.T, wg *sync.WaitGroup, timeout time.Duration) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		t.Fatalf("wg.Wait() deadlocked — a Clear/audit goroutine did not return within %s", timeout)
+	}
+}
+
 // TestClearAIAudit_NoDeadlockWhenWriterStopsConcurrently exercises the exact
 // race #451 describes: Clear captures a live writer pointer, stopAIAuditWriter
 // nils the global + closes w.stop + drains + exits, then Clear sends on the
@@ -102,7 +120,7 @@ func TestClearAIAudit_NoDeadlockWhenWriterStopsConcurrently(t *testing.T) {
 	// Drain the writers so no goroutine lingers past the test. The Clear loop
 	// may have stopped a fresh writer mid-flight; ensure a clean slate.
 	stopAIAuditWriter()
-	wg.Wait()
+	waitWithTimeout(t, &wg, 5*time.Second)
 }
 
 // TestClearNetworkAudit_NoDeadlockWhenWriterStopsConcurrently is the network
@@ -150,7 +168,7 @@ func TestClearNetworkAudit_NoDeadlockWhenWriterStopsConcurrently(t *testing.T) {
 	<-ctx.Done()
 	close(stop)
 	stopNetworkAuditWriter()
-	wg.Wait()
+	waitWithTimeout(t, &wg, 5*time.Second)
 }
 
 // TestClearAIAudit_DurableClearStillRunsThroughWriterWhenAlive is the
@@ -269,7 +287,7 @@ func TestCloseVault_DrainsInFlightAICall(t *testing.T) {
 	closingFlag := app.closing
 	app.vaultMu.RUnlock()
 	if !dbNil || !pathEmpty {
-		t.Fatalf("teardown did not run: db=%v vaultPath=%q", !dbNil, app.vaultPath)
+		t.Fatalf("teardown did not run: db=%v vaultPath=%q", app.db, app.vaultPath)
 	}
 	if closingFlag {
 		t.Errorf("closing flag left set after CloseVault — would reject all future AI calls")

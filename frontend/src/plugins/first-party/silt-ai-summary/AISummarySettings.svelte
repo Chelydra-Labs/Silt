@@ -122,6 +122,16 @@
     </label>
   </fieldset>
 
+  <p class="privacy">
+    <span class="material-symbols-outlined" aria-hidden="true">shield</span>
+    <span>
+      Note content is sent only to your configured AI endpoint — local or remote — to generate the
+      summary. No other note data is sent. See <strong
+        >Settings &rarr; AI Provider &rarr; Recent AI activity</strong
+      > for the call log.
+    </span>
+  </p>
+
   {#if loaded}
     <fieldset class="control">
       <legend class="label">When to generate</legend>
@@ -221,14 +231,6 @@
         compute on long notes.
       </p>
     </fieldset>
-
-    <p class="privacy">
-      <span class="material-symbols-outlined" aria-hidden="true">shield</span>
-      Note content is sent only to your configured AI endpoint — local or remote — to generate the
-      summary. No other note data is sent. See <strong
-        >Settings &rarr; AI Provider &rarr; Recent AI activity</strong
-      > for the call log.
-    </p>
   {/if}
 </section>
 
@@ -257,8 +259,7 @@
     color: var(--color-text-muted);
     line-height: 1.5;
   }
-  .note,
-  .privacy {
+  .note {
     display: flex;
     align-items: flex-start;
     gap: 8px;
@@ -268,6 +269,23 @@
     background: color-mix(in srgb, var(--color-accent-primary-glow) 8%, var(--color-surface-card));
     border: 1px solid color-mix(in srgb, var(--color-accent-primary-glow) 22%, transparent);
     color: var(--color-text-primary);
+    line-height: 1.5;
+  }
+  /* First Silt plugin that sends note content externally — the notice sits
+     above the tuning controls and reads as a callout, not fineprint: stronger
+     accent tint + a 3px left rail (the established .silt-callout idiom). */
+  .privacy {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-accent-primary-glow) 14%, var(--color-surface-card));
+    border: 1px solid color-mix(in srgb, var(--color-accent-primary-glow) 30%, transparent);
+    border-left: 3px solid var(--color-accent-primary-start);
+    color: var(--color-text-primary);
+    font-size: 0.85rem;
     line-height: 1.5;
   }
   .note .material-symbols-outlined {

@@ -1041,12 +1041,14 @@ func (a *App) SwitchVault(path string) error {
 			a.closing = false
 			return fmt.Errorf("switch vault: save settings: %w", err)
 		}
-		// initializeVaultServices resets closing=false at the top (defensive —
-		// a reinit must always reopen the vault for AI calls).
+		// initializeVaultServices resets closing=false at the top, but if it
+		// fails partway, mirror the UpdateSettings failure path (line 1041)
+		// so the flag can never be left stuck on an init failure.
 		if err := a.initializeVaultServices(abs); err != nil {
 			if prior != nil {
 				_ = a.rollbackMove(activePath, prior)
 			}
+			a.closing = false
 			return fmt.Errorf("switch vault: init services: %w", err)
 		}
 		return nil
