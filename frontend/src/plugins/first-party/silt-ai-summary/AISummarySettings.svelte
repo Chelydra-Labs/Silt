@@ -224,9 +224,10 @@
 
     <p class="privacy">
       <span class="material-symbols-outlined" aria-hidden="true">shield</span>
-      Note content is sent to your configured AI endpoint to generate the summary. Nothing else
-      leaves your device. See <strong>Settings &rarr; AI Provider &rarr; Recent AI activity</strong>
-      for the call log.
+      Note content is sent only to your configured AI endpoint — local or remote — to generate the
+      summary. No other note data is sent. See <strong
+        >Settings &rarr; AI Provider &rarr; Recent AI activity</strong
+      > for the call log.
     </p>
   {/if}
 </section>

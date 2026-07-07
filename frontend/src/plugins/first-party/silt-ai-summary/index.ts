@@ -43,9 +43,12 @@ export const manifest: PluginManifest = {
   capabilities: { ai: true, 'plugin-db': true }
 }
 
-// Stable surface ids. The banner host looks up data-banner-close for focus
-// management; the SummaryBanner uses 'silt-ai-summary' for that attribute.
-const BANNER_SURFACE_ID = 'silt-ai-summary:banner'
+// Stable surface ids. The banner host's cross-banner focus management queries
+// `[data-banner-close="<registered id>"]` after a dismiss, so the SummaryBanner
+// MUST set its close button's data-banner-close to the SAME id it is registered
+// under — exported here so the component imports the single source of truth
+// rather than re-hardcoding the literal (which drifted once and broke focus).
+export const BANNER_SURFACE_ID = 'silt-ai-summary:banner'
 const REOPEN_SURFACE_ID = 'silt-ai-summary:reopen'
 const PLUGIN_ID = 'silt-ai-summary'
 

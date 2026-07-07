@@ -23,8 +23,8 @@ export interface SummarySettings {
   facets: FacetToggles
   regenerate_debounce_ms: number
   max_note_chars: number
-  /** Dismissed banners keyed by `pageId:contentHash` so a meaningfully-changed
-   *  note re-shows its banner. */
+  /** Dismissed banners keyed by `pageId` (v1). #455 tracks upgrading to
+   *  `pageId:contentHash` so a meaningfully-edited dismissed note re-shows. */
   dismissed_notes: string[]
 }
 
@@ -63,6 +63,7 @@ export type SummaryErrorCode =
   | 'unconfigured' // no provider ready — banner shows the setup nudge
   | 'provider-error' // the call ran but the endpoint errored
   | 'oversized' // note exceeds max_note_chars and chunking is not implemented
+  | 'fetch-failed' // the note's content couldn't be read (distinct from empty)
   | 'unknown'
 
 export interface SummaryError {

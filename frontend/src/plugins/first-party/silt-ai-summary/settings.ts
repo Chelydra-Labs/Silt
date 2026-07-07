@@ -29,6 +29,15 @@ export function resolveSettings(raw: Record<string, unknown> | undefined | null)
   const out: SummarySettings = { ...DEFAULT_SETTINGS, facets: { ...DEFAULT_SETTINGS.facets } }
   if (typeof raw.auto_on_open === 'boolean') out.auto_on_open = raw.auto_on_open
   if (typeof raw.on_demand_only === 'boolean') out.on_demand_only = raw.on_demand_only
+  // The two flags are semantically a binary: either summarize automatically on
+  // note open, or only on explicit click (on-demand). `!auto_on_open &&
+  // !on_demand_only` is incoherent — it would mount the banner but never start a
+  // generation, leaving a perpetual skeleton with a disabled Regenerate. Reachable
+  // via hand-edited config or a partial write; normalize to on-demand so the
+  // re-open chip (the honest affordance) shows instead.
+  if (!out.auto_on_open && !out.on_demand_only) {
+    out.on_demand_only = true
+  }
   if (raw.summary_length === 'short' || raw.summary_length === 'medium' || raw.summary_length === 'long') {
     out.summary_length = raw.summary_length
   }

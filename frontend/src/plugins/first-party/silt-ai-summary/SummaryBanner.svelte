@@ -26,7 +26,7 @@
    * the hash lands is a one-line change here.
    */
 
-  import { getController } from './index'
+  import { getController, BANNER_SURFACE_ID } from './index'
   import type { PageState } from './state.svelte'
   import type { PluginContext } from '../../sdk'
   import type { SummaryResult, FacetDiff, SummaryError } from './types'
@@ -41,11 +41,17 @@
   }
   let { ctx, onDismiss }: Props = $props()
 
-  // The host's cross-banner focus management queries
-  // [data-banner-close="${nextId}"] after a dismiss. There is only ever one
-  // summary banner, and the orchestrator registers it with this id.
-  const SURFACE_ID = 'silt-ai-summary'
+  // The close button's data-banner-close MUST match the surface id the
+  // orchestrator registers the banner under (BANNER_SURFACE_ID). The host's
+  // cross-banner focus management queries that attribute after a dismiss to
+  // forward focus to the next banner; a mismatch silently drops focus.
   const FACET_PREVIEW_LIMIT = 3
+  // Bound the dismissed list so config.yaml doesn't grow without limit. The
+  // list is keyed by pageId, so dropping the oldest entry only re-shows a
+  // banner for a note dismissed long ago — an acceptable trade vs. unbounded
+  // config growth. 500 covers any realistic vault; the host's RMW write can't
+  // race with a second summary dismissal anyway (only one banner surface exists).
+  const MAX_DISMISSED = 500
 
   type FacetKey = 'tasks' | 'risks' | 'decisions'
   interface FacetMeta {
@@ -187,8 +193,13 @@
     // (key, value) form — the pluginID is captured in the ctx closure.
     const cur = settings.dismissed_notes ?? []
     if (!cur.includes(pageId)) {
+      // Keep the most-recent MAX_DISMISSED; drop the oldest so config stays
+      // bounded. The new pageId is appended last (most recent).
+      const next = [...cur, pageId]
+      const bounded =
+        next.length > MAX_DISMISSED ? next.slice(next.length - MAX_DISMISSED) : next
       try {
-        await ctx.updatePluginSetting('dismissed_notes', [...cur, pageId])
+        await ctx.updatePluginSetting('dismissed_notes', bounded)
       } catch {
         /* best-effort — host tears down regardless via onDismiss */
       }
@@ -202,6 +213,8 @@
       return 'Configure an AI provider in Settings → AI Provider to generate summaries.'
     if (e.code === 'oversized')
       return 'This note is too long to summarize in one pass.'
+    if (e.code === 'fetch-failed')
+      return "Couldn't read this note's content. The vault may be busy — try again."
     return `Couldn't generate a summary. ${e.message ?? ''}`.trim()
   }
 </script>
@@ -284,7 +297,7 @@
       <button
         type="button"
         class="action close-btn"
-        data-banner-close={SURFACE_ID}
+        data-banner-close={BANNER_SURFACE_ID}
         onclick={handleClose}
         aria-label="Dismiss AI summary"
         title="Dismiss"

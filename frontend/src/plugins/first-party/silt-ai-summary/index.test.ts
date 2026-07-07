@@ -15,8 +15,9 @@ vi.mock('../../../settings/store.svelte', () => ({
 }))
 
 import { decideMountKind } from './mountKind'
-import { readProviderInfo } from './state.svelte'
+import { readProviderInfo, createSummaryController } from './state.svelte'
 import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
+import type { PluginContext } from '../../sdk'
 
 describe('decideMountKind (on-demand + dismissal)', () => {
   it('mounts the banner when not dismissed and not on-demand', () => {
@@ -68,5 +69,35 @@ describe('readProviderInfo coherence with aiProviderNeedsSetup (#450)', () => {
       const info = readProviderInfo()
       expect(info.isConfigured, `for ${JSON.stringify(chat)}`).toBe(!aiProviderNeedsSetup(chat as any))
     }
+  })
+})
+
+describe('generateFor fetch-failure handling', () => {
+  it('surfaces a content-read failure as a fetch-failed error, not an empty note', async () => {
+    // A SQLite/query failure must not masquerade as "Nothing to highlight" —
+    // the user keeps a retryable error signal. The controller short-circuits
+    // before summarize(), so only sqliteQuery needs to reject.
+    const ctx = {
+      activeNotebook: 'NB',
+      activeSection: 'S',
+      activePage: 'P',
+      sqliteQuery: vi.fn(async () => {
+        throw new Error('vault locked')
+      })
+    } as unknown as PluginContext
+    const controller = createSummaryController(() => ({
+      isConfigured: true,
+      configuredModel: 'qwen3:30b'
+    }))
+    const outcome = await controller.generateFor(ctx, 'NB/S/P')
+    expect(outcome.ok).toBe(false)
+    if (!outcome.ok) {
+      expect(outcome.error.code).toBe('fetch-failed')
+    }
+    // Page state reflects the error so the banner renders Retry.
+    const ps = controller.state.get('NB/S/P')
+    expect(ps?.status).toBe('error')
+    expect(ps?.result?.ok).toBe(false)
+    controller.dispose()
   })
 })

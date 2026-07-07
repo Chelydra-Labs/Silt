@@ -26,7 +26,14 @@ const { mockController, mockAppSettings } = vi.hoisted(() => {
   return { mockController, mockAppSettings }
 })
 
-vi.mock('./index', () => ({ getController: () => mockController }))
+vi.mock('./index', () => ({
+  getController: () => mockController,
+  // The contract under test: SummaryBanner must use THIS id (the one the host
+  // registers the banner under) for its data-banner-close attribute. Providing
+  // it via the mock verifies the component reads the imported binding rather
+  // than a hardcoded literal.
+  BANNER_SURFACE_ID: 'silt-ai-summary:banner'
+}))
 vi.mock('../../../settings/store.svelte', () => ({
   settings: mockAppSettings,
   loadConfig: vi.fn(),
@@ -62,6 +69,20 @@ describe('SummaryBanner', () => {
     mockController.generateFor.mockResolvedValue({ ok: true, result: {} })
     mockAppSettings.config.ai.chat.model = 'qwen3:30b'
     mockAppSettings.config.ai.chat.provider_type = 'local'
+  })
+
+  it('sets data-banner-close to the registered surface id (cross-banner focus contract)', () => {
+    // The host's PluginNoteBanners queries `[data-banner-close="<registered id>"]`
+    // to forward focus after a dismiss. A mismatch silently drops focus. This
+    // pins the contract: the close button carries the imported BANNER_SURFACE_ID.
+    const { container } = render(SummaryBanner, {
+      props: { ctx: makeCtx(), onDismiss: () => {} }
+    })
+    const closeBtn = container.querySelector<HTMLButtonElement>(
+      '[data-banner-close="silt-ai-summary:banner"]'
+    )
+    expect(closeBtn).toBeTruthy()
+    expect(closeBtn?.getAttribute('aria-label')).toBe('Dismiss AI summary')
   })
 
   it('renders the unconfigured nudge when no chat model is configured', () => {
@@ -175,6 +196,49 @@ describe('SummaryBanner', () => {
     await fireEvent.click(getByRole('button', { name: /Dismiss AI summary/i }))
     expect(ctx.updatePluginSetting).toHaveBeenCalledWith('dismissed_notes', [PAGE_ID])
     expect(dismissed).toBe(true)
+  })
+
+  it('bounds dismissed_notes to MAX_DISMISSED, dropping the oldest entry', async () => {
+    // Pre-fill the dismissed list past the cap so the new dismiss must trim.
+    // pageId for this render is Work/Journal/Daily; the list holds 500 prior
+    // ids, so appending one more (501) drops the oldest.
+    const stale: string[] = Array.from({ length: 500 }, (_, i) => `NB/S/p${i}`)
+    mockController.getSettings = vi.fn((): SummarySettings => ({
+      auto_on_open: true,
+      on_demand_only: false,
+      summary_length: 'medium',
+      facets: { tasks: true, risks: true, decisions: true },
+      regenerate_debounce_ms: 3000,
+      max_note_chars: 12000,
+      dismissed_notes: stale
+    }))
+    setPageState({
+      status: 'ready',
+      stale: false,
+      result: {
+        ok: true,
+        result: {
+          summary: 's',
+          tasks: [],
+          risks: [],
+          decisions: [],
+          newItems: { tasks: [], risks: [], decisions: [] },
+          fromCache: false,
+          model: 'm',
+          generatedAt: '2026-07-06T10:00:00Z'
+        }
+      }
+    })
+    const ctx = makeCtx()
+    const { getByRole } = render(SummaryBanner, {
+      props: { ctx, onDismiss: () => {} }
+    })
+    await fireEvent.click(getByRole('button', { name: /Dismiss AI summary/i }))
+    const saved = (ctx.updatePluginSetting as ReturnType<typeof vi.fn>).mock.calls[0][1] as string[]
+    expect(saved).toHaveLength(500)
+    expect(saved[saved.length - 1]).toBe(PAGE_ID)
+    // Oldest entry (p0) was trimmed to make room.
+    expect(saved[0]).toBe('NB/S/p1')
   })
 
   it('triggers a forced regeneration when Regenerate is clicked', async () => {

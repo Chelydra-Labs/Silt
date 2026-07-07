@@ -177,7 +177,25 @@ export function createSummaryController(providerInfo: () => ProviderInfo = readP
             opts.page ?? ctx.activePage
           )
         } catch {
-          content = ''
+          // A content-read failure (locked vault, disk error, query failure) is
+          // NOT an empty note. Surfacing it as 'fetch-failed' lets the banner
+          // show Retry instead of the muted "Nothing to highlight" — the user
+          // keeps a retryable error signal rather than a silent mislabel.
+          const outcome: SummaryOutcome = {
+            ok: false,
+            error: {
+              code: 'fetch-failed',
+              message:
+                "Couldn't read this note's content. The vault may be busy or the note unavailable."
+            }
+          }
+          if (generations.get(pageId) === gen) {
+            setStatus(pageId, 'error')
+            const cur = state.get(pageId)
+            if (cur) cur.result = outcome
+            else state.set(pageId, { status: 'error', result: outcome })
+          }
+          return outcome
         }
       }
       return run(ctx, pageId, content, !!opts.force, gen)
