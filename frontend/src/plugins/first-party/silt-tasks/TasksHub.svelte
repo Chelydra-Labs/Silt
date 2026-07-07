@@ -129,21 +129,25 @@
   // user's preferences. Re-hydrate when the on-disk silt-tasks slice reference
   // changes — but only if the user hasn't touched the views since mount (an
   // in-session edit wins over a stale external snapshot).
-  let lastExternalSavedViews: unknown = undefined
+  let lastExternalSlice: unknown = undefined
   let savedViewsHydrated = false
   $effect(() => {
     const tasksSettings =
       settingsStore.config?.plugins?.plugin_settings?.['silt-tasks']
-    const ref = tasksSettings?.saved_views
+    // Track the whole silt-tasks slice, not just saved_views: a vault with no
+    // saved_views (fresh vault or display-prefs-only) has undefined on both
+    // the baseline and post-loadConfig runs, so undefined === undefined would
+    // early-return and skip the re-hydration of the other dimensions.
+    const ref = tasksSettings
     if (!savedViewsHydrated) {
       // First run captures the baseline; the mount block above already did
       // the initial hydration from the same snapshot.
-      lastExternalSavedViews = ref
+      lastExternalSlice = ref
       savedViewsHydrated = true
       return
     }
-    if (ref === lastExternalSavedViews) return
-    lastExternalSavedViews = ref
+    if (ref === lastExternalSlice) return
+    lastExternalSlice = ref
     // An in-session edit flips savedViewsDirty; don't clobber it.
     if (getTaskHubState().savedViewsDirty) return
     const views = loadSavedViews()
@@ -222,17 +226,10 @@
           dir +
           MODES.length) %
         MODES.length
-    for (let i = 0; i < MODES.length; i++) {
-      const next =
-        (((start + i * dir) % MODES.length) + MODES.length) % MODES.length
-      if (next !== start || i === 0) {
-        chooseMode(MODES[next].value)
-        ;(e.currentTarget as HTMLElement)
-          .querySelector<HTMLElement>(`[data-mode="${MODES[next].value}"]`)
-          ?.focus()
-        return
-      }
-    }
+    chooseMode(MODES[start].value)
+    ;(e.currentTarget as HTMLElement)
+      .querySelector<HTMLElement>(`[data-mode="${MODES[start].value}"]`)
+      ?.focus()
   }
 
   // --- Scope breadcrumb --------------------------------------------------
@@ -379,7 +376,12 @@
       groupBy: hubState.groupBy,
       sort: hubState.sort,
       scope: hubState.scope,
-      filters: { ...hubState.filters },
+      filters: {
+        owners: [...hubState.filters.owners],
+        priorities: [...hubState.filters.priorities],
+        dueDate: hubState.filters.dueDate,
+        tags: [...hubState.filters.tags]
+      },
       calendarSubMode: hubState.calendarSubMode,
       columns: [...hubState.columns],
       system: false,

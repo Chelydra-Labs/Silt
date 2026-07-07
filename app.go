@@ -32,6 +32,10 @@ var versionBytes []byte
 // VERSION file. Used for plugin minSiltVersion enforcement.
 var appVersion = strings.TrimSpace(string(versionBytes))
 
+// migratorConfigSave is a var so tests can inject a failure and verify
+// the retry-on-next-launch contract (mirrors the auditActor var pattern).
+var migratorConfigSave = config.Save
+
 type App struct {
 	ctx          context.Context
 	db           *db.DatabaseManager
@@ -548,6 +552,40 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		}
 	}
 
+	// Phase 9 (#431): one-time migration of legacy silt-calendar /
+	// silt-kanban plugin settings into the unified silt-tasks schema. The
+	// gate is checked against the RAW on-disk YAML (not the in-memory cfg,
+	// which always has silt-tasks via the Defaults merge) — so once the
+	// migration has written silt-tasks to config.yaml, every subsequent
+	// launch is a no-op. Old keys stay on disk for one release so a
+	// downgrade still sees the user's prior config. Mirrors the F4 grants
+	// migration pattern: read raw YAML → check gate → merge under configMu
+	// → atomic Save + RegisterSelfWrite.
+	// (accepted TOCTOU; external edits in the load→save window are reverted
+	// — mirrors F4 grants pattern.)
+	var taskMigrationSaveErr error
+	rawTaskSettings := vault.LoadLegacyTaskPluginSettings(vaultPath)
+	if migrated := vault.MigrateLegacyTaskPluginSettings(a.cfg, rawTaskSettings); migrated != nil {
+		a.configMu.Lock()
+		if a.cfg.Plugins.PluginSettings == nil {
+			a.cfg.Plugins.PluginSettings = map[string]any{}
+		}
+		a.cfg.Plugins.PluginSettings["silt-tasks"] = migrated
+		if a.configWatcher != nil {
+			a.configWatcher.RegisterSelfWrite()
+		}
+		saveErr := migratorConfigSave(a.vaultPath, a.cfg)
+		a.configMu.Unlock()
+		if saveErr != nil {
+			// Best-effort: log and continue. The migration retries on the
+			// next launch (the gate is still "silt-tasks absent in YAML")
+			// and the in-memory cfg already holds the merged settings so
+			// the current session is consistent.
+			log.Printf("[WARN] task plugin migration save failed: %v", saveErr)
+			taskMigrationSaveErr = saveErr
+		}
+	}
+
 	// #218: move any plaintext AI provider keys into the OS keyring on first
 	// run after upgrade. Best-effort + idempotent — if the keyring is off or
 	// unavailable, plaintext keys are left in config (the documented fallback).
@@ -639,6 +677,9 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// indexed (valid metadata, no scan error) get a files row — a file that
 	// failed to parse shouldn't be marked "unchanged" next time.
 	var allWarnings []string
+	if taskMigrationSaveErr != nil {
+		allWarnings = append(allWarnings, fmt.Sprintf("task plugin migration save failed: %v", taskMigrationSaveErr))
+	}
 	for _, res := range changed {
 		if res.Err != nil {
 			allWarnings = append(allWarnings, fmt.Sprintf("%s: %v", res.Path, res.Err))

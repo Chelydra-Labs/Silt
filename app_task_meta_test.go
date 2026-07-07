@@ -654,6 +654,25 @@ func TestSetTaskOrder_NegativeRejects(t *testing.T) {
 	}
 }
 
+// TestSetTaskOrder_OverMillionRejects mirrors the negative-rejection guard:
+// the 1,000,001 ceiling is a contract violation (not user intent), so the
+// backend rejects up front and leaves the file untouched.
+func TestSetTaskOrder_OverMillionRejects(t *testing.T) {
+	app := newTestApp(t)
+	const id = "5656ccdd-1111-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "OrderOverMillion", "2026-07-01", content)
+
+	before, _ := os.ReadFile(filePath)
+	if err := app.SetTaskOrder(id, 1_000_001); err == nil {
+		t.Fatal("expected error for order > 1,000,000, got nil")
+	}
+	after, _ := os.ReadFile(filePath)
+	if string(before) != string(after) {
+		t.Errorf("file must NOT be written on rejected order\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
 // TestPluginSetTaskOrder_GatedByCapability mirrors the content-mutate gate
 // pattern: a third-party plugin without the grant is denied; the same
 // plugin with content-mutate succeeds and the file gets the token.
@@ -797,5 +816,95 @@ func TestPluginSetTaskOrders_GatedByCapability(t *testing.T) {
 	}
 	if !strings.Contains(taskLineForID(string(updated), id2), "[order:: 1]") {
 		t.Errorf("granted batch should have stamped [order:: 1] on id2")
+	}
+}
+
+// TestSetTaskOrders_DuplicateIDLastOrderWins pins the round-3 fix that
+// changed len(group) → len(orderByID): a duplicate id in the input produces
+// two pending entries but only one block to find, so the old check reported a
+// phantom shortfall and errored. With the map-dedup, the last value wins
+// (map assignment is last-write-wins) and no error is returned.
+func TestSetTaskOrders_DuplicateIDLastOrderWins(t *testing.T) {
+	app := newTestApp(t)
+	const id = "5656ee11-2222-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "OrderDupID", "2026-07-01", content)
+
+	if err := app.SetTaskOrders([]string{id, id}, []int{5, 10}); err != nil {
+		t.Fatalf("SetTaskOrders duplicate id: %v", err)
+	}
+	updated, _ := os.ReadFile(filePath)
+	line := taskLineForID(string(updated), id)
+	// Last value wins via map dedup (orderByID[id] = 5, then overwritten to 10).
+	if !strings.Contains(line, "[order:: 10]") {
+		t.Errorf("expected [order:: 10] (last value wins) in line: %s", line)
+	}
+
+	tasks, err := app.db.QueryTasksWithFilters(parser.TaskQueryFilter{})
+	if err != nil {
+		t.Fatalf("QueryTasks: %v", err)
+	}
+	for _, tk := range tasks {
+		if tk.ID == id {
+			if tk.ManualOrder != 10 {
+				t.Errorf("index: expected manual_order=10, got %d", tk.ManualOrder)
+			}
+			return
+		}
+	}
+	t.Errorf("subject %s not returned by QueryTasks", id)
+}
+
+// TestSetTaskOrders_WritesEachFileAtomically verifies the per-file atomicity
+// contract: tasks spread across two different files (different page names)
+// each get their own read-parse-render-write-reindex cycle, so both files are
+// written and the index reflects all orders.
+func TestSetTaskOrders_WritesEachFileAtomically(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		idA1 = "5656ff11-2222-1111-1111-111111111111"
+		idA2 = "5656ff22-2222-1111-1111-111111111111"
+		idB1 = "5656ff33-2222-1111-1111-111111111111"
+	)
+	contentA := "- [ ] first <!-- id: " + idA1 + " -->\n" +
+		"- [ ] second <!-- id: " + idA2 + " -->\n"
+	contentB := "- [ ] third <!-- id: " + idB1 + " -->\n"
+	// Different page names → different files (same notebook/section).
+	fileA := indexTestFile(t, app, "W", "S", "OrderMultiA", "2026-07-01", contentA)
+	fileB := indexTestFile(t, app, "W", "S", "OrderMultiB", "2026-07-01", contentB)
+
+	ids := []string{idA1, idA2, idB1}
+	orders := []int{2, 1, 3}
+	if err := app.SetTaskOrders(ids, orders); err != nil {
+		t.Fatalf("SetTaskOrders multi-file: %v", err)
+	}
+
+	// Both files must carry their respective [order::] tokens.
+	updatedA, _ := os.ReadFile(fileA)
+	updatedB, _ := os.ReadFile(fileB)
+	strA, strB := string(updatedA), string(updatedB)
+	if want := "[order:: 2]"; !strings.Contains(taskLineForID(strA, idA1), want) {
+		t.Errorf("file A idA1: expected %s in line: %s", want, taskLineForID(strA, idA1))
+	}
+	if want := "[order:: 1]"; !strings.Contains(taskLineForID(strA, idA2), want) {
+		t.Errorf("file A idA2: expected %s in line: %s", want, taskLineForID(strA, idA2))
+	}
+	if want := "[order:: 3]"; !strings.Contains(taskLineForID(strB, idB1), want) {
+		t.Errorf("file B idB1: expected %s in line: %s", want, taskLineForID(strB, idB1))
+	}
+
+	// Index reflects all three orders across both files.
+	tasks, err := app.db.QueryTasksWithFilters(parser.TaskQueryFilter{})
+	if err != nil {
+		t.Fatalf("QueryTasks: %v", err)
+	}
+	orderByID := make(map[string]int)
+	for _, tk := range tasks {
+		orderByID[tk.ID] = tk.ManualOrder
+	}
+	for i, id := range ids {
+		if orderByID[id] != orders[i] {
+			t.Errorf("index: id %s expected manual_order=%d, got %d", id, orders[i], orderByID[id])
+		}
 	}
 }

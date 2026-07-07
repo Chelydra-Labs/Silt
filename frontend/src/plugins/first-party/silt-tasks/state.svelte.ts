@@ -319,6 +319,12 @@ export function setActiveFilter(f: CalendarFilter): void {
 /** Reset the filter to 'all' (the X / "All Tasks" affordance). */
 export function clearActiveFilter(): void {
   _state.activeFilter = 'all'
+  // Clear dueDate so "All Tasks" shows every task even after a saved view
+  // set a date filter. The other filters (owners/priorities/tags) are
+  // independent selections and stay; dueDate is the only dimension "All
+  // Tasks" semantically overrides.
+  _state.filters.dueDate = ''
+  markDirtyIfViewActive()
 }
 
 /**

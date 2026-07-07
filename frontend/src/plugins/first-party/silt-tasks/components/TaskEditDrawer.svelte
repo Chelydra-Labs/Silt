@@ -61,7 +61,11 @@
       // tabindex=-1 lets the panel receive focus without joining the tab order.
       tick().then(() => panelRef?.focus())
     } else if (previouslyFocused) {
-      previouslyFocused.focus?.()
+      // Guard against a detached node: open A → open B → close can leave
+      // previouslyFocused pointing at a card that re-rendered away.
+      if (previouslyFocused.isConnected) {
+        previouslyFocused.focus?.()
+      }
       previouslyFocused = null
     }
   })

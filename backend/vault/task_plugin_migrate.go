@@ -25,6 +25,8 @@ import (
 // The on-disk YAML is read via a throwaway partial decode (not config.Load,
 // which merges Defaults and would always populate silt-tasks — defeating the
 // gate). This mirrors LoadLegacyVaultGrants.
+// (accepted TOCTOU; external edits in the load→save window are reverted —
+// mirrors F4 grants pattern)
 
 // LegacyTaskPluginSettings is a partial decode of config.yaml's
 // plugins.plugin_settings subtree, scoped to ONLY what the migrator needs to

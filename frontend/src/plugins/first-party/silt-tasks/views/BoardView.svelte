@@ -1048,6 +1048,9 @@
                   ondragstart={(e) => onDragStart(e, card, col.key)}
                   ondragend={cleanupDrag}
                   ondragover={(e) => onCardDragOver(e, card, col)}
+                  ondragleave={() => {
+                    if (dragOverCardId === card.id) dragOverCardId = null
+                  }}
                   ondrop={(e) => onCardDrop(e, card, col)}
                   onkeydown={(e) => onCardKeydown(e, card, col)}
                   onclick={() => (selectedCard = card)}

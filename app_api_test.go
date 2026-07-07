@@ -2278,8 +2278,15 @@ func TestGetPluginSettingsForNotebook_KanbanFallsBackToTasks(t *testing.T) {
 	app.configMu.Lock()
 	delete(app.cfg.Plugins.PluginSettings, "silt-kanban")
 	app.cfg.Plugins.PluginSettings["silt-tasks"] = map[string]any{
-		"columns":      []any{"Vault-1", "Vault-2"},
-		"vault_marker": "from-vault",
+		"columns":       []any{"Vault-1", "Vault-2"},
+		"vault_marker":  "from-vault",
+		"default_scope": "notebook",
+		"filters": map[string]any{
+			"owners":     []any{"Alice"},
+			"priorities": []any{1, 2},
+			"dueDate":    "today",
+			"tags":       []any{"work"},
+		},
 	}
 	app.configMu.Unlock()
 
@@ -2318,6 +2325,29 @@ func TestGetPluginSettingsForNotebook_KanbanFallsBackToTasks(t *testing.T) {
 	// Linked-only key added through the alias merge.
 	if got["linked_marker"] != "from-linked" {
 		t.Errorf("expected linked_marker added through alias, got %v", got["linked_marker"])
+	}
+	// filters round-trip through the alias: the vault's silt-tasks.filters
+	// map must survive the alias (deep-merged, not dropped) so a stale
+	// kanban frontend sees the same filter shape silt-tasks would return.
+	filters, ok := got["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected filters map through alias, got %T", got["filters"])
+	}
+	if owners, _ := filters["owners"].([]any); len(owners) != 1 || owners[0] != "Alice" {
+		t.Errorf("expected filters.owners=[Alice] through alias, got %v", filters["owners"])
+	}
+	if priorities, _ := filters["priorities"].([]any); len(priorities) != 2 {
+		t.Errorf("expected filters.priorities len 2 through alias, got %v", filters["priorities"])
+	}
+	if filters["dueDate"] != "today" {
+		t.Errorf("expected filters.dueDate=today through alias, got %v", filters["dueDate"])
+	}
+	if tags, _ := filters["tags"].([]any); len(tags) != 1 || tags[0] != "work" {
+		t.Errorf("expected filters.tags=[work] through alias, got %v", filters["tags"])
+	}
+	// default_scope round-trips through the alias.
+	if got["default_scope"] != "notebook" {
+		t.Errorf("expected default_scope=notebook through alias, got %v", got["default_scope"])
 	}
 }
 
@@ -2932,5 +2962,67 @@ func TestApplyConfigLocked_PrunesStaleQuarantineEntries(t *testing.T) {
 	app.configMu.RUnlock()
 	if stillQuarantined {
 		t.Fatal("applyConfigLocked must prune quarantine entries for removed links")
+	}
+}
+
+// TestTaskMigration_SaveFailureSurfacesAndRetries verifies the migrator's
+// "best-effort + idempotent retry on next launch" contract: when config.Save
+// fails, the in-memory cfg still holds the migrated data (session consistent),
+// the gate stays open (silt-tasks absent from on-disk YAML), and a retry
+// succeeds once the save path is restored.
+func TestTaskMigration_SaveFailureSurfacesAndRetries(t *testing.T) {
+	app := newTestApp(t)
+
+	// Overwrite the scaffolded config with legacy YAML (no silt-tasks key).
+	configPath := filepath.Join(app.vaultPath, ".system", "config.yaml")
+	legacyYAML := "plugins:\n  plugin_settings:\n    silt-kanban:\n      columns: [TODO, DOING, DONE]\n      boards:\n        - id: b1\n          name: My Board\n          scope: vault\n          filters:\n            owners: []\n            priorities: []\n            dueDate: \"\"\n            tags: []\n"
+	if err := os.WriteFile(configPath, []byte(legacyYAML), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// The migrator should produce a non-nil result (gate is open).
+	rawSettings := vault.LoadLegacyTaskPluginSettings(app.vaultPath)
+	migrated := vault.MigrateLegacyTaskPluginSettings(app.cfg, rawSettings)
+	if migrated == nil {
+		t.Fatal("expected non-nil migration result for legacy vault")
+	}
+
+	// Inject a save failure via the var indirection.
+	origSave := migratorConfigSave
+	migratorConfigSave = func(string, config.SystemConfig) error {
+		return fmt.Errorf("simulated disk full")
+	}
+	defer func() { migratorConfigSave = origSave }()
+
+	// The save fails — simulating the app.go error path.
+	if err := migratorConfigSave(app.vaultPath, app.cfg); err == nil {
+		t.Fatal("expected save to fail with injected error")
+	}
+
+	// The in-memory cfg still has the migrated data (session consistent).
+	app.cfg.Plugins.PluginSettings["silt-tasks"] = migrated
+	tasksEntry, ok := app.cfg.Plugins.PluginSettings["silt-tasks"].(map[string]any)
+	if !ok || tasksEntry["default_group_by"] != "dueDate" {
+		t.Fatal("in-memory cfg should have silt-tasks with migrated data")
+	}
+
+	// The gate is still open (silt-tasks NOT in on-disk YAML because save failed).
+	rawSettings2 := vault.LoadLegacyTaskPluginSettings(app.vaultPath)
+	migrated2 := vault.MigrateLegacyTaskPluginSettings(app.cfg, rawSettings2)
+	if migrated2 == nil {
+		t.Fatal("expected non-nil migration on retry (gate should still be open)")
+	}
+
+	// Restore save — retry succeeds.
+	migratorConfigSave = origSave
+	if err := migratorConfigSave(app.vaultPath, app.cfg); err != nil {
+		t.Fatalf("retry save should succeed: %v", err)
+	}
+
+	// The gate is now closed (silt-tasks IS in on-disk YAML).
+	rawSettings3 := vault.LoadLegacyTaskPluginSettings(app.vaultPath)
+	migrated3 := vault.MigrateLegacyTaskPluginSettings(app.cfg, rawSettings3)
+	if migrated3 != nil {
+		t.Error("expected nil migration after successful save (gate should be closed)")
 	}
 }
