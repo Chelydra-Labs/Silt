@@ -417,7 +417,7 @@ Standard glow ring
 
 Transitions status to next cycle
 
-Kanban Task Card
+Board Card
 
 var(--color-panel) base, no offset
 
@@ -437,7 +437,7 @@ Hover Interaction Transitions: Duration: 120ms for color changes and layout shif
 
 Command Menu Initialization: Scale transition from 0.97 to 1.0 combined with opacity fade-in. Duration: 100ms.
 
-Kanban Card Drag-Reorder: Uses compile-time svelte/animate (using Svelte's native flip transition mechanics). Duration: 200ms with linear-out motion.
+Board Card Drag-Reorder: Uses compile-time svelte/animate (using Svelte's native flip transition mechanics). Duration: 200ms with linear-out motion.
 
 7. Picker & Selection UX
 

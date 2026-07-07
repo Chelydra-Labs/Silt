@@ -112,11 +112,11 @@ capability is deferred until the signing/trust model matures.
 
 ### 4.4 First-party ID reservation (F5)
 
-The ids `silt-calendar`, `silt-kanban`, `silt-attachments` are
-reserved for the bundled first-party plugins. A third-party archive claiming
-one is rejected at install time (`plugins.Validate`) with a clear error, and
-re-checked in `plugins.Install` as defense in depth. The match is exact —
-near-collision ids like `silt-kanban2` are accepted.
+The ids `silt-tasks`, `silt-attachments` are reserved for the bundled
+first-party plugins. A third-party archive claiming one is rejected at
+install time (`plugins.Validate`) with a clear error, and re-checked in
+`plugins.Install` as defense in depth. The match is exact — near-collision
+ids like `silt-tasks2` are accepted.
 
 ### 4.5 Network safety (F13)
 

@@ -46,8 +46,8 @@ correctness regression, not a style choice.
 | Tier | Format | Location | Holds | Example |
 |---|---|---|---|---|
 | **Content** | Markdown (`.md`) | Vault root + per-page files | Block bodies, task markers, per-task metadata, block identity (`<!-- id: uuid @ YYYY-MM-DD -->`) | `[/] DOING TASK [Alice] (2026-06-15) #2 !pin [p:50] Implement search <!-- id: 7c2a… @ 2026-06-15 -->` |
-| **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Kanban columns, Kanban filter state, hotkey bindings, editor font sizes, theme typography overrides | `plugins.plugin_settings.silt-kanban.columns: [Backlog, In Progress, Review, Done]` |
-| **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook. Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-kanban.columns: [Backlog, Done]` |
+| **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Tasks hub saved views + display mode/grouping/sort, hotkey bindings, editor font sizes, theme typography overrides | `plugins.plugin_settings.silt-tasks.saved_views: [{name: "Today's Board", displayMode: board, groupBy: status, columns: [TODO, DOING, DONE]}]` |
+| **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook. Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-tasks.default_group_by: status` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
 | **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
 | **Plugin-owned storage** | SQLite (WAL) | `<vault>/.system/plugins/<id>/data/plugin.db` | Per-plugin private data the plugin owns the schema for: working memory OR durable storage at the plugin's discretion (embeddings, content-hash caches, agent memory). The plugin decides durability semantics; data that must survive uninstall or be portable MUST round-trip through markdown. | A plugin's `vec0` vector index, a content-hash cache table |
@@ -111,11 +111,12 @@ projections of those files, not the other way around.
 Notebook › Section › Page tree, both still plain markdown so the
 source-of-truth invariant holds:
 
-- **Standalone tasks** — tasks created from a quick-add surface (calendar
-  cell, kanban footer, global `Mod+Shift+N`) that aren't attached to a note
+- **Standalone tasks** — tasks created from a quick-add surface (any
+  silt-tasks quick-add surface — Calendar day cell, Board column footer,
+  List footer, global `Mod+Shift+N`) that aren't attached to a note
   live as GFM checkboxes in `<vault>/.silt/tasks.md`, indexed under a
   synthetic hidden `.silt` notebook (no new SQL table, no nullable
-  `block_id`). The Tasks first-party plugin is the only user-facing surface
+  `block_id`). The silt-tasks hub is the only user-facing surface
   for them; every navigation funnel re-routes `.silt` jumps to it. See
   SPECS §4.1 for the feature design.
 - **Recurring tasks** — a `[recur:: RULE]` token is cached in `tasks.recur`
@@ -269,7 +270,7 @@ CREATE TABLE tags (
 -- means "block_id is blocked by blocked_by_id". Both FKs cascade so a deleted
 -- block cleans up its edges as a dependent and as a blocker. Re-derivable
 -- from markdown (rule 4); the reverse-lookup index on blocked_by_id serves
--- the DONE-branch fan-out and the Kanban/Agenda "blocked" badge.
+-- the DONE-branch fan-out and the silt-tasks "blocked" badge.
 CREATE TABLE task_dependencies (
     block_id      TEXT NOT NULL,
     blocked_by_id TEXT NOT NULL,
@@ -408,7 +409,7 @@ vault's. The merge is computed on every call from the live, mtime-cached
 co-located config (see `App.linkedConfigs`), so an external edit is reflected
 on the next call. The multi-root watcher observes `<linkedRoot>/.system/
 config.yaml` and emits `linked-config:changed` on external edit, driving
-reactive refreshes (e.g. Kanban columns/filters re-resolve on the switch).
+reactive refreshes (e.g. Tasks hub saved views/filters re-resolve on the switch).
 
 Resolution surface: `App.GetPluginSettingsForNotebook(pluginID, notebookName)`
 is the IPC binding that resolves a plugin's settings for the active notebook
@@ -431,7 +432,7 @@ type MutateBlockPayload struct {
 }
 
 
-4.2 Query Filter Envelope (Agenda / Calendar)
+4.2 Query Filter Envelope (silt-tasks)
 
 type TaskQueryFilter struct {
 	Owner     string   `json:"owner"`
@@ -456,12 +457,18 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `SetTaskOwner` / `SetTaskPriority` / `SetTaskTags` / `SetTaskTitle`
   (and their `Plugin*` SDK wrappers) follow the same atomic-rewrite +
   `block:changed` shape as `SetTaskDueDate` / `SetTaskRecurrence`.
+  `SetTaskOrder` / `PluginSetTaskOrder` rewrite the 1-based `[order:: N]`
+  manual-sort token (clears it on `0`; negative values are rejected up
+  front so a UI glitch can't stamp an off-by-one into the file).
   `SetTaskTags` takes the full new tag set (the backend does the surgical
   `#hashtag` add/remove on the prose); `SetTaskTitle` rewrites only the
   prose, preserving `#tags`, `((uuid))` refs, and inline `[key:: value]`
   tokens. **Sub-editor**: `FetchSubtree`
-  (read-only child sub-tree extraction) and `SaveSubtreeBlocks` (atomic
-  sub-tree splice through the canonical write chain).
+  (read-only child sub-tree extraction; also hydrates `block_meta`
+  comment attribution for NOTE children) and `SaveSubtreeBlocks` (atomic
+  sub-tree splice through the canonical write chain). **Local author**:
+  `GetLocalAuthor` returns the host OS username (the default seed for the
+  per-vault `local_author` pref that attributes Task comment threads).
 - **Navigation CRUD** — `CreateNotebook` / `OpenNotebook` /
   `PickNotebookFolder`, `CreateSection`, `CreatePage` / `MovePage`
   (cross-section; `section` may be `""`). Silt starts blank — the user opens
@@ -699,13 +706,13 @@ Each tab carries a `viewMode: 'edit' | 'source'` on its `TabEntry` (`frontend/sr
 
 The `handleDrop` ProseMirror plugin is deliberately conservative: it returns `true` (and dispatches the indent-aware transaction) only when it can prove the dragged identity, the drop target, and the resolved depth are all unambiguous; on any uncertainty it returns `false` and hands control back to ProseMirror's native reorder-only drop. The identity check is `$old.nodeAfter.eq(draggedNode)` against the drag source's `NodeSelection`, so a stale drag position (e.g. an editor re-render mid-drag) can never delete or indent the wrong block — a false `true` here is document-mutating. The interactive HTML5 drag pipeline has no jsdom equivalent (no real `DataTransfer` / layout-driven `posAtCoords`), so the end-to-end path is gated on the TESTING.md manual matrix.
 
-5.3 Drag-and-Drop Kanban Board
+5.3 Board Display Mode (silt-tasks)
 
-The Kanban board is a first-party plugin (`silt-kanban`, `frontend/src/plugins/first-party/silt-kanban/Kanban.svelte`) that uses the identical `PluginContext` SDK as Agenda and Calendar — no direct `window.go.*` access. It queries tasks via `ctx.sqliteQuery` and shifts status via `ctx.updateBlockState`, preserving the "core feature decoupling" contract (SPECS §8.3).
+The Board is one of three display modes hosted by the unified `silt-tasks` plugin (`frontend/src/plugins/first-party/silt-tasks/views/BoardView.svelte`, mounted inside `TasksHub.svelte`). It uses the identical `PluginContext` SDK as any third-party plugin — no direct `window.go.*` access. It reads the task set via the shared SQL builder (`silt-tasks/query.ts`) against the unified hub state (`state.svelte.ts`) and shifts status via `ctx.updateBlockState`, preserving the "core feature decoupling" contract (SPECS §8.3).
 
-Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` and animated with Svelte's native `svelte/animate/flip` (200ms cubic-out, per DESIGN.md §6). HTML5 drag-and-drop drives the data; the FLIP animation repositions remaining cards in the same paint frame. Keyboard users change status with ArrowLeft/ArrowRight directly; Enter/click opens the shared non-blocking inspector drawer (`first-party/shared/TaskEditDrawer.svelte` — the same component Tasks uses, #410) and `Shift+Enter` opens the shared scoped sub-editor (`TaskSubEditorModal`). The board supports multi-level scope (vault / notebook / section / page) via a segmented control, with the SQL `WHERE` clause built per scope level.
+Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` and animated with Svelte's native `svelte/animate/flip` (200ms cubic-out, per DESIGN.md §6). HTML5 drag-and-drop drives the data; the FLIP animation repositions remaining cards in the same paint frame. Keyboard users change status with ArrowLeft/ArrowRight directly; Enter/click opens the shared non-blocking inspector drawer (`silt-tasks/components/TaskEditDrawer.svelte`) and `Shift+Enter` opens the shared scoped sub-editor (`TaskSubEditorModal`). The board supports multi-level scope (vault / notebook / section / page) via a segmented control, with the SQL `WHERE` clause built per scope level. Cross-card and within-column drops persist a new `[order:: N]` manual-sort position via `ctx.setTaskOrder`.
 
-**Shared task hub foundation.** The forward-looking unified shared-state store (`TaskHubState`) and SQL-query factory (`buildQuery` with `groupBy`/`window` params) live under `first-party/silt-tasks/` as the foundation for a single hub that supersedes the parallel `focusState` / `kanbanSharedState` / Kanban query-builder modules. The modules are additive today; consumer migration is tracked for a later milestone. The `scopeUserOverride` invariant (a user-narrowed scope survives an automatic scope change) is preserved.
+**Unified hub state.** The Board is not a standalone plugin — it shares one `TaskHubState` reactive store and one `buildQuery` SQL factory with the List and Calendar modes. The hub state (scope + filters + `focusDate` + `activeFilter` + `displayMode` + `groupBy` + `sort` + `columns` + saved views) is the single reactive source of truth the shell (`TasksHub.svelte`), the unified sidebar (`Sidebar.svelte`), and all three renderers read from and write to. The `scopeUserOverride` invariant (a user-narrowed scope survives an automatic scope change) lives in `setScope` / `narrowScopeTo` / `clearScopeOverride`.
 
 5.4 Search & Writing Aids
 
@@ -841,11 +848,11 @@ plugin.init(ctx: PluginContext)   ←   sqliteQuery (SELECT/WITH-only),
 plugin.onVaultOpen(ctx)             ←   v2 lifecycle hook
          │
          ▼
-App view router renders plugin:<id> via PluginView (or Agenda/Calendar slots)
+App view router renders plugin:<id> via PluginView (incl. the silt-tasks hub)
 
 Per-plugin load failures are collected and surfaced (PluginView shows a load-error notice) without aborting boot. The `plugins:changed` Wails event (emitted after install/uninstall/enable/disable) re-runs discovery.
 
-**Vault-switch lifecycle.** The Go `vault:closing` event fires before teardown so the loader can run every plugin's `onVaultClose`/`onShutdown` hook and clear the session registry; it also resets the first-party shared-state module globals (`resetKanbanState` / `resetFocusState`) so a switched vault doesn't inherit the previous scope, board owners/tags, filters, or `focusDate`. A `loadedPlugins.loadersReady` flag gates `PluginContext` construction in `Sidebar.svelte` and `PluginView.svelte`: the flag flips to `false` at the start of teardown and back to `true` once the next `loadPlugins` completes, so a sidebar that remounts during the clear→re-register window never captures a stale/empty session token (and `makePluginContext` is simply not called against a half-torn-down registry). The derived context re-runs on the flag, so the moment the new vault's plugins resolve the sidebar re-binds cleanly.
+**Vault-switch lifecycle.** The Go `vault:closing` event fires before teardown so the loader can run every plugin's `onVaultClose`/`onShutdown` hook and clear the session registry; it also resets the unified Tasks hub state (`resetTaskHubState` in `first-party/silt-tasks/state.svelte.ts`) so a switched vault doesn't inherit the previous display mode, scope, grouping, filters, saved views, or `focusDate`. A `loadedPlugins.loadersReady` flag gates `PluginContext` construction in `Sidebar.svelte` and `PluginView.svelte`: the flag flips to `false` at the start of teardown and back to `true` once the next `loadPlugins` completes, so a sidebar that remounts during the clear→re-register window never captures a stale/empty session token (and `makePluginContext` is simply not called against a half-torn-down registry). The derived context re-runs on the flag, so the moment the new vault's plugins resolve the sidebar re-binds cleanly.
 
 7.2 v2 SDK Capability & Permission Model
 
@@ -959,7 +966,7 @@ PluginContext is a thin frontend wrapper over four Wails bindings on App:
 
 7.5 Smart Graph Events
 
-Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, Notebook, Section, Page, FileDate}) so live embeds (`{{embed:uuid}}`) and references (`((uuid))`) refresh in real time. Emitted from MutateBlock, UpdateBlockState, and the post-write path of SaveFileBlocks; emission no-ops when ctx is nil (tests). The frontend EmbedPortal subscribes via EventsOn and re-fetches its source block when the event matches its uuid (a module-scoped render-stack guard stops recursive embed loops). When a block transitions to DONE, `UpdateBlockState` also fans the event out to every dependent task (those `[blocked_by::]` the just-completed block) so the Kanban/Agenda "blocked" badge and the DONE-confirm guard re-evaluate (#301).
+Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, Notebook, Section, Page, FileDate}) so live embeds (`{{embed:uuid}}`) and references (`((uuid))`) refresh in real time. Emitted from MutateBlock, UpdateBlockState, and the post-write path of SaveFileBlocks; emission no-ops when ctx is nil (tests). The frontend EmbedPortal subscribes via EventsOn and re-fetches its source block when the event matches its uuid (a module-scoped render-stack guard stops recursive embed loops). When a block transitions to DONE, `UpdateBlockState` also fans the event out to every dependent task (those `[blocked_by::]` the just-completed block) so the silt-tasks "blocked" badge and the DONE-confirm guard re-evaluate (#301).
 
 ---
 
@@ -1034,4 +1041,4 @@ TestAtomicWrite_KillMidWriteRecoversViaWAL (backend/db/db_test.go) simulates a d
 
 9.3 UI Frame-Budget Probe
 
-frontend/src/lib/perf/frame-budget.ts provides `measureFrameBudget(label, fn)` — a dev-only probe (gated on `?perf=1` in the URL; zero-cost pass-through otherwise) that wraps a callback in `performance.mark`/`measure` + `requestAnimationFrame` and logs the elapsed time against the 16ms frame budget. Instrumented on the three highest-stress paths: Kanban drag-drop settle, TipTap editor transaction (docToBlocks), and theme-token injection.
+frontend/src/lib/perf/frame-budget.ts provides `measureFrameBudget(label, fn)` — a dev-only probe (gated on `?perf=1` in the URL; zero-cost pass-through otherwise) that wraps a callback in `performance.mark`/`measure` + `requestAnimationFrame` and logs the elapsed time against the 16ms frame budget. Instrumented on the three highest-stress paths: Board drag-drop settle, TipTap editor transaction (docToBlocks), and theme-token injection.

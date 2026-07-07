@@ -184,7 +184,7 @@ placeholders:                               # optional; drives the picker form
 - Bugs resolved:
 ```
 
-> **Task shorthand:** lines using `- [ ] TODO TASK …` are recognized as indexed tasks and flow into the Kanban, Agenda, and Calendar views automatically. Plain `- [ ]` checkboxes are just notes — they don't appear in task views. See [`SPECS.md` §4](../SPECS.md) for the full task grammar.
+> **Task shorthand:** lines using `- [ ] TODO TASK …` are recognized as indexed tasks and flow into the unified Tasks hub automatically. Plain `- [ ]` checkboxes are just notes — they don't appear in task views. See [`SPECS.md` §4](../SPECS.md) for the full task grammar.
 
 ---
 
@@ -298,7 +298,7 @@ Manual verification (under 2 minutes with `wails dev`):
 2. Select **Daily Note** — the preview shows today's date and weekday.
 3. Enter a page name → **Create Page** → the new page opens with the rendered template.
 4. Type `/template` in the editor → select **Meeting Notes** → fill `meeting_title` → **Insert** → the blocks appear at the cursor.
-5. Verify action items (TODO TASK lines) appear in the Kanban view.
+5. Verify action items (TODO TASK lines) appear in the Tasks hub.
 6. Drop a custom `.md` into `<vault>/.system/templates/` → it appears in the picker without a restart.
 
 ---

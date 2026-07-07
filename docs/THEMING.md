@@ -29,7 +29,7 @@ leave them out:
 app          the root (always authored)
 ├─ sidebar      → app      (filetree/notebook list)
 ├─ editor       → app      (the TipTap writing canvas)
-├─ panel        → app      (docked panels, settings, kanban/calendar)
+├─ panel        → app      (docked panels, settings, silt-tasks)
 │  ├─ card        → panel    (cards, list items, callouts)
 │  └─ modal       → panel    (modal dialogs)
 │     └─ popover    → modal    (menus, dropdowns, tooltips, toasts)
@@ -105,7 +105,7 @@ Each zone is `{bg, border, text}`. Only **`surfaces.app`** is required; every ot
 | `surfaces.app.{bg,border,text}` | `--color-surface-app` / `-app-border` / `-app-text` | yes | The root canvas behind everything. `bg` also seeds the native window background (the pre-CSS paint color). |
 | `surfaces.sidebar.*` | `--color-surface-sidebar{,-border,-text}` | no | Folders / notebook list. Inherits from `app`. |
 | `surfaces.editor.*` | `--color-surface-editor{,-border,-text}` | no | The TipTap writing canvas. Inherits from `app`. |
-| `surfaces.panel.*` | `--color-surface-panel{,-border,-text}` | no | Docked panels, settings panes, kanban/calendar. Inherits from `app`. |
+| `surfaces.panel.*` | `--color-surface-panel{,-border,-text}` | no | Docked panels, settings panes, silt-tasks. Inherits from `app`. |
 | `surfaces.card.*` | `--color-surface-card{,-border,-text}` | no | Cards, list items, callouts. Inherits from `panel`. |
 | `surfaces.modal.*` | `--color-surface-modal{,-border,-text}` | no | Modal dialogs. Inherits from `panel`. |
 | `surfaces.popover.*` | `--color-surface-popover{,-border,-text}` | no | Menus, dropdowns, tooltips, toasts. Inherits from `modal`. |

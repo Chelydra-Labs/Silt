@@ -14,7 +14,7 @@
 
 Silt is a simple, ultra-fast, local-first note-taking app designed to capture stream-of-consciousness thoughts and connect them. Like silt carried by water, your daily notes are fleeting deposits that slowly settle, accumulate, and connect—ultimately building a fertile, structured foundation of knowledge.
 
-It bridges the gap between structured namespace notebooks and chronological daily streams. Silt treats human-readable plaintext Markdown files on your local drive as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into fully interactive **Agenda**, **Calendar**, and **Kanban** board interfaces.
+It bridges the gap between structured namespace notebooks and chronological daily streams. Silt treats human-readable plaintext Markdown files on your local drive as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into a unified **Tasks** hub with List, Board, and Calendar display modes.
 
 ---
 
@@ -38,7 +38,7 @@ Silt is built on the belief that your notes belong to you.
   ```
   **Recurring tasks** – Add `[recur:: every week]` to any task and Silt automatically generates the next instance when you complete it. Supported intervals: `every day`, `every weekday` (Mon–Fri), `every week`, `every N weeks`, `every month`, `every N months`, `every year`. The next due date is computed from the current due date, skipping any missed occurrences (no clutter from backfilled instances).
 - **Built-in & Custom Themes** – Styled with a "Cyber-Ink" design language. Ships with 11 premium themes including dark, light, playful, retro, and dual-surface (dark chrome + light page) palettes. Import or export your own as simple JSON files.
-- **Flexible Plugin SDK** – Dynamic viewports like Agenda, Calendar, and Kanban are decoupled as plugins. Extend Silt using native ES Modules in a secure runtime sandbox; plugins may carry their own per-plugin data store (including vector search) without touching the core Markdown index.
+- **Flexible Plugin SDK** – Dynamic viewports like the unified Tasks hub are decoupled as plugins. Extend Silt using native ES Modules in a secure runtime sandbox; plugins may carry their own per-plugin data store (including vector search) without touching the core Markdown index.
 - **Linked Notebooks** – Mount external folders (e.g., a synced OneDrive/SharePoint or Obsidian directory) directly without importing them. They are watched and edited in place.
 
 ---
