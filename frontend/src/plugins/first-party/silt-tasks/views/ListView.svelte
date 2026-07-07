@@ -218,10 +218,13 @@
   )
 
   // Report counts upward so the hub header stays in sync. Runs after every
-  // reload / filter / nav change.
+  // reload / filter / nav change. Both counts reflect what's displayed:
+  // open uses filteredOpen (filtered), done uses filteredDone (filtered to
+  // the active smart-list). Using unfiltered doneItems here would inflate
+  // the header count whenever a smart-list scope hid the completed rows.
   $effect(() => {
     const open = filteredOpen.length
-    const done = doneItems.length
+    const done = filteredDone.length
     onCountChange?.(open, done)
   })
 

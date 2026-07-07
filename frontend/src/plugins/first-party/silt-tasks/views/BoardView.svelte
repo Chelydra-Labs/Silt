@@ -198,13 +198,32 @@
     toCol: BoardColumn
   ) {
     const multiMembership = groupBy === 'tag'
+    // For tag drops, the card's tags field must be updated optimistically
+    // so a rapid successive drop reads the fresh tag set (not the stale one
+    // from before the first drop's block:changed reload). unionTags is the
+    // same helper dispatchDrop feeds to setTaskTags, so the optimistic
+    // value matches what the persist will land.
+    const tagUpdate =
+      multiMembership && toCol.value
+        ? { tags: unionTags(card, toCol.value).join('|') }
+        : {}
     columns = columns.map((c) => {
       if (c.key === toCol.key) {
         if (c.items.some((i) => i.id === card.id)) return c
-        return { ...c, items: [...c.items, { ...card }] }
+        return { ...c, items: [...c.items, { ...card, ...tagUpdate }] }
       }
       if (!multiMembership && c.key === fromColKey) {
         return { ...c, items: c.items.filter((i) => i.id !== card.id) }
+      }
+      // For tag DnD, the card stays in its other columns too — refresh its
+      // tags there as well so a later read sees the union.
+      if (multiMembership && c.items.some((i) => i.id === card.id)) {
+        return {
+          ...c,
+          items: c.items.map((i) =>
+            i.id === card.id ? { ...i, ...tagUpdate } : i
+          )
+        }
       }
       return c
     })
@@ -322,6 +341,28 @@
     pendingBlockedDone = null
     try {
       await ctx.updateBlockState(pending.card.id, 'DONE')
+      // Cross-column manual sort (#426): mirror commitDrop. The DONE jump is
+      // a cross-column move under manual sort, so the card needs an order
+      // token beyond the destination's tail. prev (snapshot at drag-start) is
+      // not in scope here; read the current destination column instead.
+      if (sort === 'manual') {
+        const destItems =
+          columns.find((c) => c.key === pending.toCol.key)?.items ?? []
+        const maxOrder =
+          destItems.length > 0
+            ? Math.max(...destItems.map((c) => c.manual_order ?? 0))
+            : 0
+        try {
+          await ctx.setTaskOrder(pending.card.id, maxOrder + 1)
+        } catch (e) {
+          moveError = e instanceof Error ? e.message : String(e)
+          // The status change already persisted; reload picks up on-disk state
+          // (new column, stale order value) rather than desyncing.
+          await reload()
+          liveMessage = 'Move partially failed — reloaded.'
+          return
+        }
+      }
       liveMessage = 'Task completed despite open prerequisites.'
     } catch (e) {
       moveError = e instanceof Error ? e.message : String(e)
@@ -542,9 +583,14 @@
     const v = renameValue.trim()
     renamingColKey = null
     if (!v || v === oldStatus || statusColumns.includes(v)) return
+    const prev = statusColumns
     statusColumns = statusColumns.map((c) => (c === oldStatus ? v : c))
     void persistColumns(statusColumns).then((ok) => {
-      if (!ok) configError = settings.error || 'Failed to save columns'
+      if (!ok) {
+        configError = settings.error || 'Failed to save columns'
+        statusColumns = prev
+        rebin()
+      }
     })
     rebin()
   }
@@ -554,10 +600,14 @@
   async function addColumn() {
     const name = window.prompt('New column name')?.trim()
     if (!name || statusColumns.includes(name)) return
+    const prev = statusColumns
     statusColumns = [...statusColumns, name]
     configError = ''
     const ok = await persistColumns(statusColumns)
-    if (!ok) configError = settings.error || 'Failed to save columns'
+    if (!ok) {
+      configError = settings.error || 'Failed to save columns'
+      statusColumns = prev
+    }
     rebin()
   }
   async function removeColumn(statusName: string) {
@@ -568,10 +618,14 @@
       )
     )
       return
+    const prev = statusColumns
     statusColumns = statusColumns.filter((c) => c !== statusName)
     configError = ''
     const ok = await persistColumns(statusColumns)
-    if (!ok) configError = settings.error || 'Failed to save columns'
+    if (!ok) {
+      configError = settings.error || 'Failed to save columns'
+      statusColumns = prev
+    }
     rebin()
   }
   function onColDragStart(e: DragEvent, i: number) {
@@ -592,12 +646,17 @@
     const from = colDragIndex
     colDragIndex = null
     if (from === i) return
+    const prev = statusColumns
     const next = [...statusColumns]
     const [moved] = next.splice(from, 1)
     next.splice(i, 0, moved)
     statusColumns = next
     void persistColumns(statusColumns).then((ok) => {
-      if (!ok) configError = 'Failed to save column order'
+      if (!ok) {
+        configError = 'Failed to save column order'
+        statusColumns = prev
+        rebin()
+      }
     })
     rebin()
   }

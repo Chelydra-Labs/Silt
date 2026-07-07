@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -313,7 +314,16 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 
 	// One write cycle per file. Each group shares the notebook/section/page
 	// of its members (they're in the same file by construction).
-	for _, group := range groups {
+	//
+	// Map iteration order is non-deterministic in Go; sort the keys first so
+	// a partial-failure across files produces reproducible behavior.
+	fileKeys := make([]string, 0, len(groups))
+	for k := range groups {
+		fileKeys = append(fileKeys, k)
+	}
+	sort.Strings(fileKeys)
+	for _, fk := range fileKeys {
+		group := groups[fk]
 		first := group[0]
 		safeNotebook := sanitizePathSegment(first.loc.Notebook)
 		safeSection := sanitizePathSegment(first.loc.Section)
@@ -360,8 +370,11 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 						}
 					}
 				}
-				if found != len(group) {
-					writeErr = fmt.Errorf("SetTaskOrders: expected %d task blocks in %s, found %d", len(group), filePath, found)
+				if found != len(orderByID) {
+					// Compare against unique-id count, not len(group): a duplicate
+					// id in `ids` produces multiple `pending` entries but only one
+					// block to find, so the old check reported a phantom shortfall.
+					writeErr = fmt.Errorf("SetTaskOrders: expected %d unique task blocks in %s, found %d", len(orderByID), filePath, found)
 					return
 				}
 
@@ -401,6 +414,12 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 					}
 				} else {
 					log.Printf("SetTaskOrders: re-parse failed (file written, index stale until next scan): %v", err)
+					// Mirror mutateTaskBlock: emit even on re-parse failure so the
+					// UI gets a refresh signal. Use the pre-write fileDate as
+					// fallback (emitBlockChanged only reads ID + FileDate).
+					for _, p := range group {
+						emitBlocks = append(emitBlocks, parser.ParsedBlock{ID: p.blockID, FileDate: fileDate})
+					}
 				}
 			})
 		})

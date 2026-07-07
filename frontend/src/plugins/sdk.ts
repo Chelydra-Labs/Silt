@@ -212,13 +212,9 @@ export interface PluginContext {
   setTaskOrder: (id: string, order: number) => Promise<boolean>
   /**
    * Batch-renumber `[order:: N]` tokens across multiple tasks in one atomic
-   * write PER FILE (#426). Use this instead of N individual `setTaskOrder`
-   * calls when a drag-reorder shifts multiple tasks in the same file: the Go
-   * side groups the (id, order) pairs by file and performs one
-   * read-parse-render-write-reindex cycle per file, so a mid-batch IPC
-   * failure leaves every file in the batch unchanged on disk (vs. N parallel
-   * `setTaskOrder` calls where a mid-loop failure produces a half-renumbered
-   * sequence). ids and orders are parallel arrays; ids[i] gets orders[i].
+   * write per file (#426). Each entry in `items` rewrites that task's token.
+   * Server rejects any order outside [0, 1,000,000]. Use this instead of N
+   * individual `setTaskOrder` calls when a drag-reorder shifts multiple tasks.
    */
   setTaskOrders: (items: { id: string; order: number }[]) => Promise<boolean>
   /**
@@ -260,8 +256,10 @@ export interface PluginContext {
   fetchSubtree: (blockId: string) => Promise<SubtreeBlock[]>
   /**
    * The host OS username, used as the default for the per-vault local_author
-   * preference (#430). Returns "unknown" if the host can't resolve it. The
-   * user's explicit local_author pref (if set) always wins over this.
+   * preference (#430). Returns an empty string if the host can't resolve it
+   * (the comment composer prompts the user on first run rather than seeding
+   * YAML with a placeholder). The user's explicit local_author pref (if set)
+   * always wins over this.
    */
   getLocalAuthor: () => Promise<string>
   /**

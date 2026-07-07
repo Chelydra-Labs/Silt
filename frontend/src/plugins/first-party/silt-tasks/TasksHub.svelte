@@ -97,10 +97,15 @@
       // Status columns (#421) hydrate into the unified state so saved
       // views can snapshot them. BoardView keeps its own local mirror
       // today; Phase 7 reconciles the two.
+      // Length check is load-bearing: Array.some walks only persistedCols
+      // indices, so a TRIMMED config ([TODO,DOING] vs default [TODO,DOING,
+      // DONE]) would otherwise compare equal and silently revert the trim.
       const persistedCols = loadColumns()
+      const currentCols = getTaskHubState().columns
       if (
         persistedCols.length &&
-        persistedCols.some((c, i) => c !== getTaskHubState().columns[i])
+        (persistedCols.length !== currentCols.length ||
+          persistedCols.some((c, i) => c !== currentCols[i]))
       ) {
         setColumns(persistedCols)
       }
@@ -121,15 +126,15 @@
 
   // Late-loadConfig hydration (#428): loadConfig races with the Svelte mount,
   // so the mount-time snapshot above can see an empty config and miss the
-  // user's saved_views. Re-hydrate when the on-disk saved_views reference
+  // user's preferences. Re-hydrate when the on-disk silt-tasks slice reference
   // changes — but only if the user hasn't touched the views since mount (an
   // in-session edit wins over a stale external snapshot).
   let lastExternalSavedViews: unknown = undefined
   let savedViewsHydrated = false
   $effect(() => {
-    const ref =
+    const tasksSettings =
       settingsStore.config?.plugins?.plugin_settings?.['silt-tasks']
-        ?.saved_views
+    const ref = tasksSettings?.saved_views
     if (!savedViewsHydrated) {
       // First run captures the baseline; the mount block above already did
       // the initial hydration from the same snapshot.
@@ -144,6 +149,24 @@
     const views = loadSavedViews()
     if (views.length) {
       getTaskHubState().savedViews = views
+    }
+    // Other dimensions: loadConfig may have arrived after mount, leaving
+    // displayMode/groupBy/sort/columns at defaults. Re-hydrate each one only
+    // when its persisted value diverges from the current state — a no-op
+    // when the mount block already saw it.
+    const mode = loadDefaultDisplayMode()
+    if (mode !== getTaskHubState().displayMode) setDisplayMode(mode)
+    const group = loadDefaultGroupBy()
+    if (group !== getTaskHubState().groupBy) setGroupBy(group)
+    const sortVal = loadDefaultSort()
+    if (sortVal !== getTaskHubState().sort) setSort(sortVal)
+    const cols = loadColumns()
+    const curCols = getTaskHubState().columns
+    if (
+      cols.length &&
+      (cols.length !== curCols.length || cols.some((c, i) => c !== curCols[i]))
+    ) {
+      setColumns(cols)
     }
   })
 

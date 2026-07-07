@@ -32,7 +32,7 @@ export function tasksSettings(): Record<string, unknown> {
   return slice && typeof slice === 'object' ? slice : {}
 }
 
-function isDisplayMode(v: unknown): v is DisplayMode {
+export function isDisplayMode(v: unknown): v is DisplayMode {
   return v === 'list' || v === 'board' || v === 'calendar'
 }
 
@@ -61,11 +61,11 @@ const SORT_MODE_VALUES: readonly SortMode[] = [
   'owner'
 ]
 
-function isGroupBy(v: unknown): v is GroupBy {
+export function isGroupBy(v: unknown): v is GroupBy {
   return typeof v === 'string' && (GROUP_BY_VALUES as string[]).includes(v)
 }
 
-function isSortMode(v: unknown): v is SortMode {
+export function isSortMode(v: unknown): v is SortMode {
   return typeof v === 'string' && (SORT_MODE_VALUES as string[]).includes(v)
 }
 

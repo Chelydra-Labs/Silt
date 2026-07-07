@@ -181,9 +181,12 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
-// The view issues two queries per reload — a windowed SELECT for the visible
-// month/week, and a separate undated SELECT. Both go through buildQuery; the
-// undated query is the one whose SQL contains the "due_date IS NULL" branch.
+// The view issues three queries per reload — a windowed SELECT for the
+// visible month/week, a separate undated SELECT, and an all-overdue-open
+// SELECT (status != 'DONE' AND due_date < today). All go through buildQuery;
+// the undated query is the one whose SQL contains the "due_date IS NULL"
+// branch; the overdue query is the one whose SQL contains "t.status != 'DONE'"
+// without a `due_date >=` window bound.
 async function mockQueries(
   rows: Record<string, unknown>[],
   undatedRows: Record<string, unknown>[] = []
@@ -192,6 +195,15 @@ async function mockQueries(
   mocks.sqliteQuery.mockImplementation(async (sql: string) => {
     if (sql.includes('due_date IS NULL')) {
       return { rows: undatedRows, truncated: false }
+    }
+    // The all-overdue-open query carries a "status != 'DONE'" filter the
+    // windowed query lacks — mirror the WHERE clause so a DONE-overdue row
+    // in the windowed result doesn't surface via the overdue path.
+    if (sql.includes("status != 'DONE'") && !sql.includes('due_date >=')) {
+      return {
+        rows: rows.filter((r) => r.status !== 'DONE'),
+        truncated: false
+      }
     }
     return { rows, truncated: false }
   })

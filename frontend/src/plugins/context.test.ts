@@ -173,10 +173,10 @@ describe('makePluginContext — getPluginSettings (#133)', () => {
     const loc = { notebook: 'Work', section: 'Journal', page: 'Daily' }
     mocks.getActiveLocation.mockReturnValue(loc)
     mocks.getPluginSettingsForNotebook.mockResolvedValue({ columns: ['TODO'] })
-    const ctx = makePluginContext('silt-kanban')
+    const ctx = makePluginContext('silt-tasks')
     const got = await ctx.getPluginSettings()
     expect(mocks.getPluginSettingsForNotebook).toHaveBeenCalledWith(
-      'silt-kanban',
+      'silt-tasks',
       'Work'
     )
     expect(got).toEqual({ columns: ['TODO'] })
@@ -203,14 +203,14 @@ describe('makePluginContext — getPluginSettings (#133)', () => {
     const loc = { notebook: 'Work', section: 'Journal', page: 'Daily' }
     mocks.getActiveLocation.mockReturnValue(loc)
     mocks.getPluginSettingsForNotebook.mockResolvedValue({})
-    const ctx = makePluginContext('silt-kanban')
+    const ctx = makePluginContext('silt-tasks')
 
     // Navigate to a linked notebook AFTER context construction. The reactive
     // getter must reflect the new value at the next getPluginSettings call.
     loc.notebook = 'Linked'
     await ctx.getPluginSettings()
     expect(mocks.getPluginSettingsForNotebook).toHaveBeenCalledWith(
-      'silt-kanban',
+      'silt-tasks',
       'Linked'
     )
   })

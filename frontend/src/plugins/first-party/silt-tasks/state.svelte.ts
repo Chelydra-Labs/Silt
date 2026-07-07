@@ -378,7 +378,16 @@ export function applySavedView(view: SavedView): void {
     _state.scopeUserOverride = true
   }
   if (view.filters !== undefined) {
-    _state.filters = { ...view.filters }
+    // Deep-clone the array fields: a shallow spread shares the owners/
+    // priorities/tags array references, so a later in-place edit on this
+    // state would mutate the SavedView's stored filters (and a saved-view
+    // reload would surface the mutation).
+    _state.filters = {
+      owners: [...view.filters.owners],
+      priorities: [...view.filters.priorities],
+      dueDate: view.filters.dueDate,
+      tags: [...view.filters.tags]
+    }
   }
   if (view.calendarSubMode !== undefined) {
     _state.calendarSubMode = view.calendarSubMode

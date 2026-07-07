@@ -52,6 +52,9 @@
   let cursor = $state(new Date())
   let byDate = $state<Record<string, TaskDetail[]>>({})
   let undated = $state<TaskDetail[]>([])
+  // All-overdue-open rows (no lower-bound window) so tasks from past months
+  // still surface in today's cell. Filled by a third query in reload().
+  let overdueAll = $state<TaskDetail[]>([])
   let loading = $state(true)
   let errorMsg = $state('')
   let selectedTask = $state<TaskDetail | null>(null)
@@ -168,32 +171,31 @@
   })
 
   // Overdue open tasks surface into today's cell so they aren't lost in past
-  // days. Kept in ADDITION to their actual due-date cell (the truth of when
-  // they're due stays visible); the surfaced chip carries an error-tone
-  // stripe so the user can tell why it appears under today.
+  // days. Sourced from the all-overdue-open query (no lower bound) so tasks
+  // from past months — which fall outside the visible window — surface too.
+  // The surfaced chip carries an error-tone stripe so the user can tell why
+  // it appears under today; the task also remains in its actual due-date
+  // cell when that date is inside the visible window.
   let overdueSurfaced = $derived.by(() => {
-    const t = today
     const out: TaskDetail[] = []
     const seen = new Set<string>()
-    for (const items of Object.values(byDate)) {
-      for (const r of items) {
-        if (r.due_date && r.due_date < t && r.status !== 'DONE') {
-          if (!seen.has(r.id)) {
-            seen.add(r.id)
-            out.push(r)
-          }
-        }
+    for (const r of overdueAll) {
+      if (!seen.has(r.id)) {
+        seen.add(r.id)
+        out.push(r)
       }
     }
     return out
   })
 
   // --- Query/reload ------------------------------------------------------
-  // Two queries: a windowed SELECT for the visible month/week, and a separate
-  // undated SELECT for the "No Date" strip. The unified buildQuery handles
-  // scope/owner/priority/tag filters; the window option adds the due-date
-  // bounds, and overriding filters.dueDate='none' surfaces null/empty rows
-  // the window would otherwise exclude.
+  // Three queries: a windowed SELECT for the visible month/week, a separate
+  // undated SELECT for the "No Date" strip, and an all-overdue-open SELECT
+  // so tasks from past months surface in today's cell. The unified buildQuery
+  // handles scope/owner/priority/tag filters; the window option adds the
+  // due-date bounds, overriding filters.dueDate='none' surfaces null/empty
+  // rows the window would otherwise exclude, and activeFilter='overdue'
+  // produces an unbounded (status open + due < today) query.
   let loadSeq = 0
   async function reload() {
     const my = ++loadSeq
@@ -216,9 +218,15 @@
         ctxLike,
         { activeFilter: getTaskHubState().activeFilter }
       )
-      const [winRes, undatedRes] = await Promise.all([
+      // Unbounded overdue: tasks due before today, open, scoped/filtered by
+      // the user's other filters. No `window` so past months aren't trimmed.
+      const overdueQ = buildQuery(scope, filters, ctxLike, {
+        activeFilter: 'overdue'
+      })
+      const [winRes, undatedRes, overdueRes] = await Promise.all([
         ctx.sqliteQuery(winQ.sql, winQ.params),
-        ctx.sqliteQuery(undatedQ.sql, undatedQ.params)
+        ctx.sqliteQuery(undatedQ.sql, undatedQ.params),
+        ctx.sqliteQuery(overdueQ.sql, overdueQ.params)
       ])
       if (my !== loadSeq) return
       const winRows = (winRes.rows as unknown as TaskDetail[]).map((r) => ({
@@ -241,11 +249,19 @@
         completed_at: r.completed_at ?? '',
         manual_order: r.manual_order ?? 0
       }))
+      overdueAll = (overdueRes.rows as unknown as TaskDetail[]).map((r) => ({
+        ...r,
+        pinned: !!r.pinned,
+        created_at: r.created_at ?? '',
+        completed_at: r.completed_at ?? '',
+        manual_order: r.manual_order ?? 0
+      }))
       // Keep the open drawer in sync with fresh data.
       if (selectedTask) {
         const fresh =
           winRows.find((r) => r.id === selectedTask!.id) ??
-          undated.find((r) => r.id === selectedTask!.id)
+          undated.find((r) => r.id === selectedTask!.id) ??
+          overdueAll.find((r) => r.id === selectedTask!.id)
         if (fresh) selectedTask = fresh
       }
     } catch (e) {
@@ -538,9 +554,12 @@
     }
   }
 
-  // Month-cell keyboard navigation: arrows move focus by day (clamped to the
-  // grid); Enter opens quick-add for the focused day. Alt-modified arrows are
-  // handled by the focused chip's reschedule handler — let them through.
+  // Month/week-cell keyboard navigation: arrows move focus by day (clamped
+  // to the visible grid); Enter opens quick-add for the focused day. Shared
+  // between month + week views so week-view gets full arrow parity (was
+  // Enter-only). Alt-modified arrows are handled by the focused chip's
+  // reschedule handler — let them through. Grid source switches on subMode
+  // (monthWeeks is [] in week view, weekDays is [] in month view).
   function onCellKeydown(e: KeyboardEvent, day: Date) {
     if (e.altKey) return
     if (e.key === 'Enter') {
@@ -557,7 +576,7 @@
     const delta = map[e.key]
     if (delta === undefined) return
     e.preventDefault()
-    const grid = monthWeeks.flat()
+    const grid = subMode === 'month' ? monthWeeks.flat() : weekDays
     const idx = grid.findIndex((d) => ymd(d) === ymd(day))
     if (idx < 0) return
     const next = Math.min(Math.max(idx + delta, 0), grid.length - 1)
@@ -642,6 +661,7 @@
       </h2>
       <div class="flex items-center gap-1 ml-2">
         <button
+          type="button"
           onclick={prev}
           class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
           aria-label="Previous"
@@ -650,11 +670,13 @@
           >
         </button>
         <button
+          type="button"
           onclick={goToday}
           class="px-2.5 py-1 rounded border border-surface-panel-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm bg-transparent cursor-pointer transition-colors"
           >Today</button
         >
         <button
+          type="button"
           onclick={next}
           class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
           aria-label="Next"
@@ -770,7 +792,6 @@
                     (items.length + overdueHere.length === 1 ? '' : 's')
                   : ''
               }`}
-              aria-dropeffect="move"
               onkeydown={(e) => onCellKeydown(e, day)}
               ondragover={(e) => onCellDragOver(e, day)}
               ondragleave={(e) => onCellDragLeave(e, day)}
@@ -850,6 +871,7 @@
                     ? 'opacity-40'
                     : ''}"
                   title="Overdue (was due {item.due_date}): {item.clean_content}"
+                  aria-label="Overdue (was due {item.due_date}): {item.clean_content}"
                   >{item.clean_content}</button
                 >
               {/each}
@@ -893,7 +915,6 @@
                   (items.length + overdueHere.length === 1 ? '' : 's')
                 : ''
             }`}
-            aria-dropeffect="move"
             ondragover={(e) => onCellDragOver(e, day)}
             ondragleave={(e) => onCellDragLeave(e, day)}
             ondrop={(e) => onCellDrop(e, day)}
@@ -902,12 +923,7 @@
               if (t.closest('button,input')) return
               openQuickAddForDay(day)
             }}
-            onkeydown={(e) => {
-              if (e.key === 'Enter' && e.target === e.currentTarget) {
-                e.preventDefault()
-                openQuickAddForDay(day)
-              }
-            }}
+            onkeydown={(e) => onCellKeydown(e, day)}
             class:ring-2={overCellDate === ymd(day)}
             class:ring-accent-primary-glow={overCellDate === ymd(day)}
             class:rounded-lg={overCellDate === ymd(day)}
@@ -970,6 +986,7 @@
                   ? 'opacity-40'
                   : ''}"
                 title="Overdue (was due {item.due_date}): {item.clean_content}"
+                aria-label="Overdue (was due {item.due_date}): {item.clean_content}"
                 >{item.clean_content}</button
               >
             {/each}

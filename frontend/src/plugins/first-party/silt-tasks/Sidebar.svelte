@@ -379,10 +379,11 @@
     if (!window.confirm(`Delete saved view "${view.name}"?`)) return
     errorMsg = ''
     deleteSavedView(view.id)
-    try {
-      await persistSavedViews(getTaskHubState().savedViews)
-    } catch (e) {
-      errorMsg = e instanceof Error ? e.message : String(e)
+    // persistSavedViews resolves to false on write failure (vs. rejecting) —
+    // surface that path so the user knows the deletion didn't reach disk.
+    const ok = await persistSavedViews(getTaskHubState().savedViews)
+    if (!ok) {
+      errorMsg = 'Failed to delete view — will retry on next launch'
     }
   }
 

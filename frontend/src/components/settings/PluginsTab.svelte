@@ -347,7 +347,7 @@
   }
 
   function openPluginView(id: string) {
-    // First-party view ids map to activeView (silt-calendar → calendar, etc.).
+    // First-party view ids map to activeView (silt-tasks → tasks).
     const viewId = id.replace(/^silt-/, '')
     window.dispatchEvent(new CustomEvent('switch-view', { detail: viewId }))
   }

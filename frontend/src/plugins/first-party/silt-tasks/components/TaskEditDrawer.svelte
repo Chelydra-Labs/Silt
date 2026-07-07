@@ -50,8 +50,14 @@
   let panelRef = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
   $effect(() => {
-    if (task) {
+    // Capture the trigger only on the null → non-null transition. Without
+    // this guard, every task switch (A → B, both non-null) overwrites
+    // previouslyFocused with an element about to be unmounted, and on
+    // close focus lands on <body>.
+    if (task && !previouslyFocused) {
       previouslyFocused = document.activeElement as HTMLElement
+    }
+    if (task) {
       // tabindex=-1 lets the panel receive focus without joining the tab order.
       tick().then(() => panelRef?.focus())
     } else if (previouslyFocused) {
