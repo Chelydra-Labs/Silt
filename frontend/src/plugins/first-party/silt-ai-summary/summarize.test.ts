@@ -81,6 +81,39 @@ describe('summarize — empty note', () => {
   })
 })
 
+describe('summarize — oversized note is skipped (#220)', () => {
+  beforeEach(() => resetCacheState())
+  it('returns an oversized outcome WITHOUT calling the LLM', async () => {
+    const complete = vi.fn()
+    const { ctx } = makeCtx({ complete })
+    const big = 'x'.repeat(settings.max_note_chars + 1)
+    const out = await summarize(ctx, {
+      pageId: 'p',
+      cleanContent: big,
+      settings,
+      ...configured
+    })
+    expect(out.ok).toBe(false)
+    if (!out.ok) expect(out.error.code).toBe('oversized')
+    expect(complete).not.toHaveBeenCalled()
+  })
+  it('does not skip a note exactly at the limit', async () => {
+    const complete = vi
+      .fn()
+      .mockResolvedValue({ content: '{"summary":"s"}', model: 'qwen3:30b' })
+    const { ctx } = makeCtx({ complete })
+    const atLimit = 'y'.repeat(settings.max_note_chars)
+    const out = await summarize(ctx, {
+      pageId: 'p',
+      cleanContent: atLimit,
+      settings,
+      ...configured
+    })
+    expect(out.ok).toBe(true)
+    expect(complete).toHaveBeenCalled()
+  })
+})
+
 describe('summarize — cache hit', () => {
   beforeEach(() => resetCacheState())
   it('serves a cached extraction with a matching model and skips the LLM', async () => {

@@ -54,6 +54,22 @@ export async function summarize(ctx: PluginContext, deps: SummarizeDeps): Promis
   if (!deps.cleanContent.trim()) {
     return emptyResult()
   }
+  // Oversized notes are SKIPPED (not truncated/chunked — v1). A head+tail
+  // slice would produce a partial, potentially misleading summary; chunking is
+  // a documented future enhancement. The settings page advertises this as
+  // "skipped" and the banner renders the 'oversized' code as an inline state
+  // pointing the user at Max note size. extract.ts still caps the prompt via
+  // truncateForPrompt as a defense-in-depth context-window guard for any
+  // caller that bypasses this gate.
+  if (deps.cleanContent.length > deps.settings.max_note_chars) {
+    return {
+      ok: false,
+      error: {
+        code: 'oversized',
+        message: `This note is ${deps.cleanContent.length} characters; the limit is ${deps.settings.max_note_chars}. Raise "Max note size" in Settings → AI Summary or split the note.`
+      }
+    }
+  }
 
   await migrateCache(ctx)
   const hash = await computeContentHash(deps.cleanContent)
