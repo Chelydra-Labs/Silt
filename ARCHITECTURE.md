@@ -460,6 +460,10 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `SetTaskOrder` / `PluginSetTaskOrder` rewrite the 1-based `[order:: N]`
   manual-sort token (clears it on `0`; negative values are rejected up
   front so a UI glitch can't stamp an off-by-one into the file).
+  `SetTaskOrders` / `PluginSetTaskOrders` batch the same `[order:: N]`
+  rewrite across multiple task blocks in one atomic per-file write (a single
+  drag-reorder shifts several rows; batching avoids N round-trips and N file
+  re-parses, and the per-file write lock keeps each batch atomic).
   `SetTaskTags` takes the full new tag set (the backend does the surgical
   `#hashtag` add/remove on the prose); `SetTaskTitle` rewrites only the
   prose, preserving `#tags`, `((uuid))` refs, and inline `[key:: value]`

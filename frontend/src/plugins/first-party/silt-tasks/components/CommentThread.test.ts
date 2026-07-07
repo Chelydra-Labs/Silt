@@ -214,6 +214,52 @@ describe('CommentThread', () => {
     confirmSpy.mockRestore()
   })
 
+  it('on delete failure, restores the comment at its original index (not the end)', async () => {
+    // Pins the round-5 fix: onDelete captures the index before filtering and
+    // splices the comment back at that slot on failure. Appending at the end
+    // would reshuffle thread order on every transient failure.
+    const deleteBlock = vi.fn().mockRejectedValue(new Error('disk locked'))
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'a',
+          clean_text: 'A',
+          author: 'x',
+          timestamp: '2026-07-01T09:00:00'
+        }),
+        makeBlock({
+          id: 'b',
+          clean_text: 'B',
+          author: 'x',
+          timestamp: '2026-07-02T09:00:00'
+        }),
+        makeBlock({
+          id: 'c',
+          clean_text: 'C',
+          author: 'x',
+          timestamp: '2026-07-03T09:00:00'
+        })
+      ]),
+      deleteBlock
+    })
+    mount({ ctx })
+    await flush()
+
+    // Delete the middle comment (B).
+    const delBtns = screen.getAllByLabelText('Delete comment')
+    await fireEvent.click(delBtns[1]!)
+    await flush()
+
+    // B is restored at its original index (1), not appended at the end (2).
+    const articles = document.querySelectorAll('[role="comment"]')
+    expect(articles).toHaveLength(3)
+    expect(articles[1]!.textContent).toContain('B')
+    expect(articles[2]!.textContent).toContain('C')
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
   it('typing in the composer + Enter calls ctx.addTaskComment with taskId + text + author', async () => {
     const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
     const ctx = makeCtx({ addTaskComment })

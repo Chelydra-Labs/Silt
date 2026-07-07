@@ -260,6 +260,12 @@
   // Monotonic token so a failed earlier move can't revert over a later
   // optimistic move (mirrors Kanban's moveSeq).
   let moveSeq = 0
+  // In-flight setTaskOrders IPC; a newer within-column reorder awaits it so
+  // the newer write lands after the older one's on disk. IPC arrival order
+  // across near-simultaneous calls isn't FIFO, and the Go side is last-
+  // writer-wins — without serialization a stale older orderByID resolving
+  // later would clobber the user's newest intent. See commitManualReorder.
+  let reorderInFlight: Promise<void> | null = null
   async function commitDrop(
     card: TaskDetail,
     fromColKey: string,
@@ -781,10 +787,28 @@
     liveMessage = `Task moved to position ${
       changes.find((c) => c.id === src.id)?.order ?? ''
     } in ${col.label}.`
+    // Serialize reorder IPCs so a newer reorder's write always lands after
+    // an older one's on disk (the Go file-lock serializes, but IPC arrival
+    // order across near-simultaneous calls is not guaranteed FIFO). The
+    // optimistic UI already reflects the user's latest intent (manual_order
+    // patched above); this ensures disk agrees.
+    if (reorderInFlight) await reorderInFlight.catch(() => {})
     try {
-      await ctx.setTaskOrders(
+      const p = ctx.setTaskOrders(
         changes.map((c) => ({ id: c.id, order: c.order }))
       )
+      reorderInFlight = p.then(
+        () => {},
+        () => {}
+      )
+      await p
+      if (my !== moveSeq) {
+        // A newer reorder happened during the IPC. Reload to reconcile —
+        // the newer reorder's IPC may have already written or may write
+        // next; either way, disk is the source of truth now.
+        void reload()
+        return
+      }
     } catch (e) {
       if (my !== moveSeq) return
       moveError = e instanceof Error ? e.message : String(e)

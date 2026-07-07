@@ -181,6 +181,15 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
+// Locate a rendered card by its clean_content. Within-column manual
+// reorders reshuffle DOM order, so position-based lookups (cards[N]) are
+// unstable across an optimistic update; text lookup stays correct.
+function cardByText(text: string): HTMLElement {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-card]')).find(
+    (c) => c.textContent?.includes(text)
+  )!
+}
+
 async function renderBoard(
   g: ReturnType<typeof setGroupBy> extends never
     ? never
@@ -906,6 +915,98 @@ describe('BoardView — dimension-aware Board (#421)', () => {
 
     // max([1, 5]) + 1 = 6, not destLen(2)+1 = 3.
     expect(mocks.setTaskOrder).toHaveBeenCalledWith('t1', 6)
+  })
+
+  it('sort=manual: serializes rapid reorder IPCs so the newer write always lands last', async () => {
+    // The Go side is last-writer-wins and IPC arrival order across near-
+    // simultaneous calls isn't FIFO, so a stale older orderByID resolving
+    // AFTER a newer reorder would clobber the user's last action. The
+    // in-flight tracker makes the newer reorder await the older IPC,
+    // guaranteeing the newer write lands last on disk.
+    let resolveFirst!: (v: boolean) => void
+    const firstPending = new Promise<boolean>((r) => (resolveFirst = r))
+    mocks.setTaskOrders
+      .mockReturnValueOnce(firstPending)
+      .mockResolvedValueOnce(true)
+
+    await renderBoardWithSort('status', 'manual', [
+      row({ id: 'a', status: 'TODO', clean_content: 'A', manual_order: 1 }),
+      row({ id: 'b', status: 'TODO', clean_content: 'B', manual_order: 2 }),
+      row({ id: 'c', status: 'TODO', clean_content: 'C', manual_order: 3 })
+    ])
+
+    // First reorder (move A before C): IPC stays pending via the
+    // controllable promise so the second reorder overlaps it.
+    await fireEvent.dragStart(cardByText('A'))
+    await fireEvent.drop(cardByText('C'))
+    await tick()
+
+    // Second reorder during the first IPC (move C before B).
+    await fireEvent.dragStart(cardByText('C'))
+    await fireEvent.drop(cardByText('B'))
+    await tick()
+
+    // Serialized: only the first IPC has fired — the second is parked on
+    // reorderInFlight. Without the fix both would be in-flight here.
+    expect(mocks.setTaskOrders).toHaveBeenCalledTimes(1)
+
+    resolveFirst(true)
+    await flush()
+
+    // The second IPC fires now and carries fresh optimistic manual_order
+    // values (the round-5 patch): [a,b,c] → [b,a,c] → [c,b,a].
+    expect(mocks.setTaskOrders).toHaveBeenCalledTimes(2)
+    const secondBatch = mocks.setTaskOrders.mock.calls[1]![0] as {
+      id: string
+      order: number
+    }[]
+    expect(secondBatch).toEqual(
+      expect.arrayContaining([
+        { id: 'c', order: 1 },
+        { id: 'b', order: 2 },
+        { id: 'a', order: 3 }
+      ])
+    )
+  })
+
+  it('sort=manual: second rapid reorder receives fresh optimistic manual_order values', async () => {
+    // Pins the round-5 optimistic patch (manual_order: i+1 on the reordered
+    // card objects): a second reorder before the first IPC settles must read
+    // the FIRST reorder's fresh orders. Without the patch, a card whose stale
+    // order coincidentally equals its new position is skipped and dropped
+    // from the batch, writing a colliding [order::] token to disk.
+    mocks.setTaskOrders.mockResolvedValue(true)
+
+    await renderBoardWithSort('status', 'manual', [
+      row({ id: 'a', status: 'TODO', clean_content: 'A', manual_order: 1 }),
+      row({ id: 'b', status: 'TODO', clean_content: 'B', manual_order: 2 }),
+      row({ id: 'c', status: 'TODO', clean_content: 'C', manual_order: 3 })
+    ])
+
+    // First reorder (move A before C) → [b, a, c].
+    await fireEvent.dragStart(cardByText('A'))
+    await fireEvent.drop(cardByText('C'))
+    await tick()
+
+    // Second reorder before the first settles (move C before B) → [c, b, a].
+    await fireEvent.dragStart(cardByText('C'))
+    await fireEvent.drop(cardByText('B'))
+    await flush()
+
+    expect(mocks.setTaskOrders).toHaveBeenCalledTimes(2)
+    const secondBatch = mocks.setTaskOrders.mock.calls[1]![0] as {
+      id: string
+      order: number
+    }[]
+    // All three carry fresh orders. Without the round-5 patch card B
+    // (stale 2 → new 2) would be skipped and absent from this batch.
+    expect(secondBatch).toEqual(
+      expect.arrayContaining([
+        { id: 'c', order: 1 },
+        { id: 'b', order: 2 },
+        { id: 'a', order: 3 }
+      ])
+    )
   })
 
   // --- Smart-list activeFilter integration (#432) -----------------------
