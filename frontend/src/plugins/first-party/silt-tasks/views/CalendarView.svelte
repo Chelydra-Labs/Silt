@@ -21,6 +21,7 @@
   import { plusDaysISO } from '../../../sdk'
   import { settings } from '../../../../settings/store.svelte'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
+  import ErrorBanner from '../components/ErrorBanner.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import type { TaskDetail } from '../types'
@@ -741,24 +742,12 @@
   {/if}
 
   {#if subModeError}
-    <div
-      class="px-6 py-1.5 border-b border-status-warn/30 bg-status-warn/10 flex items-center gap-2 text-[12px] font-body-md"
-      role="status"
-      data-testid="calendar-submode-error"
-    >
-      <span class="material-symbols-outlined text-[14px] text-status-warn"
-        >save</span
-      >
-      <span class="text-text-primary">{subModeError}</span>
-      <button
-        type="button"
-        onclick={() => (subModeError = '')}
-        aria-label="Dismiss error"
-        class="ml-auto p-1 rounded hover:bg-hover text-text-muted border-none bg-transparent cursor-pointer"
-      >
-        <span class="material-symbols-outlined text-[14px]">close</span>
-      </button>
-    </div>
+    <ErrorBanner
+      kind="warning"
+      message={subModeError}
+      dataTestId="calendar-submode-error"
+      onDismiss={() => (subModeError = '')}
+    />
   {/if}
 
   <!-- Screen-reader announcement of drag/keyboard reschedules. -->
@@ -805,7 +794,7 @@
         {/each}
       </div>
     {:else if errorMsg}
-      <div class="text-error p-6">{errorMsg}</div>
+      <ErrorBanner message={errorMsg} />
     {:else if subMode === 'month'}
       <!-- Month grid (lifted from silt-calendar). 7-column CSS grid; each day
            cell carries role="gridcell" and a data-celldate for testing/DnD.

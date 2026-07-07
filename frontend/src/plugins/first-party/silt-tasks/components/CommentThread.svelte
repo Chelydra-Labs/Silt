@@ -4,6 +4,7 @@
   import type { PluginContext, SubtreeBlock } from '../../../sdk'
   import RichText from '../../../../components/RichText.svelte'
   import { loadLocalAuthor, persistLocalAuthor } from '../settings'
+  import ErrorBanner from './ErrorBanner.svelte'
 
   /**
    * Comment thread for TaskEditDrawer (#430). Each comment is a child NOTE
@@ -287,7 +288,7 @@
   <div class="sr-only" aria-live="polite">{liveMessage}</div>
 
   {#if errorMsg}
-    <p role="alert" class="text-[11px] text-error mb-2">{errorMsg}</p>
+    <ErrorBanner message={errorMsg} compact dataTestId="comment-thread-error" />
   {/if}
 
   {#if loading}

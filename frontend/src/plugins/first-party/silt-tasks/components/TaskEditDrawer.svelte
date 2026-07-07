@@ -3,6 +3,16 @@
   import { tick, untrack } from 'svelte'
   import type { PluginContext, TaskStatus } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
+  import { trailingDebounce } from '../debounce'
+  import { friendlyCaughtError } from '../errors'
+  import ErrorBanner from './ErrorBanner.svelte'
+
+  // Coerce a caught value to a friendly meta-error string. Maps the backend
+  // focus-lock sentinel (#444) to actionable copy; passes everything else
+  // through so unknown failures stay diagnosable.
+  function errMsg(e: unknown): string {
+    return friendlyCaughtError(e)
+  }
   import type { TaskDetail } from '../types'
   import { PRIORITY_LABELS, laneLabel, priorityClass } from '../types'
   import DependencyPicker from './DependencyPicker.svelte'
@@ -107,6 +117,12 @@
   let recurrenceState = $state('')
   let dueDateState = $state('')
   let statusState = $state<TaskStatus>('TODO')
+  // statusCommitted is the anchor for revert: the last status successfully
+  // persisted (or the task's authoritative value on load). #442: arrow-key
+  // navigation now flips statusState (local) instantly and debounces the
+  // commit; on commit failure statusState reverts to statusCommitted rather
+  // than the immediately-prior (possibly also-uncommitted) selection.
+  let statusCommitted = $state<TaskStatus>('TODO')
   let metaError = $state('')
   let pinPending = $state(false)
   let progressPending = $state(false)
@@ -128,6 +144,8 @@
   let ownerPending = $state(false)
   let priorityState = $state(2)
   let priorityPending = $state(false)
+  // priorityCommitted mirrors statusCommitted for the priority radiogroup (#442).
+  let priorityCommitted = $state(2)
   let tagsState = $state<string[]>([])
   let tagsPending = $state(false)
   let tagDraft = $state('')
@@ -184,12 +202,18 @@
     if (untrack(() => !recurrencePending))
       recurrenceState = task?.recurrence ?? ''
     if (untrack(() => !dueDatePending)) dueDateState = task?.due_date ?? ''
-    if (untrack(() => !statusPending)) statusState = task?.status ?? 'TODO'
+    if (untrack(() => !statusPending)) {
+      statusState = task?.status ?? 'TODO'
+      statusCommitted = task?.status ?? 'TODO'
+    }
     if (untrack(() => !ownerPending)) {
       ownerState = task?.owner ?? ''
       ownerDraft = task?.owner ?? ''
     }
-    if (untrack(() => !priorityPending)) priorityState = task?.priority ?? 2
+    if (untrack(() => !priorityPending)) {
+      priorityState = task?.priority ?? 2
+      priorityCommitted = task?.priority ?? 2
+    }
     if (untrack(() => !tagsPending)) {
       tagsState = task?.tags ? task.tags.split('|').filter(Boolean) : []
     }
@@ -211,7 +235,7 @@
       onMetaChanged?.()
     } catch (e) {
       pinState = prev
-      metaError = e instanceof Error ? e.message : String(e)
+      metaError = errMsg(e)
     } finally {
       pinPending = false
     }
@@ -233,7 +257,7 @@
       } catch (err) {
         if (my !== progressSeq) return
         progressState = prev
-        metaError = err instanceof Error ? err.message : String(err)
+        metaError = errMsg(err)
       } finally {
         progressPending = false
       }
@@ -267,7 +291,7 @@
       onMetaChanged?.()
     } catch (e) {
       recurrenceState = prev
-      metaError = e instanceof Error ? e.message : String(e)
+      metaError = errMsg(e)
     } finally {
       recurrencePending = false
     }
@@ -326,7 +350,7 @@
       onMetaChanged?.()
     } catch (e) {
       dueDateState = prev
-      metaError = e instanceof Error ? e.message : String(e)
+      metaError = errMsg(e)
     } finally {
       dueDatePending = false
     }
@@ -370,7 +394,10 @@
   }
 
   function onStatusKeydown(e: KeyboardEvent) {
-    if (statusPending) return
+    // #442: update the local selection INSTANTLY on every arrow/Home/End and
+    // reschedule a trailing-debounced commit. The previous code swallowed any
+    // arrow pressed during an in-flight write (if (statusPending) return), so
+    // rapid nav (Normal → Low → wrap to Critical) landed only the first press.
     const idx = nextRadiogroupIndex(
       e.key,
       STATUSES.indexOf(statusState),
@@ -378,25 +405,26 @@
     )
     if (idx === null) return
     e.preventDefault()
-    void setStatus(STATUSES[idx])
-    // Move focus with the arrow immediately — EXCEPT when landing on DONE
-    // for a blocked task, where setStatus will pause on the guard. Pre-
-    // focusing the (about-to-be-canceled) DONE radio would park focus on an
-    // unchecked tabindex=-1 radio; cancelBlockedDone re-points focus to the
-    // still-checked radio instead.
-    const willGuard = STATUSES[idx] === 'DONE' && !!task?.is_blocked
-    if (!willGuard) {
-      ;(e.currentTarget as HTMLElement)
-        .querySelector<HTMLElement>(`[data-status="${STATUSES[idx]}"]`)
-        ?.focus()
-    }
+    statusState = STATUSES[idx]
+    statusDebouncer.trigger()
+    // Move focus with the arrow immediately. The DONE-on-blocked guard now
+    // fires after the debounce settle (inside applyStatus); if the user
+    // cancels it, cancelBlockedDone reverts statusState and re-points focus.
+    ;(e.currentTarget as HTMLElement)
+      .querySelector<HTMLElement>(`[data-status="${STATUSES[idx]}"]`)
+      ?.focus()
   }
 
-  async function setStatus(s: TaskStatus) {
-    if (!task || s === statusState || statusPending) return
+  // applyStatus is the single entry point for a status selection, shared by the
+  // debounced arrow path (flushStatusCommit) and the immediate click path
+  // (setStatus). It runs the DONE-on-blocked guard then delegates the write to
+  // commitStatusWrite. confirmBlockedDone calls commitStatusWrite directly
+  // (the user already confirmed the guard — don't re-trigger it).
+  async function applyStatus(s: TaskStatus) {
+    if (!task || s === statusCommitted || statusPending) return
     // DONE-on-blocked guard (#302): pause and render the shared
-    // BlockedDoneDialog before committing. We do NOT optimistically flip to
-    // DONE first; statusState stays at the prior value until confirm.
+    // BlockedDoneDialog before committing. statusState may already show DONE
+    // optimistically (arrow path); cancelBlockedDone reverts it on cancel.
     if (s === 'DONE' && task.is_blocked) {
       try {
         const blockers = await ctx.getTaskBlockers(task.id)
@@ -410,42 +438,56 @@
           return
         }
       } catch (e) {
-        metaError = e instanceof Error ? e.message : String(e)
+        metaError = errMsg(e)
         return
       }
     }
-    await commitStatus(s)
+    await commitStatusWrite(s)
   }
 
-  async function commitStatus(s: TaskStatus) {
-    if (!task) return
-    const prev = statusState
-    statusState = s
+  // commitStatusWrite performs the optimistic write + revert-on-error, with
+  // statusCommitted as the revert anchor. No guard — callers handle that.
+  async function commitStatusWrite(s: TaskStatus) {
+    if (!task || s === statusCommitted || statusPending) return
     statusPending = true
     metaError = ''
     try {
       await ctx.updateBlockState(task.id, s)
+      statusCommitted = s
       onMetaChanged?.()
     } catch (e) {
-      statusState = prev
-      metaError = e instanceof Error ? e.message : String(e)
+      statusState = statusCommitted // revert local selection to last committed
+      metaError = errMsg(e)
     } finally {
       statusPending = false
     }
   }
 
+  // Click path: commit immediately (clicks are discrete, no rapid-fire).
+  async function setStatus(s: TaskStatus) {
+    statusState = s
+    await applyStatus(s)
+  }
+
+  // Debounced arrow-key commit: applies the latest local selection.
+  function flushStatusCommit() {
+    void applyStatus(statusState)
+  }
+  const statusDebouncer = trailingDebounce(flushStatusCommit, 200)
+
   function confirmBlockedDone() {
     pendingBlockedDone = null
-    void commitStatus('DONE')
+    void commitStatusWrite('DONE')
   }
 
   async function cancelBlockedDone() {
     pendingBlockedDone = null
-    // statusState unchanged — we never optimistically flipped to DONE. The
-    // DONE radio (the click/arrow target) holds focus with tabindex=-1
-    // while the checked radio holds tabindex=0. After the guard dialog
-    // unmounts (and restores focus to that DONE radio), re-point focus to
-    // the still-checked radio so roving tabindex stays consistent.
+    // Revert the optimistic DONE flip the arrow path made; statusCommitted
+    // still holds the pre-DONE value (we never committed DONE).
+    statusState = statusCommitted
+    // The DONE radio (the arrow target) holds focus with tabindex=-1 while
+    // the checked radio holds tabindex=0. Re-point focus to the still-checked
+    // radio so roving tabindex stays consistent.
     await tick()
     panelRef
       ?.querySelector<HTMLElement>(`[data-status="${statusState}"]`)
@@ -469,7 +511,7 @@
     } catch (e) {
       ownerState = prev
       ownerDraft = prev
-      metaError = e instanceof Error ? e.message : String(e)
+      metaError = errMsg(e)
     } finally {
       ownerPending = false
     }
@@ -477,38 +519,53 @@
 
   // --- Priority editor (#412) ---
   // Segmented radiogroup; reuses the shared nextRadiogroupIndex helper.
+  // #442: arrow nav updates priorityState instantly + debounces the commit;
+  // clicks go through commitPriority immediately (discrete events).
   let priorityCheckedIdx = $derived(PRIORITIES.indexOf(priorityState))
 
   async function commitPriority(p: number) {
-    if (!task || priorityPending || p === priorityState) return
-    const prev = priorityState
+    if (!task || priorityPending || p === priorityCommitted) return
     priorityState = p
     priorityPending = true
     metaError = ''
     try {
       await ctx.setTaskPriority(task.id, p)
+      priorityCommitted = p
       onMetaChanged?.()
     } catch (e) {
-      priorityState = prev
-      metaError = e instanceof Error ? e.message : String(e)
+      priorityState = priorityCommitted // revert local selection to last committed
+      metaError = errMsg(e)
     } finally {
       priorityPending = false
     }
   }
 
   function onPriorityKeydown(e: KeyboardEvent) {
-    if (priorityPending) return
-    // When no radio is checked (priority unset), roving tabindex starts at
-    // the first option so the group is always keyboard-reachable.
+    // Instant local update on every arrow/Home/End; no in-flight swallow.
     const curIdx = priorityCheckedIdx >= 0 ? priorityCheckedIdx : 0
     const idx = nextRadiogroupIndex(e.key, curIdx, PRIORITIES.length)
     if (idx === null) return
     e.preventDefault()
-    void commitPriority(PRIORITIES[idx])
+    priorityState = PRIORITIES[idx]
+    priorityDebouncer.trigger()
     ;(e.currentTarget as HTMLElement)
       .querySelector<HTMLElement>(`[data-priority="${PRIORITIES[idx]}"]`)
       ?.focus()
   }
+
+  function flushPriorityCommit() {
+    void commitPriority(priorityState)
+  }
+  const priorityDebouncer = trailingDebounce(flushPriorityCommit, 200)
+
+  // #442: cancel any in-flight debounced commit when the drawer unmounts so a
+  // pending write never fires against a stale/gone task.
+  $effect(() => {
+    return () => {
+      statusDebouncer.cancel()
+      priorityDebouncer.cancel()
+    }
+  })
 
   // --- Tags chip editor (#412) ---
   // Each add/remove commits the FULL new tag set via ctx.setTaskTags
@@ -533,7 +590,7 @@
       tagsAnnouncement = announcement
         .replace('Added tag', "Couldn't add")
         .replace('Removed tag', "Couldn't remove")
-      metaError = e instanceof Error ? e.message : String(e)
+      metaError = errMsg(e)
     } finally {
       tagsPending = false
     }
@@ -584,7 +641,7 @@
     } catch (e) {
       titleState = prev
       titleDraft = prev
-      metaError = e instanceof Error ? e.message : String(e)
+      metaError = errMsg(e)
     } finally {
       titlePending = false
     }
@@ -720,15 +777,10 @@
 
     <div class="px-5 py-4 space-y-6">
       {#if metaError}
-        <div
-          class="flex items-start gap-2 px-3 py-2 rounded border border-error-border bg-error-bg text-error text-[12px] font-body-md"
-          role="alert"
-        >
-          <span class="material-symbols-outlined text-[14px] shrink-0"
-            >error</span
-          >
-          <span>Couldn't save: {metaError}</span>
-        </div>
+        <ErrorBanner
+          message={`Couldn't save: ${metaError}`}
+          dataTestId="task-meta-error"
+        />
       {/if}
 
       <!-- Status radiogroup -->

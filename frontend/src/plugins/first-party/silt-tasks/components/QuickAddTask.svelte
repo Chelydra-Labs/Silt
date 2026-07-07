@@ -12,6 +12,7 @@
   // shim over the app-level CreateStandaloneTask binding. One component, one
   // source of truth for the Enter/Escape/busy/error behavior.
   import type { PluginContext, TaskStatus } from '../../../sdk'
+  import ErrorBanner from './ErrorBanner.svelte'
 
   interface Props {
     /** Plugin context (plugin surfaces). Mutually exclusive with createTask. */
@@ -168,7 +169,7 @@
   {/if}
 </div>
 {#if errorMsg}
-  <div class="text-error text-[11px] mt-1" role="alert">
-    {errorMsg}
+  <div class="mt-1">
+    <ErrorBanner message={errorMsg} compact dataTestId="quick-add-error" />
   </div>
 {/if}

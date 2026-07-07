@@ -28,6 +28,7 @@
   import type { TaskDetail } from '../types'
   import { PRIORITY_LABELS, laneLabel, priorityClass } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
+  import ErrorBanner from '../components/ErrorBanner.svelte'
   import {
     getTaskHubState,
     setDisplayMode,
@@ -902,22 +903,14 @@
   data-testid="tasks-board"
 >
   {#if moveError}
-    <div
-      class="px-6 py-2 bg-error-bg border-b border-error-border text-error text-[12px] font-body-md"
-      role="alert"
-    >
-      Couldn't move task: {moveError}
-    </div>
+    <ErrorBanner message={`Couldn't move task: ${moveError}`} />
   {/if}
 
   {#if configError}
-    <div
-      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-[12px] font-body-md flex items-center gap-2"
-      role="status"
-    >
-      <span class="material-symbols-outlined text-[16px]">save</span>
-      <span>Couldn't save board layout: {configError}</span>
-    </div>
+    <ErrorBanner
+      kind="warning"
+      message={`Couldn't save board layout: ${configError}`}
+    />
   {/if}
 
   {#if columns.length > 10 && columns.length <= 20}

@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { tick } from 'svelte'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
 // jsdom polyfill: Svelte 5 transition:fly calls element.animate().
@@ -550,11 +551,42 @@ describe('TaskEditDrawer — priority editor (#412)', () => {
     const rg = container.querySelector(
       '[aria-labelledby="task-priority-label"]'
     ) as HTMLElement
+    await tick()
     // Start at Low (priority 3, index 2). ArrowLeft → Normal (priority 2).
+    // Commit is debounced ~200ms (#442): wait past the trailing edge.
     await fireEvent.keyDown(rg, { key: 'ArrowLeft' })
+    await tick()
+    await new Promise((r) => setTimeout(r, 250))
     expect(setTaskPriority).toHaveBeenCalledWith('task-1', 2)
-    // ArrowRight from Normal wraps forward; here test Home jumps to Critical.
+    // Home jumps to Critical (priority 1).
     await fireEvent.keyDown(rg, { key: 'Home' })
+    await tick()
+    await new Promise((r) => setTimeout(r, 250))
+    expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 1)
+  })
+
+  it('rapid arrow-key navigation commits only the final selection once (#442)', async () => {
+    const setTaskPriority = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskPriority })
+    const { container } = render(TaskEditDrawer, {
+      props: { task: makeTask({ priority: 2 }), ctx, onClose: () => {} }
+    })
+    const rg = container.querySelector(
+      '[aria-labelledby="task-priority-label"]'
+    ) as HTMLElement
+    await tick()
+    // Two quick arrows within the 200ms debounce window: Normal(2) → Low(3)
+    // → wrap to Critical(1). tick() between presses lets priorityState update
+    // so the next index is computed correctly, but no 200ms elapses, so both
+    // collapse to ONE trailing commit of the final selection.
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // 2 → 3 (Low)
+    await tick()
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // 3 → 1 (Critical, wrap)
+    await tick()
+    expect(setTaskPriority).not.toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 250)) // past the debounce window
+    // Exactly one commit, for the final selection (Critical, priority 1).
+    expect(setTaskPriority).toHaveBeenCalledTimes(1)
     expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 1)
   })
 

@@ -18,6 +18,7 @@
   import { onMount } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import { plusDaysISO, localToday } from '../../sdk'
+  import ErrorBanner from './components/ErrorBanner.svelte'
   import { PRIORITY_LABELS } from './types'
   import {
     getTaskHubState,
@@ -691,8 +692,6 @@
   <div class="sr-only" aria-live="polite">{liveMessage}</div>
 
   {#if errorMsg}
-    <p class="px-2 text-error text-[11px] font-body-md" role="alert">
-      {errorMsg}
-    </p>
+    <ErrorBanner message={errorMsg} compact />
   {/if}
 </aside>
