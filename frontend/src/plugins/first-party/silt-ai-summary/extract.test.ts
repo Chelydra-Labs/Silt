@@ -103,7 +103,9 @@ describe('parseSummary', () => {
     })
   })
   it('drops non-string / empty facet entries', () => {
-    expect(parseSummary('{"summary":"s","tasks":["ok","",42]}').tasks).toEqual(['ok'])
+    const parsed = parseSummary('{"summary":"s","tasks":["ok","",42]}')
+    expect(parsed).not.toBeNull()
+    expect(parsed?.tasks).toEqual(['ok'])
   })
   it('returns null when summary is missing or empty', () => {
     expect(parseSummary('{"tasks":["t"]}')).toBeNull()

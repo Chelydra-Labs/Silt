@@ -31,9 +31,38 @@ export interface PluginSurface {
   kind: SurfaceKind
   label: string
   icon?: string
-  /** The HTML document rendered inside the sandboxed iframe (srcdoc). */
-  html: string
+  /** The HTML document rendered inside the sandboxed iframe (srcdoc). Required
+   *  for third-party plugins (which cannot compile Svelte at runtime). */
+  html?: string
+  /** First-party-only: a compiled Svelte component rendered directly in the
+   *  host webview (no iframe isolation). When present, the host ignores
+   *  `html` and mounts this component instead — first-party plugins already
+   *  run in the main webview, so the sandbox bridge is unnecessary overhead
+   *  for rich, interactive surfaces (e.g. the AI Summary banner). Third-party
+   *  plugins have no compiled component to pass; this field is conventionally
+   *  first-party. Either `component` or `html` MUST be supplied for content-
+   *  rendering kinds (sidebar-panel/modal/note-banner/settings-panel). */
+  component?: any
+  /** Extra props forwarded to a first-party `component` (merged with the
+   *  host-supplied ctx + onDismiss). Ignored for the iframe path. */
+  props?: Record<string, unknown>
+  /** Click handler for chrome-rendered kinds (status-bar-item) where the host
+   *  draws the affordance from label/icon. First-party callbacks only — a
+   *  third-party plugin cannot inject executable code this way (its surface
+   *  runs in the iframe). */
+  onClick?: () => void
 }
+
+/** Surface kinds whose content the host renders from the surface's own
+ *  component/html. Chrome-rendered kinds (status-bar-item,
+ *  command-palette-entry) draw their affordance from label/icon and do not
+ *  require content. */
+const CONTENT_KINDS: ReadonlySet<SurfaceKind> = new Set([
+  'sidebar-panel',
+  'modal',
+  'settings-panel',
+  'note-banner'
+])
 
 type SurfaceListener = (surfaces: PluginSurface[]) => void
 
@@ -57,8 +86,15 @@ function notify() {
  * Returns an unregister function.
  */
 export function registerSurface(surface: PluginSurface): () => void {
-  if (!surface.id || !surface.pluginID || !surface.html) {
-    throw new Error('Surface requires id, pluginID, and html')
+  if (!surface.id || !surface.pluginID) {
+    throw new Error('Surface requires id and pluginID')
+  }
+  // A content-rendering surface must carry content one way or the other: an
+  // HTML document for the sandboxed iframe path, or a compiled Svelte component
+  // for the first-party direct-render path (#221). Chrome-rendered kinds
+  // (status-bar-item, command-palette-entry) draw from label/icon + onClick.
+  if (CONTENT_KINDS.has(surface.kind) && !surface.html && !surface.component) {
+    throw new Error(`Surface ${surface.id} (${surface.kind}) requires html or component`)
   }
   if (!isGranted(surface.pluginID, 'ui-surface')) {
     // eslint-disable-next-line no-console

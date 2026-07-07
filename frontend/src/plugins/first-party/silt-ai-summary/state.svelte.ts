@@ -75,7 +75,12 @@ export interface SummaryController {
 /** Create the per-vault controller. `providerInfo` is injectable so tests can
  *  pin the configured/unconfigured branch without the settings store. */
 export function createSummaryController(providerInfo: () => ProviderInfo = readProviderInfo): SummaryController {
-  const state = new Map<string, PageState>()
+  // $state deep-proxies the Map AND its PageState values, so a component
+  // reading `controller.state.get(pageId)` (via $derived) re-runs when the
+  // controller mutates a page's status/result/stale. Without $state the banner
+  // would render once and never update as the LLM call resolves. (Pending
+  // timers + generation counters are internal bookkeeping — not reactive.)
+  const state = $state(new Map<string, PageState>())
   const pending = new Map<string, ReturnType<typeof setTimeout>>()
   // Track the most-recent generation per page so a stale completion (note
   // switched mid-generation) doesn't overwrite the newer state.
