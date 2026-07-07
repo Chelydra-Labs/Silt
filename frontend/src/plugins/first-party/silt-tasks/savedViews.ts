@@ -54,61 +54,6 @@ export const SYSTEM_VIEWS: SavedView[] = [
 ]
 
 /**
- * Build a stable fingerprint of a SavedView's dimension values. Two views
- * that snapshot the same dimensions produce the same string, so the header
- * bookmark / sidebar list can detect "this view is active" without deep
- * equality. Uses `\u0000` (NUL) as the field separator — it can't appear
- * in any of the dimension values (UUIDs, enum names, YAML strings) so the
- * join is unambiguous.
- *
- * Generalized from KanbanSidebar.svelte:89-101 which only fingerprinted
- * scope+filters; the unified hub dimensions (displayMode/groupBy/sort/
- * calendarSubMode/columns) all participate now.
- */
-export function fingerprintOf(view: SavedView): string {
-  const f = view.filters ?? {
-    owners: [],
-    priorities: [],
-    dueDate: '',
-    tags: []
-  }
-  return [
-    view.displayMode ?? '',
-    view.groupBy ?? '',
-    view.sort ?? '',
-    view.scope ?? '',
-    f.owners.join('|'),
-    f.priorities.join('|'),
-    f.dueDate,
-    f.tags.join('|'),
-    view.calendarSubMode ?? '',
-    (view.columns ?? []).join('|')
-  ].join('\u0000')
-}
-
-/**
- * Fingerprint of the CURRENT hub state — i.e. the view the user would
- * save if they clicked "Save current view" right now. Comparing this
- * against `fingerprintOf(activeSavedView)` tells the bookmark whether
- * to show "saved" (match) or "modified" (mismatch).
- */
-export function fingerprintOfState(s: TaskHubState): string {
-  const f = s.filters
-  return [
-    s.displayMode,
-    s.groupBy,
-    s.sort,
-    s.scope,
-    f.owners.join('|'),
-    f.priorities.join('|'),
-    f.dueDate,
-    f.tags.join('|'),
-    s.calendarSubMode,
-    s.columns.join('|')
-  ].join('\u0000')
-}
-
-/**
  * Lenient "does this view match the current state?" check (#427, #432).
  *
  * System views are partial templates — they define only the dims they care

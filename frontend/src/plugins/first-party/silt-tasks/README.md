@@ -15,7 +15,7 @@ state/query module per mode.
 |---|---|
 | `state.svelte.ts` | The unified reactive hub state (`TaskHubState`) — display mode, grouping, sort, scope, filters, focus date, smart-list filter, calendar sub-mode, status columns, saved views, and the active-view + dirty flags. Svelte 5 `$state`. |
 | `query.ts` | Pure SQL builder (`buildQuery`) consuming hub state → `{ sql, params }`. Scope + filter WHERE clauses, groupBy/sort ORDER BY, optional due-date window. All values flow through `?` placeholders. |
-| `grouping.ts` | Pure client-side binning (`binByDimension`) — assigns rows to ordered `GroupSection`s for the 9 grouping dimensions. `distinctValues` derives the universe of values for sidebar pickers. |
+| `grouping.ts` | Pure client-side binning (`binByDimension`) — assigns rows to ordered `GroupSection`s for the 9 grouping dimensions. |
 | `savedViews.ts` | The three code-defined `SYSTEM_VIEWS` + the `fingerprintOf` / `fingerprintOfState` helpers that power the "is the live state the same as this saved view?" check. |
 | `settings.ts` | YAML pref I/O for everything under `plugins.plugin_settings.silt-tasks`. Reads come from the synchronous settings snapshot; writes go through the atomic `updatePluginSetting`. |
 | `TasksHub.svelte` | The shell — title + open/done count header, mode switcher, FilterBar, scope breadcrumb, saved-view bookmark affordance, and the route to the active renderer. |
@@ -76,8 +76,7 @@ default.
 **Add a new grouping dimension.** 1) Extend the `GroupBy` union in
 `state.svelte.ts` and add the option to `GROUP_OPTIONS` in `TasksHub.svelte`
 (+ `GROUP_BY_VALUES` in `settings.ts` for validation). 2) Add a `binByX`
-case to `binByDimension` in `grouping.ts` (and `distinctValues` if the
-sidebar should offer it as a picker). 3) If the dimension can sort
+case to `binByDimension` in `grouping.ts`. 3) If the dimension can sort
 server-side, add an `orderByFor` / `sortClauseFor` branch in `query.ts`;
 high-cardinality dimensions (tag/notebook/section/page) are binned
 client-side and share the default ORDER BY.

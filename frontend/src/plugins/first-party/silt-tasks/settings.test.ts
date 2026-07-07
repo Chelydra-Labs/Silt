@@ -131,7 +131,11 @@ describe('loadSavedViews (#427)', () => {
     expect(sys?.name).toBe("Today's Board")
   })
 
-  it('merges legacy silt-kanban boards alongside system + user views', () => {
+  it('ignores legacy silt-kanban.boards[] (migration is Go-side, not a frontend forward-read)', () => {
+    // The Go migrator (#431) lifts legacy boards into saved_views[] once
+    // at startup. loadSavedViews() must NOT forward-read the legacy key,
+    // or user-deleted views would resurrect from the uncleared boards[]
+    // entry on every load.
     mocks.settings.config.plugins.plugin_settings['silt-tasks'] = {
       saved_views: [
         {
@@ -159,28 +163,9 @@ describe('loadSavedViews (#427)', () => {
     }
     const views = loadSavedViews()
     const ids = views.map((v) => v.id).sort()
-    expect(ids).toEqual([...SYSTEM_VIEWS.map((v) => v.id), 'u1', 'b1'].sort())
-  })
-
-  it('dedupes by id (system ids win over legacy collisions)', () => {
-    // A legacy board with a system id would collide — system wins because
-    // SYSTEM_VIEWS are seeded first and the legacy branch only inserts
-    // when the id is absent.
-    mocks.settings.config.plugins.plugin_settings['silt-kanban'] = {
-      boards: [
-        {
-          id: 'sys-today-board',
-          name: 'Impostor',
-          scope: 'vault',
-          filters: { owners: [], priorities: [], dueDate: '', tags: [] }
-        }
-      ]
-    }
-    const views = loadSavedViews()
-    expect(views.filter((v) => v.id === 'sys-today-board')).toHaveLength(1)
-    expect(views.find((v) => v.id === 'sys-today-board')?.name).toBe(
-      "Today's Board"
-    )
+    // Legacy board b1 is absent — loadSavedViews() reads only saved_views[].
+    expect(ids).toEqual([...SYSTEM_VIEWS.map((v) => v.id), 'u1'].sort())
+    expect(ids).not.toContain('b1')
   })
 })
 

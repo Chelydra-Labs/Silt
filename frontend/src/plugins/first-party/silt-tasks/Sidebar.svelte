@@ -424,13 +424,20 @@
   aria-label="Tasks sidebar"
   data-test-tasks-sidebar
 >
-  <!-- Smart Lists (lifted from CalendarSidebar) -->
+  <!-- Smart Lists (lifted from CalendarSidebar). Counts are vault-wide: the
+       smart-list query carries no scope/filter predicates, so a count can
+       exceed what the (scope/filter-aware) hub shows. -->
   <section aria-labelledby="tasks-smart-lists-heading">
     <h3
       id="tasks-smart-lists-heading"
       class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
     >
       Smart Lists
+      <span
+        class="font-label-sm normal-case tracking-normal text-text-muted/60"
+      >
+        (vault-wide)
+      </span>
     </h3>
     {#if counts.all > 0 || counts.completed > 0}
       <ul role="listbox" aria-label="Smart lists" class="mt-1 space-y-0.5">

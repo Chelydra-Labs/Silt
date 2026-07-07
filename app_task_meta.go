@@ -403,13 +403,15 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 					if idxErr != nil {
 						log.Printf("SetTaskOrders: IndexFileBlocks failed: %v", idxErr)
 					}
-					// Collect the re-parsed blocks for emit.
+					// Collect the re-parsed blocks for emit. Map IDs once so
+					// this is O(moved) rather than O(moved × blocksInFile).
+					blocksByID := make(map[string]parser.ParsedBlock, len(blocks))
+					for _, b := range blocks {
+						blocksByID[b.ID] = b
+					}
 					for _, p := range group {
-						for _, b := range blocks {
-							if b.ID == p.blockID {
-								emitBlocks = append(emitBlocks, b)
-								break
-							}
+						if b, ok := blocksByID[p.blockID]; ok {
+							emitBlocks = append(emitBlocks, b)
 						}
 					}
 				} else {

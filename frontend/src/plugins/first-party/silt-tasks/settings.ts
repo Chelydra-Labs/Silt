@@ -232,9 +232,11 @@ function coerceSavedView(raw: unknown): SavedView | null {
 
 /**
  * Load the merged saved-views list: SYSTEM_VIEWS (code-defined, never
- * persisted) + user views from `saved_views[]` + legacy Kanban boards
- * forward-mapped to views. Dedup by id (system ids win; user views can't
- * carry `sys-` so there's no real collision).
+ * persisted) + user views from `saved_views[]`. The Go migrator
+ * (#431) writes legacy Kanban boards into saved_views[] on first
+ * launch; the forward-read (loadLegacyKanbanBoardsAsViews) was
+ * removed because it resurrected user-deleted views from the uncleared
+ * legacy silt-kanban.boards[] key.
  */
 export function loadSavedViews(): SavedView[] {
   const merged = new Map<string, SavedView>()
@@ -246,9 +248,6 @@ export function loadSavedViews(): SavedView[] {
       const v = coerceSavedView(entry)
       if (v) merged.set(v.id, v)
     }
-  }
-  for (const legacy of loadLegacyKanbanBoardsAsViews()) {
-    if (!merged.has(legacy.id)) merged.set(legacy.id, legacy)
   }
   return [...merged.values()]
 }

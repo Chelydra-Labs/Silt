@@ -2,7 +2,7 @@
 // has a binning contract that ListView relies on, so these are the
 // load-bearing assertions for the generalized list rendering.
 import { describe, it, expect } from 'vitest'
-import { binByDimension, distinctValues, type GroupSection } from './grouping'
+import { binByDimension, type GroupSection } from './grouping'
 import type { TaskDetail } from './types'
 
 function row(overrides: Partial<TaskDetail> & { id: string }): TaskDetail {
@@ -241,41 +241,5 @@ describe('binByDimension — notebook/section/page', () => {
       'Inbox',
       'No Page'
     ])
-  })
-})
-
-describe('distinctValues', () => {
-  it('returns [] for none/dueDate (not a scalar dimension)', () => {
-    expect(distinctValues([], 'none')).toEqual([])
-    expect(distinctValues([], 'dueDate')).toEqual([])
-  })
-
-  it('returns the alphabetized universe of owner values, excluding empties', () => {
-    const rows = [
-      row({ id: 'a', owner: 'Bob' }),
-      row({ id: 'b', owner: 'Alice' }),
-      row({ id: 'c', owner: '' })
-    ]
-    expect(distinctValues(rows, 'owner')).toEqual(['Alice', 'Bob'])
-  })
-
-  it('status preserves TODO/DOING/DONE order before custom lanes', () => {
-    const rows = [
-      row({ id: 'a', status: 'DONE' }),
-      row({ id: 'b', status: 'TODO' }),
-      row({ id: 'c', status: 'WAITING' as TaskDetail['status'] }),
-      row({ id: 'd', status: 'DOING' })
-    ]
-    expect(distinctValues(rows, 'status')).toEqual([
-      'TODO',
-      'DOING',
-      'DONE',
-      'WAITING'
-    ])
-  })
-
-  it('tag de-dupes across multi-tag rows', () => {
-    const rows = [row({ id: 'a', tags: 'x|y' }), row({ id: 'b', tags: 'y|z' })]
-    expect(distinctValues(rows, 'tag')).toEqual(['x', 'y', 'z'])
   })
 })

@@ -411,7 +411,11 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     expect(screen.getByTestId('tasks-hub-bookmark')).toBeInTheDocument()
   })
 
-  it('hydrates the 3 system views + legacy kanban boards on mount', async () => {
+  it('hydrates only the 3 system views (legacy kanban boards are migrated Go-side, not forward-read)', async () => {
+    // loadSavedViews() must not forward-read silt-kanban.boards[]: a
+    // user-deleted view would resurrect from the uncleared legacy key on
+    // every load. The Go migrator (#431) writes legacy boards into
+    // saved_views[] once at startup; this test locks that boundary.
     mocks.settings.config.plugins.plugin_settings['silt-kanban'] = {
       boards: [
         {
@@ -428,19 +432,14 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
 
     const views = getTaskHubState().savedViews
     const ids = views.map((v) => v.id)
-    // 3 system views + 1 legacy board = 4 total.
-    expect(views).toHaveLength(4)
+    // Only the 3 system views — legacy board b1 is NOT forward-read.
+    expect(views).toHaveLength(3)
     expect(ids).toContain('sys-today-board')
     expect(ids).toContain('sys-by-owner')
     expect(ids).toContain('sys-week-calendar')
-    expect(ids).toContain('b1')
+    expect(ids).not.toContain('b1')
     // System views carry the read-only marker.
     expect(views.find((v) => v.id === 'sys-today-board')?.system).toBe(true)
-    // Legacy board is forward-mapped to a board view.
-    const legacy = views.find((v) => v.id === 'b1')
-    expect(legacy?.displayMode).toBe('board')
-    expect(legacy?.groupBy).toBe('status')
-    expect(legacy?.sort).toBe('manual')
   })
 
   it('clicking the bookmark with no active view opens the save composer', async () => {
