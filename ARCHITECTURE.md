@@ -951,9 +951,12 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
   sidebar panel / modal / status-bar / `note-banner` surfaces; theme tokens
   injected. The `note-banner` kind mounts a dismissible banner host at
   the top of the note view (above the TipTap editor); first-party banners
-  render a compiled Svelte component, third-party via the iframe bridge. The
+  render a compiled Svelte component (passed via the surface's `component`
+  field, mounted directly with `{ ctx, onDismiss }` props — `silt-ai-summary`
+  is the reference consumer), third-party via the iframe bridge. The
   bridge is bidirectional: iframe→host requests (PluginContext proxy) AND
-  host→iframe events. The close affordance sends a `dismiss` event so the
+  host→iframe events. The close affordance sends a `dismiss` event (iframe
+  path) or invokes the component's `onDismiss` prop (first-party path) so the
   plugin can persist dismissal state (`updatePluginSetting('<id>',
   'dismissed_notes', [...])`) — `updatePluginSetting` is in the bridge's
   `allowedMethods` so the documented pattern is reachable from a sandboxed

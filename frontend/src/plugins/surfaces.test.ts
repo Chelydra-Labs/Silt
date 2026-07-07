@@ -136,4 +136,56 @@ describe('plugin surface manager (#117, #158)', () => {
     off()
     expect(getSurfaces()).toHaveLength(0)
   })
+
+  // --- #221: first-party compiled-component path + chrome-rendered onClick ---
+
+  it('registers a first-party note-banner surface by component (no html)', () => {
+    const Cmp = {} // a compiled Svelte component stand-in
+    registerSurface({
+      id: 'silt-ai-summary:banner',
+      pluginID: 'silt-ai-summary',
+      kind: 'note-banner',
+      label: 'AI summary',
+      component: Cmp
+    })
+    const banners = getSurfaces('note-banner')
+    expect(banners).toHaveLength(1)
+    expect(banners[0].component).toBe(Cmp)
+    expect(banners[0].html).toBeUndefined()
+  })
+
+  it('accepts a chrome-rendered status-bar item with label/icon + onClick (no html/component)', () => {
+    const onClick = vi.fn()
+    registerSurface({
+      id: 'silt-ai-summary:reopen',
+      pluginID: 'silt-ai-summary',
+      kind: 'status-bar-item',
+      label: 'Show AI summary',
+      icon: 'auto_awesome',
+      onClick
+    })
+    const items = getSurfaces('status-bar-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].onClick).toBe(onClick)
+  })
+
+  it('still requires html or component for content-rendering kinds', () => {
+    expect(() =>
+      registerSurface({
+        id: 'p:bare',
+        pluginID: 'p',
+        kind: 'note-banner',
+        label: 'Bare'
+      })
+    ).toThrow(/html or component/)
+    // A bare status-bar item is fine (chrome-rendered from label/icon).
+    expect(() =>
+      registerSurface({
+        id: 'p:chip',
+        pluginID: 'p',
+        kind: 'status-bar-item',
+        label: 'Chip'
+      })
+    ).not.toThrow()
+  })
 })

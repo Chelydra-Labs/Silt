@@ -27,6 +27,11 @@ var FirstPartyPluginIDs = map[string]bool{
 	// requireGrant gate denies every quick-add — even though the frontend grant
 	// cache (grants.svelte.ts) masks it as first-party until the IPC call lands.
 	"silt-tasks": true,
+	// silt-ai-summary (#220–#223): the first AI-capable first-party plugin.
+	// Calls ctx.ai.complete (gated by ai) and owns a per-plugin SQLite cache
+	// (plugin-db). Without this entry seedFirstPartyGrants never seeds those
+	// grants and every summarize() call is denied at the Go requireGrant gate.
+	"silt-ai-summary": true,
 }
 
 // IsFirstPartyID reports whether pluginID is a reserved (bundled) plugin id.

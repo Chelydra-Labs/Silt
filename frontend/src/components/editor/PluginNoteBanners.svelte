@@ -80,24 +80,34 @@
   const DISMISS_TIMEOUT_MS = 400
   let dismissedThisTick: string | null = null
 
-  function dismiss(surface: PluginSurface, closeBtn: HTMLButtonElement) {
+  // onDismissFor(surface) returns the closure a first-party component receives
+  // as its `onDismiss` prop. It converges on the same dismiss path the host
+  // chrome close button uses, so a component that renders its own "Got it"
+  // affordance and the host close button both produce the same teardown +
+  // persistence. The iframe path does not use this (it gets a host→iframe
+  // 'dismiss' postMessage instead).
+  function onDismissFor(surface: PluginSurface): () => void {
+    return () => dismiss(surface)
+  }
+
+  function dismiss(surface: PluginSurface) {
     if (dismissedThisTick === surface.id) return // idempotent on double-click
     dismissedThisTick = surface.id
 
-    // Signal the plugin first (host→iframe), then tear down after a grace
-    // window so its updatePluginSetting call can land before the iframe is gone.
-    // The notify is best-effort: if the post throws (e.g. the iframe is already
-    // gone, or an environment quirk), dismissal MUST still proceed — the host
-    // never wedges on an unresponsive/unreachable plugin (#355 fallback).
-    const post = postFns.get(surface.id)
-    try {
-      post?.({
-        __siltSurface: 'event',
-        type: 'dismiss',
-        payload: { surfaceId: surface.id, persistent: false }
-      })
-    } catch {
-      /* best-effort notify — teardown below is the guarantee */
+    // First-party components dismiss synchronously (no iframe to signal); the
+    // iframe path still gets the host→plugin 'dismiss' postMessage + grace
+    // window so its updatePluginSetting call can land before teardown.
+    if (!surface.component) {
+      const post = postFns.get(surface.id)
+      try {
+        post?.({
+          __siltSurface: 'event',
+          type: 'dismiss',
+          payload: { surfaceId: surface.id, persistent: false }
+        })
+      } catch {
+        /* best-effort notify — teardown below is the guarantee */
+      }
     }
 
     const doRemove = () => {
@@ -124,7 +134,13 @@
       })
     }
 
-    // Give the plugin a chance to persist, but never hang the host.
+    if (surface.component) {
+      // First-party: no grace window needed (the component is in-process and
+      // its persistence runs synchronously via onDismiss before this call).
+      doRemove()
+      return
+    }
+    // Third-party: give the plugin a chance to persist, but never hang the host.
     dismissTimer = window.setTimeout(doRemove, DISMISS_TIMEOUT_MS)
   }
 
@@ -191,35 +207,49 @@
 
     <div id="banner-stack" class="banner-stack">
       {#each visibleSurfaces as surface (surface.id)}
-        <div
-          class="note-banner"
-          role="status"
-          aria-live="polite"
-          aria-label={surface.label}
-        >
-          <span class="material-symbols-outlined banner-icon" aria-hidden="true"
-            >{surface.icon || 'campaign'}</span
+        {#if surface.component}
+          {@const Banner = surface.component}
+          {@const extra = surface.props ?? {}}
+          <!-- First-party direct-render path (#221): a compiled Svelte component
+               mounted in the host webview. The component owns its complete
+               chrome — role=region, aria-live, icon, content, regenerate, AND a
+               close button carrying data-banner-close (so the host's
+               cross-banner focus management still works). The host supplies ctx
+               + onDismiss; the component persists its own dismissal state before
+               calling onDismiss (the iframe path can't do this in-process, which
+               is why third-party banners still use the host chrome below). -->
+          <Banner {...extra} ctx={ctxFor(surface.pluginID)} onDismiss={onDismissFor(surface)} />
+        {:else}
+          <div
+            class="note-banner"
+            role="status"
+            aria-live="polite"
+            aria-label={surface.label}
           >
-          <div class="banner-frame-wrapper">
-            <PluginSurfaceFrame
-              {surface}
-              ctxProxy={ctxFor(surface.pluginID)}
-              onBridgeReady={(post) => postFns.set(surface.id, post)}
-            />
-          </div>
-          <button
-            type="button"
-            class="banner-dismiss"
-            data-banner-close={surface.id}
-            onclick={(e) => dismiss(surface, e.currentTarget)}
-            aria-label="Dismiss {surface.label}"
-            title="Dismiss {surface.label}"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true"
-              >close</span
+            <span class="material-symbols-outlined banner-icon" aria-hidden="true"
+              >{surface.icon || 'campaign'}</span
             >
-          </button>
-        </div>
+            <div class="banner-frame-wrapper">
+              <PluginSurfaceFrame
+                {surface}
+                ctxProxy={ctxFor(surface.pluginID)}
+                onBridgeReady={(post) => postFns.set(surface.id, post)}
+              />
+            </div>
+            <button
+              type="button"
+              class="banner-dismiss"
+              data-banner-close={surface.id}
+              onclick={() => dismiss(surface)}
+              aria-label="Dismiss {surface.label}"
+              title="Dismiss {surface.label}"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true"
+                >close</span
+              >
+            </button>
+          </div>
+        {/if}
       {/each}
     </div>
   </div>
