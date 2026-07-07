@@ -56,14 +56,15 @@ describe('computeContentHash', () => {
 describe('migrateCache', () => {
   beforeEach(() => resetCacheState())
 
-  it('runs the migration once with version 1 + the summaries table', async () => {
+  it('runs the migration once with version 2 + the summaries table + summary_length', async () => {
     const { ctx, migrateCalls } = makeCtx()
     await migrateCache(ctx)
     await migrateCache(ctx) // idempotent
     expect(migrateCalls).toHaveLength(1)
-    expect(migrateCalls[0].version).toBe(1)
+    expect(migrateCalls[0].version).toBe(2)
     expect(migrateCalls[0].sql).toContain('CREATE TABLE IF NOT EXISTS summaries')
     expect(migrateCalls[0].sql).toContain('content_hash')
+    expect(migrateCalls[0].sql).toContain('ALTER TABLE summaries ADD COLUMN summary_length')
   })
 })
 
@@ -128,6 +129,7 @@ describe('putCachedSummary', () => {
       decisions: ['d'],
       prior_snapshot: { summary: '', tasks: ['t'], risks: [], decisions: [] },
       model: 'm',
+      summary_length: 'medium',
       generated_at: '2026-07-06T10:00:00Z'
     })
     expect(execCalls).toHaveLength(1)

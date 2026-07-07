@@ -236,6 +236,40 @@ describe('summarize — invalidation', () => {
     }
     expect(complete).toHaveBeenCalled()
   })
+
+  it('regenerates when summary_length changed even if content + model match', async () => {
+    // summary_length changes the prompt + maxTokens, so a cached row generated
+    // at a different length is stale. Without this invalidation, changing
+    // medium→short and reopening an unchanged note serves the old summary.
+    const complete = vi
+      .fn()
+      .mockResolvedValue({ content: '{"summary":"fresh at medium"}', model: 'qwen3:30b' })
+    const cachedRow = {
+      summary: 'stale short summary',
+      tasks: '[]',
+      risks: '[]',
+      decisions: '[]',
+      prior_snapshot: '{}',
+      model: 'qwen3:30b',
+      summary_length: 'short',
+      generated_at: '2026-07-06T10:00:00Z'
+    }
+    const { ctx } = makeCtx({ cachedRow, complete })
+    const out = await summarize(ctx, {
+      pageId: 'p',
+      cleanContent: 'note',
+      settings: { ...settings, summary_length: 'medium' },
+      configuredModel: 'qwen3:30b',
+      isConfigured: true
+    })
+    expect(out.ok).toBe(true)
+    if (out.ok) {
+      expect(out.result.fromCache).toBe(false)
+      expect(out.result.summary).toBe('fresh at medium')
+    }
+    expect(complete).toHaveBeenCalled()
+  })
+
   it('force=true bypasses the cache even on an exact hash + model match', async () => {
     const complete = vi
       .fn()

@@ -85,7 +85,7 @@ export async function summarize(ctx: PluginContext, deps: SummarizeDeps): Promis
       () => getCachedSummary(ctx, deps.pageId, hash),
       'read'
     )
-    if (cached && cached.model === deps.configuredModel) {
+    if (cached && cached.model === deps.configuredModel && cached.summary_length === deps.settings.summary_length) {
       const result: SummaryResult = {
         summary: cached.summary,
         tasks: cached.tasks,
@@ -128,6 +128,7 @@ export async function summarize(ctx: PluginContext, deps: SummarizeDeps): Promis
         decisions: extracted.extraction.decisions,
         prior_snapshot: prior,
         model: extracted.model,
+        summary_length: deps.settings.summary_length,
         generated_at: generatedAt
       }),
     'write'

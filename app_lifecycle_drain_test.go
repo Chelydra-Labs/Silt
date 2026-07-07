@@ -171,6 +171,75 @@ func TestClearNetworkAudit_NoDeadlockWhenWriterStopsConcurrently(t *testing.T) {
 	waitWithTimeout(t, &wg, 5*time.Second)
 }
 
+// TestClearAIAudit_WStopFallbackUsesWriterVaultNotCurrentVaultPath is the
+// cross-vault regression guard for the <-w.stop fallback. When the writer exits
+// before processing a clear-op, the fallback must truncate the WRITER's vault
+// (w.vaultPath — the vault the clear was enqueued for), never a.vaultPath (which
+// a concurrent SwitchVault may have already moved to a different vault).
+//
+// The test forces the fallback deterministically: it stops the writer (closes
+// w.stop) WITHOUT niling the global pointer, so ClearAIAudit still captures a
+// non-nil writer and takes the writer path. The writer has exited, so op.done
+// never closes and the select fires <-w.stop every time. Before the fix, the
+// fallback truncated a.vaultPath (vaultB — the wrong vault); after the fix it
+// waits on <-w.done and truncates w.vaultPath (vaultA — the correct vault).
+func TestClearAIAudit_WStopFallbackUsesWriterVaultNotCurrentVaultPath(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	vaultA := t.TempDir() // the writer's vault (w.vaultPath)
+	vaultB := t.TempDir() // a.vaultPath after a simulated switch
+
+	entry := &AIAuditEntry{
+		Plugin: "test-plugin", Kind: "chat", Host: "example.com",
+		Model: "m", Status: "ok", At: "2026-01-01T00:00:00Z",
+	}
+	appendAIAuditLine(vaultA, entry)
+	appendAIAuditLine(vaultB, entry)
+
+	startAIAuditWriter(vaultA)
+	w := currentAIAuditWriter()
+	if w == nil {
+		t.Fatal("startAIAuditWriter did not set the global writer")
+	}
+
+	// Simulate the post-switch state: a.vaultPath points to vaultB while the
+	// writer is still for vaultA.
+	app.vaultMu.Lock()
+	app.vaultPath = vaultB
+	app.vaultMu.Unlock()
+
+	// Stop the writer by closing w.stop directly (NOT via stopAIAuditWriter,
+	// which would nil the global). The writer drains + exits. ClearAIAudit will
+	// still see the non-nil global and take the writer path — hitting <-w.stop
+	// every time (the writer can't process the op, it already exited).
+	close(w.stop)
+	<-w.done
+
+	// Re-seed vaultA so the fallback truncation has something to clear.
+	appendAIAuditLine(vaultA, entry)
+
+	if err := app.ClearAIAudit(); err != nil {
+		t.Fatalf("ClearAIAudit: %v", err)
+	}
+
+	// vaultA (the writer's vault) must be cleared.
+	if data, _ := os.ReadFile(filepath.Join(vaultA, ".system", "plugins", "test-plugin", "ai.log")); len(data) > 0 {
+		t.Errorf("vaultA ai.log should be empty after clear (w.vaultPath), got %q", data)
+	}
+	// vaultB (a.vaultPath — the wrong vault) must survive. Before the fix this
+	// was truncated, destroying the new vault's freshly-seeded audit history.
+	if data, _ := os.ReadFile(filepath.Join(vaultB, ".system", "plugins", "test-plugin", "ai.log")); len(data) == 0 {
+		t.Fatal("vaultB ai.log was truncated by ClearAIAudit — <-w.stop fallback used a.vaultPath instead of w.vaultPath (cross-vault data loss)")
+	}
+
+	// Cleanup: nil the global manually (w.stop is already closed; calling
+	// stopAIAuditWriter would double-close it).
+	aiAuditWriterMu.Lock()
+	aiAuditWriter = nil
+	aiAuditWriterMu.Unlock()
+}
+
 // TestClearAIAudit_DurableClearStillRunsThroughWriterWhenAlive is the
 // regression guard the #451 fix could regress: if the non-blocking send
 // accidentally always took the default (inline) branch, a clear would still

@@ -11,7 +11,7 @@
 import type { PluginContext } from '../../sdk'
 import type { SummaryExtraction } from './types'
 
-const MIGRATION_VERSION = 1
+const MIGRATION_VERSION = 2
 const MIGRATION_SQL = `CREATE TABLE IF NOT EXISTS summaries (
   page_id        TEXT NOT NULL,
   content_hash   TEXT NOT NULL,
@@ -23,7 +23,8 @@ const MIGRATION_SQL = `CREATE TABLE IF NOT EXISTS summaries (
   model          TEXT NOT NULL,
   generated_at   TEXT NOT NULL,
   PRIMARY KEY (page_id, content_hash)
-);`
+);
+ALTER TABLE summaries ADD COLUMN summary_length TEXT NOT NULL DEFAULT 'medium';`
 
 /** One cached summary row. Array facets are stored as JSON strings. */
 export interface CacheRow {
@@ -37,6 +38,10 @@ export interface CacheRow {
    *  can re-derive the diff without a second row). */
   prior_snapshot: SummaryExtraction
   model: string
+  /** The summary_length the row was generated with, so a settings change
+   *  (short ↔ medium ↔ long) invalidates the cache even when content + model
+   *  are unchanged — the length changes the prompt + maxTokens. */
+  summary_length: string
   generated_at: string
 }
 
@@ -79,7 +84,7 @@ export async function getCachedSummary(
   contentHash: string
 ): Promise<CacheRow | null> {
   const { rows } = await ctx.pluginDb.query(
-    `SELECT summary, tasks, risks, decisions, prior_snapshot, model, generated_at
+    `SELECT summary, tasks, risks, decisions, prior_snapshot, model, summary_length, generated_at
        FROM summaries
       WHERE page_id = ? AND content_hash = ?
       LIMIT 1`,
@@ -98,11 +103,11 @@ export async function latestSummaryForPage(
   pageId: string
 ): Promise<CacheRow | null> {
   const { rows } = await ctx.pluginDb.query(
-    `SELECT content_hash, summary, tasks, risks, decisions, prior_snapshot, model, generated_at
+    `SELECT content_hash, summary, tasks, risks, decisions, prior_snapshot, model, summary_length, generated_at
        FROM summaries
-      WHERE page_id = ?
-      ORDER BY generated_at DESC
-      LIMIT 1`,
+       WHERE page_id = ?
+       ORDER BY generated_at DESC
+       LIMIT 1`,
     [pageId]
   )
   const r = rows[0]
@@ -116,8 +121,8 @@ export async function latestSummaryForPage(
 export async function putCachedSummary(ctx: PluginContext, row: CacheRow): Promise<void> {
   await ctx.pluginDb.exec(
     `INSERT INTO summaries
-       (page_id, content_hash, summary, tasks, risks, decisions, prior_snapshot, model, generated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (page_id, content_hash, summary, tasks, risks, decisions, prior_snapshot, model, summary_length, generated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(page_id, content_hash) DO UPDATE SET
        summary = excluded.summary,
        tasks = excluded.tasks,
@@ -125,6 +130,7 @@ export async function putCachedSummary(ctx: PluginContext, row: CacheRow): Promi
        decisions = excluded.decisions,
        prior_snapshot = excluded.prior_snapshot,
        model = excluded.model,
+       summary_length = excluded.summary_length,
        generated_at = excluded.generated_at`,
     [
       row.page_id,
@@ -135,6 +141,7 @@ export async function putCachedSummary(ctx: PluginContext, row: CacheRow): Promi
       JSON.stringify(row.decisions),
       JSON.stringify(row.prior_snapshot),
       row.model,
+      row.summary_length,
       row.generated_at
     ]
   )
@@ -161,6 +168,7 @@ function deserializeRow(
     // JSON string, so feeding it an already-parsed array would yield []).
     prior_snapshot: parsePriorSnapshot(r.prior_snapshot),
     model: stringOrEmpty(r.model),
+    summary_length: stringOrEmpty(r.summary_length) || 'medium',
     generated_at: stringOrEmpty(r.generated_at)
   }
 }

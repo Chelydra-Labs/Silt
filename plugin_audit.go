@@ -128,12 +128,19 @@ func (a *App) GetNetworkAudit() ([]NetworkAuditEntry, error) {
 // we just emptied. When the writer is not running (tests, pre-initialize),
 // the truncation runs inline — the pre-#235 behavior.
 func (a *App) ClearNetworkAudit() error {
+	// Snapshot vaultPath under vaultMu BEFORE acquiring networkAuditMu so the
+	// w==nil inline path never reads a.vaultPath unsynchronized (a concurrent
+	// SwitchVault/ImportVault may flip it). The writer branches use w.vaultPath
+	// (the vault the writer was created for) instead — see the <-w.stop branch.
+	a.vaultMu.RLock()
+	vaultPathSnapshot := a.vaultPath
+	a.vaultMu.RUnlock()
 	networkAuditMu.Lock()
 	networkAudit = nil
 	w := currentNetworkAuditWriter()
 	if w == nil {
 		// Writer not running: truncate inline (pre-#235 path).
-		clearNetworkAuditFiles(a.vaultPath)
+		clearNetworkAuditFiles(vaultPathSnapshot)
 		networkAuditMu.Unlock()
 		return nil
 	}
@@ -150,28 +157,31 @@ func (a *App) ClearNetworkAudit() error {
 	// the global pointer, closes w.stop, the writer drains its queue and
 	// exits). Because the channel is buffered (256 slots), the send would
 	// STILL succeed after the goroutine is gone — and then <-op.done would
-	// block forever with no goroutine to process it (#451). The default
-	// branch (queue full — astronomically rare given the 256-slot buffer and
-	// that auditNetwork itself drops on full) falls back to inline
-	// truncation, matching auditNetwork's own accept-degradation on a full
-	// queue.
+	// block forever with no goroutine to process it (#451).
 	op := &networkAuditOp{clear: true, done: make(chan struct{})}
 	select {
 	case w.ch <- op:
 		networkAuditMu.Unlock()
 		// Wait for the writer to process the clear, but ALSO watch w.stop. If
-		// the op landed in the window between the writer's final drain and its
-		// exit, op.done would never close; w.stop closes as part of stopping,
-		// so on that branch we inline-truncate (idempotent — files are already
-		// empty after the drain) and never hang.
+		// the writer exits before processing the op (or if the select
+		// spuriously picks w.stop when both are ready), we must still guarantee
+		// the truncation runs against the WRITER's vault — never a.vaultPath,
+		// which a concurrent SwitchVault may have already moved to a different
+		// vault (#452 cross-vault data-loss regression). Waiting on w.done
+		// ensures the writer's drain completes first (our op is in the buffer
+		// and the drain processes every buffered op before returning).
 		select {
 		case <-op.done:
 		case <-w.stop:
-			clearNetworkAuditFiles(a.vaultPath)
+			<-w.done
+			clearNetworkAuditFiles(w.vaultPath)
 		}
 	default:
-		// Queue full: inline truncation under the lock.
-		clearNetworkAuditFiles(a.vaultPath)
+		// Queue full (astronomically rare). Truncate the WRITER's vault — not
+		// a.vaultPath — so a concurrent switch can't redirect the truncation
+		// to the new vault. Same FIFO trade-off as ClearAIAudit's default
+		// branch (see comment there).
+		clearNetworkAuditFiles(w.vaultPath)
 		networkAuditMu.Unlock()
 	}
 	return nil
@@ -506,12 +516,19 @@ func (a *App) GetAIAudit() ([]AIAuditEntry, error) {
 // click cannot interleave a line into a file we just emptied. When the writer
 // is not running (tests, pre-initialize), the truncation runs inline.
 func (a *App) ClearAIAudit() error {
+	// Snapshot vaultPath under vaultMu BEFORE acquiring aiAuditMu so the
+	// w==nil inline path never reads a.vaultPath unsynchronized (a concurrent
+	// SwitchVault/ImportVault may flip it). The writer branches use w.vaultPath
+	// instead — see the <-w.stop branch.
+	a.vaultMu.RLock()
+	vaultPathSnapshot := a.vaultPath
+	a.vaultMu.RUnlock()
 	aiAuditMu.Lock()
 	aiAudit = nil
 	w := currentAIAuditWriter()
 	if w == nil {
 		// Writer not running: truncate inline.
-		clearAIAuditFiles(a.vaultPath)
+		clearAIAuditFiles(vaultPathSnapshot)
 		aiAuditMu.Unlock()
 		return nil
 	}
@@ -522,34 +539,39 @@ func (a *App) ClearAIAudit() error {
 	// The send is NON-BLOCKING to avoid a latent deadlock: a blocking send
 	// can succeed on the buffered channel even after the writer goroutine has
 	// exited (stopAIAuditWriter nils the global pointer, closes w.stop, the
-	// writer drains and exits), leaving <-op.done blocked forever (#451). The
-	// default branch (queue full — rare) and the w.stop fallback in the wait
-	// both fall back to inline truncation, which is idempotent.
+	// writer drains and exits), leaving <-op.done blocked forever (#451).
 	op := &aiAuditOp{clear: true, done: make(chan struct{})}
 	select {
 	case w.ch <- op:
 		aiAuditMu.Unlock()
+		// Wait for the writer to process the clear, but ALSO watch w.stop. If
+		// the writer exits before processing the op (or the select picks
+		// w.stop when both are ready), we must still guarantee the truncation
+		// runs against the WRITER's vault — never a.vaultPath, which a
+		// concurrent SwitchVault may have moved to a different vault (#452
+		// cross-vault data-loss regression). Waiting on w.done ensures the
+		// writer's drain completes first (our op is in the buffer and the
+		// drain processes every buffered op before returning).
 		select {
 		case <-op.done:
 		case <-w.stop:
-			clearAIAuditFiles(a.vaultPath)
+			<-w.done
+			clearAIAuditFiles(w.vaultPath)
 		}
 	default:
 		// Queue full (256-slot saturation — astronomically rare: needs a burst
 		// of 256+ AI calls with the writer stalled, e.g. slow disk). We
-		// truncate inline under the lock rather than block (blocking can
-		// deadlock — see #451) or enqueue (the queue is full).
+		// truncate the WRITER's vault inline — not a.vaultPath — so a
+		// concurrent switch can't redirect the truncation to the new vault.
 		//
 		// KNOWN FIFO TRADE-OFF: the writer goroutine appends queued entries to
 		// disk WITHOUT holding aiAuditMu, so an entry op already in the queue
 		// when this truncation runs can be re-appended by the writer AFTER the
 		// truncation, resurrecting a pre-clear line in the on-disk ai.log. The
-		// in-memory log (cleared at line 510 under the lock) is always correct;
-		// only the on-disk diagnostic file can carry a stale tail. Accepted
-		// because the path is near-unreachable and the data is diagnostic. A
-		// proper FIFO fix needs epoch-marked ops so the writer can distinguish
-		// pre-clear from post-clear entries — out of scope for this rare path.
-		clearAIAuditFiles(a.vaultPath)
+		// in-memory log (cleared above under the lock) is always correct; only
+		// the on-disk diagnostic file can carry a stale tail. Accepted because
+		// the path is near-unreachable and the data is diagnostic.
+		clearAIAuditFiles(w.vaultPath)
 		aiAuditMu.Unlock()
 	}
 	return nil

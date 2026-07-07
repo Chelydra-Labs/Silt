@@ -502,6 +502,12 @@ func (a *App) snapshotAIProvider(which string) (ai.AIProvider, error) {
 // aiPreflightPlugin runs the plugin-side gates (session, capability, rate limit)
 // and returns the resolved provider snapshot + effective model. Locks are
 // released before the keyring lookup and before the caller does any HTTP.
+//
+// NOTE (drain contract): the closing-check + vaultClosingWG.Add(1) below MUST
+// stay within this single RLock hold — any future IPC handler that releases
+// vaultMu mid-call must follow the same pattern (check closing + Add under one
+// RLock, defer Done on the success path only). See #473 for a proposed wrapper
+// that bundles preflight + Add so the contract can't be accidentally dropped.
 func (a *App) aiPreflightPlugin(pluginID, sessionToken, which string) (ai.AIProvider, string, error) {
 	a.vaultMu.RLock()
 	// Reject new AI calls once a vault close/switch has begun. The check and
