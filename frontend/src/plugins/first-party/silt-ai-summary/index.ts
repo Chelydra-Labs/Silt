@@ -20,6 +20,7 @@
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { registerSurface, unregisterSurface } from '../../surfaces'
 import AISummaryPanel from './AISummaryPanel.svelte'
+import AISummarySettings from './AISummarySettings.svelte'
 import SummaryBanner from './SummaryBanner.svelte'
 import { createSummaryController, type SummaryController } from './state.svelte'
 
@@ -108,6 +109,7 @@ function mountForPage(ctx: PluginContext, pageId: string, dismissed: boolean) {
 export default {
   manifest,
   component: AISummaryPanel,
+  settingsPageComponent: AISummarySettings,
   onVaultOpen(ctx: PluginContext) {
     controller = createSummaryController()
     lastPageId = null

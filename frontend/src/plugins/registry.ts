@@ -93,6 +93,7 @@ registerPlugin({
 registerPlugin({
   manifest: AISummaryPlugin.manifest,
   component: AISummaryPlugin.component,
+  settingsPageComponent: AISummaryPlugin.settingsPageComponent,
   onVaultOpen: AISummaryPlugin.onVaultOpen,
   onVaultClose: AISummaryPlugin.onVaultClose,
   onShutdown: AISummaryPlugin.onShutdown,
