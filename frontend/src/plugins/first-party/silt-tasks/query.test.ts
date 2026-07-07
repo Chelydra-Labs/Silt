@@ -355,3 +355,66 @@ describe('buildQuery — sort lever (new in #423)', () => {
     expect(orderBy).not.toContain('CASE WHEN t.manual_order')
   })
 })
+
+// ── New: activeFilter lever (sidebar smart-list, #432) ───────────────
+
+describe('buildQuery — activeFilter lever (new in #432)', () => {
+  it("activeFilter='today' adds status!=DONE AND due_date=today", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'today'
+    })
+    expect(sql).toContain("t.status != 'DONE'")
+    expect(sql).toContain('t.due_date = ?')
+    expect(params).toEqual(['2026-06-22'])
+  })
+
+  it("activeFilter='overdue' adds status!=DONE AND due_date<today", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'overdue'
+    })
+    expect(sql).toContain("t.status != 'DONE'")
+    expect(sql).toContain('t.due_date < ?')
+    expect(params).toEqual(['2026-06-22'])
+  })
+
+  it("activeFilter='upcoming' adds status!=DONE AND due_date>today AND due_date<=today+7", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'upcoming'
+    })
+    expect(sql).toContain("t.status != 'DONE'")
+    expect(sql).toContain('t.due_date > ?')
+    expect(sql).toContain('t.due_date <= ?')
+    expect(params).toEqual(['2026-06-22', '2026-06-29'])
+  })
+
+  it("activeFilter='completed' adds status=DONE", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'completed'
+    })
+    expect(sql).toContain("t.status = 'DONE'")
+    expect(params).toEqual([])
+  })
+
+  it("activeFilter='today' overrides filters.dueDate='overdue' (no conflicting clause)", () => {
+    const filters: TaskFilters = { ...emptyFilters, dueDate: 'overdue' }
+    const { sql, params } = buildQuery('vault', filters, ctx, {
+      activeFilter: 'today'
+    })
+    // Smart-list wins: only the today equality, no overdue less-than.
+    expect(sql).toContain('t.due_date = ?')
+    expect(sql).not.toContain('t.due_date < ?')
+    expect(params).toEqual(['2026-06-22'])
+  })
+
+  it("activeFilter='all' is a no-op (no smart-list WHERE added)", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'all'
+    })
+    // No smart-list clause is appended to the WHERE; the body ends with
+    // 'WHERE 1=1' followed directly by the ORDER BY (the EXISTS subquery
+    // for is_blocked references `bt.status != 'DONE'`, so a substring
+    // check on the full SQL would false-positive).
+    expect(sql).toContain('WHERE 1=1 ORDER BY')
+    expect(params).toEqual([])
+  })
+})

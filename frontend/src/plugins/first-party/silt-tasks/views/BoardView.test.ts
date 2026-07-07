@@ -114,7 +114,8 @@ import {
   resetTaskHubState,
   setGroupBy,
   setDisplayMode,
-  setSort
+  setSort,
+  setActiveFilter
 } from '../state.svelte'
 
 const TODAY = '2026-07-06'
@@ -675,5 +676,69 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     // tail order (1 card already in DOING → t1 gets order 2).
     expect(mocks.updateBlockState).toHaveBeenCalledWith('t1', 'DOING')
     expect(mocks.setTaskOrder).toHaveBeenCalledWith('t1', 2)
+  })
+
+  it('sort=manual: cross-column drop uses max(existing orders)+1 for gap-tolerant destinations', async () => {
+    // Source column holds non-contiguous orders [1, 5] (gap-tolerant: the
+    // source isn't renumbered when a card leaves). The destination has 1
+    // card at order 1. A count-based destLen+1 would assign 2 — but if the
+    // destination also had gaps (e.g. [1, 5]) destLen+1=3 would land mid-
+    // column rather than at the tail. Verifies max+1 produces order 6.
+    await renderBoardWithSort('status', 'manual', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A', manual_order: 1 }),
+      row({
+        id: 'd1',
+        status: 'DOING',
+        clean_content: 'B',
+        manual_order: 1
+      }),
+      row({
+        id: 'd2',
+        status: 'DOING',
+        clean_content: 'C',
+        manual_order: 5
+      })
+    ])
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doingCol = screen.getByRole('group', { name: 'In Progress' })
+
+    await fireEvent.dragStart(todoCard)
+    await fireEvent.drop(doingCol)
+    await flush()
+
+    // max([1, 5]) + 1 = 6, not destLen(2)+1 = 3.
+    expect(mocks.setTaskOrder).toHaveBeenCalledWith('t1', 6)
+  })
+
+  // --- Smart-list activeFilter integration (#432) -----------------------
+
+  it('activeFilter wires into buildQuery so clicking "Today" narrows the board', async () => {
+    // The regression: Sidebar sets hubState.activeFilter on a smart-list
+    // click but no renderer consumed it, so the click was decorative-only.
+    // Verify BoardView forwards activeFilter to buildQuery by inspecting
+    // the SQL the reload() fired.
+    resetTaskHubState()
+    setGroupBy('status')
+    setActiveFilter('today')
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    const ctx = makeCtx()
+    render(BoardView, { ctx, onCountChange: vi.fn() })
+    await flush()
+
+    expect(mocks.sqliteQuery).toHaveBeenCalled()
+    // Every fired query should carry the smart-list constraint — verify
+    // the most recent one (the load effect may fire more than once during
+    // mount as reactive deps settle).
+    const lastCall = mocks.sqliteQuery.mock.calls.at(-1)!
+    const sql = lastCall[0] as string
+    const params = lastCall[1] as unknown[]
+    // Smart-list today → status!=DONE AND due_date=today.
+    expect(sql).toContain("t.status != 'DONE'")
+    expect(sql).toContain('t.due_date = ?')
+    expect(params).toContain(TODAY)
   })
 })

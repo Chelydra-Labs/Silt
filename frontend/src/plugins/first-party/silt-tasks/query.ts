@@ -20,6 +20,7 @@
 
 import { plusDaysISO } from '../../sdk'
 import type {
+  CalendarFilter,
   DueDateFilter,
   GroupBy,
   Scope,
@@ -64,6 +65,16 @@ export interface BuildQueryOptions {
    * are `?`-bound; `null`/empty due dates fall outside any window.
    */
   window?: { start: string; end: string }
+  /**
+   * Sidebar smart-list filter (#432). When set and != 'all', adds a WHERE
+   * constraint that narrows the result set to the smart list's scope.
+   * Date-based smart lists (today/overdue/upcoming) take PRECEDENCE over
+   * filters.dueDate — the smart list wins so clicking "Today" after
+   * selecting the "Overdue" quick-pick doesn't produce an empty
+   * intersection. 'completed' adds a status='DONE' clause alongside the
+   * existing filters; 'all' is a no-op.
+   */
+  activeFilter?: CalendarFilter
 }
 
 /**
@@ -204,7 +215,13 @@ export function buildQuery(
     where.push(inClause('t.priority', f.priorities))
     params.push(...f.priorities)
   }
-  if (f.dueDate) {
+  // Smart-list precedence (#432): date-based active filters (today/overdue/
+  // upcoming) override filters.dueDate so clicking a smart list after picking
+  // a due-date quick-pick doesn't produce an empty intersection.
+  const af = options?.activeFilter
+  const smartListIsDateBased =
+    af === 'today' || af === 'overdue' || af === 'upcoming'
+  if (f.dueDate && !smartListIsDateBased) {
     const today = ctx.today
     const due = f.dueDate as DueDateFilter
     if (due === 'overdue') {
@@ -231,6 +248,23 @@ export function buildQuery(
   if (options?.window) {
     where.push('t.due_date >= ?', 't.due_date <= ?')
     params.push(options.window.start, options.window.end)
+  }
+  // Smart-list filter (#432). Maps the sidebar's semantic filter to WHERE
+  // clauses matching the count-query semantics in Sidebar.svelte.
+  if (af && af !== 'all') {
+    const today = ctx.today
+    if (af === 'today') {
+      where.push("t.status != 'DONE'", 't.due_date = ?')
+      params.push(today)
+    } else if (af === 'overdue') {
+      where.push("t.status != 'DONE'", 't.due_date < ?')
+      params.push(today)
+    } else if (af === 'upcoming') {
+      where.push("t.status != 'DONE'", 't.due_date > ?', 't.due_date <= ?')
+      params.push(today, plusDaysISO(today, 7))
+    } else if (af === 'completed') {
+      where.push("t.status = 'DONE'")
+    }
   }
   const orderBy = composeOrderBy(options?.groupBy, options?.sort)
   const whereClause = where.length

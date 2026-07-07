@@ -324,7 +324,7 @@ plugins:
   plugin_settings:
     silt-tasks:
       default_display_mode: list
-      default_group_by: none
+      default_group_by: dueDate
       default_sort: dueDate
       default_scope: vault
       calendar_sub_mode: month

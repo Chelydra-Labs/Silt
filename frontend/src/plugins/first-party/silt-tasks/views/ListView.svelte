@@ -166,7 +166,24 @@
       !s.filters.priorities.includes(item.priority)
     )
       return false
-    if (s.filters.dueDate) {
+    // Smart-list filter (#432): date-based smart lists (today/overdue/
+    // upcoming) take precedence over filters.dueDate so clicking a smart
+    // list after picking a due-date quick-pick doesn't produce an empty
+    // intersection. Mirrors the WHERE clauses emitted by buildQuery.
+    const af = s.activeFilter
+    if (af === 'completed') return false // open row, but smart-list wants DONE
+    const smartListIsDateBased =
+      af === 'today' || af === 'overdue' || af === 'upcoming'
+    if (smartListIsDateBased) {
+      if (af === 'today' && item.due_date !== today) return false
+      if (af === 'overdue' && (!item.due_date || item.due_date >= today))
+        return false
+      if (
+        af === 'upcoming' &&
+        (!item.due_date || item.due_date <= today || item.due_date > weekAhead)
+      )
+        return false
+    } else if (s.filters.dueDate) {
       const d = s.filters.dueDate
       if (d === 'none') {
         if (item.due_date) return false
@@ -191,6 +208,14 @@
   }
 
   let filteredOpen = $derived(openItems.filter(passesHubFilters))
+
+  // Smart-list filter for the Completed section (#432): 'completed' shows
+  // only done rows; the other smart-list values empty the Completed section
+  // (date-based smart lists are open-task scopes by definition).
+  let activeFilter = $derived(getTaskHubState().activeFilter)
+  let filteredDone = $derived(
+    activeFilter === 'all' || activeFilter === 'completed' ? doneItems : []
+  )
 
   // Report counts upward so the hub header stays in sync. Runs after every
   // reload / filter / nav change.
@@ -835,7 +860,7 @@
         {/each}
       {/if}
 
-      {#if doneItems.length > 0}
+      {#if filteredDone.length > 0}
         <section aria-label="Completed" data-group="completed">
           <h2
             class="font-label-sm-bold uppercase tracking-widest text-[11px] mb-2 flex items-center gap-2 text-text-muted"
@@ -859,7 +884,7 @@
               {/if}
               Completed
               <span class="text-text-muted/60" aria-hidden="true"
-                >{doneItems.length}</span
+                >{filteredDone.length}</span
               >
             </button>
           </h2>
@@ -869,7 +894,7 @@
               class="space-y-1 opacity-60"
               data-testid="tasks-completed-list"
             >
-              {#each doneItems as item (item.id)}
+              {#each filteredDone as item (item.id)}
                 <div
                   class="flex items-center gap-3 px-3 py-2 rounded-lg"
                   data-block-id={item.id}

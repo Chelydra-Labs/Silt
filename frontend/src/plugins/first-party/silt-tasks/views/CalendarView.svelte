@@ -207,12 +207,14 @@
         today
       }
       const winQ = buildQuery(scope, filters, ctxLike, {
-        window: { start: ymd(windowStart), end: ymd(windowEnd) }
+        window: { start: ymd(windowStart), end: ymd(windowEnd) },
+        activeFilter: getTaskHubState().activeFilter
       })
       const undatedQ = buildQuery(
         scope,
         { ...filters, dueDate: 'none' },
-        ctxLike
+        ctxLike,
+        { activeFilter: getTaskHubState().activeFilter }
       )
       const [winRes, undatedRes] = await Promise.all([
         ctx.sqliteQuery(winQ.sql, winQ.params),

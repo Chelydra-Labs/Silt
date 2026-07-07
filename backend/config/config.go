@@ -460,7 +460,7 @@ func Defaults() SystemConfig {
 				// []string seed would mismatch on Load.
 				"silt-tasks": map[string]any{
 					"default_display_mode": "list",
-					"default_group_by":     "none",
+					"default_group_by":     "dueDate",
 					"default_sort":         "dueDate",
 					"default_scope":        "vault",
 					"calendar_sub_mode":    "month",

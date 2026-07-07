@@ -17,12 +17,6 @@ package plugins
 // either confuse the user with a duplicate Settings entry or, should the
 // bundle ever drop the id, inherit the first-party grants seeded by
 // seedFirstPartyGrants).
-// FirstPartyPluginIDs is the set of plugin ids reserved for bundled plugins.
-// A third-party archive whose manifest id appears in this set is rejected at
-// install time so an impostor cannot shadow a bundled plugin (which would
-// either confuse the user with a duplicate Settings entry or, should the
-// bundle ever drop the id, inherit the first-party grants seeded by
-// seedFirstPartyGrants).
 var FirstPartyPluginIDs = map[string]bool{
 	"silt-attachments": true,
 	// silt-tasks (#407): ships as a first-party plugin that creates standalone

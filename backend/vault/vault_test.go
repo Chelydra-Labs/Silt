@@ -286,8 +286,8 @@ func TestScaffoldVault_SeedsSiltTasksPluginSettings(t *testing.T) {
 	if tasks["default_display_mode"] != "list" {
 		t.Errorf("silt-tasks.default_display_mode: got %v, want list", tasks["default_display_mode"])
 	}
-	if tasks["default_group_by"] != "none" {
-		t.Errorf("silt-tasks.default_group_by: got %v, want none", tasks["default_group_by"])
+	if tasks["default_group_by"] != "dueDate" {
+		t.Errorf("silt-tasks.default_group_by: got %v, want dueDate", tasks["default_group_by"])
 	}
 	if tasks["default_sort"] != "dueDate" {
 		t.Errorf("silt-tasks.default_sort: got %v, want dueDate", tasks["default_sort"])

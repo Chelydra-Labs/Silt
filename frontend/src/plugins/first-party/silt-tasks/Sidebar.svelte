@@ -99,10 +99,10 @@
           SUM(CASE WHEN t.status != 'DONE' AND t.due_date = ? THEN 1 ELSE 0 END) AS today,
           SUM(CASE WHEN t.status != 'DONE' AND t.due_date >= ? AND t.due_date <= ? THEN 1 ELSE 0 END) AS upcoming,
           SUM(CASE WHEN t.status != 'DONE' AND t.due_date < ? THEN 1 ELSE 0 END) AS overdue,
-          SUM(CASE WHEN t.status = 'DONE' AND t.due_date = ? THEN 1 ELSE 0 END) AS completed,
+          SUM(CASE WHEN t.status = 'DONE' THEN 1 ELSE 0 END) AS completed,
           SUM(CASE WHEN t.status != 'DONE' THEN 1 ELSE 0 END) AS "all"
        FROM blocks b JOIN tasks t ON b.id = t.block_id`,
-      [today, tomorrow, weekAhead, today, today]
+      [today, tomorrow, weekAhead, today]
     )
     const row = (res.rows?.[0] ?? {}) as Record<string, unknown>
     counts = {

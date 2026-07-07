@@ -284,14 +284,20 @@
     liveMessage = announceMove(toCol)
     try {
       await dispatchDrop(card, toCol)
-      // Cross-column manual sort (#426): the moved card joins the
-      // destination column's tail (highest order + 1). The source column
-      // is NOT renumbered (gap-tolerant). Within-column reorder is owned
-      // by commitManualReorder via the card-level drop handler.
+      // Cross-column manual sort (#426): the moved card joins after the
+      // destination's highest existing order. Source columns aren't
+      // renumbered on removal (gap-tolerant), so destination orders can be
+      // non-contiguous (e.g. [1, 5]) — count-based destLen+1 would land the
+      // card mid-column rather than at the tail. Within-column reorder is
+      // owned by commitManualReorder via the card-level drop handler.
       if (sort === 'manual') {
-        const destLen = prev.find((c) => c.key === toCol.key)?.items.length ?? 0
+        const destItems = prev.find((c) => c.key === toCol.key)?.items ?? []
+        const maxOrder =
+          destItems.length > 0
+            ? Math.max(...destItems.map((c) => c.manual_order ?? 0))
+            : 0
         try {
-          await ctx.setTaskOrder(card.id, destLen + 1)
+          await ctx.setTaskOrder(card.id, maxOrder + 1)
         } catch (e) {
           if (my !== moveSeq) return
           moveError = e instanceof Error ? e.message : String(e)
@@ -427,7 +433,7 @@
           activePage: ctx.activePage,
           today
         },
-        { groupBy, sort }
+        { groupBy, sort, activeFilter: getTaskHubState().activeFilter }
       )
       const { rows: raw } = await ctx.sqliteQuery(sql, params)
       if (my !== loadSeq) return
