@@ -565,7 +565,14 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// — mirrors F4 grants pattern.)
 	var taskMigrationSaveErr error
 	rawTaskSettings := vault.LoadLegacyTaskPluginSettings(vaultPath)
-	if migrated := vault.MigrateLegacyTaskPluginSettings(a.cfg, rawTaskSettings); migrated != nil {
+	// Snapshot a.cfg under the read lock so the migrator reads a consistent
+	// value even if a concurrent config reload swaps a.cfg mid-call. The
+	// write path below still takes configMu.Lock() to mutate + persist.
+	var cfgSnapshot config.SystemConfig
+	a.configMu.RLock()
+	cfgSnapshot = a.cfg
+	a.configMu.RUnlock()
+	if migrated := vault.MigrateLegacyTaskPluginSettings(cfgSnapshot, rawTaskSettings); migrated != nil {
 		a.configMu.Lock()
 		if a.cfg.Plugins.PluginSettings == nil {
 			a.cfg.Plugins.PluginSettings = map[string]any{}

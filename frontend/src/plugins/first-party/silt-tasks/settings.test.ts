@@ -36,6 +36,7 @@ import {
   loadSavedViews,
   loadLegacyKanbanBoardsAsViews,
   persistSavedViews,
+  loadColumns,
   TASKS_PLUGIN_ID
 } from './settings'
 import { SYSTEM_VIEWS } from './savedViews'
@@ -284,5 +285,44 @@ describe('loadLegacyKanbanBoardsAsViews (#427 forward-read)', () => {
     const views = loadLegacyKanbanBoardsAsViews()
     expect(views).toHaveLength(1)
     expect(views[0].id).toBe('z')
+  })
+})
+
+describe('loadColumns (#421)', () => {
+  beforeEach(() => {
+    mocks.settings.config.plugins.plugin_settings = {}
+  })
+
+  it('returns the default TODO/DOING/DONE when columns is unset', () => {
+    expect(loadColumns()).toEqual(['TODO', 'DOING', 'DONE'])
+  })
+
+  it('returns defaults when columns is not an array', () => {
+    mocks.settings.config.plugins.plugin_settings['silt-tasks'] = {
+      columns: 'TODO,DOING'
+    }
+    expect(loadColumns()).toEqual(['TODO', 'DOING', 'DONE'])
+  })
+
+  it('trims to 50 entries when the persisted array exceeds the cap', () => {
+    const many = Array.from({ length: 60 }, (_, i) => `COL${i}`)
+    mocks.settings.config.plugins.plugin_settings['silt-tasks'] = {
+      columns: many
+    }
+    const cols = loadColumns()
+    expect(cols).toHaveLength(50)
+    expect(cols[0]).toBe('COL0')
+    expect(cols[49]).toBe('COL49')
+  })
+
+  it('returns a copy of a valid array (caller can mutate without touching the snapshot)', () => {
+    mocks.settings.config.plugins.plugin_settings['silt-tasks'] = {
+      columns: ['Backlog', 'TODO', 'DOING', 'DONE']
+    }
+    const cols = loadColumns()
+    expect(cols).toEqual(['Backlog', 'TODO', 'DOING', 'DONE'])
+    cols.push('Extra')
+    // A second read returns the original persisted set, not the mutated copy.
+    expect(loadColumns()).toEqual(['Backlog', 'TODO', 'DOING', 'DONE'])
   })
 })

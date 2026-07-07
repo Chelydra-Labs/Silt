@@ -29,6 +29,7 @@
     clearFilters,
     applySavedView,
     deleteSavedView,
+    saveView,
     type SavedView,
     type TaskFilters,
     type DueDateFilter,
@@ -378,11 +379,20 @@
     if (view.system) return
     if (!window.confirm(`Delete saved view "${view.name}"?`)) return
     errorMsg = ''
+    // Capture the view before the in-memory delete so a persist failure can
+    // restore it — without this, the view vanishes from the UI but survives
+    // on disk, reappearing on next launch with no explanation to the user.
+    const viewToRemove = getTaskHubState().savedViews.find(
+      (v) => v.id === view.id
+    )
     deleteSavedView(view.id)
     // persistSavedViews resolves to false on write failure (vs. rejecting) —
     // surface that path so the user knows the deletion didn't reach disk.
     const ok = await persistSavedViews(getTaskHubState().savedViews)
-    if (!ok) {
+    if (!ok && viewToRemove) {
+      saveView(viewToRemove)
+      errorMsg = 'Delete failed — the view will reappear on next launch.'
+    } else if (!ok) {
       errorMsg = 'Failed to delete view — will retry on next launch'
     }
   }
@@ -603,48 +613,56 @@
           </button>
         </div>
         <div class="grid grid-cols-7 gap-0.5" role="grid">
-          {#each DOW as d}
-            <div
-              class="text-center text-[9px] uppercase tracking-widest font-label-sm-bold text-text-muted py-0.5"
-            >
-              {d}
-            </div>
-          {/each}
-          {#each miniWeeks as week, wi (wi)}
-            {#each week as day, di (di)}
-              {@const inMonth = day.getMonth() === miniCursor.getMonth()}
-              {@const key = ymd(day)}
-              {@const count = byDate[key] ?? 0}
-              {@const flatIdx = wi * 7 + di}
-              <button
-                type="button"
-                role="gridcell"
-                tabindex={flatIdx === miniFocusIdx ? 0 : -1}
-                data-mini-day={flatIdx}
-                data-mini-date={key}
-                data-test-mini-day={key}
-                onclick={() => pickDay(day)}
-                onkeydown={(e) => onDayKeydown(e, flatIdx)}
-                aria-label={`${key}${count ? ', ' + count + ' task' + (count === 1 ? '' : 's') : ''}`}
-                aria-current={key === activeFocusDate ? 'date' : undefined}
-                data-testid={`mini-day-${key}`}
-                class="aspect-square flex flex-col items-center justify-center rounded text-[10px] font-label-sm cursor-pointer border-none bg-transparent
-                  {inMonth
-                  ? 'text-text-primary hover:bg-hover'
-                  : 'text-text-muted/50'}
-                  {key === activeFocusDate
-                  ? 'ring-1 ring-accent-primary-start bg-accent-primary-glow'
-                  : ''}"
+          <div role="row" class="contents">
+            {#each DOW as d}
+              <div
+                role="columnheader"
+                class="text-center text-[9px] uppercase tracking-widest font-label-sm-bold text-text-muted py-0.5"
               >
-                <span>{day.getDate()}</span>
-                {#if count > 0}
-                  <span
-                    class="w-1 h-1 rounded-full bg-accent-primary-start"
-                    aria-hidden="true"
-                  ></span>
-                {/if}
-              </button>
+                {d}
+              </div>
             {/each}
+          </div>
+          {#each miniWeeks as week, wi (wi)}
+            <div role="row" class="contents">
+              {#each week as day, di (di)}
+                {@const inMonth = day.getMonth() === miniCursor.getMonth()}
+                {@const key = ymd(day)}
+                {@const count = byDate[key] ?? 0}
+                {@const flatIdx = wi * 7 + di}
+                <button
+                  type="button"
+                  role="gridcell"
+                  tabindex={flatIdx === miniFocusIdx ? 0 : -1}
+                  data-mini-day={flatIdx}
+                  data-mini-date={key}
+                  data-test-mini-day={key}
+                  onclick={() => {
+                    miniFocusIdx = flatIdx
+                    pickDay(day)
+                  }}
+                  onkeydown={(e) => onDayKeydown(e, flatIdx)}
+                  aria-label={`${key}${count ? ', ' + count + ' task' + (count === 1 ? '' : 's') : ''}`}
+                  aria-current={key === activeFocusDate ? 'date' : undefined}
+                  data-testid={`mini-day-${key}`}
+                  class="aspect-square flex flex-col items-center justify-center rounded text-[10px] font-label-sm cursor-pointer border-none bg-transparent
+                    {inMonth
+                    ? 'text-text-primary hover:bg-hover'
+                    : 'text-text-muted/50'}
+                    {key === activeFocusDate
+                    ? 'ring-1 ring-accent-primary-start bg-accent-primary-glow'
+                    : ''}"
+                >
+                  <span>{day.getDate()}</span>
+                  {#if count > 0}
+                    <span
+                      class="w-1 h-1 rounded-full bg-accent-primary-start"
+                      aria-hidden="true"
+                    ></span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
           {/each}
         </div>
         {#if activeFocusDate}

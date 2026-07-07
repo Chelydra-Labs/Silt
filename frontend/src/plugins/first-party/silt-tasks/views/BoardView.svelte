@@ -280,6 +280,9 @@
       applyOptimistic(card, fromColKey, toCol)
       try {
         const blockers = await ctx.getTaskBlockers(card.id)
+        // A second drop during the await bumped moveSeq; abandon this
+        // commit so a stale confirm dialog can't land over a newer move.
+        if (my !== moveSeq) return
         if (blockers.length > 0) {
           pendingBlockedDone = {
             card,
@@ -748,9 +751,21 @@
     if (changes.length === 0) return
 
     // Optimistic: patch the column's items so the card snaps to its slot
-    // before the IPC round-trip; revert on failure (mirror commitDrop).
+    // before the IPC round-trip; revert on failure (mirror commitDrop). The
+    // reordered cards MUST carry their fresh manual_order values — a second
+    // reorder before this IPC completes would otherwise read stale values,
+    // skip a card whose stale value happens to equal its new position, and
+    // write a colliding [order::] token to disk.
     columns = columns.map((c) =>
-      c.key === col.key ? { ...c, items: reordered } : c
+      c.key === col.key
+        ? {
+            ...c,
+            items: reordered.map((item, i) => ({
+              ...item,
+              manual_order: i + 1
+            }))
+          }
+        : c
     )
     liveMessage = `Task moved to position ${
       changes.find((c) => c.id === src.id)?.order ?? ''
@@ -995,6 +1010,10 @@
                     <div
                       class="absolute right-0 top-full mt-1 z-50 min-w-[140px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
                       role="menu"
+                      tabindex="-1"
+                      onkeydown={(e) => {
+                        if (e.key === 'Escape') menuCol = null
+                      }}
                     >
                       <button
                         type="button"

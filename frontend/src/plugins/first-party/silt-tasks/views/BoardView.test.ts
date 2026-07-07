@@ -437,6 +437,135 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
   })
 
+  it('confirmBlockedDone writes DONE + cross-column manual order when sort=manual', async () => {
+    mocks.getTaskBlockers.mockResolvedValue([
+      { id: 'pre', clean_content: 'Prerequisite' }
+    ])
+    // DONE already has one card at manual_order=5 so max+1 = 6 (gap-tolerant).
+    await renderBoardWithSort('status', 'manual', [
+      row({
+        id: 'tb',
+        status: 'TODO',
+        clean_content: 'blocked',
+        is_blocked: 1
+      }),
+      row({
+        id: 'd1',
+        status: 'DONE',
+        clean_content: 'existing done',
+        manual_order: 5
+      })
+    ])
+
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doneCol = screen.getByRole('group', { name: 'Done' })
+
+    await fireEvent.dragStart(card)
+    await fireEvent.drop(doneCol)
+    await flush()
+
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Complete blocked task?'
+    })
+    expect(dialog).toBeInTheDocument()
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+
+    // Confirm the dialog → DONE persists AND setTaskOrder assigns the
+    // destination's tail order (max([5]) + 1 = 6).
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Complete anyway' })
+    )
+    await flush()
+
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('tb', 'DONE')
+    expect(mocks.setTaskOrder).toHaveBeenCalledWith('tb', 6)
+  })
+
+  it('cancelBlockedDone reverts card to source column without persisting', async () => {
+    mocks.getTaskBlockers.mockResolvedValue([
+      { id: 'pre', clean_content: 'Prerequisite' }
+    ])
+    await renderBoard('status', [
+      row({ id: 'tb', status: 'TODO', clean_content: 'blocked', is_blocked: 1 })
+    ])
+
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doneCol = screen.getByRole('group', { name: 'Done' })
+
+    await fireEvent.dragStart(card)
+    await fireEvent.drop(doneCol)
+    await flush()
+
+    await screen.findByRole('alertdialog', { name: 'Complete blocked task?' })
+
+    // Cancel → the optimistic DONE placement reverts; the card is back in
+    // To Do and no DONE write fired.
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await flush()
+
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    const todoCards = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelectorAll('[data-card]')
+    expect(todoCards).toHaveLength(1)
+    expect(
+      screen
+        .getByRole('group', { name: 'Done' })
+        .querySelectorAll('[data-card]')
+    ).toHaveLength(0)
+  })
+
+  it('getTaskBlockers rejection proceeds with persist (no dialog)', async () => {
+    mocks.getTaskBlockers.mockRejectedValue(new Error('blocker lookup failed'))
+    await renderBoard('status', [
+      row({ id: 'tb', status: 'TODO', clean_content: 'blocked', is_blocked: 1 })
+    ])
+
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doneCol = screen.getByRole('group', { name: 'Done' })
+
+    await fireEvent.dragStart(card)
+    await fireEvent.drop(doneCol)
+    await flush()
+
+    // Blocker lookup failed → the persist proceeds rather than stranding the
+    // card in an un-committed optimistic state. No dialog opens.
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Complete blocked task?' })
+    ).toBeNull()
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('tb', 'DONE')
+  })
+
+  it('is_blocked=true but no blockers proceeds without dialog', async () => {
+    // is_blocked is set but the blocker query returns empty — the task was
+    // flagged stale (a prerequisite was deleted without clearing the flag).
+    // The drop should proceed to DONE without surfacing the confirm dialog.
+    mocks.getTaskBlockers.mockResolvedValue([])
+    await renderBoard('status', [
+      row({ id: 'tb', status: 'TODO', clean_content: 'blocked', is_blocked: 1 })
+    ])
+
+    const card = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doneCol = screen.getByRole('group', { name: 'Done' })
+
+    await fireEvent.dragStart(card)
+    await fireEvent.drop(doneCol)
+    await flush()
+
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Complete blocked task?' })
+    ).toBeNull()
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('tb', 'DONE')
+  })
+
   // --- Keyboard parity ---------------------------------------------------
 
   it('ArrowRight on a focused TODO card moves it to DOING (status)', async () => {

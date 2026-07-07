@@ -189,9 +189,19 @@
     void persistDefaultSort(s)
   }
 
-  // Ctrl+Shift+V cycles List → Board → Calendar → List.
+  // Ctrl+Shift+V cycles List → Board → Calendar → List. Guard against the
+  // browser's paste-without-formatting shortcut when the user is typing in
+  // an input/textarea/contenteditable so the hub doesn't steal the keystroke
+  // mid-composition.
   function onGlobalKeydown(e: KeyboardEvent) {
     if (!(e.ctrlKey && e.shiftKey) || e.key !== 'V') return
+    const t = e.target as HTMLElement
+    if (
+      t instanceof HTMLInputElement ||
+      t instanceof HTMLTextAreaElement ||
+      t.isContentEditable
+    )
+      return
     e.preventDefault()
     const order: DisplayMode[] = ['list', 'board', 'calendar']
     const idx = order.indexOf(getTaskHubState().displayMode)

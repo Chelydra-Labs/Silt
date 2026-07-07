@@ -213,6 +213,10 @@
 
   async function onDelete(comment: Comment) {
     if (!window.confirm('Delete this comment?')) return
+    // Capture the index before filtering so a failed delete restores the
+    // comment at its original position — appending at the end would reshuffle
+    // the thread order on every transient failure.
+    const idx = comments.findIndex((c) => c.id === comment.id)
     comments = comments.filter((c) => c.id !== comment.id)
     try {
       await ctx.deleteBlock(comment.id)
@@ -220,7 +224,7 @@
       liveMessage = 'Comment deleted'
     } catch (e) {
       // Restore on failure so the user sees the delete didn't take.
-      comments = [...comments, comment]
+      comments = [...comments.slice(0, idx), comment, ...comments.slice(idx)]
       errorMsg = e instanceof Error ? e.message : String(e)
       liveMessage = 'Comment failed to delete'
     }

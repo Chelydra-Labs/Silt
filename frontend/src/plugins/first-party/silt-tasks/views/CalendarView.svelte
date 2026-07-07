@@ -49,7 +49,15 @@
 
   // --- Local state --------------------------------------------------------
   // Anchor date for the visible window; the focus-date listener pans this.
-  let cursor = $state(new Date())
+  // Initialized from ctx.today (not wall-clock new Date()) so the visible
+  // month tracks the same "today" the Sidebar's mini-cal does — avoids drift
+  // near a month boundary when ctx.today is injected (#118).
+  function cursorFromToday(): Date {
+    const iso = ctx.today
+    const [y, m, d] = iso.split('-').map(Number)
+    return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1)
+  }
+  let cursor = $state(cursorFromToday())
   let byDate = $state<Record<string, TaskDetail[]>>({})
   let undated = $state<TaskDetail[]>([])
   // All-overdue-open rows (no lower-bound window) so tasks from past months
@@ -337,14 +345,21 @@
     return () => window.removeEventListener('calendar:focus-date', handler)
   })
 
-  // Report counts upward so the hub header stays in sync. Includes both the
-  // windowed tasks and the undated strip so the count matches what the user
-  // sees on screen.
+  // Report counts upward so the hub header stays in sync. Includes the
+  // windowed tasks, the undated strip, AND overdue-surfaced tasks (deduped
+  // against the windowed rows so a task due inside the visible window isn't
+  // double-counted when it also surfaces in today's cell). Without the
+  // overdue contribution the header under-reports vs Board.
   $effect(() => {
     const win = Object.values(byDate).flat()
-    const all = [...win, ...undated]
-    const open = all.filter((r) => r.status !== 'DONE').length
-    const done = all.filter((r) => r.status === 'DONE').length
+    const winIds = new Set(win.map((r) => r.id))
+    const allOpen = [
+      ...win,
+      ...undated,
+      ...overdueAll.filter((o) => !winIds.has(o.id))
+    ]
+    const open = allOpen.filter((r) => r.status !== 'DONE').length
+    const done = allOpen.filter((r) => r.status === 'DONE').length
     onCountChange?.(open, done)
   })
 
@@ -418,7 +433,7 @@
     cursor = subMode === 'month' ? addMonths(cursor, 1) : addDays(cursor, 7)
   }
   function goToday() {
-    cursor = new Date()
+    cursor = cursorFromToday()
   }
 
   // --- Quick-add --------------------------------------------------------
@@ -622,6 +637,7 @@
           aria-checked={subMode === 'month'}
           aria-label="Month grid"
           data-testid="calendar-submode-month"
+          tabindex={subMode === 'month' ? 0 : -1}
           onclick={() => chooseSubMode('month')}
           class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
           class:bg-hover={subMode === 'month'}
@@ -634,6 +650,7 @@
           aria-checked={subMode === 'week'}
           aria-label="Week strip"
           data-testid="calendar-submode-week"
+          tabindex={subMode === 'week' ? 0 : -1}
           onclick={() => chooseSubMode('week')}
           class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
           class:bg-hover={subMode === 'week'}
@@ -762,25 +779,165 @@
       <div class="text-error p-6">{errorMsg}</div>
     {:else if subMode === 'month'}
       <!-- Month grid (lifted from silt-calendar). 7-column CSS grid; each day
-           cell carries role="gridcell" and a data-celldate for testing/DnD. -->
-      <div class="grid grid-cols-7 gap-1 min-w-[700px]">
-        {#each DOW as d}
-          <div
-            class="text-center text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted py-1"
-          >
-            {d}
+           cell carries role="gridcell" and a data-celldate for testing/DnD.
+           ARIA grid structure: container role="grid", each week a role="row",
+           DOW headers role="columnheader". The row wrappers use display:contents
+           so the CSS grid layout is unaffected (children participate in the
+           parent grid). -->
+      <div class="grid grid-cols-7 gap-1 min-w-[700px]" role="grid">
+        <div role="row" class="contents">
+          {#each DOW as d}
+            <div
+              role="columnheader"
+              class="text-center text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted py-1"
+            >
+              {d}
+            </div>
+          {/each}
+        </div>
+        {#each monthWeeks as week}
+          <div role="row" class="contents">
+            {#each week as day}
+              {@const inMonth = day.getMonth() === cursor.getMonth()}
+              {@const isToday = ymd(day) === todayKey}
+              {@const items = cellItems(day)}
+              {@const isTodayCell = isToday}
+              {@const overdueHere = isTodayCell
+                ? overdueSurfaced.filter(
+                    (o) => !items.some((i) => i.id === o.id)
+                  )
+                : []}
+              <div
+                role="gridcell"
+                tabindex="0"
+                data-celldate={ymd(day)}
+                aria-label={`${day.toDateString()}${
+                  items.length + overdueHere.length
+                    ? ', ' +
+                      (items.length + overdueHere.length) +
+                      ' task' +
+                      (items.length + overdueHere.length === 1 ? '' : 's')
+                    : ''
+                }`}
+                onkeydown={(e) => onCellKeydown(e, day)}
+                ondragover={(e) => onCellDragOver(e, day)}
+                ondragleave={(e) => onCellDragLeave(e, day)}
+                ondrop={(e) => onCellDrop(e, day)}
+                onclick={(e) => {
+                  // Open quick-add when clicking the cell OR a non-interactive
+                  // child (the date number / header label), but not when the
+                  // click lands on a task chip button, the + button, or the
+                  // quick-add input.
+                  const t = e.target as HTMLElement
+                  if (t.closest('button,input')) return
+                  openQuickAddForDay(day)
+                }}
+                class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 transition-all focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {overCellDate ===
+                ymd(day)
+                  ? 'border-accent-primary-glow ring-2 ring-accent-primary-glow/40'
+                  : inMonth
+                    ? 'border-surface-panel-border bg-surface-panel'
+                    : 'border-surface-panel-border/30 bg-transparent'}"
+              >
+                <div class="flex items-center justify-between">
+                  <span
+                    class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
+                    class:bg-accent-primary-start={isToday}
+                    class:text-surface-app={isToday}
+                    class:text-text-muted={!isToday && !inMonth}
+                    class:text-text-primary={!isToday && inMonth}
+                    >{day.getDate()}</span
+                  >
+                  <button
+                    type="button"
+                    onclick={(e) => {
+                      e.stopPropagation()
+                      openQuickAddForDay(day)
+                    }}
+                    aria-label="Add task for {ymd(day)}"
+                    data-testid="calendar-day-add"
+                    class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0 leading-none"
+                  >
+                    <span class="material-symbols-outlined text-[14px]"
+                      >add</span
+                    >
+                  </button>
+                </div>
+                {#each items.slice(0, 3) as item (item.id)}
+                  <button
+                    type="button"
+                    draggable="true"
+                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                    ondragstart={(e) => onCardDragStart(e, item)}
+                    ondragend={onCardDragEnd}
+                    onkeydown={(e) => onCardKeydown(e, item)}
+                    onclick={() => (selectedTask = item)}
+                    class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
+                    item.id
+                      ? 'opacity-40'
+                      : ''}"
+                    title={item.clean_content}>{item.clean_content}</button
+                  >
+                {/each}
+                {#if items.length > 3}
+                  <span class="text-[9px] text-text-muted px-1"
+                    >+{items.length - 3} more</span
+                  >
+                {/if}
+                <!-- Overdue open tasks surface in today's cell with an error-tone
+                   stripe so they're not lost in past days. They ALSO remain in
+                   their actual due-date cell above so the truth stays visible. -->
+                {#each overdueHere.slice(0, 2) as item (item.id)}
+                  <button
+                    type="button"
+                    draggable="true"
+                    data-overdue-surfaced="true"
+                    aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                    ondragstart={(e) => onCardDragStart(e, item)}
+                    ondragend={onCardDragEnd}
+                    onkeydown={(e) => onCardKeydown(e, item)}
+                    onclick={() => (selectedTask = item)}
+                    class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-error-bg border-l-2 border-l-error text-error hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
+                    item.id
+                      ? 'opacity-40'
+                      : ''}"
+                    title="Overdue (was due {item.due_date}): {item.clean_content}"
+                    aria-label="Overdue (was due {item.due_date}): {item.clean_content}"
+                    >{item.clean_content}</button
+                  >
+                {/each}
+                {#if overdueHere.length > 2}
+                  <span class="text-[9px] text-error px-1"
+                    >+{overdueHere.length - 2} overdue</span
+                  >
+                {/if}
+                {#if quickAddDate === ymd(day)}
+                  <QuickAddTask
+                    {ctx}
+                    dueDate={ymd(day)}
+                    keepOpenAfterCreate={false}
+                    onCreated={closeQuickAdd}
+                    onCancel={closeQuickAdd}
+                  />
+                {/if}
+              </div>
+            {/each}
           </div>
         {/each}
-        {#each monthWeeks as week}
-          {#each week as day}
-            {@const inMonth = day.getMonth() === cursor.getMonth()}
+      </div>
+    {:else}
+      <!-- Week view: 7 day columns (lifted from silt-calendar). ARIA grid
+           structure mirrors month view: role="grid" + role="row" wrapper. -->
+      <div class="grid grid-cols-7 gap-2 min-w-[700px]" role="grid">
+        <div role="row" class="contents">
+          {#each weekDays as day}
             {@const isToday = ymd(day) === todayKey}
             {@const items = cellItems(day)}
-            {@const isTodayCell = isToday}
-            {@const overdueHere = isTodayCell
+            {@const overdueHere = isToday
               ? overdueSurfaced.filter((o) => !items.some((i) => i.id === o.id))
               : []}
             <div
+              class="flex flex-col gap-1.5 min-h-[120px]"
               role="gridcell"
               tabindex="0"
               data-celldate={ymd(day)}
@@ -792,35 +949,35 @@
                     (items.length + overdueHere.length === 1 ? '' : 's')
                   : ''
               }`}
-              onkeydown={(e) => onCellKeydown(e, day)}
               ondragover={(e) => onCellDragOver(e, day)}
               ondragleave={(e) => onCellDragLeave(e, day)}
               ondrop={(e) => onCellDrop(e, day)}
               onclick={(e) => {
-                // Open quick-add when clicking the cell OR a non-interactive
-                // child (the date number / header label), but not when the
-                // click lands on a task chip button, the + button, or the
-                // quick-add input.
                 const t = e.target as HTMLElement
                 if (t.closest('button,input')) return
                 openQuickAddForDay(day)
               }}
-              class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 transition-all focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {overCellDate ===
-              ymd(day)
-                ? 'border-accent-primary-glow ring-2 ring-accent-primary-glow/40'
-                : inMonth
-                  ? 'border-surface-panel-border bg-surface-panel'
-                  : 'border-surface-panel-border/30 bg-transparent'}"
+              onkeydown={(e) => onCellKeydown(e, day)}
+              class:ring-2={overCellDate === ymd(day)}
+              class:ring-accent-primary-glow={overCellDate === ymd(day)}
+              class:rounded-lg={overCellDate === ymd(day)}
             >
-              <div class="flex items-center justify-between">
-                <span
-                  class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
-                  class:bg-accent-primary-start={isToday}
-                  class:text-surface-app={isToday}
-                  class:text-text-muted={!isToday && !inMonth}
-                  class:text-text-primary={!isToday && inMonth}
-                  >{day.getDate()}</span
-                >
+              <div
+                class="flex items-center justify-between pb-2 border-b border-surface-panel-border"
+              >
+                <div>
+                  <div
+                    class="text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted"
+                  >
+                    {DOW[day.getDay()]}
+                  </div>
+                  <span
+                    class="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px] font-label-sm-bold mt-1"
+                    class:bg-accent-primary-start={isToday}
+                    class:text-surface-app={isToday}
+                    class:text-text-primary={!isToday}>{day.getDate()}</span
+                  >
+                </div>
                 <button
                   type="button"
                   onclick={(e) => {
@@ -834,31 +991,25 @@
                   <span class="material-symbols-outlined text-[14px]">add</span>
                 </button>
               </div>
-              {#each items.slice(0, 3) as item (item.id)}
+              {#each items as item (item.id)}
                 <button
+                  type="button"
                   draggable="true"
                   aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => (selectedTask = item)}
-                  class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
+                  class="text-left text-[12px] px-2 py-1.5 rounded bg-surface-panel border border-surface-panel-border hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer {dragTaskId ===
                   item.id
                     ? 'opacity-40'
                     : ''}"
                   title={item.clean_content}>{item.clean_content}</button
                 >
               {/each}
-              {#if items.length > 3}
-                <span class="text-[9px] text-text-muted px-1"
-                  >+{items.length - 3} more</span
-                >
-              {/if}
-              <!-- Overdue open tasks surface in today's cell with an error-tone
-                   stripe so they're not lost in past days. They ALSO remain in
-                   their actual due-date cell above so the truth stays visible. -->
-              {#each overdueHere.slice(0, 2) as item (item.id)}
+              {#each overdueHere as item (item.id)}
                 <button
+                  type="button"
                   draggable="true"
                   data-overdue-surfaced="true"
                   aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
@@ -866,7 +1017,7 @@
                   ondragend={onCardDragEnd}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => (selectedTask = item)}
-                  class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-error-bg border-l-2 border-l-error text-error hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
+                  class="text-left text-[12px] px-2 py-1.5 rounded bg-error-bg border-l-2 border-l-error text-error transition-all cursor-pointer {dragTaskId ===
                   item.id
                     ? 'opacity-40'
                     : ''}"
@@ -875,11 +1026,6 @@
                   >{item.clean_content}</button
                 >
               {/each}
-              {#if overdueHere.length > 2}
-                <span class="text-[9px] text-error px-1"
-                  >+{overdueHere.length - 2} overdue</span
-                >
-              {/if}
               {#if quickAddDate === ymd(day)}
                 <QuickAddTask
                   {ctx}
@@ -891,116 +1037,7 @@
               {/if}
             </div>
           {/each}
-        {/each}
-      </div>
-    {:else}
-      <!-- Week view: 7 day columns (lifted from silt-calendar). -->
-      <div class="grid grid-cols-7 gap-2 min-w-[700px]">
-        {#each weekDays as day}
-          {@const isToday = ymd(day) === todayKey}
-          {@const items = cellItems(day)}
-          {@const overdueHere = isToday
-            ? overdueSurfaced.filter((o) => !items.some((i) => i.id === o.id))
-            : []}
-          <div
-            class="flex flex-col gap-1.5 min-h-[120px]"
-            role="gridcell"
-            tabindex="0"
-            data-celldate={ymd(day)}
-            aria-label={`${day.toDateString()}${
-              items.length + overdueHere.length
-                ? ', ' +
-                  (items.length + overdueHere.length) +
-                  ' task' +
-                  (items.length + overdueHere.length === 1 ? '' : 's')
-                : ''
-            }`}
-            ondragover={(e) => onCellDragOver(e, day)}
-            ondragleave={(e) => onCellDragLeave(e, day)}
-            ondrop={(e) => onCellDrop(e, day)}
-            onclick={(e) => {
-              const t = e.target as HTMLElement
-              if (t.closest('button,input')) return
-              openQuickAddForDay(day)
-            }}
-            onkeydown={(e) => onCellKeydown(e, day)}
-            class:ring-2={overCellDate === ymd(day)}
-            class:ring-accent-primary-glow={overCellDate === ymd(day)}
-            class:rounded-lg={overCellDate === ymd(day)}
-          >
-            <div
-              class="flex items-center justify-between pb-2 border-b border-surface-panel-border"
-            >
-              <div>
-                <div
-                  class="text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted"
-                >
-                  {DOW[day.getDay()]}
-                </div>
-                <span
-                  class="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px] font-label-sm-bold mt-1"
-                  class:bg-accent-primary-start={isToday}
-                  class:text-surface-app={isToday}
-                  class:text-text-primary={!isToday}>{day.getDate()}</span
-                >
-              </div>
-              <button
-                type="button"
-                onclick={(e) => {
-                  e.stopPropagation()
-                  openQuickAddForDay(day)
-                }}
-                aria-label="Add task for {ymd(day)}"
-                data-testid="calendar-day-add"
-                class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0 leading-none"
-              >
-                <span class="material-symbols-outlined text-[14px]">add</span>
-              </button>
-            </div>
-            {#each items as item (item.id)}
-              <button
-                draggable="true"
-                aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
-                ondragstart={(e) => onCardDragStart(e, item)}
-                ondragend={onCardDragEnd}
-                onkeydown={(e) => onCardKeydown(e, item)}
-                onclick={() => (selectedTask = item)}
-                class="text-left text-[12px] px-2 py-1.5 rounded bg-surface-panel border border-surface-panel-border hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer {dragTaskId ===
-                item.id
-                  ? 'opacity-40'
-                  : ''}"
-                title={item.clean_content}>{item.clean_content}</button
-              >
-            {/each}
-            {#each overdueHere as item (item.id)}
-              <button
-                draggable="true"
-                data-overdue-surfaced="true"
-                aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
-                ondragstart={(e) => onCardDragStart(e, item)}
-                ondragend={onCardDragEnd}
-                onkeydown={(e) => onCardKeydown(e, item)}
-                onclick={() => (selectedTask = item)}
-                class="text-left text-[12px] px-2 py-1.5 rounded bg-error-bg border-l-2 border-l-error text-error transition-all cursor-pointer {dragTaskId ===
-                item.id
-                  ? 'opacity-40'
-                  : ''}"
-                title="Overdue (was due {item.due_date}): {item.clean_content}"
-                aria-label="Overdue (was due {item.due_date}): {item.clean_content}"
-                >{item.clean_content}</button
-              >
-            {/each}
-            {#if quickAddDate === ymd(day)}
-              <QuickAddTask
-                {ctx}
-                dueDate={ymd(day)}
-                keepOpenAfterCreate={false}
-                onCreated={closeQuickAdd}
-                onCancel={closeQuickAdd}
-              />
-            {/if}
-          </div>
-        {/each}
+        </div>
       </div>
     {/if}
 
@@ -1036,6 +1073,7 @@
           {#each undated as item (item.id)}
             <li>
               <button
+                type="button"
                 draggable="true"
                 aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
                 ondragstart={(e) => onCardDragStart(e, item)}

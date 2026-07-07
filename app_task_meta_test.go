@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"silt/backend/db"
@@ -905,6 +906,71 @@ func TestSetTaskOrders_WritesEachFileAtomically(t *testing.T) {
 	for i, id := range ids {
 		if orderByID[id] != orders[i] {
 			t.Errorf("index: id %s expected manual_order=%d, got %d", id, orders[i], orderByID[id])
+		}
+	}
+}
+
+// TestSetTaskOrders_ConcurrentWithSetTaskOwner_NoLostUpdate verifies the
+// per-file write lock serializes concurrent same-file mutations from
+// different entry points. SetTaskOrders([A,B],[1,2]) locks block A then the
+// file; SetTaskOwner(B,"Alice") locks block B then the same file. The file
+// lock must serialize them so neither mutation is lost (the second writer
+// re-reads the post-first-write file content). Run with -race to also catch
+// any unsynchronized memory access.
+func TestSetTaskOrders_ConcurrentWithSetTaskOwner_NoLostUpdate(t *testing.T) {
+	app := newTestApp(t)
+	const (
+		idA = "5656aaaa-4444-1111-1111-111111111111"
+		idB = "5656bbbb-4444-1111-1111-111111111111"
+	)
+	content := "- [ ] first <!-- id: " + idA + " -->\n" +
+		"- [ ] second <!-- id: " + idB + " -->\n"
+	indexTestFile(t, app, "W", "S", "ConcurrentOrderOwner", "2026-07-01", content)
+
+	// Channel barrier: both goroutines block until close(barrier), then race
+	// to acquire the file write lock. No real sleeping — the barrier is the
+	// only synchronization point.
+	barrier := make(chan struct{})
+	var wg sync.WaitGroup
+	var ordersErr, ownerErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-barrier
+		ordersErr = app.SetTaskOrders([]string{idA, idB}, []int{1, 2})
+	}()
+	go func() {
+		defer wg.Done()
+		<-barrier
+		ownerErr = app.SetTaskOwner(idB, "Alice")
+	}()
+	close(barrier)
+	wg.Wait()
+
+	if ordersErr != nil {
+		t.Fatalf("SetTaskOrders: %v", ordersErr)
+	}
+	if ownerErr != nil {
+		t.Fatalf("SetTaskOwner: %v", ownerErr)
+	}
+
+	tasks, err := app.db.QueryTasksWithFilters(parser.TaskQueryFilter{})
+	if err != nil {
+		t.Fatalf("QueryTasks: %v", err)
+	}
+	for _, tk := range tasks {
+		switch tk.ID {
+		case idA:
+			if tk.ManualOrder != 1 {
+				t.Errorf("A: expected manual_order=1, got %d", tk.ManualOrder)
+			}
+		case idB:
+			if tk.ManualOrder != 2 {
+				t.Errorf("B: expected manual_order=2, got %d", tk.ManualOrder)
+			}
+			if tk.Owner != "Alice" {
+				t.Errorf("B: expected owner=Alice, got %q", tk.Owner)
+			}
 		}
 	}
 }

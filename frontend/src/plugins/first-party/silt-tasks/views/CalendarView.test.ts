@@ -576,6 +576,98 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     expect(last?.[1]).toBe(1) // done
   })
 
+  it('includes overdue-surfaced tasks in the count (deduped against windowed rows)', async () => {
+    // An open overdue task whose due_date falls OUTSIDE the visible window
+    // (past month) would be missing from `win` but present in `overdueAll`.
+    // The count effect must include it so the header matches Board's tally.
+    await mockQueries([
+      row({ id: 'o1', status: 'TODO', due_date: TODAY, clean_content: 'open' })
+    ])
+    // Override the mock to inject an overdue row from a past month that does
+    // NOT appear in the windowed result (so it's not deduped out).
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('due_date IS NULL')) {
+        return { rows: [], truncated: false }
+      }
+      if (sql.includes("status != 'DONE'") && !sql.includes('due_date >=')) {
+        return {
+          rows: [
+            row({
+              id: 'od1',
+              status: 'TODO',
+              due_date: '2026-06-15',
+              clean_content: 'past due'
+            })
+          ],
+          truncated: false
+        }
+      }
+      return {
+        rows: [
+          row({
+            id: 'o1',
+            status: 'TODO',
+            due_date: TODAY,
+            clean_content: 'open'
+          })
+        ],
+        truncated: false
+      }
+    })
+    const { onCountChange } = await renderCalendar()
+
+    const last = onCountChange.mock.calls.at(-1)
+    expect(last?.[0]).toBe(2) // o1 (windowed) + od1 (overdue-surfaced)
+  })
+
+  // --- Keyboard navigation (#425 a11y) ----------------------------------
+
+  it('week view: ArrowRight moves focus to the next day cell', async () => {
+    await mockQueries([])
+    await renderCalendar()
+
+    // Switch to week view so the grid is a single 7-day row.
+    await fireEvent.click(screen.getByTestId('calendar-submode-week'))
+    await flush()
+
+    const todayCell = document.querySelector(
+      `[data-celldate="${TODAY}"]`
+    ) as HTMLElement
+    expect(todayCell).toBeTruthy()
+    todayCell.focus()
+    await fireEvent.keyDown(todayCell, { key: 'ArrowRight' })
+    await flush()
+
+    const [y, m, d] = TODAY.split('-').map(Number)
+    const next = new Date(y, m - 1, d + 1)
+    const expectedKey = `${next.getFullYear()}-${String(
+      next.getMonth() + 1
+    ).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`
+    const focused = document.activeElement as HTMLElement
+    expect(focused.getAttribute('data-celldate')).toBe(expectedKey)
+  })
+
+  it('month view: ArrowDown moves focus to the cell one week below', async () => {
+    await mockQueries([])
+    await renderCalendar()
+
+    const todayCell = document.querySelector(
+      `[data-celldate="${TODAY}"]`
+    ) as HTMLElement
+    expect(todayCell).toBeTruthy()
+    todayCell.focus()
+    await fireEvent.keyDown(todayCell, { key: 'ArrowDown' })
+    await flush()
+
+    const [y, m, d] = TODAY.split('-').map(Number)
+    const next = new Date(y, m - 1, d + 7)
+    const expectedKey = `${next.getFullYear()}-${String(
+      next.getMonth() + 1
+    ).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`
+    const focused = document.activeElement as HTMLElement
+    expect(focused.getAttribute('data-celldate')).toBe(expectedKey)
+  })
+
   async function renderCalendarWithRows(
     rows: Record<string, unknown>[],
     undatedRows: Record<string, unknown>[] = []
