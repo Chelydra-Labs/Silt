@@ -1067,7 +1067,7 @@
     sidebarWidth = px
     if (setSidebarTimer) clearTimeout(setSidebarTimer)
     setSidebarTimer = setTimeout(() => {
-      SetSidebarWidth(px).catch((e) =>
+      SetSidebarWidth(Math.round(px)).catch((e) =>
         console.error('SetSidebarWidth failed:', e)
       )
     }, 250)
