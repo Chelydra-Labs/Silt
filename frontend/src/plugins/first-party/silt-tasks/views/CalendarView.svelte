@@ -81,6 +81,11 @@
   let nowTick = $state(0)
   let nowInterval: ReturnType<typeof setInterval> | undefined
 
+  // Roving tabindex for the day-cell grid: only the focused cell joins the
+  // tab order (tabindex=0); the rest are tabindex=-1. Arrows move focus
+  // within the grid; Tab/Shift-Tab exits to the next/previous UI element.
+  let cellFocusIdx = $state(0)
+
   // --- Calendar arithmetic (lifted verbatim from silt-calendar) ----------
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
   const MONTHS = [
@@ -228,13 +233,15 @@
       )
       // Unbounded overdue: tasks due before today, open, scoped/filtered by
       // the user's other filters. No `window` so past months aren't trimmed.
+      // LIMIT 500 bounds memory on a vault with years of stale overdue rows.
       const overdueQ = buildQuery(scope, filters, ctxLike, {
         activeFilter: 'overdue'
       })
+      const overdueSql = overdueQ.sql + ' LIMIT 500'
       const [winRes, undatedRes, overdueRes] = await Promise.all([
         ctx.sqliteQuery(winQ.sql, winQ.params),
         ctx.sqliteQuery(undatedQ.sql, undatedQ.params),
-        ctx.sqliteQuery(overdueQ.sql, overdueQ.params)
+        ctx.sqliteQuery(overdueSql, overdueQ.params)
       ])
       if (my !== loadSeq) return
       const winRows = (winRes.rows as unknown as TaskDetail[]).map((r) => ({
@@ -369,6 +376,9 @@
   const SUBMODES: CalendarSubMode[] = ['month', 'week']
   function chooseSubMode(m: CalendarSubMode) {
     setCalendarSubMode(m)
+    // Reset roving tabindex: month grid has up to 42 cells, week has 7, so a
+    // stale idx from the other layout would leave no cell with tabindex=0.
+    cellFocusIdx = 0
     if (subModeSaveTimer) clearTimeout(subModeSaveTimer)
     subModeSaveTimer = setTimeout(() => {
       void persistCalendarSubMode(m).then((ok) => {
@@ -597,6 +607,7 @@
     const next = Math.min(Math.max(idx + delta, 0), grid.length - 1)
     const targetDt = grid[next]
     if (!targetDt) return
+    cellFocusIdx = next
     document
       .querySelector<HTMLElement>(`[data-celldate="${ymd(targetDt)}"]`)
       ?.focus()
@@ -795,9 +806,10 @@
             </div>
           {/each}
         </div>
-        {#each monthWeeks as week}
+        {#each monthWeeks as week, weekIdx}
           <div role="row" class="contents">
-            {#each week as day}
+            {#each week as day, dayIdx}
+              {@const flatIdx = weekIdx * 7 + dayIdx}
               {@const inMonth = day.getMonth() === cursor.getMonth()}
               {@const isToday = ymd(day) === todayKey}
               {@const items = cellItems(day)}
@@ -809,7 +821,7 @@
                 : []}
               <div
                 role="gridcell"
-                tabindex="0"
+                tabindex={cellFocusIdx === flatIdx ? 0 : -1}
                 data-celldate={ymd(day)}
                 aria-label={`${day.toDateString()}${
                   items.length + overdueHere.length
@@ -930,7 +942,7 @@
            structure mirrors month view: role="grid" + role="row" wrapper. -->
       <div class="grid grid-cols-7 gap-2 min-w-[700px]" role="grid">
         <div role="row" class="contents">
-          {#each weekDays as day}
+          {#each weekDays as day, i}
             {@const isToday = ymd(day) === todayKey}
             {@const items = cellItems(day)}
             {@const overdueHere = isToday
@@ -939,7 +951,7 @@
             <div
               class="flex flex-col gap-1.5 min-h-[120px]"
               role="gridcell"
-              tabindex="0"
+              tabindex={cellFocusIdx === i ? 0 : -1}
               data-celldate={ymd(day)}
               aria-label={`${day.toDateString()}${
                 items.length + overdueHere.length

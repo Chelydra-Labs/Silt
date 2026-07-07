@@ -29,7 +29,7 @@
   import PluginView from './components/PluginView.svelte'
   import SettingsShell from './components/settings/SettingsShell.svelte'
   import QuickAddTask from './plugins/first-party/silt-tasks/components/QuickAddTask.svelte'
-  import { setDisplayMode } from './plugins/first-party/silt-tasks/state.svelte'
+  import { setDisplayModeQuiet } from './plugins/first-party/silt-tasks/state.svelte'
   import { loadPlugins } from './plugins/loader'
   import {
     initConfigHotReload,
@@ -166,10 +166,10 @@
   // N+1 when the old view-ids are fully removed.
   $effect(() => {
     if (activeView === 'calendar') {
-      setDisplayMode('calendar')
+      setDisplayModeQuiet('calendar')
       activeView = 'tasks'
     } else if (activeView === 'kanban') {
-      setDisplayMode('board')
+      setDisplayModeQuiet('board')
       activeView = 'tasks'
     }
   })

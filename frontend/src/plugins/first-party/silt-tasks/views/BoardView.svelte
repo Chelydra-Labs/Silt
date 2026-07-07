@@ -218,6 +218,11 @@
       // For tag DnD, the card stays in its other columns too — refresh its
       // tags there as well so a later read sees the union.
       if (multiMembership && c.items.some((i) => i.id === card.id)) {
+        // A tagless card that just gained a tag must leave the No Tag bucket
+        // optimistically, or it appears in two columns until the reload.
+        if (!c.value && tagUpdate.tags) {
+          return { ...c, items: c.items.filter((i) => i.id !== card.id) }
+        }
         return {
           ...c,
           items: c.items.map((i) =>
@@ -262,28 +267,35 @@
   ) {
     if (!dndEnabled) return
     if (groupBy !== 'tag' && toCol.key === fromColKey) return
-    if (groupBy === 'tag' && !toCol.value) return
+    if (groupBy === 'tag' && !toCol.value) {
+      liveMessage =
+        "No Tag column doesn't remove tags — drop on a tag column to add."
+      return
+    }
 
     const my = ++moveSeq
     moveError = ''
     const prev = snapshotColumns()
 
     // DONE-on-blocked guard (#302, status dimension only): pause before the
-    // persist so the user can confirm or cancel. The optimistic placement
-    // already landed; cancel() reverts it.
+    // persist so the user can confirm or cancel. applyOptimistic runs AFTER
+    // the getTaskBlockers await + moveSeq check so a second drop that bumps
+    // moveSeq during the await leaves nothing stranded in DONE (was: card
+    // stuck in DONE with no revert, no persist, no dialog).
     if (
       groupBy === 'status' &&
       toCol.value === 'DONE' &&
       card.is_blocked &&
       !pendingBlockedDone
     ) {
-      applyOptimistic(card, fromColKey, toCol)
       try {
         const blockers = await ctx.getTaskBlockers(card.id)
         // A second drop during the await bumped moveSeq; abandon this
         // commit so a stale confirm dialog can't land over a newer move.
+        // Nothing is stranded — applyOptimistic hasn't run yet.
         if (my !== moveSeq) return
         if (blockers.length > 0) {
+          applyOptimistic(card, fromColKey, toCol)
           pendingBlockedDone = {
             card,
             fromColKey,
@@ -296,12 +308,11 @@
           return
         }
       } catch {
-        // Blocker lookup failed — proceed with the persist rather than
+        // Blocker lookup failed — proceed with the persist below rather than
         // stranding the card in an un-committed optimistic state.
       }
-    } else {
-      applyOptimistic(card, fromColKey, toCol)
     }
+    applyOptimistic(card, fromColKey, toCol)
 
     liveMessage = announceMove(toCol)
     try {

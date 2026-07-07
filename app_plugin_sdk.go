@@ -1005,6 +1005,18 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 		return nil, fmt.Errorf("linked config for %s: %w", ln.DisplayName, err)
 	}
 	linkedEntry, _ := linkedCfg.Plugins.PluginSettings[effectivePluginID].(map[string]any)
+	// When the alias remapped silt-kanban → silt-tasks, the linked config's
+	// silt-tasks may be just Defaults (LoadLinked seeds from Defaults, so the
+	// entry is always non-nil even when the notebook hasn't migrated). An
+	// explicit silt-kanban entry is the user's real co-located override —
+	// silt-kanban is never in Defaults, so its presence means user-authored.
+	// Prefer it so a not-yet-migrated linked notebook's settings aren't
+	// silently dropped.
+	if effectivePluginID != pluginID {
+		if origEntry, _ := linkedCfg.Plugins.PluginSettings[pluginID].(map[string]any); origEntry != nil {
+			linkedEntry = origEntry
+		}
+	}
 	if linkedEntry == nil {
 		linkedEntry = map[string]any{}
 	}

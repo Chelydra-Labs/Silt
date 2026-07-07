@@ -1,6 +1,6 @@
 <script lang="ts">
   import { fly } from 'svelte/transition'
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import type { PluginContext, TaskStatus } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
   import type { TaskDetail } from '../types'
@@ -49,21 +49,21 @@
   // interactive so the user can click another task to switch.
   let panelRef = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
+  // Gate focus-capture on the closed→open transition only, so a task prop
+  // reassignment (e.g. an onMetaChanged reload) doesn't yank focus back to
+  // the panel out of whatever field the user is mid-edit on.
+  let drawerOpen = false
   $effect(() => {
-    // Capture the trigger only on the null → non-null transition. Without
-    // this guard, every task switch (A → B, both non-null) overwrites
-    // previouslyFocused with an element about to be unmounted, and on
-    // close focus lands on <body>.
-    if (task && !previouslyFocused) {
+    if (task && !drawerOpen) {
+      drawerOpen = true
       previouslyFocused = document.activeElement as HTMLElement
-    }
-    if (task) {
       // tabindex=-1 lets the panel receive focus without joining the tab order.
       tick().then(() => panelRef?.focus())
-    } else if (previouslyFocused) {
+    } else if (!task && drawerOpen) {
+      drawerOpen = false
       // Guard against a detached node: open A → open B → close can leave
       // previouslyFocused pointing at a card that re-rendered away.
-      if (previouslyFocused.isConnected) {
+      if (previouslyFocused?.isConnected) {
         previouslyFocused.focus?.()
       }
       previouslyFocused = null
@@ -167,20 +167,29 @@
     void task?.priority
     void task?.tags
     void task?.clean_content
-    // Coerce at the boundary: `pinned` arrives as INT 0/1/NULL from the SQL
-    // projection; force a real boolean so aria-pressed renders "true"/"false"
-    // (not "0"/"1", which is out of spec).
-    pinState = task?.pinned ? true : false
-    progressState = task?.progress ?? 0
-    recurrenceState = task?.recurrence ?? ''
-    dueDateState = task?.due_date ?? ''
-    statusState = task?.status ?? 'TODO'
-    ownerState = task?.owner ?? ''
-    ownerDraft = task?.owner ?? ''
-    priorityState = task?.priority ?? 2
-    tagsState = task?.tags ? task.tags.split('|').filter(Boolean) : []
-    titleState = task?.clean_content ?? ''
-    titleDraft = task?.clean_content ?? ''
+    // Guard each mirror with its pending flag (via untrack so the flag
+    // doesn't become a dependency) — a reload during an in-flight edit
+    // mustn't clobber the optimistic value. Without untrack, the pending
+    // flag flipping to false after an error would re-fire this effect and
+    // clear metaError before the user sees it.
+    if (untrack(() => !pinPending)) pinState = task?.pinned ? true : false
+    if (untrack(() => !progressPending)) progressState = task?.progress ?? 0
+    if (untrack(() => !recurrencePending))
+      recurrenceState = task?.recurrence ?? ''
+    if (untrack(() => !dueDatePending)) dueDateState = task?.due_date ?? ''
+    if (untrack(() => !statusPending)) statusState = task?.status ?? 'TODO'
+    if (untrack(() => !ownerPending)) {
+      ownerState = task?.owner ?? ''
+      ownerDraft = task?.owner ?? ''
+    }
+    if (untrack(() => !priorityPending)) priorityState = task?.priority ?? 2
+    if (untrack(() => !tagsPending)) {
+      tagsState = task?.tags ? task.tags.split('|').filter(Boolean) : []
+    }
+    if (untrack(() => !titlePending)) {
+      titleState = task?.clean_content ?? ''
+      titleDraft = task?.clean_content ?? ''
+    }
     metaError = ''
   })
 

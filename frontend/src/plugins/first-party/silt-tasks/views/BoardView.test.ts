@@ -566,6 +566,72 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(mocks.updateBlockState).toHaveBeenCalledWith('tb', 'DONE')
   })
 
+  it('second drop during blocker await does not strand first card in DONE', async () => {
+    // Card A is blocked (enters the DONE-guard path and awaits
+    // getTaskBlockers); card B is unblocked. While A's blocker lookup is
+    // pending, dropping B to DONE bumps moveSeq — A's commitDrop must
+    // return without stranding A in DONE (no optimistic placement, no
+    // dialog, no persist). Was: applyOptimistic ran before the await, so
+    // the early return left A visually in DONE with no revert/persist.
+    let resolveBlockers!: (v: { id: string; clean_content: string }[]) => void
+    const blockersPending = new Promise<
+      {
+        id: string
+        clean_content: string
+      }[]
+    >((r) => {
+      resolveBlockers = r
+    })
+    mocks.getTaskBlockers.mockReturnValue(blockersPending)
+    await renderBoard('status', [
+      row({
+        id: 'a',
+        status: 'TODO',
+        clean_content: 'blocked A',
+        is_blocked: 1
+      }),
+      row({ id: 'b', status: 'TODO', clean_content: 'free B', is_blocked: 0 })
+    ])
+
+    const todoCards = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelectorAll<HTMLElement>('[data-card]')
+    const cardA = todoCards[0]!
+    const cardB = todoCards[1]!
+    const doneCol = screen.getByRole('group', { name: 'Done' })
+
+    // Drop A to DONE — enters the blocked-guard and awaits getTaskBlockers.
+    await fireEvent.dragStart(cardA)
+    await fireEvent.drop(doneCol)
+    await tick()
+
+    // While A's blocker lookup is pending, drop B to DONE — bumps moveSeq.
+    await fireEvent.dragStart(cardB)
+    await fireEvent.drop(doneCol)
+    await flush()
+
+    // Resolve A's blocker lookup — A's commitDrop resumes, sees my !== moveSeq,
+    // and returns without stranding A in DONE.
+    resolveBlockers([{ id: 'pre', clean_content: 'Prerequisite' }])
+    await flush()
+
+    // A is NOT stranded in DONE — no DONE write for A.
+    expect(mocks.updateBlockState).not.toHaveBeenCalledWith('a', 'DONE')
+    // B's normal drop to DONE did proceed.
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('b', 'DONE')
+    // No confirm dialog opened for A (nothing stranded).
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Complete blocked task?' })
+    ).toBeNull()
+    // A is still in To Do, not Done.
+    const doneTexts = Array.from(
+      screen
+        .getByRole('group', { name: 'Done' })
+        .querySelectorAll('[data-card]')
+    ).map((c) => c.textContent)
+    expect(doneTexts.some((t) => t?.includes('blocked A'))).toBe(false)
+  })
+
   // --- Keyboard parity ---------------------------------------------------
 
   it('ArrowRight on a focused TODO card moves it to DOING (status)', async () => {

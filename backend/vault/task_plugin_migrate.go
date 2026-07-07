@@ -76,6 +76,10 @@ func LoadLegacyTaskPluginSettings(vaultPath string) map[string]any {
 // itself stored by value (a snapshot is appropriate — Defaults is a pure
 // function of the running binary, not of the live cfg).
 //
+// Safety relies on the caller holding vaultMu.Lock (preventing
+// UpdatePluginSetting's in-place map mutation); the value-copy is a shallow
+// snapshot that shares the map refs.
+//
 // Otherwise it returns the new silt-tasks entry (a complete map — every key
 // the frontend reads is present, seeded from Defaults so missing legacy
 // fields don't poke holes in the schema). Old keys are NOT removed; the

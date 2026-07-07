@@ -117,7 +117,9 @@
 
   async function loadAuthor() {
     const saved = loadLocalAuthor()
-    if (saved) {
+    if (saved !== undefined) {
+      // Respect both a saved name AND an explicit clear (''); only re-seed
+      // from the OS username when the key is absent (never set).
       composerAuthor = saved
       return
     }
@@ -126,7 +128,7 @@
     try {
       const who = await ctx.getLocalAuthor()
       composerAuthor = who || ''
-      if (who) void persistLocalAuthor(who)
+      if (who) await persistLocalAuthor(who)
     } catch {
       // Non-fatal: composerAuthor stays '' and the comment posts with no
       // author token (renderer shows "Unknown").

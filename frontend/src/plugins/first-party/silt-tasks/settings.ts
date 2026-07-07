@@ -94,13 +94,16 @@ export function loadDefaultSort(): SortMode {
 }
 
 /**
- * Persisted local author for the comment composer (#430); '' when unset so
- * the caller falls back to the OS username via ctx.getLocalAuthor. Seeded
- * on first comment post so subsequent composers open with the same name
- * without re-querying the host.
+ * Persisted local author for the comment composer (#430). Distinguishes
+ * "never set" (undefined) from "explicitly cleared" (''): a cleared pref
+ * must be respected, not re-seeded from the OS username on every mount.
+ * Returns `undefined` when the key is absent, `''` when the user cleared
+ * the input, or the saved name otherwise.
  */
-export function loadLocalAuthor(): string {
-  const v = tasksSettings()['local_author']
+export function loadLocalAuthor(): string | undefined {
+  const slice = tasksSettings()
+  if (!('local_author' in slice)) return undefined
+  const v = slice['local_author']
   return typeof v === 'string' ? v : ''
 }
 

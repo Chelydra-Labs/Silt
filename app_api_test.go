@@ -2351,6 +2351,60 @@ func TestGetPluginSettingsForNotebook_KanbanFallsBackToTasks(t *testing.T) {
 	}
 }
 
+// TestGetPluginSettingsForNotebook_KanbanAliasFallsBackToLinkedKanban covers
+// the round-6 fix: a migrated main vault (silt-kanban gone, silt-tasks present)
+// aliases effectivePluginID to silt-tasks. A linked notebook with co-located
+// silt-kanban (but NOT silt-tasks) would have its settings silently dropped
+// if the lookup used only the remapped id. The fix falls back to the original
+// pluginID for the linked-notebook overlay so the kanban settings merge in.
+func TestGetPluginSettingsForNotebook_KanbanAliasFallsBackToLinkedKanban(t *testing.T) {
+	app := newTestApp(t)
+
+	// Migrated vault: silt-kanban removed, silt-tasks present.
+	app.configMu.Lock()
+	delete(app.cfg.Plugins.PluginSettings, "silt-kanban")
+	app.cfg.Plugins.PluginSettings["silt-tasks"] = map[string]any{
+		"columns":      []any{"Vault-Col"},
+		"vault_marker": "from-vault",
+	}
+	app.configMu.Unlock()
+
+	// Linked notebook with co-located silt-kanban (NOT silt-tasks).
+	ext := t.TempDir()
+	cfgPath := config.LinkedConfigPath(ext)
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(
+		"plugins:\n  plugin_settings:\n    silt-kanban:\n      columns: [Linked-Kanban-Col]\n      linked_kanban_marker: from-linked-kanban\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app.configMu.Lock()
+	app.cfg.LinkedNotebooks = []config.LinkedNotebook{
+		{ID: "ext", RootPath: ext, DisplayName: "Ext"},
+	}
+	app.configMu.Unlock()
+
+	got, err := app.GetPluginSettingsForNotebook("silt-kanban", "Ext")
+	if err != nil {
+		t.Fatalf("kanban alias fallback: %v", err)
+	}
+	// The linked silt-kanban columns overlay the vault silt-tasks columns.
+	cols, ok := got["columns"].([]any)
+	if !ok || len(cols) != 1 || cols[0] != "Linked-Kanban-Col" {
+		t.Errorf("expected linked silt-kanban columns [Linked-Kanban-Col], got %v", got["columns"])
+	}
+	// Vault-only key survives the alias merge.
+	if got["vault_marker"] != "from-vault" {
+		t.Errorf("expected vault_marker preserved, got %v", got["vault_marker"])
+	}
+	// Linked-only silt-kanban key added through the fallback overlay.
+	if got["linked_kanban_marker"] != "from-linked-kanban" {
+		t.Errorf("expected linked_kanban_marker added via fallback, got %v", got["linked_kanban_marker"])
+	}
+}
+
 // TestGetPluginSettingsForNotebook_KanbanNoFallbackWhenKanbanPresent confirms
 // the shim does NOT fire when silt-kanban has a real entry — the alias is a
 // one-release bridge, not a permanent override.
