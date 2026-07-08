@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/svelte'
+import { tick } from 'svelte'
 import type { PluginContext } from '../../sdk'
 import type { SummarySettings } from './types'
+import type { PageState } from './state.svelte'
 
 // vi.hoisted lifts the mock handles above the vi.mock factories (which are
 // themselves hoisted above all imports) so the factories can reference them.
@@ -16,7 +18,7 @@ const { mockController, mockAppSettings } = vi.hoisted(() => {
     dismissed_notes: []
   }
   const mockController = {
-    state: new Map<string, any>(),
+    state: {} as Record<string, PageState>,
     getSettings: vi.fn((): SummarySettings => ({
       ...defaultSettings,
       facets: { ...defaultSettings.facets }
@@ -45,6 +47,7 @@ vi.mock('../../../settings/store.svelte', () => ({
 }))
 
 import SummaryBanner from './SummaryBanner.svelte'
+import { createSummaryController } from './state.svelte'
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {
@@ -59,10 +62,12 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
 const PAGE_ID = 'Work/Journal/Daily'
 
 function setPageState(state: any) {
-  mockController.state.set(PAGE_ID, state)
+  mockController.state[PAGE_ID] = state
 }
 function clearPageState() {
-  mockController.state.clear()
+  for (const k of Object.keys(mockController.state)) {
+    delete mockController.state[k as keyof typeof mockController.state]
+  }
 }
 
 describe('SummaryBanner', () => {
@@ -452,5 +457,56 @@ describe('SummaryBanner', () => {
     // No dismiss — the nudge must persist until a provider is configured so it
     // can't poison dismissed_notes with a nudge dismissal.
     expect(queryByRole('button', { name: /Dismiss AI summary/i })).toBeNull()
+  })
+
+  // --- Regression: $state(new Map()) was non-reactive (#silt-ai-summary) ---
+  it('clears the stale spinner when the controller resolves stale=false', async () => {
+    // Regression: $state(new Map()) was non-reactive, so the banner rendered
+    // once at mount and never observed the controller's stale=false write.
+    //
+    // The hand-rolled mock above uses a plain object for `state`, which
+    // $derived can't track — so for THIS test we swap in the real controller's
+    // $state-wrapped Record. setPageState still writes through mockController,
+    // so the spec's exact mutation path (mockController.state[PAGE_ID].stale)
+    // exercises a genuinely reactive store.
+    const reactiveController = createSummaryController(() => ({
+      isConfigured: true,
+      configuredModel: 'qwen3:30b'
+    }))
+    const originalState = mockController.state
+    mockController.state = reactiveController.state
+
+    try {
+      setPageState({
+        status: 'ready',
+        stale: true,
+        result: {
+          ok: true,
+          result: {
+            summary: 'Prior summary still readable.',
+            tasks: [],
+            risks: [],
+            decisions: [],
+            newItems: { tasks: [], risks: [], decisions: [] },
+            fromCache: true,
+            model: 'm',
+            generatedAt: '2026-07-06T10:00:00Z'
+          }
+        }
+      })
+      const { container } = render(SummaryBanner, {
+        props: { ctx: makeCtx(), onDismiss: () => {} }
+      })
+      expect(container.querySelector('.updating-line')).toBeTruthy() // baseline: spinner shown
+
+      // Controller's run() wins its generation guard and clears stale.
+      const ps = mockController.state[PAGE_ID] as PageState
+      ps.stale = false
+      await tick()
+
+      expect(container.querySelector('.updating-line')).toBeNull()
+    } finally {
+      mockController.state = originalState
+    }
   })
 })

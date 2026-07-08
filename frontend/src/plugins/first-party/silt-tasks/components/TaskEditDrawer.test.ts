@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { tick } from 'svelte'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
 // jsdom polyfill: Svelte 5 transition:fly calls element.animate().
@@ -355,6 +356,31 @@ describe('TaskEditDrawer — status radiogroup', () => {
     const doingRadio = screen.getByRole('radio', { name: 'In Progress' })
     expect(document.activeElement).toBe(doingRadio)
   })
+
+  it('rapid arrow-key navigation commits only the final status once (#442)', async () => {
+    const updateBlockState = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ updateBlockState })
+    const { container } = render(TaskEditDrawer, {
+      // Unblocked so landing on DONE via arrow doesn't trigger the guard.
+      props: { task: makeTask({ status: 'TODO' }), ctx, onClose: () => {} }
+    })
+    const rg = container.querySelector(
+      '[aria-label="Task status"]'
+    ) as HTMLElement
+    await tick()
+    // Two quick ArrowRights within the 200ms window: TODO → DOING → DONE.
+    // tick() between presses lets statusState update so the next index is
+    // computed correctly, but no 200ms elapses, so both collapse to ONE
+    // trailing commit of the final selection (DONE).
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // TODO → DOING
+    await tick()
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // DOING → DONE
+    await tick()
+    expect(updateBlockState).not.toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 250)) // past the debounce window
+    expect(updateBlockState).toHaveBeenCalledTimes(1)
+    expect(updateBlockState).toHaveBeenLastCalledWith('task-1', 'DONE')
+  })
 })
 
 describe('TaskEditDrawer — source awareness + affordances', () => {
@@ -550,11 +576,86 @@ describe('TaskEditDrawer — priority editor (#412)', () => {
     const rg = container.querySelector(
       '[aria-labelledby="task-priority-label"]'
     ) as HTMLElement
+    await tick()
     // Start at Low (priority 3, index 2). ArrowLeft → Normal (priority 2).
+    // Commit is debounced ~200ms (#442): wait past the trailing edge.
     await fireEvent.keyDown(rg, { key: 'ArrowLeft' })
+    await tick()
+    await new Promise((r) => setTimeout(r, 250))
     expect(setTaskPriority).toHaveBeenCalledWith('task-1', 2)
-    // ArrowRight from Normal wraps forward; here test Home jumps to Critical.
+    // Home jumps to Critical (priority 1).
     await fireEvent.keyDown(rg, { key: 'Home' })
+    await tick()
+    await new Promise((r) => setTimeout(r, 250))
+    expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 1)
+  })
+
+  it('rapid arrow-key navigation commits only the final selection once (#442)', async () => {
+    const setTaskPriority = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskPriority })
+    const { container } = render(TaskEditDrawer, {
+      props: { task: makeTask({ priority: 2 }), ctx, onClose: () => {} }
+    })
+    const rg = container.querySelector(
+      '[aria-labelledby="task-priority-label"]'
+    ) as HTMLElement
+    await tick()
+    // Two quick arrows within the 200ms debounce window: Normal(2) → Low(3)
+    // → wrap to Critical(1). tick() between presses lets priorityState update
+    // so the next index is computed correctly, but no 200ms elapses, so both
+    // collapse to ONE trailing commit of the final selection.
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // 2 → 3 (Low)
+    await tick()
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // 3 → 1 (Critical, wrap)
+    await tick()
+    expect(setTaskPriority).not.toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 250)) // past the debounce window
+    // Exactly one commit, for the final selection (Critical, priority 1).
+    expect(setTaskPriority).toHaveBeenCalledTimes(1)
+    expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 1)
+  })
+
+  it('catches up a newer selection that landed during a slow in-flight commit (#442)', async () => {
+    // Regression guard: before the fix, a debounced flush that fired while a
+    // prior IPC was still pending early-returned on `priorityPending` and the
+    // newer selection was silently dropped (drawer shows one value, the list
+    // view another). The fix re-arms the debouncer from the commit's finally
+    // when the local selection has diverged.
+    let resolveFirst!: () => void
+    const firstInFlight = new Promise<void>((r) => (resolveFirst = r))
+    const setTaskPriority = vi
+      .fn()
+      .mockReturnValueOnce(firstInFlight.then(() => true)) // 1st call: slow
+      .mockResolvedValue(true) // subsequent calls: instant
+    const ctx = makeCtx({ setTaskPriority })
+    const { container } = render(TaskEditDrawer, {
+      props: { task: makeTask({ priority: 2 }), ctx, onClose: () => {} }
+    })
+    const rg = container.querySelector(
+      '[aria-labelledby="task-priority-label"]'
+    ) as HTMLElement
+    await tick()
+
+    // 1st arrow (2→3): debounce fires → commit starts, awaits the slow IPC.
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' })
+    await tick()
+    await new Promise((r) => setTimeout(r, 300)) // past the 200ms debounce
+    expect(setTaskPriority).toHaveBeenCalledTimes(1)
+    expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 3)
+
+    // 2nd arrow (3→1) WHILE the 1st IPC is still in-flight. The debounce
+    // flush fires but commitPriority early-returns on priorityPending — the
+    // catch-up must re-arm it after the 1st commit resolves.
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' })
+    await tick()
+    await new Promise((r) => setTimeout(r, 300)) // flush during in-flight → dropped
+    // Still only the 1st call; the 2nd was dropped (in-flight).
+    expect(setTaskPriority).toHaveBeenCalledTimes(1)
+
+    // 1st IPC resolves → finally re-arms the debouncer → catch-up commits 1.
+    resolveFirst()
+    await new Promise((r) => setTimeout(r, 300)) // past the catch-up debounce
+    expect(setTaskPriority).toHaveBeenCalledTimes(2)
     expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 1)
   })
 

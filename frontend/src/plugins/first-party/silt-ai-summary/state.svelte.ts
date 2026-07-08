@@ -9,7 +9,7 @@
 //   - note-switch / vault-close cleanup.
 //
 // Lifecycle: created in onVaultOpen, disposed in onVaultClose. The banner
-// reads `controller.state.get(pageId)` and calls `generateFor` / `regenerate`.
+// reads `controller.state[pageId]` and calls `generateFor` / `regenerate`.
 
 import type { PluginContext } from '../../sdk'
 import { settings } from '../../../settings/store.svelte'
@@ -48,8 +48,8 @@ export function readProviderInfo(): ProviderInfo {
 }
 
 export interface SummaryController {
-  /** Reactive pageId → state map (Svelte $state). */
-  readonly state: Map<string, PageState>
+  /** Reactive pageId → state record (Svelte $state). */
+  readonly state: Record<string, PageState>
   /** Resolved settings, re-read each call so a settings change applies live. */
   getSettings(): SummarySettings
   /** Generate (or regenerate) for a page. Fetches the page's content when
@@ -86,12 +86,15 @@ export interface SummaryController {
 export function createSummaryController(
   providerInfo: () => ProviderInfo = readProviderInfo
 ): SummaryController {
-  // $state deep-proxies the Map AND its PageState values, so a component
-  // reading `controller.state.get(pageId)` (via $derived) re-runs when the
-  // controller mutates a page's status/result/stale. Without $state the banner
-  // would render once and never update as the LLM call resolves. (Pending
-  // timers + generation counters are internal bookkeeping — not reactive.)
-  const state = $state(new Map<string, PageState>())
+  // $state deep-proxies plain objects and arrays, so a component reading
+  // `controller.state[pageId]` (via $derived) re-runs when the controller
+  // mutates a page's status/result/stale. Svelte 5's $state proxy excludes
+  // Maps by prototype (only plain objects + arrays are deep-proxied), so the
+  // per-page state MUST live in a Record — a Map would never observe field
+  // mutations and the banner would render once and never update as the LLM
+  // call resolves. (Pending timers + generation counters are internal
+  // bookkeeping — not reactive — so plain Maps are still correct for them.)
+  const state = $state<Record<string, PageState>>({})
   const pending = new Map<string, ReturnType<typeof setTimeout>>()
   // Track the most-recent generation per page so a stale completion (note
   // switched mid-generation) doesn't overwrite the newer state.
@@ -104,12 +107,12 @@ export function createSummaryController(
   }
 
   function setStatus(pageId: string, status: PageStatus, stale?: boolean) {
-    const cur = state.get(pageId)
+    const cur = state[pageId]
     if (cur) {
       cur.status = status
       cur.stale = stale
     } else {
-      state.set(pageId, { status, stale })
+      state[pageId] = { status, stale }
     }
   }
 
@@ -132,16 +135,16 @@ export function createSummaryController(
     // A newer generation for this page has started (note switched back + edit);
     // drop this stale completion so the banner shows the freshest result.
     if (generations.get(pageId) !== gen) return outcome
-    const cur = state.get(pageId)
+    const cur = state[pageId]
     if (cur) {
       cur.result = outcome
       cur.status = outcome.ok ? 'ready' : 'error'
       cur.stale = false
     } else {
-      state.set(pageId, {
+      state[pageId] = {
         status: outcome.ok ? 'ready' : 'error',
         result: outcome
-      })
+      }
     }
     return outcome
   }
@@ -171,7 +174,7 @@ export function createSummaryController(
     async generateFor(ctx, pageId, opts = {}) {
       const gen = nextGen(pageId)
       // Show loading only when there's no existing result to show as stale.
-      const existing = state.get(pageId)
+      const existing = state[pageId]
       if (existing?.result?.ok) {
         existing.stale = true
       } else {
@@ -201,9 +204,9 @@ export function createSummaryController(
           }
           if (generations.get(pageId) === gen) {
             setStatus(pageId, 'error')
-            const cur = state.get(pageId)
+            const cur = state[pageId]
             if (cur) cur.result = outcome
-            else state.set(pageId, { status: 'error', result: outcome })
+            else state[pageId] = { status: 'error', result: outcome }
           }
           return outcome
         }
@@ -232,15 +235,15 @@ export function createSummaryController(
     },
     clear(pageId) {
       if (pageId === undefined) {
-        state.clear()
+        Object.keys(state).forEach((k) => delete state[k])
         return
       }
-      state.delete(pageId)
+      delete state[pageId]
     },
     dispose() {
       for (const t of pending.values()) clearTimeout(t)
       pending.clear()
-      state.clear()
+      Object.keys(state).forEach((k) => delete state[k])
       generations.clear()
     }
   }

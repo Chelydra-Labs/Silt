@@ -345,11 +345,18 @@
     <EditorUtilityBar editor={editorInstance} {activeMarks} />
   {/if}
 
+  <!-- containerEl is intentionally NOT a flex container. The .silt-texture-
+       surface::before overlay (index.css) uses position:sticky with
+       height:100vh + margin-bottom:-100vh to pin the theme's paper texture
+       across the scroll viewport. That cancel trick relies on BLOCK flow —
+       when this element was `flex flex-col`, the ::before became a flex item
+       and the vh/negative-margin pair stopped cancelling, which collapsed the
+       content geometry and broke scrolling on textured themes (Linen). -->
   <div
     bind:this={containerEl}
-    class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-surface-editor flex flex-col min-h-0"
+    class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-surface-editor min-h-0"
   >
-    <div class="relative z-[1] flex flex-col flex-1">
+    <div class="relative z-[1] flex flex-col">
       <nav
         class="mb-6 flex items-center gap-1.5 text-text-muted/60 text-[11px] font-medium tracking-wider uppercase font-body"
       >

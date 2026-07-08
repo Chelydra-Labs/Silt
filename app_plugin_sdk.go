@@ -8,11 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"silt/backend/config"
-	"silt/backend/db"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 	"silt/backend/vault"
-	"strconv"
 	"strings"
 	"time"
 
@@ -247,8 +245,16 @@ func (a *App) PluginUpdateTaskMeta(pluginID, sessionToken, blockID string, pin i
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return false, err
 	}
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
+	// Capability gate — mirrors every sibling Plugin* task setter
+	// (PluginSetTaskOwner/Priority/Tags/Title/Order/DueDate/BlockedBy,
+	// PluginAppendTaskComment). pin/progress are file-resident user intent, so
+	// a third-party plugin without CapContentMutate must not toggle them.
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
+	// Input validation runs before acquiring the lock; mutateTaskBlock takes
+	// its own RLock. (Pre-refactor these checks happened under the lock — pure
+	// input/range checks don't need it.)
 	if pin < -2 || pin > 1 {
 		return false, fmt.Errorf("invalid pin value %d (valid: -2=clear, -1=no change, 0=unpin, 1=pin)", pin)
 	}
@@ -258,131 +264,31 @@ func (a *App) PluginUpdateTaskMeta(pluginID, sessionToken, blockID string, pin i
 	if pin == -1 && progress == -1 {
 		return true, nil // no-op
 	}
-
-	if a.db == nil {
-		return false, fmt.Errorf("vault database not loaded")
-	}
-
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	var loc db.BlockLocation
-	err := a.coordinator.WithDBReadResult(func() error {
-		var e error
-		loc, e = a.db.GetBlockLocation(blockID)
-		return e
-	})
-	if err != nil {
-		return false, fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
-	}
-	notebook, section, page, blockType := loc.Notebook, loc.Section, loc.Page, loc.BlockType
-	if blockType != string(parser.BlockTask) {
-		return false, fmt.Errorf("block %s is not a task", blockID)
-	}
-
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" {
-		return false, fmt.Errorf("invalid file metadata for block %s", blockID)
-	}
-	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
-	if err != nil {
-		return false, fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
-	}
-	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, notebookDir) {
-		return false, fmt.Errorf("resolved file path escapes notebook root")
-	}
-
-	var writeErr error
-	a.coordinator.LockBlockWrite(blockID, func() {
-		a.coordinator.LockFileWrite(filePath, func() {
-			contentBytes, err := os.ReadFile(filePath)
-			if err != nil {
-				writeErr = err
-				return
+	// Delegate the canonical write chain to mutateTaskBlock (#476). This
+	// retires a ~135-line inline duplicate and, as a side effect, UPGRADES the
+	// emit semantics: the inline version emitted inside the lock with no
+	// re-parse-failure fallback (a latent deadlock footgun + missing
+	// emit-on-failure); mutateTaskBlock emits AFTER the locks release with a
+	// fileDate fallback (the round-3 emit-on-failure fix). It also inherits
+	// the focus-lock guard (#444) every other task-setter now shares.
+	if err := a.mutateTaskBlock(blockID, "PluginUpdateTaskMeta", func(b *parser.ParsedBlock) {
+		if pin != -1 {
+			switch pin {
+			case -2:
+				b.Pinned = nil // remove the token
+			case 0:
+				v := false
+				b.Pinned = &v // [pin:: false]
+			case 1:
+				v := true
+				b.Pinned = &v // [pin:: true]
 			}
-			fileDate := fileOrDefaultDate(filePath)
-			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
-			if parseErr != nil {
-				writeErr = fmt.Errorf("failed to parse file for task meta update: %w", parseErr)
-				return
-			}
-			found := false
-			for i := range parsedBlocks {
-				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
-					if pin != -1 {
-						switch pin {
-						case -2:
-							parsedBlocks[i].Pinned = nil // remove the token
-						case 0:
-							b := false
-							parsedBlocks[i].Pinned = &b // [pin:: false]
-						case 1:
-							b := true
-							parsedBlocks[i].Pinned = &b // [pin:: true]
-						}
-					}
-					if progress != -1 {
-						parsedBlocks[i].Progress = progress
-					}
-					found = true
-					break
-				}
-			}
-			if !found {
-				writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
-				return
-			}
-
-			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
-			if frontmatter == "" {
-				// Use the date from the parsed metadata (derived from the
-				// file's mtime or frontmatter fallback), NOT time.Now(), so
-				// we don't inject today's date over a file whose blocks
-				// carry their own per-block file_date.
-				fmDate := meta.Date
-				if fmDate == "" {
-					fmDate = fileDate
-				}
-				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
-				body = string(contentBytes)
-			}
-			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-				writeErr = err
-				return
-			}
-
-			// Re-index so SQLite reflects the new pin/progress values.
-			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
-			if err == nil {
-				var idxErr error
-				a.coordinator.WithDBWrite(func() {
-					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
-				})
-				if idxErr != nil {
-					log.Printf("PluginUpdateTaskMeta: IndexFileBlocks failed: %v", idxErr)
-				}
-			} else {
-				// The file write succeeded but re-parsing the rendered content
-				// failed — the index stays stale until the next fsnotify scan.
-				// This should never happen (the content was just rendered from
-				// successfully-parsed blocks) but log it so the gap is observable.
-				log.Printf("PluginUpdateTaskMeta: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
-			}
-
-			for _, b := range blocks {
-				if b.ID == blockID {
-					a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)
-				}
-			}
-		})
-	}) // LockBlockWrite
-	if writeErr != nil {
-		return false, writeErr
+		}
+		if progress != -1 {
+			b.Progress = progress
+		}
+	}); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -402,132 +308,23 @@ func (a *App) PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate stri
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return false, err
 	}
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
 	// "" clears the token; a non-empty value must be a valid YYYY-MM-DD so a
-	// malformed date can never reach disk.
+	// malformed date can never reach disk. Validated up front (before the lock
+	// mutateTaskBlock takes) to preserve the early-rejection behavior.
 	if dueDate != "" {
 		if _, derr := time.Parse("2006-01-02", dueDate); derr != nil {
 			return false, fmt.Errorf("invalid dueDate %q (want YYYY-MM-DD or empty to clear)", dueDate)
 		}
 	}
-	if a.db == nil {
-		return false, fmt.Errorf("vault database not loaded")
-	}
-
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	var loc db.BlockLocation
-	err := a.coordinator.WithDBReadResult(func() error {
-		var e error
-		loc, e = a.db.GetBlockLocation(blockID)
-		return e
-	})
-	if err != nil {
-		return false, fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
-	}
-	notebook, section, page, blockType := loc.Notebook, loc.Section, loc.Page, loc.BlockType
-	if blockType != string(parser.BlockTask) {
-		return false, fmt.Errorf("block %s is not a task", blockID)
-	}
-
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" {
-		return false, fmt.Errorf("invalid file metadata for block %s", blockID)
-	}
-	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
-	if err != nil {
-		return false, fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
-	}
-	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, notebookDir) {
-		return false, fmt.Errorf("resolved file path escapes notebook root")
-	}
-
-	var writeErr error
-	// emitFileDate captures the changed block's file_date (or falls back to
-	// the loc metadata) so block:changed fires AFTER both locks release —
-	// matching CreateStandaloneTask / UpdateBlockState, and avoiding a
-	// deadlock footgun if EventsEmit ever becomes synchronous. didWrite is
-	// set whenever the file write succeeded: even if the post-write re-parse
-	// fails (so `blocks` is nil and the index stays stale), we still emit so
-	// subscribed views re-query and surface the now-on-disk state instead of
-	// freezing on the pre-drag row.
-	var emitFileDate string
-	didWrite := false
-	a.coordinator.LockBlockWrite(blockID, func() {
-		a.coordinator.LockFileWrite(filePath, func() {
-			contentBytes, err := os.ReadFile(filePath)
-			if err != nil {
-				writeErr = err
-				return
-			}
-			fileDate := fileOrDefaultDate(filePath)
-			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
-			if parseErr != nil {
-				writeErr = fmt.Errorf("failed to parse file for due-date update: %w", parseErr)
-				return
-			}
-			found := false
-			for i := range parsedBlocks {
-				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
-					parsedBlocks[i].DueDate = dueDate
-					found = true
-					break
-				}
-			}
-			if !found {
-				writeErr = fmt.Errorf("block %s not found in file %s", blockID, filePath)
-				return
-			}
-
-			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
-			if frontmatter == "" {
-				fmDate := meta.Date
-				if fmDate == "" {
-					fmDate = fileDate
-				}
-				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
-				body = string(contentBytes)
-			}
-			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-				writeErr = err
-				return
-			}
-			didWrite = true
-
-			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
-			if err == nil {
-				var idxErr error
-				a.coordinator.WithDBWrite(func() {
-					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
-				})
-				if idxErr != nil {
-					log.Printf("PluginSetTaskDueDate: IndexFileBlocks failed: %v", idxErr)
-				}
-				for _, b := range blocks {
-					if b.ID == blockID {
-						emitFileDate = b.FileDate
-					}
-				}
-			} else {
-				log.Printf("PluginSetTaskDueDate: re-parse of rendered content failed (file written, index stale until next scan): %v", err)
-			}
-			if emitFileDate == "" {
-				emitFileDate = fileDate
-			}
-		})
-	}) // LockBlockWrite
-	if writeErr != nil {
-		return false, writeErr
-	}
-	if didWrite {
-		a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, emitFileDate)
+	// Delegate the canonical write chain to mutateTaskBlock (#476): retires a
+	// ~135-line inline duplicate. mutateTaskBlock's emit-on-failure path
+	// (fileDate fallback, emit after locks release) is byte-for-byte the same
+	// pattern this function already used, so the refactor is behavior-preserving
+	// for due-date writes and adds focus-lock protection (#444) for free.
+	if err := a.mutateTaskBlock(blockID, "PluginSetTaskDueDate", func(b *parser.ParsedBlock) {
+		b.DueDate = dueDate
+	}); err != nil {
+		return false, err
 	}
 	return true, nil
 }

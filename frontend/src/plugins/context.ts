@@ -24,6 +24,7 @@ import {
   FetchSubtree,
   GetLocalAuthor,
   PluginSaveSubtreeBlocks,
+  PluginAppendTaskComment,
   SearchBlocks,
   SearchBlocksPaged,
   PluginCreateTask,
@@ -89,51 +90,6 @@ function getPluginSchemaDefault(pluginID: string, key: string): unknown {
   if (!schema) return undefined
   const field = schema.find((f) => f.key === key)
   return field?.default
-}
-
-// newCommentUUID mints the id for a comment NOTE block client-side so
-// addTaskComment can return the exact UUID that lands on disk (saveSubtreeBlocks
-// resolves to boolean, not the id). Prefers the Web Crypto UUID v4; falls back
-// to a hand-rolled RFC 4122 v4 when crypto.randomUUID is unavailable (older
-// embedded webviews / non-secure test contexts).
-function newCommentUUID(): string {
-  if (
-    typeof crypto !== 'undefined' &&
-    typeof crypto.randomUUID === 'function'
-  ) {
-    return crypto.randomUUID()
-  }
-  const bytes = new Uint8Array(16)
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(bytes)
-  } else {
-    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40
-  bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const h = (b: number) => b.toString(16).padStart(2, '0')
-  return (
-    h(bytes[0]) +
-    h(bytes[1]) +
-    h(bytes[2]) +
-    h(bytes[3]) +
-    '-' +
-    h(bytes[4]) +
-    h(bytes[5]) +
-    '-' +
-    h(bytes[6]) +
-    h(bytes[7]) +
-    '-' +
-    h(bytes[8]) +
-    h(bytes[9]) +
-    '-' +
-    h(bytes[10]) +
-    h(bytes[11]) +
-    h(bytes[12]) +
-    h(bytes[13]) +
-    h(bytes[14]) +
-    h(bytes[15])
-  )
 }
 
 // normalizeAIError coerces whatever shape a Wails IPC rejection arrives in — a
@@ -316,32 +272,30 @@ export function makePluginContext(
         children as unknown as Parameters<typeof PluginSaveSubtreeBlocks>[3]
       ),
     // Append a timestamped comment NOTE to a task's child sub-tree (#430).
-    // Goes through saveSubtreeBlocks rather than createBlock: createBlock's
-    // insertAfter places the new block at Depth 0 (flat sibling), but a
-    // comment must be a CHILD (Depth > parent) so fetchSubtree returns it.
-    // saveSubtreeBlocks' spliceSubtree normalizes the new NOTE's depth to
-    // parentDepth+1. Author/timestamp ride on the SubtreeBlock struct fields
-    // (parser scanNoteTokens + renderBlock round-trip them; createBlock's
-    // text-only signature can't carry them without re-parsing).
+    // Routed through the atomic PluginAppendTaskComment binding (#456): the
+    // server does the read-modify-write under one LockBlockWrite+LockFileWrite
+    // hold, minting the NOTE's UUID + splicing it as a CHILD (Depth > parent,
+    // normalized by spliceSubtree to parentDepth+1 so fetchSubtree returns it).
+    // Author/timestamp ride as [author::]/[ts::] tokens. The previous two-step
+    // (FetchSubtree → PluginSaveSubtreeBlocks) was last-write-wins on concurrent
+    // posts; the atomic binding closes that race.
     addTaskComment: async (taskId, text, author) => {
+      // Single atomic IPC: PluginAppendTaskComment does the read-modify-write
+      // under one LockBlockWrite+LockFileWrite hold server-side (#456). The
+      // previous two-step (FetchSubtree → PluginSaveSubtreeBlocks) was unlocked
+      // between the fetch and the save, so two surfaces posting a comment on
+      // the same task concurrently were last-write-wins and one was dropped.
+      // The server binding mints the UUID + splices the NOTE child + rewrites
+      // via the canonical chain; we just pass the attribution tokens through.
       const ts = new Date().toISOString().slice(0, 19) // YYYY-MM-DDTHH:MM:SS
-      const existing = (await FetchSubtree(taskId)) as SubtreeBlock[]
-      const newId = newCommentUUID()
-      const comment: SubtreeBlock = {
-        id: newId,
-        type: 'NOTE',
-        depth: 0,
-        line_number: 0,
-        raw_text: '',
-        clean_text: text,
-        author: author && author.length > 0 ? author : undefined,
-        timestamp: ts
-      }
-      await PluginSaveSubtreeBlocks(pluginID, sessionToken ?? '', taskId, [
-        ...existing,
-        comment
-      ] as unknown as Parameters<typeof PluginSaveSubtreeBlocks>[3])
-      return newId
+      return PluginAppendTaskComment(
+        pluginID,
+        sessionToken ?? '',
+        taskId,
+        text,
+        author ?? '',
+        ts
+      )
     },
     // Create a standalone task in <vault>/.silt/tasks.md (#368). title required;
     // dueDate/status optional with TODO + no-due defaults.

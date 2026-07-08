@@ -6,10 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"silt/backend/db"
 	"silt/backend/parser"
 	"silt/backend/plugins"
+
+	"github.com/google/uuid"
 )
 
 // FetchSubtree returns a task block's child sub-tree — the contiguous run of
@@ -170,6 +173,12 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (
 	didWrite := false
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			// Focus-lock guard mirrors every other task setter (#444): refuse
+			// rather than clobber an in-flight editor edit on the same file.
+			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+				writeErr = errBlockBeingEdited
+				return
+			}
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil {
 				writeErr = err
@@ -234,6 +243,193 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (
 		a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, emitFileDate)
 	}
 	return didWrite, nil
+}
+
+// AppendTaskComment atomically appends a NOTE comment to a task's child
+// sub-tree (#456). It closes the concurrent-post race that the previous
+// two-step SDK path (FetchSubtree → PluginSaveSubtreeBlocks) had: the fetch
+// was unlocked, so two surfaces posting a comment on the same task at once
+// were last-write-wins and one comment was silently dropped. This binding
+// performs the read-modify-write under a single LockBlockWrite+LockFileWrite
+// hold, so both concurrent posts land.
+//
+// Returns the freshly-minted block id of the new NOTE comment. `author` and
+// `ts` are the NOTE-block comment-attribution tokens ([author:: NAME] /
+// [ts:: YYYY-MM-DDTHH:MM:SS]); pass empty to omit either (nullable per
+// ARCHITECTURE.md §2.2). The SDK generates `ts` client-side and passes it
+// through; the binding is a pure transport so the caller controls attribution.
+func (a *App) AppendTaskComment(taskID, text, author, ts string) (string, error) {
+	return a.appendTaskComment(taskID, text, author, ts)
+}
+
+// PluginAppendTaskComment is the plugin-SDK wrapper for AppendTaskComment,
+// gated by the standard capability + session checks so a third-party plugin
+// without the CapContentMutate grant can't splice NOTE blocks into a task's
+// sub-tree. Mirrors PluginSaveSubtreeBlocks.
+func (a *App) PluginAppendTaskComment(pluginID, sessionToken, taskID, text, author, ts string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return "", err
+	}
+	return a.appendTaskComment(taskID, text, author, ts)
+}
+
+// appendTaskComment is the shared core for the app-level and plugin-level
+// entry points. Read-modify-write under one LockBlockWrite+LockFileWrite hold:
+// parse the file, collect the existing child sub-tree, build a new NOTE block
+// with a fresh UUID + the author/ts attribution tokens, splice [existing...,
+// comment] back through spliceSubtree (the same helper SaveSubtreeBlocks uses),
+// then run the canonical write chain. The append is atomic with respect to
+// other comment posts and other task setters because the per-file write lock
+// serializes the whole read-modify-write.
+func (a *App) appendTaskComment(taskID, text, author, ts string) (string, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.db == nil {
+		return "", fmt.Errorf("vault database not loaded")
+	}
+	// Reject empty/whitespace-only text up front: a bare NOTE bullet with no
+	// body is never a useful comment, and failing here (before lock
+	// acquisition + the read-modify-write) keeps the guard cheap and the
+	// intent obvious. Mirrors setTaskTitle's empty-input contract guard.
+	if strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("comment text must not be empty")
+	}
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var loc db.BlockLocation
+	err := a.coordinator.WithDBReadResult(func() error {
+		var e error
+		loc, e = a.db.GetBlockLocation(taskID)
+		return e
+	})
+	if err != nil {
+		return "", fmt.Errorf("block %s not found in SQLite: %w", taskID, err)
+	}
+	if loc.BlockType != string(parser.BlockTask) {
+		return "", fmt.Errorf("block %s is not a task", taskID)
+	}
+	safeNotebook := sanitizePathSegment(loc.Notebook)
+	safeSection := sanitizePathSegment(loc.Section)
+	safePage := sanitizePathSegment(loc.Page)
+	if safeNotebook == "" || safePage == "" {
+		return "", fmt.Errorf("invalid file metadata for block %s", taskID)
+	}
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
+	if err != nil {
+		return "", fmt.Errorf("resolve notebook dir for block %s: %w", taskID, err)
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return "", fmt.Errorf("resolved file path %q escapes notebook root %q", filePath, notebookDir)
+	}
+
+	newID := uuid.New().String()
+	var writeErr error
+	var emitFileDate string
+	didWrite := false
+	a.coordinator.LockBlockWrite(taskID, func() {
+		a.coordinator.LockFileWrite(filePath, func() {
+			// Focus-lock guard mirrors every other task setter (#444): refuse
+			// rather than clobber an in-flight editor edit on the same file.
+			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+				writeErr = errBlockBeingEdited
+				return
+			}
+			contentBytes, err := os.ReadFile(filePath)
+			if err != nil {
+				writeErr = err
+				return
+			}
+			fileDate := fileOrDefaultDate(filePath)
+			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
+			if parseErr != nil {
+				writeErr = fmt.Errorf("parse file for append comment: %w", parseErr)
+				return
+			}
+
+			// Find the parent's depth so the new NOTE sits at parentDepth+1
+			// (spliceSubtree would otherwise anchor minDepth+delta and could
+			// re-indent existing children if we passed a shallow placeholder).
+			parentDepth := 0
+			parentFound := false
+			for _, b := range parsedBlocks {
+				if b.ID == taskID {
+					parentDepth = b.Depth
+					parentFound = true
+					break
+				}
+			}
+			if !parentFound {
+				writeErr = fmt.Errorf("parent block %s not found in file %s", taskID, filePath)
+				return
+			}
+
+			existing := extractSubtree(parsedBlocks, taskID)
+			comment := parser.ParsedBlock{
+				ID:        newID,
+				ParentID:  taskID,
+				Type:      parser.BlockNote,
+				Depth:     parentDepth + 1,
+				CleanText: text,
+				Author:    author,
+				Timestamp: ts,
+			}
+			merged, ok := spliceSubtree(parsedBlocks, taskID, append(existing, comment))
+			if !ok {
+				writeErr = fmt.Errorf("parent block %s not found in file %s", taskID, filePath)
+				return
+			}
+
+			frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
+			if frontmatter == "" {
+				fmDate := meta.Date
+				if fmDate == "" {
+					fmDate = fileDate
+				}
+				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n", strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(fmDate))
+				body = string(contentBytes)
+			}
+			newContent := parser.RenderFileContent(merged, body, frontmatter, a.spacesPerTab)
+			a.tracker.RegisterWrite(filePath)
+			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+				writeErr = err
+				return
+			}
+			didWrite = true
+
+			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
+			if err == nil {
+				var idxErr error
+				a.coordinator.WithDBWrite(func() {
+					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
+				})
+				if idxErr != nil {
+					log.Printf("AppendTaskComment: IndexFileBlocks failed: %v", idxErr)
+				}
+				for _, b := range blocks {
+					if b.ID == taskID {
+						emitFileDate = b.FileDate
+					}
+				}
+			} else {
+				log.Printf("AppendTaskComment: re-parse failed (file written, index stale until next scan): %v", err)
+			}
+			if emitFileDate == "" {
+				emitFileDate = fileDate
+			}
+		})
+	}) // LockBlockWrite
+	if writeErr != nil {
+		return "", writeErr
+	}
+	if didWrite {
+		a.emitBlockChanged(taskID, safeNotebook, safeSection, safePage, emitFileDate)
+	}
+	return newID, nil
 }
 
 // spliceSubtree replaces the child sub-tree of parentID in blocks with the

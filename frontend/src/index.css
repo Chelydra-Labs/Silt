@@ -1208,3 +1208,14 @@ body {
     transform: translateX(100%);
   }
 }
+
+/* Reduced-motion: freeze every skeleton shimmer (List rows + Board column
+   shells + Calendar day cells). Honors prefers-reduced-motion per AGENTS.md
+   a11y rules without per-component gating. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-circle::after,
+  .skeleton-text::after,
+  .skeleton-badge::after {
+    animation: none;
+  }
+}

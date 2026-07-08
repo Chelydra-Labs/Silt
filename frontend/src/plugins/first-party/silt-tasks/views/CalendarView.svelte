@@ -21,6 +21,7 @@
   import { plusDaysISO } from '../../../sdk'
   import { settings } from '../../../../settings/store.svelte'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
+  import ErrorBanner from '../components/ErrorBanner.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import type { TaskDetail } from '../types'
@@ -741,24 +742,12 @@
   {/if}
 
   {#if subModeError}
-    <div
-      class="px-6 py-1.5 border-b border-status-warn/30 bg-status-warn/10 flex items-center gap-2 text-[12px] font-body-md"
-      role="status"
-      data-testid="calendar-submode-error"
-    >
-      <span class="material-symbols-outlined text-[14px] text-status-warn"
-        >save</span
-      >
-      <span class="text-text-primary">{subModeError}</span>
-      <button
-        type="button"
-        onclick={() => (subModeError = '')}
-        aria-label="Dismiss error"
-        class="ml-auto p-1 rounded hover:bg-hover text-text-muted border-none bg-transparent cursor-pointer"
-      >
-        <span class="material-symbols-outlined text-[14px]">close</span>
-      </button>
-    </div>
+    <ErrorBanner
+      kind="warning"
+      message={subModeError}
+      dataTestId="calendar-submode-error"
+      onDismiss={() => (subModeError = '')}
+    />
   {/if}
 
   <!-- Screen-reader announcement of drag/keyboard reschedules. -->
@@ -774,7 +763,7 @@
       <div class="max-w-md">
         <QuickAddTask
           {ctx}
-          placeholder="New task (no due date) — Enter to add, Esc to close"
+          placeholder="New task (no due date) — Enter to add"
           keepOpenAfterCreate={false}
           onCreated={closeQuickAdd}
           onCancel={closeQuickAdd}
@@ -783,11 +772,35 @@
     </div>
   {/if}
 
+  {#if errorMsg}
+    <!-- Hoisted above the padded content container so it renders as a
+         full-width strip, matching BoardView/ListView's error placement. -->
+    <ErrorBanner message={errorMsg} />
+  {/if}
   <div class="flex-1 overflow-auto custom-scrollbar p-4">
     {#if loading}
-      <div class="text-text-muted animate-pulse p-6">Loading…</div>
+      <!-- Skeleton: 6×7 day-cell grid mirroring the month layout, so the
+           switch from skeleton to real grid doesn't reflow. Reuses the global
+           .skeleton-text shimmer (gated by prefers-reduced-motion in
+           index.css). -->
+      <div
+        class="grid grid-cols-7 gap-1 min-w-[700px]"
+        data-testid="tasks-calendar-loading"
+        aria-busy="true"
+        aria-label="Loading calendar"
+      >
+        {#each Array(42) as _, i (i)}
+          <div
+            class="min-h-[92px] rounded border border-dashed border-surface-panel-border p-1.5 space-y-1"
+          >
+            <div class="skeleton-text" style="width: 30%"></div>
+            <div class="skeleton-text subtitle"></div>
+          </div>
+        {/each}
+      </div>
     {:else if errorMsg}
-      <div class="text-error p-6">{errorMsg}</div>
+      <!-- Fatal query error: the grid is suppressed (the banner above shows
+           the message; nothing to render in the padded content area). -->
     {:else if subMode === 'month'}
       <!-- Month grid (lifted from silt-calendar). 7-column CSS grid; each day
            cell carries role="gridcell" and a data-celldate for testing/DnD.

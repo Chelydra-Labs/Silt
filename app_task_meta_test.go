@@ -1,13 +1,16 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"silt/backend/db"
+	"silt/backend/monitor"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 )
@@ -972,5 +975,286 @@ func TestSetTaskOrders_ConcurrentWithSetTaskOwner_NoLostUpdate(t *testing.T) {
 				t.Errorf("B: expected owner=Alice, got %q", tk.Owner)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Focus-lock guard (#444)
+//
+// mutateTaskBlock + setTaskOrders refuse to write a file the user is actively
+// editing (mirrors MutateBlock's errBlockBeingEdited). PluginSetTaskDueDate +
+// PluginUpdateTaskMeta inherit the guard after the #476 refactor onto
+// mutateTaskBlock — the inheritance test pins that.
+// ---------------------------------------------------------------------------
+
+// withFocusLockWatcher wires a real DirectoryWatcher onto the test app so
+// AcquireFocusLock/IsFocusLocked behave as in production. Mirrors the setup in
+// TestFocusLocking_AcquireAndRelease (app_api_test.go).
+func withFocusLockWatcher(t *testing.T, app *App) {
+	t.Helper()
+	watcher, err := monitor.NewDirectoryWatcher(app.vaultPath, app.db, app.tracker, app.coordinator, app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher failed: %v", err)
+	}
+	app.watcher = watcher
+}
+
+func TestSetTaskOwner_RefusedWhileFocusLocked(t *testing.T) {
+	app := newTestApp(t)
+	withFocusLockWatcher(t, app)
+	const id = "f1f1aaaa-4444-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	indexTestFile(t, app, "W", "S", "FocusLockOwner", "2026-07-01", content)
+
+	if err := app.AcquireFocusLock("W", "S", "FocusLockOwner"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+	// While the editor holds the focus lock, the setter must refuse rather than
+	// clobber the in-flight edit.
+	if err := app.SetTaskOwner(id, "Alice"); !errors.Is(err, errBlockBeingEdited) {
+		t.Fatalf("expected errBlockBeingEdited while focus-locked, got %v", err)
+	}
+	// After release the write succeeds.
+	if err := app.ReleaseFocusLock("W", "S", "FocusLockOwner"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	if err := app.SetTaskOwner(id, "Alice"); err != nil {
+		t.Fatalf("SetTaskOwner after release: %v", err)
+	}
+}
+
+func TestSetTaskOrders_RefusedWhileFocusLocked(t *testing.T) {
+	app := newTestApp(t)
+	withFocusLockWatcher(t, app)
+	const (
+		idA = "f1f1bbbb-4444-1111-1111-111111111111"
+		idB = "f1f1cccc-4444-1111-1111-111111111111"
+	)
+	content := "- [ ] first <!-- id: " + idA + " -->\n" +
+		"- [ ] second <!-- id: " + idB + " -->\n"
+	indexTestFile(t, app, "W", "S", "FocusLockOrders", "2026-07-01", content)
+
+	if err := app.AcquireFocusLock("W", "S", "FocusLockOrders"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+	// The batch reorder path (setTaskOrders) does NOT route through
+	// mutateTaskBlock — the guard is added there independently. A DnD reorder
+	// on a focused file is the highest-risk clobber, so it must refuse too.
+	if err := app.SetTaskOrders([]string{idA, idB}, []int{1, 2}); !errors.Is(err, errBlockBeingEdited) {
+		t.Fatalf("expected errBlockBeingEdited while focus-locked, got %v", err)
+	}
+	if err := app.ReleaseFocusLock("W", "S", "FocusLockOrders"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	if err := app.SetTaskOrders([]string{idA, idB}, []int{1, 2}); err != nil {
+		t.Fatalf("SetTaskOrders after release: %v", err)
+	}
+}
+
+// TestSetTaskOrders_NoPartialApplyAcrossFiles pins the pre-scan: a batch
+// reorder spanning multiple files must refuse the WHOLE batch up front if any
+// target file is focus-locked. Without the pre-scan, the per-file write loop
+// would write the first file(s) before a later locked file returns
+// errBlockBeingEdited, leaving the reorder half-applied on disk.
+func TestSetTaskOrders_NoPartialApplyAcrossFiles(t *testing.T) {
+	app := newTestApp(t)
+	withFocusLockWatcher(t, app)
+	const (
+		idA = "f2f2aaaa-4444-1111-1111-111111111111"
+		idB = "f2f2bbbb-4444-1111-1111-111111111111"
+	)
+	contentA := "- [ ] first <!-- id: " + idA + " -->\n"
+	contentB := "- [ ] second <!-- id: " + idB + " -->\n"
+	// Two separate files, each with one task. The batch spans both.
+	indexTestFile(t, app, "W", "S", "OrdersFileA", "2026-07-01", contentA)
+	indexTestFile(t, app, "W", "S", "OrdersFileB", "2026-07-01", contentB)
+
+	// Lock ONLY file B. The pre-scan must refuse the whole batch before any
+	// write — otherwise file A gets its order applied before file B aborts.
+	if err := app.AcquireFocusLock("W", "S", "OrdersFileB"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+	if err := app.SetTaskOrders([]string{idA, idB}, []int{1, 2}); !errors.Is(err, errBlockBeingEdited) {
+		t.Fatalf("expected errBlockBeingEdited while file B focus-locked, got %v", err)
+	}
+
+	// File A must be byte-for-byte unchanged: the pre-scan refused before any
+	// file write. This assertion fails on the partial-apply bug (file A would
+	// carry the freshly-written [order:: 1] token).
+	got, err := os.ReadFile(filepath.Join(app.vaultPath, "W", "S", "OrdersFileA.md"))
+	if err != nil {
+		t.Fatalf("read file A: %v", err)
+	}
+	if string(got) != contentA {
+		t.Errorf("file A partially written despite file B being focus-locked:\nwant %q\ngot  %q", contentA, string(got))
+	}
+
+	if err := app.ReleaseFocusLock("W", "S", "OrdersFileB"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	// After release the whole batch applies cleanly.
+	if err := app.SetTaskOrders([]string{idA, idB}, []int{1, 2}); err != nil {
+		t.Fatalf("SetTaskOrders after release: %v", err)
+	}
+}
+
+// TestPluginSetTaskDueDate_RefusedWhileFocusLocked pins the #476 refactor's
+// inheritance: PluginSetTaskDueDate used to inline the write chain; now it
+// delegates to mutateTaskBlock, so it inherits the #444 focus-lock guard for
+// free. If someone re-inlines the chain, this test fails.
+func TestPluginSetTaskDueDate_RefusedWhileFocusLocked(t *testing.T) {
+	app := newTestApp(t)
+	withFocusLockWatcher(t, app)
+	const id = "f1f1dddd-4444-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	indexTestFile(t, app, "W", "S", "FocusLockDue", "2026-07-01", content)
+
+	// PluginSetTaskDueDate's session/grant gates need a registered plugin
+	// session; bypass them by exercising the underlying mutation through the
+	// app-level path that the refactored Plugin* wrapper delegates to. We
+	// confirm the guard is inherited by calling the plugin path's shared core
+	// (mutateTaskBlock) indirectly via SetTaskOwner, AND directly assert the
+	// plugin entry returns errBlockBeingEdited by stubbing a valid session.
+	if err := app.AcquireFocusLock("W", "S", "FocusLockDue"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+	// Direct delegation check: the refactored PluginSetTaskDueDate calls
+	// mutateTaskBlock, which now guards. Use a real plugin session + grant so
+	// the session/grant gates pass and the focus-lock guard is the only blocker.
+	tok := registerTestSession(t, app, "focus-plugin")
+	if err := app.RequestCapability("focus-plugin", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	ok, err := app.PluginSetTaskDueDate("focus-plugin", tok, id, "2026-08-01")
+	if ok {
+		t.Fatalf("expected ok=false while focus-locked")
+	}
+	if !errors.Is(err, errBlockBeingEdited) {
+		t.Fatalf("expected errBlockBeingEdited from refactored PluginSetTaskDueDate, got %v", err)
+	}
+	if err := app.ReleaseFocusLock("W", "S", "FocusLockDue"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	ok, err = app.PluginSetTaskDueDate("focus-plugin", tok, id, "2026-08-01")
+	if err != nil || !ok {
+		t.Fatalf("PluginSetTaskDueDate after release: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestPluginUpdateTaskMeta_RefusedWhileFocusLocked pins the same inheritance
+// for the other refactored caller (#476). Also confirms the refactor preserved
+// the no-op short-circuit (pin=-1,progress=-1 returns ok without touching disk
+// — no focus-lock error even while locked).
+func TestPluginUpdateTaskMeta_RefusedWhileFocusLocked(t *testing.T) {
+	app := newTestApp(t)
+	withFocusLockWatcher(t, app)
+	const id = "f1f1eeee-4444-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	indexTestFile(t, app, "W", "S", "FocusLockMeta", "2026-07-01", content)
+	tok := registerTestSession(t, app, "focus-plugin")
+	// PluginUpdateTaskMeta is now capability-gated; grant content-mutate so the
+	// focus-lock guard is the only blocker (not the capability gate).
+	if err := app.RequestCapability("focus-plugin", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+
+	if err := app.AcquireFocusLock("W", "S", "FocusLockMeta"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+	// No-op short-circuit must NOT trip the guard: it writes nothing, so a
+	// focus lock is irrelevant. Preserves the pre-refactor behavior.
+	if ok, err := app.PluginUpdateTaskMeta("focus-plugin", tok, id, -1, -1); err != nil || !ok {
+		t.Fatalf("no-op PluginUpdateTaskMeta while locked: ok=%v err=%v", ok, err)
+	}
+	// A real update inherits the focus-lock guard from mutateTaskBlock.
+	if ok, err := app.PluginUpdateTaskMeta("focus-plugin", tok, id, 1, 50); ok {
+		t.Fatalf("expected ok=false while focus-locked")
+	} else if !errors.Is(err, errBlockBeingEdited) {
+		t.Fatalf("expected errBlockBeingEdited from refactored PluginUpdateTaskMeta, got %v", err)
+	}
+	if err := app.ReleaseFocusLock("W", "S", "FocusLockMeta"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	if ok, err := app.PluginUpdateTaskMeta("focus-plugin", tok, id, 1, 50); err != nil || !ok {
+		t.Fatalf("PluginUpdateTaskMeta after release: ok=%v err=%v", ok, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Focus-lock guard on the remaining task writers (#444 consistency follow-up).
+//
+// UpdateBlockState (status), SetTaskRecurrence, and SetTaskBlockedBy are task
+// mutations that previously wrote without the IsFocusLocked check, leaving the
+// drawer's status / recurrence / dependency edits able to clobber an actively
+// edited file while owner/priority/tags/title/due/order were already guarded.
+// These pin the guard on each path (mirrors TestSetTaskOwner_RefusedWhileFocusLocked).
+// ---------------------------------------------------------------------------
+
+func TestUpdateBlockState_RefusedWhileFocusLocked(t *testing.T) {
+	app := newTestApp(t)
+	withFocusLockWatcher(t, app)
+	const id = "f1f1ffff-4444-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + id + " -->\n"
+	indexTestFile(t, app, "W", "S", "FocusLockStatus", "2026-07-01", content)
+
+	if err := app.AcquireFocusLock("W", "S", "FocusLockStatus"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+	// A status change on a focus-locked file must refuse, not clobber the edit.
+	if err := app.UpdateBlockState(id, "DONE"); !errors.Is(err, errBlockBeingEdited) {
+		t.Fatalf("expected errBlockBeingEdited while focus-locked, got %v", err)
+	}
+	if err := app.ReleaseFocusLock("W", "S", "FocusLockStatus"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	if err := app.UpdateBlockState(id, "DONE"); err != nil {
+		t.Fatalf("UpdateBlockState after release: %v", err)
+	}
+}
+
+func TestSetTaskRecurrence_RefusedWhileFocusLocked(t *testing.T) {
+	app := newTestApp(t)
+	withFocusLockWatcher(t, app)
+	const id = "f1f10000-4444-1111-1111-111111111111"
+	// Recurrence requires a due-date anchor (the resolver advances [due::]).
+	content := "- [ ] ship [due:: 2026-08-01] <!-- id: " + id + " -->\n"
+	indexTestFile(t, app, "W", "S", "FocusLockRecur", "2026-07-01", content)
+
+	if err := app.AcquireFocusLock("W", "S", "FocusLockRecur"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+	if err := app.SetTaskRecurrence(id, "every week"); !errors.Is(err, errBlockBeingEdited) {
+		t.Fatalf("expected errBlockBeingEdited while focus-locked, got %v", err)
+	}
+	if err := app.ReleaseFocusLock("W", "S", "FocusLockRecur"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	if err := app.SetTaskRecurrence(id, "every week"); err != nil {
+		t.Fatalf("SetTaskRecurrence after release: %v", err)
+	}
+}
+
+func TestSetTaskBlockedBy_RefusedWhileFocusLocked(t *testing.T) {
+	app := newTestApp(t)
+	withFocusLockWatcher(t, app)
+	const (
+		id     = "f1f10001-4444-1111-1111-111111111111"
+		prereq = "f1f10002-4444-1111-1111-111111111112"
+	)
+	content := "- [ ] prereq <!-- id: " + prereq + " -->\n" +
+		"- [ ] ship <!-- id: " + id + " -->\n"
+	indexTestFile(t, app, "W", "S", "FocusLockBlocked", "2026-07-01", content)
+
+	if err := app.AcquireFocusLock("W", "S", "FocusLockBlocked"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+	if err := app.SetTaskBlockedBy(id, []string{prereq}); !errors.Is(err, errBlockBeingEdited) {
+		t.Fatalf("expected errBlockBeingEdited while focus-locked, got %v", err)
+	}
+	if err := app.ReleaseFocusLock("W", "S", "FocusLockBlocked"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	if err := app.SetTaskBlockedBy(id, []string{prereq}); err != nil {
+		t.Fatalf("SetTaskBlockedBy after release: %v", err)
 	}
 }

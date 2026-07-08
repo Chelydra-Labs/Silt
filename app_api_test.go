@@ -15,6 +15,7 @@ import (
 	"silt/backend/db"
 	"silt/backend/monitor"
 	"silt/backend/parser"
+	"silt/backend/plugins"
 	"silt/backend/vault"
 )
 
@@ -1340,6 +1341,11 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 		app := newTestApp(t)
 		filePath, taskID, _ := seedTaskFile(t, app)
 		tok := registerTestSession(t, app, "test-plugin")
+		// PluginUpdateTaskMeta is gated by CapContentMutate (mirrors every sibling
+		// Plugin* task setter); grant it so the round-trip path is exercised.
+		if err := app.RequestCapability("test-plugin", string(plugins.CapContentMutate), ""); err != nil {
+			t.Fatalf("grant: %v", err)
+		}
 
 		ok, err := app.PluginUpdateTaskMeta("test-plugin", tok, taskID, 1, -1)
 		if err != nil || !ok {
@@ -1380,6 +1386,9 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 		app := newTestApp(t)
 		filePath, taskID, _ := seedTaskFile(t, app)
 		tok := registerTestSession(t, app, "test-plugin")
+		if err := app.RequestCapability("test-plugin", string(plugins.CapContentMutate), ""); err != nil {
+			t.Fatalf("grant: %v", err)
+		}
 
 		ok, err := app.PluginUpdateTaskMeta("test-plugin", tok, taskID, -1, 75)
 		if err != nil || !ok {
@@ -1395,6 +1404,9 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 		app := newTestApp(t)
 		filePath, taskID, _ := seedTaskFile(t, app)
 		tok := registerTestSession(t, app, "test-plugin")
+		if err := app.RequestCapability("test-plugin", string(plugins.CapContentMutate), ""); err != nil {
+			t.Fatalf("grant: %v", err)
+		}
 		before, _ := os.ReadFile(filePath)
 
 		ok, err := app.PluginUpdateTaskMeta("test-plugin", tok, taskID, -1, -1)
@@ -1450,6 +1462,28 @@ func TestPluginUpdateTaskMeta(t *testing.T) {
 			t.Errorf("missing block should error, got ok=%v err=%v", ok, err)
 		}
 	})
+}
+
+// TestPluginUpdateTaskMeta_RequiresCapability pins the content-mutate gate on
+// PluginUpdateTaskMeta (mirrors TestPluginAppendTaskComment_GatedByCapability).
+// A plugin with a valid session but no CapContentMutate grant must not toggle
+// pin/progress; the same plugin granted content-mutate succeeds.
+func TestPluginUpdateTaskMeta_RequiresCapability(t *testing.T) {
+	app := newTestApp(t)
+	_, taskID, _ := seedTaskFile(t, app)
+	tok := registerTestSession(t, app, "third-party")
+
+	// Without the grant: rejected.
+	if ok, err := app.PluginUpdateTaskMeta("third-party", tok, taskID, 1, -1); err == nil {
+		t.Fatalf("expected capability denial without content-mutate grant, got ok=%v", ok)
+	}
+	// Grant content-mutate; the same call succeeds.
+	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if ok, err := app.PluginUpdateTaskMeta("third-party", tok, taskID, 1, -1); err != nil || !ok {
+		t.Fatalf("PluginUpdateTaskMeta with grant: ok=%v err=%v", ok, err)
+	}
 }
 
 // TestUpdatePluginSetting_PreservesOtherFields confirms the atomic per-plugin

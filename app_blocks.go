@@ -132,6 +132,16 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	var writeErr error
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			// Don't clobber a file the user is actively editing (the editor
+			// holds a focus lock on the file while focused). Mirrors MutateBlock
+			// + mutateTaskBlock so every task-status write refuses consistently
+			// (#444). The editor itself saves via SaveFileBlocks (whole-file),
+			// not this per-block path, so this never blocks the editor's own
+			// writes.
+			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+				writeErr = errBlockBeingEdited
+				return
+			}
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil {
 				writeErr = err

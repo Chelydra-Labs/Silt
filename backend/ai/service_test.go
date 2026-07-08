@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -125,6 +126,9 @@ func TestComplete_UnauthorizedIsTyped(t *testing.T) {
 }
 
 func TestComplete_StatusClassification(t *testing.T) {
+	// Transient statuses (429/500/502) now retry, so shrink the backoff or
+	// this table test pays ~2s per retryable case.
+	withFastRetry(t)
 	cases := []struct {
 		status int
 		want   AIErrorKind
@@ -460,5 +464,109 @@ func TestProbe_ChatOmitsMaxTokens(t *testing.T) {
 
 	if err := Probe(context.Background(), AIProvider{BaseURL: srv.URL, Model: "m"}, true); err != nil {
 		t.Errorf("Probe chat: %v", err)
+	}
+}
+
+// withFastRetry shrinks the retry backoff to zero for the duration of the test
+// so retry-exercising cases don't pay real wall-clock waits. Restored on
+// cleanup so it can't leak into other tests.
+func withFastRetry(t *testing.T) {
+	t.Helper()
+	saved := retryBackoff
+	retryBackoff = []time.Duration{0, 0}
+	t.Cleanup(func() { retryBackoff = saved })
+}
+
+func TestComplete_RetriesTransientThenSucceeds(t *testing.T) {
+	// A transient 5xx on the first attempt must be retried; the second attempt
+	// succeeds. The provider's OpenAI-compat shim (Google's) intermittently
+	// returns INTERNAL 500s, which is exactly the case this absorbs.
+	withFastRetry(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) == 1 {
+			http.Error(w, "transient", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "m",
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m"},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete after retry: %v", err)
+	}
+	if res.Content != "ok" {
+		t.Errorf("content = %q, want ok", res.Content)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("hits = %d, want 2 (1 failed + 1 succeeded)", got)
+	}
+}
+
+func TestComplete_RetriesTransientExhausted(t *testing.T) {
+	// A persistent 5xx must exhaust the retry budget and surface the typed
+	// server error (not a bare transport string), having tried the initial
+	// attempt plus one per backoff entry.
+	withFastRetry(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m"},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	})
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrServer {
+		t.Errorf("kind = %q, want server", e.Kind)
+	}
+	if e.Status != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", e.Status)
+	}
+	wantHits := int32(1 + len(retryBackoff)) // initial + one retry per backoff entry
+	if got := hits.Load(); got != wantHits {
+		t.Errorf("hits = %d, want %d (initial + %d retries)", got, wantHits, len(retryBackoff))
+	}
+}
+
+func TestComplete_DoesNotRetryClientError(t *testing.T) {
+	// 4xx is deterministic — retrying an identical request must not happen.
+	withFastRetry(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "bad", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m"},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	})
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrBadRequest {
+		t.Errorf("kind = %q, want bad-request", e.Kind)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("hits = %d, want 1 (4xx must not retry)", got)
 	}
 }

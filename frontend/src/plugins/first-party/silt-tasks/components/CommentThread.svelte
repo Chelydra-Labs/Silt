@@ -4,6 +4,8 @@
   import type { PluginContext, SubtreeBlock } from '../../../sdk'
   import RichText from '../../../../components/RichText.svelte'
   import { loadLocalAuthor, persistLocalAuthor } from '../settings'
+  import ErrorBanner from './ErrorBanner.svelte'
+  import { friendlyCaughtError } from '../errors'
 
   /**
    * Comment thread for TaskEditDrawer (#430). Each comment is a child NOTE
@@ -52,6 +54,11 @@
   let comments = $state<Comment[]>([])
   let loading = $state(true)
   let errorMsg = $state('')
+  // errorRetryable is true only when the last error was a failed comment POST
+  // whose draft text was restored to the composer — the one surface where a
+  // "Try again" CTA cleanly re-invokes the action (#459). Load/delete failures
+  // have no clean retry path from the banner.
+  let errorRetryable = $state(false)
   let composerText = $state('')
   let composerAuthor = $state('')
   let composerPending = $state(false)
@@ -109,7 +116,8 @@
       })
       comments = mapped
     } catch (e) {
-      errorMsg = e instanceof Error ? e.message : String(e)
+      errorMsg = friendlyCaughtError(e)
+      errorRetryable = false
     } finally {
       loading = false
     }
@@ -185,6 +193,7 @@
     composerText = ''
     composerPending = true
     errorMsg = ''
+    errorRetryable = false
     try {
       const realId = await ctx.addTaskComment(taskId, text, author || undefined)
       comments = comments.map((c) =>
@@ -194,9 +203,12 @@
       liveMessage = 'Comment added'
     } catch (e) {
       // Revert the optimistic entry so the thread doesn't show a comment
-      // that never reached disk.
+      // that never reached disk, AND restore the draft text so the user can
+      // edit + retry (the ErrorBanner surfaces a "Try again" CTA, #459).
       comments = comments.filter((c) => c.key !== optimisticKey)
-      errorMsg = e instanceof Error ? e.message : String(e)
+      composerText = text
+      errorMsg = friendlyCaughtError(e)
+      errorRetryable = true
       liveMessage = 'Comment failed to post'
     } finally {
       composerPending = false
@@ -227,7 +239,8 @@
     } catch (e) {
       // Restore on failure so the user sees the delete didn't take.
       comments = [...comments.slice(0, idx), comment, ...comments.slice(idx)]
-      errorMsg = e instanceof Error ? e.message : String(e)
+      errorMsg = friendlyCaughtError(e)
+      errorRetryable = false
       liveMessage = 'Comment failed to delete'
     }
   }
@@ -287,7 +300,12 @@
   <div class="sr-only" aria-live="polite">{liveMessage}</div>
 
   {#if errorMsg}
-    <p role="alert" class="text-[11px] text-error mb-2">{errorMsg}</p>
+    <ErrorBanner
+      message={errorMsg}
+      compact
+      dataTestId="comment-thread-error"
+      onRetry={errorRetryable ? () => void submit() : undefined}
+    />
   {/if}
 
   {#if loading}

@@ -21,6 +21,8 @@
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
   import type { TaskDetail } from '../types'
+  import { dueDateClass, dueDateTextClass } from '../dueDate'
+  import ErrorBanner from '../components/ErrorBanner.svelte'
   import { getTaskHubState, type GroupBy, type SortMode } from '../state.svelte'
   import { binByDimension, type GroupSection } from '../grouping'
 
@@ -673,8 +675,12 @@
       >
     {/if}
     {#if item.due_date}
-      <span class="text-[10px] text-text-muted font-label-sm flex-shrink-0"
-        >{item.due_date}</span
+      <span
+        class="text-[10px] {item.status === 'DONE'
+          ? 'text-text-muted'
+          : dueDateTextClass(
+              dueDateClass(item.due_date, today)
+            )} font-label-sm flex-shrink-0">{item.due_date}</span
       >
     {/if}
   </div>
@@ -682,53 +688,31 @@
 
 <div class="flex-1 flex flex-col min-h-0 overflow-hidden" data-tasks-view>
   {#if markDownError}
-    <div
-      class="px-6 py-2 bg-error-bg border-b border-error-border text-error text-[12px] font-body-md flex items-center gap-2"
-      role="alert"
-      data-testid="tasks-mark-done-error"
-    >
-      <span class="flex-1">Couldn't mark task done: {markDownError}</span>
-      <button
-        type="button"
-        aria-label="Dismiss error"
-        onclick={() => {
-          markDownError = ''
-          if (markDownTimer) {
-            clearTimeout(markDownTimer)
-            markDownTimer = null
-          }
-        }}
-        data-testid="tasks-mark-done-error-dismiss"
-        class="p-1 rounded hover:bg-hover text-text-muted hover:text-error border-none bg-transparent cursor-pointer"
-      >
-        <span class="material-symbols-outlined text-[14px]">close</span>
-      </button>
-    </div>
+    <ErrorBanner
+      message={`Couldn't mark task done: ${markDownError}`}
+      dataTestId="tasks-mark-done-error"
+      onDismiss={() => {
+        markDownError = ''
+        if (markDownTimer) {
+          clearTimeout(markDownTimer)
+          markDownTimer = null
+        }
+      }}
+    />
   {/if}
 
   {#if orderError}
-    <div
-      class="px-6 py-2 bg-error-bg border-b border-error-border text-error text-[12px] font-body-md flex items-center gap-2"
-      role="alert"
-      data-testid="tasks-order-error"
-    >
-      <span class="flex-1">Couldn't reorder task: {orderError}</span>
-      <button
-        type="button"
-        aria-label="Dismiss error"
-        onclick={() => {
-          orderError = ''
-          if (orderErrorTimer) {
-            clearTimeout(orderErrorTimer)
-            orderErrorTimer = null
-          }
-        }}
-        data-testid="tasks-order-error-dismiss"
-        class="p-1 rounded hover:bg-hover text-text-muted hover:text-error border-none bg-transparent cursor-pointer"
-      >
-        <span class="material-symbols-outlined text-[14px]">close</span>
-      </button>
-    </div>
+    <ErrorBanner
+      message={`Couldn't reorder task: ${orderError}`}
+      dataTestId="tasks-order-error"
+      onDismiss={() => {
+        orderError = ''
+        if (orderErrorTimer) {
+          clearTimeout(orderErrorTimer)
+          orderErrorTimer = null
+        }
+      }}
+    />
   {/if}
 
   <!-- aria-live region for manual-order drag announcements (#426) -->
@@ -738,7 +722,12 @@
     class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-6 max-w-4xl w-full"
   >
     {#if loading}
-      <div class="skeleton-container" data-testid="tasks-loading">
+      <div
+        class="skeleton-container"
+        data-testid="tasks-loading"
+        aria-busy="true"
+        aria-label="Loading tasks"
+      >
         {#each Array(4) as _}
           <div class="skeleton-row">
             <div class="skeleton-circle"></div>
