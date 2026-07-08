@@ -73,6 +73,19 @@ type App struct {
 	aiCtx       context.Context
 	aiCtxCancel context.CancelFunc
 
+	// vaultCtx is the vault-scoped context for AI HTTP calls — a CHILD of
+	// aiCtx, re-created on every initializeVaultServices and cancelled in
+	// CloseVault/SwitchVault before vaultClosingWG.Wait() so an in-flight
+	// call aborts promptly (HTTP client observes context.Canceled in
+	// milliseconds) instead of blocking the close/switch for up to the
+	// provider timeout (~60s on a slow local model). aiCtxCancel (shutdown)
+	// cascades and cancels vaultCtx too; cancelling vaultCtx alone leaves
+	// the lifecycle context intact. aiContext() returns vaultCtx when set.
+	// nil alongside aiCtx in tests (the helper falls back through aiCtx to
+	// context.Background()).
+	vaultCtx       context.Context
+	vaultCtxCancel context.CancelFunc
+
 	// grants is the per-host plugin capability grant table (F4). It lives in
 	// <configDir>/silt/grants.json (NOT in vault-scoped config.yaml) so a
 	// vault synced from another host cannot carry the counterpart's grant
@@ -184,7 +197,7 @@ type App struct {
 	// under vaultMu.Lock, then Waits outside the lock before teardown —
 	// draining those calls so a close can't strand an AI call that would
 	// otherwise write a stale audit entry or leak into the next vault (#452).
-	// aiPreflightPlugin checks closing + Add(1) under one RLock hold, making
+	// withAIPreflight checks closing + Add(1) under one RLock hold, making
 	// the gate atomic w.r.t. the close path's set+Wait (no TOCTOU window).
 	// Both closing and the WG are guarded by vaultMu (closing is read/written
 	// only while holding it); the WG is Add'd under RLock and Done'd with no
@@ -459,18 +472,31 @@ func (a *App) CloseVault() error {
 		a.vaultMu.Unlock()
 		return nil
 	}
-	// Set the closing flag under the exclusive lock so aiPreflightPlugin's
+	// Set the closing flag under the exclusive lock so withAIPreflight's
 	// RLock-hold check+Add becomes atomic w.r.t. this set. New AI calls now
 	// reject (errVaultClosing) before issuing HTTP; calls already past
 	// preflight are tracked in vaultClosingWG and drained next.
 	a.closing = true
 	a.vaultMu.Unlock()
 
+	// Cancel the vault-scoped AI context OUTSIDE the lock so every in-flight
+	// HTTP call observes context.Canceled in milliseconds — the HTTP client
+	// aborts the request, the call returns, vaultClosingWG.Done() fires, and
+	// the Wait() below unblocks promptly. Without this the drain blocks for
+	// up to the provider timeout (~60s on a slow local model) with no UI
+	// feedback, risking a force-quit mid-teardown (#471). The closing flag
+	// (set above) still rejects NEW calls; vaultCtx is re-created on the
+	// next initializeVaultServices, so cancelling it here is safe.
+	if a.vaultCtxCancel != nil {
+		a.vaultCtxCancel()
+	}
+
 	// Drain in-flight AI calls OUTSIDE the lock. They released vaultMu after
 	// preflight (the HTTP call doesn't hold it), so the lock can't serialize
-	// them — and holding it across the (potentially long) completion would
-	// block every reader IPC. This wait is bounded by the provider timeout
-	// (aiCtxCancel on shutdown cancels it immediately).
+	// them — and holding it across the (now short) completion would block
+	// every reader IPC. With vaultCtx cancelled above, the wait is bounded
+	// by the HTTP client's context-observe latency (milliseconds), not the
+	// provider timeout.
 	a.vaultClosingWG.Wait()
 
 	// Emit vault:closing BEFORE teardown so the frontend plugin loader can run
@@ -496,6 +522,18 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// here after a failed/partial close must not inherit a stuck flag, or AI
 	// calls would reject forever (#452).
 	a.closing = false
+	// (Re)create the vault-scoped AI context. A prior CloseVault/SwitchVault
+	// cancelled the old vaultCtx to abort in-flight HTTP; the cancel func is
+	// stale once the new vault opens, so always mint a fresh child of aiCtx
+	// here. aiCtx may be nil for a bare App used only in unit tests that
+	// bypass startup() — fall back to context.Background() in that case so
+	// direct initializeVaultServices callers (app_lifecycle_drain_test.go)
+	// still get a cancellable per-vault context.
+	parent := a.aiCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	a.vaultCtx, a.vaultCtxCancel = context.WithCancel(parent)
 	// Load system config first: its editor.tab_indent_spaces drives
 	// ScanWorkspace and every subsequent parse, so it must be applied before
 	// the initial index is built. A missing/invalid config is non-fatal —
@@ -1074,6 +1112,12 @@ func (a *App) SwitchVault(path string) error {
 		a.closing = true
 		a.vaultMu.Unlock()
 
+		// Cancel the vault-scoped AI context so in-flight HTTP calls abort
+		// promptly (context.Canceled) instead of blocking the drain for up
+		// to the provider timeout (#471). Mirrors CloseVault.
+		if a.vaultCtxCancel != nil {
+			a.vaultCtxCancel()
+		}
 		a.vaultClosingWG.Wait()
 
 		a.vaultMu.Lock()
