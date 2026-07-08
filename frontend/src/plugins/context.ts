@@ -649,9 +649,13 @@ export function makePluginContext(
           max_tokens: req.maxTokens,
           reasoning_effort: req.reasoningEffort,
           stream: req.stream ?? false,
-          response_schema: req.responseSchema
-            ? (JSON.stringify(req.responseSchema) as any)
-            : undefined
+          // Pass the schema object directly — NOT JSON.stringify'd. Wails
+          // JSON-serializes the whole struct for IPC, so a plain object becomes
+          // a JSON object on the wire, which Go's json.RawMessage captures as
+          // raw JSON bytes. Stringifying would double-encode it (object →
+          // string), causing both native encoders to receive a JSON string
+          // instead of a JSON object and silently reject the schema.
+          response_schema: req.responseSchema as any
           // Wails generates PluginAICompleteInput as a class (it has a nested
           // struct array), so the strict TS type wants an instance with
           // convertValues. The runtime binding JSON-serializes a plain object

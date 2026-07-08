@@ -275,7 +275,9 @@
     modelError[which] = null
     manualModel[which] = false
     void persistProvider(which)
-    void loadModels(which)
+    // Auto-refresh: poll the new provider's models immediately so the dropdown
+    // populates without a manual click. Non-blocking; errors surface inline.
+    void refreshModels(which)
   }
 
   function providerDefaultURL(type: string): string {

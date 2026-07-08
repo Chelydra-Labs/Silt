@@ -180,6 +180,12 @@ func completeAnthropic(ctx context.Context, req CompleteRequest, model, baseURL 
 	var sb strings.Builder
 	for _, b := range resp.Content {
 		if b.Type == "tool_use" && b.Name == anthropicStructuredToolName && len(b.Input) > 0 {
+			// A truncated tool_use (stop_reason=max_tokens) produces incomplete
+			// JSON that would fail silently in the parse-fallback. Surface a
+			// clear error so the caller can retry with a higher token budget.
+			if resp.StopReason == "max_tokens" {
+				return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: "structured output was truncated (stop_reason: max_tokens); increase max_tokens and retry"}
+			}
 			return CompleteResult{Content: string(b.Input), Model: resp.Model}, nil
 		}
 		if b.Type == "text" {
@@ -204,43 +210,58 @@ func completeAnthropic(ctx context.Context, req CompleteRequest, model, baseURL 
 }
 
 // listModelsAnthropic polls GET <baseURL>/v1/models. Carries display_name as the
-// dropdown label.
+// dropdown label. Follows cursor-based pagination (after_id + has_more) so the
+// dropdown isn't silently truncated.
 func listModelsAnthropic(ctx context.Context, p AIProvider, baseURL string) ([]AIModel, error) {
-	pr := providerRequest{
-		method: "GET",
-		url:    baseURL + "/v1/models",
-		setHeaders: func(r *http.Request) {
-			if p.APIKey != "" {
-				r.Header.Set("x-api-key", p.APIKey)
+	var out []AIModel
+	afterID := ""
+	// Cap iterations as a safety valve against a misbehaving endpoint.
+	for page := 0; page < 20; page++ {
+		url := baseURL + "/v1/models?limit=100"
+		if afterID != "" {
+			url += "&after_id=" + afterID
+		}
+		pr := providerRequest{
+			method: "GET",
+			url:    url,
+			setHeaders: func(r *http.Request) {
+				if p.APIKey != "" {
+					r.Header.Set("x-api-key", p.APIKey)
+				}
+				r.Header.Set("anthropic-version", anthropicVersion)
+			},
+			classifyErr: anthropicClassifyError,
+		}
+		raw, _, aiErr := sendWithRetry(ctx, pr, p.TimeoutMs)
+		if aiErr != nil {
+			return nil, aiErr
+		}
+		var resp struct {
+			Data []struct {
+				ID          string `json:"id"`
+				DisplayName string `json:"display_name"`
+			} `json:"data"`
+			HasMore bool   `json:"has_more"`
+			LastID  string `json:"last_id"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return nil, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse models response: %v", err)}
+		}
+		for _, m := range resp.Data {
+			id := strings.TrimSpace(m.ID)
+			if id == "" {
+				continue
 			}
-			r.Header.Set("anthropic-version", anthropicVersion)
-		},
-		classifyErr: anthropicClassifyError,
-	}
-	raw, _, aiErr := sendWithRetry(ctx, pr, p.TimeoutMs)
-	if aiErr != nil {
-		return nil, aiErr
-	}
-	var resp struct {
-		Data []struct {
-			ID          string `json:"id"`
-			DisplayName string `json:"display_name"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return nil, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse models response: %v", err)}
-	}
-	out := make([]AIModel, 0, len(resp.Data))
-	for _, m := range resp.Data {
-		id := strings.TrimSpace(m.ID)
-		if id == "" {
-			continue
+			display := strings.TrimSpace(m.DisplayName)
+			if display == "" {
+				display = id
+			}
+			out = append(out, AIModel{ID: id, DisplayName: display})
 		}
-		display := strings.TrimSpace(m.DisplayName)
-		if display == "" {
-			display = id
+		if !resp.HasMore || resp.LastID == "" {
+			break
 		}
-		out = append(out, AIModel{ID: id, DisplayName: display})
+		afterID = resp.LastID
 	}
 	return out, nil
 }

@@ -44,6 +44,7 @@ type googleGenerateResponse struct {
 		Content struct {
 			Parts []googleTextPart `json:"parts"`
 		} `json:"content"`
+		FinishReason string `json:"finishReason"`
 	} `json:"candidates"`
 	UsageMetadata *struct {
 		PromptTokenCount     *int `json:"promptTokenCount"`
@@ -220,8 +221,18 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse response: %v", err)}
 	}
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: "provider returned no content"}
+	if len(resp.Candidates) == 0 {
+		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: "provider returned no candidates"}
+	}
+	if len(resp.Candidates[0].Content.Parts) == 0 {
+		// Google blocks content via safety filters: the candidate exists but
+		// has empty parts and a finishReason like "SAFETY". Surface the reason
+		// so the user knows the output wasn't empty by mistake.
+		reason := resp.Candidates[0].FinishReason
+		if reason == "" {
+			reason = "unknown"
+		}
+		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("provider returned no content (finishReason: %s)", reason)}
 	}
 	// Concatenate all text parts (a single turn may span multiple segments).
 	var sb strings.Builder
@@ -293,51 +304,66 @@ func embedGoogle(ctx context.Context, req EmbedRequest, model, baseURL string) (
 // listModelsGoogle polls GET <baseURL>/v1beta/models. Strips the models/ prefix
 // from the resource name for the ID; carries displayName as the dropdown label.
 // When which is "embedding", only models supporting embedContent are returned;
-// otherwise only generateContent-supporting models.
+// otherwise only generateContent-supporting models. Follows nextPageToken to
+// consume all pages so the dropdown isn't silently truncated for accounts with
+// many models.
 func listModelsGoogle(ctx context.Context, p AIProvider, baseURL, which string) ([]AIModel, error) {
-	pr := providerRequest{
-		method: "GET",
-		url:    baseURL + "/v1beta/models",
-		setHeaders: func(r *http.Request) {
-			if p.APIKey != "" {
-				r.Header.Set("x-goog-api-key", p.APIKey)
-			}
-		},
-		classifyErr: googleClassifyError,
-	}
-	raw, _, aiErr := sendWithRetry(ctx, pr, p.TimeoutMs)
-	if aiErr != nil {
-		return nil, aiErr
-	}
-	var resp struct {
-		Models []struct {
-			Name                       string   `json:"name"`
-			DisplayName                string   `json:"displayName"`
-			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return nil, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse models response: %v", err)}
-	}
 	want := "generateContent"
 	if which == "embedding" {
 		want = "embedContent"
 	}
-	out := make([]AIModel, 0, len(resp.Models))
-	for _, m := range resp.Models {
-		if !supportsMethod(m.SupportedGenerationMethods, want) {
-			continue
+	var out []AIModel
+	pageToken := ""
+	// Cap iterations as a safety valve against a misbehaving endpoint that
+	// loops forever on the same token.
+	for page := 0; page < 20; page++ {
+		url := baseURL + "/v1beta/models"
+		if pageToken != "" {
+			url += "?pageToken=" + pageToken
 		}
-		id := strings.TrimPrefix(m.Name, "models/")
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
+		pr := providerRequest{
+			method: "GET",
+			url:    url,
+			setHeaders: func(r *http.Request) {
+				if p.APIKey != "" {
+					r.Header.Set("x-goog-api-key", p.APIKey)
+				}
+			},
+			classifyErr: googleClassifyError,
 		}
-		display := strings.TrimSpace(m.DisplayName)
-		if display == "" {
-			display = id
+		raw, _, aiErr := sendWithRetry(ctx, pr, p.TimeoutMs)
+		if aiErr != nil {
+			return nil, aiErr
 		}
-		out = append(out, AIModel{ID: id, DisplayName: display})
+		var resp struct {
+			Models []struct {
+				Name                       string   `json:"name"`
+				DisplayName                string   `json:"displayName"`
+				SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+			} `json:"models"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return nil, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse models response: %v", err)}
+		}
+		for _, m := range resp.Models {
+			if !supportsMethod(m.SupportedGenerationMethods, want) {
+				continue
+			}
+			id := strings.TrimSpace(strings.TrimPrefix(m.Name, "models/"))
+			if id == "" {
+				continue
+			}
+			display := strings.TrimSpace(m.DisplayName)
+			if display == "" {
+				display = id
+			}
+			out = append(out, AIModel{ID: id, DisplayName: display})
+		}
+		pageToken = resp.NextPageToken
+		if pageToken == "" {
+			break
+		}
 	}
 	return out, nil
 }
