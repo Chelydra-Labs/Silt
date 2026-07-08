@@ -1,0 +1,218 @@
+// Native Anthropic (Claude) provider. Speaks the Messages API against
+// api.anthropic.com/v1/messages. Auth is the x-api-key header plus the mandatory
+// anthropic-version header (never Authorization: Bearer). Anthropic has no
+// native embeddings endpoint — Embed returns a clear error pointing to the
+// OpenAI-compatible or local path.
+
+package ai
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+)
+
+// anthropicVersion is the single stable API version string required on every
+// Anthropic request. Documented at platform.claude.com/docs/en/api/getting-started.
+const anthropicVersion = "2023-06-01"
+
+// anthropicDefaultMaxTokens is the max_tokens default when the caller omits it.
+// Anthropic's max_tokens is MANDATORY (unlike OpenAI's optional field); sending
+// 0/nil yields a 400. 4096 is a generous round number that covers any reasonable
+// summary/extraction without being so large the provider rejects it.
+const anthropicDefaultMaxTokens = 4096
+
+// anthropicMessage is one message in the Anthropic messages[] array. Role is
+// "user" or "assistant"; content is the simple string form (the API also accepts
+// a content-blocks array, but the string form is the universal denominator).
+type anthropicMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// anthropicRequest is the /v1/messages request body.
+type anthropicRequest struct {
+	Model       string             `json:"model"`
+	MaxTokens   int                `json:"max_tokens"`
+	System      string             `json:"system,omitempty"`
+	Messages    []anthropicMessage `json:"messages"`
+	Temperature *float64           `json:"temperature,omitempty"`
+}
+
+// anthropicResponse is the /v1/messages response body.
+type anthropicResponse struct {
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+	Model      string `json:"model"`
+	StopReason string `json:"stop_reason"`
+	Usage      *struct {
+		InputTokens  *int `json:"input_tokens"`
+		OutputTokens *int `json:"output_tokens"`
+	} `json:"usage,omitempty"`
+}
+
+// anthropicError is the structured Anthropic error body:
+// {type: "error", error: {type, message}}.
+type anthropicError struct {
+	Type  string `json:"type"`
+	Error struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// anthropicClassifyError maps an Anthropic structured error body to an AIError.
+// Returns nil when the body isn't the expected shape so the default status-based
+// path runs.
+func anthropicClassifyError(raw []byte, status int) *AIError {
+	var ae anthropicError
+	if err := json.Unmarshal(raw, &ae); err != nil || ae.Error.Message == "" {
+		return nil
+	}
+	kind := classifyStatus(status)
+	switch ae.Error.Type {
+	case "invalid_request_error":
+		kind = ErrBadRequest
+	case "authentication_error":
+		kind = ErrUnauthorized
+	case "permission_error":
+		kind = ErrForbidden
+	case "not_found_error":
+		kind = ErrModelMissing
+	case "rate_limit_error":
+		kind = ErrRateLimited
+	case "api_error", "overloaded_error":
+		kind = ErrServer
+	}
+	msg := strings.TrimSpace(ae.Error.Message)
+	if len(msg) > 500 {
+		msg = msg[:500] + "…"
+	}
+	return &AIError{Kind: kind, Status: status, Message: msg}
+}
+
+// completeAnthropic performs a chat completion via /v1/messages.
+func completeAnthropic(ctx context.Context, req CompleteRequest, model, baseURL string) (CompleteResult, error) {
+	// Split system messages into the top-level system field (Anthropic does not
+	// accept role:"system" in messages[]). Remaining user/assistant messages
+	// pass through verbatim.
+	var system strings.Builder
+	var msgs []anthropicMessage
+	for _, m := range req.Messages {
+		if m.Role == "system" {
+			if system.Len() > 0 {
+				system.WriteString("\n\n")
+			}
+			system.WriteString(m.Content)
+			continue
+		}
+		role := m.Role
+		if role != "assistant" {
+			role = "user"
+		}
+		msgs = append(msgs, anthropicMessage{Role: role, Content: m.Content})
+	}
+	// max_tokens is mandatory for Anthropic. Default when the caller omits it.
+	maxTokens := anthropicDefaultMaxTokens
+	if req.MaxTokens != nil && *req.MaxTokens > 0 {
+		maxTokens = *req.MaxTokens
+	}
+	body, err := json.Marshal(anthropicRequest{
+		Model:       model,
+		MaxTokens:   maxTokens,
+		System:      system.String(),
+		Messages:    msgs,
+		Temperature: req.Temperature,
+	})
+	if err != nil {
+		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}
+	}
+	pr := providerRequest{
+		method: "POST",
+		url:    baseURL + "/v1/messages",
+		body:   body,
+		setHeaders: func(r *http.Request) {
+			if req.Provider.APIKey != "" {
+				r.Header.Set("x-api-key", req.Provider.APIKey)
+			}
+			r.Header.Set("anthropic-version", anthropicVersion)
+		},
+		classifyErr: anthropicClassifyError,
+	}
+	raw, _, aiErr := sendWithRetry(ctx, pr, req.Provider.TimeoutMs)
+	if aiErr != nil {
+		return CompleteResult{}, aiErr
+	}
+	var resp anthropicResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse response: %v", err)}
+	}
+	// Concatenate all text blocks (a single turn may carry multiple).
+	var sb strings.Builder
+	for _, b := range resp.Content {
+		if b.Type == "text" {
+			sb.WriteString(b.Text)
+		}
+	}
+	if sb.Len() == 0 {
+		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: "provider returned no text content"}
+	}
+	out := CompleteResult{Content: sb.String(), Model: resp.Model}
+	if resp.Usage != nil {
+		out.Usage = &AIUsage{
+			PromptTokens:     resp.Usage.InputTokens,
+			CompletionTokens: resp.Usage.OutputTokens,
+		}
+		if resp.Usage.InputTokens != nil && resp.Usage.OutputTokens != nil {
+			total := *resp.Usage.InputTokens + *resp.Usage.OutputTokens
+			out.Usage.TotalTokens = &total
+		}
+	}
+	return out, nil
+}
+
+// listModelsAnthropic polls GET <baseURL>/v1/models. Carries display_name as the
+// dropdown label.
+func listModelsAnthropic(ctx context.Context, p AIProvider, baseURL string) ([]AIModel, error) {
+	pr := providerRequest{
+		method: "GET",
+		url:    baseURL + "/v1/models",
+		setHeaders: func(r *http.Request) {
+			if p.APIKey != "" {
+				r.Header.Set("x-api-key", p.APIKey)
+			}
+			r.Header.Set("anthropic-version", anthropicVersion)
+		},
+		classifyErr: anthropicClassifyError,
+	}
+	raw, _, aiErr := sendWithRetry(ctx, pr, p.TimeoutMs)
+	if aiErr != nil {
+		return nil, aiErr
+	}
+	var resp struct {
+		Data []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse models response: %v", err)}
+	}
+	out := make([]AIModel, 0, len(resp.Data))
+	for _, m := range resp.Data {
+		id := strings.TrimSpace(m.ID)
+		if id == "" {
+			continue
+		}
+		display := strings.TrimSpace(m.DisplayName)
+		if display == "" {
+			display = id
+		}
+		out = append(out, AIModel{ID: id, DisplayName: display})
+	}
+	return out, nil
+}
