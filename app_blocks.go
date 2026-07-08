@@ -16,10 +16,23 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// errBlockBeingEdited is returned by MutateBlock when the target file is
-// focus-locked (a user is editing it in another view). Callers retry rather
-// than silently overwriting the in-flight edit.
+// errBlockBeingEdited is the sentinel returned by MutateBlock when the target
+// file is focus-locked (a user is editing it in another view). It is kept as
+// the errors.Is target so the 18+ existing test assertions keep working after
+// the #478 migration: the return sites now hand back a blockBeingEditedError()
+// (an *IPCError carrying CodeBlockBeingEdited) that wraps this sentinel, so
+// errors.Is(err, errBlockBeingEdited) still returns true while the frontend
+// additionally receives a stable code across the IPC boundary.
 var errBlockBeingEdited = fmt.Errorf("block is being edited in another view")
+
+// blockBeingEditedError returns the focus-lock rejection as an *IPCError that
+// carries the stable CodeBlockBeingEdited (#478) AND satisfies
+// errors.Is(err, errBlockBeingEdited) via the wrapped sentinel. Use this at
+// every return site instead of the bare sentinel so the frontend can map on
+// the code.
+func blockBeingEditedError() *IPCError {
+	return wrapSentinelAsIPCError(CodeBlockBeingEdited, errBlockBeingEdited.Error(), errBlockBeingEdited)
+}
 
 // FetchPageBlocks returns a flat list of all blocks for a page, ordered by
 // line_number. A page is a single file; each block carries its own file_date.

@@ -343,7 +343,7 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 		}
 		filePath := filepath.Join(notebookDir, sanitizePathSegment(first.loc.Section), sanitizePathSegment(first.loc.Page)+".md")
 		if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
-			return errBlockBeingEdited
+			return blockBeingEditedError()
 		}
 	}
 	for _, fk := range fileKeys {

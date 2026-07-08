@@ -43,12 +43,22 @@ import (
 // two vaults on one machine keep separate keys.
 const keyringService = "Silt"
 
-// errVaultClosing is returned by withAIPreflight when a vault close/switch is
-// in progress. The call is rejected before any HTTP so it can neither strand an
-// audit entry against a torn-down vault nor leak into the next vault (#452).
-// The plugin surfaces it as a transient rejection (normalizeAIError → unknown);
-// the UI is unmounting during a close, so it is rarely observed.
+// errVaultClosing is the sentinel returned by withAIPreflight when a vault
+// close/switch is in progress. The call is rejected before any HTTP so it can
+// neither strand an audit entry against a torn-down vault nor leak into the
+// next vault (#452). Kept as the errors.Is target; the return site hands back
+// a vaultClosingError() (*IPCError carrying CodeVaultClosing, #478) that wraps
+// this sentinel so errors.Is(err, errVaultClosing) still holds. The plugin
+// surfaces it as a transient rejection (normalizeAIError → unknown); the UI is
+// unmounting during a close, so it is rarely observed.
 var errVaultClosing = errors.New("vault is closing; AI call rejected")
+
+// vaultClosingError returns the close-in-progress rejection as an *IPCError
+// carrying the stable CodeVaultClosing (#478) that also satisfies
+// errors.Is(err, errVaultClosing) via the wrapped sentinel.
+func vaultClosingError() *IPCError {
+	return wrapSentinelAsIPCError(CodeVaultClosing, errVaultClosing.Error(), errVaultClosing)
+}
 
 // aiContext returns the vault-scoped context for AI HTTP calls, falling
 // back through the app-lifecycle context (aiCtx) to context.Background()
@@ -534,7 +544,7 @@ func (a *App) withAIPreflight(pluginID, sessionToken, which string) (ai.AIProvid
 	// drain returns (#452).
 	if a.closing {
 		a.vaultMu.RUnlock()
-		return ai.AIProvider{}, "", nil, errVaultClosing
+		return ai.AIProvider{}, "", nil, vaultClosingError()
 	}
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		a.vaultMu.RUnlock()
