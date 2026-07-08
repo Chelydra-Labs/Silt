@@ -248,6 +248,17 @@ describe('CalendarView — Calendar display mode (#425)', () => {
 
   // --- Grid rendering ----------------------------------------------------
 
+  it('renders a 6×7 day-cell skeleton while loading (#458)', async () => {
+    // Never-resolving query keeps `loading` true so the skeleton renders.
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockReturnValue(new Promise(() => {}))
+    resetTaskHubState()
+    setCalendarSubMode('month')
+    render(CalendarView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await tick() // initial mount render (loading starts true)
+    expect(screen.getByTestId('tasks-calendar-loading')).toBeTruthy()
+  })
+
   it('renders the month grid container', async () => {
     await mockQueries([])
     await renderCalendar()

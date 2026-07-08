@@ -276,6 +276,39 @@ describe('CommentThread', () => {
     )
   })
 
+  it('failed post restores the draft + "Try again" re-submits (#459)', async () => {
+    const addTaskComment = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('server down'))
+      .mockResolvedValue('real-id')
+    const ctx = makeCtx({ addTaskComment })
+    mount({ ctx })
+    await flush()
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
+    await fireEvent.input(ta, { target: { value: 'please retry me' } })
+    await fireEvent.keyDown(ta, { key: 'Enter' })
+    await flush()
+
+    // The post failed: the error banner surfaces with a "Try again" CTA...
+    expect(addTaskComment).toHaveBeenCalledTimes(1)
+    const retry = screen.getByRole('button', { name: 'Try again' })
+    // ...and the failed draft is restored to the composer for editing/retry.
+    expect(ta.value).toBe('please retry me')
+
+    await fireEvent.click(retry)
+    await flush()
+
+    // The retry re-invoked addTaskComment with the same draft, and it landed.
+    expect(addTaskComment).toHaveBeenCalledTimes(2)
+    expect(addTaskComment).toHaveBeenLastCalledWith(
+      'task-1',
+      'please retry me',
+      'osuser'
+    )
+    // Banner cleared after the successful retry.
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
   it('Enter submits; Shift+Enter does NOT submit (inserts a newline)', async () => {
     const addTaskComment = vi.fn().mockResolvedValue('new-uuid')
     const ctx = makeCtx({ addTaskComment })

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"silt/backend/parser"
+	"silt/backend/plugins"
 )
 
 // ---------------------------------------------------------------------------
@@ -174,6 +175,43 @@ func TestAppendTaskComment_RejectsNonTask(t *testing.T) {
 
 	if _, err := app.AppendTaskComment(noteID, "x", "Dana", "2026-07-07T14:22:00"); err == nil {
 		t.Fatal("expected error appending comment to a non-task block, got nil")
+	}
+}
+
+// TestPluginAppendTaskComment_GatedByCapability mirrors the content-mutate gate
+// pattern the other Plugin* task setters use: a third-party plugin without the
+// grant is denied (no splice, no id); the same plugin with content-mutate
+// succeeds and lands the NOTE child. Pins #456's plugin-wrapper parity.
+func TestPluginAppendTaskComment_GatedByCapability(t *testing.T) {
+	app := newTestApp(t)
+	const taskID = "ac1eeeee-4444-1111-1111-111111111111"
+	content := "- [ ] gated comment target <!-- id: " + taskID + " -->\n"
+	indexTestFile(t, app, "W", "S", "CommentGated", "2026-07-01", content)
+
+	tok := registerTestSession(t, app, "third-party")
+	// Without the content-mutate grant: rejected, no comment lands.
+	if _, err := app.PluginAppendTaskComment("third-party", tok, taskID, "x", "Dana", "2026-07-07T14:22:00"); err == nil {
+		t.Fatal("expected capability denial without content-mutate grant")
+	}
+	sub, _ := app.FetchSubtree(taskID)
+	if len(sub) != 0 {
+		t.Errorf("no comment should land on a denied call, got %d children", len(sub))
+	}
+
+	// Grant content-mutate; the same call now succeeds and lands the NOTE.
+	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	id, err := app.PluginAppendTaskComment("third-party", tok, taskID, "looks good", "Dana", "2026-07-07T14:22:00")
+	if err != nil {
+		t.Fatalf("PluginAppendTaskComment with grant: %v", err)
+	}
+	if id == "" {
+		t.Fatal("expected a non-empty new comment id from granted call")
+	}
+	sub, _ = app.FetchSubtree(taskID)
+	if len(sub) != 1 || sub[0].ID != id {
+		t.Errorf("granted call should have landed exactly one NOTE child id=%q: %+v", id, sub)
 	}
 }
 

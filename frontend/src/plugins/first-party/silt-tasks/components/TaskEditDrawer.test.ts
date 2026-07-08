@@ -356,6 +356,31 @@ describe('TaskEditDrawer — status radiogroup', () => {
     const doingRadio = screen.getByRole('radio', { name: 'In Progress' })
     expect(document.activeElement).toBe(doingRadio)
   })
+
+  it('rapid arrow-key navigation commits only the final status once (#442)', async () => {
+    const updateBlockState = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ updateBlockState })
+    const { container } = render(TaskEditDrawer, {
+      // Unblocked so landing on DONE via arrow doesn't trigger the guard.
+      props: { task: makeTask({ status: 'TODO' }), ctx, onClose: () => {} }
+    })
+    const rg = container.querySelector(
+      '[aria-label="Task status"]'
+    ) as HTMLElement
+    await tick()
+    // Two quick ArrowRights within the 200ms window: TODO → DOING → DONE.
+    // tick() between presses lets statusState update so the next index is
+    // computed correctly, but no 200ms elapses, so both collapse to ONE
+    // trailing commit of the final selection (DONE).
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // TODO → DOING
+    await tick()
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' }) // DOING → DONE
+    await tick()
+    expect(updateBlockState).not.toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 250)) // past the debounce window
+    expect(updateBlockState).toHaveBeenCalledTimes(1)
+    expect(updateBlockState).toHaveBeenLastCalledWith('task-1', 'DONE')
+  })
 })
 
 describe('TaskEditDrawer — source awareness + affordances', () => {

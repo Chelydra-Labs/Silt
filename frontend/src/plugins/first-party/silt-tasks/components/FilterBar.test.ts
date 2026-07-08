@@ -134,6 +134,37 @@ describe('FilterBar facet search (#462)', () => {
     await tick()
     expect(screen.getByTestId('tag-facet-search')).toBeTruthy()
   })
+
+  it('ArrowDown in the search field moves focus to the first option (#462)', async () => {
+    const owners = [
+      'Alice',
+      'Bob',
+      'Carol',
+      'Dave',
+      'Eve',
+      'Frank',
+      'Grace',
+      'Heidi',
+      'Ivan',
+      'Judy',
+      'Mallory'
+    ] // 11 — exceeds the threshold
+    render(FilterBar, { props: makeProps({ owners }) })
+
+    await fireEvent.click(screen.getByRole('button', { name: /Owner/ }))
+    await tick()
+    const search = screen.getByTestId('owner-facet-search') as HTMLInputElement
+    search.focus()
+    expect(document.activeElement).toBe(search)
+
+    // ArrowDown bridges from the search field into the list (the listbox's own
+    // keydown handler only covers listbox descendants, so the search input — a
+    // sibling — needs this bridge).
+    await fireEvent.keyDown(search, { key: 'ArrowDown' })
+    // First visible option's checkbox now holds focus.
+    const firstCheckbox = screen.getByLabelText('Alice', { exact: false })
+    expect(document.activeElement).toBe(firstCheckbox)
+  })
 })
 
 // Keep the PluginContext type import referenced (no-unused).

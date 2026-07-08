@@ -185,6 +185,24 @@
     items[nextIdx]?.focus()
   }
 
+  // #462 follow-up: when the facet search field is focused, ArrowDown should
+  // move focus into the first visible option (the listbox's own keydown handler
+  // only fires for keys on listbox descendants, so the search input — a sibling
+  // of the listbox — needs its own bridge). ArrowLeft/Right/Home/End are left
+  // alone so the user can edit the query with the caret normally.
+  function onFacetSearchKeydown(e: KeyboardEvent) {
+    if (e.key !== 'ArrowDown') return
+    const popover = (e.currentTarget as HTMLElement).closest('[role="group"]')
+    // Focus the first checkbox directly (not the wrapping <label>, which isn't
+    // focusable and would no-op the focus() call).
+    const first = popover?.querySelector<HTMLInputElement>(
+      'input[type="checkbox"]'
+    )
+    if (!first) return
+    e.preventDefault()
+    first.focus()
+  }
+
   // A chip counts as "active" if it has at least one selection; the Clear-all
   // affordance appears once any chip is active.
   let activeCount = $derived(
@@ -430,6 +448,7 @@
               type="text"
               value={ownerQuery}
               oninput={(e) => (ownerQuery = e.currentTarget.value)}
+              onkeydown={onFacetSearchKeydown}
               placeholder="Filter…"
               aria-label="Filter owners by name"
               data-testid="owner-facet-search"
@@ -595,6 +614,7 @@
               type="text"
               value={tagQuery}
               oninput={(e) => (tagQuery = e.currentTarget.value)}
+              onkeydown={onFacetSearchKeydown}
               placeholder="Filter…"
               aria-label="Filter tags by name"
               data-testid="tag-facet-search"
