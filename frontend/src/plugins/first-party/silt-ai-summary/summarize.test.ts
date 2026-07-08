@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PluginContext } from '../../sdk'
+import { stripReasoningContent } from '../../stripReasoning'
 import { resetCacheState } from './cache'
 import { summarize } from './summarize'
 import { DEFAULT_SETTINGS } from './settings'
@@ -155,12 +156,10 @@ describe('summarize — cache hit', () => {
 describe('summarize — cache miss generates, diffs against prior, stores', () => {
   beforeEach(() => resetCacheState())
   it('calls the LLM, parses, writes the cache row, and flags new items', async () => {
-    const complete = vi
-      .fn()
-      .mockResolvedValue({
-        content: '{"summary":"s","tasks":["new task"]}',
-        model: 'qwen3:30b'
-      })
+    const complete = vi.fn().mockResolvedValue({
+      content: '{"summary":"s","tasks":["new task"]}',
+      model: 'qwen3:30b'
+    })
     const { ctx, execCalls } = makeCtx({ complete, latestRow: null })
     const out = await summarize(ctx, {
       pageId: 'p',
@@ -185,12 +184,10 @@ describe('summarize — cache miss generates, diffs against prior, stores', () =
   })
 
   it('threads the latest extraction as the prior snapshot across regenerations', async () => {
-    const complete = vi
-      .fn()
-      .mockResolvedValue({
-        content: '{"summary":"s","tasks":["second"]}',
-        model: 'qwen3:30b'
-      })
+    const complete = vi.fn().mockResolvedValue({
+      content: '{"summary":"s","tasks":["second"]}',
+      model: 'qwen3:30b'
+    })
     const latestRow = {
       content_hash: 'oldhash',
       summary: 'first',
@@ -254,12 +251,10 @@ describe('summarize — invalidation', () => {
     // summary_length changes the prompt + maxTokens, so a cached row generated
     // at a different length is stale. Without this invalidation, changing
     // medium→short and reopening an unchanged note serves the old summary.
-    const complete = vi
-      .fn()
-      .mockResolvedValue({
-        content: '{"summary":"fresh at medium"}',
-        model: 'qwen3:30b'
-      })
+    const complete = vi.fn().mockResolvedValue({
+      content: '{"summary":"fresh at medium"}',
+      model: 'qwen3:30b'
+    })
     const cachedRow = {
       summary: 'stale short summary',
       tasks: '[]',
@@ -328,5 +323,61 @@ describe('summarize — provider error', () => {
     })
     expect(out.ok).toBe(false)
     if (!out.ok) expect(out.error.code).toBe('provider-error')
+  })
+})
+
+// AC2 regression (#483): a leaky provider's <thought> reasoning must never
+// reach the persisted cache. ctx.ai.complete (context.ts) strips it in
+// production; this test mirrors that by routing the raw leaky output through
+// stripReasoningContent in the mock, then asserts BOTH the rendered result and
+// the cache row written by summarize are clean.
+describe('summarize — reasoning tags never persist (#483)', () => {
+  beforeEach(() => resetCacheState())
+  it('stores a clean summary + facets when the provider leaks a <thought> block', async () => {
+    const complete = vi.fn().mockResolvedValue({
+      content: stripReasoningContent(
+        '<thought>* Input: … * Draft 1: …</thought>{"summary":"clean summary","tasks":["new task"]}'
+      ),
+      model: 'qwen3:30b'
+    })
+    const { ctx, execCalls } = makeCtx({ complete, latestRow: null })
+    const out = await summarize(ctx, {
+      pageId: 'p',
+      cleanContent: 'a note',
+      settings,
+      ...configured
+    })
+    // Rendered result is clean.
+    expect(out.ok).toBe(true)
+    if (out.ok) {
+      expect(out.result.summary).toBe('clean summary')
+      expect(out.result.summary).not.toMatch(/<thought|<think|<reasoning/i)
+      expect(out.result.tasks).toEqual(['new task'])
+    }
+    // Persisted cache row is clean (AC2). params[2] is the summary column.
+    const put = execCalls.find((e) => /INSERT INTO summaries/.test(e.sql))
+    expect(put).toBeDefined()
+    expect(put?.params[2]).toBe('clean summary')
+    expect(String(put?.params[2])).not.toMatch(/<thought|<think|<reasoning/i)
+  })
+
+  it('persists a clean summary from a <think>-wrapped response (tag variant)', async () => {
+    // Variant coverage: the <think> tag (DeepSeek-R1 / Qwen3 canonical) must be
+    // stripped just like <thought>. The first case used <thought>; this uses the
+    // canonical variant against the same persist path.
+    const leaky = vi.fn().mockResolvedValue({
+      content: stripReasoningContent(
+        '<think>planning</think>{"summary":"cached clean","tasks":[]}'
+      ),
+      model: 'qwen3:30b'
+    })
+    const { ctx } = makeCtx({ complete: leaky, latestRow: null })
+    const first = await summarize(ctx, {
+      pageId: 'p',
+      cleanContent: 'a note',
+      settings,
+      ...configured
+    })
+    expect(first.ok && first.result.summary).toBe('cached clean')
   })
 })

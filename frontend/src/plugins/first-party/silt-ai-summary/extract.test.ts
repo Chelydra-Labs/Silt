@@ -7,6 +7,7 @@ import {
   providerError,
   truncateForPrompt
 } from './extract'
+import { stripReasoningContent } from '../../stripReasoning'
 import { DEFAULT_SETTINGS } from './settings'
 import type { SummarySettings } from './types'
 
@@ -223,5 +224,66 @@ describe('extractSummary', () => {
     const r = await extractSummary({ complete, content: 'note', settings })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe('provider-error')
+  })
+})
+
+// Composition of reasoning-tag stripping + extraction (#483). In production the
+// ctx.ai.complete wrapper (context.ts) strips <thought>/<think>/… blocks before
+// extractSummary sees the content; these tests mirror that by routing a leaky
+// provider's raw output through stripReasoningContent in the mock. They guard
+// that the strip never eats the JSON that follows a thought block, and that a
+// reasoning-only response degrades to a typed error rather than a blank/leaked
+// summary.
+describe('extractSummary — reasoning-tag composition (#483)', () => {
+  const viaWrapper = (raw: string, model = 'test-model') =>
+    vi.fn().mockResolvedValue({ content: stripReasoningContent(raw), model })
+
+  it('extracts JSON that followed a <think> block with no spurious retry', async () => {
+    const complete = viaWrapper(
+      '<think>planning the extraction</think>{"summary":"s","tasks":["t"]}'
+    )
+    const r = await extractSummary({ complete, content: 'note', settings })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.extraction.summary).toBe('s')
+      expect(r.extraction.tasks).toEqual(['t'])
+    }
+    expect(complete).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers a clean prose summary when the fallback was thought-wrapped', async () => {
+    const complete = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: stripReasoningContent('<think>r</think>not json'),
+        model: 'm'
+      })
+      .mockResolvedValueOnce({
+        content: stripReasoningContent('<think>r</think>still not json'),
+        model: 'm'
+      })
+      .mockResolvedValueOnce({
+        content: stripReasoningContent(
+          '<think>draft</think>A clean two-sentence summary.'
+        ),
+        model: 'm'
+      })
+    const r = await extractSummary({ complete, content: 'note', settings })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.extraction.summary).toBe('A clean two-sentence summary.')
+      expect(r.extraction.tasks).toEqual([])
+    }
+    expect(complete).toHaveBeenCalledTimes(3)
+  })
+
+  it('degrades a reasoning-only response to a provider-error, not a blank/leaked summary', async () => {
+    const complete = viaWrapper('<think>all reasoning, no answer</think>')
+    const r = await extractSummary({ complete, content: 'note', settings })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.code).toBe('provider-error')
+    // All three tiers ran (structured + retry + prose); every tier stripped to
+    // empty, so no summary is recoverable.
+    expect(complete).toHaveBeenCalledTimes(3)
   })
 })

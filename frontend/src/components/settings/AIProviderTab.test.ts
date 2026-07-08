@@ -384,10 +384,18 @@ describe('AIProviderTab', () => {
       render(AIProviderTab)
       await ready()
 
-      expect(screen.getAllByRole('radio', { name: /Local \(Ollama\)/i })).toHaveLength(2)
-      expect(screen.getAllByRole('radio', { name: /OpenAI-compatible/i })).toHaveLength(2)
-      expect(screen.getAllByRole('radio', { name: /Google AI/i })).toHaveLength(2)
-      expect(screen.getAllByRole('radio', { name: /Anthropic/i })).toHaveLength(2)
+      expect(
+        screen.getAllByRole('radio', { name: /Local \(Ollama\)/i })
+      ).toHaveLength(2)
+      expect(
+        screen.getAllByRole('radio', { name: /OpenAI-compatible/i })
+      ).toHaveLength(2)
+      expect(screen.getAllByRole('radio', { name: /Google AI/i })).toHaveLength(
+        2
+      )
+      expect(screen.getAllByRole('radio', { name: /Anthropic/i })).toHaveLength(
+        2
+      )
     })
 
     it('switches chat to Google AI and snaps the base URL', async () => {
@@ -441,11 +449,44 @@ describe('AIProviderTab', () => {
       )
     })
 
+    it('does not force-refresh models when persisting the new provider fails', async () => {
+      // A failed save (IPC rejection, or invalid advanced settings) leaves the
+      // backend on the OLD provider config; a forced ListModels would poll the
+      // wrong endpoint and show stale models under the new type label. The
+      // refresh must be gated on a successful persist and the failure surfaced.
+      mocks.UpdateAIProviderConfig.mockRejectedValueOnce(
+        new Error('save failed')
+      )
+      render(AIProviderTab)
+      await ready()
+
+      const googleRadios = screen.getAllByRole('radio', { name: /Google AI/i })
+      await fireEvent.click(googleRadios[0])
+
+      // The provider type flips locally and the save is attempted...
+      await waitFor(() =>
+        expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+          'chat',
+          expect.objectContaining({ provider_type: 'google' })
+        )
+      )
+      // ...but the forced model refresh must NOT fire against stale backend config.
+      expect(mocks.ListModels).not.toHaveBeenCalledWith('chat', true)
+      // The save failure surfaces on the model error channel.
+      await waitFor(() =>
+        expect(
+          screen.getByText(/failed to save provider settings/i)
+        ).toBeInTheDocument()
+      )
+    })
+
     it('switches chat to Anthropic and snaps the base URL', async () => {
       render(AIProviderTab)
       await ready()
 
-      const anthropicRadios = screen.getAllByRole('radio', { name: /Anthropic/i })
+      const anthropicRadios = screen.getAllByRole('radio', {
+        name: /Anthropic/i
+      })
       await fireEvent.click(anthropicRadios[0]) // chat card
 
       expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
@@ -457,9 +498,86 @@ describe('AIProviderTab', () => {
       )
     })
 
+    it('snaps a custom OpenAI-compat base URL to the Google default on switch (regression)', async () => {
+      // Footgun: Google's OpenAI-compatible shim URL (…/v1beta/openai/) pasted
+      // under openai-compatible must NOT survive a switch to native Google — the
+      // native paths would double up (/v1beta/openai//v1beta/models) and 404.
+      mocks.configState.chat.provider_type = 'openai-compatible'
+      mocks.configState.chat.base_url =
+        'https://generativelanguage.googleapis.com/v1beta/openai/'
+      mocks.GetAIProviderConfig.mockResolvedValue(
+        structuredClone(mocks.configState)
+      )
+      render(AIProviderTab)
+      await ready()
+
+      const googleRadios = screen.getAllByRole('radio', { name: /Google AI/i })
+      await fireEvent.click(googleRadios[0])
+
+      expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+        'chat',
+        expect.objectContaining({
+          provider_type: 'google',
+          base_url: 'https://generativelanguage.googleapis.com'
+        })
+      )
+    })
+
+    it('snaps an arbitrary custom base URL to the Anthropic default on switch', async () => {
+      mocks.configState.chat.provider_type = 'openai-compatible'
+      mocks.configState.chat.base_url =
+        'https://my-custom-gateway.example.com/v1'
+      mocks.GetAIProviderConfig.mockResolvedValue(
+        structuredClone(mocks.configState)
+      )
+      render(AIProviderTab)
+      await ready()
+
+      const anthropicRadios = screen.getAllByRole('radio', {
+        name: /Anthropic/i
+      })
+      await fireEvent.click(anthropicRadios[0])
+
+      expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+        'chat',
+        expect.objectContaining({
+          provider_type: 'anthropic',
+          base_url: 'https://api.anthropic.com'
+        })
+      )
+    })
+
+    it('preserves a custom base URL when switching between local and openai-compatible', async () => {
+      // Non-native targets accept arbitrary endpoints, so a custom gateway URL
+      // must survive a local↔openai-compatible switch (only native targets
+      // force-snap). Guards that the native-snap fix is surgical.
+      mocks.configState.chat.provider_type = 'openai-compatible'
+      mocks.configState.chat.base_url =
+        'https://my-custom-gateway.example.com/v1'
+      mocks.GetAIProviderConfig.mockResolvedValue(
+        structuredClone(mocks.configState)
+      )
+      render(AIProviderTab)
+      await ready()
+
+      const localRadios = screen.getAllByRole('radio', {
+        name: /Local \(Ollama\)/i
+      })
+      await fireEvent.click(localRadios[0])
+
+      expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+        'chat',
+        expect.objectContaining({
+          provider_type: 'local',
+          base_url: 'https://my-custom-gateway.example.com/v1'
+        })
+      )
+    })
+
     it('shows the cloud privacy warning for Google AI', async () => {
       mocks.configState.chat.provider_type = 'google'
-      mocks.configState.chat.base_url = 'https://generativelanguage.googleapis.com'
+      mocks.configState.chat.base_url =
+        'https://generativelanguage.googleapis.com'
       mocks.GetAIProviderConfig.mockResolvedValue(
         structuredClone(mocks.configState)
       )
@@ -478,7 +596,9 @@ describe('AIProviderTab', () => {
       render(AIProviderTab)
       await ready()
 
-      expect(screen.getByText(/Anthropic doesn't offer embeddings/i)).toBeInTheDocument()
+      expect(
+        screen.getByText(/Anthropic doesn't offer embeddings/i)
+      ).toBeInTheDocument()
     })
   })
 
@@ -502,7 +622,9 @@ describe('AIProviderTab', () => {
       await ready()
 
       // Click the Refresh-models button in the chat card.
-      const refreshBtns = screen.getAllByRole('button', { name: /Refresh models/i })
+      const refreshBtns = screen.getAllByRole('button', {
+        name: /Refresh models/i
+      })
       await fireEvent.click(refreshBtns[0]) // chat card
 
       // After the poll resolves, the dropdown should show the models.
@@ -511,7 +633,9 @@ describe('AIProviderTab', () => {
         expect(chatModel?.tagName).toBe('SELECT')
       })
       // The select should have options for both models.
-      const select = document.getElementById('ai-chat-model') as HTMLSelectElement
+      const select = document.getElementById(
+        'ai-chat-model'
+      ) as HTMLSelectElement
       expect(select.options.length).toBeGreaterThanOrEqual(2)
     })
 
@@ -521,7 +645,9 @@ describe('AIProviderTab', () => {
       render(AIProviderTab)
       await ready()
 
-      const refreshBtns = screen.getAllByRole('button', { name: /Refresh models/i })
+      const refreshBtns = screen.getAllByRole('button', {
+        name: /Refresh models/i
+      })
       await fireEvent.click(refreshBtns[0])
 
       // Should still be a free-text input (no models to show).
@@ -537,7 +663,9 @@ describe('AIProviderTab', () => {
       render(AIProviderTab)
       await ready()
 
-      const refreshBtns = screen.getAllByRole('button', { name: /Refresh models/i })
+      const refreshBtns = screen.getAllByRole('button', {
+        name: /Refresh models/i
+      })
       await fireEvent.click(refreshBtns[0])
 
       await waitFor(() => {

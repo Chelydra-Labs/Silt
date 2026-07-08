@@ -828,6 +828,14 @@ thinking on reasoning-capable models; not all providers support every value),
 `stream` (reserved; streaming is not yet wired through the bridge). Per-call
 overrides are merged over the user's provider config.
 
+`res.content` is always **reasoning-free**. Reasoning models (DeepSeek-R1,
+Qwen3 thinking, …) wrap scratchpad in `<think>`/`<thought>`/`<reasoning>`
+tags; OpenAI-compatible servers without a reasoning parser (Ollama, LM
+Studio, llama.cpp) leave them inline in `content`, while native Google /
+Anthropic already separate reasoning. Silt normalizes the leak at the
+`ctx.ai.complete` boundary, so a plugin never needs to strip these tags
+itself and never sees raw reasoning in `content`.
+
 #### Embeddings
 
 ```ts

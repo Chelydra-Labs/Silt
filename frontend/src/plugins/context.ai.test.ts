@@ -41,6 +41,7 @@ vi.mock('./location.svelte', () => ({
 }))
 
 import { makePluginContext } from './context'
+import type { PluginAIChatMessage } from './sdk'
 
 describe('ctx.ai.complete', () => {
   beforeEach(() => mocks.pluginAIComplete.mockClear())
@@ -143,6 +144,67 @@ describe('ctx.ai.complete', () => {
     await expect(
       ctx.ai.complete({ messages: [{ role: 'user', content: 'x' }] })
     ).rejects.toMatchObject({ code: 'unknown', message: 'boom' })
+  })
+
+  // --- Reasoning-tag normalization (#483) -----------------------------------
+  // ctx.ai.complete is the single boundary that strips <thought>/<think>/…
+  // reasoning blocks leaking from OpenAI-compatible servers without a reasoning
+  // parser, so every plugin consumer receives clean content.
+  it('strips a <thought> reasoning block from the returned content', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      content:
+        '<thought>* Draft 1: …</thought>The current method of mapping backend errors…',
+      model: 'qwen3:30b',
+      usage: { promptTokens: 5, completionTokens: 9, totalTokens: 14 }
+    })
+    const ctx = makePluginContext('p')
+    const res = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'x' }]
+    })
+    expect(res.content).toBe('The current method of mapping backend errors…')
+    // model + usage pass through untouched.
+    expect(res.model).toBe('qwen3:30b')
+    expect(res.usage?.totalTokens).toBe(14)
+  })
+
+  it('is a no-op on reasoning-tag-free content', async () => {
+    // The default mock returns clean 'pong'; it must survive unchanged.
+    const ctx = makePluginContext('p')
+    const res = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'x' }]
+    })
+    expect(res.content).toBe('pong')
+  })
+
+  it('strips only the response content, never the request fields', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      content: '<think>plan</think>answer',
+      model: 'm',
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }
+    })
+    const ctx = makePluginContext('p')
+    const messages: PluginAIChatMessage[] = [
+      { role: 'user', content: 'do not touch <think> me' }
+    ]
+    await ctx.ai.complete({
+      messages,
+      maxTokens: 32,
+      temperature: 0.4,
+      reasoningEffort: 'low',
+      responseSchema: { type: 'object' }
+    })
+    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >
+    // The request payload preserves the user's literal "<think>" verbatim — only
+    // the model's RESPONSE is normalized.
+    expect(input.messages).toEqual(messages)
+    expect(input.max_tokens).toBe(32)
+    expect(input.temperature).toBe(0.4)
+    expect(input.reasoning_effort).toBe('low')
+    expect(input.stream).toBe(false)
+    expect(input.response_schema).toEqual({ type: 'object' })
   })
 })
 
