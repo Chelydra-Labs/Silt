@@ -66,10 +66,14 @@ fallback (parse → retry → summary-only) so you always get at least a summary
 
 ## Dismiss & regenerate
 
-- **Close (×)** dismisses the banner for the current note. A **Show AI summary**
-  chip appears in the status bar to re-open it.
+- **Close (×)** dismisses the banner for the current note's content. Dismissal
+  is keyed by `pageId:contentHash`, so **editing the note re-shows the banner**
+  on the next open (the content hash changes). A **Show AI summary** chip
+  appears in the status bar to re-open it manually at any time.
 - **Regenerate (↻)** forces a fresh extraction for the current note, bypassing
   the cache.
+- Unconfigured and oversized states include a **settings deep-link** CTA that
+  jumps straight to Settings → AI Provider (or this plugin's settings tab).
 
 ## Privacy
 
