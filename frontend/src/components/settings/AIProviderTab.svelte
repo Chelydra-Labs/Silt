@@ -267,7 +267,15 @@
     if (b.provider_type === type) return
     const oldDefault = providerDefaultURL(b.provider_type)
     b.provider_type = type
-    if (b.base_url === oldDefault || !b.base_url) {
+    // Native providers (Google/Anthropic) have a single canonical endpoint and a
+    // fixed path structure; a custom URL carried over from another type — e.g.
+    // Google's OpenAI-compatible shim (…/v1beta/openai/) — is never valid for the
+    // native API and double-paths to a cryptic 404. Always snap to the canonical
+    // default when switching TO a native provider. Local/OpenAI-compatible accept
+    // arbitrary endpoints, so preserve a custom URL there (only snap when it was
+    // empty or the previous type's default).
+    const nativeTarget = type === 'google' || type === 'anthropic'
+    if (nativeTarget || b.base_url === oldDefault || !b.base_url) {
       b.base_url = providerDefaultURL(type)
     }
     // A provider-type change invalidates the cached model list (different API).
@@ -524,8 +532,7 @@
             >
             Stay on <em>Local</em> if you run Ollama at the default URL, switch
             to <em>OpenAI-compatible</em> for a cloud endpoint, or pick
-            <em>Google AI</em> or <em>Anthropic</em> for native first-party
-            access.
+            <em>Google AI</em> or <em>Anthropic</em> for native first-party access.
           </div>
         </div>
       {/if}
@@ -543,7 +550,11 @@
       {@const testingNow = testing[which]}
       {@const result = testResult[which]}
       {@const providerTypes = [
-        { value: 'local' as ProviderType, icon: 'dns', label: 'Local (Ollama)' },
+        {
+          value: 'local' as ProviderType,
+          icon: 'dns',
+          label: 'Local (Ollama)'
+        },
         {
           value: 'openai-compatible' as ProviderType,
           icon: 'cloud',
@@ -722,7 +733,9 @@
                   class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer"
                 >
                   {#if !modelLists[which].some((m) => m.id === b.model)}
-                    <option value={b.model}>{b.model || 'Select a model…'}</option>
+                    <option value={b.model}
+                      >{b.model || 'Select a model…'}</option
+                    >
                   {/if}
                   {#each modelLists[which] as m (m.id)}
                     <option value={m.id}>{m.display_name}</option>
