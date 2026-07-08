@@ -501,16 +501,22 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 - **UI persistence** — `GetOpenTabs` / `SetOpenTabs` (pinned tabs only,
   pruned against `ListNavigation`); `GetNavOrder` / `SetNavOrder`;
   `GetSidebarWidth` / `SetSidebarWidth`.
-- **AI providers** (#216, #218) — `GetAIProviderConfig` (key-scrubbed read;
+- **AI providers** (#216, #218, #479) — `GetAIProviderConfig` (key-scrubbed read;
   emits `has_key` flags, never the raw secret), `UpdateAIProviderConfig`
   (provider type / base URL / model / tuning — never the key),
   `SetAIAPIKey` / `ClearAIAPIKey` (dedicated key surface: routes to the OS
   keyring when `use_keyring` + reachable, else plaintext config), `SetUseKeyring`
   (toggles keyring storage + opportunistically migrates plaintext keys),
-  `TestAIConnection` (1-token chat / single-embed probe). `GetAIAudit` /
-  `ClearAIAudit` expose the plugin-AI-call log (in-memory, mirrored to per-plugin
-  `ai.log`; `ClearAIAudit` truncates both). NOT capability-gated
-  (core cross-cutting settings), but `PluginAIComplete` / `PluginAIEmbed` are.
+  `TestAIConnection` (1-token chat / single-embed probe), `ListModels` (polls
+  the provider's model-list endpoint; cached per-provider in-memory, invalidated
+  on type/base-URL/key change; force=false on cold start returns empty without
+  a network call). `GetAIAudit` / `ClearAIAudit` expose the plugin-AI-call log
+  (in-memory, mirrored to per-plugin `ai.log`; `ClearAIAudit` truncates both).
+  Provider types: `local` | `openai-compatible` (universal default, OpenAI-shaped)
+  | `google` | `anthropic` (native first-party APIs — generateContent / messages —
+  bypassing the compat shim for stability + structured-output support). NOT
+  capability-gated (core cross-cutting settings), but `PluginAIComplete` /
+  `PluginAIEmbed` are.
 
 Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`
 files; this list is the contract surface, not the source.
