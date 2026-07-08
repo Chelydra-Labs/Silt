@@ -911,6 +911,23 @@
         })
       }
     )
+    // Mass id re-mint detection (#443): an external tool/sync stripped the
+    // block-identity comments from a previously-indexed file, so the parser
+    // re-minted fresh UUIDs — which silently breaks every ((uuid)) reference
+    // to those blocks. Sticky (no auto-dismiss) because the user needs to
+    // restore from backup or re-author the broken links; the copy names the
+    // affected page and explains the recovery path.
+    const offReMintWarning = EventsOn(
+      'index:re-mint-warning',
+      (w: { page: string; minted_count: number; prior_count: number }) => {
+        if (!w) return
+        pushNotification({
+          kind: 'info',
+          message: `Silt re-created ${w.minted_count} block id${w.minted_count === 1 ? '' : 's'} for “${w.page}” — an external tool may have stripped id comments, which can break ((uuid)) references. Restore the file from backup or re-author the broken links.`,
+          autoDismissMs: 0
+        })
+      }
+    )
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
@@ -932,6 +949,7 @@
       offLinkedQuarantined()
       offVaultInitError()
       offVaultInitWarnings()
+      offReMintWarning()
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()

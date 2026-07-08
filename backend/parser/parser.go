@@ -904,6 +904,7 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			}
 			if minted {
 				modifiedAny = true
+				meta.MintedCount++ // one region block got a fresh id this parse
 			}
 			outputLines = append(outputLines, emitLines...)
 			i = consumedTo
@@ -913,6 +914,13 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		block, newLine, modified := ParseLine(line, lineNumber, spacesPerTab)
 		if modified {
 			modifiedAny = true
+			// ParseLine mints a fresh id exactly when the line lacked a
+			// block-identity comment; count it for the #443 re-mint
+			// heuristic. A block with an empty ID (frontmatter prose) is
+			// never minted, so guard on ID presence.
+			if block.ID != "" {
+				meta.MintedCount++
+			}
 		}
 
 		if block.ID != "" {

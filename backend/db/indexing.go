@@ -247,6 +247,27 @@ func (dm *DatabaseManager) BlockIDsForPage(source, notebook, section, page strin
 	return ids, rows.Err()
 }
 
+// CountBlocksForPage returns the number of managed blocks currently indexed for
+// one (source, notebook, section, page) tuple. It mirrors BlockIDsForPage's
+// WHERE shape but returns a COUNT so the watcher can read the PRIOR block count
+// before a re-parse replaces the rows — the input to the mass-re-mint heuristic
+// (#443). The count is derived working memory (ARCHITECTURE.md §0 rule 4): no
+// schema change, re-derivable from the blocks table on demand.
+func (dm *DatabaseManager) CountBlocksForPage(source, notebook, section, page string) (int, error) {
+	if source == "" {
+		source = "vault"
+	}
+	var n int
+	err := dm.db.QueryRow(
+		"SELECT COUNT(*) FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		source, notebook, section, page,
+	).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // IndexFileBlocks updates the index with a set of blocks in a single transaction.
 //
 // fileWarnings is an optional slice of non-fatal diagnostics from the parser

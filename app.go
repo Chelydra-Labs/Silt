@@ -794,6 +794,10 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// linked-config:changed event (#133). The handler is called from the
 	// watcher goroutine; it only touches configMu + the event emitter.
 	watcher.SetLinkedConfigHandler(a.onLinkedConfigChange)
+	// Route mass-re-mint detections to the index:re-mint-warning event (#443).
+	// The handler is called from the watcher goroutine; it only emits a Wails
+	// event (safe — no vaultMu/configMu access).
+	watcher.SetReMintWarningHandler(a.onReMintWarning)
 
 	// Start hot-reload of .system/config.yaml. External edits re-parse and
 	// emit config:changed without a restart (SPECS.md §9.2). Silt's own
