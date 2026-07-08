@@ -319,6 +319,16 @@ export interface PluginContext {
    */
   updatePluginSetting: (key: string, value: any) => Promise<boolean>
   /**
+   * Open the Settings dialog, optionally targeting a specific tab. Plugins use
+   * this to deep-link the user from a CTA (e.g. "Configure AI provider") to the
+   * relevant settings page rather than asking them to navigate manually.
+   *
+   * Tab ids: '' (default/General), 'ai' (AI Provider), 'appearance', 'editor',
+   * 'hotkeys', 'plugins', or 'plugin:<pluginID>' for a plugin's own bespoke
+   * settings tab. An unknown id falls back to the default tab.
+   */
+  openSettings: (tab?: string) => void
+  /**
    * Subscribe to a typed host event (#106). Returns an unsubscribe function;
    * the host also auto-cleans every subscription on plugin disable/uninstall/
    * vault close, so a plugin cannot leak listeners across reloads. The

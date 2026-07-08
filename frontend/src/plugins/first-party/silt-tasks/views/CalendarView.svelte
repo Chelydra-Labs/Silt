@@ -19,7 +19,6 @@
   import { onMount, onDestroy } from 'svelte'
   import type { PluginContext } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
-  import { settings } from '../../../../settings/store.svelte'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
@@ -383,8 +382,7 @@
     if (subModeSaveTimer) clearTimeout(subModeSaveTimer)
     subModeSaveTimer = setTimeout(() => {
       void persistCalendarSubMode(m).then((ok) => {
-        if (!ok)
-          subModeError = settings.error || "Couldn't save calendar layout"
+        if (!ok) subModeError = "Couldn't save calendar layout"
       })
     }, 200)
   }

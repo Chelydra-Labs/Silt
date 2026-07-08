@@ -2,16 +2,20 @@
 //
 // Every hub preference lives under `plugins.plugin_settings.silt-tasks` in the
 // vault config.yaml (ARCHITECTURE §0 rule 2: per-vault plugin prefs → YAML).
-// Reads come from the synchronous `settings` snapshot (fast first paint); the
-// atomic Go-side `updatePluginSetting` (configMu-guarded, #120) is the single
-// write path so a concurrent external config edit can't be silently clobbered.
+// Reads come from the SDK's `ctx.getPluginSettings()` (async, per-active-
+// notebook override-aware #133); writes go through `ctx.updatePluginSetting`
+// (the atomic Go-side UpdatePluginSetting binding, configMu-guarded #120).
+//
+// Routing through the PluginContext SDK (not the app-level settings store)
+// ensures linked-notebook co-located overrides are honored and the module is
+// compatible with the planned per-plugin webview migration (#151/#152).
 //
 // Each build phase that persists a new key adds a load*/persist* pair here so
 // there is one source of truth for the silt-tasks config shape. The final
 // schema (incl. saved_views/columns/filters/default_scope/calendar_sub_mode)
 // is owned by the migration issue (#431); this module is the read/write surface.
 
-import { settings, updatePluginSetting } from '../../../settings/store.svelte'
+import type { PluginContext } from '../../sdk'
 import { SYSTEM_VIEWS } from './savedViews'
 import type {
   CalendarSubMode,
@@ -24,12 +28,38 @@ import type {
 
 export const TASKS_PLUGIN_ID = 'silt-tasks'
 
+// Module-scoped config slice + persist function, set by initTasksSettings.
+// Reads default to {} (all load* functions return their documented defaults
+// for an empty slice) until the hub's onMount populates them async via
+// ctx.getPluginSettings(). This honors the per-active-notebook override
+// layer (#133) without a synchronous app-store import.
+let configSlice: Record<string, unknown> = {}
+let saveFn: ((key: string, value: unknown) => Promise<boolean>) | null = null
+
+/**
+ * Wire the SDK into the module: capture the persist function and load the
+ * initial settings slice. Called once from TasksHub's onMount (before any
+ * load* call). The returned slice is also available synchronously via
+ * tasksSettings() for the hydration block that follows.
+ */
+export async function initTasksSettings(ctx: PluginContext): Promise<void> {
+  saveFn = (key, value) =>
+    ctx.updatePluginSetting(key, value).catch(() => false)
+  configSlice = (await ctx.getPluginSettings()) ?? {}
+}
+
+/**
+ * Re-read the settings slice from the SDK (e.g. after a config:changed event
+ * signals an external edit). Does NOT re-wire saveFn (it's stable for the
+ * plugin's lifetime).
+ */
+export async function reloadTasksSettings(ctx: PluginContext): Promise<void> {
+  configSlice = (await ctx.getPluginSettings()) ?? {}
+}
+
 /** The on-disk slice `plugins.plugin_settings['silt-tasks']`, or {}. */
 export function tasksSettings(): Record<string, unknown> {
-  const ps = settings.config?.plugins?.plugin_settings as
-    Record<string, Record<string, unknown>> | undefined
-  const slice = ps?.[TASKS_PLUGIN_ID]
-  return slice && typeof slice === 'object' ? slice : {}
+  return configSlice
 }
 
 export function isDisplayMode(v: unknown): v is DisplayMode {
@@ -109,7 +139,7 @@ export function loadLocalAuthor(): string | undefined {
 
 /** Atomically write the local author pref to the vault config. */
 export function persistLocalAuthor(author: string): Promise<boolean> {
-  return updatePluginSetting(TASKS_PLUGIN_ID, 'local_author', author)
+  return saveFn ? saveFn('local_author', author) : Promise.resolve(false)
 }
 
 /**
@@ -131,29 +161,29 @@ export function loadColumns(): string[] {
 
 /** Atomically write the Board-mode status columns to the vault config. */
 export function persistColumns(columns: string[]): Promise<boolean> {
-  return updatePluginSetting(TASKS_PLUGIN_ID, 'columns', [...columns])
+  return saveFn ? saveFn('columns', [...columns]) : Promise.resolve(false)
 }
 
 /** Atomically write the default display mode to the vault config. */
 export function persistDefaultDisplayMode(mode: DisplayMode): Promise<boolean> {
-  return updatePluginSetting(TASKS_PLUGIN_ID, 'default_display_mode', mode)
+  return saveFn ? saveFn('default_display_mode', mode) : Promise.resolve(false)
 }
 
 /** Atomically write the Calendar sub-layout to the vault config. */
 export function persistCalendarSubMode(
   mode: CalendarSubMode
 ): Promise<boolean> {
-  return updatePluginSetting(TASKS_PLUGIN_ID, 'calendar_sub_mode', mode)
+  return saveFn ? saveFn('calendar_sub_mode', mode) : Promise.resolve(false)
 }
 
 /** Atomically write the default group-by to the vault config. */
 export function persistDefaultGroupBy(g: GroupBy): Promise<boolean> {
-  return updatePluginSetting(TASKS_PLUGIN_ID, 'default_group_by', g)
+  return saveFn ? saveFn('default_group_by', g) : Promise.resolve(false)
 }
 
 /** Atomically write the default sort to the vault config. */
 export function persistDefaultSort(s: SortMode): Promise<boolean> {
-  return updatePluginSetting(TASKS_PLUGIN_ID, 'default_sort', s)
+  return saveFn ? saveFn('default_sort', s) : Promise.resolve(false)
 }
 
 // ─── Saved views (#427) ────────────────────────────────────────────────────
@@ -253,66 +283,10 @@ export function loadSavedViews(): SavedView[] {
 }
 
 /**
- * Read the legacy `plugins.plugin_settings['silt-kanban'].boards[]` and
- * map each SavedBoard to a SavedView with displayMode='board' (a saved
- * board is just a saved view of the board). The one-time migration
- * (#431 / Phase 9) writes these into saved_views[]; until that lands,
- * this forward-read keeps a pre-migration vault's boards visible.
- */
-export function loadLegacyKanbanBoardsAsViews(): SavedView[] {
-  const ps = settings.config?.plugins?.plugin_settings as
-    Record<string, Record<string, unknown>> | undefined
-  const kanbanSlice = ps?.['silt-kanban']
-  const raw = kanbanSlice?.['boards']
-  if (!Array.isArray(raw)) return []
-  const views: SavedView[] = []
-  for (const entry of raw) {
-    if (!entry || typeof entry !== 'object') continue
-    const r = entry as Record<string, unknown>
-    if (typeof r.id !== 'string' || typeof r.name !== 'string') continue
-    if (
-      r.scope !== 'vault' &&
-      r.scope !== 'notebook' &&
-      r.scope !== 'section' &&
-      r.scope !== 'page'
-    ) {
-      continue
-    }
-    const fr = (r.filters ?? {}) as Record<string, unknown>
-    views.push({
-      id: r.id,
-      name: r.name,
-      displayMode: 'board',
-      groupBy: 'status',
-      sort: 'manual',
-      columns: undefined,
-      scope: r.scope as SavedView['scope'],
-      filters: {
-        owners: Array.isArray(fr.owners)
-          ? (fr.owners.filter((x) => typeof x === 'string') as string[])
-          : [],
-        priorities: Array.isArray(fr.priorities)
-          ? (fr.priorities.filter((x) => typeof x === 'number') as number[])
-          : [],
-        dueDate:
-          typeof fr.dueDate === 'string' &&
-          ['', 'overdue', 'today', 'week', 'none'].includes(fr.dueDate)
-            ? (fr.dueDate as TaskFilters['dueDate'])
-            : '',
-        tags: Array.isArray(fr.tags)
-          ? (fr.tags.filter((x) => typeof x === 'string') as string[])
-          : []
-      }
-    })
-  }
-  return views
-}
-
-/**
  * Persist the user-defined saved views to `saved_views[]`. Strips
  * system views first (they're re-derived from SYSTEM_VIEWS on every
  * load and never consume YAML budget). Returns the atomic-write
- * promise from updatePluginSetting (#120 clobber-safe).
+ * promise from ctx.updatePluginSetting (#120 clobber-safe).
  */
 export function persistSavedViews(views: SavedView[]): Promise<boolean> {
   const userViews = views
@@ -325,5 +299,5 @@ export function persistSavedViews(views: SavedView[]): Promise<boolean> {
       void _system
       return rest
     })
-  return updatePluginSetting(TASKS_PLUGIN_ID, 'saved_views', userViews)
+  return saveFn ? saveFn('saved_views', userViews) : Promise.resolve(false)
 }

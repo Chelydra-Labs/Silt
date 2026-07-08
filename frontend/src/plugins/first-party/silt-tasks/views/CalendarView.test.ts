@@ -69,30 +69,16 @@ if (
   Range.prototype.getBoundingClientRect = () => zeroRect
 }
 
-// Hoisted mock state — the settings store is mocked so loadCalendarSubMode()
-// reads from the synchronous snapshot, and every SDK setter is a spy so the
-// reschedule dispatcher can be asserted.
+// Hoisted mock state — loadCalendarSubMode() reads from the settings module's
+// slice (seeded via initTasksSettings in beforeEach), and every SDK setter is
+// a spy so the reschedule dispatcher can be asserted.
 const mocks = vi.hoisted(() => ({
-  settings: {
-    config: {
-      plugins: {
-        active: [],
-        disabled: [],
-        plugin_settings: {} as Record<string, Record<string, unknown>>
-      }
-    },
-    error: ''
-  },
+  tasksSettings: {} as Record<string, unknown>,
   sqliteQuery: vi.fn(),
   setTaskDueDate: vi.fn().mockResolvedValue(true),
   createTask: vi.fn().mockResolvedValue('new-task-id'),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
   blockChangedCallbacks: [] as Array<() => void>
-}))
-
-vi.mock('../../../../settings/store.svelte', () => ({
-  settings: mocks.settings,
-  updatePluginSetting: mocks.updatePluginSetting
 }))
 
 vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
@@ -112,6 +98,7 @@ import {
   setGroupBy,
   setCalendarSubMode
 } from '../state.svelte'
+import { initTasksSettings } from '../settings'
 
 const TODAY = '2026-07-06'
 
@@ -128,7 +115,8 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     updateTaskMeta: vi.fn(),
     setTaskDueDate: mocks.setTaskDueDate,
     createTask: mocks.createTask,
-    getPluginSettings: vi.fn(() => Promise.resolve({})),
+    getPluginSettings: vi.fn(() => Promise.resolve(mocks.tasksSettings)),
+    updatePluginSetting: mocks.updatePluginSetting,
     on: <E extends PluginEventName>(
       event: E,
       cb: (payload: PluginEventPayload<E>) => void
@@ -234,12 +222,15 @@ function ymdForCell(dateNum: number): string {
 }
 
 describe('CalendarView — Calendar display mode (#425)', () => {
-  beforeEach(() => {
-    mocks.settings.config.plugins.plugin_settings = {}
+  beforeEach(async () => {
+    mocks.tasksSettings = {}
     mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.blockChangedCallbacks.length = 0
+    // Seed the settings module so loadCalendarSubMode() + persistCalendarSubMode()
+    // (saveFn) are wired to the mock slice.
+    await initTasksSettings(makeCtx())
   })
 
   afterEach(() => {
@@ -519,7 +510,6 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     await flush()
 
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'silt-tasks',
       'calendar_sub_mode',
       'week'
     )

@@ -64,6 +64,7 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
       'getPluginSettings',
       'getSetting',
       'updatePluginSetting',
+      'openSettings',
       'on',
       'queryByTag',
       'queryByDateRange',

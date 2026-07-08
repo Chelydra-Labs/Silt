@@ -60,6 +60,7 @@ export const v2CtxStubs: Pick<
   | 'provideDecorations'
   | 'getSetting'
   | 'updatePluginSetting'
+  | 'openSettings'
   | 'registerSurface'
   | 'addAttachment'
   | 'openAttachment'
@@ -127,6 +128,7 @@ export const v2CtxStubs: Pick<
   provideDecorations: () => () => {},
   getSetting: () => Promise.resolve(undefined),
   updatePluginSetting: () => Promise.resolve(true),
+  openSettings: () => {},
   registerSurface: () => () => {},
   addAttachment: () => Promise.resolve(''),
   openAttachment: () => Promise.resolve(true),

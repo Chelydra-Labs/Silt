@@ -111,12 +111,16 @@
   </header>
 
   {#if unconfigured}
-    <p class="note" role="status">
+    <div class="note unconfigured" role="status">
       <span class="material-symbols-outlined" aria-hidden="true">info</span>
-      No AI provider is configured yet. Open
-      <strong>Settings &rarr; AI Provider</strong> to add a chat model — summaries
-      are generated locally or by your own OpenAI-compatible endpoint.
-    </p>
+      <span>
+        No AI provider is configured yet — summaries need a chat model. Add one
+        via your own local or OpenAI-compatible endpoint.
+      </span>
+      <button type="button" class="cta" onclick={() => ctx.openSettings('ai')}>
+        Open AI Provider settings
+      </button>
+    </div>
   {/if}
 
   <fieldset class="control">
@@ -327,6 +331,38 @@
     color: var(--color-accent-primary-start);
     font-size: 18px;
     flex-shrink: 0;
+  }
+  .unconfigured {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .cta {
+    margin-left: auto;
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: 1px solid
+      color-mix(in srgb, var(--color-accent-primary-glow) 40%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 14%,
+      transparent
+    );
+    color: var(--color-text-primary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .cta:hover {
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 24%,
+      transparent
+    );
+  }
+  .cta:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
   }
   .privacy .material-symbols-outlined {
     color: var(--color-text-muted);

@@ -2,26 +2,15 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
-// Mock seam mirrors TasksHub.test.ts: the sidebar persists via the settings
-// store and reads the synchronous config snapshot, plus the wails runtime.
+// Mock seam mirrors TasksHub.test.ts: the sidebar persists through the
+// PluginContext SDK (ctx.updatePluginSetting) and reads its slice via
+// ctx.getPluginSettings. Sidebar doesn't self-init the settings module, so
+// each test seeds it via initTasksSettings(ctx) in beforeEach.
 const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
-  settings: {
-    config: {
-      plugins: {
-        active: [],
-        disabled: [],
-        plugin_settings: {} as Record<string, Record<string, unknown>>
-      }
-    }
-  },
+  tasksSettings: {} as Record<string, unknown>,
   blockChangedCallbacks: [] as Array<() => void>
-}))
-
-vi.mock('../../../settings/store.svelte', () => ({
-  settings: mocks.settings,
-  updatePluginSetting: mocks.updatePluginSetting
 }))
 
 vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
@@ -44,6 +33,7 @@ import {
   type SavedView
 } from './state.svelte'
 import { SYSTEM_VIEWS } from './savedViews'
+import { initTasksSettings } from './settings'
 
 // jsdom polyfills: the sidebar itself doesn't need them, but keeping the
 // pattern consistent with TasksHub.test.ts avoids breakage when the test
@@ -78,7 +68,8 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     mutateBlock: vi.fn(),
     updateBlockState: vi.fn(),
     updateTaskMeta: vi.fn(),
-    getPluginSettings: vi.fn(() => Promise.resolve({})),
+    getPluginSettings: vi.fn(() => Promise.resolve(mocks.tasksSettings)),
+    updatePluginSetting: mocks.updatePluginSetting,
     on: <E extends PluginEventName>(
       event: E,
       cb: (payload: PluginEventPayload<E>) => void
@@ -142,12 +133,15 @@ async function flush() {
 }
 
 describe('silt-tasks Sidebar (#432)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     mocks.sqliteQuery.mockReset()
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
-    mocks.settings.config.plugins.plugin_settings = {}
+    mocks.tasksSettings = {}
     mocks.blockChangedCallbacks.length = 0
     resetTaskHubState()
+    // Seed the settings module so persistSavedViews' saveFn is wired to
+    // mocks.updatePluginSetting (Sidebar doesn't self-init).
+    await initTasksSettings(makeCtx())
     // Default sqlite behavior: empty counts + empty facets. Individual
     // tests override via mockImplementation when they need data.
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
@@ -381,7 +375,6 @@ describe('silt-tasks Sidebar (#432)', () => {
     await fireEvent.click(screen.getByTestId('delete-view-u1'))
     await flush()
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'silt-tasks',
       'saved_views',
       expect.not.arrayContaining([expect.objectContaining({ id: 'u1' })])
     )

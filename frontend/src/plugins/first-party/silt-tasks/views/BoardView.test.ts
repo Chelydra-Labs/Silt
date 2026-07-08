@@ -69,20 +69,11 @@ if (
   Range.prototype.getBoundingClientRect = () => zeroRect
 }
 
-// Hoisted mutable mock state — the settings store is mocked so loadColumns()
-// reads from the synchronous snapshot, and every SDK setter is a spy so the
-// dimension-aware DnD dispatcher can be asserted per-dimension.
+// Hoisted mutable mock state — loadColumns() reads from the settings module's
+// slice (seeded via initTasksSettings in beforeEach), and every SDK setter is
+// a spy so the dimension-aware DnD dispatcher can be asserted per-dimension.
 const mocks = vi.hoisted(() => ({
-  settings: {
-    config: {
-      plugins: {
-        active: [],
-        disabled: [],
-        plugin_settings: {} as Record<string, Record<string, unknown>>
-      }
-    },
-    error: ''
-  },
+  tasksSettings: {} as Record<string, unknown>,
   sqliteQuery: vi.fn(),
   updateBlockState: vi.fn(),
   setTaskOwner: vi.fn(),
@@ -95,11 +86,6 @@ const mocks = vi.hoisted(() => ({
   getTaskBlockers: vi.fn().mockResolvedValue([]),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
   notify: vi.fn().mockResolvedValue(true)
-}))
-
-vi.mock('../../../../settings/store.svelte', () => ({
-  settings: mocks.settings,
-  updatePluginSetting: mocks.updatePluginSetting
 }))
 
 vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
@@ -117,6 +103,7 @@ import {
   setSort,
   setActiveFilter
 } from '../state.svelte'
+import { initTasksSettings } from '../settings'
 
 const TODAY = '2026-07-06'
 
@@ -139,7 +126,8 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     setTaskOrders: mocks.setTaskOrders,
     createTask: mocks.createTask,
     getTaskBlockers: mocks.getTaskBlockers,
-    getPluginSettings: vi.fn(() => Promise.resolve({})),
+    getPluginSettings: vi.fn(() => Promise.resolve(mocks.tasksSettings)),
+    updatePluginSetting: mocks.updatePluginSetting,
     notify: mocks.notify,
     on: () => () => {},
     ...overrides
@@ -227,8 +215,8 @@ async function renderBoardWithSort(
 }
 
 describe('BoardView — dimension-aware Board (#421)', () => {
-  beforeEach(() => {
-    mocks.settings.config.plugins.plugin_settings = {}
+  beforeEach(async () => {
+    mocks.tasksSettings = {}
     mocks.updateBlockState.mockReset().mockResolvedValue(true)
     mocks.setTaskOwner.mockReset().mockResolvedValue(true)
     mocks.setTaskPriority.mockReset().mockResolvedValue(true)
@@ -240,6 +228,10 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     mocks.getTaskBlockers.mockReset().mockResolvedValue([])
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.notify.mockReset().mockResolvedValue(true)
+    // Seed the settings module AFTER resets so loadColumns() (read at
+    // BoardView construction) and persistColumns() (saveFn) are wired to
+    // the freshly-reset mock slice.
+    await initTasksSettings(makeCtx())
   })
 
   afterEach(() => {
@@ -720,7 +712,6 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(promptSpy).toHaveBeenCalled()
     expect(screen.getByRole('group', { name: 'Backlog' })).toBeInTheDocument()
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'silt-tasks',
       'columns',
       expect.arrayContaining(['Backlog'])
     )
