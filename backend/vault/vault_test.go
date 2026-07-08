@@ -301,8 +301,7 @@ func TestScaffoldVault_SeedsSiltTasksPluginSettings(t *testing.T) {
 	if tasks["local_author"] != "" {
 		t.Errorf("silt-tasks.local_author: got %v, want empty", tasks["local_author"])
 	}
-	// Active list contains the unified hub (Phase 10 / #429 retired the
-	// standalone silt-calendar and silt-kanban ids).
+	// Active list contains the unified task hub.
 	for _, id := range []string{"silt-tasks"} {
 		found := false
 		for _, a := range partial.Plugins.Active {

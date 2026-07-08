@@ -1514,9 +1514,10 @@ func TestUpdatePluginSetting_PreservesOtherFields(t *testing.T) {
 		t.Fatalf("UpdatePluginSetting: %v", err)
 	}
 
-	// In-memory: targeted key updated to the new value. The value retains its
-	// concrete Go type here ([]string); it only generalises to []any after a
-	// YAML round-trip (checked below on the reload).
+	// In-memory: targeted key updated to the new value. UpdatePluginSetting
+	// re-reads config.yaml under the lock (#475) then applies the caller's
+	// value, so the mutated key keeps the caller's concrete type ([]string);
+	// it generalises to []any only after a YAML round-trip (checked below).
 	app.configMu.RLock()
 	kanban, _ := app.cfg.Plugins.PluginSettings["silt-kanban"].(map[string]any)
 	app.configMu.RUnlock()
@@ -1544,6 +1545,59 @@ func TestUpdatePluginSetting_PreservesOtherFields(t *testing.T) {
 	cols2, _ := kanban2["columns"].([]any)
 	if len(cols2) != 2 || fmt.Sprint(cols2[0]) != "TODO" {
 		t.Errorf("on-disk columns = %v, want [TODO DOING]", kanban2["columns"])
+	}
+}
+
+// TestUpdatePluginSetting_PreservesConcurrentExternalEdit verifies the #475
+// TOCTOU hardening: UpdatePluginSetting re-reads config.yaml under configMu.Lock
+// before applying its mutation, so an external edit to an UNRELATED key that
+// landed after the last config.Load is preserved rather than overwritten by the
+// stale in-memory cfg. Without the re-read, the external editor's change to
+// Editor.FontFamily would be silently reverted.
+func TestUpdatePluginSetting_PreservesConcurrentExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+
+	// Seed on-disk config with a known editor font + plugin setting.
+	app.configMu.Lock()
+	app.cfg.Editor.FontFamily = "OriginalFont"
+	app.cfg.Plugins.PluginSettings["silt-tasks"] = map[string]any{"columns": []string{"TODO"}}
+	app.cfg.Plugins.PluginSettings["silt-kanban"] = map[string]any{"columns": []string{"Old"}}
+	app.configMu.Unlock()
+	if err := config.Save(app.vaultPath, app.cfg); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+
+	// Simulate an external editor changing Editor.FontFamily directly on disk,
+	// AFTER the last config.Load but BEFORE UpdatePluginSetting. The in-memory
+	// a.cfg still holds "OriginalFont" (stale).
+	freshCfg, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("fresh load: %v", err)
+	}
+	freshCfg.Editor.FontFamily = "ExternalEditFont"
+	if err := config.Save(app.vaultPath, freshCfg); err != nil {
+		t.Fatalf("external edit save: %v", err)
+	}
+	// a.cfg is now stale (has "OriginalFont" while disk has "ExternalEditFont").
+
+	// UpdatePluginSetting should re-read from disk under the lock, apply its
+	// mutation, and save — preserving the external Editor.FontFamily edit.
+	if err := app.UpdatePluginSetting("silt-kanban", "columns", []string{"TODO", "DOING"}); err != nil {
+		t.Fatalf("UpdatePluginSetting: %v", err)
+	}
+
+	// Reload from disk: the external edit must survive alongside our mutation.
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.Editor.FontFamily != "ExternalEditFont" {
+		t.Errorf("external Editor.FontFamily edit lost: got %q, want %q", loaded.Editor.FontFamily, "ExternalEditFont")
+	}
+	kanban, _ := loaded.Plugins.PluginSettings["silt-kanban"].(map[string]any)
+	cols, _ := kanban["columns"].([]any)
+	if len(cols) != 2 || fmt.Sprint(cols[0]) != "TODO" {
+		t.Errorf("plugin mutation lost: got %v, want [TODO DOING]", kanban["columns"])
 	}
 }
 
@@ -2299,172 +2353,6 @@ func TestGetPluginSettingsForNotebook_LinkedMissingFileReturnsVault(t *testing.T
 	}
 }
 
-// TestGetPluginSettingsForNotebook_KanbanFallsBackToTasks covers the Phase 9
-// (#431) one-release compat shim: a vault that has migrated (silt-kanban
-// gone, silt-tasks present) AND a linked notebook in the same state must
-// still answer "silt-kanban" lookups — old frontend code on a stale linked
-// notebook still asks for the legacy id. The shim aliases the request to
-// silt-tasks so the same shape (columns/filters/scope) flows back. Drop in
-// N+1 once the old plugin id retires.
-func TestGetPluginSettingsForNotebook_KanbanFallsBackToTasks(t *testing.T) {
-	app := newTestApp(t)
-
-	// Migrated vault: silt-kanban removed, silt-tasks present with a
-	// recognisable sentinel.
-	app.configMu.Lock()
-	delete(app.cfg.Plugins.PluginSettings, "silt-kanban")
-	app.cfg.Plugins.PluginSettings["silt-tasks"] = map[string]any{
-		"columns":       []any{"Vault-1", "Vault-2"},
-		"vault_marker":  "from-vault",
-		"default_scope": "notebook",
-		"filters": map[string]any{
-			"owners":     []any{"Alice"},
-			"priorities": []any{1, 2},
-			"dueDate":    "today",
-			"tags":       []any{"work"},
-		},
-	}
-	app.configMu.Unlock()
-
-	// Linked notebook in the same migrated state.
-	ext := t.TempDir()
-	cfgPath := config.LinkedConfigPath(ext)
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(cfgPath, []byte(
-		"plugins:\n  plugin_settings:\n    silt-tasks:\n      columns: [Linked-1, Linked-2]\n      linked_marker: from-linked\n",
-	), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	app.configMu.Lock()
-	app.cfg.LinkedNotebooks = []config.LinkedNotebook{
-		{ID: "ext", RootPath: ext, DisplayName: "Ext"},
-	}
-	app.configMu.Unlock()
-
-	got, err := app.GetPluginSettingsForNotebook("silt-kanban", "Ext")
-	if err != nil {
-		t.Fatalf("kanban fallback: %v", err)
-	}
-	// Linked override of columns surfaces — the alias path uses
-	// effectivePluginID for the linked lookup too, so the linked notebook's
-	// silt-tasks entry overlays the vault's.
-	cols, ok := got["columns"].([]any)
-	if !ok || len(cols) != 2 || cols[0] != "Linked-1" {
-		t.Errorf("expected linked silt-tasks columns [Linked-1 Linked-2], got %v", got["columns"])
-	}
-	// Vault-only key survives the alias merge.
-	if got["vault_marker"] != "from-vault" {
-		t.Errorf("expected vault_marker preserved through alias, got %v", got["vault_marker"])
-	}
-	// Linked-only key added through the alias merge.
-	if got["linked_marker"] != "from-linked" {
-		t.Errorf("expected linked_marker added through alias, got %v", got["linked_marker"])
-	}
-	// filters round-trip through the alias: the vault's silt-tasks.filters
-	// map must survive the alias (deep-merged, not dropped) so a stale
-	// kanban frontend sees the same filter shape silt-tasks would return.
-	filters, ok := got["filters"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected filters map through alias, got %T", got["filters"])
-	}
-	if owners, _ := filters["owners"].([]any); len(owners) != 1 || owners[0] != "Alice" {
-		t.Errorf("expected filters.owners=[Alice] through alias, got %v", filters["owners"])
-	}
-	if priorities, _ := filters["priorities"].([]any); len(priorities) != 2 {
-		t.Errorf("expected filters.priorities len 2 through alias, got %v", filters["priorities"])
-	}
-	if filters["dueDate"] != "today" {
-		t.Errorf("expected filters.dueDate=today through alias, got %v", filters["dueDate"])
-	}
-	if tags, _ := filters["tags"].([]any); len(tags) != 1 || tags[0] != "work" {
-		t.Errorf("expected filters.tags=[work] through alias, got %v", filters["tags"])
-	}
-	// default_scope round-trips through the alias.
-	if got["default_scope"] != "notebook" {
-		t.Errorf("expected default_scope=notebook through alias, got %v", got["default_scope"])
-	}
-}
-
-// TestGetPluginSettingsForNotebook_KanbanAliasFallsBackToLinkedKanban covers
-// the round-6 fix: a migrated main vault (silt-kanban gone, silt-tasks present)
-// aliases effectivePluginID to silt-tasks. A linked notebook with co-located
-// silt-kanban (but NOT silt-tasks) would have its settings silently dropped
-// if the lookup used only the remapped id. The fix falls back to the original
-// pluginID for the linked-notebook overlay so the kanban settings merge in.
-func TestGetPluginSettingsForNotebook_KanbanAliasFallsBackToLinkedKanban(t *testing.T) {
-	app := newTestApp(t)
-
-	// Migrated vault: silt-kanban removed, silt-tasks present.
-	app.configMu.Lock()
-	delete(app.cfg.Plugins.PluginSettings, "silt-kanban")
-	app.cfg.Plugins.PluginSettings["silt-tasks"] = map[string]any{
-		"columns":      []any{"Vault-Col"},
-		"vault_marker": "from-vault",
-	}
-	app.configMu.Unlock()
-
-	// Linked notebook with co-located silt-kanban (NOT silt-tasks).
-	ext := t.TempDir()
-	cfgPath := config.LinkedConfigPath(ext)
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(cfgPath, []byte(
-		"plugins:\n  plugin_settings:\n    silt-kanban:\n      columns: [Linked-Kanban-Col]\n      linked_kanban_marker: from-linked-kanban\n",
-	), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	app.configMu.Lock()
-	app.cfg.LinkedNotebooks = []config.LinkedNotebook{
-		{ID: "ext", RootPath: ext, DisplayName: "Ext"},
-	}
-	app.configMu.Unlock()
-
-	got, err := app.GetPluginSettingsForNotebook("silt-kanban", "Ext")
-	if err != nil {
-		t.Fatalf("kanban alias fallback: %v", err)
-	}
-	// The linked silt-kanban columns overlay the vault silt-tasks columns.
-	cols, ok := got["columns"].([]any)
-	if !ok || len(cols) != 1 || cols[0] != "Linked-Kanban-Col" {
-		t.Errorf("expected linked silt-kanban columns [Linked-Kanban-Col], got %v", got["columns"])
-	}
-	// Vault-only key survives the alias merge.
-	if got["vault_marker"] != "from-vault" {
-		t.Errorf("expected vault_marker preserved, got %v", got["vault_marker"])
-	}
-	// Linked-only silt-kanban key added through the fallback overlay.
-	if got["linked_kanban_marker"] != "from-linked-kanban" {
-		t.Errorf("expected linked_kanban_marker added via fallback, got %v", got["linked_kanban_marker"])
-	}
-}
-
-// TestGetPluginSettingsForNotebook_KanbanNoFallbackWhenKanbanPresent confirms
-// the shim does NOT fire when silt-kanban has a real entry — the alias is a
-// one-release bridge, not a permanent override.
-func TestGetPluginSettingsForNotebook_KanbanNoFallbackWhenKanbanPresent(t *testing.T) {
-	app := newTestApp(t)
-	app.configMu.Lock()
-	app.cfg.Plugins.PluginSettings["silt-kanban"] = map[string]any{
-		"columns": []any{"Kanban-Col"},
-	}
-	app.cfg.Plugins.PluginSettings["silt-tasks"] = map[string]any{
-		"columns": []any{"Tasks-Col"},
-	}
-	app.configMu.Unlock()
-
-	got, err := app.GetPluginSettingsForNotebook("silt-kanban", "Work")
-	if err != nil {
-		t.Fatalf("kanban lookup: %v", err)
-	}
-	cols, _ := got["columns"].([]any)
-	if len(cols) != 1 || cols[0] != "Kanban-Col" {
-		t.Errorf("expected kanban's own columns, got %v", got["columns"])
-	}
-}
-
 // TestGetPluginSettingsForNotebook_LinkedUnparseableSurfacesError locks the
 // fail-loud contract: a present-but-broken co-located config yields an error
 // (the user must see their broken file), not a silent fall-through to vault.
@@ -3052,67 +2940,5 @@ func TestApplyConfigLocked_PrunesStaleQuarantineEntries(t *testing.T) {
 	app.configMu.RUnlock()
 	if stillQuarantined {
 		t.Fatal("applyConfigLocked must prune quarantine entries for removed links")
-	}
-}
-
-// TestTaskMigration_SaveFailureSurfacesAndRetries verifies the migrator's
-// "best-effort + idempotent retry on next launch" contract: when config.Save
-// fails, the in-memory cfg still holds the migrated data (session consistent),
-// the gate stays open (silt-tasks absent from on-disk YAML), and a retry
-// succeeds once the save path is restored.
-func TestTaskMigration_SaveFailureSurfacesAndRetries(t *testing.T) {
-	app := newTestApp(t)
-
-	// Overwrite the scaffolded config with legacy YAML (no silt-tasks key).
-	configPath := filepath.Join(app.vaultPath, ".system", "config.yaml")
-	legacyYAML := "plugins:\n  plugin_settings:\n    silt-kanban:\n      columns: [TODO, DOING, DONE]\n      boards:\n        - id: b1\n          name: My Board\n          scope: vault\n          filters:\n            owners: []\n            priorities: []\n            dueDate: \"\"\n            tags: []\n"
-	if err := os.WriteFile(configPath, []byte(legacyYAML), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	// The migrator should produce a non-nil result (gate is open).
-	rawSettings := vault.LoadLegacyTaskPluginSettings(app.vaultPath)
-	migrated := vault.MigrateLegacyTaskPluginSettings(app.cfg, rawSettings)
-	if migrated == nil {
-		t.Fatal("expected non-nil migration result for legacy vault")
-	}
-
-	// Inject a save failure via the var indirection.
-	origSave := migratorConfigSave
-	migratorConfigSave = func(string, config.SystemConfig) error {
-		return fmt.Errorf("simulated disk full")
-	}
-	defer func() { migratorConfigSave = origSave }()
-
-	// The save fails — simulating the app.go error path.
-	if err := migratorConfigSave(app.vaultPath, app.cfg); err == nil {
-		t.Fatal("expected save to fail with injected error")
-	}
-
-	// The in-memory cfg still has the migrated data (session consistent).
-	app.cfg.Plugins.PluginSettings["silt-tasks"] = migrated
-	tasksEntry, ok := app.cfg.Plugins.PluginSettings["silt-tasks"].(map[string]any)
-	if !ok || tasksEntry["default_group_by"] != "dueDate" {
-		t.Fatal("in-memory cfg should have silt-tasks with migrated data")
-	}
-
-	// The gate is still open (silt-tasks NOT in on-disk YAML because save failed).
-	rawSettings2 := vault.LoadLegacyTaskPluginSettings(app.vaultPath)
-	migrated2 := vault.MigrateLegacyTaskPluginSettings(app.cfg, rawSettings2)
-	if migrated2 == nil {
-		t.Fatal("expected non-nil migration on retry (gate should still be open)")
-	}
-
-	// Restore save — retry succeeds.
-	migratorConfigSave = origSave
-	if err := migratorConfigSave(app.vaultPath, app.cfg); err != nil {
-		t.Fatalf("retry save should succeed: %v", err)
-	}
-
-	// The gate is now closed (silt-tasks IS in on-disk YAML).
-	rawSettings3 := vault.LoadLegacyTaskPluginSettings(app.vaultPath)
-	migrated3 := vault.MigrateLegacyTaskPluginSettings(app.cfg, rawSettings3)
-	if migrated3 != nil {
-		t.Error("expected nil migration after successful save (gate should be closed)")
 	}
 }

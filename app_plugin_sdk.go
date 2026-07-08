@@ -578,13 +578,22 @@ func (a *App) seedFirstPartyGrants() {
 // field is preserved verbatim, so a concurrent external edit to an unrelated
 // section is not clobbered.
 //
-// Atomicity: configMu is held across the in-memory mutation AND the disk save,
-// so concurrent internal callers (and the watcher's applyConfig) cannot
-// interleave a snapshot-and-save and lose an update. The external-edit race is
-// handled by RegisterSelfWrite (suppresses the watcher's reaction to our own
-// write) + this lock. Like SaveSystemConfig it does NOT emit config:changed
-// (the frontend store updates optimistically; external edits still flow through
-// the watcher -> applyConfig with emit).
+// TOCTOU hardening (#475): config.yaml is RE-READ from disk inside configMu.Lock
+// immediately before the mutation, so an external edit that landed after the
+// last config.Load (vault init / watcher applyConfig) is merged into the save
+// rather than overwritten. The mutation is applied to the fresh read, a.cfg is
+// refreshed, then config.Save serializes the result. The external-edit loss
+// window shrinks to the lock-hold duration (no cross-IPC gap). If the re-read
+// fails (corrupt file), the in-memory cfg is used as the fallback so the
+// mutation is not lost.
+//
+// Atomicity: configMu is held across the re-read, in-memory mutation, AND the
+// disk save, so concurrent internal callers (and the watcher's applyConfig)
+// cannot interleave a snapshot-and-save and lose an update. The external-edit
+// race is handled by RegisterSelfWrite (suppresses the watcher's reaction to
+// our own write) + this lock. Like SaveSystemConfig it does NOT emit
+// config:changed (the frontend store updates optimistically; external edits
+// still flow through the watcher -> applyConfig with emit).
 func (a *App) UpdatePluginSetting(pluginID string, key string, value any) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -596,15 +605,25 @@ func (a *App) UpdatePluginSetting(pluginID string, key string, value any) error 
 	}
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
-	if a.cfg.Plugins.PluginSettings == nil {
-		a.cfg.Plugins.PluginSettings = map[string]any{}
+	// Re-read config.yaml under the lock so an external edit to an unrelated
+	// key is preserved rather than overwritten by the stale in-memory cfg.
+	// A re-read failure (corrupt/unreadable file) falls back to a.cfg so the
+	// caller's mutation still lands — the file is already broken and the
+	// watcher will surface config:error separately.
+	freshCfg, loadErr := config.Load(a.vaultPath)
+	if loadErr != nil {
+		freshCfg = a.cfg
 	}
-	entry, _ := a.cfg.Plugins.PluginSettings[pluginID].(map[string]any)
+	if freshCfg.Plugins.PluginSettings == nil {
+		freshCfg.Plugins.PluginSettings = map[string]any{}
+	}
+	entry, _ := freshCfg.Plugins.PluginSettings[pluginID].(map[string]any)
 	if entry == nil {
 		entry = map[string]any{}
 	}
 	entry[key] = value
-	a.cfg.Plugins.PluginSettings[pluginID] = entry
+	freshCfg.Plugins.PluginSettings[pluginID] = entry
+	a.cfg = freshCfg
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
 	}
@@ -717,7 +736,7 @@ func (a *App) SetOpenDevtoolsOnStartup(value bool) error {
 // external edit to either file is reflected on the next call (the watcher
 // also emits linked-config:changed to drive reactive refreshes).
 //
-// pluginID selects which plugin's entry is returned (e.g. "silt-kanban"). An
+// pluginID selects which plugin's entry is returned (e.g. "silt-tasks"). An
 // unknown pluginID yields an empty map, not an error — a plugin with no
 // stored settings is the same as a plugin whose settings are all defaults.
 //
@@ -749,21 +768,6 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 	vaultEntry, _ := a.cfg.Plugins.PluginSettings[pluginID].(map[string]any)
 	if vaultEntry == nil {
 		vaultEntry = map[string]any{}
-	}
-	// Phase 9 (#431) one-release fallback: a vault or linked notebook on a
-	// host that has migrated may still request "silt-kanban" because its
-	// frontend hasn't been updated. If silt-kanban has NO vault entry AND
-	// silt-tasks does, transparently alias the lookup to silt-tasks — same
-	// shape, same fields (columns/filters/scope). The effective id is used
-	// for both the vault clone and the linked-notebook overlay so a linked
-	// notebook with only silt-tasks resolves cleanly. Drop this shim in N+1
-	// once the old plugin ids retire.
-	effectivePluginID := pluginID
-	if pluginID == "silt-kanban" && len(vaultEntry) == 0 {
-		if tasksEntry, ok := a.cfg.Plugins.PluginSettings["silt-tasks"].(map[string]any); ok && len(tasksEntry) > 0 {
-			effectivePluginID = "silt-tasks"
-			vaultEntry = tasksEntry
-		}
 	}
 	// Deep-clone under the lock so the returned map is a safe snapshot.
 	vaultClone := config.MergePluginSettings(vaultEntry, nil)
@@ -801,19 +805,7 @@ func (a *App) GetPluginSettingsForNotebook(pluginID, notebookName string) (map[s
 		// returns Defaults + nil in that case).
 		return nil, fmt.Errorf("linked config for %s: %w", ln.DisplayName, err)
 	}
-	linkedEntry, _ := linkedCfg.Plugins.PluginSettings[effectivePluginID].(map[string]any)
-	// When the alias remapped silt-kanban → silt-tasks, the linked config's
-	// silt-tasks may be just Defaults (LoadLinked seeds from Defaults, so the
-	// entry is always non-nil even when the notebook hasn't migrated). An
-	// explicit silt-kanban entry is the user's real co-located override —
-	// silt-kanban is never in Defaults, so its presence means user-authored.
-	// Prefer it so a not-yet-migrated linked notebook's settings aren't
-	// silently dropped.
-	if effectivePluginID != pluginID {
-		if origEntry, _ := linkedCfg.Plugins.PluginSettings[pluginID].(map[string]any); origEntry != nil {
-			linkedEntry = origEntry
-		}
-	}
+	linkedEntry, _ := linkedCfg.Plugins.PluginSettings[pluginID].(map[string]any)
 	if linkedEntry == nil {
 		linkedEntry = map[string]any{}
 	}

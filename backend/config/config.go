@@ -454,10 +454,8 @@ func Defaults() SystemConfig {
 			"toggle_typewriter_mode": "Ctrl+Shift+Y",
 		},
 		Plugins: PluginsConfig{
-			// Phase 10 (#429) retired the standalone silt-calendar and
-			// silt-kanban plugins; silt-tasks is the single active task
-			// surface. Legacy vaults still carrying the old ids are
-			// migrated by task_plugin_migrate.go (Phase 9 / #431).
+			// silt-tasks is the unified task surface (Phase 9 / #431),
+			// succeeding the retired standalone silt-calendar / silt-kanban.
 			Active: []string{"silt-tasks"},
 			// silt-ai-summary (#220) ships OFF by default: it is the first plugin
 			// that sends note content to an external LLM endpoint, so the user
