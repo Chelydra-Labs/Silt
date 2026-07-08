@@ -6,6 +6,7 @@ import type {
   TaskStatus
 } from './sdk'
 import { localToday } from './sdk'
+import { stripReasoningContent } from './stripReasoning'
 import {
   PluginRawQuery,
   PluginMutateBlock,
@@ -662,7 +663,12 @@ export function makePluginContext(
           // identically, so a structural cast is correct here.
         } as any)
           .then((res: any) => ({
-            content: res?.content ?? '',
+            // Strip reasoning/thinking tags (<thought>/<think>/…) that leak
+            // into `content` from OpenAI-compatible servers without a reasoning
+            // parser (Ollama, LM Studio, llama.cpp). Native providers already
+            // separate reasoning; this normalizes the leak for every consumer
+            // (#483). See stripReasoning.ts.
+            content: stripReasoningContent(res?.content ?? ''),
             model: res?.model ?? '',
             usage: res?.usage
           }))
