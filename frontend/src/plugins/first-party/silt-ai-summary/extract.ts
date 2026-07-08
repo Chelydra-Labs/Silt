@@ -1,14 +1,14 @@
 // Extraction core for silt-ai-summary (#220): prompt building, tolerant JSON
 // parsing, and the LLM call with a three-tier fallback.
 //
-// Design decision D1 (PLAN.md): prompt-only JSON + tolerant parsing + a
-// summary-only fallback, rather than passing response_format/json_schema
-// through the AI service. Prompt-only works universally across OpenAI-
-// compatible servers (Ollama's response_format json_schema has a known
-// silent-ignore bug), and the fallback chain guarantees a usable result even
-// when a weak model emits prose-wrapped or partial JSON. The AI service
-// surface stays unchanged; a future enhancement can add optional
-// response_format pass-through without disturbing this plugin.
+// Design decision D1: prompt-only JSON + tolerant parsing + a summary-only
+// fallback, rather than relying solely on provider-side response_format. This
+// works universally across OpenAI-compatible servers (Ollama's response_format
+// json_schema has a known silent-ignore bug). Native providers (Google,
+// Anthropic) now receive the summary schema via responseSchema (#479) so they
+// enforce structured output directly; the tolerant parse + fallback chain
+// still runs as a safety net, and is the sole path for OpenAI-compatible
+// providers that ignore the schema.
 //
 // All functions here are pure given their inputs (extractSummary takes a ctx
 // only to call ctx.ai.complete) so they unit-test cleanly with the LLM mocked.
@@ -16,6 +16,34 @@
 import type { PluginAIChatMessage, PluginAIError } from '../../sdk'
 import type { SummaryError, SummaryExtraction, SummarySettings } from './types'
 import { maxTokensForLength } from './settings'
+
+/** The JSON Schema for the structured summary extraction. Passed to native
+ *  providers (Google, Anthropic) via responseSchema so the model returns a
+ *  JSON object conforming to this shape directly — no prompt-only heuristics,
+ *  no markdown fences. The OpenAI-compatible path ignores the schema and
+ *  falls back to prompt-only JSON + tolerant parsing (D1). */
+const SUMMARY_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string', description: 'A concise summary of the note' },
+    tasks: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Actionable to-dos the note mentions'
+    },
+    risks: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Risks, blockers, or concerns raised'
+    },
+    decisions: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Decisions made or confirmed'
+    }
+  },
+  required: ['summary', 'tasks', 'risks', 'decisions']
+} as const
 
 /** Mid-truncate a note that exceeds the size budget: keep a head and a tail
  *  with a visible ellipsis seam, preserving the opening (context) and the
@@ -188,7 +216,8 @@ export type ExtractResult =
 export async function extractSummary(args: {
   complete: (
     messages: PluginAIChatMessage[],
-    maxTokens: number
+    maxTokens: number,
+    options?: { responseSchema?: Record<string, unknown> }
   ) => Promise<{ content: string; model: string }>
   content: string
   settings: SummarySettings
@@ -199,7 +228,9 @@ export async function extractSummary(args: {
 
   let res: { content: string; model: string }
   try {
-    res = await complete(messages, maxTokens)
+    // Pass the summary schema so native providers (Google, Anthropic) enforce
+    // structured output. OpenAI-compat ignores it (D1 prompt-only fallback).
+    res = await complete(messages, maxTokens, { responseSchema: SUMMARY_SCHEMA })
   } catch (e) {
     return { ok: false, error: providerError(e) }
   }
@@ -207,7 +238,7 @@ export async function extractSummary(args: {
   if (!parsed) {
     // Tier 2: one retry with the same structured prompt.
     try {
-      res = await complete(messages, maxTokens)
+      res = await complete(messages, maxTokens, { responseSchema: SUMMARY_SCHEMA })
       parsed = parseSummary(res.content)
     } catch (e) {
       return { ok: false, error: providerError(e) }

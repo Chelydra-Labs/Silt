@@ -657,6 +657,13 @@ export interface PluginAIApi {
      *  Not all providers support every value. */
     reasoningEffort?: string
     stream?: boolean
+    /** Ask native providers (Google, Anthropic) to return a JSON object
+     *  conforming to this JSON Schema. Ignored by OpenAI-compatible providers
+     *  (prompt-only JSON is the universal fallback). The schema is a raw JSON
+     *  Schema object (lowercase type strings); each native encoder converts to
+     *  its own format. When set, the response content is the JSON-stringified
+     *  result. */
+    responseSchema?: Record<string, unknown>
   }) => Promise<PluginAICompleteResult>
   /**
    * Compute embeddings for a batch of texts against the configured embedding

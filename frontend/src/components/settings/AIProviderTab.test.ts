@@ -89,6 +89,7 @@ const mocks = vi.hoisted(() => {
     ClearAIAPIKey: vi.fn(),
     SetUseKeyring: vi.fn(),
     TestAIConnection: vi.fn(),
+    ListModels: vi.fn(),
     GetAIAudit: vi.fn(),
     ClearAIAudit: vi.fn()
   }
@@ -101,6 +102,7 @@ vi.mock('../../../wailsjs/go/main/App.js', () => ({
   ClearAIAPIKey: mocks.ClearAIAPIKey,
   SetUseKeyring: mocks.SetUseKeyring,
   TestAIConnection: mocks.TestAIConnection,
+  ListModels: mocks.ListModels,
   GetAIAudit: mocks.GetAIAudit,
   ClearAIAudit: mocks.ClearAIAudit
 }))
@@ -116,6 +118,7 @@ describe('AIProviderTab', () => {
     mocks.ClearAIAPIKey.mockReset()
     mocks.SetUseKeyring.mockReset()
     mocks.TestAIConnection.mockReset()
+    mocks.ListModels.mockReset()
     mocks.GetAIAudit.mockReset()
     mocks.ClearAIAudit.mockReset()
     // Default happy-path resolutions; individual tests override.
@@ -131,6 +134,9 @@ describe('AIProviderTab', () => {
       kind: 'chat',
       message: 'probe ok'
     })
+    // ListModels returns empty by default (cold-start cache miss) → free-text
+    // model input. Individual tests override to populate the dropdown.
+    mocks.ListModels.mockResolvedValue([])
     mocks.GetAIAudit.mockResolvedValue(structuredClone(mocks.auditState))
     mocks.ClearAIAudit.mockResolvedValue(undefined)
   })
@@ -370,6 +376,173 @@ describe('AIProviderTab', () => {
       await ready()
 
       expect(screen.getByText(/leaves your machine/i)).toBeInTheDocument()
+    })
+  })
+
+  describe('native provider options', () => {
+    it('renders all four provider type radios', async () => {
+      render(AIProviderTab)
+      await ready()
+
+      expect(screen.getAllByRole('radio', { name: /Local \(Ollama\)/i })).toHaveLength(2)
+      expect(screen.getAllByRole('radio', { name: /OpenAI-compatible/i })).toHaveLength(2)
+      expect(screen.getAllByRole('radio', { name: /Google AI/i })).toHaveLength(2)
+      expect(screen.getAllByRole('radio', { name: /Anthropic/i })).toHaveLength(2)
+    })
+
+    it('switches chat to Google AI and snaps the base URL', async () => {
+      render(AIProviderTab)
+      await ready()
+
+      const googleRadios = screen.getAllByRole('radio', { name: /Google AI/i })
+      await fireEvent.click(googleRadios[0]) // chat card
+
+      expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+        'chat',
+        expect.objectContaining({
+          provider_type: 'google',
+          base_url: 'https://generativelanguage.googleapis.com'
+        })
+      )
+    })
+
+    it('persists the provider config before refreshing models on switch', async () => {
+      // Wails IPC does not guarantee ordering between independent fire-and-forget
+      // calls. If the refresh fires before the save lands, ListModels snapshots
+      // the OLD provider config and polls the wrong endpoint. This test verifies
+      // the save completes before the force-poll fires.
+      let releaseSave!: () => void
+      mocks.UpdateAIProviderConfig.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseSave = () => resolve()
+          })
+      )
+      render(AIProviderTab)
+      await ready()
+
+      const googleRadios = screen.getAllByRole('radio', { name: /Google AI/i })
+      await fireEvent.click(googleRadios[0])
+
+      // Save is called immediately...
+      await waitFor(() =>
+        expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+          'chat',
+          expect.anything()
+        )
+      )
+      // ...but ListModels(force=true) must NOT have fired yet (save is pending).
+      expect(mocks.ListModels).not.toHaveBeenCalledWith('chat', true)
+
+      // Release the save — the force-poll should fire now.
+      releaseSave()
+      await waitFor(() =>
+        expect(mocks.ListModels).toHaveBeenCalledWith('chat', true)
+      )
+    })
+
+    it('switches chat to Anthropic and snaps the base URL', async () => {
+      render(AIProviderTab)
+      await ready()
+
+      const anthropicRadios = screen.getAllByRole('radio', { name: /Anthropic/i })
+      await fireEvent.click(anthropicRadios[0]) // chat card
+
+      expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+        'chat',
+        expect.objectContaining({
+          provider_type: 'anthropic',
+          base_url: 'https://api.anthropic.com'
+        })
+      )
+    })
+
+    it('shows the cloud privacy warning for Google AI', async () => {
+      mocks.configState.chat.provider_type = 'google'
+      mocks.configState.chat.base_url = 'https://generativelanguage.googleapis.com'
+      mocks.GetAIProviderConfig.mockResolvedValue(
+        structuredClone(mocks.configState)
+      )
+      render(AIProviderTab)
+      await ready()
+
+      expect(screen.getByText(/leaves your machine/i)).toBeInTheDocument()
+    })
+
+    it('shows the unsupported message for Anthropic embeddings', async () => {
+      mocks.configState.embedding.provider_type = 'anthropic'
+      mocks.configState.embedding.base_url = 'https://api.anthropic.com'
+      mocks.GetAIProviderConfig.mockResolvedValue(
+        structuredClone(mocks.configState)
+      )
+      render(AIProviderTab)
+      await ready()
+
+      expect(screen.getByText(/Anthropic doesn't offer embeddings/i)).toBeInTheDocument()
+    })
+  })
+
+  describe('model discovery dropdown', () => {
+    it('shows the free-text input on cold start (no cached models)', async () => {
+      // Default mock: ListModels returns [] (cold start) → free-text input.
+      render(AIProviderTab)
+      await ready()
+
+      const chatModel = document.getElementById('ai-chat-model')
+      expect(chatModel).toBeTruthy()
+      expect(chatModel?.tagName).toBe('INPUT')
+    })
+
+    it('renders a populated dropdown after a successful Refresh poll', async () => {
+      mocks.ListModels.mockResolvedValue([
+        { id: 'gpt-4o', display_name: 'GPT-4o' },
+        { id: 'gpt-4o-mini', display_name: 'GPT-4o Mini' }
+      ])
+      render(AIProviderTab)
+      await ready()
+
+      // Click the Refresh-models button in the chat card.
+      const refreshBtns = screen.getAllByRole('button', { name: /Refresh models/i })
+      await fireEvent.click(refreshBtns[0]) // chat card
+
+      // After the poll resolves, the dropdown should show the models.
+      await waitFor(() => {
+        const chatModel = document.getElementById('ai-chat-model')
+        expect(chatModel?.tagName).toBe('SELECT')
+      })
+      // The select should have options for both models.
+      const select = document.getElementById('ai-chat-model') as HTMLSelectElement
+      expect(select.options.length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('falls back to free-text when the poll returns empty', async () => {
+      // force=true returns empty → stays in manual mode.
+      mocks.ListModels.mockResolvedValue([])
+      render(AIProviderTab)
+      await ready()
+
+      const refreshBtns = screen.getAllByRole('button', { name: /Refresh models/i })
+      await fireEvent.click(refreshBtns[0])
+
+      // Should still be a free-text input (no models to show).
+      await waitFor(() => {
+        expect(mocks.ListModels).toHaveBeenCalledWith('chat', true)
+      })
+      const chatModel = document.getElementById('ai-chat-model')
+      expect(chatModel?.tagName).toBe('INPUT')
+    })
+
+    it('shows an error message when the poll fails', async () => {
+      mocks.ListModels.mockRejectedValue(new Error('connection refused'))
+      render(AIProviderTab)
+      await ready()
+
+      const refreshBtns = screen.getAllByRole('button', { name: /Refresh models/i })
+      await fireEvent.click(refreshBtns[0])
+
+      await waitFor(() => {
+        expect(screen.getByText(/connection refused/i)).toBeInTheDocument()
+      })
     })
   })
 

@@ -75,16 +75,28 @@ type AIProviderConfig struct {
 // AI provider type discriminators. "local" targets an Ollama/llama.cpp instance
 // on the same machine (no key expected by default); "openai-compatible" targets
 // a cloud/local OpenAI-compatible endpoint (OpenRouter, LM Studio, OpenAI,
-// llama-server) where a Bearer token is expected. Both build an OpenAI-compatible
-// request body — the type only nudges the default base URL + auth posture.
+// llama-server) where a Bearer token is expected. "google" and "anthropic"
+// target the providers' native first-party APIs (#479), bypassing the OpenAI
+// compat shape for better stability + structured-output support. The ai package
+// dispatches on these values; the string literals MUST match ai.Provider*.
 const (
 	AIProviderLocal            = "local"
 	AIProviderOpenAICompatible = "openai-compatible"
+	AIProviderGoogle           = "google"
+	AIProviderAnthropic        = "anthropic"
 )
 
 // DefaultAIBaseURL is the conventional local endpoint (Ollama's default port).
 // Used as the default base URL when providerType is "local" and none is set.
 const DefaultAIBaseURL = "http://localhost:11434"
+
+// DefaultGoogleBaseURL is the Google AI Studio (generativelanguage) endpoint.
+// The native generateContent / batchEmbedContents / listModels paths are rooted
+// under /v1beta/.
+const DefaultGoogleBaseURL = "https://generativelanguage.googleapis.com"
+
+// DefaultAnthropicBaseURL is the Anthropic Messages API endpoint.
+const DefaultAnthropicBaseURL = "https://api.anthropic.com"
 
 // DefaultAITimeoutMs is the per-call timeout when AIProviderConfig.TimeoutMs is
 // unset. Generous (LLM completions are slow) but bounded so a dead endpoint
@@ -880,14 +892,24 @@ func NormalizeAIConfig(ai AIConfig) AIConfig {
 // dropped so a stale value cannot drift in config.yaml.
 func normalizeAIProvider(p AIProviderConfig, isChat bool) AIProviderConfig {
 	p.ProviderType = strings.TrimSpace(p.ProviderType)
-	if p.ProviderType != AIProviderLocal && p.ProviderType != AIProviderOpenAICompatible {
+	switch p.ProviderType {
+	case AIProviderLocal, AIProviderOpenAICompatible, AIProviderGoogle, AIProviderAnthropic:
+		// known type — keep as-is
+	default:
 		// Unknown/empty → local (the safest default — nothing leaves the
 		// machine, no key expected).
 		p.ProviderType = AIProviderLocal
 	}
 	p.BaseURL = strings.TrimSpace(p.BaseURL)
-	if p.BaseURL == "" && p.ProviderType == AIProviderLocal {
-		p.BaseURL = DefaultAIBaseURL
+	if p.BaseURL == "" {
+		switch p.ProviderType {
+		case AIProviderLocal:
+			p.BaseURL = DefaultAIBaseURL
+		case AIProviderGoogle:
+			p.BaseURL = DefaultGoogleBaseURL
+		case AIProviderAnthropic:
+			p.BaseURL = DefaultAnthropicBaseURL
+		}
 	}
 	p.Model = strings.TrimSpace(p.Model)
 	p.APIKey = strings.TrimSpace(p.APIKey)

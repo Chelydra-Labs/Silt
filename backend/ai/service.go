@@ -1,25 +1,28 @@
 // Package ai is Silt's core AI service: a thin, stdlib-only proxy that turns
-// plugin chat-completion and embedding requests into OpenAI-compatible HTTP
-// calls against a user-configured provider (Ollama, llama.cpp server,
-// OpenRouter, LM Studio, OpenAI, …) and normalizes the failure modes into a
-// typed result.
+// plugin chat-completion and embedding requests into provider-specific HTTP
+// calls and normalizes the failure modes into a typed result.
 //
-// Design notes (Sprint 20 / #216):
+// Design notes (Sprint 20 / #216, native providers / #479):
 //
-//   - ONE request shape for both provider types. Ollama, llama-server,
-//     OpenRouter, LM Studio, and OpenAI all expose OpenAI-compatible
-//     /v1/chat/completions + /v1/embeddings. AIProviderConfig.ProviderType only
-//     nudges the default base URL and whether a Bearer token is expected; the
-//     request/response body is the OpenAI-compatible shape in every case.
+//   - Complete/Embed are the stable entry points. They validate the shared
+//     inputs (messages, model, base URL) then dispatch on ProviderType to a
+//     per-provider encoder/decoder. The OpenAI-compatible path is the universal
+//     default/fallback; native google + anthropic paths bypass the OpenAI
+//     request shape and speak the provider's first-party API.
 //   - The service holds NO credentials. The caller (the App binding layer)
-//     resolves the API key (config.yaml in Phase 1; OS-keyring-first in #218)
-//     and passes it via CompleteRequest / EmbedRequest, so this package never
-//     imports the keyring or config packages.
+//     resolves the API key (config.yaml or OS-keyring-first) and passes it via
+//     CompleteRequest / EmbedRequest, so this package never imports the keyring
+//     or config packages.
 //   - Errors are normalized into AIError so plugin JS gets an actionable Kind
 //     ("unauthorized", "rate-limited", "model-missing", …) instead of a raw
 //     status code or transport string.
 //   - Request and response bodies are size-capped so a runaway plugin cannot
 //     drive unbounded allocation (defense in depth, mirroring maxPluginFetchBytes).
+//   - All providers share one transport: timeout, redirect guard, size caps,
+//     retry-with-backoff on transient 5xx/429, and HTTP-status classification.
+//     Per-provider code owns only URL construction, auth headers, request-body
+//     encoding, response-body decoding, and (optionally) structured-error
+//     classification.
 package ai
 
 import (
@@ -49,14 +52,25 @@ const MaxResponseBytes = 50 * 1024 * 1024 // 50 MB
 // cannot hang a plugin call indefinitely. Mirrors config.DefaultAITimeoutMs.
 const DefaultTimeout = 60 * time.Second
 
+// Provider-type discriminators used by the dispatcher. These string values MUST
+// match config.AIProvider* — the App binding layer copies the configured value
+// verbatim into AIProvider.ProviderType. Duplicated (rather than imported) so
+// this package stays free of a config import, per the layering rule.
+const (
+	ProviderLocal            = "local"
+	ProviderOpenAICompatible = "openai-compatible"
+	ProviderGoogle           = "google"
+	ProviderAnthropic        = "anthropic"
+)
+
 // httpClient is the dedicated client for all AI provider calls. It carries a
 // CheckRedirect that rejects cross-host redirects AND same-host scheme
 // downgrades (https→http), so a compromised or misconfigured endpoint cannot
-// redirect the request (bearing the Authorization: Bearer <key> header) to a
-// different host or carry it over plaintext where it would leak. Same-host
-// same-scheme redirects (and http→https upgrades) are allowed (load balancers,
-// path normalization). A dedicated client (not http.DefaultClient) also
-// isolates AI calls from any global transport changes.
+// redirect the request (bearing an auth header) to a different host or carry
+// it over plaintext where it would leak. Same-host same-scheme redirects (and
+// http→https upgrades) are allowed (load balancers, path normalization). A
+// dedicated client (not http.DefaultClient) also isolates AI calls from any
+// global transport changes.
 var httpClient = &http.Client{
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) == 0 {
@@ -66,7 +80,7 @@ var httpClient = &http.Client{
 		if req.URL.Host != prev.Host {
 			return fmt.Errorf("ai: refused cross-host redirect from %s to %s", prev.Host, req.URL.Host)
 		}
-		// Same host, but never follow an https→http downgrade: the bearer token
+		// Same host, but never follow an https→http downgrade: the auth token
 		// must not cross a plaintext hop even if the attacker controls only the
 		// redirect response (e.g. a stripped TLS redirect on a hijacked path).
 		if prev.Scheme == "https" && req.URL.Scheme == "http" {
@@ -87,7 +101,8 @@ func validateBaseURL(baseURL string) error {
 }
 
 // ChatMessage is one message in a chat-completion conversation. The OpenAI
-// roles "system" / "user" / "assistant" are the only ones every provider honors.
+// roles "system" / "user" / "assistant" are the universal input shape; native
+// providers translate as needed (e.g. system → top-level field).
 type ChatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -103,6 +118,12 @@ type CompleteRequest struct {
 	MaxTokens       *int          `json:"max_tokens,omitempty"`       // override Provider.MaxTokens
 	ReasoningEffort *string       `json:"reasoning_effort,omitempty"` // override Provider.ReasoningEffort ("none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max")
 	Stream          bool          `json:"stream,omitempty"`           // signature present now; Sprint 22 delivers streaming
+	// ResponseSchema, when set, asks native providers (google, anthropic) to
+	// return a JSON object conforming to the given JSON Schema. The openai-
+	// compat path ignores it (prompt-only JSON stays the universal denominator,
+	// per the D1 design decision). The schema is a raw JSON Schema object
+	// (lowercase type strings); each native encoder converts to its own format.
+	ResponseSchema json.RawMessage `json:"response_schema,omitempty"`
 }
 
 // CompleteResult is the output of a successful (non-streaming) completion. Usage
@@ -114,7 +135,7 @@ type CompleteResult struct {
 }
 
 // EmbedRequest is the input to Embed. Texts is required and non-empty; the
-// whole batch is sent in a single OpenAI-compatible /v1/embeddings request.
+// whole batch is sent in a single request.
 type EmbedRequest struct {
 	Provider   AIProvider `json:"-"`
 	Texts      []string   `json:"input"`
@@ -140,19 +161,27 @@ type AIUsage struct {
 	TotalTokens      *int `json:"total_tokens,omitempty"`
 }
 
+// AIModel is one entry in a ListModels poll. ID is the value the user selects
+// (and that gets stored as AIProviderConfig.Model); DisplayName is the
+// human-readable label for the dropdown (falls back to ID when the provider's
+// list endpoint carries no name field).
+type AIModel struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+}
+
 // AIProvider is the resolved endpoint configuration handed to the service. It is
 // the AIProviderConfig from backend/config with the API key already resolved by
-// the caller (config.yaml in Phase 1; OS keyring-first in #218). The App
-// binding layer constructs one of these directly from a config.AIProviderConfig
-// before calling Complete/Embed/Probe — keeping this package free of any import
-// on config (or the keyring) so the service is unit-testable with httptest and
-// no vault.
+// the caller (config.yaml or OS keyring-first). The App binding layer constructs
+// one of these directly from a config.AIProviderConfig before calling
+// Complete/Embed/Probe — keeping this package free of any import on config (or
+// the keyring) so the service is unit-testable with httptest and no vault.
 type AIProvider struct {
-	ProviderType    string // "local" | "openai-compatible"
+	ProviderType    string // ProviderLocal | ProviderOpenAICompatible | ProviderGoogle | ProviderAnthropic
 	BaseURL         string // e.g. http://localhost:11434
 	APIKey          string // resolved by caller; "" for a keyless local endpoint
 	Model           string
-	ReasoningEffort *string // "none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max"; nil = omit
+	ReasoningEffort *string // "none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max"; nil = omit (OpenAI-compat only)
 	TimeoutMs       *int
 }
 
@@ -204,14 +233,27 @@ func (e *AIError) Error() string {
 	return fmt.Sprintf("ai: %s: %s", e.Kind, e.Message)
 }
 
-// httpDo builds the request, attaches auth, sends it with the resolved timeout,
-// and returns the decoded raw body. Centralizes timeout/auth/size handling so
-// Complete and Embed share one code path. The caller decodes `raw` into its own
-// response shape.
-func httpDo(ctx context.Context, method, url, apiKey string, timeoutMs *int, reqBody []byte) ([]byte, int, *AIError) {
-	if len(reqBody) > MaxRequestBytes {
-		return nil, 0, &AIError{Kind: ErrBadRequest, Message: fmt.Sprintf("request body exceeds %d-byte cap", MaxRequestBytes)}
-	}
+// providerRequest is the per-provider output handed to the shared transport: the
+// HTTP method, URL, serialized body, an optional header-setter (auth + provider
+// specifics), and an optional error classifier. The transport builds a fresh
+// *http.Request from these per attempt (so the body reader is never reused),
+// applies the timeout + redirect guard + size caps, and retries transient
+// failures. classifyErr, when set, parses a structured error body for richer
+// fidelity than bare HTTP-status classification; returning nil falls back to the
+// default status-based classification + trimmed body message.
+type providerRequest struct {
+	method      string
+	url         string
+	body        []byte
+	setHeaders  func(req *http.Request)
+	classifyErr func(raw []byte, status int) *AIError
+}
+
+// sendOnce builds and sends one attempt. It is the per-attempt half of
+// sendWithRetry: timeout + request build + send + response size cap + status
+// classification. buildReq is invoked once (a fresh request per attempt is the
+// caller's responsibility in sendWithRetry).
+func sendOnce(ctx context.Context, pr providerRequest, timeoutMs *int) ([]byte, int, *AIError) {
 	timeout := DefaultTimeout
 	if timeoutMs != nil && *timeoutMs > 0 {
 		timeout = time.Duration(*timeoutMs) * time.Millisecond
@@ -219,18 +261,14 @@ func httpDo(ctx context.Context, method, url, apiKey string, timeoutMs *int, req
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, pr.method, pr.url, bytes.NewReader(pr.body))
 	if err != nil {
 		// Malformed URL — surface as unreachable; the caller's base URL is bad.
 		return nil, 0, &AIError{Kind: ErrUnreachable, Message: fmt.Sprintf("build request: %v", err)}
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// Ollama's OpenAI-compatible routes accept any non-empty Bearer token; cloud
-	// providers require a real key. Sending an empty bearer would 401 on cloud,
-	// so only attach the header when a key is present (a keyless local endpoint
-	// stays truly anonymous).
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+	if pr.setHeaders != nil {
+		pr.setHeaders(req)
 	}
 
 	resp, err := httpClient.Do(req)
@@ -252,7 +290,13 @@ func httpDo(ctx context.Context, method, url, apiKey string, timeoutMs *int, req
 		return nil, resp.StatusCode, &AIError{Kind: ErrServer, Status: resp.StatusCode, Message: fmt.Sprintf("response body exceeds %d-byte cap", MaxResponseBytes)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Trim the provider's error body to a reasonable length for the message.
+		// Let the provider parse its structured error body for better fidelity;
+		// fall back to status-based classification + trimmed body.
+		if pr.classifyErr != nil {
+			if e := pr.classifyErr(raw, resp.StatusCode); e != nil {
+				return nil, resp.StatusCode, e
+			}
+		}
 		msg := strings.TrimSpace(string(raw))
 		if len(msg) > 500 {
 			msg = msg[:500] + "…"
@@ -263,7 +307,7 @@ func httpDo(ctx context.Context, method, url, apiKey string, timeoutMs *int, req
 }
 
 // classifyStatus maps an HTTP status to a normalized AIErrorKind. Centralized so
-// Complete and Embed agree on the taxonomy.
+// every provider agrees on the taxonomy.
 func classifyStatus(status int) AIErrorKind {
 	switch {
 	case status == 401:
@@ -308,17 +352,20 @@ var retryBackoff = []time.Duration{
 	1500 * time.Millisecond,
 }
 
-// httpDoWithRetry wraps httpDo with bounded retry on transient provider errors
-// (5xx / 429). Each attempt gets its own per-call timeout — httpDo derives a
+// sendWithRetry wraps sendOnce with bounded retry on transient provider errors
+// (5xx / 429). Each attempt gets its own per-call timeout — sendOnce derives a
 // fresh context.WithTimeout every call — so one slow response does not eat the
 // retry budget, and the caller's ctx still bounds the whole sequence (a
 // cancellation during backoff aborts immediately rather than waiting out the
 // timer).
-func httpDoWithRetry(ctx context.Context, method, url, apiKey string, timeoutMs *int, reqBody []byte) ([]byte, int, *AIError) {
+func sendWithRetry(ctx context.Context, pr providerRequest, timeoutMs *int) ([]byte, int, *AIError) {
+	if len(pr.body) > MaxRequestBytes {
+		return nil, 0, &AIError{Kind: ErrBadRequest, Message: fmt.Sprintf("request body exceeds %d-byte cap", MaxRequestBytes)}
+	}
 	var last *AIError
 	var lastStatus int
 	for attempt := 0; attempt <= len(retryBackoff); attempt++ {
-		raw, status, aiErr := httpDo(ctx, method, url, apiKey, timeoutMs, reqBody)
+		raw, status, aiErr := sendOnce(ctx, pr, timeoutMs)
 		if aiErr == nil {
 			return raw, status, nil
 		}
@@ -341,37 +388,12 @@ func httpDoWithRetry(ctx context.Context, method, url, apiKey string, timeoutMs 
 	return nil, lastStatus, last
 }
 
-// chatRequest is the OpenAI-compatible /v1/chat/completions request body.
-type chatRequest struct {
-	Model           string        `json:"model"`
-	Messages        []ChatMessage `json:"messages"`
-	Temperature     *float64      `json:"temperature,omitempty"`
-	MaxTokens       *int          `json:"max_tokens,omitempty"`
-	ReasoningEffort *string       `json:"reasoning_effort,omitempty"`
-	Stream          bool          `json:"stream,omitempty"`
-}
-
-// chatResponse is the OpenAI-compatible /v1/chat/completions response body.
-type chatResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
-	Model string `json:"model"`
-	Usage *struct {
-		PromptTokens     *int `json:"prompt_tokens"`
-		CompletionTokens *int `json:"completion_tokens"`
-		TotalTokens      *int `json:"total_tokens"`
-	} `json:"usage,omitempty"`
-}
-
-// Complete performs a chat completion against the provider's
-// /v1/chat/completions endpoint. Streaming is NOT implemented (Sprint 22); the
-// Stream field is accepted and forwarded so the signature is additive when
-// streaming lands, but a provider that would stream is asked not to (stream is
-// only set true when the caller explicitly opts in, and even then this path
-// returns the buffered non-streamed body).
+// Complete performs a chat completion against the configured provider. It
+// validates the shared inputs then dispatches on ProviderType to the matching
+// native encoder. Streaming is NOT implemented (Sprint 22); the Stream field is
+// accepted so the signature is additive when streaming lands, but the provider
+// is asked not to stream (stream is only set true by the caller explicitly, and
+// even then this path returns the buffered non-streamed body).
 func Complete(ctx context.Context, req CompleteRequest) (CompleteResult, error) {
 	if len(req.Messages) == 0 {
 		return CompleteResult{}, &AIError{Kind: ErrBadRequest, Message: "messages must not be empty"}
@@ -390,67 +412,23 @@ func Complete(ctx context.Context, req CompleteRequest) (CompleteResult, error) 
 	if err := validateBaseURL(baseURL); err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrBadRequest, Message: err.Error()}
 	}
-	// Resolve effective reasoning effort: per-call override, else provider default.
-	reasoning := req.ReasoningEffort
-	if reasoning == nil {
-		reasoning = req.Provider.ReasoningEffort
+	switch req.Provider.ProviderType {
+	case ProviderGoogle:
+		return completeGoogle(ctx, req, model, baseURL)
+	case ProviderAnthropic:
+		return completeAnthropic(ctx, req, model, baseURL)
+	default:
+		// ProviderLocal and ProviderOpenAICompatible (and any unknown value)
+		// all use the OpenAI-compatible shape — it is the universal default.
+		return completeOpenAI(ctx, req, model, baseURL)
 	}
-	body, err := json.Marshal(chatRequest{
-		Model:           model,
-		Messages:        req.Messages,
-		Temperature:     req.Temperature,
-		MaxTokens:       req.MaxTokens,
-		ReasoningEffort: reasoning,
-		Stream:          false, // see doc comment — streaming lands in Sprint 22
-	})
-	if err != nil {
-		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}
-	}
-	raw, _, aiErr := httpDoWithRetry(ctx, http.MethodPost, baseURL+"/v1/chat/completions", req.Provider.APIKey, req.Provider.TimeoutMs, body)
-	if aiErr != nil {
-		return CompleteResult{}, aiErr
-	}
-	var resp chatResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse response: %v", err)}
-	}
-	if len(resp.Choices) == 0 {
-		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: "provider returned no choices"}
-	}
-	out := CompleteResult{Content: resp.Choices[0].Message.Content, Model: resp.Model}
-	if resp.Usage != nil {
-		out.Usage = &AIUsage{
-			PromptTokens:     resp.Usage.PromptTokens,
-			CompletionTokens: resp.Usage.CompletionTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
-		}
-	}
-	return out, nil
 }
 
-// embedRequest is the OpenAI-compatible /v1/embeddings request body.
-type embedRequest struct {
-	Model      string   `json:"model"`
-	Input      []string `json:"input"`
-	Dimensions *int     `json:"dimensions,omitempty"`
-}
-
-// embedResponse is the OpenAI-compatible /v1/embeddings response body.
-type embedResponse struct {
-	Data []struct {
-		Embedding []float64 `json:"embedding"`
-	} `json:"data"`
-	Model string `json:"model"`
-	Usage *struct {
-		PromptTokens *int `json:"prompt_tokens"`
-		TotalTokens  *int `json:"total_tokens"`
-	} `json:"usage,omitempty"`
-}
-
-// Embed computes embeddings for a batch of texts against the provider's
-// /v1/embeddings endpoint. The whole batch is sent in a single request (the
-// OpenAI-compatible API accepts an input array); embeddings[i] corresponds to
-// texts[i].
+// Embed computes embeddings for a batch of texts against the configured
+// provider. Google uses native batchEmbedContents; the OpenAI-compatible path
+// uses /v1/embeddings; Anthropic has no embeddings endpoint and returns a clear
+// error. The whole batch is sent in a single request; embeddings[i]
+// corresponds to texts[i].
 func Embed(ctx context.Context, req EmbedRequest) (EmbedResult, error) {
 	if len(req.Texts) == 0 {
 		return EmbedResult{}, &AIError{Kind: ErrBadRequest, Message: "texts must not be empty"}
@@ -469,44 +447,21 @@ func Embed(ctx context.Context, req EmbedRequest) (EmbedResult, error) {
 	if err := validateBaseURL(baseURL); err != nil {
 		return EmbedResult{}, &AIError{Kind: ErrBadRequest, Message: err.Error()}
 	}
-	body, err := json.Marshal(embedRequest{Model: model, Input: req.Texts, Dimensions: req.Dimensions})
-	if err != nil {
-		return EmbedResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}
+	switch req.Provider.ProviderType {
+	case ProviderGoogle:
+		return embedGoogle(ctx, req, model, baseURL)
+	case ProviderAnthropic:
+		return EmbedResult{}, &AIError{Kind: ErrBadRequest, Message: "anthropic provider does not support embeddings; use an OpenAI-compatible or local embedding endpoint"}
+	default:
+		return embedOpenAI(ctx, req, model, baseURL)
 	}
-	raw, _, aiErr := httpDoWithRetry(ctx, http.MethodPost, baseURL+"/v1/embeddings", req.Provider.APIKey, req.Provider.TimeoutMs, body)
-	if aiErr != nil {
-		return EmbedResult{}, aiErr
-	}
-	var resp embedResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return EmbedResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse response: %v", err)}
-	}
-	if len(resp.Data) == 0 {
-		return EmbedResult{}, &AIError{Kind: ErrUnknown, Message: "provider returned no embeddings"}
-	}
-	// Embeddings[i] ↔ Texts[i] is the contract; a partial response would
-	// silently misalign vectors with inputs, so any count mismatch is fatal.
-	if len(resp.Data) != len(req.Texts) {
-		return EmbedResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("provider returned %d embeddings for %d texts", len(resp.Data), len(req.Texts))}
-	}
-	out := EmbedResult{
-		Embeddings: make([][]float64, len(resp.Data)),
-		Model:      resp.Model,
-		Dimensions: len(resp.Data[0].Embedding),
-	}
-	for i, d := range resp.Data {
-		out.Embeddings[i] = d.Embedding
-	}
-	if resp.Usage != nil {
-		out.Usage = &AIUsage{PromptTokens: resp.Usage.PromptTokens, TotalTokens: resp.Usage.TotalTokens}
-	}
-	return out, nil
 }
 
 // Probe performs the minimal call the AI Provider page's "Test connection" uses:
 // a 1-token chat completion (chat) or a single short embed (embedding). It
 // returns nil on success and an *AIError (normalized) on failure. isChat selects
-// the probe kind so one binding serves both provider blocks.
+// the probe kind so one binding serves both provider blocks. Dispatches through
+// Complete/Embed, so every native provider is probed via its own API shape.
 func Probe(ctx context.Context, p AIProvider, isChat bool) error {
 	if isChat {
 		// No MaxTokens cap: some reasoning endpoints reject an extremely low
@@ -521,4 +476,28 @@ func Probe(ctx context.Context, p AIProvider, isChat bool) error {
 	}
 	_, err := Embed(ctx, EmbedRequest{Provider: p, Texts: []string{"ping"}})
 	return err
+}
+
+// ListModels polls the configured provider's model-list endpoint and returns the
+// available models. which ("chat" | "embedding") lets the Google path filter to
+// generateContent- vs embedContent-supporting models. A failed/empty poll
+// returns nil + a typed error; the caller (the Settings UI) falls back to a
+// free-text model field rather than dead-ending. Dispatches on ProviderType
+// exactly like Complete/Embed.
+func ListModels(ctx context.Context, p AIProvider, which string) ([]AIModel, error) {
+	baseURL := strings.TrimRight(p.BaseURL, "/")
+	if baseURL == "" {
+		return nil, &AIError{Kind: ErrUnreachable, Message: "no base URL configured"}
+	}
+	if err := validateBaseURL(baseURL); err != nil {
+		return nil, &AIError{Kind: ErrBadRequest, Message: err.Error()}
+	}
+	switch p.ProviderType {
+	case ProviderGoogle:
+		return listModelsGoogle(ctx, p, baseURL, which)
+	case ProviderAnthropic:
+		return listModelsAnthropic(ctx, p, baseURL)
+	default:
+		return listModelsOpenAI(ctx, p, baseURL)
+	}
 }
