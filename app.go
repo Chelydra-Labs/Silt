@@ -489,6 +489,14 @@ func (a *App) CloseVault() error {
 	// next initializeVaultServices, so cancelling it here is safe.
 	if a.vaultCtxCancel != nil {
 		a.vaultCtxCancel()
+	} else if a.vaultPath != "" {
+		// vaultPath is set but vaultCtxCancel is nil — the vault was opened
+		// without going through initializeVaultServices (every production
+		// path does). The drain below will fall back to the provider-timeout
+		// bound (the pre-#471 behavior). Log so a future code path that
+		// bypasses the initializer surfaces immediately rather than silently
+		// regressing the close latency.
+		log.Printf("CloseVault: vaultCtxCancel is nil with an open vault (%s) — vault-scoped AI cancellation skipped (initializeVaultServices did not run for this vault)", a.vaultPath)
 	}
 
 	// Drain in-flight AI calls OUTSIDE the lock. They released vaultMu after

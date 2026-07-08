@@ -186,6 +186,22 @@ manually against `wails dev`. Grouped by surface; each item is pass/fail.
 - [ ] Check for updates; a download is verified against the published SHA-256
       before it is offered to install.
 
+**Resilience & hardening** (vault-close AI drain, id-strip detection, IPC errors)
+- [ ] With an AI provider configured and a plugin making a slow completion
+      (e.g. a local model), trigger a vault switch mid-call — the switch
+      returns in well under the provider timeout (no ~60s hang); the aborted
+      call's audit entry lands in the SOURCE vault's `ai.log`, not the
+      target's.
+- [ ] In an external editor, strip every `<!-- id: ... -->` comment from a
+      multi-task file and save — Silt shows a sticky warning naming the page,
+      with a "Show file" action that opens it; the copy explains links may
+      have broken and how to recover. Creating a brand-new file with many
+      tasks does NOT trigger the warning.
+- [ ] Open a task's file in the editor (focus lock), then trigger a task
+      setter from elsewhere (e.g. the Tasks hub) — the error banner shows
+      the friendly "save or close it first" copy. (The mapping is code-based,
+      so a backend wording change must not regress it.)
+
 ## Known gaps
 
 - No Wails integration test (requires the `wails dev` runtime) — covered by the

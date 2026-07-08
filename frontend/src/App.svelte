@@ -54,6 +54,7 @@
   import ToastContainer from './components/ToastContainer.svelte'
   import Onboarding from './components/Onboarding.svelte'
   import { pushNotification } from './notifications/store.svelte'
+  import { reMintToast, type ReMintWarning } from './lib/reMintToast'
   import {
     initStartupUpdateCheck,
     disposeUpdateStore
@@ -913,19 +914,15 @@
     )
     // Mass id re-mint detection (#443): an external tool/sync stripped the
     // block-identity comments from a previously-indexed file, so the parser
-    // re-minted fresh UUIDs — which silently breaks every ((uuid)) reference
-    // to those blocks. Sticky (no auto-dismiss) because the user needs to
-    // restore from backup or re-author the broken links; the copy names the
-    // affected page and explains the recovery path.
+    // re-minted fresh UUIDs — which can break note-to-note links pointing at
+    // those blocks. The toast (built by reMintToast) is sticky, leads with
+    // the user-visible impact, and offers a "Show file" CTA. The builder is
+    // extracted so its payload-shaping contract is unit-testable.
     const offReMintWarning = EventsOn(
       'index:re-mint-warning',
-      (w: { page: string; minted_count: number; prior_count: number }) => {
+      (w: ReMintWarning) => {
         if (!w) return
-        pushNotification({
-          kind: 'info',
-          message: `Silt re-created ${w.minted_count} block id${w.minted_count === 1 ? '' : 's'} for “${w.page}” — an external tool may have stripped id comments, which can break ((uuid)) references. Restore the file from backup or re-author the broken links.`,
-          autoDismissMs: 0
-        })
+        pushNotification(reMintToast(w, openPage))
       }
     )
     return () => {

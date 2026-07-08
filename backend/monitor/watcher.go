@@ -620,6 +620,18 @@ func (dw *DirectoryWatcher) listenLoop() {
 // re-minted, with a floor of 3 so a 1-2 block file doesn't flag on a single
 // normal edit. A brand-new file (priorCount == 0) is exempt by construction
 // (the caller gates on priorCount > 0).
+//
+// Known false-positive mode: this is a heuristic, not a detector. It cannot
+// distinguish "a tool stripped the id comments from N existing blocks
+// (keeping their prose)" from "the user deleted N tasks and pasted N fresh
+// ones (new prose, new ids)" — both produce MintedCount == N against a
+// nonzero priorCount. The bulk-replace case is a legitimate edit that trips
+// the warning. This is accepted: the warning is non-blocking, hedges with
+// "another app likely removed them", and is dismissible. A future tightening
+// could cross-check whether the surviving prose bodies roughly match the
+// prior blocks (stripping preserves prose; bulk-replace changes it), but that
+// is standalone work and not warranted without evidence of real false
+// positives in practice.
 func reMintThreshold(priorCount int) int {
 	if t := priorCount / 2; t > 3 {
 		return t
@@ -664,7 +676,14 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		// to the mass-re-mint heuristic, #443). The query is cheap (one COUNT
 		// on a covered index) and runs outside the write transaction below so
 		// it observes the pre-replace state.
-		priorCount, _ := dw.dm.CountBlocksForPage(source, meta.Notebook, meta.Section, meta.Page)
+		priorCount, countErr := dw.dm.CountBlocksForPage(source, meta.Notebook, meta.Section, meta.Page)
+		if countErr != nil {
+			// On DB error priorCount stays 0, which silently disables the
+			// heuristic for this event (the safe direction — no false
+			// positive). Log so a maintainer can diagnose "why did the re-mint
+			// warning stop firing" if the index gets into a bad state.
+			log.Printf("reindexFile: CountBlocksForPage failed for %s (re-mint heuristic disabled for this event): %v", path, countErr)
+		}
 
 		if modified {
 			dw.tracker.RegisterWrite(path)

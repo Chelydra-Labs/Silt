@@ -49,6 +49,12 @@ export function coerceIPCErrorMessage(raw: string): IPCErrorShape {
   // A backend IPCError serializes as a JSON object string. Cheap probe: only
   // attempt a parse when the string starts with '{' (the formatter never
   // emits leading whitespace). Avoids throwing on every plain-prose error.
+  //
+  // Assumption: the ErrorFormatter (formatIPCError in ipc_errors.go) is the
+  // SOLE producer of a '{'-prefixed error message in this app. A future code
+  // path that echoes a raw JSON body in an error string could be misparsed
+  // here — but the guard below (require a string `code` field) plus the catch
+  // fallback (non-JSON → raw prose) keep that case safe.
   if (raw.length > 0 && raw[0] === '{') {
     try {
       const parsed = JSON.parse(raw)
