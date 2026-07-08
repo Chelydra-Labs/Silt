@@ -24,11 +24,15 @@ import AISummarySettings from './AISummarySettings.svelte'
 import SummaryBanner from './SummaryBanner.svelte'
 import { createSummaryController, type SummaryController } from './state.svelte'
 import { resetCacheState } from './cache'
+import { computeContentHash } from './cache'
+import { fetchNoteContent } from './content'
 import { decideMountKind } from './mountKind'
+import { isDismissed, unDismiss } from './dismissal'
 
 // Re-exported so callers that already import the entry can reach the decision
-// helper; the pure implementation lives in mountKind.ts (testable in isolation).
-export { decideMountKind }
+// helpers; the pure implementations live in mountKind.ts / dismissal.ts
+// (testable in isolation).
+export { decideMountKind, isDismissed, unDismiss }
 
 export const manifest: PluginManifest = {
   id: 'silt-ai-summary',
@@ -71,6 +75,29 @@ function pageIdOf(notebook: string, section: string, page: string): string {
   return `${notebook}/${section}/${page}`
 }
 
+/** Hash the page's current content so dismissal can be keyed by
+ *  `${pageId}:${contentHash}` (#455). Returns undefined on a content-read
+ *  failure (locked vault, disk error, query failure): the dismiss check then
+ *  only matches legacy bare-pageId entries, and generateFor surfaces the
+ *  fetch-failed error separately. Skipped entirely in on-demand mode where
+ *  the chip mounts regardless of dismissal. */
+async function computePageHash(
+  ctx: PluginContext,
+  loc: { notebook: string; section: string; page: string }
+): Promise<string | undefined> {
+  try {
+    const content = await fetchNoteContent(
+      ctx,
+      loc.notebook,
+      loc.section,
+      loc.page
+    )
+    return await computeContentHash(content)
+  } catch {
+    return undefined
+  }
+}
+
 /** Mount the banner or the re-open chip per {@link decideMountKind}. Idempotent
  *  per page: a no-op when the target kind is already mounted, so a
  *  config:changed re-evaluation that reaches the same decision doesn't flicker.
@@ -110,10 +137,13 @@ function mountForPage(
         const cur = ctl.getSettings()
         // Clear dismissal first (no-op in the on-demand-only case) so a
         // future note switch re-evaluates cleanly; persist before showing.
-        const unDismiss = cur.dismissed_notes.filter((p) => p !== pageId)
+        // Removes both legacy bare-pageId entries and any ${pageId}:<hash>
+        // form (#455) so the chip works regardless of which keyed form was
+        // persisted.
+        const next = unDismiss(cur.dismissed_notes, pageId)
         const persist =
-          unDismiss.length !== cur.dismissed_notes.length
-            ? ctx.updatePluginSetting('dismissed_notes', unDismiss)
+          next.length !== cur.dismissed_notes.length
+            ? ctx.updatePluginSetting('dismissed_notes', next)
             : Promise.resolve(true)
         persist
           .then(() => {
@@ -171,14 +201,26 @@ export default {
 
     // On note switch: cancel the prior page's pending regeneration, mount the
     // right surface (banner vs. re-open), and (when auto-on-open is on) seed.
-    offActiveNotebook = ctx.on('active-notebook:changed', (evt) => {
+    offActiveNotebook = ctx.on('active-notebook:changed', async (evt) => {
       if (!controller) return
       if (lastPageId) controller.cancelPending(lastPageId)
       if (!evt.notebook || !evt.page) return
       const id = pageIdOf(evt.notebook, evt.section, evt.page)
       lastPageId = id
       const s = controller.getSettings()
-      const dismissed = s.dismissed_notes.includes(id)
+      // Fetch + hash the content so dismissal is keyed by content hash (#455).
+      // In on-demand mode the chip mounts regardless, so skip the SQLite read.
+      const hash = s.on_demand_only
+        ? undefined
+        : await computePageHash(ctx, {
+            notebook: evt.notebook,
+            section: evt.section,
+            page: evt.page
+          })
+      // The vault may close or the user may switch notes during the async
+      // hash; bail so we don't mount into a torn-down vault or a stale page.
+      if (!controller || lastPageId !== id) return
+      const dismissed = isDismissed(s.dismissed_notes, id, hash)
       mountForPage(ctx, id, { dismissed, onDemandOnly: s.on_demand_only })
       if (!dismissed && !s.on_demand_only && s.auto_on_open) {
         void controller.generateFor(ctx, id, {
@@ -192,11 +234,20 @@ export default {
     // A dismissal / re-open / settings tweak writes config.yaml, which fires
     // config:changed. Re-evaluate the active page's surface so the banner↔chip
     // swap (incl. an on-demand toggle) happens without a note switch.
-    offConfigChanged = ctx.on('config:changed', () => {
+    offConfigChanged = ctx.on('config:changed', async () => {
       if (!controller || !lastPageId) return
+      const idAtStart = lastPageId
       const s = controller.getSettings()
+      const hash = s.on_demand_only
+        ? undefined
+        : await computePageHash(ctx, {
+            notebook: ctx.activeNotebook,
+            section: ctx.activeSection,
+            page: ctx.activePage
+          })
+      if (!controller || lastPageId !== idAtStart) return
       mountForPage(ctx, lastPageId, {
-        dismissed: s.dismissed_notes.includes(lastPageId),
+        dismissed: isDismissed(s.dismissed_notes, lastPageId, hash),
         onDemandOnly: s.on_demand_only
       })
     })

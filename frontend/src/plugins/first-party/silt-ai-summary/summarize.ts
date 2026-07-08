@@ -54,9 +54,11 @@ export async function summarize(
   }
 
   // An empty note has nothing to summarize; serve a muted empty result so the
-  // banner can render "Nothing to highlight" without an LLM call.
+  // banner can render "Nothing to highlight" without an LLM call. The hash is
+  // still computed so dismissal can be keyed by content (#455): a user who
+  // dismisses an empty note and then types something sees the banner return.
   if (!deps.cleanContent.trim()) {
-    return emptyResult()
+    return emptyResult(await computeContentHash(deps.cleanContent))
   }
   // Oversized notes are SKIPPED (not truncated/chunked — v1). A head+tail
   // slice would produce a partial, potentially misleading summary; chunking is
@@ -102,7 +104,8 @@ export async function summarize(
         newItems: diffFacets(toExtraction(cached), cached.prior_snapshot),
         fromCache: true,
         model: cached.model,
-        generatedAt: cached.generated_at
+        generatedAt: cached.generated_at,
+        contentHash: hash
       }
       return { ok: true, result }
     }
@@ -160,7 +163,8 @@ export async function summarize(
       newItems: diffFacets(extracted.extraction, prior),
       fromCache: false,
       model: extracted.model,
-      generatedAt
+      generatedAt,
+      contentHash: hash
     }
   }
 }
@@ -199,7 +203,7 @@ async function safeCache<T>(
   }
 }
 
-function emptyResult(): SummaryOutcome {
+function emptyResult(hash: string): SummaryOutcome {
   return {
     ok: true,
     result: {
@@ -210,7 +214,8 @@ function emptyResult(): SummaryOutcome {
       newItems: { tasks: [], risks: [], decisions: [] },
       fromCache: true,
       model: '',
-      generatedAt: nowIso()
+      generatedAt: nowIso(),
+      contentHash: hash
     }
   }
 }

@@ -29,7 +29,6 @@
   import PluginView from './components/PluginView.svelte'
   import SettingsShell from './components/settings/SettingsShell.svelte'
   import QuickAddTask from './plugins/first-party/silt-tasks/components/QuickAddTask.svelte'
-  import { setDisplayModeQuiet } from './plugins/first-party/silt-tasks/state.svelte'
   import { loadPlugins } from './plugins/loader'
   import {
     initConfigHotReload,
@@ -157,22 +156,6 @@
   // read ctx.activeNotebook/Section/Page via live getters backed by this state.
   $effect(() => {
     setActiveLocation(activeNotebook, activeSection, activePage)
-  })
-
-  // One-release alias redirect (#429): 'calendar'/'kanban' view-ids (from
-  // saved nav state or external switch-view events) land in silt-tasks with
-  // the matching display mode, then redirect the activity bar to the unified
-  // 'tasks' entry. The effect reads activeView and writes to it; once it
-  // flips to 'tasks' the condition is false so it stops (no loop). Drop in
-  // N+1 when the old view-ids are fully removed.
-  $effect(() => {
-    if (activeView === 'calendar') {
-      setDisplayModeQuiet('calendar')
-      activeView = 'tasks'
-    } else if (activeView === 'kanban') {
-      setDisplayModeQuiet('board')
-      activeView = 'tasks'
-    }
   })
 
   // --- Tab management (#142) -----------------------------------------------
