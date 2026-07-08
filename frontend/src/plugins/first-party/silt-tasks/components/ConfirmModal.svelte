@@ -1,0 +1,129 @@
+<script lang="ts">
+  import { onMount, tick } from 'svelte'
+
+  /**
+   * Reusable confirmation dialog for the Tasks surfaces (#470). Mirrors the
+   * main sidebar's delete-confirm pattern: centered modal over a blurred
+   * backdrop, Escape + click-away both cancelling, simple Tab focus trap.
+   *
+   * Deliberately does NOT autofocus either button — per NN/g, a destructive
+   * confirm should require a deliberate choice rather than letting Enter fire
+   * the default action. The dialog container itself receives focus so screen
+   * readers announce the title immediately, then the user tabs to choose.
+   */
+  interface Props {
+    title: string
+    message: string
+    confirmLabel?: string
+    cancelLabel?: string
+    destructive?: boolean
+    onConfirm: () => void
+    onCancel: () => void
+    dataTestId?: string
+  }
+
+  let {
+    title,
+    message,
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel',
+    destructive = false,
+    onConfirm,
+    onCancel,
+    dataTestId
+  }: Props = $props()
+
+  let dialogRef = $state<HTMLDivElement | null>(null)
+  let previouslyFocused: HTMLElement | null = null
+
+  const FOCUSABLE =
+    'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+  function focusableEls(): HTMLElement[] {
+    if (!dialogRef) return []
+    return Array.from(dialogRef.querySelectorAll<HTMLElement>(FOCUSABLE))
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onCancel()
+      return
+    }
+    if (e.key === 'Tab' && dialogRef) {
+      const els = focusableEls()
+      if (els.length === 0) return
+      const first = els[0]
+      const last = els[els.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (e.shiftKey) {
+        if (active === first || !dialogRef.contains(active)) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else if (active === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+  }
+
+  onMount(() => {
+    previouslyFocused = document.activeElement as HTMLElement | null
+    window.addEventListener('keydown', handleKeydown)
+    // Focus the container (not a button) — no pre-selected default action.
+    tick().then(() => dialogRef?.focus())
+    return () => {
+      window.removeEventListener('keydown', handleKeydown)
+      previouslyFocused?.focus?.()
+    }
+  })
+</script>
+
+<div
+  class="fixed inset-0 z-[190] flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
+>
+  <button
+    tabindex="-1"
+    aria-label={cancelLabel}
+    class="absolute inset-0 cursor-default border-none bg-transparent p-0"
+    onclick={onCancel}
+  ></button>
+  <div
+    bind:this={dialogRef}
+    role="dialog"
+    aria-modal="true"
+    aria-label={title}
+    tabindex="-1"
+    data-testid={dataTestId}
+    class="relative w-full max-w-sm rounded-xl border border-surface-modal-border shadow-2xl overflow-hidden"
+    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 92%, transparent);"
+  >
+    <div class="px-5 py-4 border-b border-surface-modal-border">
+      <h2 class="font-headline-md text-headline-md text-text-primary">
+        {title}
+      </h2>
+      <p class="text-text-muted text-[12px] font-body-md mt-1">{message}</p>
+    </div>
+    <div class="flex items-center justify-end gap-2 px-5 py-3">
+      <button
+        type="button"
+        onclick={onCancel}
+        data-testid={dataTestId ? `${dataTestId}-cancel` : undefined}
+        class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer"
+      >
+        {cancelLabel}
+      </button>
+      <button
+        type="button"
+        onclick={onConfirm}
+        data-testid={dataTestId ? `${dataTestId}-confirm` : undefined}
+        class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border {destructive
+          ? 'bg-status-danger/20 border-status-danger/40 text-status-danger hover:brightness-110'
+          : 'bg-accent-primary-start border-accent-primary-start text-text-primary hover:brightness-110'}"
+      >
+        {confirmLabel}
+      </button>
+    </div>
+  </div>
+</div>

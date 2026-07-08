@@ -443,6 +443,31 @@ export function clearActiveSavedView(): void {
 }
 
 /**
+ * Reorder user views within the saved-views list (#470). System views
+ * stay anchored — only user views are moveable. The move is a remove-
+ * then-insert relative to the target: `before: true` lands the source
+ * immediately ahead of the target, `false` immediately after. A no-op
+ * when either id is missing, identical, or points at a system view.
+ */
+export function reorderSavedViews(
+  fromId: string,
+  toId: string,
+  before: boolean
+): void {
+  const views = _state.savedViews
+  const fromIdx = views.findIndex((v) => v.id === fromId)
+  const toIdx = views.findIndex((v) => v.id === toId)
+  if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return
+  // System views are never reorderable (neither drag source nor target).
+  if (views[fromIdx].system || views[toIdx].system) return
+  const [moved] = views.splice(fromIdx, 1)
+  // Recompute the target index after the splice shifted the array.
+  const newToIdx = views.findIndex((v) => v.id === toId)
+  const insertAt = before ? newToIdx : newToIdx + 1
+  views.splice(insertAt, 0, moved)
+}
+
+/**
  * Reset the unified hub state to defaults. Called by the loader's
  * vault:closing handler so scope/filters/override/focus from the
  * previous vault don't linger into the next — same contract as the

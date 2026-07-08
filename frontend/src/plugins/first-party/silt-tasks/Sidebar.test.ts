@@ -359,7 +359,7 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(activateBtn!.getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('delete button on a USER view calls persistSavedViews with the view removed', async () => {
+  it('deleting a USER view via manage menu → confirm modal removes + persists', async () => {
     const userView: SavedView = {
       id: 'u1',
       name: 'My View',
@@ -369,10 +369,19 @@ describe('silt-tasks Sidebar (#432)', () => {
       filters: { owners: [], priorities: [], dueDate: '', tags: [] }
     }
     seedSavedViews([userView])
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
-    await fireEvent.click(screen.getByTestId('delete-view-u1'))
+    // Open the manage menu via the ⋯ button.
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    expect(screen.getByTestId('manage-view-menu')).toBeInTheDocument()
+    // Click Delete → opens the confirm modal (NOT window.confirm).
+    await fireEvent.click(screen.getByTestId('manage-delete-view'))
+    await flush()
+    expect(screen.getByTestId('delete-view-confirm')).toBeInTheDocument()
+    expect(screen.queryByTestId('manage-view-menu')).toBeNull()
+    // Confirm the deletion.
+    await fireEvent.click(screen.getByTestId('delete-view-confirm-confirm'))
     await flush()
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
       'saved_views',
@@ -381,15 +390,375 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(screen.queryByTestId('view-u1')).toBeNull()
   })
 
-  it('delete button on a SYSTEM view is disabled (system views are read-only)', async () => {
+  it('cancelling the delete confirm modal leaves the list unchanged', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-delete-view'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('delete-view-confirm-cancel'))
+    await flush()
+    expect(screen.queryByTestId('delete-view-confirm')).toBeNull()
+    expect(screen.getByTestId('view-u1')).toBeInTheDocument()
+    expect(mocks.updatePluginSetting).not.toHaveBeenCalled()
+  })
+
+  it('delete confirm modal shows the view name in its message', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'Sprint 42',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-delete-view'))
+    await flush()
+    const modal = screen.getByTestId('delete-view-confirm')
+    expect(modal.textContent).toContain('Sprint 42')
+  })
+
+  it('SYSTEM views have no manage button and no grip (read-only)', async () => {
     seedSavedViews()
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
-    const del = screen.getByTestId(
-      'delete-view-sys-today-board'
-    ) as HTMLButtonElement
-    expect(del.disabled).toBe(true)
-    expect(del.getAttribute('aria-disabled')).toBe('true')
+    expect(screen.queryByTestId('manage-view-sys-today-board')).toBeNull()
+    expect(screen.queryByTestId('manage-view-sys-by-owner')).toBeNull()
+    expect(screen.queryByTestId('grip-sys-today-board')).toBeNull()
+    // The view name button still renders.
+    expect(screen.getByTestId('view-sys-today-board')).toBeInTheDocument()
+  })
+
+  it('right-clicking a USER view opens the manage menu', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const row = screen.getByTestId('view-row-u1')
+    await fireEvent.contextMenu(row)
+    await flush()
+    expect(screen.getByTestId('manage-view-menu')).toBeInTheDocument()
+  })
+
+  it('right-clicking a SYSTEM view does NOT open the manage menu', async () => {
+    seedSavedViews()
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const row = screen.getByTestId('view-row-sys-today-board')
+    await fireEvent.contextMenu(row)
+    await flush()
+    expect(screen.queryByTestId('manage-view-menu')).toBeNull()
+  })
+
+  it('manage menu backdrop click closes the menu', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    expect(screen.getByTestId('manage-view-menu')).toBeInTheDocument()
+    await fireEvent.click(screen.getByTestId('manage-view-backdrop'))
+    await flush()
+    expect(screen.queryByTestId('manage-view-menu')).toBeNull()
+  })
+
+  it('manage menu has aria-haspopup and the button identifies the view by name', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'My Special View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const btn = screen.getByTestId('manage-view-u1')
+    expect(btn.getAttribute('aria-haspopup')).toBe('menu')
+    expect(btn.getAttribute('aria-label')).toContain('My Special View')
+  })
+
+  // --- Rename (#470) ----------------------------------------------------
+
+  it('rename: inline editor opens prefilled, Enter confirms, persists via saveView', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'Old Name',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-rename-view'))
+    await flush()
+    const input = screen.getByTestId('rename-input-u1') as HTMLInputElement
+    expect(input.value).toBe('Old Name')
+    await fireEvent.input(input, { target: { value: 'New Name' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'saved_views',
+      expect.arrayContaining([expect.objectContaining({ name: 'New Name' })])
+    )
+    // Rename mode exited.
+    expect(screen.queryByTestId('rename-input-u1')).toBeNull()
+  })
+
+  it('rename: Escape cancels without persisting', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'Original',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-rename-view'))
+    await flush()
+    const input = screen.getByTestId('rename-input-u1') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Changed' } })
+    await fireEvent.keyDown(input, { key: 'Escape' })
+    await flush()
+    expect(screen.queryByTestId('rename-input-u1')).toBeNull()
+    expect(mocks.updatePluginSetting).not.toHaveBeenCalled()
+    // Original name survives.
+    expect(screen.getByTestId('view-u1').textContent).toContain('Original')
+  })
+
+  it('rename: empty name does not persist', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'Keep Me',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-rename-view'))
+    await flush()
+    const input = screen.getByTestId('rename-input-u1') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: '   ' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+    expect(mocks.updatePluginSetting).not.toHaveBeenCalled()
+    // Still in rename mode.
+    expect(screen.getByTestId('rename-input-u1')).toBeInTheDocument()
+  })
+
+  // --- Overwrite / Update (#470) ----------------------------------------
+
+  it('update: dirty indicator clears + current state overwrites the view', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      groupBy: 'owner',
+      sort: 'priority',
+      scope: 'vault',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] },
+      calendarSubMode: 'month',
+      columns: ['TODO', 'DOING', 'DONE']
+    }
+    seedSavedViews([userView])
+    // Make the view active + dirty, with the live state diverged to board.
+    getTaskHubState().activeSavedViewId = 'u1'
+    getTaskHubState().savedViewsDirty = true
+    getTaskHubState().displayMode = 'board'
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    // Update option is present because the view is active + dirty.
+    expect(screen.getByTestId('manage-update-view')).toBeInTheDocument()
+    await fireEvent.click(screen.getByTestId('manage-update-view'))
+    await flush()
+    const s = getTaskHubState()
+    expect(s.savedViewsDirty).toBe(false)
+    expect(s.savedViews.find((v) => v.id === 'u1')?.displayMode).toBe('board')
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'saved_views',
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'u1', displayMode: 'board' })
+      ])
+    )
+  })
+
+  it('update option is absent when the view is not the active dirty view', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    expect(screen.queryByTestId('manage-update-view')).toBeNull()
+  })
+
+  // --- Reorder (#470) ---------------------------------------------------
+
+  it('drag: drop persists the new user-view order (system views anchored)', async () => {
+    const u1: SavedView = {
+      id: 'u1',
+      name: 'First',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    const u2: SavedView = {
+      id: 'u2',
+      name: 'Second',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([u1, u2])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const grip = screen.getByTestId('grip-u1')
+    const targetRow = screen.getByTestId('view-row-u2')
+    // Simulate HTML5 drag: dragstart on grip, dragover + drop on target row.
+    await fireEvent.dragStart(grip)
+    await fireEvent.dragOver(targetRow, { clientY: 100 })
+    await fireEvent.drop(targetRow)
+    await flush()
+    const written = mocks.updatePluginSetting.mock.calls.find(
+      (c) => c[0] === 'saved_views'
+    )?.[1] as Array<{ id: string }> | undefined
+    expect(written).toBeDefined()
+    // u2 should now come before u1 in the persisted user-view order.
+    const userIds = written!.filter((v) => !v.id.startsWith('sys-'))
+    expect(userIds.map((v) => v.id)).toEqual(['u2', 'u1'])
+  })
+
+  it('keyboard: Move up persists the reordered list', async () => {
+    const u1: SavedView = {
+      id: 'u1',
+      name: 'First',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    const u2: SavedView = {
+      id: 'u2',
+      name: 'Second',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([u1, u2])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // Move u2 up via the manage menu.
+    await fireEvent.click(screen.getByTestId('manage-view-u2'))
+    await flush()
+    expect(screen.getByTestId('manage-move-up').hasAttribute('disabled')).toBe(
+      false
+    )
+    await fireEvent.click(screen.getByTestId('manage-move-up'))
+    await flush()
+    const written = mocks.updatePluginSetting.mock.calls.find(
+      (c) => c[0] === 'saved_views'
+    )?.[1] as Array<{ id: string }> | undefined
+    expect(written).toBeDefined()
+    const userIds = written!.filter((v) => !v.id.startsWith('sys-'))
+    expect(userIds.map((v) => v.id)).toEqual(['u2', 'u1'])
+  })
+
+  it('Move up is disabled for the first user view', async () => {
+    const u1: SavedView = {
+      id: 'u1',
+      name: 'First',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([u1])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    const moveUp = screen.getByTestId('manage-move-up') as HTMLButtonElement
+    expect(moveUp.disabled).toBe(true)
+  })
+
+  it('keyboard: ArrowDown navigates the manage menu items', async () => {
+    const u1: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    const u2: SavedView = {
+      id: 'u2',
+      name: 'Other',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([u1, u2])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // Open u2's menu — u2 can move up (it's the 2nd user view).
+    await fireEvent.click(screen.getByTestId('manage-view-u2'))
+    await flush()
+    const menu = screen.getByTestId('manage-view-menu')
+    // Focus the first item (Rename).
+    const renameItem = screen.getByTestId('manage-rename-view')
+    renameItem.focus()
+    await flush()
+    expect(document.activeElement).toBe(renameItem)
+    // ArrowDown should move to the next enabled item (Move up).
+    await fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    await flush()
+    const moveUp = screen.getByTestId('manage-move-up')
+    expect(document.activeElement).toBe(moveUp)
+  })
+
+  it('keyboard: Escape closes the manage menu', async () => {
+    const u1: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([u1])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    expect(screen.getByTestId('manage-view-menu')).toBeInTheDocument()
+    const menu = screen.getByTestId('manage-view-menu')
+    await fireEvent.keyDown(menu, { key: 'Escape' })
+    await flush()
+    expect(screen.queryByTestId('manage-view-menu')).toBeNull()
   })
 
   it('active view shows "(modified)" suffix when savedViewsDirty is true', async () => {

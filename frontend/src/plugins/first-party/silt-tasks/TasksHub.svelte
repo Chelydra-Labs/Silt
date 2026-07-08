@@ -12,6 +12,7 @@
   import { fly } from 'svelte/transition'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import FilterBar from './components/FilterBar.svelte'
+  import ConfirmModal from './components/ConfirmModal.svelte'
   import ListView from './views/ListView.svelte'
   import BoardView from './views/BoardView.svelte'
   import CalendarView from './views/CalendarView.svelte'
@@ -460,16 +461,29 @@
     )
   }
 
-  async function commitDelete() {
-    if (!activeSavedView) return
-    if (activeSavedView.system) return
-    if (!window.confirm(`Delete saved view "${activeSavedView.name}"?`)) return
-    const id = activeSavedView.id
-    const name = activeSavedView.name
-    deleteSavedView(id)
+  // Delete confirmation now flows through an in-app modal (#470) instead of
+  // window.confirm(). `deleteConfirmTarget` holds the view awaiting the user's
+  // choice; performDelete runs after the user confirms.
+  let deleteConfirmTarget = $state<SavedView | null>(null)
+
+  function requestDelete() {
+    if (!activeSavedView || activeSavedView.system) return
+    closePopover()
+    deleteConfirmTarget = activeSavedView
+  }
+
+  function cancelDeleteModal() {
+    deleteConfirmTarget = null
+  }
+
+  async function performDelete() {
+    const target = deleteConfirmTarget
+    deleteConfirmTarget = null
+    if (!target || target.system) return
+    deleteSavedView(target.id)
     await persistAndAnnounce(
       getTaskHubState().savedViews,
-      `View "${name}" deleted`
+      `View "${target.name}" deleted`
     )
   }
 
@@ -733,7 +747,7 @@
               title={activeSavedView?.system
                 ? 'System views cannot be deleted'
                 : undefined}
-              onclick={() => void commitDelete()}
+              onclick={() => requestDelete()}
               data-testid="tasks-hub-delete-view"
               class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-error text-left border-none bg-transparent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
             >
@@ -838,4 +852,18 @@
   >
     {savedViewLiveMsg}
   </div>
+
+  <!-- Delete confirmation modal (#470). Replaces window.confirm(). -->
+  {#if deleteConfirmTarget}
+    <ConfirmModal
+      title="Delete saved view?"
+      message={`Delete “${deleteConfirmTarget.name}”? This view will be removed from your saved views.`}
+      confirmLabel="Delete"
+      cancelLabel="Cancel"
+      destructive={true}
+      dataTestId="tasks-hub-delete-confirm"
+      onConfirm={() => void performDelete()}
+      onCancel={cancelDeleteModal}
+    />
+  {/if}
 </div>

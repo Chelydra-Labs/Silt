@@ -590,4 +590,77 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     const bm = screen.getByTestId('tasks-hub-bookmark')
     expect(bm.getAttribute('data-popover-state')).toBe('closed')
   })
+
+  it('delete uses the in-app confirm modal, not window.confirm (#470)', async () => {
+    // jsdom's window.confirm returns false by default — if commitDelete still
+    // used it, the deletion would silently no-op. We assert the modal opens
+    // instead and the choice flows through it.
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Save a view (becomes active + clean → menu shows rename/delete).
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.input(screen.getByTestId('tasks-hub-save-view-name'), {
+      target: { value: 'Doomed' }
+    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+
+    // Open the menu + click Delete.
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('tasks-hub-delete-view'))
+    await flush()
+
+    // The in-app modal opens (not window.confirm).
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.getByTestId('tasks-hub-delete-confirm')).toBeInTheDocument()
+    const modal = screen.getByTestId('tasks-hub-delete-confirm')
+    expect(modal.textContent).toContain('Doomed')
+  })
+
+  it('confirming the delete modal removes the view; cancelling keeps it (#470)', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.input(screen.getByTestId('tasks-hub-save-view-name'), {
+      target: { value: 'Keep Me' }
+    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+    const savedId = getTaskHubState().activeSavedViewId
+    expect(savedId).toBeTruthy()
+
+    // Open delete modal.
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('tasks-hub-delete-view'))
+    await flush()
+
+    // Cancel — view survives.
+    await fireEvent.click(screen.getByTestId('tasks-hub-delete-confirm-cancel'))
+    await flush()
+    expect(
+      getTaskHubState().savedViews.find((v) => v.id === savedId)
+    ).toBeDefined()
+    expect(screen.queryByTestId('tasks-hub-delete-confirm')).toBeNull()
+
+    // Re-open + confirm — view is gone.
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('tasks-hub-delete-view'))
+    await flush()
+    await fireEvent.click(
+      screen.getByTestId('tasks-hub-delete-confirm-confirm')
+    )
+    await flush()
+    expect(
+      getTaskHubState().savedViews.find((v) => v.id === savedId)
+    ).toBeUndefined()
+    expect(getTaskHubState().activeSavedViewId).toBe('')
+  })
 })
