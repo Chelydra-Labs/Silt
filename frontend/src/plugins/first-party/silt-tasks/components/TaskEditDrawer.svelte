@@ -460,6 +460,14 @@
       metaError = errMsg(e)
     } finally {
       statusPending = false
+      // #442 follow-up: if a newer arrow selection landed (statusState diverged
+      // from statusCommitted) while this commit was in-flight on a slow IPC,
+      // applyStatus's `statusPending` early-return dropped it. Re-arm the
+      // debouncer so the latest selection eventually commits. Terminates: a
+      // successful commit sets statusCommitted=s (no divergence); a failed one
+      // reverts statusState=statusCommitted (no divergence) — so this fires at
+      // most one catch-up cycle per dropped selection.
+      if (statusState !== statusCommitted) statusDebouncer.trigger()
     }
   }
 
@@ -537,6 +545,9 @@
       metaError = errMsg(e)
     } finally {
       priorityPending = false
+      // #442 follow-up: catch up a newer arrow selection that landed while this
+      // commit was in-flight (see commitStatusWrite for the termination proof).
+      if (priorityState !== priorityCommitted) priorityDebouncer.trigger()
     }
   }
 

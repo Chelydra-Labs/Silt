@@ -175,6 +175,12 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string) error {
 	didWrite := false
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			// Focus-lock guard — mirrors mutateTaskBlock/MutateBlock so a
+			// blocked-by edge write can't clobber an in-flight editor edit (#444).
+			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+				writeErr = errBlockBeingEdited
+				return
+			}
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil {
 				writeErr = err

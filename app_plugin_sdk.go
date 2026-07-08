@@ -245,6 +245,13 @@ func (a *App) PluginUpdateTaskMeta(pluginID, sessionToken, blockID string, pin i
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return false, err
 	}
+	// Capability gate — mirrors every sibling Plugin* task setter
+	// (PluginSetTaskOwner/Priority/Tags/Title/Order/DueDate/BlockedBy,
+	// PluginAppendTaskComment). pin/progress are file-resident user intent, so
+	// a third-party plugin without CapContentMutate must not toggle them.
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
 	// Input validation runs before acquiring the lock; mutateTaskBlock takes
 	// its own RLock. (Pre-refactor these checks happened under the lock — pure
 	// input/range checks don't need it.)
@@ -264,10 +271,6 @@ func (a *App) PluginUpdateTaskMeta(pluginID, sessionToken, blockID string, pin i
 	// emit-on-failure); mutateTaskBlock emits AFTER the locks release with a
 	// fileDate fallback (the round-3 emit-on-failure fix). It also inherits
 	// the focus-lock guard (#444) every other task-setter now shares.
-	//
-	// NOTE: unlike PluginSetTaskDueDate this entry point is NOT currently
-	// capability-gated (no requireGrant(CapContentMutate)). That pre-dates the
-	// refactor; preserving behavior here, flagging for a follow-up.
 	if err := a.mutateTaskBlock(blockID, "PluginUpdateTaskMeta", func(b *parser.ParsedBlock) {
 		if pin != -1 {
 			switch pin {

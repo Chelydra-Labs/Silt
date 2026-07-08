@@ -772,6 +772,11 @@
     </div>
   {/if}
 
+  {#if errorMsg}
+    <!-- Hoisted above the padded content container so it renders as a
+         full-width strip, matching BoardView/ListView's error placement. -->
+    <ErrorBanner message={errorMsg} />
+  {/if}
   <div class="flex-1 overflow-auto custom-scrollbar p-4">
     {#if loading}
       <!-- Skeleton: 6×7 day-cell grid mirroring the month layout, so the
@@ -794,7 +799,8 @@
         {/each}
       </div>
     {:else if errorMsg}
-      <ErrorBanner message={errorMsg} />
+      <!-- Fatal query error: the grid is suppressed (the banner above shows
+           the message; nothing to render in the padded content area). -->
     {:else if subMode === 'month'}
       <!-- Month grid (lifted from silt-calendar). 7-column CSS grid; each day
            cell carries role="gridcell" and a data-celldate for testing/DnD.

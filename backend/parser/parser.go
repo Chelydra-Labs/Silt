@@ -1302,9 +1302,11 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		// Fixed order — author then ts — so the parse → render round-trip
 		// is byte-stable regardless of the order the parser saw. NOTE-only
 		// by construction: TASK blocks use the task render path above.
-		// Author is sanitized before rendering: a ']' in the value would
-		// truncate the [author::] token, and a newline would split the NOTE
-		// block across lines (breaking the parse on next read).
+		// Both values are sanitized before rendering: a ']' would truncate the
+		// token and a newline would split the NOTE block across lines (breaking
+		// the parse on next read). The SDK always passes a well-formed
+		// YYYY-MM-DDTHH:MM:SS ts, but a buggy/hostile plugin calling the
+		// append-comment binding directly can't corrupt the token stream.
 		var noteTokens []string
 		if block.Author != "" {
 			author := strings.ReplaceAll(block.Author, "]", "")
@@ -1313,7 +1315,10 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 			noteTokens = append(noteTokens, fmt.Sprintf("[author:: %s]", author))
 		}
 		if block.Timestamp != "" {
-			noteTokens = append(noteTokens, fmt.Sprintf("[ts:: %s]", block.Timestamp))
+			ts := strings.ReplaceAll(block.Timestamp, "]", "")
+			ts = strings.ReplaceAll(ts, "\n", " ")
+			ts = strings.ReplaceAll(ts, "\r", "")
+			noteTokens = append(noteTokens, fmt.Sprintf("[ts:: %s]", ts))
 		}
 		noteTokenStr := ""
 		if len(noteTokens) > 0 {

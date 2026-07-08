@@ -210,3 +210,36 @@ func TestNoteAttribution_Isolation_NoteTaskKeysIgnored(t *testing.T) {
 		t.Errorf("expected [author::] stripped from CleanText, got %q", block.CleanText)
 	}
 }
+
+// TestRenderBlock_NoteTimestampSanitized mirrors the Author sanitization for
+// the [ts::] token: a hostile or buggy caller cannot use a ']' or newline in
+// the timestamp to truncate the token or split the NOTE block across lines.
+// The SDK always passes a well-formed YYYY-MM-DDTHH:MM:SS, but the append-
+// comment binding accepts arbitrary plugin input, so the renderer must defend.
+func TestRenderBlock_NoteTimestampSanitized(t *testing.T) {
+	block := ParsedBlock{
+		ID:        "9999aaaa-1111-1111-1111-111111111111",
+		Type:      BlockNote,
+		CleanText: "comment body",
+		RawText:   "- comment body",
+		FileDate:  "2026-07-06",
+		Timestamp: "evil]inject[ts:: x\nsecond line\r\nthird",
+	}
+	out := renderBlock(block, 4)
+	// The hostile ']' was stripped (no early token truncation).
+	if strings.Contains(out, "evil]") {
+		t.Errorf("hostile ']' should be stripped, got: %s", out)
+	}
+	// The newlines were collapsed to spaces — the [ts::] value did NOT split
+	// the NOTE across lines (the original had "\nsecond line\r\nthird").
+	if strings.Contains(out, "x\nsecond") || strings.Contains(out, "line\nthird") {
+		t.Errorf("newlines in ts should be collapsed to spaces, got: %q", out)
+	}
+	// The [ts::] token still emits and the block identity comment survives.
+	if !strings.Contains(out, "[ts::") {
+		t.Errorf("expected a [ts::] token, got: %s", out)
+	}
+	if !strings.Contains(out, "9999aaaa") {
+		t.Errorf("block identity comment should survive, got: %s", out)
+	}
+}

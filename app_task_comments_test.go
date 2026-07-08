@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
@@ -225,7 +224,3 @@ func mustReadTaskFile(t *testing.T, app *App, notebook, section, page string) st
 	}
 	return string(b)
 }
-
-// strings is referenced by sub-tree text assertions above; keep the import
-// honest if a future edit removes the only call site.
-var _ = strings.Contains

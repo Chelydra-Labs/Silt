@@ -615,6 +615,50 @@ describe('TaskEditDrawer — priority editor (#412)', () => {
     expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 1)
   })
 
+  it('catches up a newer selection that landed during a slow in-flight commit (#442)', async () => {
+    // Regression guard: before the fix, a debounced flush that fired while a
+    // prior IPC was still pending early-returned on `priorityPending` and the
+    // newer selection was silently dropped (drawer shows one value, the list
+    // view another). The fix re-arms the debouncer from the commit's finally
+    // when the local selection has diverged.
+    let resolveFirst!: () => void
+    const firstInFlight = new Promise<void>((r) => (resolveFirst = r))
+    const setTaskPriority = vi
+      .fn()
+      .mockReturnValueOnce(firstInFlight.then(() => true)) // 1st call: slow
+      .mockResolvedValue(true) // subsequent calls: instant
+    const ctx = makeCtx({ setTaskPriority })
+    const { container } = render(TaskEditDrawer, {
+      props: { task: makeTask({ priority: 2 }), ctx, onClose: () => {} }
+    })
+    const rg = container.querySelector(
+      '[aria-labelledby="task-priority-label"]'
+    ) as HTMLElement
+    await tick()
+
+    // 1st arrow (2→3): debounce fires → commit starts, awaits the slow IPC.
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' })
+    await tick()
+    await new Promise((r) => setTimeout(r, 300)) // past the 200ms debounce
+    expect(setTaskPriority).toHaveBeenCalledTimes(1)
+    expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 3)
+
+    // 2nd arrow (3→1) WHILE the 1st IPC is still in-flight. The debounce
+    // flush fires but commitPriority early-returns on priorityPending — the
+    // catch-up must re-arm it after the 1st commit resolves.
+    await fireEvent.keyDown(rg, { key: 'ArrowRight' })
+    await tick()
+    await new Promise((r) => setTimeout(r, 300)) // flush during in-flight → dropped
+    // Still only the 1st call; the 2nd was dropped (in-flight).
+    expect(setTaskPriority).toHaveBeenCalledTimes(1)
+
+    // 1st IPC resolves → finally re-arms the debouncer → catch-up commits 1.
+    resolveFirst()
+    await new Promise((r) => setTimeout(r, 300)) // past the catch-up debounce
+    expect(setTaskPriority).toHaveBeenCalledTimes(2)
+    expect(setTaskPriority).toHaveBeenLastCalledWith('task-1', 1)
+  })
+
   it('reverts local state and shows the error banner on failure', async () => {
     const setTaskPriority = vi.fn().mockRejectedValue(new Error('disk locked'))
     const ctx = makeCtx({ setTaskPriority })

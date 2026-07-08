@@ -722,7 +722,12 @@
     class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-6 max-w-4xl w-full"
   >
     {#if loading}
-      <div class="skeleton-container" data-testid="tasks-loading">
+      <div
+        class="skeleton-container"
+        data-testid="tasks-loading"
+        aria-busy="true"
+        aria-label="Loading tasks"
+      >
         {#each Array(4) as _}
           <div class="skeleton-row">
             <div class="skeleton-circle"></div>
