@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"silt/backend/ai"
 	"silt/backend/config"
 	"silt/backend/core"
 	"silt/backend/db"
@@ -60,6 +61,7 @@ func newTestApp(t *testing.T) *App {
 		spacesPerTab:   4,
 		rateLimiter:    newPluginRateLimiter(),
 		pluginSessions: make(map[string]string),
+		aiModelCache:   make(map[string][]ai.AIModel),
 	}
 	// Load the scaffolded config.yaml so config-backed bindings
 	// (GetPluginRegistry, GetSystemConfig) behave as in production.

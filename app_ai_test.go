@@ -339,6 +339,119 @@ func TestTestAIConnection_RejectsBadWhich(t *testing.T) {
 	}
 }
 
+// --- ListModels + model cache ---------------------------------------------
+
+func TestListModels_ColdStartReturnsEmpty(t *testing.T) {
+	// force=false with no cache returns empty (no surprise network call).
+	app := newTestApp(t)
+	models, err := app.ListModels("chat", false)
+	if err != nil {
+		t.Fatalf("ListModels cold start: %v", err)
+	}
+	if len(models) != 0 {
+		t.Errorf("cold-start ListModels should return empty, got %d", len(models))
+	}
+}
+
+func TestListModels_ForcesPollAndCaches(t *testing.T) {
+	app := newTestApp(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": "gpt-4o"},
+				{"id": "gpt-4o-mini"},
+			},
+		})
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "gpt-4o")
+
+	// force=true polls and caches.
+	models, err := app.ListModels("chat", true)
+	if err != nil {
+		t.Fatalf("ListModels force: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("got %d models, want 2", len(models))
+	}
+
+	// force=false now serves from cache (the test server is still up, but the
+	// cache path is exercised — the key point is no error + same data).
+	cached, err := app.ListModels("chat", false)
+	if err != nil {
+		t.Fatalf("ListModels cached: %v", err)
+	}
+	if len(cached) != 2 {
+		t.Errorf("cached models = %d, want 2", len(cached))
+	}
+}
+
+func TestListModels_CacheInvalidatedOnProviderConfigChange(t *testing.T) {
+	app := newTestApp(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"id": "model-a"}},
+		})
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "model-a")
+
+	// Populate the cache.
+	_, err := app.ListModels("chat", true)
+	if err != nil {
+		t.Fatalf("ListModels force: %v", err)
+	}
+
+	// Changing the provider config invalidates the cache.
+	if err := app.UpdateAIProviderConfig("chat", AIProviderPatch{
+		ProviderType: config.AIProviderOpenAICompatible,
+		BaseURL:      srv.URL,
+		Model:        "model-b",
+	}); err != nil {
+		t.Fatalf("UpdateAIProviderConfig: %v", err)
+	}
+
+	// force=false now returns empty (cache was invalidated).
+	models, err := app.ListModels("chat", false)
+	if err != nil {
+		t.Fatalf("ListModels after invalidation: %v", err)
+	}
+	if len(models) != 0 {
+		t.Errorf("cache should be invalidated after provider config change, got %d models", len(models))
+	}
+}
+
+func TestListModels_CacheInvalidatedOnKeyChange(t *testing.T) {
+	app := newTestApp(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"id": "model-a"}},
+		})
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "model-a")
+
+	// Populate the cache.
+	_, err := app.ListModels("chat", true)
+	if err != nil {
+		t.Fatalf("ListModels force: %v", err)
+	}
+
+	// Setting a key invalidates the cache.
+	if err := app.SetAIAPIKey("chat", "new-key"); err != nil {
+		t.Fatalf("SetAIAPIKey: %v", err)
+	}
+
+	// force=false returns empty (cache was invalidated by the key change).
+	models, _ := app.ListModels("chat", false)
+	if len(models) != 0 {
+		t.Errorf("cache should be invalidated after key change, got %d models", len(models))
+	}
+}
+
 // intPtrAI avoids shadowing the config-package intPtr inside the main package
 // tests.
 func intPtrAI(i int) *int { return &i }
