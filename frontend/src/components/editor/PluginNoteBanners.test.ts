@@ -16,6 +16,12 @@ vi.mock('../../plugins/context', () => ({
   makePluginContext: vi.fn(() => ({}))
 }))
 
+vi.mock('../../plugins/loader', () => ({
+  // The host must thread the loader-issued session token into the banner ctx;
+  // without it privileged SDK calls (sqliteQuery, …) fail server-side (#236).
+  getSessionToken: vi.fn(() => 'session-token')
+}))
+
 vi.mock('../../../wailsjs/go/main/App.js', () => ({
   GetPluginSettingsForNotebook: vi.fn().mockResolvedValue({}),
   UpdatePluginSetting: vi.fn().mockResolvedValue(undefined),
@@ -27,6 +33,7 @@ import {
   resetSurfacesForTests,
   getSurfaces
 } from '../../plugins/surfaces'
+import { makePluginContext } from '../../plugins/context'
 import PluginNoteBanners from './PluginNoteBanners.svelte'
 
 describe('PluginNoteBanners dismiss (#355)', () => {
@@ -47,6 +54,23 @@ describe('PluginNoteBanners dismiss (#355)', () => {
     expect(
       screen.getByRole('button', { name: /dismiss summary/i })
     ).toBeTruthy()
+  })
+
+  it('threads the loader session token into the banner ctx (#236)', () => {
+    // Regression: ctxFor called makePluginContext(pluginID) with no token, so
+    // every privileged SDK call from a first-party banner (e.g. silt-ai-summary
+    // refresh → sqliteQuery) failed server-side. The host must pass the token
+    // the loader registered, mirroring PluginView/Sidebar.
+    vi.mocked(makePluginContext).mockClear()
+    registerSurface({
+      id: 'p:tok',
+      pluginID: 'p',
+      kind: 'note-banner',
+      label: 'Token',
+      html: '<div>1</div>'
+    })
+    render(PluginNoteBanners)
+    expect(makePluginContext).toHaveBeenCalledWith('p', 'session-token')
   })
 
   it('tears the surface down after the dismiss grace timeout', () => {

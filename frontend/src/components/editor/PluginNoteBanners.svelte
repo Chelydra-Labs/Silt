@@ -13,6 +13,11 @@
   } from '../../plugins/surfaces'
   import PluginSurfaceFrame from '../PluginSurfaceFrame.svelte'
   import { makePluginContext } from '../../plugins/context'
+  // getSessionToken supplies the session token the loader registered for the
+  // plugin; without it every privileged SDK call (sqliteQuery, mutateBlock, …)
+  // from a first-party banner fails server-side with "missing session token"
+  // (#236). Mirrors the PluginView/Sidebar pattern.
+  import { getSessionToken } from '../../plugins/loader'
 
   let surfaces = $state<PluginSurface[]>(getSurfaces('note-banner'))
 
@@ -56,7 +61,7 @@
   function ctxFor(pluginID: string): any {
     let ctx = ctxCache.get(pluginID)
     if (!ctx) {
-      ctx = makePluginContext(pluginID) as any
+      ctx = makePluginContext(pluginID, getSessionToken(pluginID)) as any
       ctxCache.set(pluginID, ctx)
     }
     return ctx
