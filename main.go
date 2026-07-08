@@ -137,8 +137,14 @@ func main() {
 		// resolved from the active theme mode's bg.void so there is no
 		// pre-CSS flash that matches no token.
 		BackgroundColour: launchBackgroundColour(),
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
+		// #478: serialize IPCError-carriers (errBlockBeingEdited,
+		// errVaultClosing) and CapabilityDeniedError as a JSON string on the
+		// Wails error envelope so the frontend can map on a stable code
+		// instead of substring-matching Go prose. Unmigrated sentinels fall
+		// through to plain err.Error() (the pre-contract behavior).
+		ErrorFormatter: formatIPCError,
+		OnStartup:      app.startup,
+		OnShutdown:     app.shutdown,
 		Bind: []interface{}{
 			app,
 		},

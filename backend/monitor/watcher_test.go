@@ -533,10 +533,10 @@ func TestDirectoryWatcher_LinkedConfigSourceForPath(t *testing.T) {
 	}
 
 	cases := []struct {
-		name     string
-		path     string
-		wantOK   bool
-		wantSrc  string
+		name    string
+		path    string
+		wantOK  bool
+		wantSrc string
 	}{
 		{
 			name:    "linked co-located config",
@@ -903,5 +903,164 @@ func TestDirectoryWatcher_DeferredRegistrationOnDotDirCreate(t *testing.T) {
 	if !found {
 		t.Fatalf(".silt should be watched after deferred registration; got %v",
 			dw.watcher.WatchList())
+	}
+}
+
+// --- #443: mass id re-mint detection -----------------------------------------
+
+// newReMintTestWatcher builds a watcher + DB backed by vaultPath and registers
+// a recording reMintWarningHandler, returning the watcher and a capture func.
+// Mirrors the scaffolding in TestDirectoryWatcher_ReindexFileIndexesFile.
+func newReMintTestWatcher(t *testing.T, vaultPath string) (*DirectoryWatcher, func() []ReMintWarning) {
+	t.Helper()
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+	var mu sync.Mutex
+	var captured []ReMintWarning
+	dw.SetReMintWarningHandler(func(w ReMintWarning) {
+		mu.Lock()
+		captured = append(captured, w)
+		mu.Unlock()
+	})
+	return dw, func() []ReMintWarning {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]ReMintWarning, len(captured))
+		copy(out, captured)
+		return out
+	}
+}
+
+// TestReMint_StrippedIDsFlagsMassReMint is the core #443 scenario: a previously-
+// indexed file has its block-identity comments stripped by an external tool/sync,
+// so the parser re-mints every id. The watcher must fire the warning so the user
+// learns the ((uuid)) references may be broken.
+func TestReMint_StrippedIDsFlagsMassReMint(t *testing.T) {
+	vaultPath := t.TempDir()
+	dw, warnings := newReMintTestWatcher(t, vaultPath)
+
+	filePath := filepath.Join(vaultPath, "Work", "Plan.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// 7 managed blocks, all carrying ids (so the first reindex mints nothing
+	// and records priorCount = 7: header + 6 tasks).
+	original := "# Plan <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"- [ ] task a <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [ ] task b <!-- id: 33333333-3333-3333-3333-333333333333 -->\n" +
+		"- [ ] task c <!-- id: 44444444-4444-4444-4444-444444444444 -->\n" +
+		"- [ ] task d <!-- id: 55555555-5555-5555-5555-555555555555 -->\n" +
+		"- [ ] task e <!-- id: 66666666-6666-6666-6666-666666666666 -->\n" +
+		"- [ ] task f <!-- id: 77777777-7777-7777-7777-777777777777 -->\n"
+	if err := os.WriteFile(filePath, []byte(original), 0o644); err != nil {
+		t.Fatalf("write original: %v", err)
+	}
+	dw.reindexFile(filePath) // index → priorCount = 7
+	if got := warnings(); len(got) != 0 {
+		t.Fatalf("first reindex (all ids present) should not flag; got %v", got)
+	}
+
+	// Rewrite the file with EVERY block-identity comment stripped — the
+	// signature of a sync tool that doesn't know about <!-- id: ... -->.
+	stripped := "# Plan\n" +
+		"- [ ] task a\n" +
+		"- [ ] task b\n" +
+		"- [ ] task c\n" +
+		"- [ ] task d\n" +
+		"- [ ] task e\n" +
+		"- [ ] task f\n"
+	if err := os.WriteFile(filePath, []byte(stripped), 0o644); err != nil {
+		t.Fatalf("write stripped: %v", err)
+	}
+	dw.reindexFile(filePath) // re-mints all 7 blocks (header + 6 tasks)
+
+	got := warnings()
+	if len(got) != 1 {
+		t.Fatalf("expected 1 re-mint warning after stripping all ids, got %d: %v", len(got), got)
+	}
+	w := got[0]
+	if w.PriorCount != 7 {
+		t.Errorf("PriorCount = %d, want 7 (header + 6 tasks)", w.PriorCount)
+	}
+	if w.MintedCount != 7 {
+		t.Errorf("MintedCount = %d, want 7 (all ids re-minted)", w.MintedCount)
+	}
+	if w.Page != "Plan" {
+		t.Errorf("Page = %q, want %q", w.Page, "Plan")
+	}
+	if w.Path != filePath {
+		t.Errorf("Path = %q, want %q", w.Path, filePath)
+	}
+}
+
+// TestReMint_NewFileNotFlagged verifies the legitimate mass-creation path does
+// NOT trip the heuristic: a brand-new file (priorCount == 0) gets all its ids
+// minted on first index, but that's expected — not a stripping event.
+func TestReMint_NewFileNotFlagged(t *testing.T) {
+	vaultPath := t.TempDir()
+	dw, warnings := newReMintTestWatcher(t, vaultPath)
+
+	filePath := filepath.Join(vaultPath, "Work", "Fresh.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A large paste into a brand-new file: many tasks, none with ids.
+	fresh := "# Fresh\n"
+	for i := 0; i < 10; i++ {
+		fresh += "- [ ] item " + string(rune('a'+i)) + "\n"
+	}
+	if err := os.WriteFile(filePath, []byte(fresh), 0o644); err != nil {
+		t.Fatalf("write fresh: %v", err)
+	}
+	dw.reindexFile(filePath) // priorCount == 0 → exempt by construction
+
+	if got := warnings(); len(got) != 0 {
+		t.Fatalf("brand-new file (priorCount==0) should not flag even with many mints; got %v", got)
+	}
+}
+
+// TestReMint_SingleEditNotFlagged verifies a normal one-block edit on an
+// indexed file stays well under the threshold: adding one new task mints
+// exactly 1 id, which is far below max(3, priorCount/2).
+func TestReMint_SingleEditNotFlagged(t *testing.T) {
+	vaultPath := t.TempDir()
+	dw, warnings := newReMintTestWatcher(t, vaultPath)
+
+	filePath := filepath.Join(vaultPath, "Work", "Plan.md")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	original := "# Plan <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"- [ ] task a <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [ ] task b <!-- id: 33333333-3333-3333-3333-333333333333 -->\n" +
+		"- [ ] task c <!-- id: 44444444-4444-4444-4444-444444444444 -->\n" +
+		"- [ ] task d <!-- id: 55555555-5555-5555-5555-555555555555 -->\n" +
+		"- [ ] task e <!-- id: 66666666-6666-6666-6666-666666666666 -->\n" +
+		"- [ ] task f <!-- id: 77777777-7777-7777-7777-777777777777 -->\n"
+	if err := os.WriteFile(filePath, []byte(original), 0o644); err != nil {
+		t.Fatalf("write original: %v", err)
+	}
+	dw.reindexFile(filePath) // priorCount = 7
+
+	// Normal edit: append ONE new task (no id). MintedCount = 1,
+	// threshold = max(3, 7/2=3) = 3 → not flagged.
+	edited := original + "- [ ] task g (new)\n"
+	if err := os.WriteFile(filePath, []byte(edited), 0o644); err != nil {
+		t.Fatalf("write edited: %v", err)
+	}
+	dw.reindexFile(filePath)
+
+	if got := warnings(); len(got) != 0 {
+		t.Fatalf("single new task on a 7-block file should not flag (1 < threshold 3); got %v", got)
 	}
 }

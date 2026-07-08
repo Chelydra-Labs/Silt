@@ -6,6 +6,7 @@
   } from '../../wailsjs/go/main/App.js'
   import { EventsOn } from '../../wailsjs/runtime/runtime.js'
   import RichText from './RichText.svelte'
+  import { coerceIPCError } from '../lib/ipcError'
 
   // Per-branch chain of embed UUIDs currently being rendered. Each
   // EmbedPortal inherits its ancestor's chain via Svelte context, checks
@@ -68,12 +69,18 @@
       const msg = e instanceof Error ? e.message : String(e)
       // The source block is being edited in another view (focus lock held).
       // Retry shortly instead of silently overwriting or dropping the edit.
-      if (msg.includes('being edited') && attempt < 5) {
+      // #478: map on the stable code first (resilient to backend wording
+      // changes), with the substring as a legacy fallback for any unmigrated
+      // return site.
+      const isBusy =
+        coerceIPCError(e).code === 'block_being_edited' ||
+        msg.includes('being edited')
+      if (isBusy && attempt < 5) {
         saveTimer = setTimeout(() => void persist(text, attempt + 1), 800)
       } else {
         // Exhausted retries or a non-transient error — surface it so the
         // user knows their edit didn't save.
-        persistError = msg.includes('being edited')
+        persistError = isBusy
           ? 'Source block is busy — edit not saved yet'
           : `Save failed: ${msg}`
       }

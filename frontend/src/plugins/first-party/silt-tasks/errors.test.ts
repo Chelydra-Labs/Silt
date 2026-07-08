@@ -2,14 +2,34 @@ import { describe, expect, it } from 'vitest'
 import { friendlyCaughtError, friendlyTaskError } from './errors'
 
 describe('friendlyTaskError', () => {
-  it('maps the backend "being edited" sentinel to actionable copy', () => {
-    const friendly = 'This task is open in the editor — save or close it first.'
+  const friendly = 'This task is open in the editor — save or close it first.'
+
+  it('maps on the stable #478 code (resilient to backend wording changes)', () => {
+    // The backend ErrorFormatter serializes an IPCError as a JSON string on
+    // .message; the friendly mapper must recover the code regardless of the
+    // human wording.
+    expect(
+      friendlyTaskError(
+        '{"code":"block_being_edited","message":"totally different wording"}'
+      )
+    ).toBe(friendly)
+  })
+
+  it('still maps the legacy substring (unmigrated return sites)', () => {
     expect(friendlyTaskError('block is being edited in another view')).toBe(
       friendly
     )
   })
 
-  it('passes through unknown errors unchanged (fail-loudly)', () => {
+  it('passes through unknown codes unchanged (fail-loudly)', () => {
+    expect(
+      friendlyTaskError(
+        '{"code":"some_unrelated_code","message":"network error"}'
+      )
+    ).toBe('network error')
+  })
+
+  it('passes through non-JSON prose unchanged', () => {
     expect(friendlyTaskError('network error')).toBe('network error')
   })
 })
@@ -17,8 +37,8 @@ describe('friendlyTaskError', () => {
 describe('friendlyCaughtError', () => {
   const friendly = 'This task is open in the editor — save or close it first.'
 
-  it('reads .message off an Error and runs it through the mapper', () => {
-    const err = new Error('block is being edited in another view')
+  it('reads .message off an Error and runs it through the mapper (code path)', () => {
+    const err = new Error('{"code":"block_being_edited","message":"anything"}')
     expect(friendlyCaughtError(err)).toBe(friendly)
   })
 

@@ -44,18 +44,35 @@ import (
 // two vaults on one machine keep separate keys.
 const keyringService = "Silt"
 
-// errVaultClosing is returned by aiPreflightPlugin when a vault close/switch is
-// in progress. The call is rejected before any HTTP so it can neither strand an
-// audit entry against a torn-down vault nor leak into the next vault (#452).
-// The plugin surfaces it as a transient rejection (normalizeAIError → unknown);
-// the UI is unmounting during a close, so it is rarely observed.
+// errVaultClosing is the sentinel returned by withAIPreflight when a vault
+// close/switch is in progress. The call is rejected before any HTTP so it can
+// neither strand an audit entry against a torn-down vault nor leak into the
+// next vault (#452). Kept as the errors.Is target; the return site hands back
+// a vaultClosingError() (*IPCError carrying CodeVaultClosing, #478) that wraps
+// this sentinel so errors.Is(err, errVaultClosing) still holds. The plugin
+// surfaces it as a transient rejection (normalizeAIError → unknown); the UI is
+// unmounting during a close, so it is rarely observed.
 var errVaultClosing = errors.New("vault is closing; AI call rejected")
 
-// aiContext returns the app-lifecycle context for AI HTTP calls, falling back
-// to context.Background() when the App wasn't initialized via startup() (tests).
-// Production sets aiCtx in startup() and cancels it in shutdown() so in-flight
-// completions/embeddings don't outlive the process.
+// vaultClosingError returns the close-in-progress rejection as an *IPCError
+// carrying the stable CodeVaultClosing (#478) that also satisfies
+// errors.Is(err, errVaultClosing) via the wrapped sentinel.
+func vaultClosingError() *IPCError {
+	return wrapSentinelAsIPCError(CodeVaultClosing, errVaultClosing.Error(), errVaultClosing)
+}
+
+// aiContext returns the vault-scoped context for AI HTTP calls, falling
+// back through the app-lifecycle context (aiCtx) to context.Background()
+// when the App wasn't initialized via startup() (tests). Production sets
+// vaultCtx in initializeVaultServices (a child of aiCtx) and cancels it in
+// CloseVault/SwitchVault so in-flight completions/embeddings abort promptly
+// on close/switch instead of running to their 60s timeout (#471); aiCtx is
+// itself cancelled in shutdown() so in-flight calls also don't outlive the
+// process.
 func (a *App) aiContext() context.Context {
+	if a.vaultCtx != nil {
+		return a.vaultCtx
+	}
 	if a.aiCtx != nil {
 		return a.aiCtx
 	}
@@ -571,16 +588,26 @@ func (a *App) snapshotAIProvider(which string) (ai.AIProvider, error) {
 	}, nil
 }
 
-// aiPreflightPlugin runs the plugin-side gates (session, capability, rate limit)
-// and returns the resolved provider snapshot + effective model. Locks are
-// released before the keyring lookup and before the caller does any HTTP.
+// withAIPreflight runs the plugin-side gates (session, capability, rate limit)
+// and returns the resolved provider snapshot, the effective model, and a done
+// func the caller MUST defer. Locks are released before the keyring lookup and
+// before the caller does any HTTP.
 //
-// NOTE (drain contract): the closing-check + vaultClosingWG.Add(1) below MUST
-// stay within this single RLock hold — any future IPC handler that releases
-// vaultMu mid-call must follow the same pattern (check closing + Add under one
-// RLock, defer Done on the success path only). See #473 for a proposed wrapper
-// that bundles preflight + Add so the contract can't be accidentally dropped.
-func (a *App) aiPreflightPlugin(pluginID, sessionToken, which string) (ai.AIProvider, string, error) {
+// Drain contract (#473): the closing-check + vaultClosingWG.Add(1) below share
+// ONE RLock hold, so they are atomic w.r.t. CloseVault/SwitchVault's
+// closing=true + Wait (taken under the write lock) — no TOCTOU window where a
+// call slips through after the drain returns (#452). Returning the balancing
+// Done() as part of the same result as the Add makes the contract STRUCTURAL:
+// a caller that uses this wrapper cannot forget the Add (it's bundled in) and
+// cannot forget the Done (the returned func must be deferred or the vet/linter
+// flags the unused result). On error, done is nil — no Add ran, nothing to
+// balance. The Done() is safe to call at most once (sync.WaitGroup semantics).
+//
+// Nothing after the Add may return an error, or it would leak an unbalanced
+// increment; the remaining steps (keyring resolve + struct return) cannot fail
+// (the key resolve ignores its error and the return is a value copy), so the
+// returned done is always balanced by exactly one caller defer.
+func (a *App) withAIPreflight(pluginID, sessionToken, which string) (ai.AIProvider, string, func(), error) {
 	a.vaultMu.RLock()
 	// Reject new AI calls once a vault close/switch has begun. The check and
 	// the vaultClosingWG.Add below share this RLock hold, so they are atomic
@@ -589,20 +616,20 @@ func (a *App) aiPreflightPlugin(pluginID, sessionToken, which string) (ai.AIProv
 	// drain returns (#452).
 	if a.closing {
 		a.vaultMu.RUnlock()
-		return ai.AIProvider{}, "", errVaultClosing
+		return ai.AIProvider{}, "", nil, vaultClosingError()
 	}
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		a.vaultMu.RUnlock()
-		return ai.AIProvider{}, "", err
+		return ai.AIProvider{}, "", nil, err
 	}
 	if err := a.requireGrant(pluginID, plugins.CapAI); err != nil {
 		a.vaultMu.RUnlock()
-		return ai.AIProvider{}, "", err
+		return ai.AIProvider{}, "", nil, err
 	}
 	if a.rateLimiter != nil && !a.rateLimiter.allow(a.vaultPath, pluginID) {
 		a.vaultMu.RUnlock()
 		rps, burst := resolvePluginRatelimit(a.vaultPath, pluginID)
-		return ai.AIProvider{}, "", fmt.Errorf("plugin %q AI rate limit exceeded (max %.1f rps, burst %d); retry after a short delay", pluginID, rps, burst)
+		return ai.AIProvider{}, "", nil, fmt.Errorf("plugin %q AI rate limit exceeded (max %.1f rps, burst %d); retry after a short delay", pluginID, rps, burst)
 	}
 	a.configMu.RLock()
 	p := aiConfigBlock(a.cfg.AI, which)
@@ -611,22 +638,20 @@ func (a *App) aiPreflightPlugin(pluginID, sessionToken, which string) (ai.AIProv
 	a.configMu.RUnlock()
 	// All gates passed: this call will issue HTTP and outlive the RLock. Add
 	// to the vault-close drain so CloseVault/SwitchVault wait for it before
-	// teardown. Done() is deferred by the caller (PluginAIComplete /
-	// PluginAIEmbed) only on this success path — therefore NOTHING after this
-	// Add may return an error, or it would leak an unbalanced increment. The
-	// remaining steps (keyring resolve + struct return) cannot fail: the key
-	// resolve ignores its error and the return is a value copy.
+	// teardown (#452). The returned done func balances this Add; the caller
+	// defers it on the success path.
 	a.vaultClosingWG.Add(1)
 	a.vaultMu.RUnlock()
 	key, _ := a.resolveAIKeyUnlocked(user, useKeyring, p.APIKey)
-	return ai.AIProvider{
+	provider := ai.AIProvider{
 		ProviderType:    p.ProviderType,
 		BaseURL:         p.BaseURL,
 		APIKey:          key,
 		Model:           p.Model,
 		ReasoningEffort: p.ReasoningEffort,
 		TimeoutMs:       p.TimeoutMs,
-	}, p.Model, nil
+	}
+	return provider, p.Model, func() { a.vaultClosingWG.Done() }, nil
 }
 
 // PluginAIComplete performs a chat completion on behalf of a plugin. Gated by
@@ -636,25 +661,25 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 	// Tracked by a.wg so shutdown's a.wg.Wait() drains in-flight AI calls
 	// before teardownVaultServices clears the audit state. Unlike PluginFetch
 	// (which holds vaultMu.RLock for its whole body), PluginAIComplete releases
-	// vaultMu after aiPreflightPlugin so a long LLM call doesn't hold the vault
+	// vaultMu after withAIPreflight so a long LLM call doesn't hold the vault
 	// lock — which means vaultMu alone can't serialize the call against a close.
 	a.wg.Add(1)
 	defer a.wg.Done()
-	// Validate reasoning_effort BEFORE aiPreflightPlugin so an invalid call
+	// Validate reasoning_effort BEFORE withAIPreflight so an invalid call
 	// doesn't consume a rate-limit slot or snapshot the provider config.
 	if input.ReasoningEffort != nil {
 		if re := strings.TrimSpace(*input.ReasoningEffort); re != "" && !config.IsValidAIReasoningEffort(re) {
 			return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrBadRequest, Message: fmt.Sprintf("invalid reasoning_effort %q: must be one of none, minimal, low, medium, high, xhigh, max", *input.ReasoningEffort)}
 		}
 	}
-	provider, configuredModel, err := a.aiPreflightPlugin(pluginID, sessionToken, "chat")
+	provider, configuredModel, drainDone, err := a.withAIPreflight(pluginID, sessionToken, "chat")
 	if err != nil {
 		return ai.CompleteResult{}, err
 	}
-	// Preflight registered this call with the vault-close drain (only on the
-	// success path). Balance it now that HTTP + audit will run, so
-	// CloseVault/SwitchVault's drain can't under-count this call.
-	defer a.vaultClosingWG.Done()
+	// Preflight registered this call with the vault-close drain (the Add ran
+	// inside withAIPreflight on this success path). Balance it now that HTTP +
+	// audit will run, so CloseVault/SwitchVault's drain can't under-count.
+	defer drainDone()
 	// Effective model for auditing: the per-call override, else the configured one.
 	effectiveModel := input.Model
 	if effectiveModel == "" {
@@ -693,13 +718,14 @@ func (a *App) PluginAIEmbed(pluginID, sessionToken string, input PluginAIEmbedIn
 	// Tracked by a.wg — same rationale as PluginAIComplete (see above).
 	a.wg.Add(1)
 	defer a.wg.Done()
-	provider, configuredModel, err := a.aiPreflightPlugin(pluginID, sessionToken, "embedding")
+	provider, configuredModel, drainDone, err := a.withAIPreflight(pluginID, sessionToken, "embedding")
 	if err != nil {
 		return ai.EmbedResult{}, err
 	}
-	// Preflight registered this call with the vault-close drain (success path
-	// only); balance it so the drain can't under-count. See PluginAIComplete.
-	defer a.vaultClosingWG.Done()
+	// Preflight registered this call with the vault-close drain (the Add ran
+	// inside withAIPreflight on this success path); balance it via the returned
+	// done func. See PluginAIComplete.
+	defer drainDone()
 	effectiveModel := input.Model
 	if effectiveModel == "" {
 		effectiveModel = configuredModel

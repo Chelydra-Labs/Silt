@@ -64,6 +64,29 @@ type DirectoryWatcher struct {
 	// SetLinkedConfigHandler. Guarded by linkedConfigHandlerMu.
 	linkedConfigHandlerMu sync.RWMutex
 	linkedConfigHandler   func(source string)
+
+	// reMintWarningHandler is invoked when a re-parse of a previously-indexed
+	// file mints far more block ids than expected (#443) — the signature of an
+	// external tool/sync stripping `<!-- id: ... -->` comments, which silently
+	// breaks every ((uuid)) reference to those blocks. Optional: if nil, the
+	// watcher still logs the anomaly but does not surface it to the UI. Set
+	// via SetReMintWarningHandler. Guarded by reMintWarningHandlerMu. Called
+	// from the watcher goroutine.
+	reMintWarningHandlerMu sync.RWMutex
+	reMintWarningHandler   func(ReMintWarning)
+}
+
+// ReMintWarning is the payload handed to the reMintWarningHandler when the
+// watcher's mass-re-mint heuristic fires (#443). Carries enough context for
+// the UI to name the affected page and explain the recovery path.
+type ReMintWarning struct {
+	Path        string `json:"path"`
+	Source      string `json:"source"`
+	Notebook    string `json:"notebook"`
+	Section     string `json:"section"`
+	Page        string `json:"page"`
+	MintedCount int    `json:"minted_count"` // freshly-minted ids this parse
+	PriorCount  int    `json:"prior_count"`  // managed blocks before re-parse
 }
 
 // watchRoot records how to interpret paths beneath a watched root.
@@ -363,6 +386,17 @@ func (dw *DirectoryWatcher) SetLinkedConfigHandler(fn func(source string)) {
 	dw.linkedConfigHandlerMu.Unlock()
 }
 
+// SetReMintWarningHandler registers a callback invoked when the watcher's
+// mass-re-mint heuristic fires on a re-parsed file (#443). Pass nil to
+// unregister. The handler is called from the watcher goroutine; it MUST not
+// block on the watcher's own locks (the App-side handler only emits a Wails
+// event, which is safe).
+func (dw *DirectoryWatcher) SetReMintWarningHandler(fn func(ReMintWarning)) {
+	dw.reMintWarningHandlerMu.Lock()
+	dw.reMintWarningHandler = fn
+	dw.reMintWarningHandlerMu.Unlock()
+}
+
 // linkedConfigSourceForPath returns the source ('linked:<id>') if path is a
 // linked root's co-located config.yaml (<root>/.system/config.yaml), or "" +
 // false otherwise. Used by the event loop to route co-located config edits
@@ -386,11 +420,13 @@ func (dw *DirectoryWatcher) linkedConfigSourceForPath(path string) (string, bool
 //
 // Vault root: a vault holds MANY notebooks, so the notebook is the first path
 // component under the vault:
-//   <vault>/<notebook>/[<section>/...]<page>.md
+//
+//	<vault>/<notebook>/[<section>/...]<page>.md
 //
 // Linked root: the root IS one notebook (its display name is registered with
 // the root), so the path components are sections/page directly:
-//   <linkedRoot>/[<section>/...]<page>.md
+//
+//	<linkedRoot>/[<section>/...]<page>.md
 //
 // The governing root is the longest registered root that is an ancestor of the
 // path (correct under nesting; a linked root inside another root is unlikely
@@ -553,18 +589,18 @@ func (dw *DirectoryWatcher) listenLoop() {
 
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
 				dw.reindexFile(path)
-		} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-			clearedIDs := dw.clearIndexForFile(path)
-			// Evict the per-file IO mutex so ioMu doesn't grow linearly with
-			// the cumulative set of distinct paths ever touched (#30). Safe
-			// against an in-flight LockFileWrite via the generation check.
-			dw.coordinator.ReleaseFileMutex(path)
-			// Evict the per-block mutex entries for the blocks that lived in
-			// this file so blockMu doesn't grow with the cumulative history of
-			// every block UUID ever locked (#122). Safe via the generation
-			// check; an in-flight MutateBlock keeps its holder until unlock.
-			dw.coordinator.ReleaseBlockMutexes(clearedIDs)
-		}
+			} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+				clearedIDs := dw.clearIndexForFile(path)
+				// Evict the per-file IO mutex so ioMu doesn't grow linearly with
+				// the cumulative set of distinct paths ever touched (#30). Safe
+				// against an in-flight LockFileWrite via the generation check.
+				dw.coordinator.ReleaseFileMutex(path)
+				// Evict the per-block mutex entries for the blocks that lived in
+				// this file so blockMu doesn't grow with the cumulative history of
+				// every block UUID ever locked (#122). Safe via the generation
+				// check; an in-flight MutateBlock keeps its holder until unlock.
+				dw.coordinator.ReleaseBlockMutexes(clearedIDs)
+			}
 
 		case err, ok := <-dw.watcher.Errors:
 			if !ok {
@@ -576,6 +612,31 @@ func (dw *DirectoryWatcher) listenLoop() {
 			return
 		}
 	}
+}
+
+// reMintThreshold returns the minimum number of re-minted ids that, on a
+// previously-indexed file, trips the mass-re-mint warning (#443). It is
+// max(3, priorCount/2): at least half the file's managed blocks must be
+// re-minted, with a floor of 3 so a 1-2 block file doesn't flag on a single
+// normal edit. A brand-new file (priorCount == 0) is exempt by construction
+// (the caller gates on priorCount > 0).
+//
+// Known false-positive mode: this is a heuristic, not a detector. It cannot
+// distinguish "a tool stripped the id comments from N existing blocks
+// (keeping their prose)" from "the user deleted N tasks and pasted N fresh
+// ones (new prose, new ids)" — both produce MintedCount == N against a
+// nonzero priorCount. The bulk-replace case is a legitimate edit that trips
+// the warning. This is accepted: the warning is non-blocking, hedges with
+// "another app likely removed them", and is dismissible. A future tightening
+// could cross-check whether the surviving prose bodies roughly match the
+// prior blocks (stripping preserves prose; bulk-replace changes it), but that
+// is standalone work and not warranted without evidence of real false
+// positives in practice.
+func reMintThreshold(priorCount int) int {
+	if t := priorCount / 2; t > 3 {
+		return t
+	}
+	return 3
 }
 
 func (dw *DirectoryWatcher) reindexFile(path string) {
@@ -610,9 +671,51 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			return
 		}
 
+		// Read the PRIOR managed-block count for this page BEFORE
+		// IndexFileBlocks clears + reinserts the rows (the count is the input
+		// to the mass-re-mint heuristic, #443). The query is cheap (one COUNT
+		// on a covered index) and runs outside the write transaction below so
+		// it observes the pre-replace state.
+		priorCount, countErr := dw.dm.CountBlocksForPage(source, meta.Notebook, meta.Section, meta.Page)
+		if countErr != nil {
+			// On DB error priorCount stays 0, which silently disables the
+			// heuristic for this event (the safe direction — no false
+			// positive). Log so a maintainer can diagnose "why did the re-mint
+			// warning stop firing" if the index gets into a bad state.
+			log.Printf("reindexFile: CountBlocksForPage failed for %s (re-mint heuristic disabled for this event): %v", path, countErr)
+		}
+
 		if modified {
 			dw.tracker.RegisterWrite(path)
 			_ = parser.WriteFileAtomic(path, []byte(newContent))
+		}
+
+		// Mass-re-mint heuristic (#443): a previously-indexed file (priorCount
+		// > 0) that re-mints a large fraction of its block ids signals an
+		// external tool/sync stripped the `<!-- id: ... -->` comments — which
+		// silently breaks every ((uuid)) reference to those blocks. Brand-new
+		// files (priorCount == 0) and normal one-block edits (MintedCount == 1)
+		// stay well under the threshold. The threshold is max(3, priorCount/2):
+		// flag when at least half the file's blocks were re-minted, with a
+		// minimum of 3 so tiny files don't trip on noise.
+		if priorCount > 0 && meta.MintedCount >= reMintThreshold(priorCount) {
+			warning := ReMintWarning{
+				Path:        path,
+				Source:      source,
+				Notebook:    meta.Notebook,
+				Section:     meta.Section,
+				Page:        meta.Page,
+				MintedCount: meta.MintedCount,
+				PriorCount:  priorCount,
+			}
+			log.Printf("parser: anomalous mass id re-mint on %s: %d of %d prior blocks re-minted — external id-comment stripping suspected, ((uuid)) references may be broken",
+				path, meta.MintedCount, priorCount)
+			dw.reMintWarningHandlerMu.RLock()
+			handler := dw.reMintWarningHandler
+			dw.reMintWarningHandlerMu.RUnlock()
+			if handler != nil {
+				handler(warning)
+			}
 		}
 
 		dw.coordinator.WithDBWrite(func() {

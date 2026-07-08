@@ -521,6 +521,25 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`
 files; this list is the contract surface, not the source.
 
+**Error envelope (#478).** Every bound method returns `(T, error)`. Wails v2
+delivers the error to TypeScript as an `Error` whose `.message` is
+`err.Error()` — custom Go error-struct fields do NOT survive the bridge (the
+JS runtime wraps every value in `new Error(t.error)`, flattening objects to
+`"[object Object]"`). The stable, machine-readable error-code contract is
+therefore carried as a **JSON string** on `.message`: the App's
+`ErrorFormatter` (`main.go`, `formatIPCError`) serializes an `*IPCError`
+(`ipc_errors.go`) or `*plugins.CapabilityDeniedError` to
+`'{"code":"...","message":"..."}'`, which survives `new Error()` intact. The
+frontend `coerceIPCError` (`frontend/src/lib/ipcError.ts`) JSON-parses
+`.message` to recover `{code, message}`; non-JSON prose (an unmigrated
+sentinel) falls through to the raw message. Stable codes live in
+`ipc_errors.go` (`CodeBlockBeingEdited`, `CodeVaultClosing`,
+`CodeCapabilityDenied`); a migrated sentinel keeps `errors.Is` compatibility
+with its pre-migration var via `IPCError.Is`, so Go-side tests asserting
+`errors.Is(err, errBlockBeingEdited)` pass unchanged. Frontend callers map on
+the code, not the prose, so a backend wording change cannot regress the
+friendly mapping.
+
 
 4.4 Theme Engine IPC & Pipeline
 
@@ -832,6 +851,21 @@ theme file and settings.json acquires `themeWriteMu` first, then
 are never called under `vaultMu` — the handler snapshots the needed paths
 under `RLock`, releases, runs the dialog, then acquires `themeWriteMu` for the
 write.
+
+**Vault-close drain (#452, #471).** IPC handlers that release `vaultMu`
+mid-call (today: `PluginAIComplete` / `PluginAIEmbed`, which release the lock
+after preflight so a 60s LLM call can't hold it) are tracked by a separate
+`vaultClosingWG`. `CloseVault` / `SwitchVault` set a `closing` flag under
+`vaultMu.Lock`, release the lock, cancel the vault-scoped `vaultCtx` (a child
+of the app-lifecycle `aiCtx`), then `vaultClosingWG.Wait()` outside the lock
+before teardown. The cancel aborts in-flight HTTP calls in milliseconds (the
+HTTP client observes `context.Canceled`) instead of blocking the close for the
+provider timeout. The `closing` flag + `vaultClosingWG.Add(1)` share ONE
+`RLock` hold in the preflight (`withAIPreflight`, which returns a `done` func
+the caller defers), making the gate atomic w.r.t. the close path's set+Wait —
+no TOCTOU window where a call slips through after the drain returns. `aiCtx`
+itself is cancelled only in `shutdown()` so in-flight calls don't outlive the
+process. See `app.go` and `app_ai.go`.
 
 
 6.2 Viewport Sync Conflict Mitigation

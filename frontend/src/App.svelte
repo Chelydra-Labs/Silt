@@ -54,6 +54,7 @@
   import ToastContainer from './components/ToastContainer.svelte'
   import Onboarding from './components/Onboarding.svelte'
   import { pushNotification } from './notifications/store.svelte'
+  import { reMintToast, type ReMintWarning } from './lib/reMintToast'
   import {
     initStartupUpdateCheck,
     disposeUpdateStore
@@ -911,6 +912,19 @@
         })
       }
     )
+    // Mass id re-mint detection (#443): an external tool/sync stripped the
+    // block-identity comments from a previously-indexed file, so the parser
+    // re-minted fresh UUIDs — which can break note-to-note links pointing at
+    // those blocks. The toast (built by reMintToast) is sticky, leads with
+    // the user-visible impact, and offers a "Show file" CTA. The builder is
+    // extracted so its payload-shaping contract is unit-testable.
+    const offReMintWarning = EventsOn(
+      'index:re-mint-warning',
+      (w: ReMintWarning) => {
+        if (!w) return
+        pushNotification(reMintToast(w, openPage))
+      }
+    )
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
@@ -932,6 +946,7 @@
       offLinkedQuarantined()
       offVaultInitError()
       offVaultInitWarnings()
+      offReMintWarning()
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()

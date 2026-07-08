@@ -687,6 +687,56 @@ tags: [work/project, systems/specs]
 	if newContent != doc {
 		t.Errorf("Content mismatch. Expected:\n%s\nGot:\n%s", doc, newContent)
 	}
+	// #443: when every block already carries an id, no minting occurs, so
+	// MintedCount must be 0 (the watcher's re-mint heuristic numerator).
+	if meta.MintedCount != 0 {
+		t.Errorf("MintedCount = %d, want 0 (all blocks had ids)", meta.MintedCount)
+	}
+}
+
+// TestParseFileContent_MintedCount pins the #443 signal: MintedCount must
+// equal the number of blocks that received a FRESH id this parse (a block
+// whose block-identity comment was absent). It covers the three regimes the
+// watcher's heuristic distinguishes — all-present (0), all-missing
+// (== block count), and mixed.
+func TestParseFileContent_MintedCount(t *testing.T) {
+	// All ids present → 0 mints.
+	allPresent := "# H <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"- [ ] a <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [ ] b <!-- id: 33333333-3333-3333-3333-333333333333 -->\n"
+	if _, m1, _, _, err := ParseFileContent(allPresent, "nb", "sec", "pg", "2026-01-01", 4); err != nil {
+		t.Fatalf("allPresent: %v", err)
+	} else if m1.MintedCount != 0 {
+		t.Errorf("allPresent: MintedCount = %d, want 0", m1.MintedCount)
+	}
+
+	// All ids missing → 3 mints (header + 2 tasks).
+	allMissing := "# H\n- [ ] a\n- [ ] b\n"
+	blocks2, m2, _, modified2, err := ParseFileContent(allMissing, "nb", "sec", "pg", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("allMissing: %v", err)
+	}
+	if !modified2 {
+		t.Errorf("allMissing: expected modified=true (ids minted)")
+	}
+	if m2.MintedCount != len(blocks2) {
+		t.Errorf("allMissing: MintedCount = %d, want %d (== block count)", m2.MintedCount, len(blocks2))
+	}
+	if m2.MintedCount != 3 {
+		t.Errorf("allMissing: MintedCount = %d, want 3 (header + 2 tasks)", m2.MintedCount)
+	}
+
+	// Mixed: 2 ids present, 2 missing → 2 mints. This is the case the heuristic
+	// must NOT flag on a normal edit (adding a couple of new tasks).
+	mixed := "# H <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+		"- [ ] a <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
+		"- [ ] b (new, no id)\n" +
+		"- [ ] c (new, no id)\n"
+	if _, m3, _, _, err := ParseFileContent(mixed, "nb", "sec", "pg", "2026-01-01", 4); err != nil {
+		t.Fatalf("mixed: %v", err)
+	} else if m3.MintedCount != 2 {
+		t.Errorf("mixed: MintedCount = %d, want 2 (two of four blocks lacked ids)", m3.MintedCount)
+	}
 }
 
 func TestParseFileContent_CodeBlockIsManaged(t *testing.T) {

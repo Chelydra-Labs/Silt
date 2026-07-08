@@ -549,7 +549,7 @@ func TestUpdateAIProviderConfig_AcceptsValidReasoningEffort(t *testing.T) {
 }
 
 // TestPluginAIComplete_RejectsInvalidReasoningEffort verifies the gate fires
-// BEFORE aiPreflightPlugin — the call returns a typed bad-request error without
+// BEFORE withAIPreflight — the call returns a typed bad-request error without
 // needing a registered session, provider config, or HTTP server. If the
 // validation ran after preflight this would surface a session-denial error
 // instead.
@@ -622,7 +622,7 @@ func TestPluginAIComplete_TrackedByWaitGroup(t *testing.T) {
 		callDone <- callResult{res, err}
 	}()
 
-	// Wait until the call has passed aiPreflightPlugin (released vaultMu) and
+	// Wait until the call has passed withAIPreflight (released vaultMu) and
 	// reached the blocking HTTP server — deterministic, no timing assumption.
 	select {
 	case <-requestReceived:

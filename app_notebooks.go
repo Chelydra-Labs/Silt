@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"silt/backend/config"
+	"silt/backend/monitor"
 	"silt/backend/parser"
 	"strconv"
 	"strings"
@@ -437,6 +438,20 @@ func (a *App) onLinkedConfigChange(source string) {
 	a.invalidateLinkedConfig(source)
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "linked-config:changed", source)
+	}
+}
+
+// onReMintWarning is the watcher hook for the mass-re-mint heuristic (#443).
+// When a re-parse of a previously-indexed file mints far more block ids than
+// expected (signaling an external tool/sync stripped the `<!-- id: ... -->`
+// comments, which silently breaks every ((uuid)) reference to those blocks),
+// the watcher calls this with the details. It emits an index:re-mint-warning
+// Wails event so the frontend can surface a non-blocking warning with the
+// recovery path. Called from the watcher goroutine; only touches the event
+// emitter (no locks).
+func (a *App) onReMintWarning(w monitor.ReMintWarning) {
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "index:re-mint-warning", w)
 	}
 }
 

@@ -163,6 +163,17 @@ type FileMetadata struct {
 	// Callers should surface these so users can fix the source note
 	// rather than silently inheriting path-derived defaults.
 	Warnings []string `yaml:"-"`
+
+	// MintedCount is the number of blocks that received a FRESH UUID this
+	// parse pass (the block-identity `<!-- id: uuid @ date -->` comment was
+	// absent, so the parser minted one). It is a transient parse signal —
+	// never persisted, never part of the on-disk format — used by the
+	// watcher's mass-re-mint heuristic (#443): a previously-indexed file
+	// that re-mints far more ids than expected signals an external tool
+	// stripped the id comments (which silently breaks every ((uuid))
+	// reference to those blocks). Brand-new files and normal one-block
+	// edits produce small counts and don't trip the heuristic.
+	MintedCount int `yaml:"-"`
 }
 
 type TaskQueryFilter struct {

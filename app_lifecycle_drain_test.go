@@ -276,17 +276,27 @@ func TestClearAIAudit_DurableClearStillRunsThroughWriterWhenAlive(t *testing.T) 
 
 // --- #452: CloseVault drains in-flight AI calls before teardown -------------
 
-// TestCloseVault_DrainsInFlightAICall is the regression test from #452: an AI
-// call in flight must be drained (and audited into the CLOSING vault) before
-// teardown, then a reopened vault must NOT inherit the entry.
+// TestCloseVault_DrainsInFlightAICall is the regression test from #452/#471:
+// an AI call in flight must be CANCELLED (via vaultCtx) when CloseVault
+// begins, so the drain completes in milliseconds — not the provider timeout —
+// and the aborted call's audit entry still lands in the CLOSING vault (not the
+// next one). Before #471 the drain blocked until the call completed naturally
+// (~60s on a slow local model) because only shutdown cancelled aiCtx.
 func TestCloseVault_DrainsInFlightAICall(t *testing.T) {
 	app := newTestApp(t)
+	// newTestApp bypasses startup/initializeVaultServices, so wire the
+	// vault-scoped AI context explicitly — this is the surface #471 adds and
+	// the cancel the test must observe.
+	app.vaultCtx, app.vaultCtxCancel = context.WithCancel(context.Background())
 	resetAIAuditState(t)
 
 	requestReceived := make(chan struct{})
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requestReceived)
+		// Block until released. CloseVault's vaultCtxCancel must abort the
+		// CLIENT before this unblocks — proving the drain didn't wait for the
+		// (simulated) slow provider to respond.
 		<-release
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -295,6 +305,11 @@ func TestCloseVault_DrainsInFlightAICall(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
+	// The handler blocks at <-release; it must be unblocked before srv.Close()
+	// (deferred above) returns, otherwise httptest hangs. close(release) runs
+	// after the drain assertions below; if an early t.Fatalf fires, the
+	// deferred srv.Close would hang — so defer the release here as a safety net.
+	defer close(release)
 	pointAIProviderAt(t, app, "chat", srv.URL, "test")
 
 	tok, err := app.RegisterPluginSession("silt-tasks")
@@ -320,33 +335,33 @@ func TestCloseVault_DrainsInFlightAICall(t *testing.T) {
 
 	oldVault := app.vaultPath
 
-	// CloseVault must block on the drain while the AI call is in flight.
+	// CloseVault must cancel vaultCtx → the HTTP client aborts → Done() fires →
+	// the drain unblocks → CloseVault returns. This must happen in well under
+	// the provider timeout; assert < 1s as the #471 regression guard. The
+	// server handler is STILL blocked at <-release (we have not closed it), so
+	// the only way CloseVault returns fast is the cancel path.
+	start := time.Now()
 	closeReturned := make(chan error, 1)
 	go func() { closeReturned <- app.CloseVault() }()
-	select {
-	case <-closeReturned:
-		t.Fatal("CloseVault returned while an AI call was still in flight — drain missing")
-	case <-time.After(200 * time.Millisecond):
-		// Expected: CloseVault is blocked on vaultClosingWG.Wait().
-	}
-
-	// Release the HTTP call. The audit lands against the closing vault, Done()
-	// fires, the drain completes, and CloseVault proceeds to teardown.
-	close(release)
-
 	select {
 	case err := <-closeReturned:
 		if err != nil {
 			t.Fatalf("CloseVault: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("CloseVault did not return after the AI call completed — drain deadlocked")
+		elapsed := time.Since(start)
+		if elapsed >= time.Second {
+			t.Fatalf("CloseVault took %s — vaultCtx cancel did not abort the in-flight call (expected < 1s)", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CloseVault did not return — vaultCtx cancel failed to unblock the drain")
 	}
 
-	// The in-flight call must have completed (no error) — it was drained, not
-	// cancelled by the close (only shutdown cancels aiCtx).
-	if err := <-callDone; err != nil {
-		t.Fatalf("in-flight PluginAIComplete failed: %v", err)
+	// The in-flight call must have been ABORTED (non-nil error) by the cancel,
+	// not completed naturally. The ai service normalizes a cancelled transport
+	// into *AIError{Kind: ErrUnreachable}; assert err != nil (the call did not
+	// succeed) rather than a specific cancellation type.
+	if err := <-callDone; err == nil {
+		t.Fatal("in-flight PluginAIComplete succeeded — vaultCtx cancel did not abort the HTTP call")
 	}
 
 	// Teardown ran: services are nil.
@@ -362,11 +377,13 @@ func TestCloseVault_DrainsInFlightAICall(t *testing.T) {
 		t.Errorf("closing flag left set after CloseVault — would reject all future AI calls")
 	}
 
-	// The audit entry landed in the CLOSING vault's ai.log (drained before
-	// teardown), proving the call was not lost.
+	// The audit entry landed in the CLOSING vault's ai.log. auditAI runs
+	// unconditionally after the call returns (cancelled or not), so the entry
+	// is recorded with a non-"ok" status — proving the call was not lost even
+	// though it was aborted.
 	oldLog := filepath.Join(oldVault, ".system", "plugins", "silt-tasks", "ai.log")
 	if data, _ := os.ReadFile(oldLog); len(data) == 0 {
-		t.Errorf("closing vault's ai.log should contain the drained audit entry; file is empty")
+		t.Errorf("closing vault's ai.log should contain the aborted call's audit entry; file is empty")
 	}
 
 	// Reopen a DIFFERENT vault and assert the old entry did not seed into it
@@ -389,6 +406,71 @@ func TestCloseVault_DrainsInFlightAICall(t *testing.T) {
 	entries, _ := app.GetAIAudit()
 	if len(entries) != 0 {
 		t.Errorf("reopened vault inherited %d audit entries from the closed vault (cross-vault leak): %+v", len(entries), entries)
+	}
+}
+
+// TestCloseVault_DrainCompletesFastWhenCallInFlight is the headline #471
+// regression guard: a close must NOT block for the provider timeout (~60s on a
+// slow local model) when an AI call is in flight. The vaultCtx cancel must
+// abort the HTTP client in milliseconds. This test simulates a pathologically
+// slow provider (a server that would hold the connection for 30s) and asserts
+// CloseVault returns in well under that — if the cancel regresses, this test
+// fails at the 5s timeout instead of making a developer wait 30s.
+func TestCloseVault_DrainCompletesFastWhenCallInFlight(t *testing.T) {
+	app := newTestApp(t)
+	app.vaultCtx, app.vaultCtxCancel = context.WithCancel(context.Background())
+	resetAIAuditState(t)
+
+	requestReceived := make(chan struct{})
+	// slowRelease never fires during the test — the server simulates a
+	// provider that takes 30s to respond. The cancel must abort the CLIENT
+	// long before that.
+	slowRelease := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestReceived)
+		select {
+		case <-slowRelease:
+		case <-time.After(30 * time.Second):
+		}
+	}))
+	defer srv.Close()
+	defer close(slowRelease) // unblock the handler before srv.Close() returns
+	pointAIProviderAt(t, app, "chat", srv.URL, "test")
+
+	tok, err := app.RegisterPluginSession("silt-tasks")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+			Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
+		})
+		callDone <- err
+	}()
+
+	select {
+	case <-requestReceived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PluginAIComplete did not reach the HTTP server in time")
+	}
+
+	// The headline assertion: CloseVault must return in < 1s despite the
+	// server holding the connection for 30s. A regression that drops the
+	// vaultCtx cancel makes this block until the test's 5s timeout fires.
+	start := time.Now()
+	if err := app.CloseVault(); err != nil {
+		t.Fatalf("CloseVault: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed >= time.Second {
+		t.Fatalf("CloseVault took %s with an in-flight call against a 30s-slow provider — vaultCtx cancel regressed (expected < 1s)", elapsed)
+	}
+
+	// The call must have been aborted, not completed.
+	if err := <-callDone; err == nil {
+		t.Fatal("in-flight PluginAIComplete succeeded against a 30s-slow provider — the call was not cancelled")
 	}
 }
 
@@ -444,10 +526,15 @@ func TestCloseVault_NewAICallRejectedWhileClosing(t *testing.T) {
 }
 
 // TestSwitchVault_DrainsInFlightAICall mirrors the CloseVault drain test for
-// the switch path (#452 names "close/switch"). SwitchVault shares
-// teardownVaultServices, so the same drain applies before the cutover.
+// the switch path (#452 names "close/switch", #471 adds vaultCtx cancel to
+// both). SwitchVault shares teardownVaultServices, so the same cancel-then-drain
+// applies before the cutover. The in-flight call must be ABORTED (not drained
+// to completion) and its audit must land in the FIRST vault, not the second.
 func TestSwitchVault_DrainsInFlightAICall(t *testing.T) {
 	app := newTestApp(t)
+	// newTestApp bypasses startup/initializeVaultServices — wire the
+	// vault-scoped AI context explicitly (the surface #471 adds).
+	app.vaultCtx, app.vaultCtxCancel = context.WithCancel(context.Background())
 	resetAIAuditState(t)
 	firstVault := app.vaultPath
 
@@ -468,6 +555,7 @@ func TestSwitchVault_DrainsInFlightAICall(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
+	defer close(release) // unblock the handler before srv.Close() returns
 	pointAIProviderAt(t, app, "chat", srv.URL, "test")
 
 	tok, err := app.RegisterPluginSession("silt-tasks")
@@ -489,29 +577,28 @@ func TestSwitchVault_DrainsInFlightAICall(t *testing.T) {
 		t.Fatal("PluginAIComplete did not reach the HTTP server in time")
 	}
 
-	// SwitchVault must block on the drain while the AI call is in flight.
+	// SwitchVault must cancel vaultCtx → the HTTP client aborts → Done() fires →
+	// the drain unblocks → the cutover proceeds. Assert < 1s as the #471
+	// regression guard. The server handler is still blocked at <-release, so
+	// only the cancel path can make SwitchVault return fast.
+	start := time.Now()
 	switchReturned := make(chan error, 1)
 	go func() { switchReturned <- app.SwitchVault(secondVault) }()
-	select {
-	case err := <-switchReturned:
-		t.Fatalf("SwitchVault returned (err=%v) while an AI call was in flight — drain missing", err)
-	case <-time.After(200 * time.Millisecond):
-		// Expected: SwitchVault is blocked on vaultClosingWG.Wait().
-	}
-
-	close(release)
-
 	select {
 	case err := <-switchReturned:
 		if err != nil {
 			t.Fatalf("SwitchVault: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("SwitchVault did not return after the AI call completed — drain deadlocked")
+		if elapsed := time.Since(start); elapsed >= time.Second {
+			t.Fatalf("SwitchVault took %s — vaultCtx cancel did not abort the in-flight call (expected < 1s)", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SwitchVault did not return — vaultCtx cancel failed to unblock the drain")
 	}
 
-	if err := <-callDone; err != nil {
-		t.Fatalf("in-flight PluginAIComplete failed: %v", err)
+	// The in-flight call must have been ABORTED (non-nil error) by the cancel.
+	if err := <-callDone; err == nil {
+		t.Fatal("in-flight PluginAIComplete succeeded — vaultCtx cancel did not abort the HTTP call")
 	}
 
 	// The cutover landed on the second vault.
@@ -529,11 +616,12 @@ func TestSwitchVault_DrainsInFlightAICall(t *testing.T) {
 		_ = app.CloseVault()
 	})
 
-	// The drained audit entry landed in the FIRST vault's ai.log (the call
-	// ran against the first vault before the cutover), not the second's.
+	// The aborted call's audit entry landed in the FIRST vault's ai.log (the
+	// call ran against the first vault before the cutover), not the second's.
+	// auditAI runs unconditionally after the call returns (cancelled or not).
 	firstLog := filepath.Join(firstVault, ".system", "plugins", "silt-tasks", "ai.log")
 	if data, _ := os.ReadFile(firstLog); len(data) == 0 {
-		t.Errorf("first vault's ai.log should contain the drained audit entry; file is empty")
+		t.Errorf("first vault's ai.log should contain the aborted call's audit entry; file is empty")
 	}
 	secondLog := filepath.Join(secondVault, ".system", "plugins", "silt-tasks", "ai.log")
 	if data, _ := os.ReadFile(secondLog); len(data) != 0 {
@@ -553,3 +641,246 @@ func scaffoldVaultForTest(t *testing.T, path string) error {
 // compile-time guard: ensure ai.CompleteResult is referenced so the import
 // stays used if future tests drop the explicit reference above.
 var _ = ai.CompleteResult{}
+
+// TestWithAIPreflight_EnforcesDrainContract is #473's structural test: the
+// wrapper bundles the closing-check + vaultClosingWG.Add(1) under one RLock
+// hold and returns a done func the caller defers. This test pins both halves
+// of the contract:
+//   - SUCCESS path: done is non-nil and balances the Add (a subsequent
+//     vaultClosingWG.Wait() returns promptly once done is called).
+//   - CLOSING path: once closing=true, the wrapper returns errVaultClosing with
+//     a nil done — no Add ran, so there is nothing to balance (a non-nil done
+//     here would be a double-Done panic waiting to happen, and a missing Add
+//     would under-count the drain).
+//
+// A future IPC handler that drops the done defer would surface here as a
+// Wait() deadlock (the Add is never balanced).
+func TestWithAIPreflight_EnforcesDrainContract(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+
+	tok, err := app.RegisterPluginSession("silt-tasks")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+
+	// --- SUCCESS path: done is non-nil and balances the Add ---
+	provider, _, done, err := app.withAIPreflight("silt-tasks", tok, "chat")
+	if err != nil {
+		t.Fatalf("withAIPreflight success path: %v", err)
+	}
+	if provider.BaseURL == "" && provider.Model == "" {
+		// The default scaffold config has no AI provider, so the snapshot may
+		// be empty — that's fine; preflight still succeeds and registers the
+		// drain. What matters is the done func.
+	}
+	if done == nil {
+		t.Fatal("withAIPreflight returned nil done on the success path — the drain Add ran but the caller has no way to balance it (drain-contract regression)")
+	}
+
+	// Before done is called, the WG has one outstanding Add. A Wait() here
+	// would block; prove it via a timed Wait that MUST complete only after
+	// done fires.
+	waitReturned := make(chan struct{})
+	go func() {
+		app.vaultClosingWG.Wait()
+		close(waitReturned)
+	}()
+	// Give the Wait goroutine a moment to observe the non-zero counter. A
+	// 50ms wait is generous for goroutine scheduling; the Wait blocks on the
+	// counter, so it cannot return early.
+	select {
+	case <-waitReturned:
+		t.Fatal("vaultClosingWG.Wait() returned before done() — the Add was not outstanding (drain-contract regression)")
+	case <-time.After(50 * time.Millisecond):
+		// Expected: Wait is blocked on the unbalanced Add.
+	}
+
+	// Balance the Add. The Wait goroutine must now complete promptly.
+	done()
+	select {
+	case <-waitReturned:
+	case <-time.After(time.Second):
+		t.Fatal("vaultClosingWG.Wait() did not return after done() — the done func does not balance the Add")
+	}
+
+	// --- CLOSING path: done is nil, no Add ran ---
+	app.vaultMu.Lock()
+	app.closing = true
+	app.vaultMu.Unlock()
+	t.Cleanup(func() {
+		app.vaultMu.Lock()
+		app.closing = false
+		app.vaultMu.Unlock()
+	})
+
+	_, _, doneClosing, errClosing := app.withAIPreflight("silt-tasks", tok, "chat")
+	if !errors.Is(errClosing, errVaultClosing) {
+		t.Fatalf("withAIPreflight closing path: want errVaultClosing, got %v", errClosing)
+	}
+	if doneClosing != nil {
+		t.Fatal("withAIPreflight returned a non-nil done on the closing (error) path — calling it would double-Done or the Add never ran (drain-contract regression)")
+	}
+
+	// The closing-path rejection must NOT have touched the WG: a Wait() must
+	// still return immediately (the only Add was the success-path one, already
+	// balanced above).
+	waitReturned2 := make(chan struct{})
+	go func() {
+		app.vaultClosingWG.Wait()
+		close(waitReturned2)
+	}()
+	select {
+	case <-waitReturned2:
+		// Expected: WG is balanced; Wait returns at once.
+	case <-time.After(time.Second):
+		t.Fatal("vaultClosingWG.Wait() blocked after the closing-path call — the rejection path leaked an unbalanced Add")
+	}
+}
+
+// TestInitializeVaultServices_CancelsPriorVaultCtx pins the MoveVault/
+// rollbackMove re-init path (#471 follow-up): initializeVaultServices must
+// cancel any prior vaultCtx before overwriting it. teardownVaultServices does
+// NOT cancel vaultCtx, and MoveVault/rollbackMove reach initializeVaultServices
+// via teardown → init WITHOUT a proactive cancel (unlike CloseVault/SwitchVault,
+// which cancel before the drain wait). Without the self-cleaning guard at the
+// top of initializeVaultServices, every vault move / failed-move rollback would
+// orphan the old context in aiCtx.children until shutdown.
+func TestInitializeVaultServices_CancelsPriorVaultCtx(t *testing.T) {
+	app := newTestApp(t)
+	// Capture the vault path before teardown nils it (newTestApp scaffolds a
+	// real vault on disk that survives teardown — teardown closes the db but
+	// leaves the files, so re-init on the same path works).
+	vaultPath := app.vaultPath
+	// Simulate a prior init's vaultCtx (newTestApp builds the App literal
+	// directly, so vaultCtx is nil until the first initializeVaultServices).
+	app.vaultCtx, app.vaultCtxCancel = context.WithCancel(context.Background())
+	prior := app.vaultCtx
+
+	// Sanity: the prior context is live before re-init.
+	select {
+	case <-prior.Done():
+		t.Fatal("prior vaultCtx already done before re-init")
+	default:
+	}
+
+	// Re-init via the MoveVault/rollback shape: teardown (does NOT cancel
+	// vaultCtx) then initializeVaultServices (the guard must cancel prior).
+	app.vaultMu.Lock()
+	app.teardownVaultServices()
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		app.vaultMu.Unlock()
+		t.Fatalf("initializeVaultServices: %v", err)
+	}
+	app.vaultMu.Unlock()
+	t.Cleanup(func() { _ = app.CloseVault() })
+
+	// The guard cancelled the prior context before overwriting it. If the guard
+	// regresses, the prior context stays live (orphaned) and this times out.
+	select {
+	case <-prior.Done():
+		// Expected: prior was cancelled by the re-init guard.
+	case <-time.After(time.Second):
+		t.Fatal("prior vaultCtx was not cancelled by re-init — MoveVault/rollback would orphan it in aiCtx.children")
+	}
+
+	// A fresh context took its place (not the orphaned one).
+	app.vaultMu.RLock()
+	fresh := app.vaultCtx
+	app.vaultMu.RUnlock()
+	if fresh == nil || fresh == prior {
+		t.Fatal("re-init did not mint a fresh vaultCtx (nil or same pointer as prior)")
+	}
+}
+
+// TestMoveVault_DrainsInFlightAICall pins the #452/#471 drain on the MoveVault
+// cutover — the third lifecycle path. MoveVault used to call teardown→init
+// directly with no closing flag, no vaultCtxCancel, and no vaultClosingWG.Wait,
+// so an AI call past preflight survived teardown (which stops the audit
+// writer); once initializeVaultServices' self-cleaning guard cancelled its
+// context, its audit entry landed in the wrong vault via the inline fallback.
+// The fix mirrors CloseVault/SwitchVault: drain (closing + cancel + Wait)
+// BEFORE teardown so the call's audit routes through the still-running writer
+// into the SOURCE vault. This test asserts the audit lands in src, not dest.
+func TestMoveVault_DrainsInFlightAICall(t *testing.T) {
+	// newMoveTestApp runs the full initializeVaultServices (so vaultCtx +
+	// the audit writer are wired as in production, unlike newTestApp).
+	app, src := newMoveTestApp(t)
+	resetAIAuditState(t)
+
+	dest := filepath.Join(t.TempDir(), "moved")
+
+	requestReceived := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestReceived)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "pong"}}},
+		})
+	}))
+	defer srv.Close()
+	defer close(release) // unblock the handler before srv.Close() returns
+	pointAIProviderAt(t, app, "chat", srv.URL, "test")
+
+	tok, err := app.RegisterPluginSession("silt-tasks")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+			Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
+		})
+		callDone <- err
+	}()
+
+	select {
+	case <-requestReceived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PluginAIComplete did not reach the HTTP server in time")
+	}
+
+	// MoveVault must drain (cancel vaultCtx + Wait) before teardown, so it
+	// returns in well under the provider timeout once the in-flight call is
+	// aborted — not blocked until the (simulated) slow provider responds.
+	start := time.Now()
+	moveDone := make(chan error, 1)
+	go func() {
+		_, err := app.MoveVault(dest, false)
+		moveDone <- err
+	}()
+	select {
+	case err := <-moveDone:
+		if err != nil {
+			t.Fatalf("MoveVault: %v", err)
+		}
+		if elapsed := time.Since(start); elapsed >= time.Second {
+			t.Fatalf("MoveVault took %s — the drain did not cancel the in-flight call (expected < 1s)", elapsed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("MoveVault did not return — drain missing or deadlocked")
+	}
+
+	// The in-flight call must have been aborted (non-nil error) by the drain's
+	// vaultCtx cancel, not completed naturally.
+	if err := <-callDone; err == nil {
+		t.Fatal("in-flight PluginAIComplete succeeded — the drain did not cancel the HTTP call")
+	}
+
+	// The aborted call's audit entry landed in the SOURCE vault's ai.log: the
+	// drain ran before teardown, so the still-running writer (w.vaultPath=src)
+	// processed it. dest's ai.log was copied BEFORE the entry existed (MoveVault
+	// copies the tree before the cutover), so it must stay empty — proving no
+	// cross-vault leak (the #452 class this hardens).
+	srcLog := filepath.Join(src, ".system", "plugins", "silt-tasks", "ai.log")
+	if data, _ := os.ReadFile(srcLog); len(data) == 0 {
+		t.Errorf("source vault's ai.log should contain the drained audit entry; file is empty")
+	}
+	destLog := filepath.Join(dest, ".system", "plugins", "silt-tasks", "ai.log")
+	if data, _ := os.ReadFile(destLog); len(data) != 0 {
+		t.Errorf("dest vault's ai.log should be empty (no cross-vault leak); got %q", string(data))
+	}
+}

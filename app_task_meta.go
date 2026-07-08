@@ -109,7 +109,7 @@ func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedB
 			// so every single-field task-setter refuses consistently; the
 			// frontend surfaces the error via the shared ErrorBanner (#444).
 			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
-				writeErr = errBlockBeingEdited
+				writeErr = blockBeingEditedError()
 				return
 			}
 			contentBytes, err := os.ReadFile(filePath)
@@ -343,7 +343,7 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 		}
 		filePath := filepath.Join(notebookDir, sanitizePathSegment(first.loc.Section), sanitizePathSegment(first.loc.Page)+".md")
 		if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
-			return errBlockBeingEdited
+			return blockBeingEditedError()
 		}
 	}
 	for _, fk := range fileKeys {
@@ -379,7 +379,7 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 				// Mirrors mutateTaskBlock / MutateBlock; the frontend surfaces
 				// the error via the shared ErrorBanner.
 				if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
-					writeErr = errBlockBeingEdited
+					writeErr = blockBeingEditedError()
 					return
 				}
 				contentBytes, err := os.ReadFile(filePath)
