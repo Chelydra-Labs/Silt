@@ -95,6 +95,11 @@ memory and never the source of truth for your notes (markdown is).
 
 ## Troubleshooting
 
+- **Reasoning tags in the summary?** Models that "think" (DeepSeek-R1, Qwen3
+  thinking, …) wrap internal reasoning in `<thought>`/`<think>` tags. Silt strips
+  these before the summary is rendered or cached, so you should only ever see
+  clean prose. If tags still appear, the summary predates the fix — click
+  **Regenerate** to refresh it.
 - **"Configure an AI provider" nudge won't go away** — set a chat model in
   Settings → AI Provider. Local providers (Ollama) need no key; cloud providers
   need an API key.
