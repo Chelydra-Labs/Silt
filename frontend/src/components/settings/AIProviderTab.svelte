@@ -285,9 +285,18 @@
     // Persist the new config FIRST, then poll — Wails does not guarantee IPC
     // ordering between independent fire-and-forget calls, so racing them
     // could snapshot the old provider's endpoint and show its models under
-    // the new type label.
+    // the new type label. Gate the forced refresh on a successful persist: a
+    // failed save (invalid advanced settings or IPC rejection) leaves the
+    // backend on the OLD provider, so ListModels would poll the wrong
+    // endpoint and repopulate the new UI with stale models — surface the
+    // failure on the model error channel instead.
     void (async () => {
-      await persistProvider(which)
+      const persisted = await persistProvider(which)
+      if (!persisted.ok) {
+        modelError[which] = persisted.message
+        manualModel[which] = true
+        return
+      }
       void refreshModels(which)
     })()
   }

@@ -449,6 +449,37 @@ describe('AIProviderTab', () => {
       )
     })
 
+    it('does not force-refresh models when persisting the new provider fails', async () => {
+      // A failed save (IPC rejection, or invalid advanced settings) leaves the
+      // backend on the OLD provider config; a forced ListModels would poll the
+      // wrong endpoint and show stale models under the new type label. The
+      // refresh must be gated on a successful persist and the failure surfaced.
+      mocks.UpdateAIProviderConfig.mockRejectedValueOnce(
+        new Error('save failed')
+      )
+      render(AIProviderTab)
+      await ready()
+
+      const googleRadios = screen.getAllByRole('radio', { name: /Google AI/i })
+      await fireEvent.click(googleRadios[0])
+
+      // The provider type flips locally and the save is attempted...
+      await waitFor(() =>
+        expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+          'chat',
+          expect.objectContaining({ provider_type: 'google' })
+        )
+      )
+      // ...but the forced model refresh must NOT fire against stale backend config.
+      expect(mocks.ListModels).not.toHaveBeenCalledWith('chat', true)
+      // The save failure surfaces on the model error channel.
+      await waitFor(() =>
+        expect(
+          screen.getByText(/failed to save provider settings/i)
+        ).toBeInTheDocument()
+      )
+    })
+
     it('switches chat to Anthropic and snaps the base URL', async () => {
       render(AIProviderTab)
       await ready()

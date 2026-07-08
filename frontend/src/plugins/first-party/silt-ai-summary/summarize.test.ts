@@ -361,8 +361,10 @@ describe('summarize — reasoning tags never persist (#483)', () => {
     expect(String(put?.params[2])).not.toMatch(/<thought|<think|<reasoning/i)
   })
 
-  it('serves a clean summary from the cache on a second open (no regression after persist)', async () => {
-    // First call: generate + persist a clean row derived from a leaky response.
+  it('persists a clean summary from a <think>-wrapped response (tag variant)', async () => {
+    // Variant coverage: the <think> tag (DeepSeek-R1 / Qwen3 canonical) must be
+    // stripped just like <thought>. The first case used <thought>; this uses the
+    // canonical variant against the same persist path.
     const leaky = vi.fn().mockResolvedValue({
       content: stripReasoningContent(
         '<think>planning</think>{"summary":"cached clean","tasks":[]}'
