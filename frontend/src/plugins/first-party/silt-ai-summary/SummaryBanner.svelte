@@ -70,9 +70,7 @@
     `${ctx.activeNotebook}/${ctx.activeSection}/${ctx.activePage}`
   )
   const controller = getController()
-  const pageState = $derived<PageState | undefined>(
-    controller?.state.get(pageId)
-  )
+  const pageState = $derived<PageState | undefined>(controller?.state[pageId])
   const settings = $derived(controller?.getSettings() ?? DEFAULT_SETTINGS)
   const unconfigured = $derived(
     aiProviderNeedsSetup(appSettings.config?.ai?.chat)

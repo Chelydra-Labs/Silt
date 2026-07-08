@@ -10,7 +10,7 @@ const { mockRegister, mockUnregister, mockController, mockSettings } =
     mockRegister: vi.fn(),
     mockUnregister: vi.fn(),
     mockController: {
-      state: new Map<string, unknown>(),
+      state: {} as Record<string, unknown>,
       getSettings: vi.fn(),
       generateFor: vi.fn(async () => ({ ok: true, result: {} })),
       scheduleGenerate: vi.fn(),

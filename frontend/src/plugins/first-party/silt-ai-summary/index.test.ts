@@ -117,7 +117,7 @@ describe('generateFor fetch-failure handling', () => {
       expect(outcome.error.code).toBe('fetch-failed')
     }
     // Page state reflects the error so the banner renders Retry.
-    const ps = controller.state.get('NB/S/P')
+    const ps = controller.state['NB/S/P']
     expect(ps?.status).toBe('error')
     expect(ps?.result?.ok).toBe(false)
     controller.dispose()
