@@ -73,6 +73,15 @@ if [ -n "$GO_CHANGED" ]; then
     echo "ERROR: Go tests failed! Push aborted."
     exit 1
   fi
+  echo "Running withAIPreflight defer-contract analyzer..."
+  go build -tags tools -o ./.gobins/withaipreflightdefer ./cmd/withaipreflightdefer 2>/dev/null
+  if [ -f ./.gobins/withaipreflightdefer ]; then
+    go vet -vettool=./.gobins/withaipreflightdefer ./...
+    if [ $? -ne 0 ]; then
+      echo "ERROR: withAIPreflight defer-contract analyzer failed! Push aborted."
+      exit 1
+    fi
+  fi
 else
   echo "No Go files changed. Skipping Go tests (CI handles the full pipeline)."
 fi
