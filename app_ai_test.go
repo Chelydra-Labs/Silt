@@ -339,6 +339,25 @@ func TestTestAIConnection_RejectsBadWhich(t *testing.T) {
 	}
 }
 
+// TestProviderTypeLiteralsMatchConfig guards against silent dispatch drift:
+// the ai package cannot import config (layering rule), so the provider-type
+// string constants are duplicated. If one side ever changes a literal, the
+// dispatcher would silently route through the wrong provider shape. This test
+// asserts both packages agree on every literal value.
+func TestProviderTypeLiteralsMatchConfig(t *testing.T) {
+	pairs := []struct{ aiVal, cfgVal string }{
+		{ai.ProviderLocal, config.AIProviderLocal},
+		{ai.ProviderOpenAICompatible, config.AIProviderOpenAICompatible},
+		{ai.ProviderGoogle, config.AIProviderGoogle},
+		{ai.ProviderAnthropic, config.AIProviderAnthropic},
+	}
+	for _, p := range pairs {
+		if p.aiVal != p.cfgVal {
+			t.Fatalf("provider literal drift: ai=%q config=%q", p.aiVal, p.cfgVal)
+		}
+	}
+}
+
 // --- ListModels + model cache ---------------------------------------------
 
 func TestListModels_ColdStartReturnsEmpty(t *testing.T) {

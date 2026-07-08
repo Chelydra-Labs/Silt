@@ -14,10 +14,6 @@ import (
 func googleChatServer(t *testing.T, key string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Path must end with :generateContent and carry the models/ prefix.
-		if r.URL.Path == "" || r.URL.Path[len(r.URL.Path)-1] != 't' {
-			// More precise check below; this just avoids index panics.
-		}
 		// Auth header must be x-goog-api-key, NOT Authorization: Bearer.
 		if key != "" && r.Header.Get("x-goog-api-key") != key {
 			http.Error(w, "missing/invalid x-goog-api-key", http.StatusUnauthorized)

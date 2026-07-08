@@ -274,10 +274,14 @@
     modelLists[which] = []
     modelError[which] = null
     manualModel[which] = false
-    void persistProvider(which)
-    // Auto-refresh: poll the new provider's models immediately so the dropdown
-    // populates without a manual click. Non-blocking; errors surface inline.
-    void refreshModels(which)
+    // Persist the new config FIRST, then poll — Wails does not guarantee IPC
+    // ordering between independent fire-and-forget calls, so racing them
+    // could snapshot the old provider's endpoint and show its models under
+    // the new type label.
+    void (async () => {
+      await persistProvider(which)
+      void refreshModels(which)
+    })()
   }
 
   function providerDefaultURL(type: string): string {

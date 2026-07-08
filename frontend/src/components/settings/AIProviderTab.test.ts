@@ -406,6 +406,41 @@ describe('AIProviderTab', () => {
       )
     })
 
+    it('persists the provider config before refreshing models on switch', async () => {
+      // Wails IPC does not guarantee ordering between independent fire-and-forget
+      // calls. If the refresh fires before the save lands, ListModels snapshots
+      // the OLD provider config and polls the wrong endpoint. This test verifies
+      // the save completes before the force-poll fires.
+      let releaseSave!: () => void
+      mocks.UpdateAIProviderConfig.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseSave = () => resolve()
+          })
+      )
+      render(AIProviderTab)
+      await ready()
+
+      const googleRadios = screen.getAllByRole('radio', { name: /Google AI/i })
+      await fireEvent.click(googleRadios[0])
+
+      // Save is called immediately...
+      await waitFor(() =>
+        expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+          'chat',
+          expect.anything()
+        )
+      )
+      // ...but ListModels(force=true) must NOT have fired yet (save is pending).
+      expect(mocks.ListModels).not.toHaveBeenCalledWith('chat', true)
+
+      // Release the save — the force-poll should fire now.
+      releaseSave()
+      await waitFor(() =>
+        expect(mocks.ListModels).toHaveBeenCalledWith('chat', true)
+      )
+    })
+
     it('switches chat to Anthropic and snaps the base URL', async () => {
       render(AIProviderTab)
       await ready()
