@@ -245,3 +245,56 @@ func TestCompleteAnthropic_NoContent(t *testing.T) {
 		t.Fatal("expected error for empty content, got nil")
 	}
 }
+
+func TestCompleteAnthropic_StructuredOutput(t *testing.T) {
+	var capturedBody anthropicRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &capturedBody)
+		// Respond with a tool_use block (forced tool-use response).
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{
+				{
+					"type": "tool_use",
+					"id":   "toolu_01",
+					"name": "structured_output",
+					"input": map[string]any{
+						"summary":   "Meeting notes",
+						"tasks":     []any{"Follow up"},
+						"risks":     []any{},
+						"decisions": []any{},
+					},
+				},
+			},
+			"model": "claude-sonnet-5",
+			"usage": map[string]any{"input_tokens": 10, "output_tokens": 20},
+		})
+	}))
+	defer srv.Close()
+	schema := json.RawMessage(`{"type":"object","properties":{"summary":{"type":"string"},"tasks":{"type":"array","items":{"type":"string"}}},"required":["summary","tasks"]}`)
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider:       AIProvider{ProviderType: ProviderAnthropic, BaseURL: srv.URL, Model: "claude-sonnet-5"},
+		Messages:       []ChatMessage{{Role: "user", Content: "summarize"}},
+		ResponseSchema: schema,
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	// The response content should be the JSON-stringified tool input.
+	if !contains(res.Content, `"summary":"Meeting notes"`) {
+		t.Errorf("content = %q, want JSON with summary field", res.Content)
+	}
+	// Verify the request included the forced tool.
+	if len(capturedBody.Tools) != 1 {
+		t.Fatalf("tools len = %d, want 1", len(capturedBody.Tools))
+	}
+	if capturedBody.Tools[0].Name != "structured_output" {
+		t.Errorf("tool name = %q, want structured_output", capturedBody.Tools[0].Name)
+	}
+	// ToolChoice should force the tool.
+	tc, ok := capturedBody.ToolChoice.(map[string]any)
+	if !ok || tc["type"] != "tool" || tc["name"] != "structured_output" {
+		t.Errorf("tool_choice = %+v, want {type:tool, name:structured_output}", capturedBody.ToolChoice)
+	}
+}

@@ -17,6 +17,34 @@ import type { PluginAIChatMessage, PluginAIError } from '../../sdk'
 import type { SummaryError, SummaryExtraction, SummarySettings } from './types'
 import { maxTokensForLength } from './settings'
 
+/** The JSON Schema for the structured summary extraction. Passed to native
+ *  providers (Google, Anthropic) via responseSchema so the model returns a
+ *  JSON object conforming to this shape directly — no prompt-only heuristics,
+ *  no markdown fences. The OpenAI-compatible path ignores the schema and
+ *  falls back to prompt-only JSON + tolerant parsing (D1). */
+const SUMMARY_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string', description: 'A concise summary of the note' },
+    tasks: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Actionable to-dos the note mentions'
+    },
+    risks: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Risks, blockers, or concerns raised'
+    },
+    decisions: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Decisions made or confirmed'
+    }
+  },
+  required: ['summary', 'tasks', 'risks', 'decisions']
+} as const
+
 /** Mid-truncate a note that exceeds the size budget: keep a head and a tail
  *  with a visible ellipsis seam, preserving the opening (context) and the
  *  closing (actions/decisions often live at the end of meeting notes). Notes
@@ -188,7 +216,8 @@ export type ExtractResult =
 export async function extractSummary(args: {
   complete: (
     messages: PluginAIChatMessage[],
-    maxTokens: number
+    maxTokens: number,
+    options?: { responseSchema?: Record<string, unknown> }
   ) => Promise<{ content: string; model: string }>
   content: string
   settings: SummarySettings
@@ -199,7 +228,9 @@ export async function extractSummary(args: {
 
   let res: { content: string; model: string }
   try {
-    res = await complete(messages, maxTokens)
+    // Pass the summary schema so native providers (Google, Anthropic) enforce
+    // structured output. OpenAI-compat ignores it (D1 prompt-only fallback).
+    res = await complete(messages, maxTokens, { responseSchema: SUMMARY_SCHEMA })
   } catch (e) {
     return { ok: false, error: providerError(e) }
   }
@@ -207,7 +238,7 @@ export async function extractSummary(args: {
   if (!parsed) {
     // Tier 2: one retry with the same structured prompt.
     try {
-      res = await complete(messages, maxTokens)
+      res = await complete(messages, maxTokens, { responseSchema: SUMMARY_SCHEMA })
       parsed = parseSummary(res.content)
     } catch (e) {
       return { ok: false, error: providerError(e) }

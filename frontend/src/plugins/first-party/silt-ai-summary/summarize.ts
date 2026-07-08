@@ -118,8 +118,13 @@ export async function summarize(
   const prior = latest ? toExtraction(latest) : EMPTY_EXTRACTION
 
   const extracted = await extractSummary({
-    complete: (messages, maxTokens) =>
-      ctx.ai.complete({ messages, temperature: 0, maxTokens }),
+    complete: (messages, maxTokens, options) =>
+      ctx.ai.complete({
+        messages,
+        temperature: 0,
+        maxTokens,
+        responseSchema: options?.responseSchema
+      }),
     content: deps.cleanContent,
     settings: deps.settings
   })

@@ -253,6 +253,47 @@ func TestCompleteGoogle_FallsBackToStatusClassification(t *testing.T) {
 	}
 }
 
+func TestCompleteGoogle_StructuredOutput(t *testing.T) {
+	var capturedBody googleGenerateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []map[string]any{
+				{"content": map[string]any{"parts": []map[string]any{{"text": `{"summary":"test","tasks":[],"risks":[],"decisions":[]}`}}}},
+			},
+		})
+	}))
+	defer srv.Close()
+	schema := json.RawMessage(`{"type":"object","properties":{"summary":{"type":"string"},"tasks":{"type":"array","items":{"type":"string"}}},"required":["summary","tasks"]}`)
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider:       AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-2.0-flash"},
+		Messages:       []ChatMessage{{Role: "user", Content: "summarize"}},
+		ResponseSchema: schema,
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if capturedBody.GenerationConfig == nil {
+		t.Fatal("generationConfig should be set when ResponseSchema is provided")
+	}
+	if capturedBody.GenerationConfig.ResponseMimeType != "application/json" {
+		t.Errorf("responseMimeType = %q, want application/json", capturedBody.GenerationConfig.ResponseMimeType)
+	}
+	// The schema types should be UPPERCASE (Google's enum).
+	var raw map[string]any
+	_ = json.Unmarshal(capturedBody.GenerationConfig.ResponseSchema, &raw)
+	if raw["type"] != "OBJECT" {
+		t.Errorf("schema type = %v, want OBJECT (uppercase)", raw["type"])
+	}
+	props, _ := raw["properties"].(map[string]any)
+	summary, _ := props["summary"].(map[string]any)
+	if summary["type"] != "STRING" {
+		t.Errorf("summary type = %v, want STRING", summary["type"])
+	}
+}
+
 // contains is a local string-contains helper (avoids importing strings in test).
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)

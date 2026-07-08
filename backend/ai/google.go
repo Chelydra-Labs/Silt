@@ -32,8 +32,10 @@ type googleGenerateRequest struct {
 }
 
 type googleGenerationConfig struct {
-	Temperature     *float64 `json:"temperature,omitempty"`
-	MaxOutputTokens *int     `json:"maxOutputTokens,omitempty"`
+	Temperature      *float64        `json:"temperature,omitempty"`
+	MaxOutputTokens  *int            `json:"maxOutputTokens,omitempty"`
+	ResponseMimeType string          `json:"responseMimeType,omitempty"`
+	ResponseSchema   json.RawMessage `json:"responseSchema,omitempty"`
 }
 
 // googleGenerateResponse is the generateContent response body.
@@ -84,6 +86,50 @@ func googleModelName(model string) string {
 		return model
 	}
 	return "models/" + model
+}
+
+// googleConvertSchema converts a standard JSON Schema (lowercase type strings)
+// to Google's responseSchema format (uppercase type enum: STRING, NUMBER,
+// INTEGER, BOOLEAN, ARRAY, OBJECT). Google accepts the rest of JSON Schema
+// (properties, items, required, enum, description) verbatim — only the type
+// field needs uppercasing. The conversion is recursive into properties and
+// items so nested objects/arrays are handled.
+func googleConvertSchema(raw json.RawMessage) json.RawMessage {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return raw // malformed → pass through; the provider will reject it
+	}
+	converted := googleConvertValue(v)
+	out, err := json.Marshal(converted)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func googleConvertValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			if k == "type" {
+				if s, ok := val.(string); ok {
+					out[k] = strings.ToUpper(s)
+					continue
+				}
+			}
+			out[k] = googleConvertValue(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = googleConvertValue(val)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // googleClassifyError maps a Google structured error body to an AIError. Returns
@@ -141,6 +187,12 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 		})
 	}
 	gc := &googleGenerationConfig{Temperature: req.Temperature, MaxOutputTokens: req.MaxTokens}
+	// Native structured output: Google's responseSchema uses uppercase type
+	// enum values (STRING, ARRAY, OBJECT, …). Convert from standard JSON Schema.
+	if len(req.ResponseSchema) > 0 {
+		gc.ResponseMimeType = "application/json"
+		gc.ResponseSchema = googleConvertSchema(req.ResponseSchema)
+	}
 	body, err := json.Marshal(googleGenerateRequest{
 		SystemInstruction: system,
 		Contents:          contents,

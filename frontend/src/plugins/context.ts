@@ -648,7 +648,10 @@ export function makePluginContext(
           temperature: req.temperature,
           max_tokens: req.maxTokens,
           reasoning_effort: req.reasoningEffort,
-          stream: req.stream ?? false
+          stream: req.stream ?? false,
+          response_schema: req.responseSchema
+            ? (JSON.stringify(req.responseSchema) as any)
+            : undefined
           // Wails generates PluginAICompleteInput as a class (it has a nested
           // struct array), so the strict TS type wants an instance with
           // convertValues. The runtime binding JSON-serializes a plain object

@@ -28,6 +28,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -135,6 +136,7 @@ type PluginAICompleteInput struct {
 	MaxTokens       *int                  `json:"max_tokens,omitempty"`
 	ReasoningEffort *string               `json:"reasoning_effort,omitempty"`
 	Stream          bool                  `json:"stream,omitempty"`
+	ResponseSchema  json.RawMessage       `json:"response_schema,omitempty"`
 }
 
 // PluginAIEmbedInput is the plugin-side request envelope for an embedding batch.
@@ -670,6 +672,7 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 		MaxTokens:       input.MaxTokens,
 		ReasoningEffort: input.ReasoningEffort,
 		Stream:          false, // Sprint 22 delivers streaming; signature is additive
+		ResponseSchema:  input.ResponseSchema,
 	})
 	status := "ok"
 	if callErr != nil {

@@ -39,13 +39,33 @@ type anthropicRequest struct {
 	System      string             `json:"system,omitempty"`
 	Messages    []anthropicMessage `json:"messages"`
 	Temperature *float64           `json:"temperature,omitempty"`
+	// Forced tool-use for structured output (D1 revisit). When Tools is set,
+	// ToolChoice forces the model to emit a tool_use block whose input conforms
+	// to the schema. The decoder extracts the input as JSON.
+	Tools      []anthropicTool `json:"tools,omitempty"`
+	ToolChoice any             `json:"tool_choice,omitempty"`
 }
+
+// anthropicTool defines a single tool the model may call. For structured output
+// we define exactly one tool whose input_schema is the desired JSON Schema and
+// force the model to call it.
+type anthropicTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
+
+// Structured-output tool name. The decoder looks for a tool_use block with
+// this name and extracts its input as the JSON result.
+const anthropicStructuredToolName = "structured_output"
 
 // anthropicResponse is the /v1/messages response body.
 type anthropicResponse struct {
 	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type  string          `json:"type"`
+		Text  string          `json:"text"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
 	} `json:"content"`
 	Model      string `json:"model"`
 	StopReason string `json:"stop_reason"`
@@ -127,6 +147,8 @@ func completeAnthropic(ctx context.Context, req CompleteRequest, model, baseURL 
 		System:      system.String(),
 		Messages:    msgs,
 		Temperature: req.Temperature,
+		Tools:       anthropicStructuredTools(req.ResponseSchema),
+		ToolChoice:  anthropicStructuredChoice(req.ResponseSchema),
 	})
 	if err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}
@@ -151,9 +173,15 @@ func completeAnthropic(ctx context.Context, req CompleteRequest, model, baseURL 
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse response: %v", err)}
 	}
-	// Concatenate all text blocks (a single turn may carry multiple).
+	// Concatenate all text blocks. When forced tool-use is active, extract the
+	// structured output from the tool_use block's input (JSON-stringified so
+	// the existing string-based contract holds). A text block alongside a
+	// tool_use block (thinking text) is ignored for the structured result.
 	var sb strings.Builder
 	for _, b := range resp.Content {
+		if b.Type == "tool_use" && b.Name == anthropicStructuredToolName && len(b.Input) > 0 {
+			return CompleteResult{Content: string(b.Input), Model: resp.Model}, nil
+		}
 		if b.Type == "text" {
 			sb.WriteString(b.Text)
 		}
@@ -215,4 +243,26 @@ func listModelsAnthropic(ctx context.Context, p AIProvider, baseURL string) ([]A
 		out = append(out, AIModel{ID: id, DisplayName: display})
 	}
 	return out, nil
+}
+
+// anthropicStructuredTools returns a single forced tool whose input_schema is
+// the given JSON Schema, or nil when no schema is set (no structured output).
+func anthropicStructuredTools(schema json.RawMessage) []anthropicTool {
+	if len(schema) == 0 {
+		return nil
+	}
+	return []anthropicTool{{
+		Name:        anthropicStructuredToolName,
+		Description: "Return the structured result",
+		InputSchema: schema,
+	}}
+}
+
+// anthropicStructuredChoice forces the model to call the structured-output tool
+// when a schema is set, or nil when no schema is set.
+func anthropicStructuredChoice(schema json.RawMessage) any {
+	if len(schema) == 0 {
+		return nil
+	}
+	return map[string]string{"type": "tool", "name": anthropicStructuredToolName}
 }

@@ -28,6 +28,7 @@ package ai
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -117,6 +118,12 @@ type CompleteRequest struct {
 	MaxTokens       *int          `json:"max_tokens,omitempty"`       // override Provider.MaxTokens
 	ReasoningEffort *string       `json:"reasoning_effort,omitempty"` // override Provider.ReasoningEffort ("none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max")
 	Stream          bool          `json:"stream,omitempty"`           // signature present now; Sprint 22 delivers streaming
+	// ResponseSchema, when set, asks native providers (google, anthropic) to
+	// return a JSON object conforming to the given JSON Schema. The openai-
+	// compat path ignores it (prompt-only JSON stays the universal denominator,
+	// per the D1 design decision). The schema is a raw JSON Schema object
+	// (lowercase type strings); each native encoder converts to its own format.
+	ResponseSchema json.RawMessage `json:"response_schema,omitempty"`
 }
 
 // CompleteResult is the output of a successful (non-streaming) completion. Usage
