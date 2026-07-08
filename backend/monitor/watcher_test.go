@@ -953,15 +953,9 @@ func TestReMint_StrippedIDsFlagsMassReMint(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	// 6 managed blocks, all carrying ids (so the first reindex mints nothing
-	// and records priorCount = 6).
-	original := "# Plan <!-- id: aaaaaaaa-1111-1111-1111-111111111111 -->\n"
-	for i := 0; i < 6; i++ {
-		original += "- [ ] task " + string(rune('a'+i)) +
-			" <!-- id: aaaaaaaa-" + string(rune('2'+i)) + "222-2222-2222-1111111111" + string(rune('1'+i)) + " -->\n"
-	}
-	// Use stable distinct ids to avoid collisions.
-	original = "# Plan <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
+	// 7 managed blocks, all carrying ids (so the first reindex mints nothing
+	// and records priorCount = 7: header + 6 tasks).
+	original := "# Plan <!-- id: 11111111-1111-1111-1111-111111111111 -->\n" +
 		"- [ ] task a <!-- id: 22222222-2222-2222-2222-222222222222 -->\n" +
 		"- [ ] task b <!-- id: 33333333-3333-3333-3333-333333333333 -->\n" +
 		"- [ ] task c <!-- id: 44444444-4444-4444-4444-444444444444 -->\n" +
@@ -971,7 +965,7 @@ func TestReMint_StrippedIDsFlagsMassReMint(t *testing.T) {
 	if err := os.WriteFile(filePath, []byte(original), 0o644); err != nil {
 		t.Fatalf("write original: %v", err)
 	}
-	dw.reindexFile(filePath) // index → priorCount = 6
+	dw.reindexFile(filePath) // index → priorCount = 7
 	if got := warnings(); len(got) != 0 {
 		t.Fatalf("first reindex (all ids present) should not flag; got %v", got)
 	}
@@ -1058,14 +1052,9 @@ func TestReMint_SingleEditNotFlagged(t *testing.T) {
 	}
 	dw.reindexFile(filePath) // priorCount = 7
 
-	// Normal edit: append ONE new task (no id). MintedCount = 1, threshold = max(3, 7/2=3) = 3 → not flagged.
-	edited := strings.TrimRight(original, "\n") +
-		"\n- [ ] task g (new) <!-- id: 88888888-8888-8888-8888-888888888888 -->\n"
-	// The new task carries an id here to keep MintedCount focused on the
-	// "exactly one mint" case; a real new block without an id would also
-	// be the only mint and still pass. Strip the new line's id to simulate
-	// a freshly-typed task the parser must mint for:
-	edited = original + "- [ ] task g (new)\n"
+	// Normal edit: append ONE new task (no id). MintedCount = 1,
+	// threshold = max(3, 7/2=3) = 3 → not flagged.
+	edited := original + "- [ ] task g (new)\n"
 	if err := os.WriteFile(filePath, []byte(edited), 0o644); err != nil {
 		t.Fatalf("write edited: %v", err)
 	}

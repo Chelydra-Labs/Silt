@@ -737,3 +737,58 @@ func TestWithAIPreflight_EnforcesDrainContract(t *testing.T) {
 		t.Fatal("vaultClosingWG.Wait() blocked after the closing-path call — the rejection path leaked an unbalanced Add")
 	}
 }
+
+// TestInitializeVaultServices_CancelsPriorVaultCtx pins the MoveVault/
+// rollbackMove re-init path (#471 follow-up): initializeVaultServices must
+// cancel any prior vaultCtx before overwriting it. teardownVaultServices does
+// NOT cancel vaultCtx, and MoveVault/rollbackMove reach initializeVaultServices
+// via teardown → init WITHOUT a proactive cancel (unlike CloseVault/SwitchVault,
+// which cancel before the drain wait). Without the self-cleaning guard at the
+// top of initializeVaultServices, every vault move / failed-move rollback would
+// orphan the old context in aiCtx.children until shutdown.
+func TestInitializeVaultServices_CancelsPriorVaultCtx(t *testing.T) {
+	app := newTestApp(t)
+	// Capture the vault path before teardown nils it (newTestApp scaffolds a
+	// real vault on disk that survives teardown — teardown closes the db but
+	// leaves the files, so re-init on the same path works).
+	vaultPath := app.vaultPath
+	// Simulate a prior init's vaultCtx (newTestApp builds the App literal
+	// directly, so vaultCtx is nil until the first initializeVaultServices).
+	app.vaultCtx, app.vaultCtxCancel = context.WithCancel(context.Background())
+	prior := app.vaultCtx
+
+	// Sanity: the prior context is live before re-init.
+	select {
+	case <-prior.Done():
+		t.Fatal("prior vaultCtx already done before re-init")
+	default:
+	}
+
+	// Re-init via the MoveVault/rollback shape: teardown (does NOT cancel
+	// vaultCtx) then initializeVaultServices (the guard must cancel prior).
+	app.vaultMu.Lock()
+	app.teardownVaultServices()
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		app.vaultMu.Unlock()
+		t.Fatalf("initializeVaultServices: %v", err)
+	}
+	app.vaultMu.Unlock()
+	t.Cleanup(func() { _ = app.CloseVault() })
+
+	// The guard cancelled the prior context before overwriting it. If the guard
+	// regresses, the prior context stays live (orphaned) and this times out.
+	select {
+	case <-prior.Done():
+		// Expected: prior was cancelled by the re-init guard.
+	case <-time.After(time.Second):
+		t.Fatal("prior vaultCtx was not cancelled by re-init — MoveVault/rollback would orphan it in aiCtx.children")
+	}
+
+	// A fresh context took its place (not the orphaned one).
+	app.vaultMu.RLock()
+	fresh := app.vaultCtx
+	app.vaultMu.RUnlock()
+	if fresh == nil || fresh == prior {
+		t.Fatal("re-init did not mint a fresh vaultCtx (nil or same pointer as prior)")
+	}
+}

@@ -530,16 +530,21 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// here after a failed/partial close must not inherit a stuck flag, or AI
 	// calls would reject forever (#452).
 	a.closing = false
-	// (Re)create the vault-scoped AI context. A prior CloseVault/SwitchVault
-	// cancelled the old vaultCtx to abort in-flight HTTP; the cancel func is
-	// stale once the new vault opens, so always mint a fresh child of aiCtx
-	// here. aiCtx may be nil for a bare App used only in unit tests that
-	// bypass startup() — fall back to context.Background() in that case so
-	// direct initializeVaultServices callers (app_lifecycle_drain_test.go)
-	// still get a cancellable per-vault context.
+	// (Re)create the vault-scoped AI context. Cancel any PRIOR context first:
+	// CloseVault/SwitchVault cancel proactively, but MoveVault/rollbackMove
+	// re-enter here via teardownVaultServices → initializeVaultServices WITHOUT
+	// cancelling (teardown doesn't touch vaultCtx), so without this guard each
+	// vault move / failed-move rollback would orphan the old context in
+	// aiCtx.children until shutdown. aiCtx may be nil for a bare App used only
+	// in unit tests that bypass startup() — fall back to context.Background()
+	// in that case so direct initializeVaultServices callers
+	// (app_lifecycle_drain_test.go) still get a cancellable per-vault context.
 	parent := a.aiCtx
 	if parent == nil {
 		parent = context.Background()
+	}
+	if a.vaultCtxCancel != nil {
+		a.vaultCtxCancel()
 	}
 	a.vaultCtx, a.vaultCtxCancel = context.WithCancel(parent)
 	// Load system config first: its editor.tab_indent_spaces drives
