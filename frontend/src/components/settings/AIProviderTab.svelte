@@ -22,10 +22,12 @@
     ClearAIAPIKey,
     SetUseKeyring,
     TestAIConnection,
+    ListModels,
     GetAIAudit,
     ClearAIAudit
   } from '../../../wailsjs/go/main/App.js'
   import type { main } from '../../../wailsjs/go/models'
+  import type { ai as aiTypes } from '../../../wailsjs/go/models'
 
   type Which = 'chat' | 'embedding'
 
@@ -71,6 +73,28 @@
     embedding: false
   })
 
+  // Model discovery state. The dropdown polls ListModels (cached server-side);
+  // this holds the client-side copy for rendering. manualModel tracks whether
+  // the user opted into the free-text input (or the poll failed/returned empty,
+  // which auto-falls-back). When true the <select> is hidden and a text input
+  // is shown, preserving the current model value.
+  let modelLists = $state<Record<Which, aiTypes.AIModel[]>>({
+    chat: [],
+    embedding: []
+  })
+  let modelLoading = $state<Record<Which, boolean>>({
+    chat: false,
+    embedding: false
+  })
+  let modelError = $state<Record<Which, string | null>>({
+    chat: null,
+    embedding: null
+  })
+  let manualModel = $state<Record<Which, boolean>>({
+    chat: false,
+    embedding: false
+  })
+
   // Element refs. Wrapped in $state so Svelte 5's bind:this doesn't
   // warn about non-reactive bindings; we only use these to focus the
   // input on the "Replace" affordance click, never to render from.
@@ -94,6 +118,8 @@
   // Backend constants.
   const LOCAL_DEFAULT = 'http://localhost:11434'
   const OPENAI_DEFAULT = 'https://api.openai.com/v1'
+  const GOOGLE_DEFAULT = 'https://generativelanguage.googleapis.com'
+  const ANTHROPIC_DEFAULT = 'https://api.anthropic.com'
 
   // Plain-object round-trip so Svelte 5's deep proxy can track nested
   // field mutations — Wails returns class instances, which $state does
@@ -112,10 +138,48 @@
     loadError = null
     try {
       config = toPlain(await GetAIProviderConfig())
+      // Load cached model lists (non-forced: no network call on cold start).
+      // Best-effort — a failure leaves the dropdown empty with manual fallback.
+      void loadModels('chat')
+      void loadModels('embedding')
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e)
     } finally {
       loading = false
+    }
+  }
+
+  // loadModels reads the server-side cache (no network when cached). On cold
+  // start with no cache it returns empty — the dropdown falls back to free-text.
+  async function loadModels(which: Which) {
+    try {
+      const models = toPlain(await ListModels(which, false))
+      modelLists[which] = models ?? []
+      if (modelLists[which].length === 0) {
+        manualModel[which] = true
+      }
+    } catch {
+      // No cache yet — silent; user can click Refresh to poll.
+    }
+  }
+
+  // refreshModels forces a server-side poll (bypasses cache) and updates the
+  // dropdown. On empty/error, auto-falls-back to the free-text input.
+  async function refreshModels(which: Which) {
+    if (modelLoading[which]) return
+    modelLoading[which] = true
+    modelError[which] = null
+    try {
+      const models = toPlain(await ListModels(which, true))
+      modelLists[which] = models ?? []
+      if (modelLists[which].length === 0) {
+        manualModel[which] = true
+      }
+    } catch (e) {
+      modelError[which] = e instanceof Error ? e.message : String(e)
+      manualModel[which] = true
+    } finally {
+      modelLoading[which] = false
     }
   }
 
@@ -192,23 +256,51 @@
     }
   }
 
-  // Switching provider type snaps base_url to that type's default
-  // unless the user has already typed a custom endpoint, so flipping
-  // openai→local and back doesn't clobber an OpenRouter URL.
-  function selectProviderType(
-    which: Which,
-    type: 'local' | 'openai-compatible'
-  ) {
+  type ProviderType = 'local' | 'openai-compatible' | 'google' | 'anthropic'
+
+  // Switching provider type snaps base_url to that type's canonical default
+  // unless the user has a custom endpoint, so flipping between types doesn't
+  // clobber a typed URL. Also drops the cached model list (different endpoint).
+  function selectProviderType(which: Which, type: ProviderType) {
     if (!config) return
     const b = config[which]
     if (b.provider_type === type) return
+    const oldDefault = providerDefaultURL(b.provider_type)
     b.provider_type = type
-    if (type === 'local') {
-      b.base_url = LOCAL_DEFAULT
-    } else if (!b.base_url || b.base_url === LOCAL_DEFAULT) {
-      b.base_url = OPENAI_DEFAULT
+    if (b.base_url === oldDefault || !b.base_url) {
+      b.base_url = providerDefaultURL(type)
     }
+    // A provider-type change invalidates the cached model list (different API).
+    modelLists[which] = []
+    modelError[which] = null
+    manualModel[which] = false
     void persistProvider(which)
+    void loadModels(which)
+  }
+
+  function providerDefaultURL(type: string): string {
+    switch (type) {
+      case 'local':
+        return LOCAL_DEFAULT
+      case 'google':
+        return GOOGLE_DEFAULT
+      case 'anthropic':
+        return ANTHROPIC_DEFAULT
+      default:
+        return OPENAI_DEFAULT
+    }
+  }
+
+  // Cloud providers (google/anthropic/openai-compatible) send content off-device;
+  // only "local" stays on-machine.
+  function isCloudProvider(type: string): boolean {
+    return type !== 'local'
+  }
+
+  // Anthropic has no native embeddings endpoint — the embedding block should
+  // surface this and disable the model field when anthropic is selected.
+  function supportsEmbeddings(type: string): boolean {
+    return type !== 'anthropic'
   }
 
   // --- API key save / clear --------------------------------------------
@@ -424,9 +516,10 @@
             <strong class="text-accent-primary-start"
               >Set up an AI provider.</strong
             >
-            Stay on <em>Local</em> if you run Ollama at the default URL, or
-            switch to <em>OpenAI-compatible</em> and add an API key to use a cloud
-            endpoint.
+            Stay on <em>Local</em> if you run Ollama at the default URL, switch
+            to <em>OpenAI-compatible</em> for a cloud endpoint, or pick
+            <em>Google AI</em> or <em>Anthropic</em> for native first-party
+            access.
           </div>
         </div>
       {/if}
@@ -438,8 +531,29 @@
       {@const typeLabel =
         which === 'chat' ? 'Chat provider type' : 'Embedding provider type'}
       {@const isLocal = b.provider_type === 'local'}
+      {@const isCloud = isCloudProvider(b.provider_type)}
+      {@const embedUnsupported =
+        which === 'embedding' && !supportsEmbeddings(b.provider_type)}
       {@const testingNow = testing[which]}
       {@const result = testResult[which]}
+      {@const providerTypes = [
+        { value: 'local' as ProviderType, icon: 'dns', label: 'Local (Ollama)' },
+        {
+          value: 'openai-compatible' as ProviderType,
+          icon: 'cloud',
+          label: 'OpenAI-compatible'
+        },
+        {
+          value: 'google' as ProviderType,
+          icon: 'auto_awesome',
+          label: 'Google AI'
+        },
+        {
+          value: 'anthropic' as ProviderType,
+          icon: 'psychology',
+          label: 'Anthropic'
+        }
+      ]}
       <div
         class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
       >
@@ -454,46 +568,30 @@
           <div
             role="radiogroup"
             aria-labelledby="{idPrefix}-type-label"
-            class="inline-flex bg-surface-panel border border-surface-panel-border rounded-lg p-1 gap-1"
+            class="flex flex-wrap bg-surface-panel border border-surface-panel-border rounded-lg p-1 gap-1"
           >
-            <button
-              type="button"
-              role="radio"
-              aria-checked={isLocal}
-              onclick={() => selectProviderType(which, 'local')}
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-label-sm text-label-sm motion-reduce:transition-none transition-colors border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-              class:bg-hover={isLocal}
-              class:text-accent-primary-start={isLocal}
-              class:text-text-muted={!isLocal}
-              class:hover:text-text-primary={!isLocal}
-              class:ring-1={isLocal}
-              class:ring-accent-primary-start={isLocal}
-            >
-              <span
-                class="material-symbols-outlined text-[16px]"
-                aria-hidden="true">dns</span
+            {#each providerTypes as pt (pt.value)}
+              {@const selected = b.provider_type === pt.value}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onclick={() => selectProviderType(which, pt.value)}
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-label-sm text-label-sm motion-reduce:transition-none transition-colors border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+                class:bg-hover={selected}
+                class:text-accent-primary-start={selected}
+                class:text-text-muted={!selected}
+                class:hover:text-text-primary={!selected}
+                class:ring-1={selected}
+                class:ring-accent-primary-start={selected}
               >
-              Local (Ollama)
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={!isLocal}
-              onclick={() => selectProviderType(which, 'openai-compatible')}
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-label-sm text-label-sm motion-reduce:transition-none transition-colors border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-              class:bg-hover={!isLocal}
-              class:text-accent-primary-start={!isLocal}
-              class:text-text-muted={isLocal}
-              class:hover:text-text-primary={isLocal}
-              class:ring-1={!isLocal}
-              class:ring-accent-primary-start={!isLocal}
-            >
-              <span
-                class="material-symbols-outlined text-[16px]"
-                aria-hidden="true">cloud</span
-              >
-              OpenAI-compatible
-            </button>
+                <span
+                  class="material-symbols-outlined text-[16px]"
+                  aria-hidden="true">{pt.icon}</span
+                >
+                {pt.label}
+              </button>
+            {/each}
           </div>
           <!-- Privacy notice: local stays on-device; cloud sends content out. -->
           <p
@@ -533,24 +631,119 @@
               class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
           </label>
-          <label class="flex flex-col gap-1.5" for="{idPrefix}-model">
-            <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
-              >Model</span
-            >
-            <input
-              id="{idPrefix}-model"
-              type="text"
-              bind:value={b.model}
-              onblur={() => void persistProvider(which)}
-              autocomplete="off"
-              spellcheck="false"
-              placeholder={which === 'chat'
-                ? 'llama3.1, gpt-4o'
-                : 'text-embedding-3-small, nomic-embed-text'}
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
-            />
-          </label>
+          {#if embedUnsupported}
+            <!-- Anthropic has no embeddings endpoint: surface a clear message
+                 instead of a model field that can only fail. -->
+            <div class="flex flex-col gap-1.5">
+              <span
+                class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+                >Model</span
+              >
+              <div
+                class="flex items-start gap-2 px-3 py-2 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-[12px] font-body-md"
+                role="note"
+              >
+                <span
+                  class="material-symbols-outlined text-[16px] mt-0.5 flex-shrink-0"
+                  aria-hidden="true">block</span
+                >
+                <span class="flex-1">
+                  Anthropic doesn't offer embeddings. Switch to Local or
+                  OpenAI-compatible for the embedding model.
+                </span>
+              </div>
+            </div>
+          {:else}
+            <div class="flex flex-col gap-1.5">
+              <div class="flex items-center justify-between">
+                <span
+                  class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+                  >Model</span
+                >
+                <button
+                  type="button"
+                  onclick={() => void refreshModels(which)}
+                  disabled={modelLoading[which]}
+                  class="text-[10px] font-label-sm-bold underline bg-transparent border-none cursor-pointer text-text-muted hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed p-0"
+                >
+                  {#if modelLoading[which]}
+                    <span
+                      class="material-symbols-outlined text-[12px] animate-spin align-middle"
+                      aria-hidden="true">progress_activity</span
+                    >
+                    Loading…
+                  {:else}
+                    <span
+                      class="material-symbols-outlined text-[12px] align-middle"
+                      aria-hidden="true">refresh</span
+                    >
+                    Refresh models
+                  {/if}
+                </button>
+              </div>
+              {#if manualModel[which] || modelLists[which].length === 0}
+                <!-- Free-text fallback: cold start, failed poll, or user-toggled. -->
+                <input
+                  id="{idPrefix}-model"
+                  type="text"
+                  bind:value={b.model}
+                  onblur={() => void persistProvider(which)}
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder={which === 'chat'
+                    ? 'gemini-2.0-flash, claude-sonnet-5, llama3.1'
+                    : 'text-embedding-3-small, nomic-embed-text'}
+                  class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+                />
+                {#if modelLists[which].length > 0}
+                  <button
+                    type="button"
+                    onclick={() => (manualModel[which] = false)}
+                    class="text-[10px] font-label-sm text-text-muted hover:text-text-primary bg-transparent border-none cursor-pointer p-0 self-start"
+                  >
+                    Pick from list
+                  </button>
+                {/if}
+              {:else}
+                <!-- Dropdown populated from ListModels. -->
+                <select
+                  id="{idPrefix}-model"
+                  value={b.model}
+                  onchange={(e) => {
+                    b.model = (e.currentTarget as HTMLSelectElement).value
+                    void persistProvider(which)
+                  }}
+                  class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer"
+                >
+                  {#if !modelLists[which].some((m) => m.id === b.model)}
+                    <option value={b.model}>{b.model || 'Select a model…'}</option>
+                  {/if}
+                  {#each modelLists[which] as m (m.id)}
+                    <option value={m.id}>{m.display_name}</option>
+                  {/each}
+                </select>
+                <button
+                  type="button"
+                  onclick={() => (manualModel[which] = true)}
+                  class="text-[10px] font-label-sm text-text-muted hover:text-text-primary bg-transparent border-none cursor-pointer p-0 self-start"
+                >
+                  Type manually
+                </button>
+              {/if}
+              {#if modelError[which]}
+                <p
+                  class="text-[10px] font-label-sm text-error flex items-center gap-1"
+                  role="alert"
+                >
+                  <span
+                    class="material-symbols-outlined text-[12px]"
+                    aria-hidden="true">error</span
+                  >
+                  {modelError[which]}
+                </p>
+              {/if}
+            </div>
+          {/if}
         </div>
         {#if isLocal}
           <p class="text-text-muted text-[11px] font-label-sm -mt-2">

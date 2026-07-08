@@ -89,6 +89,7 @@ const mocks = vi.hoisted(() => {
     ClearAIAPIKey: vi.fn(),
     SetUseKeyring: vi.fn(),
     TestAIConnection: vi.fn(),
+    ListModels: vi.fn(),
     GetAIAudit: vi.fn(),
     ClearAIAudit: vi.fn()
   }
@@ -101,6 +102,7 @@ vi.mock('../../../wailsjs/go/main/App.js', () => ({
   ClearAIAPIKey: mocks.ClearAIAPIKey,
   SetUseKeyring: mocks.SetUseKeyring,
   TestAIConnection: mocks.TestAIConnection,
+  ListModels: mocks.ListModels,
   GetAIAudit: mocks.GetAIAudit,
   ClearAIAudit: mocks.ClearAIAudit
 }))
@@ -116,6 +118,7 @@ describe('AIProviderTab', () => {
     mocks.ClearAIAPIKey.mockReset()
     mocks.SetUseKeyring.mockReset()
     mocks.TestAIConnection.mockReset()
+    mocks.ListModels.mockReset()
     mocks.GetAIAudit.mockReset()
     mocks.ClearAIAudit.mockReset()
     // Default happy-path resolutions; individual tests override.
@@ -131,6 +134,9 @@ describe('AIProviderTab', () => {
       kind: 'chat',
       message: 'probe ok'
     })
+    // ListModels returns empty by default (cold-start cache miss) → free-text
+    // model input. Individual tests override to populate the dropdown.
+    mocks.ListModels.mockResolvedValue([])
     mocks.GetAIAudit.mockResolvedValue(structuredClone(mocks.auditState))
     mocks.ClearAIAudit.mockResolvedValue(undefined)
   })

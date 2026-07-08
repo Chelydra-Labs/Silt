@@ -492,18 +492,21 @@ func (a *App) TestAIConnection(which string) (AIProbeResult, error) {
 }
 
 // ListModels polls the configured provider's model-list endpoint and returns
-// the available models for the Settings dropdown. Served from the in-memory
-// cache when present (so a cold-start tab open shows the last poll); the
-// frontend's "Refresh models" button passes force=true to bypass the cache and
-// re-poll. which selects chat vs embedding so the Google filter can pick
-// generateContent vs embedContent models. The snapshot is taken with locks
-// released before the (potentially slow) HTTP list call, mirroring
-// TestAIConnection.
+// the available models for the Settings dropdown. When force is false and a
+// cached result exists, the cache is served without a network call (so tab-open
+// after a prior poll shows the dropdown instantly). When force is false and NO
+// cache entry exists, an empty list is returned (no network call) — cold start
+// shows the free-text fallback until the user clicks "Refresh models", which
+// passes force=true to poll and populate the cache. which selects chat vs
+// embedding so the Google filter can pick generateContent vs embedContent
+// models. The snapshot is taken with locks released before the (potentially
+// slow) HTTP list call, mirroring TestAIConnection.
 func (a *App) ListModels(which string, force bool) ([]ai.AIModel, error) {
 	if err := aiValidateWhich(which); err != nil {
 		return nil, err
 	}
-	// Serve from cache unless the caller forces a refresh.
+	// Serve from cache when present; cold-start (no cache, no force) returns
+	// empty so the dropdown falls back to free-text without a surprise poll.
 	if !force {
 		a.aiModelCacheMu.Lock()
 		cached, ok := a.aiModelCache[which]
@@ -511,6 +514,7 @@ func (a *App) ListModels(which string, force bool) ([]ai.AIModel, error) {
 		if ok {
 			return cached, nil
 		}
+		return nil, nil
 	}
 	provider, err := a.snapshotAIProvider(which)
 	if err != nil {
