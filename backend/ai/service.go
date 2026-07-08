@@ -283,6 +283,64 @@ func classifyStatus(status int) AIErrorKind {
 	}
 }
 
+// isTransient reports whether a provider error is worth retrying. Only
+// server-side failures (5xx) and rate-limiting (429) qualify: a 5xx is the
+// provider's own "try again" signal, and a 429 explicitly invites a backoff.
+// 4xx errors (bad request, unauthorized, forbidden, model-missing) are
+// deterministic — retrying an identical request only wastes the user's time.
+// Transport errors (unreachable/timeout) are excluded too: unreachable
+// usually means a misconfigured endpoint, and a timeout has already consumed
+// the full per-call budget, so a retry would double an already-long wait.
+func isTransient(aiErr *AIError) bool {
+	return aiErr != nil && (aiErr.Kind == ErrServer || aiErr.Kind == ErrRateLimited)
+}
+
+// retryBackoff is the wait before each retry attempt; its length also caps the
+// retry count (len entries → len retries on top of the initial attempt). The
+// schedule is modest because 5xx/429 responses arrive immediately, so the
+// waits — not request latency — dominate the cost of a persistent failure.
+// ~2s of total backoff is a cheap price for absorbing a provider's transient
+// blip (e.g. Google's OpenAI-compatible shim intermittently returns INTERNAL
+// 500s). A package var (not a const) so tests can shrink it to keep the suite
+// fast.
+var retryBackoff = []time.Duration{
+	500 * time.Millisecond,
+	1500 * time.Millisecond,
+}
+
+// httpDoWithRetry wraps httpDo with bounded retry on transient provider errors
+// (5xx / 429). Each attempt gets its own per-call timeout — httpDo derives a
+// fresh context.WithTimeout every call — so one slow response does not eat the
+// retry budget, and the caller's ctx still bounds the whole sequence (a
+// cancellation during backoff aborts immediately rather than waiting out the
+// timer).
+func httpDoWithRetry(ctx context.Context, method, url, apiKey string, timeoutMs *int, reqBody []byte) ([]byte, int, *AIError) {
+	var last *AIError
+	var lastStatus int
+	for attempt := 0; attempt <= len(retryBackoff); attempt++ {
+		raw, status, aiErr := httpDo(ctx, method, url, apiKey, timeoutMs, reqBody)
+		if aiErr == nil {
+			return raw, status, nil
+		}
+		last, lastStatus = aiErr, status
+		// Non-transient errors (4xx, transport) return immediately — no retry.
+		if !isTransient(aiErr) {
+			return raw, status, aiErr
+		}
+		// Transient: wait before the next attempt, unless this was the last try.
+		if attempt < len(retryBackoff) {
+			timer := time.NewTimer(retryBackoff[attempt])
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, lastStatus, &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("aborted during retry backoff: %v", ctx.Err())}
+			case <-timer.C:
+			}
+		}
+	}
+	return nil, lastStatus, last
+}
+
 // chatRequest is the OpenAI-compatible /v1/chat/completions request body.
 type chatRequest struct {
 	Model           string        `json:"model"`
@@ -348,7 +406,7 @@ func Complete(ctx context.Context, req CompleteRequest) (CompleteResult, error) 
 	if err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}
 	}
-	raw, _, aiErr := httpDo(ctx, http.MethodPost, baseURL+"/v1/chat/completions", req.Provider.APIKey, req.Provider.TimeoutMs, body)
+	raw, _, aiErr := httpDoWithRetry(ctx, http.MethodPost, baseURL+"/v1/chat/completions", req.Provider.APIKey, req.Provider.TimeoutMs, body)
 	if aiErr != nil {
 		return CompleteResult{}, aiErr
 	}
@@ -415,7 +473,7 @@ func Embed(ctx context.Context, req EmbedRequest) (EmbedResult, error) {
 	if err != nil {
 		return EmbedResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}
 	}
-	raw, _, aiErr := httpDo(ctx, http.MethodPost, baseURL+"/v1/embeddings", req.Provider.APIKey, req.Provider.TimeoutMs, body)
+	raw, _, aiErr := httpDoWithRetry(ctx, http.MethodPost, baseURL+"/v1/embeddings", req.Provider.APIKey, req.Provider.TimeoutMs, body)
 	if aiErr != nil {
 		return EmbedResult{}, aiErr
 	}
