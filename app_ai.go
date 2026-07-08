@@ -333,7 +333,14 @@ func (a *App) UpdateAIProviderConfig(which string, patch AIProviderPatch) error 
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
 	}
-	return config.Save(a.vaultPath, a.cfg)
+	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+		return err
+	}
+	// A provider-type / base-URL / model change means the cached model list
+	// may no longer match the live endpoint — drop it so the next ListModels
+	// re-polls.
+	a.invalidateAIModelCache(which)
+	return nil
 }
 
 // SetAIAPIKey stores a provider API key. When the use_keyring toggle is on AND
@@ -384,7 +391,13 @@ func (a *App) SetAIAPIKey(which, key string) error {
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
 	}
-	return config.Save(a.vaultPath, a.cfg)
+	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+		return err
+	}
+	// A key change may flip a 401 list-endpoint to success (or vice versa) —
+	// drop the cached list so the next poll reflects the new credentials.
+	a.invalidateAIModelCache(which)
+	return nil
 }
 
 // ClearAIAPIKey removes a provider API key from BOTH stores (the OS keyring and
@@ -417,7 +430,13 @@ func (a *App) ClearAIAPIKey(which string) error {
 	if a.configWatcher != nil {
 		a.configWatcher.RegisterSelfWrite()
 	}
-	return config.Save(a.vaultPath, a.cfg)
+	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+		return err
+	}
+	// Cleared key → the cached list (polled under the old key) may no longer
+	// be authoritatively reachable. Drop it.
+	a.invalidateAIModelCache(which)
+	return nil
 }
 
 // SetUseKeyring toggles whether AI provider keys are stored in the OS keyring
@@ -470,6 +489,53 @@ func (a *App) TestAIConnection(which string) (AIProbeResult, error) {
 		return AIProbeResult{OK: false, Message: err.Error()}, nil
 	}
 	return AIProbeResult{OK: true}, nil
+}
+
+// ListModels polls the configured provider's model-list endpoint and returns
+// the available models for the Settings dropdown. Served from the in-memory
+// cache when present (so a cold-start tab open shows the last poll); the
+// frontend's "Refresh models" button passes force=true to bypass the cache and
+// re-poll. which selects chat vs embedding so the Google filter can pick
+// generateContent vs embedContent models. The snapshot is taken with locks
+// released before the (potentially slow) HTTP list call, mirroring
+// TestAIConnection.
+func (a *App) ListModels(which string, force bool) ([]ai.AIModel, error) {
+	if err := aiValidateWhich(which); err != nil {
+		return nil, err
+	}
+	// Serve from cache unless the caller forces a refresh.
+	if !force {
+		a.aiModelCacheMu.Lock()
+		cached, ok := a.aiModelCache[which]
+		a.aiModelCacheMu.Unlock()
+		if ok {
+			return cached, nil
+		}
+	}
+	provider, err := a.snapshotAIProvider(which)
+	if err != nil {
+		return nil, err
+	}
+	models, err := ai.ListModels(a.aiContext(), provider, which)
+	if err != nil {
+		return nil, err
+	}
+	// Cache the successful result. A failed poll leaves the previous cache
+	// intact so a transient list-endpoint error doesn't wipe a good dropdown.
+	a.aiModelCacheMu.Lock()
+	a.aiModelCache[which] = models
+	a.aiModelCacheMu.Unlock()
+	return models, nil
+}
+
+// invalidateAIModelCache drops the cached model list for one provider block.
+// Called when the provider type, base URL, model, or key changes so the
+// dropdown doesn't show stale models from a different endpoint. Safe to call
+// when no cache entry exists (no-op).
+func (a *App) invalidateAIModelCache(which string) {
+	a.aiModelCacheMu.Lock()
+	delete(a.aiModelCache, which)
+	a.aiModelCacheMu.Unlock()
 }
 
 // snapshotAIProvider reads one provider block, resolves its key (keyring-first,

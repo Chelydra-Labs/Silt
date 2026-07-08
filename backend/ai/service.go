@@ -470,3 +470,27 @@ func Probe(ctx context.Context, p AIProvider, isChat bool) error {
 	_, err := Embed(ctx, EmbedRequest{Provider: p, Texts: []string{"ping"}})
 	return err
 }
+
+// ListModels polls the configured provider's model-list endpoint and returns the
+// available models. which ("chat" | "embedding") lets the Google path filter to
+// generateContent- vs embedContent-supporting models. A failed/empty poll
+// returns nil + a typed error; the caller (the Settings UI) falls back to a
+// free-text model field rather than dead-ending. Dispatches on ProviderType
+// exactly like Complete/Embed.
+func ListModels(ctx context.Context, p AIProvider, which string) ([]AIModel, error) {
+	baseURL := strings.TrimRight(p.BaseURL, "/")
+	if baseURL == "" {
+		return nil, &AIError{Kind: ErrUnreachable, Message: "no base URL configured"}
+	}
+	if err := validateBaseURL(baseURL); err != nil {
+		return nil, &AIError{Kind: ErrBadRequest, Message: err.Error()}
+	}
+	switch p.ProviderType {
+	case ProviderGoogle:
+		return listModelsGoogle(ctx, p, baseURL, which)
+	case ProviderAnthropic:
+		return listModelsAnthropic(ctx, p, baseURL)
+	default:
+		return listModelsOpenAI(ctx, p, baseURL)
+	}
+}
