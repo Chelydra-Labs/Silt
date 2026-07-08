@@ -792,3 +792,95 @@ func TestInitializeVaultServices_CancelsPriorVaultCtx(t *testing.T) {
 		t.Fatal("re-init did not mint a fresh vaultCtx (nil or same pointer as prior)")
 	}
 }
+
+// TestMoveVault_DrainsInFlightAICall pins the #452/#471 drain on the MoveVault
+// cutover — the third lifecycle path. MoveVault used to call teardown→init
+// directly with no closing flag, no vaultCtxCancel, and no vaultClosingWG.Wait,
+// so an AI call past preflight survived teardown (which stops the audit
+// writer); once initializeVaultServices' self-cleaning guard cancelled its
+// context, its audit entry landed in the wrong vault via the inline fallback.
+// The fix mirrors CloseVault/SwitchVault: drain (closing + cancel + Wait)
+// BEFORE teardown so the call's audit routes through the still-running writer
+// into the SOURCE vault. This test asserts the audit lands in src, not dest.
+func TestMoveVault_DrainsInFlightAICall(t *testing.T) {
+	// newMoveTestApp runs the full initializeVaultServices (so vaultCtx +
+	// the audit writer are wired as in production, unlike newTestApp).
+	app, src := newMoveTestApp(t)
+	resetAIAuditState(t)
+
+	dest := filepath.Join(t.TempDir(), "moved")
+
+	requestReceived := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestReceived)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "pong"}}},
+		})
+	}))
+	defer srv.Close()
+	defer close(release) // unblock the handler before srv.Close() returns
+	pointAIProviderAt(t, app, "chat", srv.URL, "test")
+
+	tok, err := app.RegisterPluginSession("silt-tasks")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+			Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
+		})
+		callDone <- err
+	}()
+
+	select {
+	case <-requestReceived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PluginAIComplete did not reach the HTTP server in time")
+	}
+
+	// MoveVault must drain (cancel vaultCtx + Wait) before teardown, so it
+	// returns in well under the provider timeout once the in-flight call is
+	// aborted — not blocked until the (simulated) slow provider responds.
+	start := time.Now()
+	moveDone := make(chan error, 1)
+	go func() {
+		_, err := app.MoveVault(dest, false)
+		moveDone <- err
+	}()
+	select {
+	case err := <-moveDone:
+		if err != nil {
+			t.Fatalf("MoveVault: %v", err)
+		}
+		if elapsed := time.Since(start); elapsed >= time.Second {
+			t.Fatalf("MoveVault took %s — the drain did not cancel the in-flight call (expected < 1s)", elapsed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("MoveVault did not return — drain missing or deadlocked")
+	}
+
+	// The in-flight call must have been aborted (non-nil error) by the drain's
+	// vaultCtx cancel, not completed naturally.
+	if err := <-callDone; err == nil {
+		t.Fatal("in-flight PluginAIComplete succeeded — the drain did not cancel the HTTP call")
+	}
+
+	// The aborted call's audit entry landed in the SOURCE vault's ai.log: the
+	// drain ran before teardown, so the still-running writer (w.vaultPath=src)
+	// processed it. dest's ai.log was copied BEFORE the entry existed (MoveVault
+	// copies the tree before the cutover), so it must stay empty — proving no
+	// cross-vault leak (the #452 class this hardens).
+	srcLog := filepath.Join(src, ".system", "plugins", "silt-tasks", "ai.log")
+	if data, _ := os.ReadFile(srcLog); len(data) == 0 {
+		t.Errorf("source vault's ai.log should contain the drained audit entry; file is empty")
+	}
+	destLog := filepath.Join(dest, ".system", "plugins", "silt-tasks", "ai.log")
+	if data, _ := os.ReadFile(destLog); len(data) != 0 {
+		t.Errorf("dest vault's ai.log should be empty (no cross-vault leak); got %q", string(data))
+	}
+}

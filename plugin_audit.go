@@ -476,6 +476,19 @@ func (a *App) auditAI(pluginID, kind, host, model, status string, usage *ai.AIUs
 		entry.CompletionTokens = usage.CompletionTokens
 		entry.TotalTokens = usage.TotalTokens
 	}
+	// Snapshot vaultPath under vaultMu BEFORE acquiring aiAuditMu so the
+	// w==nil inline path never reads a.vaultPath unsynchronized. A concurrent
+	// lifecycle transition (CloseVault/SwitchVault/MoveVault) can flip or nil
+	// a.vaultPath while an in-flight AI call — whose audit fires after the
+	// caller released vaultMu — reaches this point; reading it unlocked would
+	// be a data race AND could route the audit entry to the wrong vault
+	// (#452 cross-vault leak). Mirrors ClearAIAudit's snapshot. The writer
+	// branches below use w.vaultPath (captured at writer start), not this
+	// snapshot, so only the rare inline fallback (writer not running) reads
+	// it. Lock order vaultMu -> aiAuditMu matches ClearAIAudit.
+	a.vaultMu.RLock()
+	vaultPathSnapshot := a.vaultPath
+	a.vaultMu.RUnlock()
 	aiAuditMu.Lock()
 	aiAudit = append(aiAudit, entry)
 	if len(aiAudit) > maxAIAuditEntries {
@@ -494,7 +507,7 @@ func (a *App) auditAI(pluginID, kind, host, model, status string, usage *ai.AIUs
 			log.Printf("auditAI: writer queue full; dropping on-disk write for plugin %q", pluginID)
 		}
 	} else {
-		appendAIAuditLine(a.vaultPath, &entry)
+		appendAIAuditLine(vaultPathSnapshot, &entry)
 	}
 	aiAuditMu.Unlock()
 }

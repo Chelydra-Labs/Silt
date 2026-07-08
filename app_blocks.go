@@ -152,7 +152,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 			// not this per-block path, so this never blocks the editor's own
 			// writes.
 			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
-				writeErr = errBlockBeingEdited
+				writeErr = blockBeingEditedError()
 				return
 			}
 			contentBytes, err := os.ReadFile(filePath)
@@ -490,7 +490,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 			// Refuse rather than silently overwrite; callers (e.g. EmbedPortal)
 			// retry once the editor releases the lock.
 			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
-				writeErr = errBlockBeingEdited
+				writeErr = blockBeingEditedError()
 				return
 			}
 			contentBytes, err := os.ReadFile(filePath)

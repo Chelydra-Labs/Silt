@@ -486,8 +486,13 @@ func (a *App) CloseVault() error {
 	// Set the closing flag under the exclusive lock so withAIPreflight's
 	// RLock-hold check+Add becomes atomic w.r.t. this set. New AI calls now
 	// reject (errVaultClosing) before issuing HTTP; calls already past
-	// preflight are tracked in vaultClosingWG and drained next.
+	// preflight are tracked in vaultClosingWG and drained next. Snapshot the
+	// cancel func + vaultPath under the same hold so the reads after the
+	// Unlock are correct-by-construction (not reliant on a cross-goroutine
+	// happens-before argument that a future caller could break).
 	a.closing = true
+	cancel := a.vaultCtxCancel
+	vp := a.vaultPath
 	a.vaultMu.Unlock()
 
 	// Cancel the vault-scoped AI context OUTSIDE the lock so every in-flight
@@ -498,16 +503,16 @@ func (a *App) CloseVault() error {
 	// feedback, risking a force-quit mid-teardown (#471). The closing flag
 	// (set above) still rejects NEW calls; vaultCtx is re-created on the
 	// next initializeVaultServices, so cancelling it here is safe.
-	if a.vaultCtxCancel != nil {
-		a.vaultCtxCancel()
-	} else if a.vaultPath != "" {
+	if cancel != nil {
+		cancel()
+	} else if vp != "" {
 		// vaultPath is set but vaultCtxCancel is nil — the vault was opened
 		// without going through initializeVaultServices (every production
 		// path does). The drain below will fall back to the provider-timeout
 		// bound (the pre-#471 behavior). Log so a future code path that
 		// bypasses the initializer surfaces immediately rather than silently
 		// regressing the close latency.
-		log.Printf("CloseVault: vaultCtxCancel is nil with an open vault (%s) — vault-scoped AI cancellation skipped (initializeVaultServices did not run for this vault)", a.vaultPath)
+		log.Printf("CloseVault: vaultCtxCancel is nil with an open vault (%s) — vault-scoped AI cancellation skipped (initializeVaultServices did not run for this vault)", vp)
 	}
 
 	// Drain in-flight AI calls OUTSIDE the lock. They released vaultMu after
@@ -1010,15 +1015,40 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 	//    serializes lifecycle calls). rollbackMove also runs under this lock
 	//    (it does not acquire it itself — RWMutex is not reentrant).
 	cutoverErr := func() error {
+		// First hold: snapshot prior settings, set the closing flag, and
+		// capture the cancel func — all under the lock so withAIPreflight's
+		// RLock-hold check+Add stays atomic w.r.t. closing=true (#452).
 		a.vaultMu.Lock()
-		defer a.vaultMu.Unlock()
 		if a.vaultPath != src {
+			a.vaultMu.Unlock()
 			return fmt.Errorf("vault changed during move (concurrent lifecycle transition)")
 		}
 		prior, err := vault.LoadSettings()
 		if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
+			a.vaultMu.Unlock()
 			return fmt.Errorf("move vault: snapshot settings: %w", err)
 		}
+		// Drain in-flight AI calls BEFORE teardown, mirroring CloseVault/
+		// SwitchVault (#452/#471). Without this, an AI call past preflight
+		// survives teardownVaultServices (which stops the audit writer) and,
+		// once initializeVaultServices' self-cleaning guard cancels its
+		// vaultCtx, its audit entry lands in the wrong vault via the inline
+		// fallback (auditAI reads a.vaultPath with no lock). Draining first
+		// routes the call's audit through the still-running writer into the
+		// SOURCE vault before teardown stops it.
+		a.closing = true
+		cancel := a.vaultCtxCancel
+		a.vaultMu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		a.vaultClosingWG.Wait()
+
+		// Second hold: the teardown→save→reinit cutover. rollbackMove runs
+		// under this lock (it does not acquire it itself — RWMutex is not
+		// reentrant). initializeVaultServices resets closing=false at its top.
+		a.vaultMu.Lock()
+		defer a.vaultMu.Unlock()
 		a.teardownVaultServices()
 		if _, err := vault.UpdateSettings(func(s *vault.AppSettings) {
 			s.VaultPath = dest
@@ -1138,13 +1168,16 @@ func (a *App) SwitchVault(path string) error {
 		activePath := a.vaultPath
 		prior, _ := vault.LoadSettings()
 		a.closing = true
+		// Snapshot the cancel func under the lock so the post-Unlock read is
+		// correct-by-construction (mirrors CloseVault).
+		cancel := a.vaultCtxCancel
 		a.vaultMu.Unlock()
 
 		// Cancel the vault-scoped AI context so in-flight HTTP calls abort
 		// promptly (context.Canceled) instead of blocking the drain for up
 		// to the provider timeout (#471). Mirrors CloseVault.
-		if a.vaultCtxCancel != nil {
-			a.vaultCtxCancel()
+		if cancel != nil {
+			cancel()
 		}
 		a.vaultClosingWG.Wait()
 

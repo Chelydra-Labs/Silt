@@ -176,7 +176,7 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (
 			// Focus-lock guard mirrors every other task setter (#444): refuse
 			// rather than clobber an in-flight editor edit on the same file.
 			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
-				writeErr = errBlockBeingEdited
+				writeErr = blockBeingEditedError()
 				return
 			}
 			contentBytes, err := os.ReadFile(filePath)
@@ -336,7 +336,7 @@ func (a *App) appendTaskComment(taskID, text, author, ts string) (string, error)
 			// Focus-lock guard mirrors every other task setter (#444): refuse
 			// rather than clobber an in-flight editor edit on the same file.
 			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
-				writeErr = errBlockBeingEdited
+				writeErr = blockBeingEditedError()
 				return
 			}
 			contentBytes, err := os.ReadFile(filePath)
