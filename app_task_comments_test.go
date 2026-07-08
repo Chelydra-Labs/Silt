@@ -177,6 +177,51 @@ func TestAppendTaskComment_RejectsNonTask(t *testing.T) {
 	}
 }
 
+// TestSaveSubtreeBlocks_RefusedWhileFocusLocked pins the focus-lock guard on
+// saveSubtreeBlocks — the shared core of the sub-editor splice and the only
+// task-block writer that was missing the #444 guard. It does a full-file
+// read-modify-write, so without the guard a sub-editor save would clobber an
+// in-flight editor edit on the same file.
+func TestSaveSubtreeBlocks_RefusedWhileFocusLocked(t *testing.T) {
+	app := newTestApp(t)
+	withFocusLockWatcher(t, app)
+	const taskID = "ac1eeeee-4444-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + taskID + " -->\n"
+	indexTestFile(t, app, "W", "S", "SubtreeFocus", "2026-07-01", content)
+
+	if err := app.AcquireFocusLock("W", "S", "SubtreeFocus"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+	children := []parser.ParsedBlock{
+		{ID: "ac1c1c1c-4444-1111-1111-111111111111", ParentID: taskID, Type: parser.BlockNote, Depth: 1, CleanText: "a child note"},
+	}
+	if _, err := app.SaveSubtreeBlocks(taskID, children); !errors.Is(err, errBlockBeingEdited) {
+		t.Fatalf("expected errBlockBeingEdited while focus-locked, got %v", err)
+	}
+	if err := app.ReleaseFocusLock("W", "S", "SubtreeFocus"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	if _, err := app.SaveSubtreeBlocks(taskID, children); err != nil {
+		t.Fatalf("SaveSubtreeBlocks after release: %v", err)
+	}
+}
+
+// TestAppendTaskComment_RejectsEmptyText pins the contract guard: empty or
+// whitespace-only comment text is rejected before lock acquisition. A bare
+// NOTE bullet with no body is never a useful comment.
+func TestAppendTaskComment_RejectsEmptyText(t *testing.T) {
+	app := newTestApp(t)
+	const taskID = "ac1fffff-4444-1111-1111-111111111111"
+	content := "- [ ] ship <!-- id: " + taskID + " -->\n"
+	indexTestFile(t, app, "W", "S", "CommentEmpty", "2026-07-01", content)
+
+	for _, text := range []string{"", "   ", "\t\n  "} {
+		if _, err := app.AppendTaskComment(taskID, text, "Dana", "2026-07-07T14:22:00"); err == nil {
+			t.Fatalf("expected error for empty/whitespace comment text %q, got nil", text)
+		}
+	}
+}
+
 // TestPluginAppendTaskComment_GatedByCapability mirrors the content-mutate gate
 // pattern the other Plugin* task setters use: a third-party plugin without the
 // grant is denied (no splice, no id); the same plugin with content-mutate

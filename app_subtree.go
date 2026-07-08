@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"silt/backend/db"
 	"silt/backend/parser"
@@ -172,6 +173,12 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (
 	didWrite := false
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			// Focus-lock guard mirrors every other task setter (#444): refuse
+			// rather than clobber an in-flight editor edit on the same file.
+			if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+				writeErr = errBlockBeingEdited
+				return
+			}
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil {
 				writeErr = err
@@ -282,6 +289,13 @@ func (a *App) appendTaskComment(taskID, text, author, ts string) (string, error)
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
 		return "", fmt.Errorf("vault database not loaded")
+	}
+	// Reject empty/whitespace-only text up front: a bare NOTE bullet with no
+	// body is never a useful comment, and failing here (before lock
+	// acquisition + the read-modify-write) keeps the guard cheap and the
+	// intent obvious. Mirrors setTaskTitle's empty-input contract guard.
+	if strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("comment text must not be empty")
 	}
 	a.wg.Add(1)
 	defer a.wg.Done()

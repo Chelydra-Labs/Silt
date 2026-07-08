@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1050,6 +1051,53 @@ func TestSetTaskOrders_RefusedWhileFocusLocked(t *testing.T) {
 	}
 }
 
+// TestSetTaskOrders_NoPartialApplyAcrossFiles pins the pre-scan: a batch
+// reorder spanning multiple files must refuse the WHOLE batch up front if any
+// target file is focus-locked. Without the pre-scan, the per-file write loop
+// would write the first file(s) before a later locked file returns
+// errBlockBeingEdited, leaving the reorder half-applied on disk.
+func TestSetTaskOrders_NoPartialApplyAcrossFiles(t *testing.T) {
+	app := newTestApp(t)
+	withFocusLockWatcher(t, app)
+	const (
+		idA = "f2f2aaaa-4444-1111-1111-111111111111"
+		idB = "f2f2bbbb-4444-1111-1111-111111111111"
+	)
+	contentA := "- [ ] first <!-- id: " + idA + " -->\n"
+	contentB := "- [ ] second <!-- id: " + idB + " -->\n"
+	// Two separate files, each with one task. The batch spans both.
+	indexTestFile(t, app, "W", "S", "OrdersFileA", "2026-07-01", contentA)
+	indexTestFile(t, app, "W", "S", "OrdersFileB", "2026-07-01", contentB)
+
+	// Lock ONLY file B. The pre-scan must refuse the whole batch before any
+	// write — otherwise file A gets its order applied before file B aborts.
+	if err := app.AcquireFocusLock("W", "S", "OrdersFileB"); err != nil {
+		t.Fatalf("AcquireFocusLock: %v", err)
+	}
+	if err := app.SetTaskOrders([]string{idA, idB}, []int{1, 2}); !errors.Is(err, errBlockBeingEdited) {
+		t.Fatalf("expected errBlockBeingEdited while file B focus-locked, got %v", err)
+	}
+
+	// File A must be byte-for-byte unchanged: the pre-scan refused before any
+	// file write. This assertion fails on the partial-apply bug (file A would
+	// carry the freshly-written [order:: 1] token).
+	got, err := os.ReadFile(filepath.Join(app.vaultPath, "W", "S", "OrdersFileA.md"))
+	if err != nil {
+		t.Fatalf("read file A: %v", err)
+	}
+	if string(got) != contentA {
+		t.Errorf("file A partially written despite file B being focus-locked:\nwant %q\ngot  %q", contentA, string(got))
+	}
+
+	if err := app.ReleaseFocusLock("W", "S", "OrdersFileB"); err != nil {
+		t.Fatalf("ReleaseFocusLock: %v", err)
+	}
+	// After release the whole batch applies cleanly.
+	if err := app.SetTaskOrders([]string{idA, idB}, []int{1, 2}); err != nil {
+		t.Fatalf("SetTaskOrders after release: %v", err)
+	}
+}
+
 // TestPluginSetTaskDueDate_RefusedWhileFocusLocked pins the #476 refactor's
 // inheritance: PluginSetTaskDueDate used to inline the write chain; now it
 // delegates to mutateTaskBlock, so it inherits the #444 focus-lock guard for
@@ -1190,7 +1238,7 @@ func TestSetTaskBlockedBy_RefusedWhileFocusLocked(t *testing.T) {
 	app := newTestApp(t)
 	withFocusLockWatcher(t, app)
 	const (
-		id    = "f1f10001-4444-1111-1111-111111111111"
+		id     = "f1f10001-4444-1111-1111-111111111111"
 		prereq = "f1f10002-4444-1111-1111-111111111112"
 	)
 	content := "- [ ] prereq <!-- id: " + prereq + " -->\n" +

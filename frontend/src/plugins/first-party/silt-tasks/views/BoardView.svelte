@@ -957,7 +957,7 @@
         {/each}
       </div>
     {:else if errorMsg}
-      <div class="text-error p-6">{errorMsg}</div>
+      <ErrorBanner message={errorMsg} />
     {:else}
       <div
         class="h-full flex gap-4 p-4 overflow-x-auto custom-scrollbar"

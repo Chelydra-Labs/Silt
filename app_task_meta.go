@@ -330,6 +330,22 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 		fileKeys = append(fileKeys, k)
 	}
 	sort.Strings(fileKeys)
+	// Pre-scan: refuse up front if ANY target file is focus-locked. Without
+	// this, a batch reorder spanning multiple files could write the first
+	// file(s) before a later locked file returns errBlockBeingEdited, leaving
+	// the reorder half-applied. The per-file check inside the write loop
+	// (below) still guards the narrow race where a file becomes locked mid-batch.
+	for _, fk := range fileKeys {
+		first := groups[fk][0]
+		notebookDir, err := a.resolveNotebookDir(sanitizePathSegment(first.loc.Notebook), first.loc.Source)
+		if err != nil {
+			return fmt.Errorf("resolve notebook dir for block %s: %w", first.blockID, err)
+		}
+		filePath := filepath.Join(notebookDir, sanitizePathSegment(first.loc.Section), sanitizePathSegment(first.loc.Page)+".md")
+		if a.watcher != nil && a.watcher.IsFocusLocked(filePath) {
+			return errBlockBeingEdited
+		}
+	}
 	for _, fk := range fileKeys {
 		group := groups[fk]
 		first := group[0]
