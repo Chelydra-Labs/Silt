@@ -65,6 +65,30 @@ func TestNormalizeAIConfig(t *testing.T) {
 			t.Errorf("empty openai-compatible base_url should stay empty, got %q", out.Chat.BaseURL)
 		}
 	})
+	t.Run("GoogleProviderTypePreserved", func(t *testing.T) {
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: AIProviderGoogle}})
+		if out.Chat.ProviderType != AIProviderGoogle {
+			t.Errorf("google provider_type = %q, want %q", out.Chat.ProviderType, AIProviderGoogle)
+		}
+	})
+	t.Run("GoogleDefaultBaseURL", func(t *testing.T) {
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: AIProviderGoogle}})
+		if out.Chat.BaseURL != DefaultGoogleBaseURL {
+			t.Errorf("empty google base_url = %q, want %q", out.Chat.BaseURL, DefaultGoogleBaseURL)
+		}
+	})
+	t.Run("AnthropicProviderTypePreserved", func(t *testing.T) {
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: AIProviderAnthropic}})
+		if out.Chat.ProviderType != AIProviderAnthropic {
+			t.Errorf("anthropic provider_type = %q, want %q", out.Chat.ProviderType, AIProviderAnthropic)
+		}
+	})
+	t.Run("AnthropicDefaultBaseURL", func(t *testing.T) {
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: AIProviderAnthropic}})
+		if out.Chat.BaseURL != DefaultAnthropicBaseURL {
+			t.Errorf("empty anthropic base_url = %q, want %q", out.Chat.BaseURL, DefaultAnthropicBaseURL)
+		}
+	})
 	t.Run("ChatDropsDimensions", func(t *testing.T) {
 		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{Dimensions: intPtr(128)}})
 		if out.Chat.Dimensions != nil {

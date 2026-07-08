@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"silt/backend/ai"
 	"silt/backend/config"
 	"silt/backend/core"
 	"silt/backend/db"
@@ -85,6 +86,15 @@ type App struct {
 	// context.Background()).
 	vaultCtx       context.Context
 	vaultCtxCancel context.CancelFunc
+
+	// aiModelCache holds the last ListModels poll per provider block ("chat" /
+	// "embedding"), so the Settings dropdown isn't empty on cold start.
+	// In-memory only (not persisted). Invalidated when the provider type, base
+	// URL, or key changes (UpdateAIProviderConfig / SetAIAPIKey /
+	// ClearAIAPIKey). Guarded by aiModelCacheMu (a dedicated mutex, NOT
+	// configMu, so a slow list-poll can't stall config access).
+	aiModelCacheMu sync.Mutex
+	aiModelCache   map[string][]ai.AIModel
 
 	// grants is the per-host plugin capability grant table (F4). It lives in
 	// <configDir>/silt/grants.json (NOT in vault-scoped config.yaml) so a
@@ -219,6 +229,7 @@ func NewApp() *App {
 		spacesPerTab:   4,
 		rateLimiter:    newPluginRateLimiter(),
 		pluginSessions: make(map[string]string),
+		aiModelCache:   make(map[string][]ai.AIModel),
 		// keyringStore is the OS credential store for AI provider keys (#218).
 		// Tests leave this nil (so the AI bindings fall back to config.yaml);
 		// production wires the real OS-backed store. Reachability is probed at

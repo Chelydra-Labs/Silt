@@ -155,6 +155,24 @@ describe('extractSummary', () => {
     expect(complete).toHaveBeenCalledTimes(1)
   })
 
+  it('passes the summary JSON Schema via responseSchema on every structured call', async () => {
+    // The schema must arrive as a plain object (NOT JSON.stringify'd) so native
+    // providers can enforce structured output. The third argument to complete
+    // carries the responseSchema option.
+    const complete = ok('{"summary":"s","tasks":[]}')
+    await extractSummary({ complete, content: 'note', settings })
+    expect(complete).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Number),
+      expect.objectContaining({
+        responseSchema: expect.objectContaining({
+          type: 'object',
+          properties: expect.any(Object)
+        })
+      })
+    )
+  })
+
   it('retries once on a parse failure, then succeeds', async () => {
     const complete = vi
       .fn()
