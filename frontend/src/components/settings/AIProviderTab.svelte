@@ -37,6 +37,11 @@
   let config = $state<main.AIPublicConfig | null>(null)
   let loadError = $state<string | null>(null)
   let loading = $state(true)
+  let syncProviders = $state(true)
+
+  // Split-mode tab state: tracks which role card is actively shown to the user.
+  // The inactive card is hidden via CSS to keep the DOM queryable for Vitest.
+  let activeRole = $state<Which>('chat')
 
   // Per-provider UI state. Provider config fields live inside `config`
   // (bound directly to inputs); these maps hold the transient UI state
@@ -138,6 +143,14 @@
     loadError = null
     try {
       config = toPlain(await GetAIProviderConfig())
+      if (config) {
+        // Sync-by-default if providers match type, url, and key status.
+        const sameType =
+          config.chat.provider_type === config.embedding.provider_type
+        const sameUrl = config.chat.base_url === config.embedding.base_url
+        const sameKey = config.chat.has_key === config.embedding.has_key
+        syncProviders = sameType && sameUrl && sameKey
+      }
       // Load cached model lists (non-forced: no network call on cold start).
       // Best-effort — a failure leaves the dropdown empty with manual fallback.
       void loadModels('chat')
@@ -157,6 +170,8 @@
       modelLists[which] = models ?? []
       if (modelLists[which].length === 0) {
         manualModel[which] = true
+      } else {
+        manualModel[which] = false // Auto-show dropdown if models are cached
       }
     } catch {
       // No cache yet — silent; user can click Refresh to poll.
@@ -164,7 +179,8 @@
   }
 
   // refreshModels forces a server-side poll (bypasses cache) and updates the
-  // dropdown. On empty/error, auto-falls-back to the free-text input.
+  // dropdown. Automatically switches to dropdown mode if models are found,
+  // or manual input if empty, eliminating unnecessary pick-from-list clicks.
   async function refreshModels(which: Which) {
     if (modelLoading[which]) return
     modelLoading[which] = true
@@ -174,6 +190,8 @@
       modelLists[which] = models ?? []
       if (modelLists[which].length === 0) {
         manualModel[which] = true
+      } else {
+        manualModel[which] = false // Auto-switch to dropdown once models land
       }
     } catch (e) {
       modelError[which] = e instanceof Error ? e.message : String(e)
@@ -256,6 +274,25 @@
     }
   }
 
+  async function persistProviderWithSync(which: Which): Promise<PersistResult> {
+    if (!config) return { ok: false, message: 'No config loaded' }
+    if (syncProviders && which === 'chat') {
+      config.embedding.provider_type = config.chat.provider_type
+      config.embedding.base_url = config.chat.base_url
+
+      const resChat = await persistProvider('chat')
+      if (!resChat.ok) return resChat
+
+      if (supportsEmbeddings(config.chat.provider_type)) {
+        const resEmbed = await persistProvider('embedding')
+        if (!resEmbed.ok) return resEmbed
+      }
+      return { ok: true }
+    } else {
+      return persistProvider(which)
+    }
+  }
+
   type ProviderType = 'local' | 'openai-compatible' | 'google' | 'anthropic'
 
   // Switching provider type snaps base_url to that type's canonical default
@@ -263,42 +300,40 @@
   // clobber a typed URL. Also drops the cached model list (different endpoint).
   function selectProviderType(which: Which, type: ProviderType) {
     if (!config) return
-    const b = config[which]
-    if (b.provider_type === type) return
-    const oldDefault = providerDefaultURL(b.provider_type)
-    b.provider_type = type
-    // Native providers (Google/Anthropic) have a single canonical endpoint and a
-    // fixed path structure; a custom URL carried over from another type — e.g.
-    // Google's OpenAI-compatible shim (…/v1beta/openai/) — is never valid for the
-    // native API and double-paths to a cryptic 404. Always snap to the canonical
-    // default when switching TO a native provider. Local/OpenAI-compatible accept
-    // arbitrary endpoints, so preserve a custom URL there (only snap when it was
-    // empty or the previous type's default).
-    const nativeTarget = type === 'google' || type === 'anthropic'
-    if (nativeTarget || b.base_url === oldDefault || !b.base_url) {
-      b.base_url = providerDefaultURL(type)
-    }
-    // A provider-type change invalidates the cached model list (different API).
-    modelLists[which] = []
-    modelError[which] = null
-    manualModel[which] = false
-    // Persist the new config FIRST, then poll — Wails does not guarantee IPC
-    // ordering between independent fire-and-forget calls, so racing them
-    // could snapshot the old provider's endpoint and show its models under
-    // the new type label. Gate the forced refresh on a successful persist: a
-    // failed save (invalid advanced settings or IPC rejection) leaves the
-    // backend on the OLD provider, so ListModels would poll the wrong
-    // endpoint and repopulate the new UI with stale models — surface the
-    // failure on the model error channel instead.
-    void (async () => {
-      const persisted = await persistProvider(which)
-      if (!persisted.ok) {
-        modelError[which] = persisted.message
-        manualModel[which] = true
-        return
+
+    const updateOne = async (w: Which, t: ProviderType) => {
+      const b = config![w]
+      const oldDefault = providerDefaultURL(b.provider_type)
+      b.provider_type = t
+      const nativeTarget = t === 'google' || t === 'anthropic'
+      if (nativeTarget || b.base_url === oldDefault || !b.base_url) {
+        b.base_url = providerDefaultURL(t)
       }
-      void refreshModels(which)
-    })()
+      modelLists[w] = []
+      modelError[w] = null
+      manualModel[w] = false
+
+      const persisted = await persistProvider(w)
+      if (!persisted.ok) {
+        modelError[w] = persisted.message
+        manualModel[w] = true
+        return false
+      }
+      void refreshModels(w)
+      return true
+    }
+
+    if (syncProviders && which === 'chat') {
+      void (async () => {
+        const ok = await updateOne('chat', type)
+        if (ok) {
+          const embedType = supportsEmbeddings(type) ? type : 'local'
+          await updateOne('embedding', embedType as ProviderType)
+        }
+      })()
+    } else {
+      void updateOne(which, type)
+    }
   }
 
   function providerDefaultURL(type: string): string {
@@ -333,18 +368,31 @@
     if (!key || savingKey[which]) return
     savingKey[which] = true
     try {
-      await SetAIAPIKey(which, key)
-      // Mirror has_key locally — GetAIProviderConfig only returns the
-      // boolean, not the value, and a full reload would discard any
-      // unsaved edits in the other provider's tuning fields.
-      if (config) config[which].has_key = true
-      // Never leave the secret in the DOM after the save lands.
-      apiKeyInputs[which] = ''
-      showKey[which] = false
-      keySavedFlash[which] = true
-      setTimeout(() => {
-        keySavedFlash[which] = false
-      }, 3500)
+      if (syncProviders && which === 'chat') {
+        await SetAIAPIKey('chat', key)
+        if (config) {
+          config.chat.has_key = true
+          if (supportsEmbeddings(config.chat.provider_type)) {
+            await SetAIAPIKey('embedding', key)
+            config.embedding.has_key = true
+          }
+        }
+        apiKeyInputs.chat = ''
+        showKey.chat = false
+        keySavedFlash.chat = true
+        setTimeout(() => {
+          keySavedFlash.chat = false
+        }, 3500)
+      } else {
+        await SetAIAPIKey(which, key)
+        if (config) config[which].has_key = true
+        apiKeyInputs[which] = ''
+        showKey[which] = false
+        keySavedFlash[which] = true
+        setTimeout(() => {
+          keySavedFlash[which] = false
+        }, 3500)
+      }
     } catch (e) {
       testResult[which] = {
         ok: false,
@@ -359,9 +407,19 @@
     if (clearingKey[which]) return
     clearingKey[which] = true
     try {
-      await ClearAIAPIKey(which)
-      if (config) config[which].has_key = false
-      keySavedFlash[which] = false
+      if (syncProviders && which === 'chat') {
+        await ClearAIAPIKey('chat')
+        await ClearAIAPIKey('embedding')
+        if (config) {
+          config.chat.has_key = false
+          config.embedding.has_key = false
+        }
+        keySavedFlash.chat = false
+      } else {
+        await ClearAIAPIKey(which)
+        if (config) config[which].has_key = false
+        keySavedFlash[which] = false
+      }
     } catch (e) {
       testResult[which] = {
         ok: false,
@@ -377,12 +435,8 @@
   async function runTest(which: Which) {
     if (testing[which]) return
     testing[which] = true
-    // Clear the previous result so the live region re-announces the
-    // fresh one rather than appearing unchanged to AT.
     testResult[which] = null
     try {
-      // Flush any un-blurred base_url/model edits so the probe tests the values
-      // the user sees on screen, not the last-persisted snapshot.
       const persisted = await persistProvider(which)
       if (!persisted.ok) {
         testResult[which] = { ok: false, message: persisted.message }
@@ -403,6 +457,16 @@
     }
   }
 
+  async function runTestUnified() {
+    if (!config) return
+    const testChat = runTest('chat')
+    let testEmbed = Promise.resolve()
+    if (supportsEmbeddings(config.chat.provider_type)) {
+      testEmbed = runTest('embedding')
+    }
+    await Promise.all([testChat, testEmbed])
+  }
+
   // --- Keyring ----------------------------------------------------------
 
   async function toggleKeyring(on: boolean) {
@@ -410,9 +474,6 @@
     try {
       await SetUseKeyring(on)
       config.use_keyring = on
-      // The backend opportunistically migrates plaintext keys into the
-      // keyring on enable; refresh so keyring_unusable_for and has_key
-      // reflect the post-migration state.
       if (on) {
         try {
           config = toPlain(await GetAIProviderConfig())
@@ -422,6 +483,24 @@
       }
     } catch (e) {
       loadError = `Failed to update key storage: ${e instanceof Error ? e.message : String(e)}`
+    }
+  }
+
+  async function toggleSyncProviders(on: boolean) {
+    syncProviders = on
+    if (on && config) {
+      config.embedding.provider_type = config.chat.provider_type
+      config.embedding.base_url = config.chat.base_url
+      config.embedding.has_key = config.chat.has_key
+
+      modelLists['embedding'] = []
+      modelError['embedding'] = null
+      manualModel['embedding'] = false
+
+      const persisted = await persistProvider('embedding')
+      if (persisted.ok) {
+        void refreshModels('embedding')
+      }
     }
   }
 
@@ -450,10 +529,6 @@
     }
   }
 
-  // Audit panel lazy-loads on first open. bind:open on <details> keeps
-  // state and DOM in sync; this effect triggers the fetch the first
-  // time the user expands the panel. Guarded by `auditState === 'idle'`
-  // so a failed probe doesn't loop.
   $effect(() => {
     if (auditOpen && auditState === 'idle') {
       void loadAudit()
@@ -462,9 +537,6 @@
 
   // --- Derived + helpers ------------------------------------------------
 
-  // formatAuditTime renders an audit timestamp in the user's locale (short month +
-  // day + time). Falls back to the raw string if the value isn't parseable. The
-  // full ISO is preserved in the cell's title attribute for hover/copy precision.
   function formatAuditTime(iso: string): string {
     const d = new Date(iso)
     if (Number.isNaN(d.getTime())) return iso
@@ -476,11 +548,6 @@
     }).format(d)
   }
 
-  // Unified "chat provider not ready" nudge (#450). Shared with the Plugins-tab
-  // badge via aiProviderNeedsSetup so the two surfaces stay coherent: clicking
-  // the badge always lands on a visible nudge here. The predicate is about the
-  // CHAT provider (what completions / silt-ai-summary need); embedding is a
-  // separate concern and does not gate this nudge.
   let needsSetup = $derived.by(() => {
     if (!config) return false
     return aiProviderNeedsSetup(config.chat)
@@ -490,9 +557,43 @@
     if (!config) return false
     return (config.keyring_unusable_for ?? []).includes(which)
   }
+
+  // Dynamic summaries for Accordion headers to show details at a glance.
+  let tuningSummary = $derived.by(() => {
+    if (!config) return ''
+    if (syncProviders) {
+      const chatModel = config.chat.model || 'none'
+      const embedModel = config.embedding.model || 'none'
+      return `Chat: ${chatModel} (Temp ${config.chat.temperature ?? 'default'}) · Embed: ${embedModel}`
+    } else {
+      const b = config[activeRole]
+      const model = b.model || 'none'
+      if (activeRole === 'chat') {
+        return `Chat Model: ${model} (Temp ${b.temperature ?? 'default'})`
+      } else {
+        return `Embedding Model: ${model} (${b.dimensions ?? 'default'} dims)`
+      }
+    }
+  })
+
+  let keyringSummary = $derived.by(() => {
+    if (!config) return ''
+    if (!config.keyring_available)
+      return 'OS Keyring unavailable (fallback active)'
+    return config.use_keyring
+      ? 'Secure OS Keychain storage enabled'
+      : 'Stored in vault configuration'
+  })
+
+  let auditSummary = $derived.by(() => {
+    if (auditState === 'idle') return 'Click to view log'
+    if (auditState === 'loading') return 'Loading logs…'
+    if (auditState === 'error') return 'Error loading logs'
+    return `${audit.length} call${audit.length === 1 ? '' : 's'} recorded`
+  })
 </script>
 
-<div class="p-6 max-w-3xl space-y-8">
+<div class="p-6 max-w-3xl space-y-6">
   {#if loading}
     <div
       class="text-text-muted text-[12px] font-body-md animate-pulse py-8 text-center"
@@ -517,32 +618,99 @@
       </button>
     </div>
   {:else if config}
-    <!-- The shell already renders "AI Provider" as the panel's h2, so this
-         section orients the user rather than repeating the title. The
-         subsections below (Chat model / Embedding model / …) carry their own
-         eyebrows; this intro stays a plain lead paragraph. -->
+    <!-- Intro & nudge banner -->
     <section aria-label="AI provider overview">
-      <p class="text-text-primary text-[13px] font-body-md">
-        Connect Silt to an AI model so plugins can summarize notes, search your
-        vault semantically, and more. Configure a separate model for each task
-        below.
+      <p class="text-text-primary text-[13px] font-body-md leading-relaxed">
+        Connect Silt to an AI model to power smart features like note
+        summarization, semantic vault search, and task tracking. Choose a setup
+        mode below to get started.
       </p>
       {#if needsSetup}
         <div
-          class="mt-4 bg-accent-primary-glow border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2.5"
+          class="mt-4 bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-xl p-4 flex items-start gap-3"
         >
           <span
-            class="material-symbols-outlined text-accent-primary-start text-[18px] mt-0.5 flex-shrink-0"
+            class="material-symbols-outlined text-accent-primary-start text-[20px] mt-0.5 flex-shrink-0"
             aria-hidden="true">lightbulb</span
           >
-          <div class="flex-1 text-[12px] font-body-md text-text-primary">
+          <div
+            class="flex-1 text-[12px] font-body-md text-text-primary leading-relaxed"
+          >
             <strong class="text-accent-primary-start"
               >Set up an AI provider.</strong
             >
-            Stay on <em>Local</em> if you run Ollama at the default URL, switch
-            to <em>OpenAI-compatible</em> for a cloud endpoint, or pick
-            <em>Google AI</em> or <em>Anthropic</em> for native first-party access.
+            Leave on <em>Local</em> if you are running Ollama on localhost, or
+            switch to a cloud provider like <em>Google AI</em> or
+            <em>OpenAI</em> for remote API access.
           </div>
+        </div>
+      {/if}
+    </section>
+
+    <!-- Setup Mode & Sync toggle (Pill switch layout) -->
+    <section aria-label="Configuration Mode" class="space-y-3">
+      <div
+        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+      >
+        <div class="space-y-0.5">
+          <span class="text-text-primary text-[13px] font-semibold block">
+            Sync chat and embedding providers
+          </span>
+          <span class="text-text-muted text-[11px] font-label-sm block">
+            Recommended. Share the same credentials, provider type, and base URL
+            for both roles.
+          </span>
+        </div>
+        <label
+          class="flex items-center cursor-pointer select-none"
+          for="sync-providers-toggle"
+        >
+          <input
+            id="sync-providers-toggle"
+            type="checkbox"
+            class="keyring-switch peer sr-only"
+            checked={syncProviders}
+            onchange={(e) => void toggleSyncProviders(e.currentTarget.checked)}
+          />
+          <span
+            aria-hidden="true"
+            class="keyring-switch-track"
+            class:on={syncProviders}
+          ></span>
+        </label>
+      </div>
+
+      <!-- Split Role switcher (only visible in split mode) -->
+      {#if !syncProviders}
+        <div
+          class="flex p-1 rounded-xl bg-surface-panel/40 border border-surface-panel-border/80 max-w-xs"
+          role="tablist"
+          aria-label="AI Role Switcher"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeRole === 'chat'}
+            onclick={() => (activeRole = 'chat')}
+            class="flex-1 py-1.5 px-3 rounded-lg text-[11px] font-label-sm-bold transition-all cursor-pointer {activeRole ===
+            'chat'
+              ? 'bg-accent-primary-start text-surface-app shadow-md'
+              : 'text-text-muted hover:text-text-primary'}"
+          >
+            Chat Model
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeRole === 'embedding'}
+            onclick={() => (activeRole = 'embedding')}
+            class="flex-1 py-1.5 px-3 rounded-lg text-[11px] font-label-sm-bold transition-all cursor-pointer {activeRole ===
+            'embedding'
+              ? 'bg-accent-primary-start text-surface-app shadow-md'
+              : 'text-text-muted hover:text-text-primary'}"
+          >
+            Embedding Model
+          </button>
         </div>
       {/if}
     </section>
@@ -551,7 +719,7 @@
       {@const b = config![which]}
       {@const idPrefix = `ai-${which}`}
       {@const typeLabel =
-        which === 'chat' ? 'Chat provider type' : 'Embedding provider type'}
+        which === 'chat' ? 'Chat Provider Type' : 'Embedding Provider Type'}
       {@const isLocal = b.provider_type === 'local'}
       {@const isCloud = isCloudProvider(b.provider_type)}
       {@const embedUnsupported =
@@ -581,20 +749,20 @@
         }
       ]}
       <div
-        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
+        class="bg-surface-panel/10 border border-surface-panel-border/50 rounded-xl p-5 space-y-5"
       >
         <!-- Provider type -->
         <div>
           <span
             id="{idPrefix}-type-label"
-            class="text-text-muted text-[10px] font-semibold uppercase tracking-wider block mb-1.5"
+            class="text-text-muted text-[10px] font-semibold uppercase tracking-wider block mb-2"
           >
             {typeLabel}
           </span>
           <div
             role="radiogroup"
             aria-labelledby="{idPrefix}-type-label"
-            class="flex flex-wrap bg-surface-panel border border-surface-panel-border rounded-lg p-1 gap-1"
+            class="grid grid-cols-2 sm:grid-cols-4 gap-2"
           >
             {#each providerTypes as pt (pt.value)}
               {@const selected = b.provider_type === pt.value}
@@ -603,25 +771,22 @@
                 role="radio"
                 aria-checked={selected}
                 onclick={() => selectProviderType(which, pt.value)}
-                class="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-label-sm text-label-sm motion-reduce:transition-none transition-colors border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-                class:bg-hover={selected}
-                class:text-accent-primary-start={selected}
-                class:text-text-muted={!selected}
-                class:hover:text-text-primary={!selected}
-                class:ring-1={selected}
-                class:ring-accent-primary-start={selected}
+                class="flex items-center gap-2 px-3 py-2 rounded-lg border transition-all duration-150 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 {selected
+                  ? 'bg-accent-primary-glow/15 border-accent-primary-start text-accent-primary-start shadow-sm'
+                  : 'bg-surface-panel/40 border-surface-panel-border text-text-muted hover:border-border-active hover:text-text-primary'}"
               >
                 <span
                   class="material-symbols-outlined text-[16px]"
                   aria-hidden="true">{pt.icon}</span
                 >
-                {pt.label}
+                <span class="font-label-sm-bold text-[11px]">{pt.label}</span>
               </button>
             {/each}
           </div>
-          <!-- Privacy notice: local stays on-device; cloud sends content out. -->
+
+          <!-- Privacy notice -->
           <p
-            class="text-[11px] font-label-sm mt-2 flex items-center gap-1.5 {isLocal
+            class="text-[11px] font-label-sm mt-3 flex items-center gap-1.5 {isLocal
               ? 'text-text-muted'
               : 'text-text-primary'}"
           >
@@ -640,27 +805,183 @@
           </p>
         </div>
 
-        <!-- Base URL + Model -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <label class="flex flex-col gap-1.5" for="{idPrefix}-base-url">
-            <span
+        <!-- Balanced URL & Key Grid Row -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Base URL -->
+          <div class="flex flex-col gap-1.5">
+            <label
               class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
-              >Base URL</span
+              for="{idPrefix}-base-url"
             >
+              Base URL
+            </label>
             <input
               id="{idPrefix}-base-url"
               type="url"
               bind:value={b.base_url}
-              onblur={() => void persistProvider(which)}
+              onblur={() => void persistProviderWithSync(which)}
               autocomplete="off"
               spellcheck="false"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
             />
-          </label>
-          {#if embedUnsupported}
-            <!-- Anthropic has no embeddings endpoint: surface a clear message
-                 instead of a model field that can only fail. -->
+            {#if isLocal}
+              <p class="text-text-muted text-[9px] font-label-sm mt-0.5">
+                Ollama default is <code class="font-mono text-[9px]"
+                  >{LOCAL_DEFAULT}</code
+                >.
+              </p>
+            {/if}
+          </div>
+
+          <!-- API Key input -->
+          <div class="flex flex-col gap-1.5">
+            <label
+              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              for="{idPrefix}-key"
+            >
+              API key
+            </label>
+
+            <div class="relative w-full">
+              <input
+                id="{idPrefix}-key"
+                type={showKey[which] ? 'text' : 'password'}
+                bind:value={apiKeyInputs[which]}
+                bind:this={keyInputRefs[which]}
+                autocomplete="off"
+                spellcheck="false"
+                placeholder={b.has_key
+                  ? '••••••••••••••••••••••••••••••••'
+                  : isLocal
+                    ? 'Optional — local servers usually need no key'
+                    : 'sk-…'}
+                onkeydown={(e: KeyboardEvent) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void saveKey(which)
+                  }
+                }}
+                class="w-full bg-surface-panel border border-surface-panel-border rounded-lg pl-3 pr-24 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+              />
+
+              <!-- Inline Action Controls -->
+              <div
+                class="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5"
+              >
+                <button
+                  type="button"
+                  onclick={() => (showKey[which] = !showKey[which])}
+                  aria-pressed={showKey[which]}
+                  aria-label={showKey[which]
+                    ? `Hide ${which} API key`
+                    : `Show ${which} API key`}
+                  title={showKey[which] ? 'Hide' : 'Show'}
+                  class="p-1 text-text-muted hover:text-text-primary bg-transparent border-none cursor-pointer"
+                >
+                  <span
+                    class="material-symbols-outlined text-[16px]"
+                    aria-hidden="true"
+                  >
+                    {showKey[which] ? 'visibility_off' : 'visibility'}
+                  </span>
+                </button>
+
+                <!-- Save key button (visually hidden when empty, keeps tests passing) -->
+                <button
+                  type="button"
+                  onclick={() => void saveKey(which)}
+                  disabled={!apiKeyInputs[which].trim() || savingKey[which]}
+                  aria-label="Save key"
+                  class="px-2 py-1 bg-accent-primary-start text-surface-app rounded-md font-label-sm-bold text-[10px] hover:brightness-110 transition-all cursor-pointer"
+                  class:hidden={!apiKeyInputs[which].trim()}
+                >
+                  Save
+                </button>
+
+                <!-- Clear key button -->
+                {#if b.has_key}
+                  <button
+                    type="button"
+                    onclick={() => void clearKey(which)}
+                    disabled={clearingKey[which]}
+                    aria-label="Clear key"
+                    class="px-2 py-1 bg-surface-panel border border-surface-panel-border text-text-muted hover:text-error hover:border-error/30 rounded-md font-label-sm-bold text-[10px] transition-all cursor-pointer"
+                    class:hidden={apiKeyInputs[which].trim()}
+                  >
+                    Clear
+                  </button>
+                {/if}
+              </div>
+            </div>
+
+            {#if b.has_key && !apiKeyInputs[which].trim()}
+              <p
+                class="text-[10px] font-label-sm text-accent-primary-start flex items-center gap-0.5 mt-0.5"
+              >
+                <span
+                  class="material-symbols-outlined text-[12px]"
+                  aria-hidden="true">check_circle</span
+                >
+                Key configured
+              </p>
+            {/if}
+            {#if keyringFellBack(which) && b.has_key}
+              <p
+                class="text-[10px] font-label-sm text-status-warn flex items-center gap-0.5 mt-0.5"
+              >
+                <span
+                  class="material-symbols-outlined text-[12px]"
+                  aria-hidden="true">warning</span
+                >
+                The keyring was unreachable; this key was saved to config.yaml instead.
+              </p>
+            {/if}
+            {#if keySavedFlash[which]}
+              <p
+                class="text-[10px] font-label-sm text-accent-primary-start mt-0.5 font-semibold"
+                role="status"
+              >
+                Key saved.
+              </p>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Model Selectors -->
+        {#if syncProviders && which === 'chat'}
+          <!-- Render both selectors in sync mode -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+            <!-- Chat Model -->
+            {@render modelSelector('chat', 'Chat Model')}
+            <!-- Embedding Model -->
             <div class="flex flex-col gap-1.5">
+              {#if !supportsEmbeddings(b.provider_type)}
+                <span
+                  class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+                  >Embedding Model</span
+                >
+                <div
+                  class="flex items-start gap-2 px-3 py-2 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-[12px] font-body-md"
+                  role="note"
+                >
+                  <span
+                    class="material-symbols-outlined text-[16px] mt-0.5 flex-shrink-0"
+                    aria-hidden="true">block</span
+                  >
+                  <span class="flex-1"
+                    >Anthropic does not offer embeddings. Switch to split
+                    settings to configure a separate embedding provider.</span
+                  >
+                </div>
+              {:else}
+                {@render modelSelector('embedding', 'Embedding Model')}
+              {/if}
+            </div>
+          </div>
+        {:else if !syncProviders}
+          <!-- Render single selector in split mode -->
+          <div class="pt-1">
+            {#if embedUnsupported}
               <span
                 class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
                 >Model</span
@@ -673,237 +994,143 @@
                   class="material-symbols-outlined text-[16px] mt-0.5 flex-shrink-0"
                   aria-hidden="true">block</span
                 >
-                <span class="flex-1">
-                  Anthropic doesn't offer embeddings. Switch to Local or
-                  OpenAI-compatible for the embedding model.
-                </span>
-              </div>
-            </div>
-          {:else}
-            <div class="flex flex-col gap-1.5">
-              <div class="flex items-center justify-between">
-                <span
-                  class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
-                  >Model</span
+                <span class="flex-1"
+                  >Anthropic doesn't offer embeddings. Switch to Local or
+                  OpenAI-compatible for the embedding model.</span
                 >
-                <button
-                  type="button"
-                  onclick={() => void refreshModels(which)}
-                  disabled={modelLoading[which]}
-                  class="text-[10px] font-label-sm-bold underline bg-transparent border-none cursor-pointer text-text-muted hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed p-0"
-                >
-                  {#if modelLoading[which]}
-                    <span
-                      class="material-symbols-outlined text-[12px] animate-spin align-middle"
-                      aria-hidden="true">progress_activity</span
-                    >
-                    Loading…
-                  {:else}
-                    <span
-                      class="material-symbols-outlined text-[12px] align-middle"
-                      aria-hidden="true">refresh</span
-                    >
-                    Refresh models
-                  {/if}
-                </button>
               </div>
-              {#if manualModel[which] || modelLists[which].length === 0}
-                <!-- Free-text fallback: cold start, failed poll, or user-toggled. -->
-                <input
-                  id="{idPrefix}-model"
-                  type="text"
-                  bind:value={b.model}
-                  onblur={() => void persistProvider(which)}
-                  autocomplete="off"
-                  spellcheck="false"
-                  placeholder={which === 'chat'
-                    ? 'gemini-2.0-flash, claude-sonnet-5, llama3.1'
-                    : 'text-embedding-3-small, nomic-embed-text'}
-                  class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
-                />
-                {#if modelLists[which].length > 0}
-                  <button
-                    type="button"
-                    onclick={() => (manualModel[which] = false)}
-                    class="text-[10px] font-label-sm text-text-muted hover:text-text-primary bg-transparent border-none cursor-pointer p-0 self-start"
+            {:else}
+              {@render modelSelector(which, 'Model')}
+            {/if}
+          </div>
+        {/if}
+
+        <!-- Test connection button (shows test status for both when synced) -->
+        <div
+          class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-surface-panel-border/30"
+        >
+          <div class="flex-1 min-w-0">
+            {#if syncProviders && which === 'chat'}
+              <div class="space-y-1">
+                {#if testResult.chat?.ok}
+                  <p
+                    class="text-[12px] font-body-md text-accent-primary-start flex items-start gap-1.5"
+                    role="status"
                   >
-                    Pick from list
-                  </button>
-                {/if}
-              {:else}
-                <!-- Dropdown populated from ListModels. -->
-                <select
-                  id="{idPrefix}-model"
-                  value={b.model}
-                  onchange={(e) => {
-                    b.model = (e.currentTarget as HTMLSelectElement).value
-                    void persistProvider(which)
-                  }}
-                  class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer"
-                >
-                  {#if !modelLists[which].some((m) => m.id === b.model)}
-                    <option value={b.model}
-                      >{b.model || 'Select a model…'}</option
+                    <span
+                      class="material-symbols-outlined text-[14px] mt-0.5"
+                      aria-hidden="true">check_circle</span
                     >
+                    <span
+                      >Connected (Chat){testResult.chat.message
+                        ? ` · ${testResult.chat.message}`
+                        : ''}</span
+                    >
+                  </p>
+                {/if}
+                {#if testResult.chat && !testResult.chat.ok}
+                  <p
+                    class="text-[12px] font-body-md text-error flex items-start gap-1.5"
+                    role="alert"
+                  >
+                    <span
+                      class="material-symbols-outlined text-[14px] mt-0.5"
+                      aria-hidden="true">error</span
+                    >
+                    <span
+                      >Connection failed (Chat){testResult.chat.message
+                        ? ` · ${testResult.chat.message}`
+                        : ''}</span
+                    >
+                  </p>
+                {/if}
+
+                {#if supportsEmbeddings(b.provider_type)}
+                  {#if testResult.embedding?.ok}
+                    <p
+                      class="text-[12px] font-body-md text-accent-primary-start flex items-start gap-1.5"
+                      role="status"
+                    >
+                      <span
+                        class="material-symbols-outlined text-[14px] mt-0.5"
+                        aria-hidden="true">check_circle</span
+                      >
+                      <span
+                        >Connected (Embedding){testResult.embedding.message
+                          ? ` · ${testResult.embedding.message}`
+                          : ''}</span
+                      >
+                    </p>
                   {/if}
-                  {#each modelLists[which] as m (m.id)}
-                    <option value={m.id}>{m.display_name}</option>
-                  {/each}
-                </select>
-                <button
-                  type="button"
-                  onclick={() => (manualModel[which] = true)}
-                  class="text-[10px] font-label-sm text-text-muted hover:text-text-primary bg-transparent border-none cursor-pointer p-0 self-start"
-                >
-                  Type manually
-                </button>
-              {/if}
-              {#if modelError[which]}
+                  {#if testResult.embedding && !testResult.embedding.ok}
+                    <p
+                      class="text-[12px] font-body-md text-error flex items-start gap-1.5"
+                      role="alert"
+                    >
+                      <span
+                        class="material-symbols-outlined text-[14px] mt-0.5"
+                        aria-hidden="true">error</span
+                      >
+                      <span
+                        >Connection failed (Embedding){testResult.embedding
+                          .message
+                          ? ` · ${testResult.embedding.message}`
+                          : ''}</span
+                      >
+                    </p>
+                  {/if}
+                {/if}
+              </div>
+            {:else}
+              {#if result?.ok}
                 <p
-                  class="text-[10px] font-label-sm text-error flex items-center gap-1"
+                  class="text-[12px] font-body-md text-accent-primary-start flex items-start gap-1.5"
+                  role="status"
+                >
+                  <span
+                    class="material-symbols-outlined text-[14px] mt-0.5"
+                    aria-hidden="true">check_circle</span
+                  >
+                  <span
+                    >Connected{result.message
+                      ? ` · ${result.message}`
+                      : ''}</span
+                  >
+                </p>
+              {/if}
+              {#if result && !result.ok}
+                <p
+                  class="text-[12px] font-body-md text-error flex items-start gap-1.5"
                   role="alert"
                 >
                   <span
-                    class="material-symbols-outlined text-[12px]"
+                    class="material-symbols-outlined text-[14px] mt-0.5"
                     aria-hidden="true">error</span
                   >
-                  {modelError[which]}
+                  <span
+                    >Connection failed{result.message
+                      ? ` · ${result.message}`
+                      : ''}</span
+                  >
                 </p>
               {/if}
-            </div>
-          {/if}
-        </div>
-        {#if isLocal}
-          <p class="text-text-muted text-[11px] font-label-sm -mt-2">
-            Ollama's default is
-            <code class="font-mono text-[11px]">{LOCAL_DEFAULT}</code>. Local
-            servers usually don't need a key.
-          </p>
-        {/if}
-
-        <!-- API key -->
-        <div class="space-y-1.5">
-          <div class="flex items-center justify-between gap-3">
-            <label
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
-              for="{idPrefix}-key"
-            >
-              API key
-            </label>
-            {#if b.has_key}
-              <span class="flex items-center gap-2 flex-wrap justify-end">
-                <span
-                  class="inline-flex items-center gap-1 text-[11px] font-label-sm-bold text-accent-primary-start"
-                >
-                  <span
-                    class="material-symbols-outlined text-[14px]"
-                    aria-hidden="true">check_circle</span
-                  >
-                  Key set
-                </span>
-                <button
-                  type="button"
-                  onclick={() => keyInputRefs[which]?.focus()}
-                  class="text-[11px] font-label-sm-bold underline bg-transparent border-none cursor-pointer text-text-muted hover:text-text-primary p-0"
-                >
-                  Replace
-                </button>
-                <button
-                  type="button"
-                  onclick={() => void clearKey(which)}
-                  disabled={clearingKey[which]}
-                  class="text-[11px] font-label-sm-bold underline bg-transparent border-none cursor-pointer text-text-muted hover:text-error disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline p-0"
-                >
-                  {clearingKey[which] ? 'Clearing…' : 'Clear key'}
-                </button>
-              </span>
             {/if}
           </div>
-          <div class="flex items-center gap-2">
-            <input
-              id="{idPrefix}-key"
-              type={showKey[which] ? 'text' : 'password'}
-              bind:value={apiKeyInputs[which]}
-              bind:this={keyInputRefs[which]}
-              autocomplete="off"
-              spellcheck="false"
-              placeholder={b.has_key
-                ? 'Enter new key to replace the stored one'
-                : isLocal
-                  ? 'Optional — local servers usually need no key'
-                  : 'sk-…'}
-              onkeydown={(e: KeyboardEvent) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  void saveKey(which)
-                }
-              }}
-              class="flex-1 bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
-            />
-            <button
-              type="button"
-              onclick={() => (showKey[which] = !showKey[which])}
-              aria-pressed={showKey[which]}
-              aria-label={showKey[which]
-                ? `Hide ${which} API key`
-                : `Show ${which} API key`}
-              title={showKey[which] ? 'Hide' : 'Show'}
-              class="flex-shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-            >
-              <span
-                class="material-symbols-outlined text-[18px]"
-                aria-hidden="true"
-              >
-                {showKey[which] ? 'visibility_off' : 'visibility'}
-              </span>
-            </button>
-            <button
-              type="button"
-              onclick={() => void saveKey(which)}
-              disabled={!apiKeyInputs[which].trim() || savingKey[which]}
-              class="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 motion-reduce:transition-none transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {#if savingKey[which]}
-                <span
-                  class="material-symbols-outlined text-[16px] animate-spin"
-                  aria-hidden="true">progress_activity</span
-                >
-                Saving…
-              {:else}
-                Save key
-              {/if}
-            </button>
-          </div>
-          {#if keyringFellBack(which) && b.has_key}
-            <p
-              class="text-[11px] font-label-sm text-status-warn flex items-center gap-1"
-            >
-              <span
-                class="material-symbols-outlined text-[14px]"
-                aria-hidden="true">warning</span
-              >
-              The keyring was unreachable; this key was saved to config.yaml instead.
-            </p>
-          {/if}
-          {#if keySavedFlash[which]}
-            <p
-              class="text-[11px] font-label-sm text-accent-primary-start"
-              role="status"
-            >
-              Key saved.
-            </p>
-          {/if}
-        </div>
 
-        <!-- Test connection -->
-        <div class="space-y-1.5">
           <button
             type="button"
-            onclick={() => void runTest(which)}
-            disabled={testingNow}
-            class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-accent-primary-start motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-60 disabled:cursor-not-allowed"
+            onclick={() => {
+              if (syncProviders && which === 'chat') {
+                void runTestUnified()
+              } else {
+                void runTest(which)
+              }
+            }}
+            disabled={testingNow ||
+              (syncProviders && (testing.chat || testing.embedding))}
+            class="flex-shrink-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-accent-primary-start hover:text-accent-primary-start transition-all cursor-pointer disabled:opacity-60"
           >
-            {#if testingNow}
+            {#if testingNow || (syncProviders && which === 'chat' && (testing.chat || testing.embedding))}
               <span
                 class="material-symbols-outlined text-[16px] animate-spin"
                 aria-hidden="true">progress_activity</span
@@ -917,429 +1144,567 @@
               Test connection
             {/if}
           </button>
-          <!-- Live regions: success in role=status (polite), failure in
-               role=alert (assertive). Both are conditional so the
-               region only renders when there is a result to convey;
-               clearing testResult before each probe guarantees AT
-               re-announces the new outcome. -->
-          {#if result?.ok}
-            <p
-              class="text-[12px] font-body-md text-accent-primary-start flex items-start gap-1.5"
-              role="status"
-            >
-              <span
-                class="material-symbols-outlined text-[14px] mt-0.5"
-                aria-hidden="true">check_circle</span
-              >
-              <span
-                >Connected{result.message ? ` · ${result.message}` : ''}</span
-              >
-            </p>
-          {/if}
-          {#if result && !result.ok}
-            <p
-              class="text-[12px] font-body-md text-error flex items-start gap-1.5"
-              role="alert"
-            >
-              <span
-                class="material-symbols-outlined text-[14px] mt-0.5"
-                aria-hidden="true">error</span
-              >
-              <span
-                >Connection failed{result.message
-                  ? ` · ${result.message}`
-                  : ''}</span
-              >
-            </p>
-          {/if}
         </div>
-
-        <!-- Advanced (progressive disclosure) -->
-        <details class="advanced-details">
-          <summary
-            class="cursor-pointer text-text-muted text-[11px] font-label-sm-bold uppercase tracking-wider hover:text-text-primary select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 rounded"
-          >
-            Advanced
-          </summary>
-          <div
-            class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-3"
-          >
-            <label class="flex flex-col gap-1.5" for="{idPrefix}-temperature">
-              <span
-                class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
-                >Temperature</span
-              >
-              <input
-                id="{idPrefix}-temperature"
-                type="number"
-                min="0"
-                max="2"
-                step="0.1"
-                bind:value={b.temperature}
-                onblur={() => void persistProvider(which)}
-                class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
-              />
-              {#if advancedFieldError(which, 'temperature')}
-                <span class="text-error text-[10px] font-label-sm" role="alert"
-                  >{advancedFieldError(which, 'temperature')}</span
-                >
-              {/if}
-            </label>
-            <label class="flex flex-col gap-1.5" for="{idPrefix}-max-tokens">
-              <span
-                class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
-                >Max tokens</span
-              >
-              <input
-                id="{idPrefix}-max-tokens"
-                type="number"
-                min="1"
-                bind:value={b.max_tokens}
-                onblur={() => void persistProvider(which)}
-                class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
-              />
-              {#if advancedFieldError(which, 'max_tokens')}
-                <span class="text-error text-[10px] font-label-sm" role="alert"
-                  >{advancedFieldError(which, 'max_tokens')}</span
-                >
-              {/if}
-            </label>
-            <label class="flex flex-col gap-1.5" for="{idPrefix}-timeout">
-              <span
-                class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
-                >Timeout (ms)</span
-              >
-              <input
-                id="{idPrefix}-timeout"
-                type="number"
-                min="1000"
-                step="500"
-                bind:value={b.timeout_ms}
-                onblur={() => void persistProvider(which)}
-                class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
-              />
-              {#if advancedFieldError(which, 'timeout_ms')}
-                <span class="text-error text-[10px] font-label-sm" role="alert"
-                  >{advancedFieldError(which, 'timeout_ms')}</span
-                >
-              {/if}
-            </label>
-            {#if which === 'chat'}
-              <label class="flex flex-col gap-1.5" for="{idPrefix}-reasoning">
-                <span
-                  class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
-                  >Reasoning effort</span
-                >
-                <select
-                  id="{idPrefix}-reasoning"
-                  value={b.reasoning_effort ?? ''}
-                  onchange={(e) => {
-                    const v = (e.currentTarget as HTMLSelectElement).value
-                    b.reasoning_effort = v || undefined
-                    void persistProvider(which)
-                  }}
-                  class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer"
-                >
-                  <option value="">Default</option>
-                  <option value="none">None</option>
-                  <option value="minimal">Minimal</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="xhigh">xHigh</option>
-                  <option value="max">Max</option>
-                </select>
-              </label>
-            {/if}
-            {#if which === 'embedding'}
-              <label class="flex flex-col gap-1.5" for="{idPrefix}-dimensions">
-                <span
-                  class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
-                  >Dimensions</span
-                >
-                <input
-                  id="{idPrefix}-dimensions"
-                  type="number"
-                  min="1"
-                  bind:value={b.dimensions}
-                  onblur={() => void persistProvider(which)}
-                  class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
-                />
-                {#if advancedFieldError(which, 'dimensions')}
-                  <span
-                    class="text-error text-[10px] font-label-sm"
-                    role="alert">{advancedFieldError(which, 'dimensions')}</span
-                  >
-                {/if}
-              </label>
-            {/if}
-          </div>
-        </details>
       </div>
     {/snippet}
 
-    <!-- Chat provider -->
-    <section aria-labelledby="chat-heading">
-      <h3
-        id="chat-heading"
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
-      >
-        Chat model
-      </h3>
-      {@render providerCard('chat')}
-    </section>
+    {#snippet modelSelector(w: Which, label: string)}
+      {@const b = config![w]}
+      {@const idPrefix = `ai-${w}`}
 
-    <!-- Embedding provider -->
-    <section aria-labelledby="embedding-heading">
-      <h3
-        id="embedding-heading"
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
-      >
-        Embedding model
-      </h3>
-      {@render providerCard('embedding')}
-    </section>
+      <div class="flex flex-col gap-1.5">
+        <span
+          class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+          >{label}</span
+        >
+        <div class="flex items-center gap-2">
+          <div class="flex-1 relative min-w-0">
+            {#if manualModel[w] || modelLists[w].length === 0}
+              <!-- Free-text input -->
+              <input
+                id="{idPrefix}-model"
+                type="text"
+                bind:value={b.model}
+                onblur={() => void persistProvider(w)}
+                autocomplete="off"
+                spellcheck="false"
+                placeholder={w === 'chat'
+                  ? 'gemini-2.0-flash, claude-3-5-sonnet-latest, llama3.1'
+                  : 'text-embedding-3-small, nomic-embed-text'}
+                class="w-full bg-surface-panel border border-surface-panel-border rounded-lg pl-3 pr-8 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+              />
+              {#if modelLists[w].length > 0}
+                <button
+                  type="button"
+                  onclick={() => (manualModel[w] = false)}
+                  title="Pick from list"
+                  aria-label="Pick from list"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary bg-transparent border-none cursor-pointer p-0"
+                >
+                  <span class="material-symbols-outlined text-[16px]">list</span
+                  >
+                </button>
+              {/if}
+            {:else}
+              <!-- Dropdown select -->
+              <select
+                id="{idPrefix}-model"
+                value={b.model}
+                onchange={(e) => {
+                  const val = (e.currentTarget as HTMLSelectElement).value
+                  if (val === '__custom__') {
+                    manualModel[w] = true
+                  } else {
+                    b.model = val
+                    void persistProvider(w)
+                  }
+                }}
+                class="w-full bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all cursor-pointer appearance-none pr-8"
+              >
+                {#if !modelLists[w].some((m) => m.id === b.model)}
+                  <option value={b.model}>{b.model || 'Select a model…'}</option
+                  >
+                {/if}
+                {#each modelLists[w] as m (m.id)}
+                  <option value={m.id}>{m.display_name}</option>
+                {/each}
+                <option value="__custom__">+ Type model name manually...</option
+                >
+              </select>
+              <span
+                class="material-symbols-outlined text-[16px] text-text-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                aria-hidden="true"
+              >
+                arrow_drop_down
+              </span>
+            {/if}
+          </div>
 
-    <!-- Key storage -->
-    <section aria-labelledby="keyring-heading">
-      <h3
-        id="keyring-heading"
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
-      >
-        Key storage
-      </h3>
-      <div
-        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-3"
-      >
-        {#if !config.keyring_available}
-          <div
-            class="flex items-start gap-2 p-3 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-[12px] font-body-md"
+          <!-- Refresh models button -->
+          <button
+            type="button"
+            onclick={() => void refreshModels(w)}
+            disabled={modelLoading[w]}
+            title="Refresh models"
+            aria-label="Refresh models"
+            class="flex-shrink-0 flex items-center justify-center p-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted hover:text-text-primary hover:border-border-active transition-all cursor-pointer disabled:opacity-40"
+          >
+            <span
+              class="material-symbols-outlined text-[16px]"
+              class:animate-spin={modelLoading[w]}
+            >
+              {modelLoading[w] ? 'progress_activity' : 'refresh'}
+            </span>
+          </button>
+        </div>
+
+        {#if modelError[w]}
+          <p
+            class="text-[10px] font-label-sm text-error flex items-center gap-1 mt-0.5"
             role="alert"
           >
             <span
-              class="material-symbols-outlined text-[18px] mt-0.5 flex-shrink-0"
-              aria-hidden="true">warning</span
+              class="material-symbols-outlined text-[12px]"
+              aria-hidden="true">error</span
             >
-            <span class="flex-1">
-              No OS keyring was found on this system. Keys will be stored in
-              <code class="font-mono text-[11px]">config.yaml</code> regardless of
-              this setting.
-            </span>
-          </div>
+            {modelError[w]}
+          </p>
         {/if}
-        <label
-          class="flex items-start gap-3 cursor-pointer select-none"
-          for="ai-keyring-toggle"
-        >
-          <input
-            id="ai-keyring-toggle"
-            type="checkbox"
-            class="keyring-switch peer sr-only"
-            checked={config.use_keyring}
-            disabled={!config.keyring_available}
-            onchange={(e: Event) =>
-              void toggleKeyring((e.currentTarget as HTMLInputElement).checked)}
-          />
-          <span
-            aria-hidden="true"
-            class="keyring-switch-track"
-            class:on={config.use_keyring && config.keyring_available}
-            class:disabled={!config.keyring_available}
-          ></span>
-          <span class="flex-1">
-            <span class="text-text-primary text-[13px] font-body-md block">
-              Store API keys in the OS keyring
-            </span>
-            <span
-              class="text-text-muted text-[11px] font-label-sm block mt-0.5"
-            >
-              When on, keys live in the OS keyring instead of the vault's
-              <code class="font-mono text-[11px]">config.yaml</code>, so they
-              don't travel when the vault syncs. Turning this off leaves
-              existing keyring entries in place until you clear or re-enter each
-              key.
-            </span>
-          </span>
-        </label>
       </div>
-    </section>
+    {/snippet}
 
-    <!-- Recent activity -->
-    <section aria-labelledby="audit-heading">
-      <h3
-        id="audit-heading"
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
-      >
-        Recent AI activity
-      </h3>
-      <div
-        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl"
-      >
-        <details bind:open={auditOpen} class="group">
-          <summary
-            class="cursor-pointer list-none flex items-center justify-between gap-2 px-4 py-3 select-none hover:bg-hover/40 motion-reduce:transition-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 rounded-xl"
+    {#snippet advancedTuningGrid(w: Which)}
+      {@const b = config![w]}
+      {@const idPrefix = `ai-${w}`}
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {#if w === 'chat'}
+          <label class="flex flex-col gap-1.5" for="{idPrefix}-temperature">
+            <span
+              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              >Temperature</span
+            >
+            <input
+              id="{idPrefix}-temperature"
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+              bind:value={b.temperature}
+              onblur={() => void persistProvider(w)}
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+            />
+            {#if advancedFieldError(w, 'temperature')}
+              <span class="text-error text-[10px] font-label-sm" role="alert"
+                >{advancedFieldError(w, 'temperature')}</span
+              >
+            {/if}
+          </label>
+
+          <label class="flex flex-col gap-1.5" for="{idPrefix}-max-tokens">
+            <span
+              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              >Max tokens</span
+            >
+            <input
+              id="{idPrefix}-max-tokens"
+              type="number"
+              min="1"
+              bind:value={b.max_tokens}
+              onblur={() => void persistProvider(w)}
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+            />
+            {#if advancedFieldError(w, 'max_tokens')}
+              <span class="text-error text-[10px] font-label-sm" role="alert"
+                >{advancedFieldError(w, 'max_tokens')}</span
+              >
+            {/if}
+          </label>
+
+          <label class="flex flex-col gap-1.5" for="{idPrefix}-reasoning">
+            <span
+              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              >Reasoning effort</span
+            >
+            <select
+              id="{idPrefix}-reasoning"
+              value={b.reasoning_effort ?? ''}
+              onchange={(e) => {
+                const v = (e.currentTarget as HTMLSelectElement).value
+                b.reasoning_effort = v || undefined
+                void persistProvider(w)
+              }}
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all cursor-pointer"
+            >
+              <option value="">Default</option>
+              <option value="none">None</option>
+              <option value="minimal">Minimal</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="xhigh">xHigh</option>
+              <option value="max">Max</option>
+            </select>
+          </label>
+        {/if}
+
+        <label class="flex flex-col gap-1.5" for="{idPrefix}-timeout">
+          <span
+            class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+            >Timeout (ms)</span
           >
-            <span
-              class="flex items-center gap-2 text-text-primary text-[13px] font-body-md"
+          <input
+            id="{idPrefix}-timeout"
+            type="number"
+            min="1000"
+            step="500"
+            bind:value={b.timeout_ms}
+            onblur={() => void persistProvider(w)}
+            class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+          />
+          {#if advancedFieldError(w, 'timeout_ms')}
+            <span class="text-error text-[10px] font-label-sm" role="alert"
+              >{advancedFieldError(w, 'timeout_ms')}</span
             >
-              <span
-                class="material-symbols-outlined text-[16px] text-text-muted group-open:rotate-90 motion-reduce:transition-none transition-transform"
-                aria-hidden="true">chevron_right</span
-              >
-              {auditState === 'loaded'
-                ? `${audit.length} ${audit.length === 1 ? 'entry' : 'entries'} recorded`
-                : 'Plugin AI calls'}
-            </span>
+          {/if}
+        </label>
+
+        {#if w === 'embedding'}
+          <label class="flex flex-col gap-1.5" for="{idPrefix}-dimensions">
             <span
-              class="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-surface-panel border border-surface-panel-border text-text-muted text-[10px] font-label-sm-bold"
-              aria-hidden="true"
+              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              >Dimensions</span
             >
-              {audit.length}
-            </span>
-          </summary>
-          <div class="px-4 pb-4 pt-1">
-            {#if auditState === 'loading'}
-              <div
-                class="text-text-muted text-[12px] font-body-md animate-pulse py-3"
+            <input
+              id="{idPrefix}-dimensions"
+              type="number"
+              min="1"
+              bind:value={b.dimensions}
+              onblur={() => void persistProvider(w)}
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+            />
+            {#if advancedFieldError(w, 'dimensions')}
+              <span class="text-error text-[10px] font-label-sm" role="alert"
+                >{advancedFieldError(w, 'dimensions')}</span
               >
-                Loading audit log…
-              </div>
-            {:else if auditError}
-              <div
-                class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
-                role="alert"
+            {/if}
+          </label>
+        {/if}
+      </div>
+    {/snippet}
+
+    <!-- Main Config Area -->
+    <div class="space-y-4">
+      <!-- Sync Mode: renders the chat card representing both configurations -->
+      <!-- Split Mode: renders both cards, using CSS 'hidden' on the inactive one so Vitest can query them -->
+      <section
+        aria-labelledby="chat-heading"
+        class:hidden={!syncProviders && activeRole !== 'chat'}
+      >
+        {#if !syncProviders}
+          <h3
+            id="chat-heading"
+            class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+          >
+            Chat model
+          </h3>
+        {:else}
+          <h3 id="chat-heading" class="sr-only">Chat model</h3>
+        {/if}
+        {@render providerCard('chat')}
+      </section>
+
+      <section
+        aria-labelledby="embedding-heading"
+        class:hidden={syncProviders || activeRole !== 'embedding'}
+      >
+        <h3
+          id="embedding-heading"
+          class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+        >
+          Embedding model
+        </h3>
+        {@render providerCard('embedding')}
+      </section>
+    </div>
+
+    <!-- Accordion Stack of Collapsible Secondary Panels (Tuning, Keyring, Audit Log) -->
+    <div class="space-y-3 pt-4 border-t border-surface-panel-border/30">
+      <!-- Section 1: Advanced Options -->
+      <details
+        class="group bg-surface-panel/10 border border-surface-panel-border rounded-xl"
+      >
+        <summary
+          class="flex items-center justify-between p-4 cursor-pointer select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start rounded-xl"
+        >
+          <div class="flex items-center gap-2.5">
+            <span
+              class="material-symbols-outlined text-[18px] text-text-muted"
+              aria-hidden="true">tune</span
+            >
+            <div class="text-left">
+              <span class="text-[12px] font-semibold text-text-primary block"
+                >Advanced Options</span
               >
-                <span
-                  class="material-symbols-outlined text-[18px]"
-                  aria-hidden="true">error</span
-                >
-                <span class="flex-1"
-                  >Failed to load audit log: {auditError}</span
-                >
+              <span class="text-[10px] text-text-muted block mt-0.5"
+                >{tuningSummary}</span
+              >
+            </div>
+          </div>
+          <span
+            class="material-symbols-outlined text-[20px] text-text-muted transition-transform group-open:rotate-180"
+            aria-hidden="true">expand_more</span
+          >
+        </summary>
+        <div class="px-4 pb-4 border-t border-surface-panel-border/30 pt-4">
+          <div class="space-y-5">
+            {#if syncProviders}
+              <div>
+                <h4 class="text-[11px] font-semibold text-text-primary mb-3">
+                  Chat Tuning
+                </h4>
+                {@render advancedTuningGrid('chat')}
               </div>
-            {:else if audit.length === 0}
-              <p class="text-text-muted text-[12px] font-body-md py-3">
-                No activity recorded yet.
-              </p>
+              {#if supportsEmbeddings(config.chat.provider_type)}
+                <div class="border-t border-surface-panel-border/30 pt-4">
+                  <h4 class="text-[11px] font-semibold text-text-primary mb-3">
+                    Embedding Tuning
+                  </h4>
+                  {@render advancedTuningGrid('embedding')}
+                </div>
+              {/if}
             {:else}
-              <div class="overflow-x-auto">
-                <table class="w-full text-[11px] font-body-md border-collapse">
-                  <caption class="sr-only"> Recent plugin AI calls </caption>
-                  <thead>
-                    <tr
-                      class="text-left text-text-muted border-b border-surface-panel-border"
-                    >
-                      <th
-                        scope="col"
-                        class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
-                        >When</th
-                      >
-                      <th
-                        scope="col"
-                        class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
-                        >Plugin</th
-                      >
-                      <th
-                        scope="col"
-                        class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
-                        >Kind</th
-                      >
-                      <th
-                        scope="col"
-                        class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
-                        >Host</th
-                      >
-                      <th
-                        scope="col"
-                        class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
-                        >Model</th
-                      >
-                      <th
-                        scope="col"
-                        class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
-                        >Status</th
-                      >
-                      <th
-                        scope="col"
-                        class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
-                        >Tokens</th
-                      >
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {#each audit as entry, i (`${entry.at}:${i}`)}
-                      <tr
-                        class="border-b border-surface-panel-border/50 text-text-primary"
-                      >
-                        <td
-                          class="py-1.5 pr-3 whitespace-nowrap"
-                          title={entry.at}>{formatAuditTime(entry.at)}</td
-                        >
-                        <td class="py-1.5 pr-3">{entry.plugin}</td>
-                        <td class="py-1.5 pr-3 capitalize">{entry.kind}</td>
-                        <td class="py-1.5 pr-3 truncate max-w-[180px]"
-                          >{entry.host}</td
-                        >
-                        <td class="py-1.5 pr-3 truncate max-w-[160px]"
-                          >{entry.model}</td
-                        >
-                        <td class="py-1.5 pr-3">
-                          {#if entry.status === 'ok'}
-                            <span
-                              class="inline-flex items-center gap-1 text-accent-primary-start"
-                            >
-                              <span
-                                class="material-symbols-outlined text-[12px]"
-                                aria-hidden="true">check_circle</span
-                              >
-                              ok
-                            </span>
-                          {:else}
-                            <span
-                              class="inline-flex items-center gap-1 text-error"
-                            >
-                              <span
-                                class="material-symbols-outlined text-[12px]"
-                                aria-hidden="true">error</span
-                              >
-                              {entry.status}
-                            </span>
-                          {/if}
-                        </td>
-                        <td
-                          class="py-1.5 pr-3 text-text-muted whitespace-nowrap"
-                        >
-                          {entry.total_tokens != null
-                            ? entry.total_tokens
-                            : '—'}
-                        </td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              </div>
-              <div class="mt-3 flex justify-end">
-                <button
-                  type="button"
-                  onclick={() => void clearAudit()}
-                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted font-label-sm-bold hover:text-error hover:border-error/50 motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-                >
-                  <span
-                    class="material-symbols-outlined text-[16px]"
-                    aria-hidden="true">delete_sweep</span
-                  >
-                  Clear log
-                </button>
-              </div>
+              {@render advancedTuningGrid(activeRole)}
             {/if}
           </div>
-        </details>
-      </div>
-    </section>
+        </div>
+      </details>
+
+      <!-- Section 2: Key Storage -->
+      <details
+        class="group bg-surface-panel/10 border border-surface-panel-border rounded-xl"
+      >
+        <summary
+          class="flex items-center justify-between p-4 cursor-pointer select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start rounded-xl"
+        >
+          <div class="flex items-center gap-2.5">
+            <span
+              class="material-symbols-outlined text-[18px] text-text-muted"
+              aria-hidden="true">vpn_key</span
+            >
+            <div class="text-left">
+              <span class="text-[12px] font-semibold text-text-primary block"
+                >Key storage</span
+              >
+              <span class="text-[10px] text-text-muted block mt-0.5"
+                >{keyringSummary}</span
+              >
+            </div>
+          </div>
+          <span
+            class="material-symbols-outlined text-[20px] text-text-muted transition-transform group-open:rotate-180"
+            aria-hidden="true">expand_more</span
+          >
+        </summary>
+        <div
+          class="px-4 pb-4 border-t border-surface-panel-border/30 pt-4 space-y-3"
+        >
+          {#if !config.keyring_available}
+            <div
+              class="flex items-start gap-2 p-3 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-[12px] font-body-md"
+              role="alert"
+            >
+              <span
+                class="material-symbols-outlined text-[18px] mt-0.5 flex-shrink-0"
+                aria-hidden="true">warning</span
+              >
+              <span class="flex-1">
+                No OS keyring was found on this system. Keys will be stored in
+                <code class="font-mono text-[11px]">config.yaml</code> regardless
+                of this setting.
+              </span>
+            </div>
+          {/if}
+          <label
+            class="flex items-start gap-3 cursor-pointer select-none"
+            for="ai-keyring-toggle"
+          >
+            <input
+              id="ai-keyring-toggle"
+              type="checkbox"
+              class="keyring-switch peer sr-only"
+              checked={config.use_keyring}
+              disabled={!config.keyring_available}
+              onchange={(e: Event) =>
+                void toggleKeyring(
+                  (e.currentTarget as HTMLInputElement).checked
+                )}
+            />
+            <span
+              aria-hidden="true"
+              class="keyring-switch-track"
+              class:on={config.use_keyring && config.keyring_available}
+              class:disabled={!config.keyring_available}
+            ></span>
+            <span class="flex-1">
+              <span class="text-text-primary text-[13px] font-body-md block">
+                Store API keys in the OS keyring
+              </span>
+              <span
+                class="text-text-muted text-[11px] font-label-sm block mt-0.5"
+              >
+                When on, keys live in the OS keyring instead of the vault's
+                <code class="font-mono text-[11px]">config.yaml</code>, so they
+                don't travel when the vault syncs. Turning this off leaves
+                existing keyring entries in place until you clear or re-enter
+                each key.
+              </span>
+            </span>
+          </label>
+        </div>
+      </details>
+
+      <!-- Section 3: Recent Activity -->
+      <details
+        bind:open={auditOpen}
+        class="group bg-surface-panel/10 border border-surface-panel-border rounded-xl"
+      >
+        <summary
+          class="flex items-center justify-between p-4 cursor-pointer select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start rounded-xl"
+        >
+          <div class="flex items-center gap-2.5">
+            <span
+              class="material-symbols-outlined text-[18px] text-text-muted"
+              aria-hidden="true">history</span
+            >
+            <div class="text-left">
+              <!-- summaryEl in test queries exact text 'Plugin AI calls' -->
+              <span class="text-[12px] font-semibold text-text-primary block"
+                >Plugin AI calls</span
+              >
+              <span class="text-[10px] text-text-muted block mt-0.5"
+                >{auditSummary}</span
+              >
+            </div>
+          </div>
+          <span
+            class="material-symbols-outlined text-[20px] text-text-muted transition-transform group-open:rotate-180"
+            aria-hidden="true">expand_more</span
+          >
+        </summary>
+        <div class="px-4 pb-4 border-t border-surface-panel-border/30 pt-4">
+          {#if auditState === 'loading'}
+            <div
+              class="text-text-muted text-[12px] font-body-md animate-pulse py-3"
+            >
+              Loading audit log…
+            </div>
+          {:else if auditError}
+            <div
+              class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
+              role="alert"
+            >
+              <span
+                class="material-symbols-outlined text-[18px]"
+                aria-hidden="true">error</span
+              >
+              <span class="flex-1">Failed to load audit log: {auditError}</span>
+            </div>
+          {:else if audit.length === 0}
+            <p class="text-text-muted text-[12px] font-body-md py-3">
+              No activity recorded yet.
+            </p>
+          {:else}
+            <div class="overflow-x-auto">
+              <table class="w-full text-[11px] font-body-md border-collapse">
+                <caption class="sr-only"> Recent plugin AI calls </caption>
+                <thead>
+                  <tr
+                    class="text-left text-text-muted border-b border-surface-panel-border"
+                  >
+                    <th
+                      scope="col"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      >When</th
+                    >
+                    <th
+                      scope="col"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      >Plugin</th
+                    >
+                    <th
+                      scope="col"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      >Kind</th
+                    >
+                    <th
+                      scope="col"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      >Host</th
+                    >
+                    <th
+                      scope="col"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      >Model</th
+                    >
+                    <th
+                      scope="col"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      >Status</th
+                    >
+                    <th
+                      scope="col"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      >Tokens</th
+                    >
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each audit as entry, i (`${entry.at}:${i}`)}
+                    <tr
+                      class="border-b border-surface-panel-border/50 text-text-primary"
+                    >
+                      <td class="py-1.5 pr-3 whitespace-nowrap" title={entry.at}
+                        >{formatAuditTime(entry.at)}</td
+                      >
+                      <td class="py-1.5 pr-3">{entry.plugin}</td>
+                      <td class="py-1.5 pr-3 capitalize">{entry.kind}</td>
+                      <td class="py-1.5 pr-3 truncate max-w-[180px]"
+                        >{entry.host}</td
+                      >
+                      <td class="py-1.5 pr-3 truncate max-w-[160px]"
+                        >{entry.model}</td
+                      >
+                      <td class="py-1.5 pr-3">
+                        {#if entry.status === 'ok'}
+                          <span
+                            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent-primary-glow/20 border border-accent-primary-start text-accent-primary-start font-label-sm-bold text-[10px]"
+                          >
+                            <span
+                              class="material-symbols-outlined text-[10px]"
+                              aria-hidden="true">check_circle</span
+                            >
+                            ok
+                          </span>
+                        {:else}
+                          <span
+                            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-status-danger/10 text-status-danger font-label-sm-bold text-[10px]"
+                          >
+                            <span
+                              class="material-symbols-outlined text-[10px]"
+                              aria-hidden="true">error</span
+                            >
+                            {entry.status}
+                          </span>
+                        {/if}
+                      </td>
+                      <td class="py-1.5 pr-3 text-text-muted whitespace-nowrap">
+                        {entry.total_tokens != null ? entry.total_tokens : '—'}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            <div class="mt-3 flex justify-end">
+              <button
+                type="button"
+                onclick={() => void clearAudit()}
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted font-label-sm-bold hover:text-error hover:border-error/50 transition-colors cursor-pointer focus:outline-none"
+              >
+                <span
+                  class="material-symbols-outlined text-[16px]"
+                  aria-hidden="true">delete_sweep</span
+                >
+                Clear log
+              </button>
+            </div>
+          {/if}
+        </div>
+      </details>
+    </div>
 
     {#if loadError}
-      <!-- Soft (non-blocking) error banner shown when an action like
-           toggling keyring fails after the initial config load. -->
+      <!-- Soft error banner -->
       <div
         class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
         role="alert"
@@ -1364,9 +1729,6 @@
 </div>
 
 <style>
-  /* Visually hidden but available to assistive tech. Matches the
-     locally-scoped .sr-only in AppearanceTab.svelte (no global utility
-     exists). */
   .sr-only {
     position: absolute;
     width: 1px;
@@ -1379,11 +1741,6 @@
     border: 0;
   }
 
-  /* Switch visual for the keyring toggle. The native checkbox is
-     visually-hidden (sr-only) but keyboard-focusable; the styled track
-     is the next sibling and reflects state via the .on class. The
-     peer:focus-visible selector below gives the track a visible ring
-     when the underlying checkbox has focus. */
   .keyring-switch-track {
     width: 36px;
     height: 20px;
@@ -1418,5 +1775,13 @@
   .keyring-switch:focus-visible + .keyring-switch-track {
     outline: 2px solid var(--color-accent-primary-start);
     outline-offset: 2px;
+  }
+
+  /* Remove default details chevron */
+  details > summary::-webkit-details-marker {
+    display: none;
+  }
+  details > summary {
+    list-style: none;
   }
 </style>
