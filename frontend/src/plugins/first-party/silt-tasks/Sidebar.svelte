@@ -386,8 +386,12 @@
   let renameInputEl = $state<HTMLInputElement | null>(null)
 
   // Manage-menu (⋯ button + right-click share the same menu).
-  let manageMenu = $state<{ viewId: string; x: number; y: number } | null>(null)
-  let sidebarRootEl = $state<HTMLElement | null>(null)
+  let manageMenu = $state<{
+    viewId: string
+    x: number
+    y: number
+    anchorEl: HTMLElement | null
+  } | null>(null)
 
   // Delete-confirmation modal target.
   let deleteTarget = $state<SavedView | null>(null)
@@ -398,12 +402,17 @@
 
   let userViews = $derived(hubState.savedViews.filter((v) => !v.system))
 
-  function openManageMenu(view: SavedView, x: number, y: number) {
+  function openManageMenu(
+    view: SavedView,
+    x: number,
+    y: number,
+    anchorEl: HTMLElement | null
+  ) {
     if (view.system) return
     // Store the raw anchor; the $effect below clamps it to the viewport using
     // the menu's real rendered dimensions (accurate, vs. the former hardcoded
     // 180×220 estimate that could mis-clamp).
-    manageMenu = { viewId: view.id, x, y }
+    manageMenu = { viewId: view.id, x, y, anchorEl }
   }
 
   function openManageMenuFromButton(e: MouseEvent, view: SavedView) {
@@ -415,13 +424,18 @@
       manageMenu = null
       return
     }
-    openManageMenu(view, rect.left, rect.bottom + 2)
+    openManageMenu(
+      view,
+      rect.left,
+      rect.bottom + 2,
+      e.currentTarget as HTMLElement
+    )
   }
 
   function onRowContextMenu(e: MouseEvent, view: SavedView) {
     if (view.system) return // system views: let the browser menu show
     e.preventDefault()
-    openManageMenu(view, e.clientX, e.clientY)
+    openManageMenu(view, e.clientX, e.clientY, e.currentTarget as HTMLElement)
   }
 
   function closeManageMenu() {
@@ -629,7 +643,6 @@
 </script>
 
 <aside
-  bind:this={sidebarRootEl}
   class="flex flex-col gap-4 px-3 py-3"
   aria-label="Tasks sidebar"
   data-test-tasks-sidebar
@@ -1003,7 +1016,7 @@
   <ContextMenu
     open={manageMenu !== null && manageMenuView !== undefined}
     anchor={{ x: manageMenu.x, y: manageMenu.y }}
-    anchorEl={sidebarRootEl}
+    anchorEl={manageMenu?.anchorEl ?? null}
     onClose={closeManageMenu}
     ariaLabel={`Actions for ${v.name}`}
     backdropTestId="manage-view-backdrop"

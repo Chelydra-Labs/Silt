@@ -118,6 +118,20 @@
 
   // --- focus management ---------------------------------------------------
 
+  // Capture the trigger element at open so we can restore focus on close.
+  let triggerEl: HTMLElement | null = null
+  $effect(() => {
+    if (open && anchorEl) {
+      triggerEl = anchorEl
+    }
+    return () => {
+      if (triggerEl) {
+        triggerEl.focus()
+        triggerEl = null
+      }
+    }
+  })
+
   $effect(() => {
     if (open && menuEl) {
       const first = menuEl.querySelector<HTMLElement>(
@@ -136,6 +150,7 @@
   function onMenuKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
       onClose()
       return
     }

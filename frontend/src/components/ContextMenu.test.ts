@@ -116,6 +116,36 @@ describe('ContextMenu', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  // --- focus management -------------------------------------------------------
+
+  it('restores focus to the trigger element on close', async () => {
+    const onClose = vi.fn()
+    const trigger = document.createElement('button')
+    trigger.textContent = 'Trigger'
+    document.body.appendChild(trigger)
+    trigger.focus()
+
+    const { rerender } = render(ContextMenu, {
+      props: {
+        open: true,
+        anchor: { x: 100, y: 100 },
+        anchorEl: trigger,
+        onClose
+      }
+    })
+    await tick()
+    // Focus moved to the menu item.
+    expect(document.activeElement).not.toBe(trigger)
+
+    // Close the menu.
+    await rerender({ open: false, anchor: null, anchorEl: null, onClose })
+    await tick()
+    // Focus restored to trigger.
+    expect(document.activeElement).toBe(trigger)
+
+    document.body.removeChild(trigger)
+  })
+
   // --- positioning ---------------------------------------------------------
 
   it('calls clampToViewport with measured dimensions', async () => {
@@ -318,11 +348,9 @@ describe('ContextMenu', () => {
     await tick()
 
     await fireEvent.keyDown(menu, { key: 'Escape' })
-    // Belt and suspenders: Escape fires from both the menu-level keydown
-    // (focused item) and the bubbling window-level listener. Both are
-    // intentional so a right-click open (focus stays on the row) still
-    // closes. onClose is idempotent (parent sets state to null).
-    expect(onClose).toHaveBeenCalledTimes(2)
+    // Escape on a focused menu item fires only the menu-level keydown;
+    // e.stopPropagation() prevents the window-level listener from also firing.
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   // --- cleanup ------------------------------------------------------------

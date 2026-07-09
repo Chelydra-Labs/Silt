@@ -488,13 +488,21 @@ describe('Sidebar', () => {
       }
     })
     await flush()
+    // jsdom doesn't compute Tailwind's overflow-y-auto class — set inline so
+    // findScrollableAncestor resolves correctly (see scroll-scope test below).
+    const sidebarScroller = document.querySelector(
+      '[data-sidebar] .overflow-y-auto'
+    )! as HTMLElement
+    sidebarScroller.style.overflowY = 'auto'
+
     const pageRow = screen.getByText('Daily')
     const pageBtn = pageRow.closest('button')!
     // Scroll (capture phase) dismisses the one-shot menu.
     await fireEvent.contextMenu(pageBtn)
     await flush()
     expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
-    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    // Scroll on the sidebar's internal overflow-y-auto container dismisses.
+    sidebarScroller.dispatchEvent(new Event('scroll', { bubbles: true }))
     await flush()
     expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
 
@@ -519,19 +527,7 @@ describe('Sidebar', () => {
 
   it('scroll-scope: unrelated editor scroll does not dismiss (#492)', async () => {
     mocks.listNavigation.mockResolvedValue(NAV_TREE)
-    // Create a scrollable sidebar wrapper and an unrelated editor area.
-    const sidebarWrapper = document.createElement('div')
-    sidebarWrapper.style.overflowY = 'auto'
-    sidebarWrapper.style.height = '300px'
-    document.body.appendChild(sidebarWrapper)
-
-    const editorArea = document.createElement('div')
-    editorArea.style.overflowY = 'auto'
-    editorArea.style.height = '300px'
-    document.body.appendChild(editorArea)
-
     render(Sidebar, {
-      target: sidebarWrapper,
       props: {
         activeNotebook: 'Work',
         activeSection: 'Journal',
@@ -546,23 +542,35 @@ describe('Sidebar', () => {
       }
     })
     await flush()
+    // jsdom doesn't compute Tailwind's overflow-y-auto class, so set the
+    // computed overflow inline to simulate what production CSS does. Without
+    // this, findScrollableAncestor would walk past the sidebar scroller and
+    // fall back to document (defeating the scroll-scope feature).
+    const sidebarScroller = document.querySelector(
+      '[data-sidebar] .overflow-y-auto'
+    )! as HTMLElement
+    sidebarScroller.style.overflowY = 'auto'
+
     const pageRow = screen.getByText('Daily')
     const pageBtn = pageRow.closest('button')!
     await fireEvent.contextMenu(pageBtn)
     await flush()
     expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
 
-    // Scrolling the unrelated editor should NOT dismiss.
+    // An unrelated editor area (not inside the sidebar) scrolling should NOT
+    // dismiss — the menu is scoped to the sidebar's own overflow-y-auto.
+    const editorArea = document.createElement('div')
+    editorArea.style.overflowY = 'auto'
+    editorArea.style.height = '300px'
+    document.body.appendChild(editorArea)
     editorArea.dispatchEvent(new Event('scroll', { bubbles: true }))
     await flush()
     expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+    document.body.removeChild(editorArea)
 
-    // Scrolling the sidebar's own wrapper should dismiss.
-    sidebarWrapper.dispatchEvent(new Event('scroll', { bubbles: true }))
+    // Scrolling the sidebar's own internal scroll container should dismiss.
+    sidebarScroller.dispatchEvent(new Event('scroll', { bubbles: true }))
     await flush()
     expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
-
-    document.body.removeChild(sidebarWrapper)
-    document.body.removeChild(editorArea)
   })
 })

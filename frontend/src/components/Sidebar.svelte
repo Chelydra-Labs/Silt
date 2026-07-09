@@ -130,8 +130,8 @@
     notebook: string
     section?: string
     page?: string
+    anchorEl: HTMLElement | null
   } | null>(null)
-  let sidebarRootEl = $state<HTMLElement | null>(null)
 
   // Delete confirmation dialog state
   let deleteTarget = $state<{
@@ -535,7 +535,15 @@
     page: string = ''
   ) {
     e.preventDefault()
-    contextMenu = { x: e.clientX, y: e.clientY, level, notebook, section, page }
+    contextMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      level,
+      notebook,
+      section,
+      page,
+      anchorEl: e.currentTarget as HTMLElement
+    }
   }
 
   function closeContextMenu() {
@@ -631,7 +639,6 @@
 </script>
 
 <aside
-  bind:this={sidebarRootEl}
   data-sidebar
   class="bg-surface-sidebar border-r border-surface-sidebar-border flex flex-col py-[4px] h-full flex-shrink-0 select-none z-40"
   style:width={collapsed ? '0px' : sidebarWidth + 'px'}
@@ -1103,7 +1110,7 @@
 <ContextMenu
   open={contextMenu !== null}
   anchor={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
-  anchorEl={sidebarRootEl}
+  anchorEl={contextMenu?.anchorEl ?? null}
   onClose={closeContextMenu}
   ariaLabel="Actions"
 >
