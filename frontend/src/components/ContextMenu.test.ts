@@ -365,4 +365,127 @@ describe('ContextMenu', () => {
     const menu = screen.getByRole('menu', { name: 'Custom menu' })
     expect(menu).toBeInTheDocument()
   })
+
+  // --- scroll-scope (#492) -------------------------------------------------
+
+  it('dismisses on scroll of the anchoring scrollable ancestor', async () => {
+    const onClose = vi.fn()
+    // Create a scrollable container and an anchor inside it.
+    const container = document.createElement('div')
+    container.style.overflowY = 'auto'
+    container.style.height = '200px'
+    const anchorEl = document.createElement('button')
+    container.appendChild(anchorEl)
+    document.body.appendChild(container)
+
+    render(ContextMenu, {
+      props: {
+        open: true,
+        anchor: { x: 100, y: 100 },
+        anchorEl,
+        onClose
+      }
+    })
+    await tick()
+
+    // Scrolling the container (which has overflow-y:auto) should dismiss.
+    container.dispatchEvent(new Event('scroll', { bubbles: true }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    document.body.removeChild(container)
+  })
+
+  it('does NOT dismiss on scroll of an unrelated element', async () => {
+    const onClose = vi.fn()
+    // Scrollable container for the anchor.
+    const sidebar = document.createElement('div')
+    sidebar.style.overflowY = 'auto'
+    const anchorEl = document.createElement('button')
+    sidebar.appendChild(anchorEl)
+    document.body.appendChild(sidebar)
+
+    // Unrelated scrollable container (editor).
+    const editor = document.createElement('div')
+    editor.style.overflowY = 'auto'
+    document.body.appendChild(editor)
+
+    render(ContextMenu, {
+      props: {
+        open: true,
+        anchor: { x: 100, y: 100 },
+        anchorEl,
+        onClose
+      }
+    })
+    await tick()
+
+    // Scrolling the unrelated editor should NOT dismiss.
+    editor.dispatchEvent(new Event('scroll', { bubbles: true }))
+    expect(onClose).not.toHaveBeenCalled()
+
+    document.body.removeChild(sidebar)
+    document.body.removeChild(editor)
+  })
+
+  it('falls back to document scroll when anchorEl is null', async () => {
+    const onClose = vi.fn()
+    render(ContextMenu, {
+      props: {
+        open: true,
+        anchor: { x: 100, y: 100 },
+        anchorEl: null,
+        onClose
+      }
+    })
+    await tick()
+
+    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('walks up to document when anchorEl has no scrollable ancestor', async () => {
+    const onClose = vi.fn()
+    // A non-scrollable wrapper with an anchor inside.
+    const wrapper = document.createElement('div')
+    // Default overflow is 'visible' — no scrollable ancestor.
+    const anchorEl = document.createElement('button')
+    wrapper.appendChild(anchorEl)
+    document.body.appendChild(wrapper)
+
+    render(ContextMenu, {
+      props: {
+        open: true,
+        anchor: { x: 100, y: 100 },
+        anchorEl,
+        onClose
+      }
+    })
+    await tick()
+
+    // No scrollable ancestor found → falls back to document.
+    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    document.body.removeChild(wrapper)
+  })
+
+  it('handles detached anchorEl gracefully (tree walk returns document)', async () => {
+    const onClose = vi.fn()
+    const detached = document.createElement('button')
+    // Not appended to DOM.
+
+    render(ContextMenu, {
+      props: {
+        open: true,
+        anchor: { x: 100, y: 100 },
+        anchorEl: detached,
+        onClose
+      }
+    })
+    await tick()
+
+    // No parent in DOM → findScrollableAncestor returns document.
+    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
 })
