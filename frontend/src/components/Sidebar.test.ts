@@ -491,7 +491,7 @@ describe('Sidebar', () => {
     // jsdom doesn't compute Tailwind's overflow-y-auto class — set inline so
     // findScrollableAncestor resolves correctly (see scroll-scope test below).
     const sidebarScroller = document.querySelector(
-      '[data-sidebar] .overflow-y-auto'
+      '[data-sidebar-scroll]'
     )! as HTMLElement
     sidebarScroller.style.overflowY = 'auto'
 
@@ -547,7 +547,7 @@ describe('Sidebar', () => {
     // this, findScrollableAncestor would walk past the sidebar scroller and
     // fall back to document (defeating the scroll-scope feature).
     const sidebarScroller = document.querySelector(
-      '[data-sidebar] .overflow-y-auto'
+      '[data-sidebar-scroll]'
     )! as HTMLElement
     sidebarScroller.style.overflowY = 'auto'
 

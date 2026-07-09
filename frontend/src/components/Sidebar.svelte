@@ -852,7 +852,10 @@
       {/if}
 
       <!-- Navigation tree -->
-      <div class="flex-1 overflow-y-auto custom-scrollbar px-1">
+      <div
+        class="flex-1 overflow-y-auto custom-scrollbar px-1"
+        data-sidebar-scroll
+      >
         {#if !activeNotebookObj}
           <div
             class="text-surface-sidebar-text-muted py-10 text-center font-body-md text-[13px] border border-dashed border-surface-sidebar-border rounded-lg mx-1"

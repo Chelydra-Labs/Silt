@@ -269,7 +269,7 @@
     outline: 2px solid var(--color-accent-primary-start);
     outline-offset: -2px;
   }
-  :global(.context-menu-separator) {
+  :global([data-context-menu-root] .context-menu-separator) {
     height: 1px;
     margin: 4px 6px;
     background-color: var(--color-border);
