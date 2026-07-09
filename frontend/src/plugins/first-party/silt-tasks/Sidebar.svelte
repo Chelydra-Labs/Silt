@@ -398,7 +398,16 @@
 
   function openManageMenu(view: SavedView, x: number, y: number) {
     if (view.system) return
-    manageMenu = { viewId: view.id, x, y }
+    // Clamp to viewport so the 180px-min-width menu can't render off-screen.
+    const menuW = 180
+    const menuH = 220 // estimate; the menu has at most ~5 items + separator
+    const cw = window.innerWidth
+    const ch = window.innerHeight
+    manageMenu = {
+      viewId: view.id,
+      x: Math.max(8, Math.min(x, cw - menuW - 8)),
+      y: Math.max(8, Math.min(y, ch - menuH - 8))
+    }
   }
 
   function openManageMenuFromButton(e: MouseEvent, view: SavedView) {

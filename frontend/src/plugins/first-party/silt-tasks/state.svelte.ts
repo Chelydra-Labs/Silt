@@ -217,16 +217,6 @@ export function setDisplayMode(mode: DisplayMode): void {
   markDirtyIfViewActive()
 }
 
-/**
- * Set displayMode WITHOUT marking the active saved view dirty. Used by the
- * one-release alias redirect in App.svelte (calendar/kanban → tasks), which
- * restores a persisted mode rather than recording a user edit — marking the
- * active view dirty there would spuriously flag a freshly-loaded view.
- */
-export function setDisplayModeQuiet(mode: DisplayMode): void {
-  _state.displayMode = mode
-}
-
 /** Set the Calendar display mode's sub-layout (month/week). */
 export function setCalendarSubMode(mode: CalendarSubMode): void {
   _state.calendarSubMode = mode

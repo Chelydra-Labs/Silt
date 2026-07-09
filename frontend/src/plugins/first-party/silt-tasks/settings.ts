@@ -205,12 +205,9 @@ export function persistDefaultSort(s: SortMode): Promise<boolean> {
 //
 //   1. SYSTEM_VIEWS — code-defined (savedViews.ts). Read-only, not persisted.
 //   2. User views — `plugins.plugin_settings['silt-tasks'].saved_views[]`.
-//   3. Legacy Kanban boards — `plugins.plugin_settings['silt-kanban'].boards[]`
-//      forward-mapped so a pre-migration vault still shows its boards.
 //
 // Dedup is by id; SYSTEM_VIEWS ids are reserved (`sys-` prefix), so a user
-// view can never collide. The forward-read of legacy boards is the
-// compat shim before the one-time migration (Phase 9 / #431) lands.
+// view can never collide.
 
 /**
  * Validate + coerce a single persisted view entry. Unknown enum values
@@ -275,11 +272,7 @@ function coerceSavedView(raw: unknown): SavedView | null {
 
 /**
  * Load the merged saved-views list: SYSTEM_VIEWS (code-defined, never
- * persisted) + user views from `saved_views[]`. The Go migrator
- * (#431) writes legacy Kanban boards into saved_views[] on first
- * launch; the forward-read (loadLegacyKanbanBoardsAsViews) was
- * removed because it resurrected user-deleted views from the uncleared
- * legacy silt-kanban.boards[] key.
+ * persisted) + user views from `saved_views[]`.
  */
 export function loadSavedViews(): SavedView[] {
   const merged = new Map<string, SavedView>()

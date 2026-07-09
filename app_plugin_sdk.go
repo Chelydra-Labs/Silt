@@ -584,8 +584,9 @@ func (a *App) seedFirstPartyGrants() {
 // rather than overwritten. The mutation is applied to the fresh read, a.cfg is
 // refreshed, then config.Save serializes the result. The external-edit loss
 // window shrinks to the lock-hold duration (no cross-IPC gap). If the re-read
-// fails (corrupt file), the in-memory cfg is used as the fallback so the
-// mutation is not lost.
+// fails (corrupt file), the call refuses loudly with an error — safer than
+// silently overwriting the corrupt file with the stale in-memory cfg, which
+// would destroy the user's only signal that their config is broken.
 //
 // Atomicity: configMu is held across the re-read, in-memory mutation, AND the
 // disk save, so concurrent internal callers (and the watcher's applyConfig)

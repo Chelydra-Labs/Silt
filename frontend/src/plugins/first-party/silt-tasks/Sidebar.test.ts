@@ -575,6 +575,34 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(screen.getByTestId('rename-input-u1')).toBeInTheDocument()
   })
 
+  it('rename: blur with non-empty value commits (focus loss persists)', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'Blur Me',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-rename-view'))
+    await flush()
+    const input = screen.getByTestId('rename-input-u1') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Blurred Commit' } })
+    // Simulate focus loss (clicking elsewhere) — should commit the non-empty value.
+    await fireEvent.blur(input)
+    await flush()
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'saved_views',
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Blurred Commit' })
+      ])
+    )
+    expect(screen.queryByTestId('rename-input-u1')).toBeNull()
+  })
+
   // --- Overwrite / Update (#470) ----------------------------------------
 
   it('update: dirty indicator clears + current state overwrites the view', async () => {
