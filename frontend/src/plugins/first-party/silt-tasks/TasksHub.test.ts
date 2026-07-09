@@ -2,27 +2,15 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
-// The hub persists via the settings store (which wraps the wails
-// UpdatePluginSetting binding) and reads the synchronous config snapshot —
-// same mock seam Kanban.test.ts uses.
+// The hub persists through the PluginContext SDK (ctx.updatePluginSetting)
+// and reads its slice via ctx.getPluginSettings — TasksHub's onMount calls
+// initTasksSettings(ctx) before any load* read, so the mock ctx just needs
+// both bindings wired to the hoisted spies.
 const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
-  settings: {
-    config: {
-      plugins: {
-        active: [],
-        disabled: [],
-        plugin_settings: {} as Record<string, Record<string, unknown>>
-      }
-    }
-  },
+  tasksSettings: {} as Record<string, unknown>,
   blockChangedCallbacks: [] as Array<() => void>
-}))
-
-vi.mock('../../../settings/store.svelte', () => ({
-  settings: mocks.settings,
-  updatePluginSetting: mocks.updatePluginSetting
 }))
 
 vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
@@ -94,7 +82,8 @@ function makeCtx(): PluginContext {
     mutateBlock: vi.fn(),
     updateBlockState: vi.fn(),
     updateTaskMeta: vi.fn(),
-    getPluginSettings: vi.fn(() => Promise.resolve({})),
+    getPluginSettings: vi.fn(() => Promise.resolve(mocks.tasksSettings)),
+    updatePluginSetting: mocks.updatePluginSetting,
     on: <E extends PluginEventName>(
       event: E,
       cb: (payload: PluginEventPayload<E>) => void
@@ -130,7 +119,7 @@ describe('Tasks hub shell (#424)', () => {
     // state without drawer/sub-editor side effects.
     mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
-    mocks.settings.config.plugins.plugin_settings = {}
+    mocks.tasksSettings = {}
     mocks.blockChangedCallbacks.length = 0
     resetTaskHubState()
   })
@@ -185,7 +174,6 @@ describe('Tasks hub shell (#424)', () => {
     expect(screen.getByTestId('tasks-board')).toBeInTheDocument()
     expect(screen.queryByTestId('tasks-board-stub')).toBeNull()
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'silt-tasks',
       'default_display_mode',
       'board'
     )
@@ -202,14 +190,13 @@ describe('Tasks hub shell (#424)', () => {
     expect(screen.getByTestId('tasks-calendar')).toBeInTheDocument()
     expect(screen.queryByTestId('tasks-calendar-stub')).toBeNull()
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'silt-tasks',
       'default_display_mode',
       'calendar'
     )
   })
 
   it('hydrates the display mode from the persisted vault setting on mount', async () => {
-    mocks.settings.config.plugins.plugin_settings['silt-tasks'] = {
+    mocks.tasksSettings = {
       default_display_mode: 'calendar'
     }
 
@@ -319,7 +306,7 @@ describe('Tasks hub — group-by + sort selectors (#423)', () => {
     mocks.sqliteQuery.mockReset()
     mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
-    mocks.settings.config.plugins.plugin_settings = {}
+    mocks.tasksSettings = {}
     mocks.blockChangedCallbacks.length = 0
     resetTaskHubState()
   })
@@ -349,7 +336,6 @@ describe('Tasks hub — group-by + sort selectors (#423)', () => {
 
     expect(getTaskHubState().groupBy).toBe('status')
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'silt-tasks',
       'default_group_by',
       'status'
     )
@@ -366,14 +352,13 @@ describe('Tasks hub — group-by + sort selectors (#423)', () => {
 
     expect(getTaskHubState().sort).toBe('priority')
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'silt-tasks',
       'default_sort',
       'priority'
     )
   })
 
   it('hydrates Group-by + Sort from the persisted vault settings on mount', async () => {
-    mocks.settings.config.plugins.plugin_settings['silt-tasks'] = {
+    mocks.tasksSettings = {
       default_group_by: 'owner',
       default_sort: 'title'
     }
@@ -395,7 +380,7 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     mocks.sqliteQuery.mockReset()
     mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
-    mocks.settings.config.plugins.plugin_settings = {}
+    mocks.tasksSettings = {}
     mocks.blockChangedCallbacks.length = 0
     resetTaskHubState()
   })
@@ -415,17 +400,9 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     // loadSavedViews() must not forward-read silt-kanban.boards[]: a
     // user-deleted view would resurrect from the uncleared legacy key on
     // every load. The Go migrator (#431) writes legacy boards into
-    // saved_views[] once at startup; this test locks that boundary.
-    mocks.settings.config.plugins.plugin_settings['silt-kanban'] = {
-      boards: [
-        {
-          id: 'b1',
-          name: 'Legacy Board',
-          scope: 'notebook',
-          filters: { owners: [], priorities: [], dueDate: '', tags: [] }
-        }
-      ]
-    }
+    // saved_views[] once at startup; this test locks that boundary. The
+    // settings slice is empty here, so only SYSTEM_VIEWS load.
+    mocks.tasksSettings = {}
 
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
@@ -484,12 +461,11 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     // silt-tasks / saved_views key. System views are stripped before write
     // (the persisted array contains only the user view, no `sys-` ids).
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'silt-tasks',
       'saved_views',
       expect.arrayContaining([expect.objectContaining({ name: 'Sprint 15' })])
     )
-    const [, , written] = mocks.updatePluginSetting.mock.calls.find(
-      (c) => c[1] === 'saved_views'
+    const [, written] = mocks.updatePluginSetting.mock.calls.find(
+      (c) => c[0] === 'saved_views'
     )!
     expect(
       (written as Array<{ id?: string }>).find((v) => v.id?.startsWith('sys-'))
@@ -613,5 +589,78 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     // closePopover) instead of waiting for the transition timer.
     const bm = screen.getByTestId('tasks-hub-bookmark')
     expect(bm.getAttribute('data-popover-state')).toBe('closed')
+  })
+
+  it('delete uses the in-app confirm modal, not window.confirm (#470)', async () => {
+    // jsdom's window.confirm returns false by default — if commitDelete still
+    // used it, the deletion would silently no-op. We assert the modal opens
+    // instead and the choice flows through it.
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Save a view (becomes active + clean → menu shows rename/delete).
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.input(screen.getByTestId('tasks-hub-save-view-name'), {
+      target: { value: 'Doomed' }
+    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+
+    // Open the menu + click Delete.
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('tasks-hub-delete-view'))
+    await flush()
+
+    // The in-app modal opens (not window.confirm).
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.getByTestId('tasks-hub-delete-confirm')).toBeInTheDocument()
+    const modal = screen.getByTestId('tasks-hub-delete-confirm')
+    expect(modal.textContent).toContain('Doomed')
+  })
+
+  it('confirming the delete modal removes the view; cancelling keeps it (#470)', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.input(screen.getByTestId('tasks-hub-save-view-name'), {
+      target: { value: 'Keep Me' }
+    })
+    await fireEvent.click(screen.getByTestId('tasks-hub-save-view-commit'))
+    await flush()
+    const savedId = getTaskHubState().activeSavedViewId
+    expect(savedId).toBeTruthy()
+
+    // Open delete modal.
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('tasks-hub-delete-view'))
+    await flush()
+
+    // Cancel — view survives.
+    await fireEvent.click(screen.getByTestId('tasks-hub-delete-confirm-cancel'))
+    await flush()
+    expect(
+      getTaskHubState().savedViews.find((v) => v.id === savedId)
+    ).toBeDefined()
+    expect(screen.queryByTestId('tasks-hub-delete-confirm')).toBeNull()
+
+    // Re-open + confirm — view is gone.
+    await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('tasks-hub-delete-view'))
+    await flush()
+    await fireEvent.click(
+      screen.getByTestId('tasks-hub-delete-confirm-confirm')
+    )
+    await flush()
+    expect(
+      getTaskHubState().savedViews.find((v) => v.id === savedId)
+    ).toBeUndefined()
+    expect(getTaskHubState().activeSavedViewId).toBe('')
   })
 })

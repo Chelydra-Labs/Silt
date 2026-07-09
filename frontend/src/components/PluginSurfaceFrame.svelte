@@ -118,6 +118,7 @@
     'getPluginSettings',
     'getSetting',
     'updatePluginSetting',
+    'openSettings',
     'on',
     'queryByTag',
     'queryByDateRange',

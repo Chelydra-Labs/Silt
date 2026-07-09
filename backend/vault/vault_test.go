@@ -254,12 +254,11 @@ func TestScaffoldVault_PreservesUserCustomThemes(t *testing.T) {
 	}
 }
 
-// TestScaffoldVault_SeedsSiltTasksPluginSettings pins the Phase 9 (#431) seed:
+// TestScaffoldVault_SeedsSiltTasksPluginSettings pins the silt-tasks seed:
 // a brand-new vault's config.yaml must carry a silt-tasks plugin_settings
 // block with the documented defaults so a fresh vault never nil-derefs the
-// frontend loaders. The block is parsed via a partial decode (same shape the
-// migrator's LoadLegacyTaskPluginSettings uses) to keep the test honest
-// against the actual on-disk YAML.
+// frontend loaders. The block is parsed via a partial decode of the on-disk
+// YAML to keep the test honest against the actual file content.
 func TestScaffoldVault_SeedsSiltTasksPluginSettings(t *testing.T) {
 	vaultPath := t.TempDir()
 	if err := ScaffoldVault(vaultPath); err != nil {
@@ -301,8 +300,7 @@ func TestScaffoldVault_SeedsSiltTasksPluginSettings(t *testing.T) {
 	if tasks["local_author"] != "" {
 		t.Errorf("silt-tasks.local_author: got %v, want empty", tasks["local_author"])
 	}
-	// Active list contains the unified hub (Phase 10 / #429 retired the
-	// standalone silt-calendar and silt-kanban ids).
+	// Active list contains the unified task hub.
 	for _, id := range []string{"silt-tasks"} {
 		found := false
 		for _, a := range partial.Plugins.Active {

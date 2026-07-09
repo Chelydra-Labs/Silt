@@ -111,12 +111,16 @@
   </header>
 
   {#if unconfigured}
-    <p class="note" role="status">
+    <div class="note unconfigured" role="status">
       <span class="material-symbols-outlined" aria-hidden="true">info</span>
-      No AI provider is configured yet. Open
-      <strong>Settings &rarr; AI Provider</strong> to add a chat model — summaries
-      are generated locally or by your own OpenAI-compatible endpoint.
-    </p>
+      <span>
+        No AI provider is configured yet — summaries need a chat model. Add one
+        via your own local or OpenAI-compatible endpoint.
+      </span>
+      <button type="button" class="cta" onclick={() => ctx.openSettings('ai')}>
+        Open AI Provider settings
+      </button>
+    </div>
   {/if}
 
   <fieldset class="control">
@@ -327,6 +331,46 @@
     color: var(--color-accent-primary-start);
     font-size: 18px;
     flex-shrink: 0;
+  }
+  .unconfigured {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  /* CTA — same accent-primary-start recipe as SummaryBanner's .inline-cta
+     so every AI-summary deep-link reads as the same affordance kind. */
+  .cta {
+    margin-left: auto;
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: 1px solid
+      color-mix(in srgb, var(--color-accent-primary-start) 35%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start) 10%,
+      transparent
+    );
+    color: var(--color-text-primary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease;
+  }
+  .cta:hover {
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start) 18%,
+      transparent
+    );
+  }
+  .cta:active {
+    filter: brightness(0.92);
+  }
+  .cta:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
   }
   .privacy .material-symbols-outlined {
     color: var(--color-text-muted);

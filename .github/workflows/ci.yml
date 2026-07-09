@@ -73,6 +73,16 @@ jobs:
       - name: Build Go
         run: go build ./...
 
+      - name: withAIPreflight defer-contract analyzer
+        # Builds the vettool (gated out of the prod binary via //go:build tools)
+        # and runs it as a custom go vet check. Enforces that every caller of
+        # withAIPreflight defers the returned done func — a dropped defer would
+        # leak an unbalanced vaultClosingWG increment and deadlock the next
+        # vault close/switch (#482).
+        run: |
+          go build -tags tools -o ./.gobins/withaipreflightdefer ./cmd/withaipreflightdefer
+          go vet -vettool=./.gobins/withaipreflightdefer ./...
+
       - name: Test with race detector
         run: go test -race -count=1 ./...
 

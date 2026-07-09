@@ -581,6 +581,14 @@ Settings → Plugins renders the form generically. Read merged values:
 const key = await ctx.getSetting('apiKey')  // schema-default-aware
 ```
 
+Deep-link to a settings tab from a CTA (#472):
+
+```ts
+ctx.openSettings('ai')                    // → Settings → AI Provider
+ctx.openSettings('plugin:my-plugin')      // → this plugin's bespoke settings tab
+ctx.openSettings()                        // → Settings (default tab)
+```
+
 ### 8.11 Per-plugin SQLite store (#213)
 
 A plugin that needs queryable private data — vector indexes, content-hash

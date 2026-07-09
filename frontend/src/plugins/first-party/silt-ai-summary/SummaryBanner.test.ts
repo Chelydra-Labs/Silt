@@ -55,6 +55,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     activeSection: 'Journal',
     activePage: 'Daily',
     updatePluginSetting: vi.fn(async () => true),
+    openSettings: vi.fn(),
     ...overrides
   } as unknown as PluginContext
 }
@@ -207,9 +208,91 @@ describe('SummaryBanner', () => {
       }
     })
     await fireEvent.click(getByRole('button', { name: /Dismiss AI summary/i }))
+    // No contentHash on pageState → falls back to bare pageId (#455 fallback
+    // for error / pre-summary states).
     expect(ctx.updatePluginSetting).toHaveBeenCalledWith('dismissed_notes', [
       PAGE_ID
     ])
+    expect(dismissed).toBe(true)
+  })
+
+  // --- #455 keyed dismissal: `${pageId}:${contentHash}` ----------------------
+  it('keys dismissal by `${pageId}:${contentHash}` when the hash is available', async () => {
+    // The crux of #455: dismissal is bound to the dismissed content version,
+    // so editing the note (changing the hash) re-shows the banner.
+    setPageState({
+      status: 'ready',
+      stale: false,
+      contentHash: 'abc123def',
+      result: {
+        ok: true,
+        result: {
+          summary: 's',
+          tasks: [],
+          risks: [],
+          decisions: [],
+          newItems: { tasks: [], risks: [], decisions: [] },
+          fromCache: false,
+          model: 'm',
+          generatedAt: '2026-07-06T10:00:00Z',
+          contentHash: 'abc123def'
+        }
+      }
+    })
+    const ctx = makeCtx()
+    const { getByRole } = render(SummaryBanner, {
+      props: { ctx, onDismiss: () => {} }
+    })
+    await fireEvent.click(getByRole('button', { name: /Dismiss AI summary/i }))
+    expect(ctx.updatePluginSetting).toHaveBeenCalledWith('dismissed_notes', [
+      `${PAGE_ID}:abc123def`
+    ])
+  })
+
+  it('does not duplicate the dismiss key when the same hash is already dismissed', async () => {
+    // Re-dismissing the same content version is a no-op on the persisted list
+    // (the bounded-list guard) — the banner still dismisses visually.
+    mockController.getSettings = vi.fn((): SummarySettings => ({
+      auto_on_open: true,
+      on_demand_only: false,
+      summary_length: 'medium',
+      facets: { tasks: true, risks: true, decisions: true },
+      regenerate_debounce_ms: 3000,
+      max_note_chars: 12000,
+      dismissed_notes: [`${PAGE_ID}:abc123def`]
+    }))
+    setPageState({
+      status: 'ready',
+      stale: false,
+      contentHash: 'abc123def',
+      result: {
+        ok: true,
+        result: {
+          summary: 's',
+          tasks: [],
+          risks: [],
+          decisions: [],
+          newItems: { tasks: [], risks: [], decisions: [] },
+          fromCache: false,
+          model: 'm',
+          generatedAt: '2026-07-06T10:00:00Z',
+          contentHash: 'abc123def'
+        }
+      }
+    })
+    let dismissed = false
+    const ctx = makeCtx()
+    const { getByRole } = render(SummaryBanner, {
+      props: {
+        ctx,
+        onDismiss: () => {
+          dismissed = true
+        }
+      }
+    })
+    await fireEvent.click(getByRole('button', { name: /Dismiss AI summary/i }))
+    // Already-present → no IPC write (the bounded-list guard).
+    expect(ctx.updatePluginSetting).not.toHaveBeenCalled()
     expect(dismissed).toBe(true)
   })
 
@@ -400,6 +483,39 @@ describe('SummaryBanner', () => {
     // fail again.
     expect(queryByRole('button', { name: 'Retry' })).toBeNull()
     expect(getByText(/Max note size/i)).toBeTruthy()
+  })
+
+  // --- #472 settings deep-link CTAs ----------------------------------------
+  it('renders an "Open AI Provider settings" CTA in the unconfigured state', () => {
+    mockAppSettings.config.ai.chat.model = ''
+    const ctx = makeCtx()
+    const { getByRole } = render(SummaryBanner, {
+      props: { ctx, onDismiss: () => {} }
+    })
+    const cta = getByRole('button', { name: /Open AI Provider settings/i })
+    expect(cta).toBeTruthy()
+    fireEvent.click(cta)
+    expect(ctx.openSettings).toHaveBeenCalledWith('ai')
+  })
+
+  it('renders an "Open AI Summary settings" CTA for oversized errors', () => {
+    // The oversized error can't be retried into success — point at the limit
+    // setting via a deep-link instead of leaving the user with text alone.
+    setPageState({
+      status: 'error',
+      result: {
+        ok: false,
+        error: { code: 'oversized', message: 'too long' }
+      }
+    })
+    const ctx = makeCtx()
+    const { getByRole } = render(SummaryBanner, {
+      props: { ctx, onDismiss: () => {} }
+    })
+    const cta = getByRole('button', { name: /Open AI Summary settings/i })
+    expect(cta).toBeTruthy()
+    fireEvent.click(cta)
+    expect(ctx.openSettings).toHaveBeenCalledWith('plugin:silt-ai-summary')
   })
 
   it('shows Retry for fetch-failed errors (transient/retryable)', () => {

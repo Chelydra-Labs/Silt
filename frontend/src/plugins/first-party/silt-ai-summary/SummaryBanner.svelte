@@ -18,12 +18,12 @@
    *   5. error         — pageState.status === 'error' OR result is an error
    *                      outcome. Inline, non-blocking. Error text + Retry.
    *
-   * Dismissal is keyed by `pageId` only (v1). The PLAN calls for
-   * `pageId:contentHash` so an edited note re-shows; the content hash is not on
-   * SummaryResult yet, so v1 keys by pageId. The controller regenerates on
-   * content change regardless, and re-showing on the next note open after an
-   * edit is the safe UX default. Swapping pageId for `${pageId}:${hash}` once
-   * the hash lands is a one-line change here.
+   * Dismissal is keyed by `${pageId}:${contentHash}` (#455). Editing the note
+   * changes its content hash, so the next open re-shows the banner with the
+   * new summary. The controller regenerates on content change regardless;
+   * re-showing on the next open after an edit is the safe UX default. Falls
+   * back to bare `pageId` when no hash is available (error states where the
+   * content never reached the hasher).
    */
 
   import { getController, BANNER_SURFACE_ID } from './index'
@@ -121,6 +121,33 @@
     if (pageId !== lastPageId) {
       lastPageId = pageId
       expandedFacets = { tasks: false, risks: false, decisions: false }
+      reshowDone = false
+      reshowHint = false
+    }
+  })
+
+  // Edit-triggered re-show detection (#455). When the banner re-appears
+  // because the note was edited since the last dismissal, the dismissed_notes
+  // list still holds `${pageId}:<oldHash>` while pageState.contentHash is now
+  // different. Surface a one-time hint so the un-asked-for re-show isn't
+  // confusing. `reshowDone` is a plain guard (not $state) so it doesn't
+  // re-trigger the effect; reset on page switch alongside expandedFacets.
+  let reshowHint = $state(false)
+  let reshowDone = false
+  $effect(() => {
+    if (reshowDone) return
+    if (!isReady || !pageState?.contentHash) return
+    reshowDone = true
+    const dismissed = settings.dismissed_notes ?? []
+    const prefix = `${pageId}:`
+    if (
+      dismissed.some(
+        (e) => e.startsWith(prefix) && e !== `${prefix}${pageState.contentHash}`
+      )
+    ) {
+      reshowHint = true
+      const t = setTimeout(() => (reshowHint = false), 5000)
+      return () => clearTimeout(t)
     }
   })
 
@@ -194,26 +221,32 @@
   }
 
   async function handleClose() {
-    // v1 dismiss key: pageId only. See the module header for the
-    // pageId:contentHash note. ctx.updatePluginSetting is the SDK's 2-arg
-    // (key, value) form — the pluginID is captured in the ctx closure.
+    // Dismissal key is `${pageId}:${contentHash}` (#455) — an edit changes
+    // the hash, so the next open re-shows the banner for the new content.
+    // Falls back to bare `pageId` when no hash is available (oversized /
+    // fetch-failed error states where the content never reached the hasher).
+    // ctx.updatePluginSetting is the SDK's 2-arg (key, value) form — the
+    // pluginID is captured in the ctx closure.
     const cur = settings.dismissed_notes ?? []
+    const key = pageState?.contentHash
+      ? `${pageId}:${pageState.contentHash}`
+      : pageId
     // Compute the bounded list up front (reads settings/pageId while the
     // component is still mounted), then dismiss visually FIRST so the IPC
     // round-trip doesn't add perceptible lag to the close interaction. The
     // host's dismiss path is idempotent and persistence is best-effort (the
     // catch below), so there's no correctness reason to gate the visual on
     // the write.
-    const bounded = cur.includes(pageId)
+    const bounded = cur.includes(key)
       ? cur
       : (() => {
-          const next = [...cur, pageId]
+          const next = [...cur, key]
           return next.length > MAX_DISMISSED
             ? next.slice(next.length - MAX_DISMISSED)
             : next
         })()
     onDismiss()
-    if (!cur.includes(pageId)) {
+    if (!cur.includes(key)) {
       try {
         await ctx.updatePluginSetting('dismissed_notes', bounded)
       } catch {
@@ -262,6 +295,9 @@
   class:is-unconfigured={unconfigured}
   class:is-empty={isEmpty}
   aria-label="AI summary"
+  onpointerdown={() => {
+    if (reshowHint) reshowHint = false
+  }}
 >
   <header class="head">
     <span class="lead-icon material-symbols-outlined" aria-hidden="true"
@@ -275,15 +311,30 @@
             >Settings &rarr; AI Provider</strong
           > to generate summaries.
         </p>
+        <button
+          type="button"
+          class="inline-cta"
+          onclick={() => ctx.openSettings('ai')}
+        >
+          Open AI Provider settings
+        </button>
       {:else if isError}
         <div class="error-row">
           <p class="line error-text" role="status">
             {errorMessage(errorOutcome)}
           </p>
-          {#if errorOutcome?.code !== 'oversized'}
+          {#if errorOutcome?.code === 'oversized'}
             <button
               type="button"
-              class="retry-btn"
+              class="inline-cta"
+              onclick={() => ctx.openSettings('plugin:silt-ai-summary')}
+            >
+              Open AI Summary settings
+            </button>
+          {:else}
+            <button
+              type="button"
+              class="inline-cta"
               onclick={handleRegenerate}
               aria-label="Retry"
             >
@@ -307,6 +358,11 @@
         {/if}
         {#if !isStale && result?.generatedAt}
           <p class="freshness-line">{formatFreshness(result.generatedAt)}</p>
+        {/if}
+        {#if reshowHint}
+          <p class="reshow-hint">
+            Re-showing — this note changed since you dismissed it.
+          </p>
         {/if}
         {#if isStale}
           <p class="updating-line" role="status">
@@ -539,7 +595,10 @@
     min-width: 12em;
   }
 
-  .retry-btn {
+  /* Inline CTA: shared by the error Retry button and the settings deep-links
+     (unconfigured nudge, oversized error). Same chrome so every per-banner
+     action reads as the same affordance kind. */
+  .inline-cta {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -559,7 +618,7 @@
       background 0.12s ease,
       color 0.12s ease;
   }
-  .retry-btn:hover {
+  .inline-cta:hover {
     background: color-mix(
       in srgb,
       var(--color-accent-primary-start) 18%,
@@ -567,11 +626,14 @@
     );
     color: var(--color-text-primary);
   }
-  .retry-btn:focus-visible {
+  .inline-cta:active {
+    filter: brightness(0.92);
+  }
+  .inline-cta:focus-visible {
     outline: 2px solid var(--color-accent-primary-start);
     outline-offset: 1px;
   }
-  .retry-btn .material-symbols-outlined {
+  .inline-cta .material-symbols-outlined {
     font-size: 14px;
   }
 
@@ -597,6 +659,14 @@
   .freshness-line {
     margin: 0;
     font-size: 0.7rem;
+    color: var(--color-text-muted);
+  }
+
+  /* Edit-triggered re-show nudge — explains why a dismissed banner came back.
+     Same muted treatment as the freshness line. */
+  .reshow-hint {
+    margin: 0;
+    font-size: 11px;
     color: var(--color-text-muted);
   }
 

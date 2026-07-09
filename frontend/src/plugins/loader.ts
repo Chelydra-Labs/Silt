@@ -18,6 +18,7 @@ import { unregisterPluginSurfaces } from './surfaces'
 import { unregisterPluginDecorations } from '../lib/editor/decorations'
 import { initGrants } from './grants.svelte'
 import { resetTaskHubState } from './first-party/silt-tasks/state.svelte'
+import { resetTasksSettings } from './first-party/silt-tasks/settings'
 import DiskPluginNotice from './DiskPluginNotice.svelte'
 
 // Whether the lifecycle wiring (vault:closing subscription) has been installed.
@@ -255,6 +256,10 @@ function wireLifecycleOnce() {
     // module is not — without this a switched vault opens with the previous
     // vault's Tasks scope/filter/focus.
     resetTaskHubState()
+    // Clear the settings module's cached configSlice + saveFn so the next
+    // vault doesn't inherit the previous vault's plugin settings or a stale
+    // session-bound persist function (#474 review finding).
+    resetTasksSettings()
     // Clear all session tokens so the next vault starts fresh (#151).
     for (const [, token] of sessionTokens) {
       UnregisterPluginSession(token).catch(() => {})

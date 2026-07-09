@@ -12,6 +12,7 @@
   import { fly } from 'svelte/transition'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import FilterBar from './components/FilterBar.svelte'
+  import ConfirmModal from './components/ConfirmModal.svelte'
   import ListView from './views/ListView.svelte'
   import BoardView from './views/BoardView.svelte'
   import CalendarView from './views/CalendarView.svelte'
@@ -42,12 +43,13 @@
     loadColumns,
     loadSavedViews,
     persistSavedViews,
+    initTasksSettings,
+    reloadTasksSettings,
     persistDefaultDisplayMode,
     persistDefaultGroupBy,
     persistDefaultSort
   } from './settings'
   import { viewMatchesState } from './savedViews'
-  import { settings as settingsStore } from '../../../settings/store.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -79,98 +81,96 @@
   // switch is persisted. untrack so the initial set doesn't loop through the
   // $derived that reads hubState.displayMode.
   onMount(() => {
-    untrack(() => {
-      const persisted = loadDefaultDisplayMode()
-      if (persisted !== getTaskHubState().displayMode) {
-        setDisplayMode(persisted)
-      }
-      // Group-by + sort hydrate the same way (#423). Independent of display
-      // mode so the user's preferred grouping survives a List → Board hop.
-      const persistedGroup = loadDefaultGroupBy()
-      if (persistedGroup !== getTaskHubState().groupBy) {
-        setGroupBy(persistedGroup)
-      }
-      const persistedSort = loadDefaultSort()
-      if (persistedSort !== getTaskHubState().sort) {
-        setSort(persistedSort)
-      }
-      // Status columns (#421) hydrate into the unified state so saved
-      // views can snapshot them. BoardView keeps its own local mirror
-      // today; Phase 7 reconciles the two.
-      // Length check is load-bearing: Array.some walks only persistedCols
-      // indices, so a TRIMMED config ([TODO,DOING] vs default [TODO,DOING,
-      // DONE]) would otherwise compare equal and silently revert the trim.
-      const persistedCols = loadColumns()
-      const currentCols = getTaskHubState().columns
-      if (
-        persistedCols.length &&
-        (persistedCols.length !== currentCols.length ||
-          persistedCols.some((c, i) => c !== currentCols[i]))
-      ) {
-        setColumns(persistedCols)
-      }
-      // Saved views (#427): system defaults (code-defined) + user views
-      // (YAML) + legacy Kanban boards (forward-read). Seeded once on
-      // mount; the in-memory list is the single source afterwards.
-      const views = loadSavedViews()
-      if (views.length) {
-        getTaskHubState().savedViews = views
-      }
-      // Mount-time hydration is not a user edit; clear any dirty flag a
-      // stray setter might have flipped during the seed above.
-      getTaskHubState().savedViewsDirty = false
-      getTaskHubState().activeSavedViewId = ''
+    // Pull the settings slice through the SDK (per-active-notebook override
+    // layer #133) before any load* read. initTasksSettings is async because
+    // getPluginSettings hits the Go binding, so hydration + facet reload run
+    // in its .then().
+    void initTasksSettings(ctx).then(() => {
+      untrack(() => {
+        const persisted = loadDefaultDisplayMode()
+        if (persisted !== getTaskHubState().displayMode) {
+          setDisplayMode(persisted)
+        }
+        // Group-by + sort hydrate the same way (#423). Independent of display
+        // mode so the user's preferred grouping survives a List → Board hop.
+        const persistedGroup = loadDefaultGroupBy()
+        if (persistedGroup !== getTaskHubState().groupBy) {
+          setGroupBy(persistedGroup)
+        }
+        const persistedSort = loadDefaultSort()
+        if (persistedSort !== getTaskHubState().sort) {
+          setSort(persistedSort)
+        }
+        // Status columns (#421) hydrate into the unified state so saved
+        // views can snapshot them. BoardView keeps its own local mirror
+        // today; Phase 7 reconciles the two.
+        // Length check is load-bearing: Array.some walks only persistedCols
+        // indices, so a TRIMMED config ([TODO,DOING] vs default [TODO,DOING,
+        // DONE]) would otherwise compare equal and silently revert the trim.
+        const persistedCols = loadColumns()
+        const currentCols = getTaskHubState().columns
+        if (
+          persistedCols.length &&
+          (persistedCols.length !== currentCols.length ||
+            persistedCols.some((c, i) => c !== currentCols[i]))
+        ) {
+          setColumns(persistedCols)
+        }
+        // Saved views (#427): system defaults (code-defined) + user views
+        // (YAML). Seeded once on mount; the in-memory list is the single
+        // source afterwards.
+        const views = loadSavedViews()
+        if (views.length) {
+          getTaskHubState().savedViews = views
+        }
+        // Mount-time hydration is not a user edit; clear any dirty flag a
+        // stray setter might have flipped during the seed above.
+        getTaskHubState().savedViewsDirty = false
+        getTaskHubState().activeSavedViewId = ''
+      })
+      void reloadFacets()
     })
-    void reloadFacets()
-  })
 
-  // Late-loadConfig hydration (#428): loadConfig races with the Svelte mount,
-  // so the mount-time snapshot above can see an empty config and miss the
-  // user's preferences. Re-hydrate when the on-disk silt-tasks slice reference
-  // changes — but only if the user hasn't touched the views since mount (an
-  // in-session edit wins over a stale external snapshot).
-  let lastExternalSlice: unknown = undefined
-  let savedViewsHydrated = false
-  $effect(() => {
-    const tasksSettings =
-      settingsStore.config?.plugins?.plugin_settings?.['silt-tasks']
-    // Track the whole silt-tasks slice, not just saved_views: a vault with no
-    // saved_views (fresh vault or display-prefs-only) has undefined on both
-    // the baseline and post-loadConfig runs, so undefined === undefined would
-    // early-return and skip the re-hydration of the other dimensions.
-    const ref = tasksSettings
-    if (!savedViewsHydrated) {
-      // First run captures the baseline; the mount block above already did
-      // the initial hydration from the same snapshot.
-      lastExternalSlice = ref
-      savedViewsHydrated = true
-      return
+    // Subsequent external edits (e.g. co-located config.yaml change on a
+    // linked notebook) arrive as config:changed. initTasksSettings already
+    // got the latest config on mount; this re-hydrates after the re-read —
+    // but never clobbers an in-session edit (savedViewsDirty wins).
+    //
+    // Navigation to a different notebook also triggers a reload because the
+    // SDK's getPluginSettings resolves per-active-notebook overrides (#133):
+    // a linked notebook with its own co-located config.yaml can carry
+    // different columns / default modes / saved views.
+    function rehydrateFromSettings() {
+      if (getTaskHubState().savedViewsDirty) return
+      untrack(() => {
+        const views = loadSavedViews()
+        if (views.length) getTaskHubState().savedViews = views
+        const mode = loadDefaultDisplayMode()
+        if (mode !== getTaskHubState().displayMode) setDisplayMode(mode)
+        const group = loadDefaultGroupBy()
+        if (group !== getTaskHubState().groupBy) setGroupBy(group)
+        const sortVal = loadDefaultSort()
+        if (sortVal !== getTaskHubState().sort) setSort(sortVal)
+        const cols = loadColumns()
+        const curCols = getTaskHubState().columns
+        if (
+          cols.length &&
+          (cols.length !== curCols.length ||
+            cols.some((c, i) => c !== curCols[i]))
+        ) {
+          setColumns(cols)
+        }
+      })
     }
-    if (ref === lastExternalSlice) return
-    lastExternalSlice = ref
-    // An in-session edit flips savedViewsDirty; don't clobber it.
-    if (getTaskHubState().savedViewsDirty) return
-    const views = loadSavedViews()
-    if (views.length) {
-      getTaskHubState().savedViews = views
-    }
-    // Other dimensions: loadConfig may have arrived after mount, leaving
-    // displayMode/groupBy/sort/columns at defaults. Re-hydrate each one only
-    // when its persisted value diverges from the current state — a no-op
-    // when the mount block already saw it.
-    const mode = loadDefaultDisplayMode()
-    if (mode !== getTaskHubState().displayMode) setDisplayMode(mode)
-    const group = loadDefaultGroupBy()
-    if (group !== getTaskHubState().groupBy) setGroupBy(group)
-    const sortVal = loadDefaultSort()
-    if (sortVal !== getTaskHubState().sort) setSort(sortVal)
-    const cols = loadColumns()
-    const curCols = getTaskHubState().columns
-    if (
-      cols.length &&
-      (cols.length !== curCols.length || cols.some((c, i) => c !== curCols[i]))
-    ) {
-      setColumns(cols)
+    const unsubConfig = ctx.on('config:changed', () => {
+      void reloadTasksSettings(ctx).then(rehydrateFromSettings)
+    })
+    const unsubNav = ctx.on('active-notebook:changed', () => {
+      void reloadTasksSettings(ctx).then(rehydrateFromSettings)
+    })
+    return () => {
+      unsubConfig()
+      unsubNav()
     }
   })
 
@@ -411,7 +411,7 @@
   ): Promise<void> {
     const ok = await persistSavedViews(next)
     if (!ok) {
-      savedViewError = settingsStore.error || 'Failed to save view'
+      savedViewError = 'Failed to save view'
       return
     }
     savedViewError = ''
@@ -473,16 +473,29 @@
     )
   }
 
-  async function commitDelete() {
-    if (!activeSavedView) return
-    if (activeSavedView.system) return
-    if (!window.confirm(`Delete saved view "${activeSavedView.name}"?`)) return
-    const id = activeSavedView.id
-    const name = activeSavedView.name
-    deleteSavedView(id)
+  // Delete confirmation now flows through an in-app modal (#470) instead of
+  // window.confirm(). `deleteConfirmTarget` holds the view awaiting the user's
+  // choice; performDelete runs after the user confirms.
+  let deleteConfirmTarget = $state<SavedView | null>(null)
+
+  function requestDelete() {
+    if (!activeSavedView || activeSavedView.system) return
+    closePopover()
+    deleteConfirmTarget = activeSavedView
+  }
+
+  function cancelDeleteModal() {
+    deleteConfirmTarget = null
+  }
+
+  async function performDelete() {
+    const target = deleteConfirmTarget
+    deleteConfirmTarget = null
+    if (!target || target.system) return
+    deleteSavedView(target.id)
     await persistAndAnnounce(
       getTaskHubState().savedViews,
-      `View "${name}" deleted`
+      `View "${target.name}" deleted`
     )
   }
 
@@ -746,7 +759,7 @@
               title={activeSavedView?.system
                 ? 'System views cannot be deleted'
                 : undefined}
-              onclick={() => void commitDelete()}
+              onclick={() => requestDelete()}
               data-testid="tasks-hub-delete-view"
               class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-error text-left border-none bg-transparent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
             >
@@ -851,4 +864,18 @@
   >
     {savedViewLiveMsg}
   </div>
+
+  <!-- Delete confirmation modal (#470). Replaces window.confirm(). -->
+  {#if deleteConfirmTarget}
+    <ConfirmModal
+      title="Delete saved view?"
+      message={`Delete “${deleteConfirmTarget.name}”? This view will be removed from your saved views.`}
+      confirmLabel="Delete"
+      cancelLabel="Cancel"
+      destructive={true}
+      dataTestId="tasks-hub-delete-confirm"
+      onConfirm={() => void performDelete()}
+      onCancel={cancelDeleteModal}
+    />
+  {/if}
 </div>

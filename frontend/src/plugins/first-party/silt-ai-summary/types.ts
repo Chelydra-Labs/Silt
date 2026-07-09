@@ -23,8 +23,10 @@ export interface SummarySettings {
   facets: FacetToggles
   regenerate_debounce_ms: number
   max_note_chars: number
-  /** Dismissed banners keyed by `pageId` (v1). #455 tracks upgrading to
-   *  `pageId:contentHash` so a meaningfully-edited dismissed note re-shows. */
+  /** Dismissed banners keyed by `${pageId}:${contentHash}` (#455) — an edit
+   *  changes the content hash, so the next open re-shows the banner for the
+   *  new content. Legacy bare-`pageId` entries (pre-#455) carry no content
+   *  binding and stay dismissed; the status-bar re-open chip clears them. */
   dismissed_notes: string[]
 }
 
@@ -57,6 +59,12 @@ export interface SummaryResult {
   model: string
   /** RFC3339 generation timestamp. */
   generatedAt: string
+  /** The content hash this summary was generated for. Threads the hash to the
+   *  dismiss path so dismissal is keyed by `${pageId}:${contentHash}` (#455):
+   *  editing a dismissed note changes the hash and re-shows the banner. Set
+   *  on every success path; undefined for empty/error/cache-bypass states
+   *  where no content was hashed. */
+  contentHash?: string
 }
 
 export type SummaryErrorCode =

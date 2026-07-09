@@ -332,6 +332,15 @@ export function makePluginContext(
     // SettingsForm uses; bespoke pages call it to save their controls.
     updatePluginSetting: (key, value) =>
       UpdatePluginSetting(pluginID, key, value).then(() => true),
+    // Open Settings to a specific tab (#472). Dispatches the existing
+    // 'open-settings' DOM CustomEvent that App.svelte listens for — no new
+    // Go binding needed. Available to both first-party and third-party
+    // (iframe) plugins via the postMessage bridge's allowedMethods set.
+    openSettings: (tab) => {
+      window.dispatchEvent(
+        new CustomEvent('open-settings', { detail: tab ?? '' })
+      )
+    },
     // v2 typed event bus (#106). Delegates to the module-scoped bus so
     // subscriptions are auto-cleaned on disable/uninstall/vault-close.
     on: (event, cb) => subscribe(pluginID, event, cb),

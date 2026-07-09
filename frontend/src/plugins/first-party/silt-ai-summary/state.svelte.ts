@@ -27,6 +27,12 @@ export interface PageState {
   /** True when a (re)generation is in flight and a stale result is still
    *  shown underneath — the banner renders a subtle progress affordance. */
   stale?: boolean
+  /** The content hash this page's summary was generated for. Threads the hash
+   *  to the dismiss path so dismissal is keyed by `${pageId}:${contentHash}`
+   *  (#455) — editing a dismissed note changes the hash and re-shows the
+   *  banner. Mirrored from `result.result.contentHash` on success for direct
+   *  banner access; undefined for error states. */
+  contentHash?: string
 }
 
 export interface ProviderInfo {
@@ -140,10 +146,12 @@ export function createSummaryController(
       cur.result = outcome
       cur.status = outcome.ok ? 'ready' : 'error'
       cur.stale = false
+      cur.contentHash = outcome.ok ? outcome.result.contentHash : undefined
     } else {
       state[pageId] = {
         status: outcome.ok ? 'ready' : 'error',
-        result: outcome
+        result: outcome,
+        contentHash: outcome.ok ? outcome.result.contentHash : undefined
       }
     }
     return outcome

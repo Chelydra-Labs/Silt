@@ -15,10 +15,11 @@
   // All four sections read+write the unified hub state (state.svelte.ts)
   // so a tweak here is instantly reflected in the header FilterBar and
   // every display-mode renderer.
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import { plusDaysISO, localToday } from '../../sdk'
   import ErrorBanner from './components/ErrorBanner.svelte'
+  import ConfirmModal from './components/ConfirmModal.svelte'
   import { PRIORITY_LABELS } from './types'
   import {
     getTaskHubState,
@@ -31,6 +32,7 @@
     applySavedView,
     deleteSavedView,
     saveView,
+    reorderSavedViews,
     type SavedView,
     type TaskFilters,
     type DueDateFilter,
@@ -376,19 +378,150 @@
     applySavedView(view)
   }
 
-  async function deleteView(view: SavedView) {
+  // Inline rename state (#470).
+  let renamingId = $state<string | null>(null)
+  let renameValue = $state('')
+  let renameError = $state('')
+  let renameInputEl = $state<HTMLInputElement | null>(null)
+
+  // Manage-menu (⋯ button + right-click share the same menu).
+  let manageMenu = $state<{ viewId: string; x: number; y: number } | null>(null)
+
+  // Delete-confirmation modal target.
+  let deleteTarget = $state<SavedView | null>(null)
+
+  // Drag-and-drop reorder state.
+  let dragId = $state<string | null>(null)
+  let dropTarget = $state<{ id: string; before: boolean } | null>(null)
+
+  let userViews = $derived(hubState.savedViews.filter((v) => !v.system))
+
+  function openManageMenu(view: SavedView, x: number, y: number) {
     if (view.system) return
-    if (!window.confirm(`Delete saved view "${view.name}"?`)) return
+    // Clamp to viewport so the 180px-min-width menu can't render off-screen.
+    const menuW = 180
+    const menuH = 220 // estimate; the menu has at most ~5 items + separator
+    const cw = window.innerWidth
+    const ch = window.innerHeight
+    manageMenu = {
+      viewId: view.id,
+      x: Math.max(8, Math.min(x, cw - menuW - 8)),
+      y: Math.max(8, Math.min(y, ch - menuH - 8))
+    }
+  }
+
+  function openManageMenuFromButton(e: MouseEvent, view: SavedView) {
+    if (view.system) return
+    e.stopPropagation()
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    // If the same menu is already open, toggle it closed (button-as-toggle).
+    if (manageMenu?.viewId === view.id) {
+      manageMenu = null
+      return
+    }
+    openManageMenu(view, rect.left, rect.bottom + 2)
+  }
+
+  function onRowContextMenu(e: MouseEvent, view: SavedView) {
+    if (view.system) return // system views: let the browser menu show
+    e.preventDefault()
+    openManageMenu(view, e.clientX, e.clientY)
+  }
+
+  function closeManageMenu() {
+    manageMenu = null
+  }
+
+  function startRename(view: SavedView) {
+    if (view.system) return
+    closeManageMenu()
+    renamingId = view.id
+    renameValue = view.name
+    renameError = ''
+    void tick().then(() => {
+      renameInputEl?.focus()
+      renameInputEl?.select()
+    })
+  }
+
+  function cancelRename() {
+    renamingId = null
+    renameValue = ''
+    renameError = ''
+  }
+
+  async function commitRename() {
+    const id = renamingId
+    if (!id) return
+    const name = renameValue.trim()
+    if (!name) {
+      renameError = 'Enter a view name'
+      return
+    }
+    // Exit rename mode synchronously so the blur handler can't double-fire.
+    renamingId = null
+    const view = getTaskHubState().savedViews.find((v) => v.id === id)
+    if (!view) return
+    saveView({ ...view, name })
+    renameError = ''
     errorMsg = ''
-    // Capture the view before the in-memory delete so a persist failure can
-    // restore it — without this, the view vanishes from the UI but survives
-    // on disk, reappearing on next launch with no explanation to the user.
+    const ok = await persistSavedViews(getTaskHubState().savedViews)
+    if (!ok) errorMsg = 'Failed to save view'
+  }
+
+  // Overwrite the view's stored dimensions with the current hub state
+  // (mirrors TasksHub.commitUpdateActive). Only meaningful for the active
+  // dirty view — the menu only offers it in that state.
+  async function overwriteView(view: SavedView) {
+    if (view.system) return
+    closeManageMenu()
+    const s = getTaskHubState()
+    const updated: SavedView = {
+      id: view.id,
+      name: view.name,
+      displayMode: s.displayMode,
+      groupBy: s.groupBy,
+      sort: s.sort,
+      scope: s.scope,
+      filters: {
+        owners: [...s.filters.owners],
+        priorities: [...s.filters.priorities],
+        dueDate: s.filters.dueDate,
+        tags: [...s.filters.tags]
+      },
+      calendarSubMode: s.calendarSubMode,
+      columns: [...s.columns],
+      system: false
+    }
+    saveView(updated)
+    applySavedView(updated) // clears the dirty flag
+    errorMsg = ''
+    const ok = await persistSavedViews(getTaskHubState().savedViews)
+    if (!ok) errorMsg = 'Failed to save view'
+  }
+
+  function requestDelete(view: SavedView) {
+    if (view.system) return
+    closeManageMenu()
+    deleteTarget = view
+  }
+
+  function cancelDelete() {
+    deleteTarget = null
+  }
+
+  async function confirmDelete() {
+    const view = deleteTarget
+    if (!view) return
+    deleteTarget = null
+    if (view.system) return
+    errorMsg = ''
+    // Capture before the in-memory delete so a persist failure can restore it
+    // — without this, the view vanishes from the UI but survives on disk.
     const viewToRemove = getTaskHubState().savedViews.find(
       (v) => v.id === view.id
     )
     deleteSavedView(view.id)
-    // persistSavedViews resolves to false on write failure (vs. rejecting) —
-    // surface that path so the user knows the deletion didn't reach disk.
     const ok = await persistSavedViews(getTaskHubState().savedViews)
     if (!ok && viewToRemove) {
       saveView(viewToRemove)
@@ -397,6 +530,111 @@
       errorMsg = 'Failed to delete view — will retry on next launch'
     }
   }
+
+  async function persistViewList() {
+    errorMsg = ''
+    const ok = await persistSavedViews(getTaskHubState().savedViews)
+    if (!ok) errorMsg = 'Failed to save view order'
+  }
+
+  // --- Reorder (drag + keyboard move) ------------------------------------
+
+  function onViewDragStart(e: DragEvent, view: SavedView) {
+    if (view.system) {
+      e.preventDefault()
+      return
+    }
+    dragId = view.id
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', view.id)
+    }
+  }
+
+  function onViewDragOver(e: DragEvent, view: SavedView) {
+    if (!dragId || view.system || view.id === dragId) return
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    dropTarget = {
+      id: view.id,
+      before: e.clientY < rect.top + rect.height / 2
+    }
+  }
+
+  async function onViewDrop(e: DragEvent, view: SavedView) {
+    e.preventDefault()
+    const fromId = dragId
+    const before = dropTarget?.before ?? false
+    dragId = null
+    dropTarget = null
+    if (!fromId || view.system || fromId === view.id) return
+    reorderSavedViews(fromId, view.id, before)
+    await persistViewList()
+  }
+
+  function onViewDragEnd() {
+    dragId = null
+    dropTarget = null
+  }
+
+  async function moveView(view: SavedView, direction: -1 | 1) {
+    const list = getTaskHubState().savedViews.filter((v) => !v.system)
+    const idx = list.findIndex((v) => v.id === view.id)
+    if (idx < 0) return
+    const swapIdx = idx + direction
+    if (swapIdx < 0 || swapIdx >= list.length) return
+    reorderSavedViews(
+      view.id,
+      list[swapIdx].id,
+      direction === -1 // up → land before the predecessor
+    )
+    closeManageMenu()
+    await persistViewList()
+  }
+
+  function canMoveUp(view: SavedView): boolean {
+    const idx = userViews.findIndex((v) => v.id === view.id)
+    return idx > 0
+  }
+  function canMoveDown(view: SavedView): boolean {
+    const idx = userViews.findIndex((v) => v.id === view.id)
+    return idx >= 0 && idx < userViews.length - 1
+  }
+
+  // Arrow-key navigation inside the manage menu (WAI-ARIA menu pattern).
+  function onMenuKeydown(e: KeyboardEvent) {
+    if (!manageMenu) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeManageMenu()
+      return
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    const menu = document.querySelector('[data-testid="manage-view-menu"]')
+    if (!menu) return
+    // Skip disabled items — they're not focusable and shouldn't break the cycle.
+    const items = Array.from(
+      menu.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).filter((el) => !(el as HTMLButtonElement).disabled)
+    if (items.length === 0) return
+    const active = document.activeElement as HTMLElement | null
+    const idx = active ? items.indexOf(active) : -1
+    const next =
+      e.key === 'ArrowDown'
+        ? (idx + 1) % items.length
+        : (idx - 1 + items.length) % items.length
+    items[next]?.focus()
+  }
+
+  // Keep the menu's manageMenu referencing a live view — if the list changes
+  // underneath (e.g. the view was deleted from elsewhere), close the menu.
+  let manageMenuView = $derived.by(() => {
+    const m = manageMenu
+    if (!m) return undefined
+    return hubState.savedViews.find((v) => v.id === m.viewId)
+  })
 
   // aria-live region announces count + filter changes.
   let liveMessage = $state('')
@@ -510,7 +748,7 @@
     {/if}
   </section>
 
-  <!-- Saved Views (lifted from KanbanSidebar) -->
+  <!-- Saved Views (lifted from KanbanSidebar; management UX #470) -->
   <section aria-labelledby="tasks-saved-views-heading">
     <h3
       id="tasks-saved-views-heading"
@@ -521,38 +759,126 @@
     <ul role="list" class="mt-1 space-y-0.5">
       {#each hubState.savedViews as view (view.id)}
         {@const isActive = viewMatchesState(view, hubState)}
-        <li>
+        {@const isRenaming = renamingId === view.id}
+        {@const isUser = view.system !== true}
+        {@const isDragging = dragId === view.id}
+        {@const isDropBefore = dropTarget?.id === view.id && dropTarget.before}
+        {@const isDropAfter = dropTarget?.id === view.id && !dropTarget.before}
+        <li
+          class="group relative"
+          data-testid={`view-row-${view.id}`}
+          oncontextmenu={(e) => onRowContextMenu(e, view)}
+          ondragover={(e) => onViewDragOver(e, view)}
+          ondrop={(e) => onViewDrop(e, view)}
+        >
           <div
-            class="flex items-center gap-1 px-1 py-0.5 rounded text-[12px] font-body-md border border-transparent
+            class="flex items-center gap-0.5 px-1 py-0.5 rounded text-[12px] font-body-md border transition-colors
               {isActive
               ? 'bg-accent-primary-glow border-accent-primary-start/30 text-accent-primary-start'
-              : 'text-text-primary hover:bg-hover border-transparent'}"
+              : 'text-text-primary hover:bg-hover border-transparent'}
+              {isDragging ? 'opacity-40' : ''}
+              {isDropBefore
+              ? 'border-t-2 border-t-accent-primary-start border-b-transparent'
+              : ''}
+              {isDropAfter
+              ? 'border-b-2 border-b-accent-primary-start border-t-transparent'
+              : ''}"
             data-testid={`view-${view.id}`}
           >
-            <button
-              type="button"
-              onclick={() => activateView(view)}
-              aria-pressed={isActive}
-              class="flex-1 text-left px-1.5 py-1 rounded cursor-pointer border-none bg-transparent"
-            >
-              {view.name}
-              {#if hubState.activeSavedViewId === view.id && hubState.savedViewsDirty}
-                <span class="text-text-muted text-[10px]"> (modified)</span>
+            {#if isUser}
+              <span
+                draggable="true"
+                ondragstart={(e) => onViewDragStart(e, view)}
+                ondragend={onViewDragEnd}
+                class="flex items-center text-text-muted/30 group-hover:text-text-muted cursor-grab active:cursor-grabbing touch-none"
+                title="Drag to reorder"
+                aria-hidden="true"
+                data-testid={`grip-${view.id}`}
+              >
+                <span class="material-symbols-outlined text-[14px]"
+                  >drag_indicator</span
+                >
+              </span>
+            {/if}
+
+            {#if isRenaming}
+              <label class="flex-1 sr-only" for={`rename-${view.id}`}>
+                Rename {view.name}
+              </label>
+              <input
+                id={`rename-${view.id}`}
+                bind:this={renameInputEl}
+                bind:value={renameValue}
+                data-testid={`rename-input-${view.id}`}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void commitRename()
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    cancelRename()
+                  }
+                }}
+                onblur={() => {
+                  // Commit on blur if a non-empty name was entered; cancel
+                  // otherwise. commitRename exits rename mode synchronously,
+                  // so a re-entrant blur is a no-op.
+                  if (renamingId) {
+                    if (renameValue.trim()) void commitRename()
+                    else cancelRename()
+                  }
+                }}
+                class="flex-1 min-w-0 px-1.5 py-1 rounded bg-surface-panel border border-accent-primary-start text-text-primary text-[12px] outline-none"
+              />
+              {#if renameError}
+                <span class="sr-only" role="alert">{renameError}</span>
               {/if}
-            </button>
-            <button
-              type="button"
-              onclick={() => void deleteView(view)}
-              disabled={view.system === true}
-              aria-disabled={view.system === true}
-              aria-hidden={view.system === true}
-              aria-label="Delete view {view.name}"
-              data-testid={`delete-view-${view.id}`}
-              class="p-1 rounded text-text-muted hover:text-error border-none bg-transparent cursor-pointer
-                {view.system === true ? 'hidden' : ''}"
-            >
-              <span class="material-symbols-outlined text-[12px]">delete</span>
-            </button>
+            {:else}
+              <button
+                type="button"
+                onclick={() => activateView(view)}
+                aria-pressed={isActive}
+                class="flex-1 min-w-0 text-left px-1.5 py-1 rounded cursor-pointer border-none bg-transparent"
+              >
+                <span class="truncate inline-block max-w-full align-middle"
+                  >{view.name}</span
+                >
+                {#if view.id === hubState.activeSavedViewId && hubState.savedViewsDirty}
+                  <span
+                    class="inline-block w-1.5 h-1.5 rounded-full bg-accent-secondary-start ml-1"
+                    title="This view has unsaved changes"
+                    aria-label="modified"
+                  ></span>
+                {/if}
+              </button>
+            {/if}
+
+            {#if view.system}
+              <span
+                class="material-symbols-outlined text-[11px] text-text-muted/50"
+                aria-label="Built-in view"
+                title="Built-in view — can't be modified">lock</span
+              >
+            {/if}
+
+            {#if isUser}
+              <button
+                type="button"
+                onclick={(e) => openManageMenuFromButton(e, view)}
+                aria-haspopup="menu"
+                aria-expanded={manageMenu?.viewId === view.id}
+                aria-label="Manage view {view.name}"
+                data-testid={`manage-view-${view.id}`}
+                class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-hover border-none bg-transparent cursor-pointer transition-opacity
+                  {manageMenu?.viewId === view.id
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}"
+              >
+                <span class="material-symbols-outlined text-[14px]"
+                  >more_horiz</span
+                >
+              </button>
+            {/if}
           </div>
         </li>
       {/each}
@@ -695,3 +1021,157 @@
     <ErrorBanner message={errorMsg} compact />
   {/if}
 </aside>
+
+<!-- Saved-view manage menu (#470). The ⋯ button and right-click both feed
+     into the same `manageMenu` state; this overlay is the single render. -->
+{#if manageMenu && manageMenuView}
+  {@const v = manageMenuView}
+  {@const canUpdate =
+    hubState.activeSavedViewId === v.id && hubState.savedViewsDirty}
+  <div class="fixed inset-0 z-[180]">
+    <button
+      tabindex="-1"
+      aria-label="Close menu"
+      onclick={closeManageMenu}
+      oncontextmenu={(e) => {
+        e.preventDefault()
+        closeManageMenu()
+      }}
+      class="absolute inset-0 cursor-default border-none bg-transparent p-0"
+      data-testid="manage-view-backdrop"
+    ></button>
+    <div
+      class="fixed manage-menu-card"
+      style:left={manageMenu.x + 'px'}
+      style:top={manageMenu.y + 'px'}
+      role="menu"
+      tabindex="-1"
+      aria-label={`Actions for ${v.name}`}
+      data-testid="manage-view-menu"
+      onkeydown={onMenuKeydown}
+    >
+      {#if canUpdate}
+        <button
+          type="button"
+          role="menuitem"
+          onclick={() => void overwriteView(v)}
+          data-testid="manage-update-view"
+          class="manage-menu-item"
+        >
+          <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+            >save</span
+          >
+          <span>Update “{v.name}”</span>
+        </button>
+      {/if}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => startRename(v)}
+        data-testid="manage-rename-view"
+        class="manage-menu-item"
+      >
+        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+          >edit</span
+        >
+        <span>Rename…</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        disabled={!canMoveUp(v)}
+        aria-disabled={!canMoveUp(v)}
+        onclick={() => void moveView(v, -1)}
+        data-testid="manage-move-up"
+        class="manage-menu-item disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+          >arrow_upward</span
+        >
+        <span>Move up</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        disabled={!canMoveDown(v)}
+        aria-disabled={!canMoveDown(v)}
+        onclick={() => void moveView(v, 1)}
+        data-testid="manage-move-down"
+        class="manage-menu-item disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+          >arrow_downward</span
+        >
+        <span>Move down</span>
+      </button>
+      <div class="manage-menu-separator" aria-hidden="true"></div>
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => requestDelete(v)}
+        data-testid="manage-delete-view"
+        class="manage-menu-item text-status-danger"
+      >
+        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+          >delete</span
+        >
+        <span>Delete…</span>
+      </button>
+    </div>
+  </div>
+{/if}
+
+<!-- Delete confirmation (#470). In-app modal replaces window.confirm(). -->
+{#if deleteTarget}
+  <ConfirmModal
+    title="Delete saved view?"
+    message={`Delete “${deleteTarget.name}”? This view will be removed from your saved views.`}
+    confirmLabel="Delete"
+    cancelLabel="Cancel"
+    destructive={true}
+    dataTestId="delete-view-confirm"
+    onConfirm={() => void confirmDelete()}
+    onCancel={cancelDelete}
+  />
+{/if}
+
+<style>
+  .manage-menu-card {
+    background-color: color-mix(
+      in srgb,
+      var(--color-surface-popover) 94%,
+      transparent
+    );
+    backdrop-filter: blur(12px) saturate(140%);
+    border: 1px solid var(--color-border-active);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    padding: 4px;
+    min-width: 180px;
+    z-index: 181;
+  }
+  .manage-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-family: var(--font-body, inherit);
+    text-align: left;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background-color 120ms ease-out;
+  }
+  .manage-menu-item:hover:not(:disabled) {
+    background-color: var(--color-hover);
+  }
+  .manage-menu-separator {
+    height: 1px;
+    margin: 4px 6px;
+    background-color: var(--color-border);
+  }
+</style>

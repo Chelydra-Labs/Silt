@@ -1,26 +1,15 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
-// CommentThread reads the local_author pref synchronously via the settings
-// store + persists via updatePluginSetting. Mock the store so tests can drive
-// both the "pref unset → seed from OS user" and "pref set → skip IPC" paths.
+// CommentThread reads the local_author pref via the settings module
+// (loadLocalAuthor, seeded by initTasksSettings) and persists via the SDK's
+// ctx.updatePluginSetting (wrapped by persistLocalAuthor's saveFn). The
+// component doesn't self-init the module, so each test seeds the slice via
+// initTasksSettings(ctx) before mount.
 const mocks = vi.hoisted(() => ({
   updatePluginSetting: vi.fn().mockResolvedValue(true),
-  settings: {
-    config: {
-      plugins: {
-        active: [],
-        disabled: [],
-        plugin_settings: {} as Record<string, Record<string, unknown>>
-      }
-    }
-  },
+  tasksSettings: {} as Record<string, unknown>,
   persistLocalAuthor: vi.fn().mockResolvedValue(true)
-}))
-
-vi.mock('../../../../settings/store.svelte', () => ({
-  settings: mocks.settings,
-  updatePluginSetting: mocks.updatePluginSetting
 }))
 
 vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
@@ -75,6 +64,7 @@ if (
 import CommentThread from './CommentThread.svelte'
 import type { PluginContext, SubtreeBlock } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
+import { initTasksSettings } from '../settings'
 
 interface CommentThreadProps {
   taskId: string
@@ -98,9 +88,19 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     addTaskComment: vi.fn().mockResolvedValue('new-uuid'),
     deleteBlock: vi.fn().mockResolvedValue(true),
     getLocalAuthor: vi.fn().mockResolvedValue('osuser'),
+    getPluginSettings: vi.fn(() => Promise.resolve(mocks.tasksSettings)),
+    updatePluginSetting: mocks.updatePluginSetting,
     on: vi.fn(() => () => {}),
     ...overrides
   } as unknown as PluginContext
+}
+
+// Seed the settings module's slice + wire saveFn to mocks.updatePluginSetting.
+// CommentThread reads loadLocalAuthor() in onMount, so this must resolve
+// before mount().
+async function seedSettings(slice: Record<string, unknown> = {}) {
+  mocks.tasksSettings = slice
+  await initTasksSettings(makeCtx())
 }
 
 function makeBlock(o: Partial<SubtreeBlock> & { id: string }): SubtreeBlock {
@@ -133,12 +133,12 @@ async function flush() {
 }
 
 describe('CommentThread', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     // Reset the persisted local_author between tests so the seed-vs-skip
     // branches are deterministic.
-    mocks.settings.config.plugins.plugin_settings = {}
     mocks.updatePluginSetting.mockClear()
     mocks.updatePluginSetting.mockResolvedValue(true)
+    await seedSettings({})
   })
   afterEach(() => cleanup())
 
@@ -376,7 +376,7 @@ describe('CommentThread', () => {
   })
 
   it('seeds composerAuthor from ctx.getLocalAuthor when the pref is empty, and persists it', async () => {
-    mocks.settings.config.plugins.plugin_settings = {} // pref unset
+    await seedSettings({}) // pref unset
     const getLocalAuthor = vi.fn().mockResolvedValue('osuser')
     const ctx = makeCtx({ getLocalAuthor })
     mount({ ctx })
@@ -387,16 +387,13 @@ describe('CommentThread', () => {
     ) as HTMLInputElement
     expect(authorInput.value).toBe('osuser')
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'silt-tasks',
       'local_author',
       'osuser'
     )
   })
 
   it('does NOT call ctx.getLocalAuthor when the local_author pref is already set', async () => {
-    mocks.settings.config.plugins.plugin_settings = {
-      'silt-tasks': { local_author: 'saved-name' }
-    }
+    await seedSettings({ local_author: 'saved-name' })
     const getLocalAuthor = vi.fn()
     const ctx = makeCtx({ getLocalAuthor })
     mount({ ctx })
@@ -418,7 +415,6 @@ describe('CommentThread', () => {
     await fireEvent.input(authorInput, { target: { value: 'renamed' } })
     await fireEvent.blur(authorInput)
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
-      'silt-tasks',
       'local_author',
       'renamed'
     )

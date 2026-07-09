@@ -217,16 +217,6 @@ export function setDisplayMode(mode: DisplayMode): void {
   markDirtyIfViewActive()
 }
 
-/**
- * Set displayMode WITHOUT marking the active saved view dirty. Used by the
- * one-release alias redirect in App.svelte (calendar/kanban → tasks), which
- * restores a persisted mode rather than recording a user edit — marking the
- * active view dirty there would spuriously flag a freshly-loaded view.
- */
-export function setDisplayModeQuiet(mode: DisplayMode): void {
-  _state.displayMode = mode
-}
-
 /** Set the Calendar display mode's sub-layout (month/week). */
 export function setCalendarSubMode(mode: CalendarSubMode): void {
   _state.calendarSubMode = mode
@@ -440,6 +430,31 @@ export function deleteSavedView(id: string): void {
 export function clearActiveSavedView(): void {
   _state.activeSavedViewId = ''
   _state.savedViewsDirty = false
+}
+
+/**
+ * Reorder user views within the saved-views list (#470). System views
+ * stay anchored — only user views are moveable. The move is a remove-
+ * then-insert relative to the target: `before: true` lands the source
+ * immediately ahead of the target, `false` immediately after. A no-op
+ * when either id is missing, identical, or points at a system view.
+ */
+export function reorderSavedViews(
+  fromId: string,
+  toId: string,
+  before: boolean
+): void {
+  const views = _state.savedViews
+  const fromIdx = views.findIndex((v) => v.id === fromId)
+  const toIdx = views.findIndex((v) => v.id === toId)
+  if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return
+  // System views are never reorderable (neither drag source nor target).
+  if (views[fromIdx].system || views[toIdx].system) return
+  const [moved] = views.splice(fromIdx, 1)
+  // Recompute the target index after the splice shifted the array.
+  const newToIdx = views.findIndex((v) => v.id === toId)
+  const insertAt = before ? newToIdx : newToIdx + 1
+  views.splice(insertAt, 0, moved)
 }
 
 /**

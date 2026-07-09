@@ -20,7 +20,6 @@
   import { onMount, onDestroy } from 'svelte'
   import type { PluginContext, TaskStatus } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
-  import { settings } from '../../../../settings/store.svelte'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
@@ -609,7 +608,7 @@
     statusColumns = statusColumns.map((c) => (c === oldStatus ? v : c))
     void persistColumns(statusColumns).then((ok) => {
       if (!ok) {
-        configError = settings.error || 'Failed to save columns'
+        configError = 'Failed to save columns'
         statusColumns = prev
         rebin()
       }
@@ -627,7 +626,7 @@
     configError = ''
     const ok = await persistColumns(statusColumns)
     if (!ok) {
-      configError = settings.error || 'Failed to save columns'
+      configError = 'Failed to save columns'
       statusColumns = prev
     }
     rebin()
@@ -645,7 +644,7 @@
     configError = ''
     const ok = await persistColumns(statusColumns)
     if (!ok) {
-      configError = settings.error || 'Failed to save columns'
+      configError = 'Failed to save columns'
       statusColumns = prev
     }
     rebin()

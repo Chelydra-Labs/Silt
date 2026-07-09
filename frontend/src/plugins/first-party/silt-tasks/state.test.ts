@@ -25,6 +25,7 @@ import {
   applySavedView,
   deleteSavedView,
   clearActiveSavedView,
+  reorderSavedViews,
   MAX_USER_SAVED_VIEWS,
   resetTaskHubState
 } from './state.svelte'
@@ -386,6 +387,52 @@ describe('silt-tasks unified state (#419)', () => {
       expect(after.savedViewsDirty).toBe(false)
       // The view itself is not deleted.
       expect(after.savedViews.find((v) => v.id === 'v1')).toBeDefined()
+    })
+  })
+
+  describe('reorderSavedViews() — user-view reorder (#470)', () => {
+    it('moves a view before the target when before=true', () => {
+      saveView({ id: 'u1', name: 'A' })
+      saveView({ id: 'u2', name: 'B' })
+      saveView({ id: 'u3', name: 'C' })
+      reorderSavedViews('u3', 'u1', true)
+      const ids = getTaskHubState().savedViews.map((v) => v.id)
+      expect(ids).toEqual(['u3', 'u1', 'u2'])
+    })
+
+    it('moves a view after the target when before=false', () => {
+      saveView({ id: 'u1', name: 'A' })
+      saveView({ id: 'u2', name: 'B' })
+      saveView({ id: 'u3', name: 'C' })
+      reorderSavedViews('u1', 'u2', false)
+      const ids = getTaskHubState().savedViews.map((v) => v.id)
+      expect(ids).toEqual(['u2', 'u1', 'u3'])
+    })
+
+    it('refuses to reorder system views (source or target)', () => {
+      saveView({ id: 'sys-x', name: 'Sys', system: true })
+      saveView({ id: 'u1', name: 'A' })
+      reorderSavedViews('u1', 'sys-x', true)
+      let ids = getTaskHubState().savedViews.map((v) => v.id)
+      expect(ids).toEqual(['sys-x', 'u1'])
+      reorderSavedViews('sys-x', 'u1', true)
+      ids = getTaskHubState().savedViews.map((v) => v.id)
+      expect(ids).toEqual(['sys-x', 'u1'])
+    })
+
+    it('is a no-op for identical ids or missing ids', () => {
+      saveView({ id: 'u1', name: 'A' })
+      saveView({ id: 'u2', name: 'B' })
+      reorderSavedViews('u1', 'u1', true)
+      expect(getTaskHubState().savedViews.map((v) => v.id)).toEqual([
+        'u1',
+        'u2'
+      ])
+      reorderSavedViews('u1', 'missing', true)
+      expect(getTaskHubState().savedViews.map((v) => v.id)).toEqual([
+        'u1',
+        'u2'
+      ])
     })
   })
 
