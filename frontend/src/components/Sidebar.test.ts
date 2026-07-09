@@ -465,4 +465,53 @@ describe('Sidebar', () => {
 
     expect(mocks.createPage).not.toHaveBeenCalled()
   })
+
+  // #489: the context menu clamps into the viewport (clampToViewport) and
+  // dismisses on scroll / resize / Escape. The clampToViewport math is covered
+  // by lib/editor/popoverPositioning.test.ts; the dismissal $effect mirrors the
+  // tasks sidebar's (covered by silt-tasks/Sidebar.test.ts). This test exercises
+  // the main sidebar's menu end-to-end.
+  it('context menu dismisses on scroll / resize / Escape (#489)', async () => {
+    mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const pageRow = screen.getByText('Daily')
+    const pageBtn = pageRow.closest('button')!
+    // Scroll (capture phase) dismisses the one-shot menu.
+    await fireEvent.contextMenu(pageBtn)
+    await flush()
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flush()
+    expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
+
+    // Re-open and verify resize dismissal.
+    await fireEvent.contextMenu(pageBtn)
+    await flush()
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+    window.dispatchEvent(new Event('resize'))
+    await flush()
+    expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
+
+    // Re-open and verify Escape dismissal.
+    await fireEvent.contextMenu(pageBtn)
+    await flush()
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
+  })
 })

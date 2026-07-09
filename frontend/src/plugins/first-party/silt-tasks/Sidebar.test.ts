@@ -789,6 +789,45 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(screen.queryByTestId('manage-view-menu')).toBeNull()
   })
 
+  // --- #489: dismiss the one-shot context menu on scroll / resize ----------
+  it('dismisses the manage menu on scroll (#489)', async () => {
+    const u1: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([u1])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    expect(screen.getByTestId('manage-view-menu')).toBeInTheDocument()
+    // A scroll in any container dismisses via the capture-phase listener —
+    // the menu's anchor is a one-shot position, not a tracked element.
+    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flush()
+    expect(screen.queryByTestId('manage-view-menu')).toBeNull()
+  })
+
+  it('dismisses the manage menu on window resize (#489)', async () => {
+    const u1: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([u1])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    expect(screen.getByTestId('manage-view-menu')).toBeInTheDocument()
+    window.dispatchEvent(new Event('resize'))
+    await flush()
+    expect(screen.queryByTestId('manage-view-menu')).toBeNull()
+  })
+
   it('active view shows a dirty dot when savedViewsDirty is true', async () => {
     seedSavedViews()
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
