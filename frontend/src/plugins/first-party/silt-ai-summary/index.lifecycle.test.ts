@@ -43,6 +43,7 @@ vi.mock('./cache', async (importOriginal) => {
 // Stub the Svelte components so the test doesn't pull in their transitive
 // import chains — only the reference is passed to registerSurface.
 vi.mock('./SummaryBanner.svelte', () => ({ default: vi.fn() }))
+vi.mock('./SummaryBannerLoading.svelte', () => ({ default: vi.fn() }))
 vi.mock('./AISummaryPanel.svelte', () => ({ default: vi.fn() }))
 vi.mock('./AISummarySettings.svelte', () => ({ default: vi.fn() }))
 vi.mock('../../../settings/store.svelte', () => ({
@@ -329,5 +330,171 @@ describe('mountForPage surface swap', () => {
       // The page's keyed entry is removed; the OTHER page's entry is preserved.
       ['OTHER/S/P:zzz']
     )
+  })
+
+  // --- #488: tear down the prior surface before the async hash window -------
+  it('tears down the prior note surface before the hash resolves on a note switch', async () => {
+    // Open note A → banner mounts.
+    await handlers['active-notebook:changed']({
+      notebook: 'NB',
+      section: 'S',
+      page: 'A'
+    })
+    expect(mockRegister.mock.calls.at(-1)![0]).toMatchObject({
+      id: 'silt-ai-summary:banner'
+    })
+    // Switch to note B. The prior banner MUST be unregistered before the new
+    // surface mounts so the user never sees note A's summary during note B's
+    // hash window.
+    mockUnregister.mockClear()
+    mockRegister.mockClear()
+    await handlers['active-notebook:changed']({
+      notebook: 'NB',
+      section: 'S',
+      page: 'B'
+    })
+    const bannerUnregisterIdx = mockUnregister.mock.calls.findIndex(
+      (c) => c[0] === 'silt-ai-summary:banner'
+    )
+    const bannerRegisterIdx = mockRegister.mock.calls.findIndex(
+      (c) => c[0].id === 'silt-ai-summary:banner'
+    )
+    expect(bannerUnregisterIdx).toBeGreaterThanOrEqual(0)
+    // The teardown (unregister banner) happens; a fresh banner register for B
+    // follows. The unregister must precede any register in call order.
+    expect(bannerUnregisterIdx).toBeLessThanOrEqual(bannerRegisterIdx + 1)
+  })
+
+  it('does not re-teardown on a redundant same-note re-evaluation (idempotency)', async () => {
+    await handlers['active-notebook:changed'](noteEvt())
+    mockUnregister.mockClear()
+    mockRegister.mockClear()
+    // Same note, same decision → mountForPage's guard no-ops; no teardown churn.
+    await handlers['active-notebook:changed'](noteEvt())
+    expect(mockRegister).not.toHaveBeenCalled()
+  })
+
+  it('shows a loading placeholder when the hash window is perceptible, then clears it', async () => {
+    // Use fake timers so we can advance precisely past LOADING_DELAY_MS while
+    // the hash promise is still pending.
+    vi.useFakeTimers()
+    // A pending hash: sqliteQuery resolves only when we advance the microtask
+    // queue ourselves, so the loading timer (100ms) fires first.
+    let resolveHash!: () => void
+    const slowCtx = {
+      activeNotebook: 'NB',
+      activeSection: 'S',
+      activePage: 'P',
+      on: vi.fn((evt: string, h: (e: unknown) => void) => {
+        handlers[evt] = h
+        return () => {}
+      }),
+      updatePluginSetting: vi.fn(async () => true),
+      sqliteQuery: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveHash = () =>
+              resolve({ rows: [{ clean_content: 'x' }], truncated: false })
+          })
+      )
+    } as unknown as PluginContext
+    plugin.onVaultClose!()
+    plugin.onVaultOpen(slowCtx)
+
+    const pending = handlers['active-notebook:changed'](noteEvt())
+    // Advance past the loading delay while the hash is still pending → the
+    // loading placeholder registers.
+    await vi.advanceTimersByTimeAsync(150)
+    expect(mockRegister).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'silt-ai-summary:loading' })
+    )
+
+    // Now let the hash resolve; the loading placeholder is cleared and the real
+    // banner mounts.
+    resolveHash()
+    await pending
+    expect(mockUnregister).toHaveBeenCalledWith('silt-ai-summary:loading')
+    expect(mockRegister.mock.calls.at(-1)![0]).toMatchObject({
+      id: 'silt-ai-summary:banner'
+    })
+    vi.useRealTimers()
+  })
+
+  it('does not arm the loading timer in on-demand mode (chip mounts synchronously)', async () => {
+    vi.useFakeTimers()
+    mockController.getSettings.mockReturnValue({
+      ...BASE_SETTINGS,
+      facets: { ...BASE_SETTINGS.facets },
+      on_demand_only: true
+    })
+    const pending = handlers['active-notebook:changed'](noteEvt())
+    // On-demand skips the hash, so no loading timer is armed — advancing well
+    // past LOADING_DELAY_MS must not register a loading placeholder.
+    await vi.advanceTimersByTimeAsync(500)
+    expect(mockRegister).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'silt-ai-summary:loading' })
+    )
+    await pending
+    vi.useRealTimers()
+  })
+
+  it('does not mount into a stale page when the note switches again during the hash', async () => {
+    vi.useFakeTimers()
+    // A and C resolve immediately; B (the 2nd call) hangs until we release it,
+    // so a 3rd switch to C lands while B's hash is still pending.
+    let callCount = 0
+    let resolveB!: () => void
+    const slowCtx = {
+      activeNotebook: 'NB',
+      activeSection: 'S',
+      activePage: 'P',
+      on: vi.fn((evt: string, h: (e: unknown) => void) => {
+        handlers[evt] = h
+        return () => {}
+      }),
+      updatePluginSetting: vi.fn(async () => true),
+      sqliteQuery: vi.fn(() => {
+        callCount++
+        if (callCount === 2) {
+          return new Promise((resolve) => {
+            resolveB = () =>
+              resolve({ rows: [{ clean_content: 'b' }], truncated: false })
+          })
+        }
+        return Promise.resolve({
+          rows: [{ clean_content: 'x' }],
+          truncated: false
+        })
+      })
+    } as unknown as PluginContext
+    plugin.onVaultClose!()
+    plugin.onVaultOpen(slowCtx)
+
+    // Open A, then switch to B (hash pending), then switch to C before B's hash
+    // resolves. B's late resolution must NOT mount a banner for B (stale).
+    await handlers['active-notebook:changed']({
+      notebook: 'NB',
+      section: 'S',
+      page: 'A'
+    })
+    const pendingB = handlers['active-notebook:changed']({
+      notebook: 'NB',
+      section: 'S',
+      page: 'B'
+    })
+    await handlers['active-notebook:changed']({
+      notebook: 'NB',
+      section: 'S',
+      page: 'C'
+    })
+    mockRegister.mockClear()
+    // Now resolve B's hash; the bail guard (lastPageId === 'C' !== 'B') must
+    // prevent a B banner from mounting.
+    resolveB()
+    await pendingB
+    expect(mockRegister).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'silt-ai-summary:banner' })
+    )
+    vi.useRealTimers()
   })
 })

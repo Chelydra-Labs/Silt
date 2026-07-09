@@ -22,6 +22,7 @@ import { registerSurface, unregisterSurface } from '../../surfaces'
 import AISummaryPanel from './AISummaryPanel.svelte'
 import AISummarySettings from './AISummarySettings.svelte'
 import SummaryBanner from './SummaryBanner.svelte'
+import SummaryBannerLoading from './SummaryBannerLoading.svelte'
 import { createSummaryController, type SummaryController } from './state.svelte'
 import { resetCacheState } from './cache'
 import { computeContentHash } from './cache'
@@ -54,6 +55,13 @@ export const manifest: PluginManifest = {
 // rather than re-hardcoding the literal (which drifted once and broke focus).
 export const BANNER_SURFACE_ID = 'silt-ai-summary:banner'
 const REOPEN_SURFACE_ID = 'silt-ai-summary:reopen'
+// Transient skeleton shown in the banner slot only when the content-hash
+// window on a note switch is perceptible (>LOADING_DELAY_MS); see index.ts.
+const LOADING_SURFACE_ID = 'silt-ai-summary:loading'
+// If the hash resolves faster than this, no loading placeholder is shown — the
+// common case (SQLite read + SHA-256 is typically <20ms). Above it, an empty
+// banner slot would read as frozen, so the skeleton bridges the gap (#488).
+const LOADING_DELAY_MS = 100
 const PLUGIN_ID = 'silt-ai-summary'
 
 // Module-level controller + event unsubs. One active vault at a time; reset on
@@ -73,6 +81,16 @@ export function getController(): SummaryController | null {
 
 function pageIdOf(notebook: string, section: string, page: string): string {
   return `${notebook}/${section}/${page}`
+}
+
+/** Tear down every ai-summary surface (banner, re-open chip, loading
+ *  placeholder) and reset the idempotency guard. The single source of truth for
+ *  teardown so the note-switch path and vault-close path can't drift. */
+function teardownSurfaces() {
+  unregisterSurface(BANNER_SURFACE_ID)
+  unregisterSurface(REOPEN_SURFACE_ID)
+  unregisterSurface(LOADING_SURFACE_ID)
+  mountedKind = null
 }
 
 /** Hash the page's current content so dismissal can be keyed by
@@ -111,9 +129,11 @@ function mountForPage(
 ) {
   const want = decideMountKind(opts)
   if (mountedKind === want) return
-  // Swap: tear down whichever surface is up, then mount the other.
+  // Swap: tear down whichever surface is up (incl. any lingering loading
+  // placeholder from a note-switch hash window), then mount the other.
   unregisterSurface(BANNER_SURFACE_ID)
   unregisterSurface(REOPEN_SURFACE_ID)
+  unregisterSurface(LOADING_SURFACE_ID)
   if (want === 'banner') {
     registerSurface({
       id: BANNER_SURFACE_ID,
@@ -206,8 +226,38 @@ export default {
       if (lastPageId) controller.cancelPending(lastPageId)
       if (!evt.notebook || !evt.page) return
       const id = pageIdOf(evt.notebook, evt.section, evt.page)
+      // Only a GENUINE note change tears the prior surface down before the async
+      // hash. The dispatcher guards against redundant same-note events, but a
+      // same-note re-evaluation (e.g. a settings tweak re-fired here) must keep
+      // the current surface up so mountForPage's idempotency guard can no-op an
+      // unchanged decision or swap on a changed one — tearing down would reset
+      // mountedKind and force a needless flicker.
+      const isNoteChange = id !== lastPageId
       lastPageId = id
       const s = controller.getSettings()
+
+      let loadingTimer: ReturnType<typeof setTimeout> | null = null
+      if (isNoteChange) {
+        // Tear down the prior note's surface BEFORE the async hash so the user
+        // never sees a stale summary from the previous note during the hash
+        // window (#488).
+        teardownSurfaces()
+        // Bridge the hash window with a skeleton only if it is perceptible.
+        // For the common sub-LOADING_DELAY_MS case the timer is cancelled
+        // before it fires and the user sees no flicker; on a slow read (large
+        // note / linked disk) the slot reads as loading rather than frozen.
+        loadingTimer = setTimeout(() => {
+          registerSurface({
+            id: LOADING_SURFACE_ID,
+            pluginID: PLUGIN_ID,
+            kind: 'note-banner',
+            label: 'AI summary',
+            icon: 'auto_awesome',
+            component: SummaryBannerLoading
+          })
+        }, LOADING_DELAY_MS)
+      }
+
       // Fetch + hash the content so dismissal is keyed by content hash (#455).
       // In on-demand mode the chip mounts regardless, so skip the SQLite read.
       const hash = s.on_demand_only
@@ -217,6 +267,14 @@ export default {
             section: evt.section,
             page: evt.page
           })
+
+      // Cancel the loading bridge and clear it so the real surface mounts into
+      // a clean slot. (No-op when this was a same-note re-evaluation.)
+      if (loadingTimer) {
+        clearTimeout(loadingTimer)
+        unregisterSurface(LOADING_SURFACE_ID)
+      }
+
       // The vault may close or the user may switch notes during the async
       // hash; bail so we don't mount into a torn-down vault or a stale page.
       if (!controller || lastPageId !== id) return
@@ -259,8 +317,7 @@ export default {
     offSave = null
     offActiveNotebook = null
     offConfigChanged = null
-    unregisterSurface(BANNER_SURFACE_ID)
-    unregisterSurface(REOPEN_SURFACE_ID)
+    teardownSurfaces()
     controller?.dispose()
     controller = null
     lastPageId = null
