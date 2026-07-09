@@ -198,22 +198,32 @@
         class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
       >
         <h3
+          id="ai-summary-trigger-label"
           class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
         >
           Generation Trigger
         </h3>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <button
-            type="button"
-            class="flex items-start gap-3 p-3.5 rounded-lg border text-left transition-all duration-150 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 {draft.auto_on_open &&
+        <div
+          role="radiogroup"
+          aria-labelledby="ai-summary-trigger-label"
+          class="grid grid-cols-1 sm:grid-cols-2 gap-3"
+        >
+          <label
+            class="flex items-start gap-3 p-3.5 rounded-lg border text-left transition-all duration-150 cursor-pointer select-none focus-within:ring-2 focus-within:ring-accent-primary-start/60 focus-within:outline-none {draft.auto_on_open &&
             !draft.on_demand_only
               ? 'bg-accent-primary-glow/20 border-accent-primary-start text-accent-primary-start'
               : 'bg-surface-panel border-surface-panel-border text-text-muted hover:border-border-active hover:text-text-primary'}"
-            onclick={() => {
-              void write('auto_on_open', true)
-              void write('on_demand_only', false)
-            }}
           >
+            <input
+              type="radio"
+              name="ai-summary-trigger"
+              class="sr-only"
+              checked={draft.auto_on_open && !draft.on_demand_only}
+              onchange={() => {
+                void write('auto_on_open', true)
+                void write('on_demand_only', false)
+              }}
+            />
             <span
               class="material-symbols-outlined text-[20px] flex-shrink-0 mt-0.5"
               >autorenew</span
@@ -228,18 +238,23 @@
                 >Generates or refreshes a summary as soon as you open a note.</span
               >
             </div>
-          </button>
+          </label>
 
-          <button
-            type="button"
-            class="flex items-start gap-3 p-3.5 rounded-lg border text-left transition-all duration-150 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 {draft.on_demand_only
+          <label
+            class="flex items-start gap-3 p-3.5 rounded-lg border text-left transition-all duration-150 cursor-pointer select-none focus-within:ring-2 focus-within:ring-accent-primary-start/60 focus-within:outline-none {draft.on_demand_only
               ? 'bg-accent-primary-glow/20 border-accent-primary-start text-accent-primary-start'
               : 'bg-surface-panel border-surface-panel-border text-text-muted hover:border-border-active hover:text-text-primary'}"
-            onclick={() => {
-              void write('on_demand_only', true)
-              void write('auto_on_open', false)
-            }}
           >
+            <input
+              type="radio"
+              name="ai-summary-trigger"
+              class="sr-only"
+              checked={draft.on_demand_only}
+              onchange={() => {
+                void write('on_demand_only', true)
+                void write('auto_on_open', false)
+              }}
+            />
             <span
               class="material-symbols-outlined text-[20px] flex-shrink-0 mt-0.5"
               >ads_click</span
@@ -255,7 +270,7 @@
                 Regenerate.</span
               >
             </div>
-          </button>
+          </label>
         </div>
       </div>
 
@@ -302,7 +317,7 @@
               {@const active =
                 draft.facets[key as keyof SummarySettings['facets']]}
               <label
-                class="flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-all duration-150 cursor-pointer select-none {active
+                class="flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-all duration-150 cursor-pointer select-none focus-within:ring-2 focus-within:ring-accent-primary-start/60 focus-within:outline-none {active
                   ? 'bg-accent-primary-glow/20 border-accent-primary-start text-accent-primary-start'
                   : 'bg-surface-panel border-surface-panel-border text-text-muted hover:border-border-active hover:text-text-primary'}"
               >

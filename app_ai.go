@@ -449,6 +449,49 @@ func (a *App) ClearAIAPIKey(which string) error {
 	return nil
 }
 
+// CopyAIAPIKey migrates a provider's API key into the other role's slot
+// entirely server-side, so the secret never crosses to the renderer. It backs
+// the "Sync providers" toggle: switching sync on should make embedding share
+// chat's existing key without forcing the user to re-enter it, and the frontend
+// has no way to read the key value (GetAIProviderConfig exposes only HasKey).
+//
+// No-op (returns nil) when the source has no key, so toggling sync for a
+// keyless provider does not error or clobber the destination. Resolves the
+// source via the same keyring-first/config-fallback path as every other key
+// read, then routes the store through SetAIAPIKey (which handles keyring-vs-
+// config placement, model-cache invalidation, and saveConfigTracked).
+func (a *App) CopyAIAPIKey(from, to string) error {
+	if err := aiValidateWhich(from); err != nil {
+		return err
+	}
+	if err := aiValidateWhich(to); err != nil {
+		return err
+	}
+	if from == to {
+		return nil
+	}
+	a.vaultMu.RLock()
+	if a.vaultPath == "" {
+		a.vaultMu.RUnlock()
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.RLock()
+	useKeyring := a.aiUseKeyringLocked()
+	fromUser := a.aiKeyringUser(from)
+	fromConfigKey := aiConfigBlock(a.cfg.AI, from).APIKey
+	a.configMu.RUnlock()
+	a.vaultMu.RUnlock()
+	// Resolve the source key with no locks held (the keyring may be slow or
+	// unavailable), then store it into the destination via the standard path.
+	// Locks are fully released before SetAIAPIKey re-acquires them — no
+	// re-entrancy on the RWMutex.
+	key, _ := a.resolveAIKeyUnlocked(fromUser, useKeyring, fromConfigKey)
+	if key == "" {
+		return nil
+	}
+	return a.SetAIAPIKey(to, key)
+}
+
 // SetUseKeyring toggles whether AI provider keys are stored in the OS keyring
 // (default true) vs plaintext config.yaml (#218). When turning keyring ON with
 // a keyring store present and a key already in config, it migrates that key into

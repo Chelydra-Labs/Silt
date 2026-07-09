@@ -90,6 +90,71 @@ func TestSetAndClearAIAPIKey(t *testing.T) {
 	}
 }
 
+func TestCopyAIAPIKey_PropagatesSourceKeyServerSide(t *testing.T) {
+	// The "Sync providers" toggle promises to share chat's existing key with
+	// embedding without re-entry. CopyAIAPIKey does this server-side so the
+	// secret never reaches the renderer (which can only see HasKey).
+	app := newTestApp(t)
+	if err := app.SetAIAPIKey("chat", "chat-secret"); err != nil {
+		t.Fatalf("SetAIAPIKey: %v", err)
+	}
+	if err := app.CopyAIAPIKey("chat", "embedding"); err != nil {
+		t.Fatalf("CopyAIAPIKey: %v", err)
+	}
+	app.configMu.RLock()
+	emb := app.cfg.AI.Embedding.APIKey
+	app.configMu.RUnlock()
+	if emb != "chat-secret" {
+		t.Errorf("embedding key should be copied from chat, got %q", emb)
+	}
+	// And the public view reflects it.
+	pub, err := app.GetAIProviderConfig()
+	if err != nil {
+		t.Fatalf("GetAIProviderConfig: %v", err)
+	}
+	if !pub.Embedding.HasKey {
+		t.Error("Embedding.HasKey should be true after the copy")
+	}
+}
+
+func TestCopyAIAPIKey_NoopWhenSourceHasNoKey(t *testing.T) {
+	// Toggling sync for a keyless provider must not error or clobber an
+	// existing destination key.
+	app := newTestApp(t)
+	if err := app.SetAIAPIKey("embedding", "emb-secret"); err != nil {
+		t.Fatalf("SetAIAPIKey: %v", err)
+	}
+	if err := app.CopyAIAPIKey("chat", "embedding"); err != nil {
+		t.Fatalf("CopyAIAPIKey from keyless chat: %v", err)
+	}
+	app.configMu.RLock()
+	emb := app.cfg.AI.Embedding.APIKey
+	app.configMu.RUnlock()
+	if emb != "emb-secret" {
+		t.Errorf("destination key should be untouched, got %q", emb)
+	}
+}
+
+func TestCopyAIAPIKey_SameRoleIsNoop(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.SetAIAPIKey("chat", "chat-secret"); err != nil {
+		t.Fatalf("SetAIAPIKey: %v", err)
+	}
+	if err := app.CopyAIAPIKey("chat", "chat"); err != nil {
+		t.Fatalf("CopyAIAPIKey same-role: %v", err)
+	}
+}
+
+func TestCopyAIAPIKey_RejectsBadWhich(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.CopyAIAPIKey("bogus", "embedding"); err == nil {
+		t.Error("CopyAIAPIKey should reject an unknown source role")
+	}
+	if err := app.CopyAIAPIKey("chat", "bogus"); err == nil {
+		t.Error("CopyAIAPIKey should reject an unknown destination role")
+	}
+}
+
 func TestUpdateAIProviderConfig_RejectsBadWhich(t *testing.T) {
 	app := newTestApp(t)
 	if err := app.UpdateAIProviderConfig("bogus", AIProviderPatch{}); err == nil {

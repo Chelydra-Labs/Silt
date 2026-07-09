@@ -19,6 +19,7 @@
     GetAIProviderConfig,
     UpdateAIProviderConfig,
     SetAIAPIKey,
+    CopyAIAPIKey,
     ClearAIAPIKey,
     SetUseKeyring,
     TestAIConnection,
@@ -98,14 +99,6 @@
   let manualModel = $state<Record<Which, boolean>>({
     chat: false,
     embedding: false
-  })
-
-  // Element refs. Wrapped in $state so Svelte 5's bind:this doesn't
-  // warn about non-reactive bindings; we only use these to focus the
-  // input on the "Replace" affordance click, never to render from.
-  let keyInputRefs = $state<Record<Which, HTMLInputElement | null>>({
-    chat: null,
-    embedding: null
   })
 
   // Audit log state. Loaded lazily on first expand of the audit
@@ -303,6 +296,10 @@
 
     const updateOne = async (w: Which, t: ProviderType) => {
       const b = config![w]
+      // No-op when re-selecting the current type: avoids wiping the cached
+      // model list and firing an unnecessary ListModels network poll against
+      // the same endpoint.
+      if (b.provider_type === t) return true
       const oldDefault = providerDefaultURL(b.provider_type)
       b.provider_type = t
       const nativeTarget = t === 'google' || t === 'anthropic'
@@ -347,12 +344,6 @@
       default:
         return OPENAI_DEFAULT
     }
-  }
-
-  // Cloud providers (google/anthropic/openai-compatible) send content off-device;
-  // only "local" stays on-machine.
-  function isCloudProvider(type: string): boolean {
-    return type !== 'local'
   }
 
   // Anthropic has no native embeddings endpoint — the embedding block should
@@ -487,21 +478,62 @@
   }
 
   async function toggleSyncProviders(on: boolean) {
-    syncProviders = on
-    if (on && config) {
-      config.embedding.provider_type = config.chat.provider_type
-      config.embedding.base_url = config.chat.base_url
-      config.embedding.has_key = config.chat.has_key
-
-      modelLists['embedding'] = []
-      modelError['embedding'] = null
-      manualModel['embedding'] = false
-
-      const persisted = await persistProvider('embedding')
-      if (persisted.ok) {
-        void refreshModels('embedding')
-      }
+    if (!on) {
+      syncProviders = false
+      return
     }
+    if (!config) {
+      syncProviders = true
+      return
+    }
+    // Flip sync on optimistically so the toggle tracks the user's click
+    // immediately; rolled back below if the persist or key copy fails.
+    syncProviders = true
+    // Sync the embedding slot to chat. Anthropic has no embeddings endpoint,
+    // so embedding falls back to local (mirrors selectProviderType) rather than
+    // persisting a provider_type that can never serve embeddings.
+    const chatSupportsEmbed = supportsEmbeddings(config.chat.provider_type)
+    config.embedding.provider_type = chatSupportsEmbed
+      ? config.chat.provider_type
+      : ('local' as ProviderType)
+    config.embedding.base_url = chatSupportsEmbed
+      ? config.chat.base_url
+      : providerDefaultURL('local')
+
+    modelLists['embedding'] = []
+    modelError['embedding'] = null
+    manualModel['embedding'] = false
+
+    const persisted = await persistProvider('embedding')
+    if (!persisted.ok) {
+      // Roll back the optimistic toggle and surface the failure — every other
+      // failure path in this tab surfaces its error; swallowing it left the UI
+      // claiming sync was on while the backend embedding config was stale.
+      syncProviders = false
+      loadError = persisted.message
+      return
+    }
+
+    // Share chat's existing key with embedding server-side. The frontend can
+    // only see has_key (never the value), so this goes through a backend copy
+    // binding rather than re-entering the secret. Skipped for the local
+    // fallback (Ollama is keyless) and when chat has no key.
+    if (chatSupportsEmbed && config.chat.has_key) {
+      try {
+        await CopyAIAPIKey('chat', 'embedding')
+        config.embedding.has_key = true
+      } catch (e) {
+        // Copy failed (e.g. keyring unavailable): don't lie about the key.
+        // Roll back and surface it so the user knows to re-enter the key.
+        syncProviders = false
+        loadError = `Failed to share the API key: ${e instanceof Error ? e.message : String(e)}`
+        return
+      }
+    } else {
+      config.embedding.has_key = config.chat.has_key && chatSupportsEmbed
+    }
+
+    void refreshModels('embedding')
   }
 
   // --- Audit log --------------------------------------------------------
@@ -653,7 +685,10 @@
         class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
       >
         <div class="space-y-0.5">
-          <span class="text-text-primary text-[13px] font-semibold block">
+          <span
+            id="sync-providers-label"
+            class="text-text-primary text-[13px] font-semibold block"
+          >
             Sync chat and embedding providers
           </span>
           <span class="text-text-muted text-[11px] font-label-sm block">
@@ -669,6 +704,7 @@
             id="sync-providers-toggle"
             type="checkbox"
             class="keyring-switch peer sr-only"
+            aria-labelledby="sync-providers-label"
             checked={syncProviders}
             onchange={(e) => void toggleSyncProviders(e.currentTarget.checked)}
           />
@@ -721,7 +757,6 @@
       {@const typeLabel =
         which === 'chat' ? 'Chat Provider Type' : 'Embedding Provider Type'}
       {@const isLocal = b.provider_type === 'local'}
-      {@const isCloud = isCloudProvider(b.provider_type)}
       {@const embedUnsupported =
         which === 'embedding' && !supportsEmbeddings(b.provider_type)}
       {@const testingNow = testing[which]}
@@ -847,7 +882,6 @@
                 id="{idPrefix}-key"
                 type={showKey[which] ? 'text' : 'password'}
                 bind:value={apiKeyInputs[which]}
-                bind:this={keyInputRefs[which]}
                 autocomplete="off"
                 spellcheck="false"
                 placeholder={b.has_key
@@ -1689,7 +1723,7 @@
               <button
                 type="button"
                 onclick={() => void clearAudit()}
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted font-label-sm-bold hover:text-error hover:border-error/50 transition-colors cursor-pointer focus:outline-none"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted font-label-sm-bold hover:text-error hover:border-error/50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
               >
                 <span
                   class="material-symbols-outlined text-[16px]"

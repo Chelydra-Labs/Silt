@@ -86,6 +86,7 @@ const mocks = vi.hoisted(() => {
     GetAIProviderConfig: vi.fn(),
     UpdateAIProviderConfig: vi.fn(),
     SetAIAPIKey: vi.fn(),
+    CopyAIAPIKey: vi.fn(),
     ClearAIAPIKey: vi.fn(),
     SetUseKeyring: vi.fn(),
     TestAIConnection: vi.fn(),
@@ -99,6 +100,7 @@ vi.mock('../../../wailsjs/go/main/App.js', () => ({
   GetAIProviderConfig: mocks.GetAIProviderConfig,
   UpdateAIProviderConfig: mocks.UpdateAIProviderConfig,
   SetAIAPIKey: mocks.SetAIAPIKey,
+  CopyAIAPIKey: mocks.CopyAIAPIKey,
   ClearAIAPIKey: mocks.ClearAIAPIKey,
   SetUseKeyring: mocks.SetUseKeyring,
   TestAIConnection: mocks.TestAIConnection,
@@ -115,6 +117,7 @@ describe('AIProviderTab', () => {
     mocks.GetAIProviderConfig.mockReset()
     mocks.UpdateAIProviderConfig.mockReset()
     mocks.SetAIAPIKey.mockReset()
+    mocks.CopyAIAPIKey.mockReset()
     mocks.ClearAIAPIKey.mockReset()
     mocks.SetUseKeyring.mockReset()
     mocks.TestAIConnection.mockReset()
@@ -127,6 +130,7 @@ describe('AIProviderTab', () => {
     )
     mocks.UpdateAIProviderConfig.mockResolvedValue(undefined)
     mocks.SetAIAPIKey.mockResolvedValue(undefined)
+    mocks.CopyAIAPIKey.mockResolvedValue(undefined)
     mocks.ClearAIAPIKey.mockResolvedValue(undefined)
     mocks.SetUseKeyring.mockResolvedValue(undefined)
     mocks.TestAIConnection.mockResolvedValue({
@@ -760,6 +764,94 @@ describe('AIProviderTab', () => {
       await waitFor(() =>
         expect(mocks.SetAIAPIKey).toHaveBeenCalledWith('chat', 'sk-enter')
       )
+    })
+  })
+
+  describe('sync providers', () => {
+    // The default mock config has mismatched providers (chat=openai-compatible
+    // with a key, embedding=local without), so syncProviders loads as false and
+    // the toggle is the way to drive the sync-on path.
+
+    it('toggling sync on shares the chat key with embedding server-side', async () => {
+      render(AIProviderTab)
+      await ready()
+
+      const toggle = document.getElementById(
+        'sync-providers-toggle'
+      ) as HTMLInputElement
+      await fireEvent.click(toggle)
+
+      // Embedding adopts chat's provider type (openai-compatible supports
+      // embeddings) and is persisted...
+      await waitFor(() =>
+        expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+          'embedding',
+          expect.objectContaining({ provider_type: 'openai-compatible' })
+        )
+      )
+      // ...and the chat key is copied into the embedding slot without the
+      // secret ever crossing to the renderer (CopyAIAPIKey, not SetAIAPIKey
+      // with a value).
+      await waitFor(() =>
+        expect(mocks.CopyAIAPIKey).toHaveBeenCalledWith('chat', 'embedding')
+      )
+    })
+
+    it('falls the embedding provider back to local for an Anthropic chat and skips the key copy', async () => {
+      mocks.configState.chat.provider_type = 'anthropic'
+      mocks.configState.chat.base_url = 'https://api.anthropic.com'
+      mocks.configState.chat.has_key = true
+      mocks.GetAIProviderConfig.mockResolvedValue(
+        structuredClone(mocks.configState)
+      )
+      render(AIProviderTab)
+      await ready()
+
+      const toggle = document.getElementById(
+        'sync-providers-toggle'
+      ) as HTMLInputElement
+      await fireEvent.click(toggle)
+
+      // Anthropic has no embeddings endpoint — embedding must persist as local.
+      await waitFor(() =>
+        expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+          'embedding',
+          expect.objectContaining({
+            provider_type: 'local',
+            base_url: 'http://localhost:11434'
+          })
+        )
+      )
+      // Local (Ollama) is keyless, so no key is copied.
+      expect(mocks.CopyAIAPIKey).not.toHaveBeenCalled()
+    })
+
+    it('rolls back the toggle and surfaces an error when the embedding persist fails', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mocks.UpdateAIProviderConfig.mockRejectedValueOnce(
+        new Error('persist failed')
+      )
+      try {
+        render(AIProviderTab)
+        await ready()
+
+        const toggle = document.getElementById(
+          'sync-providers-toggle'
+        ) as HTMLInputElement
+        await fireEvent.click(toggle)
+
+        // The failure must surface (every other path does) and the optimistic
+        // toggle roll back so the UI doesn't claim sync is on while the backend
+        // embedding config is stale.
+        await waitFor(() =>
+          expect(
+            screen.getByText(/failed to save provider settings/i)
+          ).toBeInTheDocument()
+        )
+        expect(toggle.checked).toBe(false)
+      } finally {
+        consoleSpy.mockRestore()
+      }
     })
   })
 

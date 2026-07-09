@@ -124,6 +124,28 @@ describe('AISummarySettings', () => {
     )
   })
 
+  it('exposes the generation trigger as an accessible radiogroup', async () => {
+    const ctx = makeCtx()
+    const { findAllByRole, findByRole } = render(AISummarySettings, {
+      props: {
+        ctx,
+        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
+      }
+    })
+    const group = await findByRole('radiogroup', {
+      name: /generation trigger/i
+    })
+    const radios = await findAllByRole('radio')
+    expect(radios).toHaveLength(2)
+    // Default settings (auto_on_open=true, on_demand_only=false) → "auto" checked.
+    const withinGroup = radios.filter((r) => group.contains(r))
+    expect(withinGroup).toHaveLength(2)
+    const autoRadio = withinGroup.find((r) =>
+      (r.closest('label')?.textContent ?? '').includes('Automatically on open')
+    )!
+    expect(autoRadio).toBeChecked()
+  })
+
   it('toggling a facet persists the whole facets object', async () => {
     const ctx = makeCtx()
     const { findAllByRole } = render(AISummarySettings, {
