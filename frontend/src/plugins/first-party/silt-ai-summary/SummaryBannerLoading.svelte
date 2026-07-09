@@ -6,15 +6,20 @@
    * Mounting the real SummaryBanner requires the content hash (so dismissal is
    * keyed by `${pageId}:${contentHash}` #455), and that hash is async (a SQLite
    * read + SHA-256). To avoid a stale flash of the PRIOR note's summary during
-   * that window, index.ts tears the prior surface down immediately on note
-   * switch and registers this placeholder only if the hash window is perceptible
-   * (>100ms); for the common sub-100ms case the timer never fires and the user
-   * sees no flicker. The real banner/chip replaces it the moment the hash
-   * resolves.
+   * that window, index.ts tears the prior surface down and registers this
+   * placeholder immediately — it occupies the slot from t=0 so the editor
+   * content below doesn't reflow (the banner stack has no min-height), while
+   * staying invisible for LOADING_FADE_DELAY then fading in. A fast hash (the
+   * common sub-delay case) resolves before the skeleton paints, so the user
+   * sees no flicker; a slow read (large note / linked disk) gets a smooth
+   * fade-in instead of a hard empty gap. The real banner/chip replaces it the
+   * moment the hash resolves.
    *
    * Intentionally inert: no controller reads, no dismiss affordance, no
    * generation — it is pure chrome reused from SummaryBanner so the slot reads
-   * as the same surface kind while the real one materializes.
+   * as the same surface kind while the real one materializes. The CSS rules
+   * mirror SummaryBanner's `.summary-banner`/`.head`/`.lead-icon`/`.body`/
+   * `.skeleton` verbatim so the swap is visually continuous.
    */
   import type { PluginContext } from '../../sdk'
 
@@ -25,7 +30,7 @@
   let { ctx: _ctx, onDismiss: _onDismiss }: Props = $props()
 </script>
 
-<section class="summary-banner is-loading" aria-label="Loading AI summary">
+<section class="summary-banner" aria-label="Loading AI summary">
   <header class="head">
     <span class="lead-icon material-symbols-outlined" aria-hidden="true"
       >auto_awesome</span
@@ -37,13 +42,12 @@
       </div>
     </div>
   </header>
-  <span class="sr-only" aria-live="polite">Loading summary…</span>
 </section>
 
 <style>
-  /* Mirrors SummaryBanner's chrome + skeleton exactly so the loading slot is
-     visually continuous with the real banner. Kept inline (not shared) because
-     SummaryBanner owns its styles and this is the only other consumer. */
+  /* Mirrors SummaryBanner's chrome + skeleton so the loading slot is visually
+     continuous with the real banner. The only addition is the delayed fade-in
+     (below), which keeps the placeholder invisible for a fast hash. */
   .summary-banner {
     display: flex;
     flex-direction: column;
@@ -60,24 +64,35 @@
     color: var(--color-text-primary);
     font-size: 0.82rem;
     line-height: 1.45;
+    position: relative;
+    /* Stay invisible during the fade-in delay so a fast hash resolves before
+       the skeleton ever paints. `forwards` holds opacity:1 once faded in. */
+    opacity: 0;
+    animation: loading-fade-in 160ms ease-out 100ms forwards;
   }
 
   .head {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
+    gap: 10px;
+    min-width: 0;
   }
 
   .lead-icon {
     font-size: 18px;
-    line-height: 1.45;
+    line-height: 1.4;
     color: var(--color-accent-primary-start);
     flex-shrink: 0;
+    margin-top: 1px;
   }
 
   .body {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-self: center;
   }
 
   .skeleton {
@@ -113,19 +128,17 @@
     }
   }
 
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
+  @keyframes loading-fade-in {
+    to {
+      opacity: 1;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .summary-banner {
+      opacity: 1;
+      animation: none;
+    }
     .sk-line {
       animation: none;
     }

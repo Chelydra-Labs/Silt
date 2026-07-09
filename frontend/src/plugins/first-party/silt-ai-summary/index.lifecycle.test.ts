@@ -5,23 +5,36 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // index.test.ts; this pins the registerSurface/unregisterSurface call sequence
 // for the banner↔chip transition + the idempotency guard.
 
-const { mockRegister, mockUnregister, mockController, mockSettings } =
-  vi.hoisted(() => ({
-    mockRegister: vi.fn(),
-    mockUnregister: vi.fn(),
-    mockController: {
-      state: {} as Record<string, unknown>,
-      getSettings: vi.fn(),
-      generateFor: vi.fn(async () => ({ ok: true, result: {} })),
-      scheduleGenerate: vi.fn(),
-      cancelPending: vi.fn(),
-      clear: vi.fn(),
-      dispose: vi.fn()
-    },
-    mockSettings: {
-      config: { ai: { chat: { model: 'qwen3:30b', provider_type: 'local' } } }
-    }
-  }))
+const {
+  mockRegister,
+  mockUnregister,
+  mockRegistered,
+  mockController,
+  mockSettings
+} = vi.hoisted(() => ({
+  // Tracks the net set of currently-registered surface ids so a test can
+  // assert "the loading surface is/isn't still up" without poking the real
+  // (mocked-away) surfaces module.
+  mockRegistered: new Set<string>(),
+  mockRegister: vi.fn((s: { id: string; [k: string]: unknown }) => {
+    mockRegistered.add(s.id)
+  }),
+  mockUnregister: vi.fn((id: string) => {
+    mockRegistered.delete(id)
+  }),
+  mockController: {
+    state: {} as Record<string, unknown>,
+    getSettings: vi.fn(),
+    generateFor: vi.fn(async () => ({ ok: true, result: {} })),
+    scheduleGenerate: vi.fn(),
+    cancelPending: vi.fn(),
+    clear: vi.fn(),
+    dispose: vi.fn()
+  },
+  mockSettings: {
+    config: { ai: { chat: { model: 'qwen3:30b', provider_type: 'local' } } }
+  }
+}))
 
 vi.mock('../../surfaces', () => ({
   registerSurface: mockRegister,
@@ -117,6 +130,7 @@ describe('mountForPage surface swap', () => {
     plugin.onVaultClose!()
     mockRegister.mockClear()
     mockUnregister.mockClear()
+    mockRegistered.clear()
     mockController.generateFor.mockClear()
     mockController.getSettings.mockReset()
     mockController.getSettings.mockReturnValue({
@@ -131,11 +145,15 @@ describe('mountForPage surface swap', () => {
 
   it('registers the banner surface on note open (not dismissed, not on-demand)', async () => {
     await handlers['active-notebook:changed'](noteEvt())
-    expect(mockRegister).toHaveBeenCalledTimes(1)
-    expect(mockRegister.mock.calls[0][0]).toMatchObject({
+    // The loading placeholder registers first, then is cleared when the hash
+    // resolves and the real banner mounts — so the banner is the final
+    // registered surface and the placeholder is gone.
+    expect(mockRegister.mock.calls.at(-1)![0]).toMatchObject({
       id: 'silt-ai-summary:banner',
       kind: 'note-banner'
     })
+    expect(mockRegistered.has('silt-ai-summary:banner')).toBe(true)
+    expect(mockRegistered.has('silt-ai-summary:loading')).toBe(false)
   })
 
   it('swaps banner → re-open chip when the note is already dismissed', async () => {
@@ -374,12 +392,10 @@ describe('mountForPage surface swap', () => {
     expect(mockRegister).not.toHaveBeenCalled()
   })
 
-  it('shows a loading placeholder when the hash window is perceptible, then clears it', async () => {
-    // Use fake timers so we can advance precisely past LOADING_DELAY_MS while
-    // the hash promise is still pending.
-    vi.useFakeTimers()
-    // A pending hash: sqliteQuery resolves only when we advance the microtask
-    // queue ourselves, so the loading timer (100ms) fires first.
+  it('registers the loading placeholder immediately on a note switch, then clears it when the hash resolves', async () => {
+    // The loading skeleton registers immediately (occupies the slot from t=0,
+    // staying invisible via a CSS fade-in until the hash is clearly slow). No
+    // timer to wait for — assert registration right away.
     let resolveHash!: () => void
     const slowCtx = {
       activeNotebook: 'NB',
@@ -402,44 +418,97 @@ describe('mountForPage surface swap', () => {
     plugin.onVaultOpen(slowCtx)
 
     const pending = handlers['active-notebook:changed'](noteEvt())
-    // Advance past the loading delay while the hash is still pending → the
-    // loading placeholder registers.
-    await vi.advanceTimersByTimeAsync(150)
+    // The loading placeholder registers IMMEDIATELY (no delay timer) so the
+    // banner slot is occupied before the editor content can reflow.
     expect(mockRegister).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'silt-ai-summary:loading' })
     )
+    expect(mockRegistered.has('silt-ai-summary:loading')).toBe(true)
 
     // Now let the hash resolve; the loading placeholder is cleared and the real
     // banner mounts.
     resolveHash()
     await pending
     expect(mockUnregister).toHaveBeenCalledWith('silt-ai-summary:loading')
+    expect(mockRegistered.has('silt-ai-summary:loading')).toBe(false)
     expect(mockRegister.mock.calls.at(-1)![0]).toMatchObject({
       id: 'silt-ai-summary:banner'
     })
-    vi.useRealTimers()
   })
 
-  it('does not arm the loading timer in on-demand mode (chip mounts synchronously)', async () => {
-    vi.useFakeTimers()
+  it('does not register the loading placeholder in on-demand mode (chip mounts synchronously)', async () => {
     mockController.getSettings.mockReturnValue({
       ...BASE_SETTINGS,
       facets: { ...BASE_SETTINGS.facets },
       on_demand_only: true
     })
-    const pending = handlers['active-notebook:changed'](noteEvt())
-    // On-demand skips the hash, so no loading timer is armed — advancing well
-    // past LOADING_DELAY_MS must not register a loading placeholder.
-    await vi.advanceTimersByTimeAsync(500)
+    await handlers['active-notebook:changed'](noteEvt())
+    // On-demand skips the hash (synchronous), so no loading placeholder is
+    // registered — the chip mounts directly.
     expect(mockRegister).not.toHaveBeenCalledWith(
       expect.objectContaining({ id: 'silt-ai-summary:loading' })
     )
-    await pending
-    vi.useRealTimers()
+  })
+
+  it('does not let a stale note switch clear a newer switch loading surface (rapid A→B→C) (#488 hardening)', async () => {
+    // Every hash hangs until released. A→B→C each register a loading surface
+    // (shared LOADING id). Releasing A's hash FIRST (while C is current) must
+    // NOT clear C's still-wanted loading surface — the per-invocation nonce
+    // guards the bail-path unregister.
+    let callCount = 0
+    const resolvers: Array<() => void> = []
+    const slowCtx = {
+      activeNotebook: 'NB',
+      activeSection: 'S',
+      activePage: 'P',
+      on: vi.fn((evt: string, h: (e: unknown) => void) => {
+        handlers[evt] = h
+        return () => {}
+      }),
+      updatePluginSetting: vi.fn(async () => true),
+      sqliteQuery: vi.fn(() => {
+        callCount++
+        return new Promise((resolve) => {
+          resolvers.push(() =>
+            resolve({ rows: [{ clean_content: 'x' }], truncated: false })
+          )
+        })
+      })
+    } as unknown as PluginContext
+    plugin.onVaultClose!()
+    plugin.onVaultOpen(slowCtx)
+
+    const pendingA = handlers['active-notebook:changed']({
+      notebook: 'NB',
+      section: 'S',
+      page: 'A'
+    })
+    const pendingB = handlers['active-notebook:changed']({
+      notebook: 'NB',
+      section: 'S',
+      page: 'B'
+    })
+    const pendingC = handlers['active-notebook:changed']({
+      notebook: 'NB',
+      section: 'S',
+      page: 'C'
+    })
+    // All three registered a loading surface; C's is current.
+    expect(mockRegistered.has('silt-ai-summary:loading')).toBe(true)
+
+    // Release A's hash first → A is now stale (lastPageId === 'C'). Its bail
+    // path MUST NOT unregister the loading surface C owns.
+    resolvers[0]()
+    await pendingA
+    expect(mockRegistered.has('silt-ai-summary:loading')).toBe(true)
+    // Release B and C so no promises are left dangling.
+    resolvers[1]()
+    resolvers[2]()
+    await pendingB
+    await pendingC
   })
 
   it('does not mount into a stale page when the note switches again during the hash', async () => {
-    vi.useFakeTimers()
     // A and C resolve immediately; B (the 2nd call) hangs until we release it,
     // so a 3rd switch to C lands while B's hash is still pending.
     let callCount = 0
@@ -495,6 +564,5 @@ describe('mountForPage surface swap', () => {
     expect(mockRegister).not.toHaveBeenCalledWith(
       expect.objectContaining({ id: 'silt-ai-summary:banner' })
     )
-    vi.useRealTimers()
   })
 })

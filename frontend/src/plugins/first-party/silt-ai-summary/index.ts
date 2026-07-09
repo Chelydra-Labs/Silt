@@ -55,13 +55,11 @@ export const manifest: PluginManifest = {
 // rather than re-hardcoding the literal (which drifted once and broke focus).
 export const BANNER_SURFACE_ID = 'silt-ai-summary:banner'
 const REOPEN_SURFACE_ID = 'silt-ai-summary:reopen'
-// Transient skeleton shown in the banner slot only when the content-hash
-// window on a note switch is perceptible (>LOADING_DELAY_MS); see index.ts.
+// Transient skeleton shown in the banner slot while silt-ai-summary computes
+// the content hash on a note switch (#488). It registers immediately (to occupy
+// the slot) but stays invisible for a short delay then fades in — see
+// SummaryBannerLoading.svelte.
 const LOADING_SURFACE_ID = 'silt-ai-summary:loading'
-// If the hash resolves faster than this, no loading placeholder is shown — the
-// common case (SQLite read + SHA-256 is typically <20ms). Above it, an empty
-// banner slot would read as frozen, so the skeleton bridges the gap (#488).
-const LOADING_DELAY_MS = 100
 const PLUGIN_ID = 'silt-ai-summary'
 
 // Module-level controller + event unsubs. One active vault at a time; reset on
@@ -74,6 +72,11 @@ let lastPageId: string | null = null
 // Which surface is currently mounted for lastPageId, so a re-evaluation that
 // reaches the same decision doesn't churn (unregister+register → flicker).
 let mountedKind: 'banner' | 'reopen' | null = null
+// Monotonic counter identifying which note-switch invocation currently owns the
+// loading skeleton. A stale invocation (A→B→C, A's hash resolves last) must not
+// clear the skeleton a newer invocation (C) registered, since both share one
+// LOADING_SURFACE_ID slot. See the note-switch handler.
+let loadingNonce = 0
 
 export function getController(): SummaryController | null {
   return controller
@@ -236,26 +239,27 @@ export default {
       lastPageId = id
       const s = controller.getSettings()
 
-      let loadingTimer: ReturnType<typeof setTimeout> | null = null
-      if (isNoteChange) {
+      // Register the loading skeleton immediately on a genuine note change that
+      // will await a hash. It occupies the banner slot from t=0 so the editor
+      // content below doesn't reflow (collapse → re-expand) during the async
+      // window; the skeleton itself stays invisible for LOADING_DELAY_MS via a
+      // CSS fade-in, so a fast hash (the common case) resolves before the
+      // skeleton ever paints and the user sees no flicker. Skipped in on-demand
+      // mode (the hash is synchronous there, so there is no window to bridge).
+      const myLoadingNonce =
+        isNoteChange && !s.on_demand_only ? ++loadingNonce : null
+      if (myLoadingNonce !== null) {
         // Tear down the prior note's surface BEFORE the async hash so the user
-        // never sees a stale summary from the previous note during the hash
-        // window (#488).
+        // never sees a stale summary from the previous note during the window.
         teardownSurfaces()
-        // Bridge the hash window with a skeleton only if it is perceptible.
-        // For the common sub-LOADING_DELAY_MS case the timer is cancelled
-        // before it fires and the user sees no flicker; on a slow read (large
-        // note / linked disk) the slot reads as loading rather than frozen.
-        loadingTimer = setTimeout(() => {
-          registerSurface({
-            id: LOADING_SURFACE_ID,
-            pluginID: PLUGIN_ID,
-            kind: 'note-banner',
-            label: 'AI summary',
-            icon: 'auto_awesome',
-            component: SummaryBannerLoading
-          })
-        }, LOADING_DELAY_MS)
+        registerSurface({
+          id: LOADING_SURFACE_ID,
+          pluginID: PLUGIN_ID,
+          kind: 'note-banner',
+          label: 'AI summary',
+          icon: 'auto_awesome',
+          component: SummaryBannerLoading
+        })
       }
 
       // Fetch + hash the content so dismissal is keyed by content hash (#455).
@@ -268,10 +272,13 @@ export default {
             page: evt.page
           })
 
-      // Cancel the loading bridge and clear it so the real surface mounts into
-      // a clean slot. (No-op when this was a same-note re-evaluation.)
-      if (loadingTimer) {
-        clearTimeout(loadingTimer)
+      // Clear this invocation's loading skeleton — but ONLY if a newer note
+      // switch hasn't already replaced it. Without the nonce guard, a stale
+      // invocation resolving after a rapid A→B→C switch would unregister C's
+      // still-wanted skeleton (the surfaces map keys by id, so they share one
+      // LOADING_SURFACE_ID slot). mountForPage also clears LOADING on a real
+      // mount, so this just covers the bail path.
+      if (myLoadingNonce !== null && myLoadingNonce === loadingNonce) {
         unregisterSurface(LOADING_SURFACE_ID)
       }
 

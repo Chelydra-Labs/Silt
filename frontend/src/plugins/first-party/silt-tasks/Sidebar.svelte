@@ -433,11 +433,13 @@
   }
 
   // Clamp the manage menu into the viewport using its real rendered size, and
-  // dismiss it on scroll / resize (#489). A context menu's anchor is a one-shot
-  // position (cursor or button rect), so it DISMISSES on scroll rather than
-  // re-positioning (unlike Popover.svelte, which tracks an anchor element).
+  // dismiss it on scroll / resize / Escape (#489). A context menu's anchor is a
+  // one-shot position (cursor or button rect), so it DISMISSES on scroll rather
+  // than re-positioning (unlike Popover.svelte, which tracks an anchor element).
   // Capture-phase scroll catches scrolls inside any overflow container, not
-  // just window. Escape is handled by onMenuKeydown on the focused menu card.
+  // just window. Escape is handled both here (window-level, works regardless of
+  // focus) and by onMenuKeydown on the focused card — belt and suspenders so a
+  // right-click open (which leaves focus on the row) still closes on Escape.
   $effect(() => {
     if (!manageMenu) {
       manageMenuPos = null
@@ -457,14 +459,22 @@
     const dismiss = () => {
       manageMenu = null
     }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        manageMenu = null
+      }
+    }
     document.addEventListener('scroll', dismiss, {
       capture: true,
       passive: true
     })
     window.addEventListener('resize', dismiss, { passive: true })
+    window.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('scroll', dismiss, { capture: true })
       window.removeEventListener('resize', dismiss)
+      window.removeEventListener('keydown', onKey)
     }
   })
 
@@ -1081,6 +1091,7 @@
       class="fixed manage-menu-card"
       style:left={(manageMenuPos?.left ?? manageMenu.x) + 'px'}
       style:top={(manageMenuPos?.top ?? manageMenu.y) + 'px'}
+      style:visibility={manageMenuPos ? 'visible' : 'hidden'}
       role="menu"
       tabindex="-1"
       aria-label={`Actions for ${v.name}`}
@@ -1205,6 +1216,10 @@
   }
   .manage-menu-item:hover:not(:disabled) {
     background-color: var(--color-hover);
+  }
+  .manage-menu-item:focus-visible:not(:disabled) {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: -2px;
   }
   .manage-menu-separator {
     height: 1px;

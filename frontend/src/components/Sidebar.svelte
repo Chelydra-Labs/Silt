@@ -1166,6 +1166,7 @@
       class="fixed context-menu-card"
       style:left={(menuPos?.left ?? contextMenu.x) + 'px'}
       style:top={(menuPos?.top ?? contextMenu.y) + 'px'}
+      style:visibility={menuPos ? 'visible' : 'hidden'}
       role="menu"
       tabindex="-1"
       aria-label="Actions"
@@ -1278,6 +1279,10 @@
   }
   .context-menu-item:hover {
     background-color: var(--color-hover);
+  }
+  .context-menu-item:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: -2px;
   }
   :global(.drag-over-top) {
     box-shadow: inset 0 2px 0 var(--color-accent-primary-start);

@@ -111,6 +111,47 @@ func TestTemplateWatcher_SelfWriteSuppressed(t *testing.T) {
 	}
 }
 
+// TestTemplateWatcher_UnregisterSelfWrite_ClearsWindow verifies that a save
+// that fails after arming the window can clear it (#487), mirroring
+// config.ConfigWatcher. A template edit landing right after the failed save
+// must NOT be silently dropped.
+func TestTemplateWatcher_UnregisterSelfWrite_ClearsWindow(t *testing.T) {
+	dir := t.TempDir()
+	tplDir := filepath.Join(dir, "templates")
+	writeTemplate(t, tplDir, "test.md", validUserTemplate)
+
+	changed := make(chan struct{}, 8)
+	w, err := NewTemplateWatcher(tplDir, func() {
+		select {
+		case changed <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("NewTemplateWatcher: %v", err)
+	}
+	w.Start()
+	defer w.Close()
+
+	// Arm the window, then immediately clear it (a failed save's cleanup).
+	w.RegisterSelfWrite()
+	w.UnregisterSelfWrite()
+
+	// A subsequent external write must be detected — the window was cleared.
+	path := filepath.Join(tplDir, "test.md")
+	if err := writeFileBytes(path, validUserTemplate+"\nexternal\n"); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	select {
+	case <-changed:
+		// expected: external edit detected because UnregisterSelfWrite cleared
+		// the suppression window.
+	case <-time.After(SelfWriteSuppressionTimeout):
+		t.Fatalf("external edit was suppressed — UnregisterSelfWrite did not clear the window (#487)")
+	}
+}
+
 func TestTemplateWatcher_ParentWatchPath(t *testing.T) {
 	// When templates/ doesn't exist, the watcher observes the parent. It
 	// should still function once templates/ is created.

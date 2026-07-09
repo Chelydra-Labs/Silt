@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"silt/backend/parser"
 	"silt/backend/templates"
@@ -227,6 +228,70 @@ func TestSaveUserTemplate_IPC_OverwriteExisting(t *testing.T) {
 	}
 	if got.Title != "V2" {
 		t.Errorf("overwrite did not update: title=%q", got.Title)
+	}
+}
+
+// TestSaveUserTemplate_FailedSaveClearsSuppression verifies the #487 fix on the
+// template path: when SaveUserTemplate's write fails, the template watcher's
+// self-write window must be cleared (UnregisterSelfWrite) so a legitimate
+// external template edit landing right after is NOT silently dropped. Mirrors
+// TestSaveConfigTracked_FailedSaveClearsSuppression for the config path.
+func TestSaveUserTemplate_FailedSaveClearsSuppression(t *testing.T) {
+	app := newTestApp(t)
+
+	changed := make(chan struct{}, 4)
+	w, err := templates.NewTemplateWatcher(app.templatesDir(), func() {
+		select {
+		case changed <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("NewTemplateWatcher: %v", err)
+	}
+	defer w.Close()
+	w.Start()
+	app.templateWatcher = w
+	defer func() { app.templateWatcher = nil }()
+
+	time.Sleep(150 * time.Millisecond)
+
+	tpl := templates.Template{
+		SchemaVersion: "1.0.0",
+		ID:            "fail-save",
+		Title:         "Fail",
+		Category:      "notes",
+		Body:          "# x\n",
+	}
+	// Force SaveTemplate to fail: make the target template path a directory so
+	// parser.WriteFileAtomic's rename cannot land a file over it.
+	tplPath := filepath.Join(app.templatesDir(), tpl.ID+".md")
+	if err := os.MkdirAll(tplPath, 0o700); err != nil {
+		t.Fatalf("mkdir template path: %v", err)
+	}
+	// Let the watcher absorb the directory-creation event before the assertion.
+	time.Sleep(templates.SelfWriteSuppressionTimeout)
+
+	// SaveUserTemplate must fail, and the failed path must clear the window.
+	if err := app.SaveUserTemplate(tpl); err == nil {
+		t.Fatalf("SaveUserTemplate should have failed (target is a directory)")
+	}
+
+	// Restore a writable file and simulate a legitimate external edit.
+	if err := os.RemoveAll(tplPath); err != nil {
+		t.Fatalf("remove template dir: %v", err)
+	}
+	if err := os.WriteFile(tplPath, []byte(testUserTemplateMD), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	// The external edit must be detected — the failed save cleared the window.
+	select {
+	case <-changed:
+		// expected: external edit detected because the failed save cleared the
+		// self-write suppression window.
+	case <-time.After(templates.SelfWriteSuppressionTimeout):
+		t.Fatalf("external edit was suppressed — failed save left the template self-write window armed (#487)")
 	}
 }
 
