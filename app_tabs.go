@@ -37,10 +37,7 @@ func (a *App) SetSidebarWidth(px int) error {
 	cfg := a.cfg
 	a.configMu.Unlock()
 
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, cfg)
+	return a.saveConfigTracked(cfg)
 }
 
 // GetNavOrder returns the persisted navigation ordering from config.yaml.
@@ -59,10 +56,7 @@ func (a *App) SetNavOrder(order config.NavOrder) error {
 	cfg := a.cfg
 	a.configMu.Unlock()
 
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, cfg)
+	return a.saveConfigTracked(cfg)
 }
 
 // --- Open tabs IPC (#142) ------------------------------------------------
@@ -166,10 +160,7 @@ func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) er
 	cfg := a.cfg
 	a.configMu.Unlock()
 
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, cfg)
+	return a.saveConfigTracked(cfg)
 }
 
 // navPageSet flattens the NavigationTree into a set of

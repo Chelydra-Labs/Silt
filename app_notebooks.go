@@ -181,10 +181,7 @@ func (a *App) LinkNotebook(folderPath string) (config.LinkedNotebook, error) {
 		return config.LinkedNotebook{}, fmt.Errorf("a linked notebook with %q already exists", existing.DisplayName)
 	}
 	a.cfg.LinkedNotebooks = append(a.cfg.LinkedNotebooks, ln)
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	saveErr := config.Save(a.vaultPath, a.cfg)
+	saveErr := a.saveConfigTracked(a.cfg)
 	a.configMu.Unlock()
 	if saveErr != nil {
 		return config.LinkedNotebook{}, fmt.Errorf("failed to persist link registry: %w", saveErr)
@@ -235,10 +232,7 @@ func (a *App) UnlinkNotebook(id string) error {
 	var saveErr error
 	if removed {
 		a.cfg.LinkedNotebooks = kept
-		if a.configWatcher != nil {
-			a.configWatcher.RegisterSelfWrite()
-		}
-		saveErr = config.Save(a.vaultPath, a.cfg)
+		saveErr = a.saveConfigTracked(a.cfg)
 	}
 	a.configMu.Unlock()
 	if saveErr != nil {
@@ -539,10 +533,7 @@ func (a *App) verifyLinkedNotebookFingerprints() {
 					break
 				}
 			}
-			if a.configWatcher != nil {
-				a.configWatcher.RegisterSelfWrite()
-			}
-			saveErr := config.Save(a.vaultPath, a.cfg)
+			saveErr := a.saveConfigTracked(a.cfg)
 			a.configMu.Unlock()
 			if saveErr != nil {
 				log.Printf("verifyLinkedNotebookFingerprints: persist FP for %s: %v", ln.DisplayName, saveErr)

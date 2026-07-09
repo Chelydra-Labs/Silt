@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"silt/backend/config"
 	"silt/backend/parser"
 	"strconv"
 	"strings"
@@ -348,10 +347,7 @@ func (a *App) updateNavOrderForMove(notebook, fromSection, toSection, page strin
 	cfg := a.cfg
 	a.configMu.Unlock()
 
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, cfg)
+	return a.saveConfigTracked(cfg)
 }
 
 // RenameSection renames a section folder and updates the section: frontmatter

@@ -349,10 +349,7 @@ func (a *App) UpdateAIProviderConfig(which string, patch AIProviderPatch) error 
 	}
 	a.cfg.AI = config.NormalizeAIConfig(a.cfg.AI)
 
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	if err := a.saveConfigTracked(a.cfg); err != nil {
 		return err
 	}
 	// A provider-type / base-URL / model change means the cached model list
@@ -407,10 +404,7 @@ func (a *App) SetAIAPIKey(which, key string) error {
 	} else {
 		a.cfg.AI.Embedding.APIKey = configKey
 	}
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	if err := a.saveConfigTracked(a.cfg); err != nil {
 		return err
 	}
 	// A key change may flip a 401 list-endpoint to success (or vice versa) —
@@ -446,10 +440,7 @@ func (a *App) ClearAIAPIKey(which string) error {
 	} else {
 		a.cfg.AI.Embedding.APIKey = ""
 	}
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	if err := a.saveConfigTracked(a.cfg); err != nil {
 		return err
 	}
 	// Cleared key → the cached list (polled under the old key) may no longer
@@ -473,10 +464,7 @@ func (a *App) SetUseKeyring(on bool) error {
 	}
 	a.configMu.Lock()
 	a.cfg.AI.UseKeyring = boolPtrAI(on)
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	err := config.Save(a.vaultPath, a.cfg)
+	err := a.saveConfigTracked(a.cfg)
 	a.configMu.Unlock()
 	if err != nil {
 		return err
@@ -816,8 +804,5 @@ func (a *App) migrateAIKeysToKeyring() {
 	if !changed {
 		return
 	}
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	_ = config.Save(a.vaultPath, a.cfg)
+	_ = a.saveConfigTracked(a.cfg)
 }

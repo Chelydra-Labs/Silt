@@ -35,11 +35,15 @@ const reloadDebounce = 120 * time.Millisecond
 const SelfWriteSuppressionTimeout = selfWriteWindow + reloadDebounce + 80*time.Millisecond
 
 // ConfigWatcher hot-reloads <vault>/.system/config.yaml. Self-loop prevention
-// is a local time-window: SaveSystemConfig calls RegisterSelfWrite() before
-// its atomic save, and the watcher ignores every config.yaml event until the
-// window elapses, so Silt's own multi-event write cannot feed back into
-// itself. External edits (e.g. editing config.yaml in a text editor) re-parse
-// and invoke onChange without a restart, exactly as SPECS.md §9.2 requires.
+// is a local time-window: every atomic setter arms the window via
+// RegisterSelfWrite() immediately before its atomic config.Save, and the
+// watcher ignores every config.yaml event until the window elapses, so Silt's
+// own multi-event write cannot feed back into itself. If a save fails, the
+// setter calls UnregisterSelfWrite() to clear the window — otherwise a failed
+// save would leave the 500ms window open and silently drop a legitimate
+// external edit landing inside it. External edits (e.g. editing config.yaml in
+// a text editor) re-parse and invoke onChange without a restart, exactly as
+// SPECS.md §9.2 requires.
 type ConfigWatcher struct {
 	vaultPath string
 	path      string
@@ -96,7 +100,9 @@ func (cw *ConfigWatcher) Start() {
 
 // RegisterSelfWrite records that Silt is about to write config.yaml itself, so
 // the resulting fsnotify event(s) are treated as self-generated and ignored
-// for selfWriteWindow. Must be called immediately before the write.
+// for selfWriteWindow. Must be called immediately before the write; pair with
+// UnregisterSelfWrite on the write's error path so a failed save doesn't leave
+// the window open and silently drop a real external edit.
 func (cw *ConfigWatcher) RegisterSelfWrite() {
 	cw.selfMu.Lock()
 	cw.selfUntil = time.Now().Add(selfWriteWindow)
@@ -109,6 +115,16 @@ func (cw *ConfigWatcher) isSelfWrite() bool {
 	cw.selfMu.Lock()
 	defer cw.selfMu.Unlock()
 	return time.Now().Before(cw.selfUntil)
+}
+
+// UnregisterSelfWrite clears a self-write suppression window opened by
+// RegisterSelfWrite. Call it when a save that armed the window fails, so a
+// failed write does not leave the window open and silently drop a legitimate
+// external edit landing inside it. No-op if no window is open.
+func (cw *ConfigWatcher) UnregisterSelfWrite() {
+	cw.selfMu.Lock()
+	cw.selfUntil = time.Time{}
+	cw.selfMu.Unlock()
 }
 
 // Close stops the loop and closes the fsnotify watcher. Safe to call multiple

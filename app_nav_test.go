@@ -944,3 +944,65 @@ func TestAppendDismissedTip_SelfWriteSuppressed(t *testing.T) {
 		// expected: no reload within the cooldown window
 	}
 }
+
+// TestSaveConfigTracked_FailedSaveClearsSuppression verifies the fix for #487:
+// when a config save fails, saveConfigTracked must clear the self-write
+// suppression window (UnregisterSelfWrite) so a legitimate external edit
+// landing right after the failed save is NOT silently dropped. A failed save
+// that left the window armed would suppress the next real external reload.
+func TestSaveConfigTracked_FailedSaveClearsSuppression(t *testing.T) {
+	app := newTestApp(t)
+
+	changed := make(chan config.SystemConfig, 4)
+	cw, err := config.NewConfigWatcher(app.vaultPath, func(c config.SystemConfig) {
+		changed <- c
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewConfigWatcher: %v", err)
+	}
+	defer cw.Close()
+	cw.Start()
+	app.configWatcher = cw
+	defer func() { app.configWatcher = nil }()
+
+	time.Sleep(150 * time.Millisecond)
+
+	// Force config.Save to fail: replace config.yaml with a directory so the
+	// atomic writer's final os.Rename (file over a directory) fails.
+	cfgPath := config.ConfigPath(app.vaultPath)
+	if err := os.Remove(cfgPath); err != nil {
+		t.Fatalf("remove config.yaml: %v", err)
+	}
+	if err := os.Mkdir(cfgPath, 0o700); err != nil {
+		t.Fatalf("mkdir config.yaml: %v", err)
+	}
+	// Let the watcher absorb the directory-creation event before the external
+	// edit so it cannot mask the assertion below.
+	time.Sleep(config.SelfWriteSuppressionTimeout)
+
+	// The setter routes through saveConfigTracked; Save must fail (config.yaml
+	// is a directory), and the failed path must clear the suppression window.
+	if err := app.SetShowFormatToolbar(true); err == nil {
+		t.Fatalf("SetShowFormatToolbar should have failed (config.yaml is a directory)")
+	}
+
+	// Restore a writable config.yaml and simulate a legitimate external edit.
+	if err := os.RemoveAll(cfgPath); err != nil {
+		t.Fatalf("remove config.yaml dir: %v", err)
+	}
+	ext := config.Defaults()
+	ext.Editor.FontSizePx = 42
+	if err := config.Save(app.vaultPath, ext); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	// The external edit must be detected — the failed save cleared the window.
+	// If the bug were present (window left armed), this would time out.
+	select {
+	case <-changed:
+		// expected: external edit detected because the failed save cleared the
+		// self-write suppression window.
+	case <-time.After(config.SelfWriteSuppressionTimeout):
+		t.Fatalf("external edit was suppressed — failed save left the self-write window armed (#487)")
+	}
+}
