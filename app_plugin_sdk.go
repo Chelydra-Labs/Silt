@@ -607,12 +607,13 @@ func (a *App) UpdatePluginSetting(pluginID string, key string, value any) error 
 	defer a.configMu.Unlock()
 	// Re-read config.yaml under the lock so an external edit to an unrelated
 	// key is preserved rather than overwritten by the stale in-memory cfg.
-	// A re-read failure (corrupt/unreadable file) falls back to a.cfg so the
-	// caller's mutation still lands — the file is already broken and the
-	// watcher will surface config:error separately.
+	// A re-read failure (corrupt/unreadable file) is returned as an error —
+	// refusing loudly is safer than silently overwriting the corrupt file
+	// with the stale in-memory cfg, which would destroy the user's only
+	// signal that their config is broken.
 	freshCfg, loadErr := config.Load(a.vaultPath)
 	if loadErr != nil {
-		freshCfg = a.cfg
+		return fmt.Errorf("cannot read config.yaml before update: %w", loadErr)
 	}
 	if freshCfg.Plugins.PluginSettings == nil {
 		freshCfg.Plugins.PluginSettings = map[string]any{}

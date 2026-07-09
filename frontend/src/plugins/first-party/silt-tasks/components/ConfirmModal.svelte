@@ -96,8 +96,7 @@
     aria-label={title}
     tabindex="-1"
     data-testid={dataTestId}
-    class="relative w-full max-w-sm rounded-xl border border-surface-modal-border shadow-2xl overflow-hidden"
-    style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 92%, transparent);"
+    class="dialog-surface relative w-full max-w-sm glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
   >
     <div class="px-5 py-4 border-b border-surface-modal-border">
       <h2 class="font-headline-md text-headline-md text-text-primary">
@@ -120,10 +119,20 @@
         data-testid={dataTestId ? `${dataTestId}-confirm` : undefined}
         class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border {destructive
           ? 'bg-status-danger/20 border-status-danger/40 text-status-danger hover:brightness-110'
-          : 'bg-accent-primary-start border-accent-primary-start text-text-primary hover:brightness-110'}"
+          : 'bg-accent-primary-start/20 border-accent-primary-start/40 text-text-primary hover:brightness-110'}"
       >
         {confirmLabel}
       </button>
     </div>
   </div>
 </div>
+
+<style>
+  /* The container receives focus on open (no button is pre-selected, per the
+     NN/g destructive-confirm guidance). Surface where focus landed for
+     sighted keyboard users. */
+  .dialog-surface:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 2px;
+  }
+</style>

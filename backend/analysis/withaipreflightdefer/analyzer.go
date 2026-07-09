@@ -37,10 +37,6 @@ const doneResultIndex = 2
 func run(pass *analysis.Pass) (any, error) {
 	inst := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 
-	// Walk assignment statements — that's where multi-value returns are bound.
-	// We find assignments whose RHS is a call to withAIPreflight, capture the
-	// identifier bound to the done return value, then verify a defer in the
-	// enclosing function calls it.
 	nodeFilter := []ast.Node{
 		(*ast.AssignStmt)(nil),
 		(*ast.FuncLit)(nil),
@@ -72,16 +68,10 @@ func run(pass *analysis.Pass) (any, error) {
 		// confused with the real target.
 		callee := typeutil.Callee(pass.TypesInfo, call)
 		fn, ok := callee.(*types.Func)
-		if !ok {
+		if !ok || fn.Name() != "withAIPreflight" {
 			return true
 		}
-		if fn.Name() != "withAIPreflight" {
-			return true
-		}
-		// The done func is the 3rd return value (index 2). Some callers use a
-		// blank identifier for returns they don't need (e.g. `_, _, _, err`),
-		// but the done value is never blank-discarded in correct code — that
-		// would be the exact leak this analyzer catches. If the assignment
+		// The done func is the 3rd return value (index 2). If the assignment
 		// binds fewer than 3 identifiers, the done value is discarded: flag it.
 		if len(assign.Lhs) <= doneResultIndex {
 			pass.Reportf(call.Pos(), "withAIPreflight's done func must be captured and deferred (result discarded)")
@@ -89,17 +79,17 @@ func run(pass *analysis.Pass) (any, error) {
 		}
 		doneIdent, ok := assign.Lhs[doneResultIndex].(*ast.Ident)
 		if !ok {
-			// Not a simple identifier (e.g. a selector or index) — skip; the
-			// contract is about the local-variable binding pattern.
 			return true
 		}
 		if doneIdent.Name == "_" {
 			pass.Reportf(call.Pos(), "withAIPreflight's done func must be deferred (assigned to blank identifier)")
 			return true
 		}
-		// Find the enclosing function body and verify a defer references doneIdent.
+		// Resolve the done identifier to its types.Object so we compare by
+		// identity (not name), avoiding false negatives from variable shadowing.
+		doneObj := pass.TypesInfo.Uses[doneIdent]
 		enclosing := enclosingFuncBody(pass, node)
-		if enclosing == nil || !isDeferred(enclosing, doneIdent.Name) {
+		if enclosing == nil || !isDeferred(enclosing, doneObj, doneIdent.Name, pass.TypesInfo) {
 			pass.Reportf(call.Pos(), "withAIPreflight's done func %q must be deferred", doneIdent.Name)
 		}
 		return true
@@ -108,18 +98,15 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-// enclosingFuncBody returns the body block of the function (FuncDecl or
-// FuncLit) that contains node, or nil if it cannot be determined.
+// enclosingFuncBody returns the body block of the innermost function (FuncDecl
+// or FuncLit) that contains node, or nil if it cannot be determined.
 func enclosingFuncBody(pass *analysis.Pass, node ast.Node) *ast.BlockStmt {
-	// Walk the file's AST to find the innermost function containing node.
 	for _, file := range pass.Files {
-		var found *ast.BlockStmt
-		stop := false
+		var best *ast.BlockStmt
 		ast.Inspect(file, func(n ast.Node) bool {
-			if stop || n == nil {
+			if n == nil {
 				return false
 			}
-			// Track function bodies that contain the target node.
 			var body *ast.BlockStmt
 			switch fn := n.(type) {
 			case *ast.FuncDecl:
@@ -132,16 +119,14 @@ func enclosingFuncBody(pass *analysis.Pass, node ast.Node) *ast.BlockStmt {
 			if body == nil || !containsPos(body, node.Pos()) {
 				return true
 			}
-			// This function body contains the node. Descend to find a tighter
-			// enclosing FuncLit (defer done() inside a closure is valid even
-			// if the closure is nested).
-			found = body
+			// Descend to find the tightest enclosing function (a nested
+			// closure is a valid defer location).
+			best = body
 			return true
 		})
-		if found != nil {
-			return found
+		if best != nil {
+			return best
 		}
-		_ = stop
 	}
 	return nil
 }
@@ -151,9 +136,10 @@ func containsPos(n ast.Node, pos token.Pos) bool {
 	return pos >= n.Pos() && pos <= n.End()
 }
 
-// isDeferred reports whether body contains a defer statement whose call
-// references name (directly `defer name()` or inside `defer func(){ name() }()`).
-func isDeferred(body *ast.BlockStmt, name string) bool {
+// isDeferred reports whether body contains a defer statement whose call invokes
+// the same variable as the done return value. Matching prefers types.Object
+// identity (shadow-safe); falls back to name matching when type info is nil.
+func isDeferred(body *ast.BlockStmt, target types.Object, name string, info *types.Info) bool {
 	found := false
 	ast.Inspect(body, func(n ast.Node) bool {
 		if found || n == nil {
@@ -163,7 +149,7 @@ func isDeferred(body *ast.BlockStmt, name string) bool {
 		if !ok {
 			return true
 		}
-		if referencesIdent(deferStmt.Call, name) {
+		if referencesDone(deferStmt.Call, target, name, info) {
 			found = true
 			return false
 		}
@@ -172,32 +158,41 @@ func isDeferred(body *ast.BlockStmt, name string) bool {
 	return found
 }
 
-// referencesIdent reports whether expr (a deferred call) invokes the identifier
-// `name`, either directly (`name()`) or as the only call inside a closure
-// (`func(){ name() }()`).
-func referencesIdent(call *ast.CallExpr, name string) bool {
-	// Direct: defer name()
-	if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == name {
+// referencesDone reports whether expr (a deferred call) invokes the done
+// variable, either directly (`done()`) or inside a closure
+// (`func(){ done() }()`).
+func referencesDone(call *ast.CallExpr, target types.Object, name string, info *types.Info) bool {
+	if ident, ok := call.Fun.(*ast.Ident); ok && sameIdent(ident, target, name, info) {
 		return true
 	}
-	// Wrapped in a closure: defer func(){ name() }()
 	if lit, ok := call.Fun.(*ast.FuncLit); ok {
-		closureCallsIdent := false
+		closureMatch := false
 		ast.Inspect(lit.Body, func(n ast.Node) bool {
-			if closureCallsIdent || n == nil {
+			if closureMatch || n == nil {
 				return false
 			}
 			if inner, ok := n.(*ast.CallExpr); ok {
-				if id, ok := inner.Fun.(*ast.Ident); ok && id.Name == name {
-					closureCallsIdent = true
+				if id, ok := inner.Fun.(*ast.Ident); ok && sameIdent(id, target, name, info) {
+					closureMatch = true
 					return false
 				}
 			}
 			return true
 		})
-		if closureCallsIdent {
+		if closureMatch {
 			return true
 		}
 	}
 	return false
+}
+
+// sameIdent reports whether ident refers to the same variable as target.
+// Prefers types.Object identity (shadow-safe); falls back to name comparison.
+func sameIdent(ident *ast.Ident, target types.Object, name string, info *types.Info) bool {
+	if target != nil && info != nil {
+		if use := info.Uses[ident]; use != nil {
+			return use == target
+		}
+	}
+	return ident.Name == name
 }

@@ -215,3 +215,21 @@ describe('makePluginContext — getPluginSettings (#133)', () => {
     )
   })
 })
+
+// openSettings (#472): dispatches the existing 'open-settings' DOM CustomEvent
+// that App.svelte listens for, so plugins can deep-link into Settings without
+// a new Go binding. Verified at the SDK boundary — no IPC involved.
+describe('makePluginContext — openSettings dispatches open-settings event', () => {
+  it('dispatches with the given tab detail', () => {
+    const ctx = makePluginContext('test-plugin')
+    const events: CustomEvent[] = []
+    const handler = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('open-settings', handler)
+    ctx.openSettings('ai')
+    ctx.openSettings()
+    window.removeEventListener('open-settings', handler)
+    expect(events).toHaveLength(2)
+    expect(events[0].detail).toBe('ai')
+    expect(events[1].detail).toBe('')
+  })
+})

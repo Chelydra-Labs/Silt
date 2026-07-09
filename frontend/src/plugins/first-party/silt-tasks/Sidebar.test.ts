@@ -761,7 +761,7 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(screen.queryByTestId('manage-view-menu')).toBeNull()
   })
 
-  it('active view shows "(modified)" suffix when savedViewsDirty is true', async () => {
+  it('active view shows a dirty dot when savedViewsDirty is true', async () => {
     seedSavedViews()
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
@@ -772,7 +772,11 @@ describe('silt-tasks Sidebar (#432)', () => {
     getTaskHubState().savedViewsDirty = true
     await flush()
     const viewChip = document.querySelector(`[data-testid="view-${view.id}"]`)
-    expect(viewChip?.textContent ?? '').toMatch(/modified/i)
+    // Dirty signal is now a colored dot (aria-label="modified") rather than
+    // text — assert the dot is present on the active dirty row.
+    const dot = viewChip?.querySelector('[aria-label="modified"]')
+    expect(dot).toBeTruthy()
+    expect(dot?.getAttribute('title')).toBe('This view has unsaved changes')
   })
 
   // --- Section 3: Mini-cal -----------------------------------------------

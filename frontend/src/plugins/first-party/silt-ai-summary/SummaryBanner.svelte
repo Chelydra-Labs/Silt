@@ -121,6 +121,33 @@
     if (pageId !== lastPageId) {
       lastPageId = pageId
       expandedFacets = { tasks: false, risks: false, decisions: false }
+      reshowDone = false
+      reshowHint = false
+    }
+  })
+
+  // Edit-triggered re-show detection (#455). When the banner re-appears
+  // because the note was edited since the last dismissal, the dismissed_notes
+  // list still holds `${pageId}:<oldHash>` while pageState.contentHash is now
+  // different. Surface a one-time hint so the un-asked-for re-show isn't
+  // confusing. `reshowDone` is a plain guard (not $state) so it doesn't
+  // re-trigger the effect; reset on page switch alongside expandedFacets.
+  let reshowHint = $state(false)
+  let reshowDone = false
+  $effect(() => {
+    if (reshowDone) return
+    if (!isReady || !pageState?.contentHash) return
+    reshowDone = true
+    const dismissed = settings.dismissed_notes ?? []
+    const prefix = `${pageId}:`
+    if (
+      dismissed.some(
+        (e) => e.startsWith(prefix) && e !== `${prefix}${pageState.contentHash}`
+      )
+    ) {
+      reshowHint = true
+      const t = setTimeout(() => (reshowHint = false), 5000)
+      return () => clearTimeout(t)
     }
   })
 
@@ -268,6 +295,9 @@
   class:is-unconfigured={unconfigured}
   class:is-empty={isEmpty}
   aria-label="AI summary"
+  onpointerdown={() => {
+    if (reshowHint) reshowHint = false
+  }}
 >
   <header class="head">
     <span class="lead-icon material-symbols-outlined" aria-hidden="true"
@@ -328,6 +358,11 @@
         {/if}
         {#if !isStale && result?.generatedAt}
           <p class="freshness-line">{formatFreshness(result.generatedAt)}</p>
+        {/if}
+        {#if reshowHint}
+          <p class="reshow-hint">
+            Re-showing — this note changed since you dismissed it.
+          </p>
         {/if}
         {#if isStale}
           <p class="updating-line" role="status">
@@ -591,6 +626,9 @@
     );
     color: var(--color-text-primary);
   }
+  .inline-cta:active {
+    filter: brightness(0.92);
+  }
   .inline-cta:focus-visible {
     outline: 2px solid var(--color-accent-primary-start);
     outline-offset: 1px;
@@ -621,6 +659,14 @@
   .freshness-line {
     margin: 0;
     font-size: 0.7rem;
+    color: var(--color-text-muted);
+  }
+
+  /* Edit-triggered re-show nudge — explains why a dismissed banner came back.
+     Same muted treatment as the freshness line. */
+  .reshow-hint {
+    margin: 0;
+    font-size: 11px;
     color: var(--color-text-muted);
   }
 

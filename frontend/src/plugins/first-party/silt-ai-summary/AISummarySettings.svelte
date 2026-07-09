@@ -336,15 +336,17 @@
     flex-wrap: wrap;
     align-items: center;
   }
+  /* CTA — same accent-primary-start recipe as SummaryBanner's .inline-cta
+     so every AI-summary deep-link reads as the same affordance kind. */
   .cta {
     margin-left: auto;
     padding: 4px 12px;
     border-radius: 6px;
     border: 1px solid
-      color-mix(in srgb, var(--color-accent-primary-glow) 40%, transparent);
+      color-mix(in srgb, var(--color-accent-primary-start) 35%, transparent);
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-glow) 14%,
+      var(--color-accent-primary-start) 10%,
       transparent
     );
     color: var(--color-text-primary);
@@ -352,13 +354,19 @@
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease;
   }
   .cta:hover {
     background: color-mix(
       in srgb,
-      var(--color-accent-primary-glow) 24%,
+      var(--color-accent-primary-start) 18%,
       transparent
     );
+  }
+  .cta:active {
+    filter: brightness(0.92);
   }
   .cta:focus-visible {
     outline: 2px solid var(--color-border-focus);

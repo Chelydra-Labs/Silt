@@ -135,31 +135,43 @@
     // linked notebook) arrive as config:changed. initTasksSettings already
     // got the latest config on mount; this re-hydrates after the re-read —
     // but never clobbers an in-session edit (savedViewsDirty wins).
-    const unsubConfig = ctx.on('config:changed', () => {
+    //
+    // Navigation to a different notebook also triggers a reload because the
+    // SDK's getPluginSettings resolves per-active-notebook overrides (#133):
+    // a linked notebook with its own co-located config.yaml can carry
+    // different columns / default modes / saved views.
+    function rehydrateFromSettings() {
       if (getTaskHubState().savedViewsDirty) return
-      void reloadTasksSettings(ctx).then(() => {
-        untrack(() => {
-          const views = loadSavedViews()
-          if (views.length) getTaskHubState().savedViews = views
-          const mode = loadDefaultDisplayMode()
-          if (mode !== getTaskHubState().displayMode) setDisplayMode(mode)
-          const group = loadDefaultGroupBy()
-          if (group !== getTaskHubState().groupBy) setGroupBy(group)
-          const sortVal = loadDefaultSort()
-          if (sortVal !== getTaskHubState().sort) setSort(sortVal)
-          const cols = loadColumns()
-          const curCols = getTaskHubState().columns
-          if (
-            cols.length &&
-            (cols.length !== curCols.length ||
-              cols.some((c, i) => c !== curCols[i]))
-          ) {
-            setColumns(cols)
-          }
-        })
+      untrack(() => {
+        const views = loadSavedViews()
+        if (views.length) getTaskHubState().savedViews = views
+        const mode = loadDefaultDisplayMode()
+        if (mode !== getTaskHubState().displayMode) setDisplayMode(mode)
+        const group = loadDefaultGroupBy()
+        if (group !== getTaskHubState().groupBy) setGroupBy(group)
+        const sortVal = loadDefaultSort()
+        if (sortVal !== getTaskHubState().sort) setSort(sortVal)
+        const cols = loadColumns()
+        const curCols = getTaskHubState().columns
+        if (
+          cols.length &&
+          (cols.length !== curCols.length ||
+            cols.some((c, i) => c !== curCols[i]))
+        ) {
+          setColumns(cols)
+        }
       })
+    }
+    const unsubConfig = ctx.on('config:changed', () => {
+      void reloadTasksSettings(ctx).then(rehydrateFromSettings)
     })
-    return () => unsubConfig()
+    const unsubNav = ctx.on('active-notebook:changed', () => {
+      void reloadTasksSettings(ctx).then(rehydrateFromSettings)
+    })
+    return () => {
+      unsubConfig()
+      unsubNav()
+    }
   })
 
   function chooseMode(mode: DisplayMode) {

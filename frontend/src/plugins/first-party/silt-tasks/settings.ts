@@ -50,11 +50,24 @@ export async function initTasksSettings(ctx: PluginContext): Promise<void> {
 
 /**
  * Re-read the settings slice from the SDK (e.g. after a config:changed event
- * signals an external edit). Does NOT re-wire saveFn (it's stable for the
- * plugin's lifetime).
+ * or active-notebook:changed signals a stale cache). Also refreshes saveFn
+ * so a post-vault-switch remount captures the new ctx.
  */
 export async function reloadTasksSettings(ctx: PluginContext): Promise<void> {
+  saveFn = (key, value) =>
+    ctx.updatePluginSetting(key, value).catch(() => false)
   configSlice = (await ctx.getPluginSettings()) ?? {}
+}
+
+/**
+ * Clear the module-scoped state on vault close/switch so a stale configSlice
+ * or an invalid session-bound saveFn from the previous vault cannot leak into
+ * the next. Called from the loader's vault:closing handler alongside
+ * resetTaskHubState().
+ */
+export function resetTasksSettings(): void {
+  configSlice = {}
+  saveFn = null
 }
 
 /** The on-disk slice `plugins.plugin_settings['silt-tasks']`, or {}. */

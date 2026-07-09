@@ -429,7 +429,10 @@
     renamingId = view.id
     renameValue = view.name
     renameError = ''
-    void tick().then(() => renameInputEl?.focus())
+    void tick().then(() => {
+      renameInputEl?.focus()
+      renameInputEl?.select()
+    })
   }
 
   function cancelRename() {
@@ -831,10 +834,22 @@
                 <span class="truncate inline-block max-w-full align-middle"
                   >{view.name}</span
                 >
-                {#if hubState.activeSavedViewId === view.id && hubState.savedViewsDirty}
-                  <span class="text-text-muted text-[10px]"> (modified)</span>
+                {#if view.id === hubState.activeSavedViewId && hubState.savedViewsDirty}
+                  <span
+                    class="inline-block w-1.5 h-1.5 rounded-full bg-accent-secondary-start ml-1"
+                    title="This view has unsaved changes"
+                    aria-label="modified"
+                  ></span>
                 {/if}
               </button>
+            {/if}
+
+            {#if view.system}
+              <span
+                class="material-symbols-outlined text-[11px] text-text-muted/50"
+                aria-label="Built-in view"
+                title="Built-in view — can't be modified">lock</span
+              >
             {/if}
 
             {#if isUser}
