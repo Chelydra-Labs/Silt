@@ -514,4 +514,55 @@ describe('Sidebar', () => {
     await flush()
     expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
   })
+
+  // --- #492: scroll-scope — unrelated editor scroll keeps the menu open ----
+
+  it('scroll-scope: unrelated editor scroll does not dismiss (#492)', async () => {
+    mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    // Create a scrollable sidebar wrapper and an unrelated editor area.
+    const sidebarWrapper = document.createElement('div')
+    sidebarWrapper.style.overflowY = 'auto'
+    sidebarWrapper.style.height = '300px'
+    document.body.appendChild(sidebarWrapper)
+
+    const editorArea = document.createElement('div')
+    editorArea.style.overflowY = 'auto'
+    editorArea.style.height = '300px'
+    document.body.appendChild(editorArea)
+
+    render(Sidebar, {
+      target: sidebarWrapper,
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const pageRow = screen.getByText('Daily')
+    const pageBtn = pageRow.closest('button')!
+    await fireEvent.contextMenu(pageBtn)
+    await flush()
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+
+    // Scrolling the unrelated editor should NOT dismiss.
+    editorArea.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flush()
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+
+    // Scrolling the sidebar's own wrapper should dismiss.
+    sidebarWrapper.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flush()
+    expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
+
+    document.body.removeChild(sidebarWrapper)
+    document.body.removeChild(editorArea)
+  })
 })

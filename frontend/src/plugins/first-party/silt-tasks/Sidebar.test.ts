@@ -828,6 +828,50 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(screen.queryByTestId('manage-view-menu')).toBeNull()
   })
 
+  // --- #492: scroll-scope — unrelated editor scroll keeps the menu open ----
+
+  it('scroll-scope: unrelated editor scroll does not dismiss (#492)', async () => {
+    const u1: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([u1])
+    // Create a scrollable sidebar wrapper and an unrelated editor area.
+    const sidebarWrapper = document.createElement('div')
+    sidebarWrapper.style.overflowY = 'auto'
+    sidebarWrapper.style.height = '300px'
+    document.body.appendChild(sidebarWrapper)
+
+    const editorArea = document.createElement('div')
+    editorArea.style.overflowY = 'auto'
+    editorArea.style.height = '300px'
+    document.body.appendChild(editorArea)
+
+    render(Sidebar, {
+      target: sidebarWrapper,
+      props: { ctx: makeCtx(), manifest: MANIFEST }
+    })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    expect(screen.getByTestId('manage-view-menu')).toBeInTheDocument()
+
+    // Scrolling the unrelated editor should NOT dismiss.
+    editorArea.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flush()
+    expect(screen.getByTestId('manage-view-menu')).toBeInTheDocument()
+
+    // Scrolling the sidebar's own wrapper should dismiss.
+    sidebarWrapper.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flush()
+    expect(screen.queryByTestId('manage-view-menu')).toBeNull()
+
+    document.body.removeChild(sidebarWrapper)
+    document.body.removeChild(editorArea)
+  })
+
   it('active view shows a dirty dot when savedViewsDirty is true', async () => {
     seedSavedViews()
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })

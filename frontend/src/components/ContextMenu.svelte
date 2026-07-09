@@ -120,7 +120,14 @@
 
   $effect(() => {
     if (open && menuEl) {
-      menuEl.focus()
+      const first = menuEl.querySelector<HTMLElement>(
+        '[role="menuitem"]:not([disabled]):not([aria-disabled="true"])'
+      )
+      if (first) {
+        first.focus()
+      } else {
+        menuEl.focus()
+      }
     }
   })
 
@@ -147,8 +154,8 @@
     const items = Array.from(
       menu.querySelectorAll<HTMLElement>('[role="menuitem"]')
     ).filter((el) => {
-      const btn = el as HTMLButtonElement
-      return !btn.disabled && btn.getAttribute('aria-disabled') !== 'true'
+      const disabled = el instanceof HTMLButtonElement ? el.disabled : false
+      return !disabled && el.getAttribute('aria-disabled') !== 'true'
     })
 
     if (items.length === 0) return
@@ -192,6 +199,7 @@
     <div
       bind:this={menuEl}
       class="fixed context-menu-card"
+      data-context-menu-root
       style:left={(menuPos?.left ?? anchor.x) + 'px'}
       style:top={(menuPos?.top ?? anchor.y) + 'px'}
       style:visibility={menuPos ? 'visible' : 'hidden'}
@@ -221,7 +229,7 @@
     min-width: 180px;
     z-index: 181;
   }
-  :global(.context-menu-card [role='menuitem']) {
+  :global([data-context-menu-root] [role='menuitem']) {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -237,10 +245,12 @@
     border-radius: 6px;
     transition: background-color 120ms ease-out;
   }
-  :global(.context-menu-card [role='menuitem']:hover:not(:disabled)) {
+  :global([data-context-menu-root] [role='menuitem']:hover:not(:disabled)) {
     background-color: var(--color-hover);
   }
-  :global(.context-menu-card [role='menuitem']:focus-visible:not(:disabled)) {
+  :global(
+    [data-context-menu-root] [role='menuitem']:focus-visible:not(:disabled)
+  ) {
     outline: 2px solid var(--color-accent-primary-start);
     outline-offset: -2px;
   }

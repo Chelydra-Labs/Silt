@@ -1001,7 +1001,7 @@
   {@const canUpdate =
     hubState.activeSavedViewId === v.id && hubState.savedViewsDirty}
   <ContextMenu
-    open={true}
+    open={manageMenu !== null && manageMenuView !== undefined}
     anchor={{ x: manageMenu.x, y: manageMenu.y }}
     anchorEl={sidebarRootEl}
     onClose={closeManageMenu}
