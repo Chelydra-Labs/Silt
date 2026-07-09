@@ -40,7 +40,7 @@
   } from './state.svelte'
   import { viewMatchesState } from './savedViews'
   import { persistSavedViews } from './settings'
-  import { clampToViewport } from '../../../lib/editor/popoverPositioning'
+  import ContextMenu from '../../../components/ContextMenu.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -387,11 +387,7 @@
 
   // Manage-menu (⋯ button + right-click share the same menu).
   let manageMenu = $state<{ viewId: string; x: number; y: number } | null>(null)
-  // Clamped render position, measured from the menu's real size once mounted
-  // (replaces the former hardcoded 180×220 estimate). Null until the first
-  // measure; the template then falls back to the raw anchor coords.
-  let manageMenuEl = $state<HTMLDivElement | null>(null)
-  let manageMenuPos = $state<{ left: number; top: number } | null>(null)
+  let sidebarRootEl = $state<HTMLElement | null>(null)
 
   // Delete-confirmation modal target.
   let deleteTarget = $state<SavedView | null>(null)
@@ -431,52 +427,6 @@
   function closeManageMenu() {
     manageMenu = null
   }
-
-  // Clamp the manage menu into the viewport using its real rendered size, and
-  // dismiss it on scroll / resize / Escape (#489). A context menu's anchor is a
-  // one-shot position (cursor or button rect), so it DISMISSES on scroll rather
-  // than re-positioning (unlike Popover.svelte, which tracks an anchor element).
-  // Capture-phase scroll catches scrolls inside any overflow container, not
-  // just window. Escape is handled both here (window-level, works regardless of
-  // focus) and by onMenuKeydown on the focused card — belt and suspenders so a
-  // right-click open (which leaves focus on the row) still closes on Escape.
-  $effect(() => {
-    if (!manageMenu) {
-      manageMenuPos = null
-      return
-    }
-    const anchor = manageMenu
-    const measure = () => {
-      const w = manageMenuEl?.offsetWidth ?? 180
-      const h = manageMenuEl?.offsetHeight ?? 0
-      manageMenuPos = clampToViewport(
-        { x: anchor.x, y: anchor.y, width: w, height: h },
-        { width: window.innerWidth, height: window.innerHeight }
-      )
-    }
-    measure()
-    void tick().then(measure)
-    const dismiss = () => {
-      manageMenu = null
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        manageMenu = null
-      }
-    }
-    document.addEventListener('scroll', dismiss, {
-      capture: true,
-      passive: true
-    })
-    window.addEventListener('resize', dismiss, { passive: true })
-    window.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('scroll', dismiss, { capture: true })
-      window.removeEventListener('resize', dismiss)
-      window.removeEventListener('keydown', onKey)
-    }
-  })
 
   function startRename(view: SavedView) {
     if (view.system) return
@@ -648,32 +598,6 @@
     return idx >= 0 && idx < userViews.length - 1
   }
 
-  // Arrow-key navigation inside the manage menu (WAI-ARIA menu pattern).
-  function onMenuKeydown(e: KeyboardEvent) {
-    if (!manageMenu) return
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      closeManageMenu()
-      return
-    }
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-    e.preventDefault()
-    const menu = document.querySelector('[data-testid="manage-view-menu"]')
-    if (!menu) return
-    // Skip disabled items — they're not focusable and shouldn't break the cycle.
-    const items = Array.from(
-      menu.querySelectorAll<HTMLElement>('[role="menuitem"]')
-    ).filter((el) => !(el as HTMLButtonElement).disabled)
-    if (items.length === 0) return
-    const active = document.activeElement as HTMLElement | null
-    const idx = active ? items.indexOf(active) : -1
-    const next =
-      e.key === 'ArrowDown'
-        ? (idx + 1) % items.length
-        : (idx - 1 + items.length) % items.length
-    items[next]?.focus()
-  }
-
   // Keep the menu's manageMenu referencing a live view — if the list changes
   // underneath (e.g. the view was deleted from elsewhere), close the menu.
   let manageMenuView = $derived.by(() => {
@@ -705,6 +629,7 @@
 </script>
 
 <aside
+  bind:this={sidebarRootEl}
   class="flex flex-col gap-4 px-3 py-3"
   aria-label="Tasks sidebar"
   data-test-tasks-sidebar
@@ -1069,104 +994,87 @@
 </aside>
 
 <!-- Saved-view manage menu (#470). The ⋯ button and right-click both feed
-     into the same `manageMenu` state; this overlay is the single render. -->
+     into the same `manageMenu` state; delegates to the shared ContextMenu
+     component (#491) for positioning, dismissal, keyboard nav, and chrome. -->
 {#if manageMenu && manageMenuView}
   {@const v = manageMenuView}
   {@const canUpdate =
     hubState.activeSavedViewId === v.id && hubState.savedViewsDirty}
-  <div class="fixed inset-0 z-[180]">
+  <ContextMenu
+    open={true}
+    anchor={{ x: manageMenu.x, y: manageMenu.y }}
+    anchorEl={sidebarRootEl}
+    onClose={closeManageMenu}
+    ariaLabel={`Actions for ${v.name}`}
+    backdropTestId="manage-view-backdrop"
+    menuTestId="manage-view-menu"
+  >
+    {#if canUpdate}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => void overwriteView(v)}
+        data-testid="manage-update-view"
+      >
+        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+          >save</span
+        >
+        <span>Update "{v.name}"</span>
+      </button>
+    {/if}
     <button
-      tabindex="-1"
-      aria-label="Close menu"
-      onclick={closeManageMenu}
-      oncontextmenu={(e) => {
-        e.preventDefault()
-        closeManageMenu()
-      }}
-      class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-      data-testid="manage-view-backdrop"
-    ></button>
-    <div
-      bind:this={manageMenuEl}
-      class="fixed manage-menu-card"
-      style:left={(manageMenuPos?.left ?? manageMenu.x) + 'px'}
-      style:top={(manageMenuPos?.top ?? manageMenu.y) + 'px'}
-      style:visibility={manageMenuPos ? 'visible' : 'hidden'}
-      role="menu"
-      tabindex="-1"
-      aria-label={`Actions for ${v.name}`}
-      data-testid="manage-view-menu"
-      onkeydown={onMenuKeydown}
+      type="button"
+      role="menuitem"
+      onclick={() => startRename(v)}
+      data-testid="manage-rename-view"
     >
-      {#if canUpdate}
-        <button
-          type="button"
-          role="menuitem"
-          onclick={() => void overwriteView(v)}
-          data-testid="manage-update-view"
-          class="manage-menu-item"
-        >
-          <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
-            >save</span
-          >
-          <span>Update “{v.name}”</span>
-        </button>
-      {/if}
-      <button
-        type="button"
-        role="menuitem"
-        onclick={() => startRename(v)}
-        data-testid="manage-rename-view"
-        class="manage-menu-item"
+      <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+        >edit</span
       >
-        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
-          >edit</span
-        >
-        <span>Rename…</span>
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        disabled={!canMoveUp(v)}
-        aria-disabled={!canMoveUp(v)}
-        onclick={() => void moveView(v, -1)}
-        data-testid="manage-move-up"
-        class="manage-menu-item disabled:opacity-40 disabled:cursor-not-allowed"
+      <span>Rename…</span>
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      disabled={!canMoveUp(v)}
+      aria-disabled={!canMoveUp(v)}
+      onclick={() => void moveView(v, -1)}
+      data-testid="manage-move-up"
+      class="disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+        >arrow_upward</span
       >
-        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
-          >arrow_upward</span
-        >
-        <span>Move up</span>
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        disabled={!canMoveDown(v)}
-        aria-disabled={!canMoveDown(v)}
-        onclick={() => void moveView(v, 1)}
-        data-testid="manage-move-down"
-        class="manage-menu-item disabled:opacity-40 disabled:cursor-not-allowed"
+      <span>Move up</span>
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      disabled={!canMoveDown(v)}
+      aria-disabled={!canMoveDown(v)}
+      onclick={() => void moveView(v, 1)}
+      data-testid="manage-move-down"
+      class="disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+        >arrow_downward</span
       >
-        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
-          >arrow_downward</span
-        >
-        <span>Move down</span>
-      </button>
-      <div class="manage-menu-separator" aria-hidden="true"></div>
-      <button
-        type="button"
-        role="menuitem"
-        onclick={() => requestDelete(v)}
-        data-testid="manage-delete-view"
-        class="manage-menu-item text-status-danger"
+      <span>Move down</span>
+    </button>
+    <div class="context-menu-separator" aria-hidden="true"></div>
+    <button
+      type="button"
+      role="menuitem"
+      onclick={() => requestDelete(v)}
+      data-testid="manage-delete-view"
+      class="text-status-danger"
+    >
+      <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+        >delete</span
       >
-        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
-          >delete</span
-        >
-        <span>Delete…</span>
-      </button>
-    </div>
-  </div>
+      <span>Delete…</span>
+    </button>
+  </ContextMenu>
 {/if}
 
 <!-- Delete confirmation (#470). In-app modal replaces window.confirm(). -->
@@ -1182,48 +1090,3 @@
     onCancel={cancelDelete}
   />
 {/if}
-
-<style>
-  .manage-menu-card {
-    background-color: color-mix(
-      in srgb,
-      var(--color-surface-popover) 94%,
-      transparent
-    );
-    backdrop-filter: blur(12px) saturate(140%);
-    border: 1px solid var(--color-border-active);
-    border-radius: 8px;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
-    padding: 4px;
-    min-width: 180px;
-    z-index: 181;
-  }
-  .manage-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 10px;
-    border: none;
-    background: transparent;
-    color: var(--color-text-primary);
-    font-size: 12px;
-    font-family: var(--font-body, inherit);
-    text-align: left;
-    cursor: pointer;
-    border-radius: 6px;
-    transition: background-color 120ms ease-out;
-  }
-  .manage-menu-item:hover:not(:disabled) {
-    background-color: var(--color-hover);
-  }
-  .manage-menu-item:focus-visible:not(:disabled) {
-    outline: 2px solid var(--color-accent-primary-start);
-    outline-offset: -2px;
-  }
-  .manage-menu-separator {
-    height: 1px;
-    margin: 4px 6px;
-    background-color: var(--color-border);
-  }
-</style>

@@ -19,6 +19,10 @@
     onClose: () => void
     /** Accessible label for the menu container. Defaults to "Actions". */
     ariaLabel?: string
+    /** Optional data-testid for the backdrop button (used by consumer tests). */
+    backdropTestId?: string
+    /** Optional data-testid for the menu container (used by consumer tests). */
+    menuTestId?: string
     /** Menu item slot. */
     children?: Snippet
   }
@@ -29,6 +33,8 @@
     anchorEl = null,
     onClose,
     ariaLabel = 'Actions',
+    backdropTestId,
+    menuTestId,
     children
   }: Props = $props()
 
@@ -172,6 +178,7 @@
     <button
       tabindex="-1"
       aria-label="Close context menu"
+      data-testid={backdropTestId}
       onclick={onClose}
       oncontextmenu={(e) => {
         e.preventDefault()
@@ -191,6 +198,7 @@
       role="menu"
       tabindex="-1"
       aria-label={ariaLabel}
+      data-testid={menuTestId}
       onkeydown={onMenuKeydown}
     >
       {@render children?.()}
