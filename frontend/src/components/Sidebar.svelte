@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import SidebarSection from './SidebarSection.svelte'
   import PluginSidebarPanels from './PluginSidebarPanels.svelte'
   import TagSidebarPanel from './TagSidebarPanel.svelte'
@@ -33,6 +33,7 @@
     reconcileActiveAfterDelete,
     findNotebook
   } from '../lib/sidebar/navActions'
+  import { clampToViewport } from '../lib/editor/popoverPositioning'
 
   import type { PluginContext, PluginManifest } from '../plugins/sdk'
   import {
@@ -130,6 +131,11 @@
     section?: string
     page?: string
   } | null>(null)
+  // The clamped render position (measured from the menu's real size once it is
+  // in the DOM). Null until the first measure, in which case the template
+  // falls back to the raw cursor coords so the menu never flashes at 0,0.
+  let contextMenuEl = $state<HTMLDivElement | null>(null)
+  let menuPos = $state<{ left: number; top: number } | null>(null)
 
   // Delete confirmation dialog state
   let deleteTarget = $state<{
@@ -539,6 +545,53 @@
   function closeContextMenu() {
     contextMenu = null
   }
+
+  // Clamp the context menu into the viewport using its real rendered size, and
+  // dismiss it on scroll / resize / Escape (#489). Unlike Popover.svelte (which
+  // RE-POSITIONS on scroll, because it anchors to a tracked element), a context
+  // menu's anchor is a one-shot cursor position, so it DISMISSES on scroll —
+  // re-clamping would detach it from the user's intent. The scroll listener
+  // uses the capture phase so a scroll inside any overflow container (not just
+  // window) dismisses, matching Popover.svelte's listener hygiene.
+  $effect(() => {
+    if (!contextMenu) {
+      menuPos = null
+      return
+    }
+    const anchor = contextMenu
+    const measure = () => {
+      const w = contextMenuEl?.offsetWidth ?? 160
+      const h = contextMenuEl?.offsetHeight ?? 0
+      menuPos = clampToViewport(
+        { x: anchor.x, y: anchor.y, width: w, height: h },
+        { width: window.innerWidth, height: window.innerHeight }
+      )
+    }
+    // offsetWidth is 0 before the menu mounts; measure now (rough) and again
+    // after the DOM flushes (accurate).
+    measure()
+    void tick().then(measure)
+    const dismiss = () => {
+      contextMenu = null
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        contextMenu = null
+      }
+    }
+    document.addEventListener('scroll', dismiss, {
+      capture: true,
+      passive: true
+    })
+    window.addEventListener('resize', dismiss, { passive: true })
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('scroll', dismiss, { capture: true })
+      window.removeEventListener('resize', dismiss)
+      window.removeEventListener('keydown', onKey)
+    }
+  })
 
   function handleContextRename() {
     if (!contextMenu) return
@@ -1109,9 +1162,11 @@
       class="absolute inset-0 cursor-default border-none bg-transparent p-0"
     ></button>
     <div
+      bind:this={contextMenuEl}
       class="fixed context-menu-card"
-      style:left={contextMenu.x + 'px'}
-      style:top={contextMenu.y + 'px'}
+      style:left={(menuPos?.left ?? contextMenu.x) + 'px'}
+      style:top={(menuPos?.top ?? contextMenu.y) + 'px'}
+      style:visibility={menuPos ? 'visible' : 'hidden'}
       role="menu"
       tabindex="-1"
       aria-label="Actions"
@@ -1224,6 +1279,10 @@
   }
   .context-menu-item:hover {
     background-color: var(--color-hover);
+  }
+  .context-menu-item:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: -2px;
   }
   :global(.drag-over-top) {
     box-shadow: inset 0 2px 0 var(--color-accent-primary-start);

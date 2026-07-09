@@ -76,6 +76,45 @@ func TestConfigWatcher_SelfWrite_IsIgnored(t *testing.T) {
 	}
 }
 
+// TestConfigWatcher_UnregisterSelfWrite_ClearsWindow verifies that a save that
+// fails after arming the window can clear it (#487), so a legitimate external
+// edit landing right after the failed save is NOT silently dropped.
+func TestConfigWatcher_UnregisterSelfWrite_ClearsWindow(t *testing.T) {
+	tmp := t.TempDir()
+	if err := Save(tmp, Defaults()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	changed := make(chan SystemConfig, 4)
+	cw, err := NewConfigWatcher(tmp, func(c SystemConfig) { changed <- c }, nil)
+	if err != nil {
+		t.Fatalf("NewConfigWatcher: %v", err)
+	}
+	defer cw.Close()
+	cw.Start()
+
+	time.Sleep(150 * time.Millisecond)
+
+	// Arm the window, then immediately clear it (a failed save's cleanup).
+	cw.RegisterSelfWrite()
+	cw.UnregisterSelfWrite()
+
+	// A subsequent external write must be detected — the window was cleared.
+	cfg := Defaults()
+	cfg.Editor.FontSizePx = 7
+	if err := os.WriteFile(ConfigPath(tmp), mustMarshal(t, cfg), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	select {
+	case <-changed:
+		// expected: external edit detected because UnregisterSelfWrite cleared
+		// the suppression window.
+	case <-time.After(SelfWriteSuppressionTimeout):
+		t.Fatalf("external edit was suppressed — UnregisterSelfWrite did not clear the window (#487)")
+	}
+}
+
 func TestConfigWatcher_MalformedWrite_TriggersError(t *testing.T) {
 	tmp := t.TempDir()
 	if err := Save(tmp, Defaults()); err != nil {

@@ -80,9 +80,10 @@ func (a *App) RenderTemplate(id string, vars map[string]string) (string, error) 
 
 // SaveUserTemplate validates t, rejects any builtin:// id (read-only), and
 // writes the canonical form atomically to <vault>/.system/templates/<id>.md.
-// The template watcher's self-write window is armed so the resulting fsnotify
-// events do not trigger a redundant reload. Emits templates:changed so the
-// picker re-lists immediately. Mirrors App.ImportTheme.
+// The template watcher's self-write window is armed before the write (and
+// cleared on failure) so the resulting fsnotify events do not trigger a
+// redundant reload. Emits templates:changed so the picker re-lists immediately.
+// Mirrors App.ImportTheme.
 func (a *App) SaveUserTemplate(t templates.Template) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -98,6 +99,9 @@ func (a *App) SaveUserTemplate(t templates.Template) error {
 		a.tracker.RegisterWrite(filepath.Join(a.templatesDir(), t.ID+".md"))
 	}
 	if err := templates.SaveTemplate(a.templatesDir(), &t); err != nil {
+		if a.templateWatcher != nil {
+			a.templateWatcher.UnregisterSelfWrite()
+		}
 		log.Printf("templates: SaveUserTemplate(%q) failed: %v", t.ID, err)
 		return err
 	}
@@ -127,6 +131,9 @@ func (a *App) DeleteUserTemplate(id string) error {
 		a.tracker.RegisterWrite(filepath.Join(a.templatesDir(), id+".md"))
 	}
 	if err := templates.DeleteTemplate(a.templatesDir(), id); err != nil {
+		if a.templateWatcher != nil {
+			a.templateWatcher.UnregisterSelfWrite()
+		}
 		log.Printf("templates: DeleteUserTemplate(%q) failed: %v", id, err)
 		return err
 	}

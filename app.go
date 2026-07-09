@@ -323,11 +323,9 @@ func (a *App) ConfirmGrantsMigration(legacyGrants map[string]map[string]string) 
 	}
 	// Rewrite config.yaml so the legacy grants block is stripped from disk.
 	// The struct no longer has a Grants field, so a round-trip through Save
-	// drops it. RegisterSelfWrite suppresses the watcher's reaction.
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	// drops it. saveConfigTracked arms the self-write window and clears it if
+	// the save fails.
+	if err := a.saveConfigTracked(a.cfg); err != nil {
 		return fmt.Errorf("strip legacy grants from config.yaml: %w", err)
 	}
 	a.emitPluginsChanged()
@@ -346,12 +344,10 @@ func (a *App) DeclineGrantsMigration() error {
 	}
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
 	// config.Save drops the grants field (it's gone from the struct), so
-	// the on-disk file no longer carries the legacy block.
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	// the on-disk file no longer carries the legacy block. saveConfigTracked
+	// arms the self-write window and clears it if the save fails.
+	if err := a.saveConfigTracked(a.cfg); err != nil {
 		return fmt.Errorf("strip legacy grants from config.yaml: %w", err)
 	}
 	return nil

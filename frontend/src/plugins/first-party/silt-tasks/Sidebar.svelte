@@ -40,6 +40,7 @@
   } from './state.svelte'
   import { viewMatchesState } from './savedViews'
   import { persistSavedViews } from './settings'
+  import { clampToViewport } from '../../../lib/editor/popoverPositioning'
 
   interface Props {
     ctx: PluginContext
@@ -386,6 +387,11 @@
 
   // Manage-menu (⋯ button + right-click share the same menu).
   let manageMenu = $state<{ viewId: string; x: number; y: number } | null>(null)
+  // Clamped render position, measured from the menu's real size once mounted
+  // (replaces the former hardcoded 180×220 estimate). Null until the first
+  // measure; the template then falls back to the raw anchor coords.
+  let manageMenuEl = $state<HTMLDivElement | null>(null)
+  let manageMenuPos = $state<{ left: number; top: number } | null>(null)
 
   // Delete-confirmation modal target.
   let deleteTarget = $state<SavedView | null>(null)
@@ -398,16 +404,10 @@
 
   function openManageMenu(view: SavedView, x: number, y: number) {
     if (view.system) return
-    // Clamp to viewport so the 180px-min-width menu can't render off-screen.
-    const menuW = 180
-    const menuH = 220 // estimate; the menu has at most ~5 items + separator
-    const cw = window.innerWidth
-    const ch = window.innerHeight
-    manageMenu = {
-      viewId: view.id,
-      x: Math.max(8, Math.min(x, cw - menuW - 8)),
-      y: Math.max(8, Math.min(y, ch - menuH - 8))
-    }
+    // Store the raw anchor; the $effect below clamps it to the viewport using
+    // the menu's real rendered dimensions (accurate, vs. the former hardcoded
+    // 180×220 estimate that could mis-clamp).
+    manageMenu = { viewId: view.id, x, y }
   }
 
   function openManageMenuFromButton(e: MouseEvent, view: SavedView) {
@@ -431,6 +431,52 @@
   function closeManageMenu() {
     manageMenu = null
   }
+
+  // Clamp the manage menu into the viewport using its real rendered size, and
+  // dismiss it on scroll / resize / Escape (#489). A context menu's anchor is a
+  // one-shot position (cursor or button rect), so it DISMISSES on scroll rather
+  // than re-positioning (unlike Popover.svelte, which tracks an anchor element).
+  // Capture-phase scroll catches scrolls inside any overflow container, not
+  // just window. Escape is handled both here (window-level, works regardless of
+  // focus) and by onMenuKeydown on the focused card — belt and suspenders so a
+  // right-click open (which leaves focus on the row) still closes on Escape.
+  $effect(() => {
+    if (!manageMenu) {
+      manageMenuPos = null
+      return
+    }
+    const anchor = manageMenu
+    const measure = () => {
+      const w = manageMenuEl?.offsetWidth ?? 180
+      const h = manageMenuEl?.offsetHeight ?? 0
+      manageMenuPos = clampToViewport(
+        { x: anchor.x, y: anchor.y, width: w, height: h },
+        { width: window.innerWidth, height: window.innerHeight }
+      )
+    }
+    measure()
+    void tick().then(measure)
+    const dismiss = () => {
+      manageMenu = null
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        manageMenu = null
+      }
+    }
+    document.addEventListener('scroll', dismiss, {
+      capture: true,
+      passive: true
+    })
+    window.addEventListener('resize', dismiss, { passive: true })
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('scroll', dismiss, { capture: true })
+      window.removeEventListener('resize', dismiss)
+      window.removeEventListener('keydown', onKey)
+    }
+  })
 
   function startRename(view: SavedView) {
     if (view.system) return
@@ -1041,9 +1087,11 @@
       data-testid="manage-view-backdrop"
     ></button>
     <div
+      bind:this={manageMenuEl}
       class="fixed manage-menu-card"
-      style:left={manageMenu.x + 'px'}
-      style:top={manageMenu.y + 'px'}
+      style:left={(manageMenuPos?.left ?? manageMenu.x) + 'px'}
+      style:top={(manageMenuPos?.top ?? manageMenu.y) + 'px'}
+      style:visibility={manageMenuPos ? 'visible' : 'hidden'}
       role="menu"
       tabindex="-1"
       aria-label={`Actions for ${v.name}`}
@@ -1168,6 +1216,10 @@
   }
   .manage-menu-item:hover:not(:disabled) {
     background-color: var(--color-hover);
+  }
+  .manage-menu-item:focus-visible:not(:disabled) {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: -2px;
   }
   .manage-menu-separator {
     height: 1px;

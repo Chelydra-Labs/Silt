@@ -37,8 +37,11 @@ const SelfWriteSuppressionTimeout = selfWriteWindow + reloadDebounce + 80*time.M
 // a restart — the same hot-reload posture as the config and theme engines.
 //
 // Self-loop prevention is a local time-window: the App calls RegisterSelfWrite
-// before SaveTemplate's atomic write, and the watcher ignores template events
-// for the window so Silt's own multi-event save cannot feed back into a reload.
+// immediately before SaveTemplate's atomic write, and the watcher ignores
+// template events for the window so Silt's own multi-event save cannot feed
+// back into a reload. If the save fails, UnregisterSelfWrite clears the window
+// so a failed write doesn't leave it open and silently drop a real external
+// edit (mirrors config.ConfigWatcher).
 //
 // The watcher observes the templatesDir directly when it exists. When it does
 // not yet exist (no user templates saved), the watcher observes the .system
@@ -109,8 +112,9 @@ func (w *TemplateWatcher) Start() {
 
 // RegisterSelfWrite records that Silt is about to write a template itself, so
 // the resulting fsnotify event(s) are treated as self-generated and ignored for
-// selfWriteWindow. Must be called immediately before the write. Mirrors
-// config.ConfigWatcher.RegisterSelfWrite.
+// selfWriteWindow. Must be called immediately before the write; pair with
+// UnregisterSelfWrite on the write's error path so a failed save doesn't leave
+// the window open. Mirrors config.ConfigWatcher.RegisterSelfWrite.
 func (w *TemplateWatcher) RegisterSelfWrite() {
 	w.selfMu.Lock()
 	w.selfUntil = time.Now().Add(selfWriteWindow)
@@ -121,6 +125,17 @@ func (w *TemplateWatcher) isSelfWrite() bool {
 	w.selfMu.Lock()
 	defer w.selfMu.Unlock()
 	return time.Now().Before(w.selfUntil)
+}
+
+// UnregisterSelfWrite clears a self-write suppression window opened by
+// RegisterSelfWrite. Call it when a save that armed the window fails, so a
+// failed write does not leave the window open and silently drop a legitimate
+// external edit landing inside it. No-op if no window is open. Mirrors
+// config.ConfigWatcher.UnregisterSelfWrite.
+func (w *TemplateWatcher) UnregisterSelfWrite() {
+	w.selfMu.Lock()
+	w.selfUntil = time.Time{}
+	w.selfMu.Unlock()
 }
 
 // Close stops the loop and closes the fsnotify watcher. Safe to call multiple

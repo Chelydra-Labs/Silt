@@ -388,6 +388,28 @@ func (a *App) GetConfigLoadError() string {
 	return msg
 }
 
+// saveConfigTracked persists cfg atomically while managing the config watcher's
+// self-write suppression window. The window is armed BEFORE the write so Silt's
+// own atomic save (temp + rename → a burst of fsnotify events) is suppressed,
+// then cleared via UnregisterSelfWrite if the write fails — otherwise a failed
+// save would leave the 500ms window open and silently drop a legitimate
+// external edit landing inside it. Safe to call while holding configMu:
+// config.Save and the watcher's selfMu are independent of configMu. This is the
+// single source of truth for the register/unregister discipline; every atomic
+// config setter routes its persist through here.
+func (a *App) saveConfigTracked(cfg config.SystemConfig) error {
+	if a.configWatcher != nil {
+		a.configWatcher.RegisterSelfWrite()
+	}
+	if err := config.Save(a.vaultPath, cfg); err != nil {
+		if a.configWatcher != nil {
+			a.configWatcher.UnregisterSelfWrite()
+		}
+		return err
+	}
+	return nil
+}
+
 // SaveSystemConfig validates, persists atomically, and applies the new config.
 // The self-write is registered first so the hot-reload watcher ignores the
 // fsnotify event from our own atomic write.
@@ -423,10 +445,7 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 	a.configMu.Lock()
 	cfg.AI.Chat.APIKey = a.cfg.AI.Chat.APIKey
 	cfg.AI.Embedding.APIKey = a.cfg.AI.Embedding.APIKey
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	err := config.Save(a.vaultPath, cfg)
+	err := a.saveConfigTracked(cfg)
 	a.configMu.Unlock()
 	if err != nil {
 		return err
@@ -626,10 +645,7 @@ func (a *App) UpdatePluginSetting(pluginID string, key string, value any) error 
 	entry[key] = value
 	freshCfg.Plugins.PluginSettings[pluginID] = entry
 	a.cfg = freshCfg
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, a.cfg)
+	return a.saveConfigTracked(a.cfg)
 }
 
 // AppendDismissedTip records a one-time UI tip ID as dismissed (#197). Mirrors
@@ -660,10 +676,7 @@ func (a *App) AppendDismissedTip(tipID string) error {
 		}
 	}
 	a.cfg.UI.DismissedTips = append(a.cfg.UI.DismissedTips, tipID)
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, a.cfg)
+	return a.saveConfigTracked(a.cfg)
 }
 
 // SetShowFormatToolbar atomically writes the format-toolbar visibility to
@@ -682,10 +695,7 @@ func (a *App) SetShowFormatToolbar(value bool) error {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	a.cfg.UI.ShowFormatToolbar = &value
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, a.cfg)
+	return a.saveConfigTracked(a.cfg)
 }
 
 // SetFocusMode atomically writes the editor focus-mode flag. Same rationale as
@@ -699,10 +709,7 @@ func (a *App) SetFocusMode(value bool) error {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	a.cfg.Editor.FocusMode = &value
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, a.cfg)
+	return a.saveConfigTracked(a.cfg)
 }
 
 // SetOpenDevtoolsOnStartup atomically writes the Dev Mode (open DevTools on
@@ -720,10 +727,7 @@ func (a *App) SetOpenDevtoolsOnStartup(value bool) error {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	a.cfg.UI.OpenDevtoolsOnStartup = &value
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, a.cfg)
+	return a.saveConfigTracked(a.cfg)
 }
 
 // GetPluginSettingsForNotebook resolves a plugin's settings map for the

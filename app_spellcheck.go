@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"strings"
-
-	"silt/backend/config"
 )
 
 // App spellcheck bindings (#196). The per-vault custom dictionary lives in
@@ -20,9 +18,9 @@ import (
 // which is the common case (vault notebooks).
 
 // SetTypewriterMode atomically toggles editor.typewriter_mode (#187), mirroring
-// SetFocusMode: vaultMu.RLock + configMu.Lock + RegisterSelfWrite + config.Save.
-// Used by the toggle_typewriter_mode hotkey (default Ctrl+Shift+Y) so a single-
-// field write doesn't clobber an unsaved Settings draft.
+// SetFocusMode: vaultMu.RLock + configMu.Lock + saveConfigTracked. Used by the
+// toggle_typewriter_mode hotkey (default Ctrl+Shift+Y) so a single-field write
+// doesn't clobber an unsaved Settings draft.
 func (a *App) SetTypewriterMode(value bool) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -32,10 +30,7 @@ func (a *App) SetTypewriterMode(value bool) error {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	a.cfg.Editor.TypewriterMode = &value
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	return config.Save(a.vaultPath, a.cfg)
+	return a.saveConfigTracked(a.cfg)
 }
 
 // GetCustomDictionary returns the per-vault custom spellcheck word list. Empty
@@ -82,10 +77,7 @@ func (a *App) AddCustomDictionaryWord(word string) ([]string, error) {
 		}
 	}
 	a.cfg.Editor.CustomDictionary = append(a.cfg.Editor.CustomDictionary, w)
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	if err := a.saveConfigTracked(a.cfg); err != nil {
 		return nil, fmt.Errorf("save custom dictionary: %w", err)
 	}
 	out := make([]string, len(a.cfg.Editor.CustomDictionary))
@@ -113,10 +105,7 @@ func (a *App) RemoveCustomDictionaryWord(word string) ([]string, error) {
 		}
 	}
 	a.cfg.Editor.CustomDictionary = next
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	if err := a.saveConfigTracked(a.cfg); err != nil {
 		return nil, fmt.Errorf("save custom dictionary: %w", err)
 	}
 	out := make([]string, len(a.cfg.Editor.CustomDictionary))

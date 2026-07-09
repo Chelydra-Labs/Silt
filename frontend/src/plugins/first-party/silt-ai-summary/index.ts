@@ -22,6 +22,7 @@ import { registerSurface, unregisterSurface } from '../../surfaces'
 import AISummaryPanel from './AISummaryPanel.svelte'
 import AISummarySettings from './AISummarySettings.svelte'
 import SummaryBanner from './SummaryBanner.svelte'
+import SummaryBannerLoading from './SummaryBannerLoading.svelte'
 import { createSummaryController, type SummaryController } from './state.svelte'
 import { resetCacheState } from './cache'
 import { computeContentHash } from './cache'
@@ -54,6 +55,11 @@ export const manifest: PluginManifest = {
 // rather than re-hardcoding the literal (which drifted once and broke focus).
 export const BANNER_SURFACE_ID = 'silt-ai-summary:banner'
 const REOPEN_SURFACE_ID = 'silt-ai-summary:reopen'
+// Transient skeleton shown in the banner slot while silt-ai-summary computes
+// the content hash on a note switch (#488). It registers immediately (to occupy
+// the slot) but stays invisible for a short delay then fades in — see
+// SummaryBannerLoading.svelte.
+const LOADING_SURFACE_ID = 'silt-ai-summary:loading'
 const PLUGIN_ID = 'silt-ai-summary'
 
 // Module-level controller + event unsubs. One active vault at a time; reset on
@@ -66,6 +72,11 @@ let lastPageId: string | null = null
 // Which surface is currently mounted for lastPageId, so a re-evaluation that
 // reaches the same decision doesn't churn (unregister+register → flicker).
 let mountedKind: 'banner' | 'reopen' | null = null
+// Monotonic counter identifying which note-switch invocation currently owns the
+// loading skeleton. A stale invocation (A→B→C, A's hash resolves last) must not
+// clear the skeleton a newer invocation (C) registered, since both share one
+// LOADING_SURFACE_ID slot. See the note-switch handler.
+let loadingNonce = 0
 
 export function getController(): SummaryController | null {
   return controller
@@ -73,6 +84,16 @@ export function getController(): SummaryController | null {
 
 function pageIdOf(notebook: string, section: string, page: string): string {
   return `${notebook}/${section}/${page}`
+}
+
+/** Tear down every ai-summary surface (banner, re-open chip, loading
+ *  placeholder) and reset the idempotency guard. The single source of truth for
+ *  teardown so the note-switch path and vault-close path can't drift. */
+function teardownSurfaces() {
+  unregisterSurface(BANNER_SURFACE_ID)
+  unregisterSurface(REOPEN_SURFACE_ID)
+  unregisterSurface(LOADING_SURFACE_ID)
+  mountedKind = null
 }
 
 /** Hash the page's current content so dismissal can be keyed by
@@ -111,9 +132,11 @@ function mountForPage(
 ) {
   const want = decideMountKind(opts)
   if (mountedKind === want) return
-  // Swap: tear down whichever surface is up, then mount the other.
+  // Swap: tear down whichever surface is up (incl. any lingering loading
+  // placeholder from a note-switch hash window), then mount the other.
   unregisterSurface(BANNER_SURFACE_ID)
   unregisterSurface(REOPEN_SURFACE_ID)
+  unregisterSurface(LOADING_SURFACE_ID)
   if (want === 'banner') {
     registerSurface({
       id: BANNER_SURFACE_ID,
@@ -206,8 +229,39 @@ export default {
       if (lastPageId) controller.cancelPending(lastPageId)
       if (!evt.notebook || !evt.page) return
       const id = pageIdOf(evt.notebook, evt.section, evt.page)
+      // Only a GENUINE note change tears the prior surface down before the async
+      // hash. The dispatcher guards against redundant same-note events, but a
+      // same-note re-evaluation (e.g. a settings tweak re-fired here) must keep
+      // the current surface up so mountForPage's idempotency guard can no-op an
+      // unchanged decision or swap on a changed one — tearing down would reset
+      // mountedKind and force a needless flicker.
+      const isNoteChange = id !== lastPageId
       lastPageId = id
       const s = controller.getSettings()
+
+      // Register the loading skeleton immediately on a genuine note change that
+      // will await a hash. It occupies the banner slot from t=0 so the editor
+      // content below doesn't reflow (collapse → re-expand) during the async
+      // window; the skeleton itself stays invisible for LOADING_DELAY_MS via a
+      // CSS fade-in, so a fast hash (the common case) resolves before the
+      // skeleton ever paints and the user sees no flicker. Skipped in on-demand
+      // mode (the hash is synchronous there, so there is no window to bridge).
+      const myLoadingNonce =
+        isNoteChange && !s.on_demand_only ? ++loadingNonce : null
+      if (myLoadingNonce !== null) {
+        // Tear down the prior note's surface BEFORE the async hash so the user
+        // never sees a stale summary from the previous note during the window.
+        teardownSurfaces()
+        registerSurface({
+          id: LOADING_SURFACE_ID,
+          pluginID: PLUGIN_ID,
+          kind: 'note-banner',
+          label: 'AI summary',
+          icon: 'auto_awesome',
+          component: SummaryBannerLoading
+        })
+      }
+
       // Fetch + hash the content so dismissal is keyed by content hash (#455).
       // In on-demand mode the chip mounts regardless, so skip the SQLite read.
       const hash = s.on_demand_only
@@ -217,6 +271,17 @@ export default {
             section: evt.section,
             page: evt.page
           })
+
+      // Clear this invocation's loading skeleton — but ONLY if a newer note
+      // switch hasn't already replaced it. Without the nonce guard, a stale
+      // invocation resolving after a rapid A→B→C switch would unregister C's
+      // still-wanted skeleton (the surfaces map keys by id, so they share one
+      // LOADING_SURFACE_ID slot). mountForPage also clears LOADING on a real
+      // mount, so this just covers the bail path.
+      if (myLoadingNonce !== null && myLoadingNonce === loadingNonce) {
+        unregisterSurface(LOADING_SURFACE_ID)
+      }
+
       // The vault may close or the user may switch notes during the async
       // hash; bail so we don't mount into a torn-down vault or a stale page.
       if (!controller || lastPageId !== id) return
@@ -259,8 +324,7 @@ export default {
     offSave = null
     offActiveNotebook = null
     offConfigChanged = null
-    unregisterSurface(BANNER_SURFACE_ID)
-    unregisterSurface(REOPEN_SURFACE_ID)
+    teardownSurfaces()
     controller?.dispose()
     controller = null
     lastPageId = null

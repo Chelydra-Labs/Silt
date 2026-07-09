@@ -349,10 +349,7 @@ func (a *App) UpdateAIProviderConfig(which string, patch AIProviderPatch) error 
 	}
 	a.cfg.AI = config.NormalizeAIConfig(a.cfg.AI)
 
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	if err := a.saveConfigTracked(a.cfg); err != nil {
 		return err
 	}
 	// A provider-type / base-URL / model change means the cached model list
@@ -407,10 +404,7 @@ func (a *App) SetAIAPIKey(which, key string) error {
 	} else {
 		a.cfg.AI.Embedding.APIKey = configKey
 	}
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	if err := a.saveConfigTracked(a.cfg); err != nil {
 		return err
 	}
 	// A key change may flip a 401 list-endpoint to success (or vice versa) —
@@ -446,16 +440,56 @@ func (a *App) ClearAIAPIKey(which string) error {
 	} else {
 		a.cfg.AI.Embedding.APIKey = ""
 	}
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	if err := config.Save(a.vaultPath, a.cfg); err != nil {
+	if err := a.saveConfigTracked(a.cfg); err != nil {
 		return err
 	}
 	// Cleared key → the cached list (polled under the old key) may no longer
 	// be authoritatively reachable. Drop it.
 	a.invalidateAIModelCache(which)
 	return nil
+}
+
+// CopyAIAPIKey migrates a provider's API key into the other role's slot
+// entirely server-side, so the secret never crosses to the renderer. It backs
+// the "Sync providers" toggle: switching sync on should make embedding share
+// chat's existing key without forcing the user to re-enter it, and the frontend
+// has no way to read the key value (GetAIProviderConfig exposes only HasKey).
+//
+// No-op (returns nil) when the source has no key, so toggling sync for a
+// keyless provider does not error or clobber the destination. Resolves the
+// source via the same keyring-first/config-fallback path as every other key
+// read, then routes the store through SetAIAPIKey (which handles keyring-vs-
+// config placement, model-cache invalidation, and saveConfigTracked).
+func (a *App) CopyAIAPIKey(from, to string) error {
+	if err := aiValidateWhich(from); err != nil {
+		return err
+	}
+	if err := aiValidateWhich(to); err != nil {
+		return err
+	}
+	if from == to {
+		return nil
+	}
+	a.vaultMu.RLock()
+	if a.vaultPath == "" {
+		a.vaultMu.RUnlock()
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.RLock()
+	useKeyring := a.aiUseKeyringLocked()
+	fromUser := a.aiKeyringUser(from)
+	fromConfigKey := aiConfigBlock(a.cfg.AI, from).APIKey
+	a.configMu.RUnlock()
+	a.vaultMu.RUnlock()
+	// Resolve the source key with no locks held (the keyring may be slow or
+	// unavailable), then store it into the destination via the standard path.
+	// Locks are fully released before SetAIAPIKey re-acquires them — no
+	// re-entrancy on the RWMutex.
+	key, _ := a.resolveAIKeyUnlocked(fromUser, useKeyring, fromConfigKey)
+	if key == "" {
+		return nil
+	}
+	return a.SetAIAPIKey(to, key)
 }
 
 // SetUseKeyring toggles whether AI provider keys are stored in the OS keyring
@@ -473,10 +507,7 @@ func (a *App) SetUseKeyring(on bool) error {
 	}
 	a.configMu.Lock()
 	a.cfg.AI.UseKeyring = boolPtrAI(on)
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	err := config.Save(a.vaultPath, a.cfg)
+	err := a.saveConfigTracked(a.cfg)
 	a.configMu.Unlock()
 	if err != nil {
 		return err
@@ -816,8 +847,5 @@ func (a *App) migrateAIKeysToKeyring() {
 	if !changed {
 		return
 	}
-	if a.configWatcher != nil {
-		a.configWatcher.RegisterSelfWrite()
-	}
-	_ = config.Save(a.vaultPath, a.cfg)
+	_ = a.saveConfigTracked(a.cfg)
 }
