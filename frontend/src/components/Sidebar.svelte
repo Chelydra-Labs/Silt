@@ -33,7 +33,7 @@
     reconcileActiveAfterDelete,
     findNotebook
   } from '../lib/sidebar/navActions'
-  import { clampToViewport } from '../lib/editor/popoverPositioning'
+  import ContextMenu from './ContextMenu.svelte'
 
   import type { PluginContext, PluginManifest } from '../plugins/sdk'
   import {
@@ -130,12 +130,8 @@
     notebook: string
     section?: string
     page?: string
+    anchorEl: HTMLElement | null
   } | null>(null)
-  // The clamped render position (measured from the menu's real size once it is
-  // in the DOM). Null until the first measure, in which case the template
-  // falls back to the raw cursor coords so the menu never flashes at 0,0.
-  let contextMenuEl = $state<HTMLDivElement | null>(null)
-  let menuPos = $state<{ left: number; top: number } | null>(null)
 
   // Delete confirmation dialog state
   let deleteTarget = $state<{
@@ -539,59 +535,20 @@
     page: string = ''
   ) {
     e.preventDefault()
-    contextMenu = { x: e.clientX, y: e.clientY, level, notebook, section, page }
+    contextMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      level,
+      notebook,
+      section,
+      page,
+      anchorEl: e.currentTarget as HTMLElement
+    }
   }
 
   function closeContextMenu() {
     contextMenu = null
   }
-
-  // Clamp the context menu into the viewport using its real rendered size, and
-  // dismiss it on scroll / resize / Escape (#489). Unlike Popover.svelte (which
-  // RE-POSITIONS on scroll, because it anchors to a tracked element), a context
-  // menu's anchor is a one-shot cursor position, so it DISMISSES on scroll —
-  // re-clamping would detach it from the user's intent. The scroll listener
-  // uses the capture phase so a scroll inside any overflow container (not just
-  // window) dismisses, matching Popover.svelte's listener hygiene.
-  $effect(() => {
-    if (!contextMenu) {
-      menuPos = null
-      return
-    }
-    const anchor = contextMenu
-    const measure = () => {
-      const w = contextMenuEl?.offsetWidth ?? 160
-      const h = contextMenuEl?.offsetHeight ?? 0
-      menuPos = clampToViewport(
-        { x: anchor.x, y: anchor.y, width: w, height: h },
-        { width: window.innerWidth, height: window.innerHeight }
-      )
-    }
-    // offsetWidth is 0 before the menu mounts; measure now (rough) and again
-    // after the DOM flushes (accurate).
-    measure()
-    void tick().then(measure)
-    const dismiss = () => {
-      contextMenu = null
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        contextMenu = null
-      }
-    }
-    document.addEventListener('scroll', dismiss, {
-      capture: true,
-      passive: true
-    })
-    window.addEventListener('resize', dismiss, { passive: true })
-    window.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('scroll', dismiss, { capture: true })
-      window.removeEventListener('resize', dismiss)
-      window.removeEventListener('keydown', onKey)
-    }
-  })
 
   function handleContextRename() {
     if (!contextMenu) return
@@ -895,7 +852,10 @@
       {/if}
 
       <!-- Navigation tree -->
-      <div class="flex-1 overflow-y-auto custom-scrollbar px-1">
+      <div
+        class="flex-1 overflow-y-auto custom-scrollbar px-1"
+        data-sidebar-scroll
+      >
         {#if !activeNotebookObj}
           <div
             class="text-surface-sidebar-text-muted py-10 text-center font-body-md text-[13px] border border-dashed border-surface-sidebar-border rounded-lg mx-1"
@@ -1148,50 +1108,29 @@
   </div>
 </aside>
 
-<!-- Context menu (#62) -->
-{#if contextMenu}
-  <div class="fixed inset-0 z-[180]">
-    <button
-      tabindex="-1"
-      aria-label="Close context menu"
-      onclick={closeContextMenu}
-      oncontextmenu={(e) => {
-        e.preventDefault()
-        closeContextMenu()
-      }}
-      class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-    ></button>
-    <div
-      bind:this={contextMenuEl}
-      class="fixed context-menu-card"
-      style:left={(menuPos?.left ?? contextMenu.x) + 'px'}
-      style:top={(menuPos?.top ?? contextMenu.y) + 'px'}
-      style:visibility={menuPos ? 'visible' : 'hidden'}
-      role="menu"
-      tabindex="-1"
-      aria-label="Actions"
-    >
-      <button
-        type="button"
-        onclick={handleContextRename}
-        role="menuitem"
-        class="context-menu-item"
-      >
-        <span class="material-symbols-outlined text-[16px]">edit</span>
-        Rename
-      </button>
-      <button
-        type="button"
-        onclick={handleContextDelete}
-        role="menuitem"
-        class="context-menu-item text-status-danger"
-      >
-        <span class="material-symbols-outlined text-[16px]">delete</span>
-        Delete
-      </button>
-    </div>
-  </div>
-{/if}
+<!-- Context menu (#62). Delegates to the shared ContextMenu component (#491)
+     which handles positioning, dismissal, keyboard nav, and scroll-scope (#492). -->
+<ContextMenu
+  open={contextMenu !== null}
+  anchor={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
+  anchorEl={contextMenu?.anchorEl ?? null}
+  onClose={closeContextMenu}
+  ariaLabel="Actions"
+>
+  <button type="button" onclick={handleContextRename} role="menuitem">
+    <span class="material-symbols-outlined text-[16px]">edit</span>
+    Rename
+  </button>
+  <button
+    type="button"
+    onclick={handleContextDelete}
+    role="menuitem"
+    class="text-status-danger"
+  >
+    <span class="material-symbols-outlined text-[16px]">delete</span>
+    Delete
+  </button>
+</ContextMenu>
 
 <!-- Delete confirmation dialog (#62) -->
 {#if deleteTarget}
@@ -1247,43 +1186,6 @@
 {/if}
 
 <style>
-  .context-menu-card {
-    background-color: color-mix(
-      in srgb,
-      var(--color-surface-sidebar) 90%,
-      transparent
-    );
-    backdrop-filter: blur(12px) saturate(140%);
-    border: 1px solid var(--color-border-active);
-    border-radius: 8px;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
-    padding: 4px;
-    min-width: 160px;
-    z-index: 181;
-  }
-  .context-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 8px 12px;
-    border: none;
-    background: transparent;
-    color: var(--color-text-primary);
-    font-size: 13px;
-    font-family: var(--font-body, inherit);
-    text-align: left;
-    cursor: pointer;
-    border-radius: 6px;
-    transition: background-color 120ms ease-out;
-  }
-  .context-menu-item:hover {
-    background-color: var(--color-hover);
-  }
-  .context-menu-item:focus-visible {
-    outline: 2px solid var(--color-accent-primary-start);
-    outline-offset: -2px;
-  }
   :global(.drag-over-top) {
     box-shadow: inset 0 2px 0 var(--color-accent-primary-start);
   }

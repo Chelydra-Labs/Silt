@@ -828,6 +828,31 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(screen.queryByTestId('manage-view-menu')).toBeNull()
   })
 
+  // --- #492: scroll-scope — document scroll dismisses when no scrollable ancestor ----
+
+  it('scroll-scope: document scroll dismisses when no scrollable ancestor (#492)', async () => {
+    const u1: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([u1])
+    // Render without a synthetic wrapper — matches production topology where
+    // the tasks sidebar is inside an overflow-hidden parent with no scrollable
+    // ancestor. findScrollableAncestor falls back to document.
+    render(Sidebar, { props: { ctx: makeCtx(), manifest: MANIFEST } })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    expect(screen.getByTestId('manage-view-menu')).toBeInTheDocument()
+
+    // Document scroll should dismiss (scroll listener is on document).
+    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flush()
+    expect(screen.queryByTestId('manage-view-menu')).toBeNull()
+  })
+
   it('active view shows a dirty dot when savedViewsDirty is true', async () => {
     seedSavedViews()
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
