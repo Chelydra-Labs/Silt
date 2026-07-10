@@ -201,7 +201,7 @@
   })
 </script>
 
-<!-- Positioning wrapper (scrim + dialog as siblings per SettingsShell pattern) -->
+<!-- Positioning wrapper: scrim + dialog as siblings (standard modal layout) -->
 <div
   class="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[150] flex items-start justify-center pt-28"
 >

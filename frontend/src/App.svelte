@@ -29,7 +29,7 @@
   import GlobalReplaceModal from './components/editor/GlobalReplaceModal.svelte'
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
-  import SettingsShell from './components/settings/SettingsShell.svelte'
+  import SettingsPanel from './components/settings/SettingsPanel.svelte'
   import QuickAddTask from './plugins/first-party/silt-tasks/components/QuickAddTask.svelte'
   import { loadPlugins } from './plugins/loader'
   import {
@@ -328,8 +328,8 @@
   }
 
   async function persistTabs(): Promise<void> {
-    // Only persist PINNED tabs + active (preview tabs are ephemeral —
-    // parity). If the active tab is a preview, don't persist it as active.
+    // Only persist PINNED page tabs + active (preview tabs are ephemeral —
+    // parity). Settings is a view, not a tab, so it's never in openTabs.
     const pinned = openTabs.filter((t) => !t.preview)
     const activeTab = openTabs.find((t) => t.id === activeTabId)
     const activePersist = activeTab && !activeTab.preview ? activeTab : null
@@ -424,8 +424,11 @@
   // via the app-level CreateStandaloneTask binding (not plugin-gated).
   let showQuickAdd = $state(false)
   let globalReplaceQuery = $state('')
-  let showSettings = $state(false)
-  let settingsTab = $state('general')
+  // The active settings section (general/editor/appearance/…). Settings is a
+  // view (#511 rework): this id selects which section the sidebar nav +
+  // content panel show. Owned here as the single source of truth, bound down
+  // to Sidebar→SettingsNav and passed to SettingsPanel.
+  let settingsSection = $state('general')
   let showTemplatePicker = $state(false)
   let templatePickerMode = $state<'new-page' | 'insert'>('new-page')
   // F20: set when the backend emits settings:fingerprint-mismatch — the
@@ -587,7 +590,10 @@
 
     function handleOpenSettings(e: Event) {
       const detail = (e as CustomEvent).detail
-      openSettings(typeof detail === 'string' ? detail : 'general')
+      // ctx.openSettings dispatches detail: tab ?? '' — an empty/missing
+      // detail means "general".
+      const section = typeof detail === 'string' && detail ? detail : 'general'
+      openSettings(section)
     }
     // Move keyboard focus into the active sidebar (#326 item 8). Expands the
     // sidebar if collapsed, then focuses the first focusable element inside it
@@ -702,6 +708,11 @@
         e.preventDefault()
         void toggleTypewriterMode()
       }
+      if (hotkeys.open_settings && matchHotkey(e, hotkeys.open_settings)) {
+        e.preventDefault()
+        openSettings()
+        return
+      }
       // Tab-strip hotkeys (#142). Ctrl+Tab / Ctrl+Shift+Tab cycle MRU;
       // Ctrl+W closes the active tab. All three are remappable / disable-
       // able (empty string) from Settings → General. No-op when 0 tabs.
@@ -758,11 +769,10 @@
       const detail = (e as CustomEvent).detail
       if (typeof detail === 'string' && detail) {
         activeView = detail
-        showSettings = false
       }
     }
     function handleOpenPluginManager() {
-      // The plugin manager is now the "Plugins" tab inside Settings.
+      // The plugin manager is the "Plugins" section inside Settings.
       openSettings('plugins')
     }
     function handlePluginsChanged() {
@@ -826,7 +836,6 @@
       openTabs = []
       activeTabId = ''
       activeView = 'notes'
-      showSettings = false
       // Drop any editor reconciliation handles tied to the old vault so a
       // teardown that bypassed Svelte $effect cleanup can't leave a stale
       // editor buffer flushing into the new vault (#345).
@@ -1100,11 +1109,11 @@
     }
   }
 
-  // Settings → Workspace → "Switch vault…" entry. Closes the settings overlay
-  // then runs the same tear-down flow as the (removed) sidebar Change Vault
-  // button, returning the user to the onboarding screen to pick a vault.
+  // Settings → Workspace → "Switch vault…" entry. Runs the same tear-down flow
+  // as the (removed) sidebar Change Vault button, returning the user to the
+  // onboarding screen to pick a vault. The Settings tab (if open) is cleared
+  // by handleChangeVault's openTabs = [] reset.
   async function handleSwitchVault() {
-    showSettings = false
     await handleChangeVault()
   }
 
@@ -1211,9 +1220,14 @@
       displayedTabs.length > 0
   )
 
-  function openSettings(tab: string = '') {
-    settingsTab = tab || 'general'
-    showSettings = true
+  // Switch to the Settings view and select a section (general/editor/
+  // appearance/…). Settings is a view, not a tab (#511 rework): no tab state is
+  // touched, and the navigation triple is left intact so the user returns to
+  // their page when they leave Settings. The section persists across opens so
+  // re-entering Settings returns the user to the panel they last visited.
+  function openSettings(section: string = 'general') {
+    settingsSection = section
+    activeView = 'settings'
   }
 
   // Native menu Save (#503): flush the active editor's pending autosave
@@ -1311,7 +1325,9 @@
         <div
           class="flex items-center px-4 py-1 text-surface-sidebar-text-muted text-[11px] uppercase tracking-widest font-label-sm-bold"
         >
-          {views.find((v) => v.id === activeView)?.label ?? activeView}
+          {activeView === 'settings'
+            ? 'Settings'
+            : (views.find((v) => v.id === activeView)?.label ?? activeView)}
         </div>
       {/if}
     </TitleBar>
@@ -1359,10 +1375,19 @@
 
         <button
           onclick={() => openSettings('general')}
-          class="w-9 h-9 rounded-lg flex items-center justify-center text-surface-activitybar-text-muted hover:text-accent-primary-start hover:bg-hover hover:scale-105 active:scale-95 transition-all cursor-pointer border-none bg-transparent focus:outline-none"
+          class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
+          class:text-accent-primary-start={activeView === 'settings'}
+          class:text-surface-activitybar-text-muted={activeView !== 'settings'}
           aria-label="Settings"
+          aria-pressed={activeView === 'settings'}
           title="Settings"
         >
+          {#if activeView === 'settings'}
+            <div
+              class="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-primary-start rounded-full shadow-[0_0_8px_var(--color-accent-primary-start)]"
+              style:opacity={sidebarCollapsed ? '0.5' : '1'}
+            ></div>
+          {/if}
           <span
             class="material-symbols-outlined text-[20px]"
             style:color={`var(--color-nav-icon-settings)`}>settings</span
@@ -1393,6 +1418,7 @@
         bind:activePage
         bind:activeView
         bind:selectedTag
+        bind:settingsSection
         bind:collapsed={sidebarCollapsed}
         {sidebarWidth}
         {sidebarDragging}
@@ -1595,6 +1621,13 @@
             focusBlockId={tasksFocusBlockId}
             focusKey={tasksFocusKey}
           />
+        {:else if activeView === 'settings'}
+          <SettingsPanel
+            bind:section={settingsSection}
+            {activeNotebook}
+            {activeSection}
+            {activePage}
+          />
         {:else}
           <!-- Unknown view -->
           <div class="flex-1 p-8 flex flex-col select-none">
@@ -1675,16 +1708,6 @@
         />
       </div>
     </div>
-  {/if}
-
-  {#if showSettings}
-    <SettingsShell
-      bind:activeTab={settingsTab}
-      onClose={() => (showSettings = false)}
-      {activeNotebook}
-      {activeSection}
-      {activePage}
-    />
   {/if}
 
   {#if showTemplatePicker}

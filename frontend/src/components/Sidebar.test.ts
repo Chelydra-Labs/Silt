@@ -358,6 +358,34 @@ describe('Sidebar', () => {
     expect(screen.getByText('Active Notebook')).toBeInTheDocument()
   })
 
+  // --- #511 rework: settings is a view; the sidebar swaps to section nav ---
+  it("activeView='settings' renders the settings section nav and hides the notes tree", async () => {
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'settings',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    // The settings section nav renders a "General" tab (role=tablist/tab).
+    const nav = document.querySelector('[data-test-settings-nav]')
+    expect(nav).toBeTruthy()
+    expect(nav?.getAttribute('role')).toBe('tablist')
+    const generalTab = nav?.querySelector('#silt-settings-tab-general')
+    expect(generalTab).toBeTruthy()
+    expect(generalTab?.getAttribute('role')).toBe('tab')
+    // The notebook tree ("Active Notebook") is absent in the settings view.
+    expect(screen.queryByText('Active Notebook')).toBeNull()
+  })
+
   it('loadersReady=false suspends the plugin sidebar (no ctx built) (#326 item 5)', async () => {
     // During vault:closing's clear→re-register window, getSessionToken
     // returns undefined. Without the gate, Sidebar would build a context

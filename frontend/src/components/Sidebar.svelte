@@ -34,6 +34,7 @@
     findNotebook
   } from '../lib/sidebar/navActions'
   import ContextMenu from './ContextMenu.svelte'
+  import SettingsNav from './settings/SettingsNav.svelte'
 
   import type { PluginContext, PluginManifest } from '../plugins/sdk'
   import {
@@ -50,6 +51,9 @@
     activePage: string
     activeView: string
     selectedTag?: string
+    /** Active settings section id (general/editor/…). Owned by App; the
+     *  settings sidebar nav binds it. */
+    settingsSection?: string
     collapsed: boolean
     sidebarWidth?: number
     sidebarDragging?: boolean
@@ -72,6 +76,7 @@
     activePage = $bindable(),
     activeView = $bindable(),
     selectedTag = $bindable(''),
+    settingsSection = $bindable('general'),
     collapsed = $bindable(),
     sidebarWidth = 256,
     sidebarDragging = false,
@@ -653,6 +658,10 @@
   >
     {#if activeView === 'tags'}
       <TagSidebarPanel bind:selectedTag />
+    {:else if activeView === 'settings'}
+      <!-- Settings view: the sidebar IS the section nav (#511 rework). The
+           matching panel lives in the content area (SettingsPanel). -->
+      <SettingsNav bind:section={settingsSection} />
     {:else if SidebarCmp && pluginSidebarCtx}
       <!-- Plugin-provided primary sidebar (#321). The active view's plugin
            owns the entire sidebar slot when it registers a sidebarComponent;

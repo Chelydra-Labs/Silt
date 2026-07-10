@@ -724,8 +724,12 @@ func TestDefaults_FormattingConfig(t *testing.T) {
 	if d.Hotkeys["format_italic"] != "Ctrl+I" {
 		t.Errorf("format_italic default: got %q", d.Hotkeys["format_italic"])
 	}
-	if d.Hotkeys["format_subscript"] != "Ctrl+," {
+	if d.Hotkeys["format_subscript"] != "Ctrl+Shift," {
 		t.Errorf("format_subscript default: got %q", d.Hotkeys["format_subscript"])
+	}
+	// open_settings (#511): the universal Ctrl+, settings convention.
+	if d.Hotkeys["open_settings"] != "Ctrl+," {
+		t.Errorf("open_settings default: got %q", d.Hotkeys["open_settings"])
 	}
 	// Alignment (#173) + blockquote (#188) hotkeys.
 	for _, key := range []string{

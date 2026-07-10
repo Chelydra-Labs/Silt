@@ -5,7 +5,7 @@
    * Confirmation dialog shown when a user moves a blocked task to DONE (#302).
    * Lists the open prerequisite tasks so the user can make an informed choice,
    * then either persists the DONE transition (onConfirm) or reverts it
-   * (onCancel). Glassy overlay + focus trap follow the SettingsShell pattern.
+   * (onCancel). Glassy overlay + focus trap (standard modal pattern).
    */
   interface Blocker {
     id: string

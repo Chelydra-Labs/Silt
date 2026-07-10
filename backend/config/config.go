@@ -381,7 +381,11 @@ func Defaults() SystemConfig {
 			"focus_sidebar":        "Ctrl+Shift+B",
 			// cycle_view_layout → Ctrl+Alt+V. Alt+Tab is the OS window-switcher
 			// on Windows/Linux (captured before the app sees it) and never fired.
-			"cycle_view_layout":    "Ctrl+Alt+V",
+			"cycle_view_layout": "Ctrl+Alt+V",
+			// open_settings → Ctrl+, (the universal settings convention; VS Code
+			// and most editors). #511 opens settings as a workspace tab. Note this
+			// freed Ctrl+, from format_subscript, which moved to Ctrl+Shift+, below.
+			"open_settings":        "Ctrl+,",
 			"indent_block":         "Tab",
 			"unindent_block":       "Shift+Tab",
 			"open_template_picker": "Ctrl+Shift+T",
@@ -409,7 +413,7 @@ func Defaults() SystemConfig {
 			"format_code":        "Ctrl+E",
 			"format_link":        "Ctrl+K",
 			"format_highlight":   "Ctrl+Shift+H",
-			"format_subscript":   "Ctrl+,",
+			"format_subscript":   "Ctrl+Shift,",
 			"format_superscript": "Ctrl+.",
 			// Heading level hotkeys (#169). Standard heading-level bindings.
 			"set_h1":   "Ctrl+Alt+1",

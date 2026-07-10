@@ -28,7 +28,7 @@
    *
    * Mirrors the main editor's TipTap setup (createEditor + extension set) but
    * with a self-contained autosave targeting the subtree splice IPC, plus the
-   * SettingsShell focus-trap + Esc-with-unsaved-prompt + focus-restore pattern.
+   * Standard modal pattern: focus-trap + Esc-with-unsaved-prompt + focus-restore.
    */
   interface Props {
     blockId: string
@@ -79,7 +79,7 @@
   // doesn't register as user input (mirrors TipTapEditor's suppressUpdate).
   let suppressUpdate = false
 
-  // --- Focus trap (mirrors SettingsShell.svelte:100-177) ---
+  // --- Focus trap (Tab/Shift+Tab cycle within the dialog) ---
   let dialogRef = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
   const FOCUSABLE =
@@ -290,7 +290,7 @@
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement
     // Keydown is handled by <svelte:window onkeydown={handleKeydown}> in the
-    // template (the SettingsShell pattern) — no addEventListener here, or
+    // template (standard modal keydown pattern) — no addEventListener here, or
     // every Esc/Tab would fire the handler twice.
     return () => {
       // Flush any in-flight + pending save before teardown so an unmount
