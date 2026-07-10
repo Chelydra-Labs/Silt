@@ -425,9 +425,7 @@ func (a *App) invalidateLinkedConfig(source string) {
 // the old config. Called from the watcher goroutine.
 func (a *App) onLinkedConfigChange(source string) {
 	a.invalidateLinkedConfig(source)
-	if a.ctx != nil {
-		a.emit("linked-config:changed", source)
-	}
+	a.emit("linked-config:changed", source)
 }
 
 // onReMintWarning is the watcher hook for the mass-re-mint heuristic (#443).
@@ -439,9 +437,7 @@ func (a *App) onLinkedConfigChange(source string) {
 // recovery path. Called from the watcher goroutine; only touches the event
 // emitter (no locks).
 func (a *App) onReMintWarning(w monitor.ReMintWarning) {
-	if a.ctx != nil {
-		a.emit("index:re-mint-warning", w)
-	}
+	a.emit("index:re-mint-warning", w)
 }
 
 // quarantineLink adds a linked notebook ID to the quarantine set and emits
@@ -463,13 +459,11 @@ func (a *App) quarantineLink(id, reason string) {
 		}
 	}
 	a.configMu.Unlock()
-	if a.ctx != nil {
-		a.emit("linked-notebook:quarantined", map[string]string{
-			"id":           id,
-			"display_name": displayName,
-			"reason":       reason,
-		})
-	}
+	a.emitOrQueue("linked-notebook:quarantined", map[string]string{
+		"id":           id,
+		"display_name": displayName,
+		"reason":       reason,
+	})
 	log.Printf("quarantineLink: %s (%s) quarantined: %s", id, displayName, reason)
 }
 

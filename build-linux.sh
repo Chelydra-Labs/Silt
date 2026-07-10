@@ -170,9 +170,11 @@ if [ ! -f "$BINARY" ]; then
 fi
 log_info "Binary built: $BINARY ($(du -h "$BINARY" | cut -f1))"
 
-# --- create AppImage + .deb via the v3 Taskfile ---
-log_info "Packaging AppImage + .deb..."
-wails3 task linux:package 2>/dev/null || log_warn "Linux packaging skipped (tools not available or failed)"
+# --- create AppImage + .deb via the custom packaging logic below ---
+# (wails3 task linux:package is NOT called here — the Taskfile and this
+# script use different packaging methods. The script's manual AppImage/deb
+# packaging below is the release path; calling the Taskfile would produce
+# duplicate artifacts in build/bin/ that are never picked up.)
 
 # --- distribution directory ---
 BUILD_DIR="$DIST_DIR/v${VERSION}"

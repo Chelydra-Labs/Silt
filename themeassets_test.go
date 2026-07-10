@@ -284,3 +284,50 @@ func TestThemeAssetHandler_HeadRequest(t *testing.T) {
 		t.Errorf("Content-Length = %d, want %d", resp.ContentLength, len(img))
 	}
 }
+
+// TestThemeAssetHandler_MissingFile: a valid id + safe filename shape +
+// allowed extension that simply doesn't exist on disk is a benign miss —
+// 404, the same surface Wails already returns for an absent embedded asset.
+// The assets dir IS created (with a different real file) so this exercises
+// the os.Open-fails branch rather than a never-existed-dir short-circuit.
+func TestThemeAssetHandler_MissingFile(t *testing.T) {
+	themesDir := t.TempDir()
+	// A real asset exists for the theme, proving the assets dir is live.
+	buildAssetTree(t, themesDir, "terra-test", "real.png", []byte("real"))
+
+	h := themeAssetHandler(func() string { return themesDir })
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/terra-test.assets/ghost.png")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for missing file", resp.StatusCode)
+	}
+}
+
+// TestThemeAssetHandler_RejectsNonGetHead: only GET/HEAD reach the asset
+// pipeline; anything else (POST here, but PUT/DELETE/etc. behave the same)
+// is a miss. The method gate runs before any filesystem touch, so even a
+// POST against a path whose file exists never serves or modifies it.
+func TestThemeAssetHandler_RejectsNonGetHead(t *testing.T) {
+	themesDir := t.TempDir()
+	img := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4}
+	buildAssetTree(t, themesDir, "terra-test", "photo.png", img)
+
+	h := themeAssetHandler(func() string { return themesDir })
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/terra-test.assets/photo.png", "text/plain", strings.NewReader("ignore"))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for POST", resp.StatusCode)
+	}
+}

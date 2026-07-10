@@ -75,5 +75,4 @@ fileAssociations:
 #    mimeType: image/jpeg  # (optional)
 
 # Other data
-other:
-  - name: My Other Data
+# (removed dead template default)

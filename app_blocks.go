@@ -394,9 +394,6 @@ func (a *App) QueryTasks(filter parser.TaskQueryFilter) ([]parser.TaskResult, er
 // emitBlockChanged broadcasts a block:changed event so live embeds/references
 // refresh whenever a block is mutated through any code path.
 func (a *App) emitBlockChanged(id, notebook, section, page, fileDate string) {
-	if a.ctx == nil {
-		return
-	}
 	a.emit("block:changed", parser.BlockChangedEvent{
 		ID: id, Notebook: notebook, Section: section, Page: page, FileDate: fileDate,
 	})

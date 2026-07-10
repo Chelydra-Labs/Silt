@@ -15,7 +15,9 @@ const mockRegisterSession = vi.hoisted(() =>
 const mockUnregisterSession = vi.hoisted(() =>
   vi.fn(() => Promise.resolve(undefined))
 )
-const mockEventsOn = vi.hoisted(() => vi.fn())
+const mockEventsOn = vi.hoisted(() =>
+  vi.fn((_event: string, _cb: (payload: unknown) => void) => () => {})
+)
 const mockEventsOff = vi.hoisted(() => vi.fn())
 
 vi.mock('../../bindings/silt/app.js', () => ({
@@ -24,10 +26,10 @@ vi.mock('../../bindings/silt/app.js', () => ({
   RegisterPluginSession: mockRegisterSession,
   UnregisterPluginSession: mockUnregisterSession
 }))
-// Events.Off is exercised by first-party plugins that unsubscribe their ctx.on
-// listeners on onVaultClose (silt-ai-summary unsubscribes editor:save,
-// active-notebook:changed, and config:changed). The mock must support it so
-// plugin cleanup doesn't throw.
+// Events.On returns a per-listener disposer (v3 contract). The mock mirrors
+// that so cleanupPlugin / clearAllSubscribers can call the captured disposer
+// without throwing. Off is kept as a no-op safety net for any code that still
+// references it directly.
 vi.mock('@wailsio/runtime', () => ({
   Events: {
     On: mockEventsOn,

@@ -151,7 +151,7 @@ log_info "Binary built: $BINARY"
 
 # --- create NSIS installer via the v3 Taskfile ---
 log_info "Creating NSIS installer..."
-wails3 task windows:package 2>/dev/null || log_warn "NSIS packaging skipped (makensis not available or failed)"
+wails3 task windows:package || log_warn "NSIS packaging skipped (makensis not available or failed)"
 
 # --- create distribution directory ---
 BUILD_DIR="$DIST_DIR/v${VERSION}"

@@ -8,7 +8,6 @@ import (
 
 	"silt/backend/updates"
 	"silt/backend/vault"
-
 )
 
 // =========================================================================
@@ -33,7 +32,7 @@ const updateProgressEvent = "update:download:progress"
 // constant or the comparison locally.
 type UpdateSettingsResult struct {
 	AutoCheck        bool   `json:"autoCheck"`
-	LastCheckRFC3339 string `json:"lastCheck"`      // empty when never checked
+	LastCheckRFC3339 string `json:"lastCheck"`       // empty when never checked
 	ShouldAutoCheck  bool   `json:"shouldAutoCheck"` // throttled startup decision
 }
 
@@ -80,12 +79,10 @@ func (a *App) CheckForUpdates() (updates.UpdateInfo, error) {
 func (a *App) DownloadUpdate(assetURL string) (string, error) {
 	client := updates.NewClient(appVersion)
 	emitProgress := func(received, total int64) {
-		if a.ctx != nil {
-			a.emit(updateProgressEvent, map[string]any{
-				"received": received,
-				"total":    total,
-			})
-		}
+		a.emit(updateProgressEvent, map[string]any{
+			"received": received,
+			"total":    total,
+		})
 	}
 	return client.DownloadAndVerify(context.Background(), assetURL, emitProgress)
 }

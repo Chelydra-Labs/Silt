@@ -141,7 +141,7 @@ func main() {
 			Middleware: func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					rel := strings.TrimPrefix(r.URL.Path, "/")
-					if strings.Contains(rel, ".assets/") {
+					if strings.Contains(rel, ".assets/") && themes.IsValidThemeID(strings.SplitN(rel, ".assets/", 2)[0]) {
 						themeHandler.ServeHTTP(w, r)
 						return
 					}
@@ -171,6 +171,6 @@ func main() {
 	})
 
 	if err := wailsApp.Run(); err != nil {
-		log.Printf("Error: %s", err.Error())
+		log.Fatalf("Error: %s", err.Error())
 	}
 }

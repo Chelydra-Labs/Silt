@@ -34,7 +34,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -72,6 +72,24 @@ jobs:
 
       - name: Build Go
         run: go build ./...
+
+      - name: Wails3 build smoke test
+        # Verifies the full v3 build pipeline (Taskfile + bindings + frontend + Go binary)
+        # produces a working binary, not just that Go compiles.
+        run: wails3 build
+
+      - name: Binding parity check
+        # Verifies the App method surface hasn't drifted from the expected count.
+        # The inventory tool scans Go AST for exported *App methods and frontend
+        # imports of the generated bindings.
+        run: |
+          go run -tags tools ./cmd/inventory/ > /tmp/inventory.json 2>/dev/null
+          METHODS=$(node -e "const d=require('/tmp/inventory.json'); console.log(d.methods.length)")
+          if [ "$METHODS" -lt 180 ]; then
+            echo "::error::Method count dropped to $METHODS (expected ~187). Check for accidentally removed bindings."
+            exit 1
+          fi
+          echo "Method count: $METHODS (OK)"
 
       - name: withAIPreflight defer-contract analyzer
         # Builds the vettool (gated out of the prod binary via //go:build tools)

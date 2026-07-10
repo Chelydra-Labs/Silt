@@ -29,8 +29,6 @@ vi.mock('../../../bindings/silt/app.js', () => ({
   SaveFileBlocks: mocks.SaveFileBlocks
 }))
 vi.mock('@wailsio/runtime', () => ({
-  OnFileDrop: vi.fn(),
-  OnFileDropOff: vi.fn(),
   Events: {
     On: vi.fn(),
     Off: vi.fn(),

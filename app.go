@@ -33,16 +33,34 @@ var versionBytes []byte
 // VERSION file. Used for plugin minSiltVersion enforcement.
 var appVersion = strings.TrimSpace(string(versionBytes))
 
+// startupEvent is one queued event emitted before the frontend mounted its
+// Events.On listeners. In Wails v3, ServiceStartup fires before the webview
+// exists, so a plain emit is lost; emitOrQueue stashes a copy here for
+// GetStartupEvents to replay on mount. Payload is the first data arg (or nil),
+// matching how Wails delivers a single-arg event as ev.data on the JS side.
+type startupEvent struct {
+	Name    string
+	Payload any
+}
+
 type App struct {
-	ctx          context.Context
-	wailsApp     *application.App
-	db           *db.DatabaseManager
-	coordinator  *core.ExecutionCoordinator
-	watcher      *monitor.DirectoryWatcher
-	tracker      *monitor.WriteTracker
-	vaultPath    string
-	spacesPerTab int
-	wg           sync.WaitGroup
+	ctx      context.Context
+	wailsApp *application.App
+	// startupEvents captures events emitted before the frontend mounted.
+	// emitOrQueue appends here (in addition to emitting) until
+	// MarkFrontendReady flips frontendReady; GetStartupEvents drains the slice
+	// on mount so the frontend can replay missed startup events through the
+	// same handlers its Events.On listeners use. Guarded by startupEventsMu.
+	startupEvents   []startupEvent
+	startupEventsMu sync.Mutex
+	frontendReady   bool
+	db              *db.DatabaseManager
+	coordinator     *core.ExecutionCoordinator
+	watcher         *monitor.DirectoryWatcher
+	tracker         *monitor.WriteTracker
+	vaultPath       string
+	spacesPerTab    int
+	wg              sync.WaitGroup
 
 	// cfg is the parsed .system/config.yaml, the single source of truth for
 	// non-vault-path settings. configMu guards it; it is replaced wholesale on
@@ -247,7 +265,7 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 		// The settings file exists on disk but is unreadable or
 		// malformed. Don't silently fall through to "no vault" — the
 		// user has a vault setup, something is just broken.
-		a.emit("vault:init-error",
+		a.emitOrQueue("vault:init-error",
 			fmt.Sprintf("failed to load settings.json: %v", err))
 		return nil
 	}
@@ -257,16 +275,41 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 	// user can accept or reject the change. The settings are still used
 	// in-memory (they are valid JSON with a valid schema).
 	if errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
-		a.emit("settings:fingerprint-mismatch", nil)
+		a.emitOrQueue("settings:fingerprint-mismatch", nil)
 	}
 	if settings.VaultPath != "" {
 		if _, statErr := os.Stat(settings.VaultPath); statErr == nil {
 			if initErr := a.initializeVaultServices(settings.VaultPath); initErr != nil {
-				a.emit("vault:init-error", initErr.Error())
+				a.emitOrQueue("vault:init-error", initErr.Error())
 			}
 		}
 	}
 	return nil
+}
+
+// GetStartupEvents returns events queued during ServiceStartup (before the
+// frontend mounted its Events.On listeners) and clears the queue. In Wails v3,
+// ServiceStartup fires before the webview exists, so emits like
+// vault:init-error and settings:fingerprint-mismatch are lost; emitOrQueue
+// stashed them for this retrieval. The frontend calls this on mount (after
+// MarkFrontendReady) and dispatches each entry through the same handler its
+// Events.On listener would have used.
+func (a *App) GetStartupEvents() []startupEvent {
+	a.startupEventsMu.Lock()
+	defer a.startupEventsMu.Unlock()
+	out := a.startupEvents
+	a.startupEvents = nil
+	return out
+}
+
+// MarkFrontendReady signals that the frontend has finished registering its
+// Events.On listeners. After this, emitOrQueue stops queueing (events reliably
+// reach the live listeners). Call once on mount, before GetStartupEvents.
+// Idempotent.
+func (a *App) MarkFrontendReady() {
+	a.startupEventsMu.Lock()
+	a.frontendReady = true
+	a.startupEventsMu.Unlock()
 }
 
 // ConfirmSettingsChange is the F20 user-ack binding. When the frontend detects
@@ -607,7 +650,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			}
 		}
 		if hasThirdParty {
-			a.emit("grants:migration-required", legacy)
+			a.emitOrQueue("grants:migration-required", legacy)
 		}
 	}
 
@@ -747,7 +790,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		}
 	}
 	if len(allWarnings) > 0 {
-		a.emit("vault:init-warnings", allWarnings)
+		a.emitOrQueue("vault:init-warnings", allWarnings)
 	}
 
 	watcher, err := monitor.NewDirectoryWatcher(vaultPath, dbMgr, tracker, coord, a.spacesPerTab)
@@ -820,7 +863,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// Report any paths the watcher could not subscribe to (fsnotify
 	// limits, permissions, etc.) so the UI can inform the user.
 	if failed := watcher.FailedPaths(); len(failed) > 0 {
-		a.emit("vault:watch-coverage", failed)
+		a.emitOrQueue("vault:watch-coverage", failed)
 	}
 
 	return nil

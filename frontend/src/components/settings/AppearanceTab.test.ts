@@ -70,8 +70,6 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@wailsio/runtime', () => ({
-  OnFileDrop: vi.fn(),
-  OnFileDropOff: vi.fn(),
   Events: {
     On: vi.fn(),
     Off: vi.fn(),

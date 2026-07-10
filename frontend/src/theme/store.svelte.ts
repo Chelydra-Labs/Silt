@@ -343,8 +343,7 @@ export async function pickAndImportTheme(): Promise<string | null> {
   return importThemeFromPath(path)
 }
 
-/** Import a theme from a known path (used by both the picker button and
- * the OnFileDrop drop zone). */
+/** Import a theme from a known path (used by the picker button). */
 export async function importThemeFromPath(
   path: string
 ): Promise<string | null> {

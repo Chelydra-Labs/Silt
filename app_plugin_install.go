@@ -175,8 +175,5 @@ func (a *App) DisablePlugin(pluginID string) error {
 }
 
 func (a *App) emitPluginsChanged() {
-	if a.ctx == nil {
-		return
-	}
 	a.emit("plugins:changed", struct{}{})
 }

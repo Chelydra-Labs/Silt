@@ -156,11 +156,9 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 
 	res := buildThemeResult(t, mode)
 	log.Printf("themes: ApplyTheme(id=%q mode=%q) → resolved %q", id, mode, t.ID)
-	if a.ctx != nil {
-		a.emit("theme:changed", map[string]string{
-			"id": t.ID, "mode": mode,
-		})
-	}
+	a.emit("theme:changed", map[string]string{
+		"id": t.ID, "mode": mode,
+	})
 	return res, nil
 }
 
@@ -228,9 +226,7 @@ func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	}
 	log.Printf("themes: ImportTheme(%q) → imported as %q (renamed=%v)", filepath.Base(srcPath), res.Info.ID, res.Renamed)
 	themes.InvalidateThemeCache(res.Info.ID)
-	if a.ctx != nil {
-		a.emit("themes:changed", struct{}{})
-	}
+	a.emit("themes:changed", struct{}{})
 	return res, nil
 }
 
@@ -357,21 +353,19 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 		return nil, err
 	}
 	themes.InvalidateThemeCache(targetID)
-	if a.ctx != nil {
-		// Emit theme:changed (singular) so the active theme's tokens —
-		// including the freshly-written --silt-bg-<zone>-image — re-inject
-		// immediately. Mirrors ApplyTheme's emission; without it the user
-		// would have to switch theme or mode to see the new background.
-		// targetID is the on-disk theme the asset was written to (a fork
-		// counts as the new active theme — its selection was persisted
-		// above), and settings.ThemeMode is the unchanged current mode.
-		a.emit("theme:changed", map[string]string{
-			"id": targetID, "mode": settings.ThemeMode,
-		})
-		// themes:changed (plural) refreshes the picker listing so the
-		// forked theme appears / the cached entry is dropped.
-		a.emit("themes:changed", struct{}{})
-	}
+	// Emit theme:changed (singular) so the active theme's tokens —
+	// including the freshly-written --silt-bg-<zone>-image — re-inject
+	// immediately. Mirrors ApplyTheme's emission; without it the user
+	// would have to switch theme or mode to see the new background.
+	// targetID is the on-disk theme the asset was written to (a fork
+	// counts as the new active theme — its selection was persisted
+	// above), and settings.ThemeMode is the unchanged current mode.
+	a.emit("theme:changed", map[string]string{
+		"id": targetID, "mode": settings.ThemeMode,
+	})
+	// themes:changed (plural) refreshes the picker listing so the
+	// forked theme appears / the cached entry is dropped.
+	a.emit("themes:changed", struct{}{})
 	log.Printf("themes: PickBackgroundImage(zone=%q) → theme %q forked=%v base64=%v", zone, targetID, forked, isBase64)
 	return &BackgroundImageResult{
 		ThemeID:   targetID,

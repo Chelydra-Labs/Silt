@@ -30,8 +30,12 @@ const subscribers = new Map<PluginEventName, Map<string, Set<Subscription>>>()
 // dispatched in-process). The handler just forwards the payload into dispatch.
 const wailsHostEvents: PluginEventName[] = ['block:changed', 'config:changed']
 
-// Track which Wails listeners are active so we Events.Off on the last unsubscribe.
-const activeWailsListeners = new Set<PluginEventName>()
+// Stores the per-event unsubscribe function returned by Events.On.
+// v3's Events.Off(name) removes ALL listeners for a name across the entire
+// app — including listeners owned by other modules (App.svelte, stores).
+// Capturing and calling the returned disposer avoids that cross-module
+// destruction.
+const wailsListenerDisposers = new Map<PluginEventName, () => void>()
 
 /**
  * Subscribe a plugin's callback to a host event. Returns an unsubscribe that
@@ -61,11 +65,13 @@ export function subscribe<E extends PluginEventName>(
 
   // Lazily attach a single Wails listener the first time any plugin subscribes
   // to a host event (block:changed / config:changed). The Wails payload is
-  // untyped at the IPC boundary; the cast asserts it matches the Go struct
-  // shape (single source of truth lives in sdk.ts payload types).
-  if (wailsHostEvents.includes(event) && !activeWailsListeners.has(event)) {
-    activeWailsListeners.add(event)
-    Events.On(event, (ev) => dispatch(event, ev.data as PluginEventPayload<E>))
+  // untyped at the IPC boundary; ev.data may be null if the backend emits
+  // with no payload, but block:changed and config:changed always carry data.
+  if (wailsHostEvents.includes(event) && !wailsListenerDisposers.has(event)) {
+    const disposer = Events.On(event, (ev: any) =>
+      dispatch(event, ev.data as PluginEventPayload<E>)
+    )
+    wailsListenerDisposers.set(event, disposer)
   }
 
   return () => {
@@ -77,13 +83,16 @@ export function subscribe<E extends PluginEventName>(
       }
     }
     // Tear down the Wails listener when the last subscriber for a host event
-    // goes away (keeps the runtime listener set minimal).
+    // goes away (keeps the runtime listener set minimal). Call the captured
+    // disposer — NOT Events.Off(name) — to avoid removing listeners owned by
+    // other modules (App.svelte, stores) that share the same event name.
     if (wailsHostEvents.includes(event)) {
       const remaining = subscribers.get(event)
       const empty = !remaining || remaining.size === 0
-      if (empty && activeWailsListeners.has(event)) {
-        activeWailsListeners.delete(event)
-        Events.Off(event)
+      if (empty && wailsListenerDisposers.has(event)) {
+        const disposer = wailsListenerDisposers.get(event)!
+        wailsListenerDisposers.delete(event)
+        disposer()
       }
     }
   }
@@ -128,14 +137,16 @@ export function dispatch<E extends PluginEventName>(
 export function cleanupPlugin(pluginID: string): void {
   for (const [event, byPlugin] of subscribers) {
     if (byPlugin.delete(pluginID)) {
-      // Tear down a Wails listener if that was the last subscriber.
+      // Tear down the Wails listener if that was the last subscriber.
+      // Uses the captured disposer, not Events.Off(name).
       if (
         wailsHostEvents.includes(event) &&
         byPlugin.size === 0 &&
-        activeWailsListeners.has(event)
+        wailsListenerDisposers.has(event)
       ) {
-        activeWailsListeners.delete(event)
-        Events.Off(event)
+        const disposer = wailsListenerDisposers.get(event)!
+        wailsListenerDisposers.delete(event)
+        disposer()
       }
     }
   }
@@ -146,10 +157,10 @@ export function cleanupPlugin(pluginID: string): void {
  * vault teardown to guarantee a clean slate.
  */
 export function clearAllSubscribers(): void {
-  for (const event of activeWailsListeners) {
-    Events.Off(event)
+  for (const disposer of wailsListenerDisposers.values()) {
+    disposer()
   }
-  activeWailsListeners.clear()
+  wailsListenerDisposers.clear()
   subscribers.clear()
 }
 

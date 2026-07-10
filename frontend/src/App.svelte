@@ -14,7 +14,9 @@
     ResolveQuarantinedLinks,
     PickLinkedNotebook,
     UnlinkNotebook,
-    CreateStandaloneTask
+    CreateStandaloneTask,
+    MarkFrontendReady,
+    GetStartupEvents
   } from '../bindings/silt/app.js'
   import { Events } from '@wailsio/runtime'
   import type * as config from '../bindings/silt/backend/config/models.js'
@@ -837,34 +839,42 @@
     // vault_path or trusted_publishers changed since last launch (possible
     // tampering, or a legit external edit). Show a confirmation modal; the
     // user can confirm (clears the sentinel) or dismiss (mismatch persists
-    // on next launch).
+    // on next launch). Extracted to a named handler so both the live
+    // Events.On listener and the startup-event replay (dispatchStartupEvent)
+    // run the exact same code.
+    function handleSettingsMismatch() {
+      showSettingsMismatch = true
+    }
     const offSettingsMismatch = Events.On(
       'settings:fingerprint-mismatch',
-      () => {
-        showSettingsMismatch = true
-      }
+      handleSettingsMismatch
     )
     // F4: grants migration — the vault's legacy config.yaml carries a grants
     // block this host has never seen. Show a one-time confirmation modal.
+    function handleGrantsMigration(
+      grants: Record<string, Record<string, string>>
+    ) {
+      pendingLegacyGrants = grants
+      showGrantsMigration = true
+    }
     const offGrantsMigration = Events.On(
       'grants:migration-required',
       (ev: any) => {
-        const grants: Record<string, Record<string, string>> = ev.data
-        pendingLegacyGrants = grants
-        showGrantsMigration = true
+        handleGrantsMigration(ev.data)
       }
     )
     // F3: linked-notebook quarantined — the root was moved or tampered with.
     // Refresh the quarantine list so the modal shows the latest set.
+    async function handleLinkedQuarantined() {
+      try {
+        quarantinedLinks = await ResolveQuarantinedLinks()
+      } catch (e) {
+        console.error('ResolveQuarantinedLinks failed:', e)
+      }
+    }
     const offLinkedQuarantined = Events.On(
       'linked-notebook:quarantined',
-      async () => {
-        try {
-          quarantinedLinks = await ResolveQuarantinedLinks()
-        } catch (e) {
-          console.error('ResolveQuarantinedLinks failed:', e)
-        }
-      }
+      handleLinkedQuarantined
     )
     // Vault init failed during startup (settings.json unreadable, DB open
     // failed, network-filesystem vault, watcher start failed, …). Without
@@ -872,24 +882,28 @@
     // with no clue why — the user sees a dead frame. Surface it as a sticky
     // error toast so the cause is visible. (Wails delivers OnStartup after
     // the frontend mounts, so this listener is registered in time.)
-    const offVaultInitError = Events.On('vault:init-error', (ev: any) => {
-      const msg: string = ev.data
+    function handleVaultInitError(msg: string) {
       pushNotification({
         kind: 'error',
         message: `Vault failed to initialize: ${msg}`,
         autoDismissMs: 0
       })
+    }
+    const offVaultInitError = Events.On('vault:init-error', (ev: any) => {
+      handleVaultInitError(ev.data)
     })
     // Non-fatal init warnings (symlink skips, permission errors during scan).
     // These don't block usage but explain missing/partial content.
-    const offVaultInitWarnings = Events.On('vault:init-warnings', (ev: any) => {
-      const warnings: string[] = ev.data
+    function handleVaultInitWarnings(warnings: string[]) {
       if (!warnings?.length) return
       pushNotification({
         kind: 'info',
         message: `Vault initialized with warnings: ${warnings.join('; ')}`,
         autoDismissMs: 0
       })
+    }
+    const offVaultInitWarnings = Events.On('vault:init-warnings', (ev: any) => {
+      handleVaultInitWarnings(ev.data)
     })
     // Mass id re-mint detection (#443): an external tool/sync stripped the
     // block-identity comments from a previously-indexed file, so the parser
@@ -902,6 +916,51 @@
       if (!w) return
       pushNotification(reMintToast(w, openPage))
     })
+
+    // Wails v3 fires ServiceStartup before the webview exists, so every
+    // startup-time emit (vault:init-error, settings:fingerprint-mismatch,
+    // grants:migration-required, vault:init-warnings, vault:watch-coverage,
+    // linked-notebook:quarantined) is lost — no JS listener was registered
+    // yet. The backend stashes those via emitOrQueue; here we mark the
+    // frontend ready (stop queueing), drain the queue, and replay each event
+    // through the same named handler its live Events.On listener uses, so a
+    // startup event is indistinguishable from a live one to the handler.
+    function dispatchStartupEvent(name: string, data: any): void {
+      switch (name) {
+        case 'settings:fingerprint-mismatch':
+          handleSettingsMismatch()
+          break
+        case 'grants:migration-required':
+          handleGrantsMigration(data)
+          break
+        case 'linked-notebook:quarantined':
+          void handleLinkedQuarantined()
+          break
+        case 'vault:init-error':
+          handleVaultInitError(data)
+          break
+        case 'vault:init-warnings':
+          handleVaultInitWarnings(data)
+          break
+        // vault:watch-coverage has no live listener today; it is queued on the
+        // backend for forward-compat (a future handler picks it up here).
+        default:
+          break
+      }
+    }
+
+    void (async () => {
+      try {
+        await MarkFrontendReady()
+        const missed = await GetStartupEvents()
+        for (const ev of missed ?? []) {
+          dispatchStartupEvent(ev.Name, ev.Payload)
+        }
+      } catch (e) {
+        console.error('Startup event replay failed:', e)
+      }
+    })()
+
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)

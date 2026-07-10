@@ -9,7 +9,6 @@ import (
 	"silt/backend/templates"
 	"strconv"
 	"time"
-
 )
 
 // templatesDir returns the on-disk user-template directory, mirroring themesDir.
@@ -105,9 +104,7 @@ func (a *App) SaveUserTemplate(t templates.Template) error {
 		return err
 	}
 	templates.InvalidateTemplateCache(t.ID)
-	if a.ctx != nil {
-		a.emit("templates:changed", struct{}{})
-	}
+	a.emit("templates:changed", struct{}{})
 	log.Printf("templates: SaveUserTemplate → saved %q", t.ID)
 	return nil
 }
@@ -137,9 +134,7 @@ func (a *App) DeleteUserTemplate(id string) error {
 		return err
 	}
 	templates.InvalidateTemplateCache(id)
-	if a.ctx != nil {
-		a.emit("templates:changed", struct{}{})
-	}
+	a.emit("templates:changed", struct{}{})
 	log.Printf("templates: DeleteUserTemplate → removed %q", id)
 	return nil
 }
@@ -168,9 +163,7 @@ func (a *App) RegisterPluginTemplates(pluginID string, tpls []*templates.Templat
 		log.Printf("templates: RegisterPluginTemplates(%q) failed: %v", pluginID, err)
 		return err
 	}
-	if a.ctx != nil {
-		a.emit("templates:changed", struct{}{})
-	}
+	a.emit("templates:changed", struct{}{})
 	log.Printf("templates: RegisterPluginTemplates → %d templates for %q", len(valid), pluginID)
 	return nil
 }
@@ -181,9 +174,7 @@ func (a *App) UnregisterPluginTemplates(pluginID string) {
 	a.wg.Add(1)
 	defer a.wg.Done()
 	templates.UnregisterPluginTemplates(pluginID)
-	if a.ctx != nil {
-		a.emit("templates:changed", struct{}{})
-	}
+	a.emit("templates:changed", struct{}{})
 	log.Printf("templates: UnregisterPluginTemplates → %q", pluginID)
 }
 
@@ -194,9 +185,7 @@ func (a *App) ReloadTemplates() error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 	templates.InvalidateTemplateCache()
-	if a.ctx != nil {
-		a.emit("templates:changed", struct{}{})
-	}
+	a.emit("templates:changed", struct{}{})
 	return nil
 }
 

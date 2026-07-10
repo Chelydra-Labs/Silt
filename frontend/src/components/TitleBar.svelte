@@ -53,11 +53,9 @@
     sidebarCollapsed ? trafficPx : trafficPx + sidebarWidth
   )
 
-  function handleToggleMax() {
-    Window.ToggleMaximise()
-    // Optimistic flip; resize listener will correct it if the platform
-    // refuses the toggle.
-    maximised = !maximised
+  async function handleToggleMax() {
+    await Window.ToggleMaximise()
+    await syncMaximised()
   }
 </script>
 
@@ -135,7 +133,9 @@
     {#if !isMac}
       <div class="flex items-center h-full">
         <button
-          onclick={() => Window.Minimise()}
+          onclick={async () => {
+            await Window.Minimise()
+          }}
           aria-label="Minimize"
           title="Minimize"
           class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
@@ -153,7 +153,9 @@
           >
         </button>
         <button
-          onclick={() => Application.Quit()}
+          onclick={async () => {
+            await Application.Quit()
+          }}
           aria-label="Close"
           title="Close"
           class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none"

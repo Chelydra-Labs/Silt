@@ -471,11 +471,6 @@
         Export active
       </button>
     </div>
-    <p class="text-text-muted text-[11px] font-label-sm mt-2">
-      Drop a theme .json file anywhere in this tab to import. Imported themes
-      are validated against the canonical schema and appear in the list above
-      immediately.
-    </p>
   </section>
 
   <!-- Live status region (a11y: aria-live="polite" for success/info, role="alert" for errors) -->

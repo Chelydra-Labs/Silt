@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 )
 
 // FileFilter mirrors the v2 runtime.FileFilter for dialog filter specs.
@@ -22,16 +23,50 @@ func (a *App) emit(name string, data ...any) {
 	a.wailsApp.Event.Emit(name, data...)
 }
 
+// emitOrQueue emits a Wails event AND, until MarkFrontendReady signals the
+// frontend has mounted its listeners, appends a copy to startupEvents so
+// GetStartupEvents can replay it. In Wails v3, ServiceStartup runs before the
+// webview exists, so a plain emit there is silently dropped — the queue is the
+// retrieval path. After MarkFrontendReady, this collapses to a plain emit (no
+// copy, no lock on the hot path). The stored payload is data[0] (or nil when
+// data is empty), matching how Wails delivers a single-arg event as ev.data on
+// the JS side. Startup emits use exactly one arg, so this is exact.
+func (a *App) emitOrQueue(name string, data ...any) {
+	var payload any
+	if len(data) > 0 {
+		payload = data[0]
+	}
+	a.startupEventsMu.Lock()
+	if !a.frontendReady {
+		a.startupEvents = append(a.startupEvents, startupEvent{Name: name, Payload: payload})
+	}
+	a.startupEventsMu.Unlock()
+	a.emit(name, data...)
+}
+
+// normalizeCancel converts a v3 dialog cancel error into the v2 contract
+// ("", nil). v3's cfd library returns ("", ErrorCancelled) on user cancel;
+// v2 returned ("", nil). The cancel sentinel lives in a Wails internal
+// package, so we match on the error string. This restores the documented
+// "Returns \"\" on cancel" contract that every picker callsite relies on.
+func normalizeCancel(path string, err error) (string, error) {
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "cancel") {
+		return "", nil
+	}
+	return path, err
+}
+
 // openDirectoryDialog opens a native folder picker. Returns "" on cancel.
 func (a *App) openDirectoryDialog(title string) (string, error) {
 	if a.wailsApp == nil {
 		return "", fmt.Errorf("application not ready")
 	}
-	return a.wailsApp.Dialog.OpenFile().
+	path, err := a.wailsApp.Dialog.OpenFile().
 		SetTitle(title).
 		CanChooseDirectories(true).
 		CanChooseFiles(false).
 		PromptForSingleSelection()
+	return normalizeCancel(path, err)
 }
 
 // openFileDialog opens a native file picker with optional filters.
@@ -44,7 +79,8 @@ func (a *App) openFileDialog(title string, filters []FileFilter) (string, error)
 	for _, f := range filters {
 		d.AddFilter(f.DisplayName, f.Pattern)
 	}
-	return d.PromptForSingleSelection()
+	path, err := d.PromptForSingleSelection()
+	return normalizeCancel(path, err)
 }
 
 // saveFileDialog opens a native save-file picker. Returns "" on cancel.
@@ -56,7 +92,8 @@ func (a *App) saveFileDialog(title, defaultFilename string, filters []FileFilter
 	for _, f := range filters {
 		d.AddFilter(f.DisplayName, f.Pattern)
 	}
-	return d.PromptForSingleSelection()
+	path, err := d.PromptForSingleSelection()
+	return normalizeCancel(path, err)
 }
 
 // clipboardGetText reads the system clipboard. Returns "" when the
