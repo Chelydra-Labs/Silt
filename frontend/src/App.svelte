@@ -909,6 +909,23 @@
     const offVaultInitWarnings = Events.On('vault:init-warnings', (ev: any) => {
       handleVaultInitWarnings(ev.data)
     })
+    // fsnotify subscription failures (watch limit, permissions). File-change
+    // watching is degraded for these paths — indexing and autosave
+    // reconciliation may not track external edits to them.
+    function handleVaultWatchCoverage(failedPaths: string[]) {
+      if (!failedPaths?.length) return
+      pushNotification({
+        kind: 'info',
+        message: `File watching unavailable for ${failedPaths.length} path(s). External edits to these folders won't auto-sync.`,
+        autoDismissMs: 0
+      })
+    }
+    const offVaultWatchCoverage = Events.On(
+      'vault:watch-coverage',
+      (ev: any) => {
+        handleVaultWatchCoverage(ev.data)
+      }
+    )
     // Mass id re-mint detection (#443): an external tool/sync stripped the
     // block-identity comments from a previously-indexed file, so the parser
     // re-minted fresh UUIDs — which can break note-to-note links pointing at
@@ -978,8 +995,9 @@
         case 'vault:init-warnings':
           handleVaultInitWarnings(data)
           break
-        // vault:watch-coverage has no live listener today; it is queued on the
-        // backend for forward-compat (a future handler picks it up here).
+        case 'vault:watch-coverage':
+          handleVaultWatchCoverage(data)
+          break
         default:
           break
       }
@@ -1018,6 +1036,7 @@
       offLinkedQuarantined()
       offVaultInitError()
       offVaultInitWarnings()
+      offVaultWatchCoverage()
       offReMintWarning()
       offMenuNewPage()
       offMenuOpenVault()
