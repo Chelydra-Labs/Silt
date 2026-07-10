@@ -1,13 +1,20 @@
-// Component-level a11y/keyboard coverage for the theme picker (#50).
-// The #50 acceptance criterion is "the picker is keyboard-navigable
-// with correct ARIA"; the injector/store unit tests cover the data
-// pipeline, but only a rendered-component test can assert the listbox/
-// radiogroup contract and the roving-tabindex keyboard map that
-// AppearanceTab.svelte implements.
+// Component-level coverage for the theme picker (#50, #512).
+// The two-stage-preview redesign (#512) replaces the hover-to-inject list
+// with a card grid + details pane: hover only highlights (CSS), a click
+// stages a temporary preview (injectTokens + Apply/Revert banner), Apply
+// or a double-click commits (applyTheme), Revert/Esc restores the active
+// theme. These tests pin that contract at the rendered-component level;
+// the injector/store unit tests cover the data pipeline.
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 // jest-dom matchers are registered via vitest.setup.ts (the /vitest
 // entry); no inline import needed here.
 
@@ -15,7 +22,8 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 // these refs available inside the vi.mock factories (which are
 // themselves hoisted above the imports). The objects are PLAIN (not
 // $state) — sufficient for assertions against the initial render and
-// the component's own $state-driven interactions (focusIndex, rowRefs).
+// the component's own $state-driven interactions (focusIndex, cardRefs,
+// previewTheme).
 const mocks = vi.hoisted(() => ({
   themeState: {
     id: 'cyber_forest',
@@ -121,7 +129,7 @@ vi.mock('../../theme/store.svelte', () => ({
 
 import AppearanceTab from './AppearanceTab.svelte'
 
-describe('AppearanceTab picker a11y (#50)', () => {
+describe('AppearanceTab picker a11y (#50, #512)', () => {
   beforeEach(() => {
     mocks.applyTheme.mockReset()
     mocks.restoreActiveTheme.mockReset()
@@ -131,8 +139,7 @@ describe('AppearanceTab picker a11y (#50)', () => {
     // Fresh event capture so a prior render's handler/disposer can't leak in.
     mocks.eventsHandlers = {}
     mocks.eventsDisposers = {}
-    // Each test starts with no preview-token data; the Esc test
-    // populates this for the focus-driven preview path.
+    // Each test starts with no flat-token data; the preview tests opt in.
     mocks.themesState.flatTokens = {}
     // Each test starts from the default dark/system-resolved state so
     // a prior test's mutation doesn't leak across.
@@ -144,20 +151,21 @@ describe('AppearanceTab picker a11y (#50)', () => {
     cleanup()
   })
 
-  it('renders a listbox of option rows with aria-selected on the active theme', () => {
+  it('renders a grid group of theme buttons with the Active badge on the saved theme', () => {
     render(AppearanceTab)
 
-    const listbox = screen.getByRole('listbox', { name: 'Available themes' })
-    expect(listbox).toBeInTheDocument()
+    const grid = screen.getByRole('group', { name: 'Available themes' })
+    expect(grid).toBeInTheDocument()
 
-    const options = screen.getAllByRole('option')
-    expect(options).toHaveLength(2)
+    const cards = within(grid).getAllByRole('button')
+    expect(cards).toHaveLength(2)
 
-    // The active theme (themeState.id === 'cyber_forest') is selected.
-    const active = screen.getByRole('option', { name: /Cyber Forest/i })
-    expect(active).toHaveAttribute('aria-selected', 'true')
-    const inactive = screen.getByRole('option', { name: /Terra Test/i })
-    expect(inactive).toHaveAttribute('aria-selected', 'false')
+    // The saved theme (themeState.id === 'cyber_forest') shows the Active
+    // badge in its accessible name; the other card does not.
+    const active = within(grid).getByRole('button', { name: /Cyber Forest/i })
+    expect(active.textContent).toMatch(/Active/)
+    const inactive = within(grid).getByRole('button', { name: /Terra Test/i })
+    expect(inactive.textContent).not.toMatch(/Active/)
   })
 
   it('renders a radiogroup for Dark/Light/System with aria-checked', () => {
@@ -176,60 +184,38 @@ describe('AppearanceTab picker a11y (#50)', () => {
     expect(light).toHaveAttribute('aria-checked', 'false')
   })
 
-  it('ArrowDown moves focus to the next theme row (roving tabindex)', async () => {
+  it('ArrowDown moves focus to the next card (roving tabindex)', async () => {
     render(AppearanceTab)
 
-    const options = screen.getAllByRole('option')
-    // Initially the first row is the roving-tabindex entry point (0).
-    options[0].focus()
-    expect(document.activeElement).toBe(options[0])
+    const grid = screen.getByRole('group', { name: 'Available themes' })
+    const cards = within(grid).getAllByRole('button')
+    // Initially the first card is the roving-tabindex entry point (0).
+    cards[0].focus()
+    expect(document.activeElement).toBe(cards[0])
 
-    // ArrowDown moves focus to the second row.
-    await fireEvent.keyDown(options[0], { key: 'ArrowDown' })
-    expect(document.activeElement).toBe(options[1])
+    // ArrowDown moves focus to the second card.
+    await fireEvent.keyDown(cards[0], { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(cards[1])
 
-    // The roving tabindex updated: row 1 is now tabbable (0), row 0 is
+    // The roving tabindex updated: card 1 is now tabbable (0), card 0 is
     // removed from the tab order (-1).
-    expect(options[1]).toHaveAttribute('tabindex', '0')
-    expect(options[0]).toHaveAttribute('tabindex', '-1')
+    expect(cards[1]).toHaveAttribute('tabindex', '0')
+    expect(cards[0]).toHaveAttribute('tabindex', '-1')
   })
 
-  it('Home jumps focus to the first row; End to the last', async () => {
+  it('Home jumps focus to the first card; End to the last', async () => {
     render(AppearanceTab)
 
-    const options = screen.getAllByRole('option')
-    options[1].focus()
-    expect(document.activeElement).toBe(options[1])
+    const grid = screen.getByRole('group', { name: 'Available themes' })
+    const cards = within(grid).getAllByRole('button')
+    cards[1].focus()
+    expect(document.activeElement).toBe(cards[1])
 
-    await fireEvent.keyDown(options[1], { key: 'Home' })
-    expect(document.activeElement).toBe(options[0])
+    await fireEvent.keyDown(cards[1], { key: 'Home' })
+    expect(document.activeElement).toBe(cards[0])
 
-    await fireEvent.keyDown(options[0], { key: 'End' })
-    expect(document.activeElement).toBe(options[1])
-  })
-
-  it('Enter on a non-active row selects it (calls applyTheme)', async () => {
-    render(AppearanceTab)
-
-    const terra = screen.getByRole('option', { name: /Terra Test/i })
-    terra.focus()
-    await fireEvent.keyDown(terra, { key: 'Enter' })
-
-    expect(mocks.applyTheme).toHaveBeenCalledTimes(1)
-    // applyTheme(id, mode) — id of the focused row, current mode.
-    const [id, mode] = mocks.applyTheme.mock.calls[0]
-    expect(id).toBe('terra-test')
-    expect(mode).toBe('dark')
-  })
-
-  it('Space also commits the focused row', async () => {
-    render(AppearanceTab)
-
-    const terra = screen.getByRole('option', { name: /Terra Test/i })
-    terra.focus()
-    await fireEvent.keyDown(terra, { key: ' ' })
-
-    expect(mocks.applyTheme).toHaveBeenCalledWith('terra-test', 'dark')
+    await fireEvent.keyDown(cards[0], { key: 'End' })
+    expect(document.activeElement).toBe(cards[1])
   })
 
   it('clicking a mode radio calls applyTheme with the new mode', async () => {
@@ -244,37 +230,128 @@ describe('AppearanceTab picker a11y (#50)', () => {
     expect(mode).toBe('light')
   })
 
-  it('Escape cancels an in-flight live preview and restores the active theme', async () => {
-    // Populate flatTokens so a focus-driven preview is observable: the
-    // component's previewTokens derived reads themesState.flatTokens[id]
-    // and, when non-null, the $effect injects the preview theme's tokens
-    // instead of the active theme's. Empty flatTokens short-circuits the
-    // preview to null, so we must provide data to exercise the path.
-    mocks.themesState.flatTokens = {
-      'terra-test': {
-        dark: { '--color-surface-app': '#1a0f0a' },
-        light: { '--color-surface-app': '#faf6f2' }
+  describe('two-stage preview (#512)', () => {
+    beforeEach(() => {
+      // Tokens for the second theme so a staged preview is observable via
+      // injectTokens; the first theme stays token-less so the active-theme
+      // restore path (previewTheme === null) is the only thing that runs
+      // for it on mount.
+      mocks.themesState.flatTokens = {
+        'terra-test': {
+          dark: { '--color-surface-app': '#1a0f0a' },
+          light: { '--color-surface-app': '#faf6f2' }
+        }
       }
-    }
-    render(AppearanceTab)
-    // Let the initial mount effect (restoreActiveTheme for the null
-    // preview) flush before we start counting preview/restore calls.
-    await tick()
-
-    const terra = screen.getByRole('option', { name: /Terra Test/i })
-    // Focusing a row starts a live preview (onfocus → onRowEnter).
-    terra.focus()
-    await tick()
-    // The preview theme's dark tokens are injected in place of the active.
-    expect(mocks.injectTokens).toHaveBeenCalledWith({
-      '--color-surface-app': '#1a0f0a'
     })
 
-    // Escape cancels the preview (onRowKey → previewId = null).
-    await fireEvent.keyDown(terra, { key: 'Escape' })
-    await tick()
-    // The active theme is restored (the $effect's else branch).
-    expect(mocks.restoreActiveTheme).toHaveBeenCalled()
+    it('hover does NOT inject tokens (regression guard for the strobe)', async () => {
+      render(AppearanceTab)
+      await tick()
+      mocks.injectTokens.mockClear()
+
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const terra = within(grid).getByRole('button', { name: /Terra Test/i })
+      // Hover/focus must only highlight the card — never rewrite :root tokens.
+      await fireEvent.mouseEnter(terra)
+      await fireEvent.mouseOver(terra)
+      await tick()
+      expect(mocks.injectTokens).not.toHaveBeenCalled()
+    })
+
+    it('single-click stages a preview: injects tokens and shows the banner', async () => {
+      render(AppearanceTab)
+      await tick()
+      mocks.injectTokens.mockClear()
+
+      expect(screen.queryByRole('status')).toBeNull()
+
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const terra = within(grid).getByRole('button', { name: /Terra Test/i })
+      await fireEvent.click(terra)
+      await tick()
+
+      // The previewed theme's dark tokens are injected in place of the active.
+      expect(mocks.injectTokens).toHaveBeenCalledWith({
+        '--color-surface-app': '#1a0f0a'
+      })
+      // The banner announces the staged theme.
+      const banner = screen.getByRole('status')
+      expect(banner).toHaveAttribute('aria-live', 'polite')
+      expect(banner.textContent).toMatch(/Previewing Terra Test/i)
+    })
+
+    it('Apply commits via applyTheme and dismisses the banner', async () => {
+      // applyTheme resolves true (success) so the banner clears on commit.
+      mocks.applyTheme.mockResolvedValue(true)
+      render(AppearanceTab)
+      await tick()
+
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const terra = within(grid).getByRole('button', { name: /Terra Test/i })
+      await fireEvent.click(terra)
+      await tick()
+      expect(screen.getByRole('status')).toBeInTheDocument()
+
+      const apply = screen.getByRole('button', { name: /^Apply$/i })
+      await fireEvent.click(apply)
+      await tick()
+
+      expect(mocks.applyTheme).toHaveBeenCalledTimes(1)
+      expect(mocks.applyTheme).toHaveBeenCalledWith('terra-test', 'dark')
+      expect(screen.queryByRole('status')).toBeNull()
+    })
+
+    it('double-click commits via applyTheme', async () => {
+      mocks.applyTheme.mockResolvedValue(true)
+      render(AppearanceTab)
+      await tick()
+      mocks.applyTheme.mockClear()
+
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const terra = within(grid).getByRole('button', { name: /Terra Test/i })
+      await fireEvent.dblClick(terra)
+      await tick()
+
+      expect(mocks.applyTheme).toHaveBeenCalledWith('terra-test', 'dark')
+    })
+
+    it('Revert restores the active theme and dismisses the banner', async () => {
+      render(AppearanceTab)
+      await tick()
+      mocks.restoreActiveTheme.mockClear()
+
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const terra = within(grid).getByRole('button', { name: /Terra Test/i })
+      await fireEvent.click(terra)
+      await tick()
+      expect(screen.getByRole('status')).toBeInTheDocument()
+
+      const revert = screen.getByRole('button', { name: /^Revert$/i })
+      await fireEvent.click(revert)
+      await tick()
+
+      expect(mocks.restoreActiveTheme).toHaveBeenCalled()
+      expect(screen.queryByRole('status')).toBeNull()
+    })
+
+    it('Escape restores the active theme and dismisses the banner', async () => {
+      render(AppearanceTab)
+      await tick()
+      mocks.restoreActiveTheme.mockClear()
+
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const terra = within(grid).getByRole('button', { name: /Terra Test/i })
+      await fireEvent.click(terra)
+      await tick()
+      expect(screen.getByRole('status')).toBeInTheDocument()
+
+      // Esc on the card reverts.
+      await fireEvent.keyDown(terra, { key: 'Escape' })
+      await tick()
+
+      expect(mocks.restoreActiveTheme).toHaveBeenCalled()
+      expect(screen.queryByRole('status')).toBeNull()
+    })
   })
 
   it('shows a theme-typography indicator when the active theme overrides fonts (#82)', () => {
@@ -380,12 +457,13 @@ describe('AppearanceTab picker a11y (#50)', () => {
 
       render(AppearanceTab)
 
-      // Each option row has one chip + two dots.
-      const options = screen.getAllByRole('option')
-      expect(options).toHaveLength(2)
+      // Each card has one chip + two dots.
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const cards = within(grid).getAllByRole('button')
+      expect(cards).toHaveLength(2)
 
-      for (const opt of options) {
-        const chip = opt.querySelector(
+      for (const card of cards) {
+        const chip = card.querySelector(
           '.theme-swatch-chip'
         ) as HTMLElement | null
         expect(chip, 'chip must render').toBeTruthy()
@@ -395,8 +473,10 @@ describe('AppearanceTab picker a11y (#50)', () => {
 
       // Cyber Forest's chip is filled with the dark surface bg (#0c0c0e).
       // jsdom normalizes hex to rgb() on read-back.
-      const cfOption = screen.getByRole('option', { name: /Cyber Forest/i })
-      const cfChip = cfOption.querySelector('.theme-swatch-chip') as HTMLElement
+      const cfCard = within(grid).getByRole('button', {
+        name: /Cyber Forest/i
+      })
+      const cfChip = cfCard.querySelector('.theme-swatch-chip') as HTMLElement
       expect(cfChip.style.backgroundColor).toBe('rgb(12, 12, 14)')
       // The first dot carries the primary accent.
       const cfDots = cfChip.querySelectorAll('.theme-swatch-dot')
@@ -430,11 +510,12 @@ describe('AppearanceTab picker a11y (#50)', () => {
 
       render(AppearanceTab)
 
-      const cfChip = screen
-        .getByRole('option', { name: /Cyber Forest/i })
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const cfChip = within(grid)
+        .getByRole('button', { name: /Cyber Forest/i })
         .querySelector('.theme-swatch-chip') as HTMLElement
-      const terraChip = screen
-        .getByRole('option', { name: /Terra Test/i })
+      const terraChip = within(grid)
+        .getByRole('button', { name: /Terra Test/i })
         .querySelector('.theme-swatch-chip') as HTMLElement
       // The whole point of #405: the surface fills differ so the user can
       // tell the themes apart by temperature, not just by accent.
