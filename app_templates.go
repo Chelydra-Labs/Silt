@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // templatesDir returns the on-disk user-template directory, mirroring themesDir.
@@ -107,7 +106,7 @@ func (a *App) SaveUserTemplate(t templates.Template) error {
 	}
 	templates.InvalidateTemplateCache(t.ID)
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+		a.emit("templates:changed", struct{}{})
 	}
 	log.Printf("templates: SaveUserTemplate → saved %q", t.ID)
 	return nil
@@ -139,7 +138,7 @@ func (a *App) DeleteUserTemplate(id string) error {
 	}
 	templates.InvalidateTemplateCache(id)
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+		a.emit("templates:changed", struct{}{})
 	}
 	log.Printf("templates: DeleteUserTemplate → removed %q", id)
 	return nil
@@ -170,7 +169,7 @@ func (a *App) RegisterPluginTemplates(pluginID string, tpls []*templates.Templat
 		return err
 	}
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+		a.emit("templates:changed", struct{}{})
 	}
 	log.Printf("templates: RegisterPluginTemplates → %d templates for %q", len(valid), pluginID)
 	return nil
@@ -183,7 +182,7 @@ func (a *App) UnregisterPluginTemplates(pluginID string) {
 	defer a.wg.Done()
 	templates.UnregisterPluginTemplates(pluginID)
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+		a.emit("templates:changed", struct{}{})
 	}
 	log.Printf("templates: UnregisterPluginTemplates → %q", pluginID)
 }
@@ -196,7 +195,7 @@ func (a *App) ReloadTemplates() error {
 	defer a.wg.Done()
 	templates.InvalidateTemplateCache()
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+		a.emit("templates:changed", struct{}{})
 	}
 	return nil
 }

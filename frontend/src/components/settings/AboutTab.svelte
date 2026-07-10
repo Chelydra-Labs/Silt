@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { GetAppVersion } from '../../../wailsjs/go/main/App.js'
-  import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime.js'
+  import { GetAppVersion } from '../../../bindings/silt/app.js'
+  import { Browser } from '@wailsio/runtime'
   import logo from '../../assets/logo.svg'
   import {
     updateState,
@@ -62,7 +62,7 @@
   function openExternal(e: MouseEvent): void {
     e.preventDefault()
     const url = (e.currentTarget as HTMLAnchorElement).href
-    if (url) BrowserOpenURL(url)
+    if (url) Browser.OpenURL(url)
   }
 </script>
 

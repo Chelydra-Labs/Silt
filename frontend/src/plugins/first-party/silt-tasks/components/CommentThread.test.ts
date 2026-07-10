@@ -12,8 +12,28 @@ const mocks = vi.hoisted(() => ({
   persistLocalAuthor: vi.fn().mockResolvedValue(true)
 }))
 
-vi.mock('../../../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: vi.fn(() => () => {})
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn(() => () => {})
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 // jsdom polyfills: transition:fly (used on each comment article) calls

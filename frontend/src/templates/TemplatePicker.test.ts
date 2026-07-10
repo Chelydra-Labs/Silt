@@ -39,7 +39,7 @@ const mocks = vi.hoisted(() => ({
   pushNotification: vi.fn()
 }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   ListTemplates: vi.fn(),
   GetTemplate: vi.fn(),
   RenderTemplate: vi.fn().mockResolvedValue('# Preview content'),
@@ -50,8 +50,28 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   RenderTemplateBlocks: vi.fn().mockResolvedValue([])
 }))
 
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: vi.fn()
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn()
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 vi.mock('./store.svelte', () => ({
@@ -177,7 +197,7 @@ describe('TemplatePicker (#55)', () => {
 
   it('dispatches focus-page-title on successful CreatePageFromTemplate (#95)', async () => {
     const { CreatePageFromTemplate } =
-      await import('../../wailsjs/go/main/App.js')
+      await import('../../bindings/silt/app.js')
     ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockResolvedValue(
       '2026-06-15'
     )
@@ -221,7 +241,7 @@ describe('TemplatePicker (#55)', () => {
 
   it('pushes a toast when CreatePageFromTemplate fails (#94)', async () => {
     const { CreatePageFromTemplate } =
-      await import('../../wailsjs/go/main/App.js')
+      await import('../../bindings/silt/app.js')
     ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error('disk full')
     )
@@ -250,8 +270,7 @@ describe('TemplatePicker (#55)', () => {
   })
 
   it('pushes a toast when RenderTemplateBlocks fails (#94)', async () => {
-    const { RenderTemplateBlocks } =
-      await import('../../wailsjs/go/main/App.js')
+    const { RenderTemplateBlocks } = await import('../../bindings/silt/app.js')
     ;(RenderTemplateBlocks as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error('IPC lost')
     )

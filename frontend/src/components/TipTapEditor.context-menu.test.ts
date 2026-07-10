@@ -60,7 +60,7 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   SaveFileBlocks: mocks.saveFileBlocks,
   AcquireFocusLock: mocks.acquireFocusLock,
   RefreshFocusLock: mocks.refreshFocusLock,
@@ -69,8 +69,28 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   DistinctOwners: mocks.distinctOwners
 }))
 
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: mocks.eventsOn
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mocks.eventsOn
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 vi.mock('../settings/store.svelte', () => ({

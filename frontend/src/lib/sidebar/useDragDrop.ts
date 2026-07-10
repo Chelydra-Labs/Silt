@@ -1,4 +1,4 @@
-import { MovePage } from '../../../wailsjs/go/main/App.js'
+import { MovePage } from '../../../bindings/silt/app.js'
 import { sortByName, type NavOrderManager } from './navOrder'
 import type { NavSection } from './types'
 
@@ -51,7 +51,12 @@ export class DragDropManager {
     this.deps = deps
   }
 
-  handleDragStart(e: DragEvent, level: string, name: string, section: string = '') {
+  handleDragStart(
+    e: DragEvent,
+    level: string,
+    name: string,
+    section: string = ''
+  ) {
     this.dragItem = { level, name, section }
     this.deps.onDragItemChange(this.dragItem)
     if (e.dataTransfer) {

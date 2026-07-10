@@ -16,13 +16,12 @@ func TestFormatIPCError_EmitsCodeIndependentOfMessage(t *testing.T) {
 	// wording than the production sentinel — the code is what matters.
 	err := NewIPCError(CodeBlockBeingEdited, "totally different wording than before")
 	out := formatIPCError(err)
-	s, ok := out.(string)
-	if !ok {
-		t.Fatalf("formatIPCError returned %T, want string", out)
+	if out == nil {
+		t.Fatal("formatIPCError returned nil for an IPCError")
 	}
 	var p ipcErrorPayload
-	if err := json.Unmarshal([]byte(s), &p); err != nil {
-		t.Fatalf("output is not JSON: %v (got %q)", err, s)
+	if err := json.Unmarshal(out, &p); err != nil {
+		t.Fatalf("output is not JSON: %v (got %q)", err, out)
 	}
 	if p.Code != string(CodeBlockBeingEdited) {
 		t.Errorf("code = %q, want %q — the code must be emitted independent of the message", p.Code, CodeBlockBeingEdited)
@@ -36,9 +35,11 @@ func TestFormatIPCError_EmitsCodeIndependentOfMessage(t *testing.T) {
 // sentinels serialize with their stable codes.
 func TestFormatIPCError_VaultClosingAndCapability(t *testing.T) {
 	out := formatIPCError(vaultClosingError())
-	s, _ := out.(string)
+	if out == nil {
+		t.Fatal("formatIPCError returned nil for vaultClosingError")
+	}
 	var p ipcErrorPayload
-	if err := json.Unmarshal([]byte(s), &p); err != nil {
+	if err := json.Unmarshal(out, &p); err != nil {
 		t.Fatalf("vaultClosing output not JSON: %v", err)
 	}
 	if p.Code != string(CodeVaultClosing) {
@@ -47,18 +48,14 @@ func TestFormatIPCError_VaultClosingAndCapability(t *testing.T) {
 }
 
 // TestFormatIPCError_PlainErrorPassesThrough verifies an unmigrated error (one
-// that is not an *IPCError or *CapabilityDeniedError) falls through to plain
-// err.Error() prose — the pre-contract behavior, so nothing breaks while
-// sentinels migrate incrementally.
+// that is not an *IPCError or *CapabilityDeniedError) returns nil so Wails'
+// default error handler kicks in — the pre-contract behavior, so nothing breaks
+// while sentinels migrate incrementally.
 func TestFormatIPCError_PlainErrorPassesThrough(t *testing.T) {
 	plain := fmt.Errorf("some unmigrated sentinel prose")
 	out := formatIPCError(plain)
-	s, ok := out.(string)
-	if !ok {
-		t.Fatalf("formatIPCError returned %T for a plain error, want string", out)
-	}
-	if s != "some unmigrated sentinel prose" {
-		t.Errorf("plain error output = %q, want the prose unchanged", s)
+	if out != nil {
+		t.Fatalf("formatIPCError returned %q for a plain error, want nil (default handler)", out)
 	}
 }
 

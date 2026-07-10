@@ -69,12 +69,32 @@ const mocks = vi.hoisted(() => ({
   pickAndImportTheme: vi.fn()
 }))
 
-vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
+vi.mock('@wailsio/runtime', () => ({
   OnFileDrop: vi.fn(),
   OnFileDropOff: vi.fn(),
-  EventsOn: vi.fn(),
-  EventsOff: vi.fn(),
-  EventsEmit: vi.fn()
+  Events: {
+    On: vi.fn(),
+    Off: vi.fn(),
+    Emit: vi.fn()
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 vi.mock('../../theme/inject', () => ({ injectTokens: mocks.injectTokens }))
 vi.mock('../../theme/store.svelte', () => ({

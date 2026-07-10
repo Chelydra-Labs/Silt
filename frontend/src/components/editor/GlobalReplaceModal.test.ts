@@ -23,17 +23,37 @@ const mocks = vi.hoisted(() => ({
   SaveFileBlocks: vi.fn()
 }))
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   SearchBlocksPaged: mocks.SearchBlocksPaged,
   FetchPageBlocks: mocks.FetchPageBlocks,
   SaveFileBlocks: mocks.SaveFileBlocks
 }))
-vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
+vi.mock('@wailsio/runtime', () => ({
   OnFileDrop: vi.fn(),
   OnFileDropOff: vi.fn(),
-  EventsOn: vi.fn(),
-  EventsOff: vi.fn(),
-  EventsEmit: vi.fn()
+  Events: {
+    On: vi.fn(),
+    Off: vi.fn(),
+    Emit: vi.fn()
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 import GlobalReplaceModal from './GlobalReplaceModal.svelte'

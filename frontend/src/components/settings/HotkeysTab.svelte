@@ -37,7 +37,7 @@
   let isValid = $derived(
     draft !== null &&
       Object.values(draft.hotkeys).every(
-        (h) => h.trim() === '' || parseHotkey(h) !== null
+        (h) => h === undefined || h.trim() === '' || parseHotkey(h) !== null
       )
   )
 

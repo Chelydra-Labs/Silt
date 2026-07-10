@@ -1,4 +1,4 @@
-import { GetNavOrder, SetNavOrder } from '../../../wailsjs/go/main/App.js'
+import { GetNavOrder, SetNavOrder } from '../../../bindings/silt/app.js'
 
 export interface NavOrderState {
   notebooks: string[]
@@ -63,8 +63,15 @@ export class NavOrderManager {
       if (gen !== this.loadGen) return
       this.state = {
         notebooks: order.notebooks ?? [],
-        sections: Object.fromEntries(Object.entries(order.sections ?? {})),
-        pages: Object.fromEntries(Object.entries(order.pages ?? {}))
+        // Per-value `| undefined` is a Wails v3 binding artifact for Go
+        // map[string][]string; the values are always present here.
+        sections: Object.fromEntries(
+          Object.entries(order.sections ?? {})
+        ) as Record<string, string[]>,
+        pages: Object.fromEntries(Object.entries(order.pages ?? {})) as Record<
+          string,
+          string[]
+        >
       }
       this.deps.onStateChange(this.state)
     } catch {
@@ -73,7 +80,10 @@ export class NavOrderManager {
   }
 
   /** Persist a new section order for a notebook. */
-  async persistSectionOrder(notebook: string, sections: string[]): Promise<void> {
+  async persistSectionOrder(
+    notebook: string,
+    sections: string[]
+  ): Promise<void> {
     const snapshot = this.state
     this.state = {
       ...this.state,

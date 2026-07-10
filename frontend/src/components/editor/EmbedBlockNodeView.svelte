@@ -5,7 +5,7 @@
   // removes the block; the drag handle is keyboard-accessible (#101).
   import { NodeViewWrapper } from 'svelte-tiptap'
   import type { NodeViewProps } from '@tiptap/core'
-  import { OpenAttachment } from '../../../wailsjs/go/main/App.js'
+  import { OpenAttachment } from '../../../bindings/silt/app.js'
   import { getActiveLocation } from '../../plugins/location.svelte'
 
   let { node, deleteNode, selected }: NodeViewProps = $props()

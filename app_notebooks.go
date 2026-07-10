@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // CreateNotebook creates a top-level notebook folder under the vault root.
@@ -83,12 +82,10 @@ func (a *App) OpenNotebook(folderPath string) (string, error) {
 // cancelled. Keeping the dialog on the Go side matches InitializeVault and
 // avoids depending on frontend runtime dialog bindings.
 func (a *App) PickNotebookFolder() (string, error) {
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
-	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open Notebook Folder",
-	})
+	selectedPath, err := a.openDirectoryDialog("Open Notebook Folder")
 	if err != nil {
 		return "", fmt.Errorf("failed to open folder picker: %w", err)
 	}
@@ -268,12 +265,10 @@ func (a *App) UnlinkNotebook(id string) error {
 // external folder. Returns the linked notebook, or a zero value (no error) when
 // the user cancels.
 func (a *App) PickLinkedNotebook() (config.LinkedNotebook, error) {
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return config.LinkedNotebook{}, fmt.Errorf("application context not ready")
 	}
-	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Link External Notebook Folder",
-	})
+	selectedPath, err := a.openDirectoryDialog("Link External Notebook Folder")
 	if err != nil {
 		return config.LinkedNotebook{}, fmt.Errorf("failed to open folder picker: %w", err)
 	}
@@ -431,7 +426,7 @@ func (a *App) invalidateLinkedConfig(source string) {
 func (a *App) onLinkedConfigChange(source string) {
 	a.invalidateLinkedConfig(source)
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "linked-config:changed", source)
+		a.emit("linked-config:changed", source)
 	}
 }
 
@@ -445,7 +440,7 @@ func (a *App) onLinkedConfigChange(source string) {
 // emitter (no locks).
 func (a *App) onReMintWarning(w monitor.ReMintWarning) {
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "index:re-mint-warning", w)
+		a.emit("index:re-mint-warning", w)
 	}
 }
 
@@ -469,7 +464,7 @@ func (a *App) quarantineLink(id, reason string) {
 	}
 	a.configMu.Unlock()
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "linked-notebook:quarantined", map[string]string{
+		a.emit("linked-notebook:quarantined", map[string]string{
 			"id":           id,
 			"display_name": displayName,
 			"reason":       reason,

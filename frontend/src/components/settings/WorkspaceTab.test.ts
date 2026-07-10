@@ -48,12 +48,6 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: vi.fn(),
-  EventsOff: vi.fn(),
-  EventsEmit: vi.fn()
-}))
-
 const appMocks = vi.hoisted(() => ({
   PickVaultDestination: vi.fn(),
   MoveVault: vi.fn(),
@@ -64,11 +58,31 @@ const appMocks = vi.hoisted(() => ({
   PickVaultArchive: vi.fn(),
   ImportVault: vi.fn()
 }))
-vi.mock('../../../wailsjs/go/main/App.js', () => appMocks)
-vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: vi.fn(() => () => {}),
-  EventsOff: vi.fn(),
-  EventsEmit: vi.fn()
+vi.mock('../../../bindings/silt/app.js', () => appMocks)
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn(() => () => {}),
+    Off: vi.fn(),
+    Emit: vi.fn()
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 vi.mock('../../settings/store.svelte', () => ({

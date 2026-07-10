@@ -3,7 +3,7 @@ import { FocusLockManager } from './useFocusLock'
 import type { FocusLockDeps } from './useFocusLock'
 
 // Mock the Wails IPC bindings.
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   AcquireFocusLock: vi.fn().mockResolvedValue(undefined),
   ReleaseFocusLock: vi.fn().mockResolvedValue(undefined),
   RefreshFocusLock: vi.fn().mockResolvedValue(undefined)
@@ -31,22 +31,29 @@ describe('FocusLockManager', () => {
   })
 
   it('acquires and releases the lock', async () => {
-    const { AcquireFocusLock, ReleaseFocusLock } = await import(
-      '../../../wailsjs/go/main/App.js'
-    )
+    const { AcquireFocusLock, ReleaseFocusLock } =
+      await import('../../../bindings/silt/app.js')
     const lock = new FocusLockManager(makeDeps())
 
     await lock.acquire()
     expect(lock.locked).toBe(true)
-    expect(AcquireFocusLock).toHaveBeenCalledWith('Work', 'Journal', '2026-06-22')
+    expect(AcquireFocusLock).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      '2026-06-22'
+    )
 
     await lock.release()
     expect(lock.locked).toBe(false)
-    expect(ReleaseFocusLock).toHaveBeenCalledWith('Work', 'Journal', '2026-06-22')
+    expect(ReleaseFocusLock).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      '2026-06-22'
+    )
   })
 
   it('release() is a no-op when not locked', async () => {
-    const { ReleaseFocusLock } = await import('../../../wailsjs/go/main/App.js')
+    const { ReleaseFocusLock } = await import('../../../bindings/silt/app.js')
     const lock = new FocusLockManager(makeDeps())
 
     await lock.release()
@@ -54,7 +61,7 @@ describe('FocusLockManager', () => {
   })
 
   it('heartbeat refreshes the lock periodically', async () => {
-    const { RefreshFocusLock } = await import('../../../wailsjs/go/main/App.js')
+    const { RefreshFocusLock } = await import('../../../bindings/silt/app.js')
     const lock = new FocusLockManager(makeDeps())
 
     await lock.acquire()
@@ -72,7 +79,7 @@ describe('FocusLockManager', () => {
   })
 
   it('stopHeartbeat stops the refresh cycle', async () => {
-    const { RefreshFocusLock } = await import('../../../wailsjs/go/main/App.js')
+    const { RefreshFocusLock } = await import('../../../bindings/silt/app.js')
     const lock = new FocusLockManager(makeDeps())
 
     await lock.acquire()
@@ -84,7 +91,7 @@ describe('FocusLockManager', () => {
   })
 
   it('startHeartbeat restarts (does not stack)', async () => {
-    const { RefreshFocusLock } = await import('../../../wailsjs/go/main/App.js')
+    const { RefreshFocusLock } = await import('../../../bindings/silt/app.js')
     const lock = new FocusLockManager(makeDeps())
 
     await lock.acquire()
@@ -98,7 +105,7 @@ describe('FocusLockManager', () => {
   })
 
   it('acquire logs error but does not throw on IPC failure', async () => {
-    const { AcquireFocusLock } = await import('../../../wailsjs/go/main/App.js')
+    const { AcquireFocusLock } = await import('../../../bindings/silt/app.js')
     vi.mocked(AcquireFocusLock).mockRejectedValueOnce(new Error('IPC fail'))
     const lock = new FocusLockManager(makeDeps())
 
@@ -117,9 +124,8 @@ describe('FocusLockManager', () => {
   })
 
   it('reads current identity after a page rename (stale-capture regression)', async () => {
-    const { AcquireFocusLock, ReleaseFocusLock } = await import(
-      '../../../wailsjs/go/main/App.js'
-    )
+    const { AcquireFocusLock, ReleaseFocusLock } =
+      await import('../../../bindings/silt/app.js')
     let currentPage = 'OldPage'
     const lock = new FocusLockManager(makeDeps({ getPage: () => currentPage }))
 
@@ -129,6 +135,10 @@ describe('FocusLockManager', () => {
     // Simulate a rename: the getter now returns the new name.
     currentPage = 'RenamedPage'
     await lock.release()
-    expect(ReleaseFocusLock).toHaveBeenCalledWith('Work', 'Journal', 'RenamedPage')
+    expect(ReleaseFocusLock).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'RenamedPage'
+    )
   })
 })

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
-  import { FetchPageBlocks, RenamePage } from '../../wailsjs/go/main/App.js'
-  import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+  import { FetchPageBlocks, RenamePage } from '../../bindings/silt/app.js'
+  import { Events } from '@wailsio/runtime'
   import TipTapEditor from './TipTapEditor.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import FindBar from './editor/FindBar.svelte'
@@ -112,19 +112,17 @@
   // handles applying the update when the user is not actively editing.
   $effect(() => {
     // Read props at the top of the effect so it re-subscribes when the user
-    // navigates to a different page (#64). Without this, the EventsOn closure
+    // navigates to a different page (#64). Without this, the Events.On closure
     // would filter against stale values after navigation.
     const nb = notebook,
       sec = section,
       pg = page
-    const off = EventsOn(
-      'block:changed',
-      (ev: { notebook: string; section: string; page: string }) => {
-        if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
-          loadPage(false)
-        }
+    const off = Events.On('block:changed', (event: any) => {
+      const ev: { notebook: string; section: string; page: string } = event.data
+      if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
+        loadPage(false)
       }
-    )
+    })
     return () => off()
   })
 

@@ -9,7 +9,6 @@ import (
 	"silt/backend/updates"
 	"silt/backend/vault"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // =========================================================================
@@ -82,7 +81,7 @@ func (a *App) DownloadUpdate(assetURL string) (string, error) {
 	client := updates.NewClient(appVersion)
 	emitProgress := func(received, total int64) {
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, updateProgressEvent, map[string]any{
+			a.emit(updateProgressEvent, map[string]any{
 				"received": received,
 				"total":    total,
 			})

@@ -6,7 +6,7 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
 // Stub the Wails-bound functions the store imports. We avoid pulling
-// the real wailsjs/runtime here because the test environment has no
+// the real @wailsio/runtime here because the test environment has no
 // window.go; vitest's vi.mock swaps the module before the store
 // imports it. vi.hoisted keeps these refs available inside the mock
 // factory, which is itself hoisted to the top of the file.
@@ -18,7 +18,7 @@ const { applyThemeMock, getActiveThemeMock, eventsOnMock, injectTokensMock } =
     injectTokensMock: vi.fn()
   }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   ApplyTheme: applyThemeMock,
   GetActiveTheme: getActiveThemeMock,
   ListThemes: vi.fn(),
@@ -27,10 +27,30 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   PickExportPath: vi.fn(),
   PickThemeFile: vi.fn()
 }))
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: eventsOnMock,
-  EventsOff: vi.fn(),
-  EventsEmit: vi.fn()
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: eventsOnMock,
+    Off: vi.fn(),
+    Emit: vi.fn()
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 vi.mock('./inject', () => ({
   injectTokens: injectTokensMock
@@ -112,7 +132,7 @@ describe('theme store', () => {
 
   it('subscribes to the theme:changed event on init', async () => {
     await initTheme()
-    // The first arg to EventsOn is the event name; the second is the
+    // The first arg to Events.On is the event name; the second is the
     // handler. We just check that the event name is "theme:changed"
     // (the one the store listens to) and that a handler was passed.
     expect(eventsOnMock).toHaveBeenCalledWith(

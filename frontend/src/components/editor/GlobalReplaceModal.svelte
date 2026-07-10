@@ -4,8 +4,9 @@
     SearchBlocksPaged,
     FetchPageBlocks,
     SaveFileBlocks
-  } from '../../../wailsjs/go/main/App.js'
-  import type { config, parser } from '../../../wailsjs/go/models.js'
+  } from '../../../bindings/silt/app.js'
+  import type * as config from '../../../bindings/silt/backend/config/models.js'
+  import type * as parser from '../../../bindings/silt/backend/parser/models.js'
   import {
     buildMatcher,
     applyReplace,

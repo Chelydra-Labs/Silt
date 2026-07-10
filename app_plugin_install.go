@@ -5,8 +5,6 @@ import (
 	"silt/backend/parser"
 	"silt/backend/plugins"
 	"silt/backend/vault"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // --- Plugin install / uninstall (.silt-plugin) ---------------------------
@@ -31,14 +29,11 @@ func (a *App) ValidatePluginArchive(archivePath string) (parser.PluginValidation
 // PickPluginArchive opens the native file picker (filtered to .silt-plugin)
 // and returns the chosen path, or empty string if cancelled.
 func (a *App) PickPluginArchive() (string, error) {
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
-	selected, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select a .silt-plugin package",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Silt Plugin (*.silt-plugin)", Pattern: "*.silt-plugin"},
-		},
+	selected, err := a.openFileDialog("Select a .silt-plugin package", []FileFilter{
+		{DisplayName: "Silt Plugin (*.silt-plugin)", Pattern: "*.silt-plugin"},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to open file picker: %w", err)
@@ -183,5 +178,5 @@ func (a *App) emitPluginsChanged() {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "plugins:changed", struct{}{})
+	a.emit("plugins:changed", struct{}{})
 }

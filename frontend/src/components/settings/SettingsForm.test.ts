@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   updatePluginSetting: vi.fn()
 }))
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   UpdatePluginSetting: mocks.updatePluginSetting
 }))
 

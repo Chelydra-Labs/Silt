@@ -13,7 +13,7 @@
 import { describe, it, expect, vi } from 'vitest'
 
 // --- IPC mocks (must be hoisted before any component import) ---------------
-// The NodeView components import from '../../wailsjs/go/main/App.js' (relative
+// The NodeView components import from '../../bindings/silt/app.js' (relative
 // to the .svelte source). vi.mock resolves by module identity, so mocking the
 // same resolved file from this test file (at lib/editor/) applies to every
 // component that imports it.
@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
   releaseFocusLock: vi.fn()
 }))
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   ResolveBlockReference: mocks.resolveBlockReference,
   PluginMutateBlock: mocks.pluginMutateBlock,
   FetchPageBlocks: mocks.fetchPageBlocks,
@@ -37,9 +37,29 @@ vi.mock('../../../wailsjs/go/main/App.js', () => ({
   ReleaseFocusLock: mocks.releaseFocusLock
 }))
 
-vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: vi.fn(() => () => {}),
-  EventsOff: vi.fn()
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn(() => () => {}),
+    Off: vi.fn()
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 import {

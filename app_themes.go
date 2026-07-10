@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"silt/backend/themes"
 	"silt/backend/vault"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // --- Theme engine IPC (#45) -----------------------------------------------
@@ -159,7 +157,7 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 	res := buildThemeResult(t, mode)
 	log.Printf("themes: ApplyTheme(id=%q mode=%q) → resolved %q", id, mode, t.ID)
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "theme:changed", map[string]string{
+		a.emit("theme:changed", map[string]string{
 			"id": t.ID, "mode": mode,
 		})
 	}
@@ -172,14 +170,11 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 // validation and writing, so the frontend never touches the filesystem
 // directly.
 func (a *App) PickThemeFile() (string, error) {
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
-	selected, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select a theme JSON",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Silt Theme (*.json)", Pattern: "*.json"},
-		},
+	selected, err := a.openFileDialog("Select a theme JSON", []FileFilter{
+		{DisplayName: "Silt Theme (*.json)", Pattern: "*.json"},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to open file picker: %w", err)
@@ -234,7 +229,7 @@ func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	log.Printf("themes: ImportTheme(%q) → imported as %q (renamed=%v)", filepath.Base(srcPath), res.Info.ID, res.Renamed)
 	themes.InvalidateThemeCache(res.Info.ID)
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "themes:changed", struct{}{})
+		a.emit("themes:changed", struct{}{})
 	}
 	return res, nil
 }
@@ -276,7 +271,7 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 	if vaultPath == "" {
 		return nil, fmt.Errorf("vault not loaded")
 	}
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return nil, fmt.Errorf("application context not ready")
 	}
 	if !themes.IsValidSurfaceZone(zone) {
@@ -291,11 +286,8 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 	// Open the picker BEFORE acquiring any write lock so a cancel is a pure
 	// no-op (no fork, no settings change) and the blocking dialog never
 	// holds a lock. An empty selection means the user cancelled.
-	selected, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select a background image",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Images (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.svg)", Pattern: "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.svg"},
-		},
+	selected, err := a.openFileDialog("Select a background image", []FileFilter{
+		{DisplayName: "Images (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.svg)", Pattern: "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.svg"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file picker: %w", err)
@@ -373,12 +365,12 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 		// targetID is the on-disk theme the asset was written to (a fork
 		// counts as the new active theme — its selection was persisted
 		// above), and settings.ThemeMode is the unchanged current mode.
-		runtime.EventsEmit(a.ctx, "theme:changed", map[string]string{
+		a.emit("theme:changed", map[string]string{
 			"id": targetID, "mode": settings.ThemeMode,
 		})
 		// themes:changed (plural) refreshes the picker listing so the
 		// forked theme appears / the cached entry is dropped.
-		runtime.EventsEmit(a.ctx, "themes:changed", struct{}{})
+		a.emit("themes:changed", struct{}{})
 	}
 	log.Printf("themes: PickBackgroundImage(zone=%q) → theme %q forked=%v base64=%v", zone, targetID, forked, isBase64)
 	return &BackgroundImageResult{
@@ -396,15 +388,11 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 // defaultFilename is offered as the initial file name (e.g.
 // "<theme-id>.json"); pass "" to let the OS pick a default.
 func (a *App) PickExportPath(defaultFilename string) (string, error) {
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
-	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "Export active theme",
-		DefaultFilename: defaultFilename,
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Silt Theme (*.json)", Pattern: "*.json"},
-		},
+	return a.saveFileDialog("Export active theme", defaultFilename, []FileFilter{
+		{DisplayName: "Silt Theme (*.json)", Pattern: "*.json"},
 	})
 }
 

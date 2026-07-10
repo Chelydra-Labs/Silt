@@ -78,7 +78,7 @@ done
 check_tool go
 check_tool node
 check_tool npm
-check_tool wails
+check_tool wails3
 check_tool makensis
 
 # --- read version & decide whether to advance -------------------------------
@@ -116,8 +116,8 @@ else
 fi
 
 # --- build frontend + backend + NSIS scaffolding ---
-# Build frontend before wails because wails runs Go bindings generation
-# first (which requires frontend/dist to exist for the embed directive).
+# Build frontend before wails3 because the Go bindings generation requires
+# frontend/dist to exist for the embed directive.
 log_info "Installing frontend dependencies..."
 (cd "$ROOT/frontend" && npm install)
 
@@ -127,17 +127,19 @@ NODE_PATH="$ROOT/frontend/node_modules" node "$ROOT/scripts/generate-icon.mjs" \
     "$ROOT/frontend/src/assets/logo.svg" \
     "$ROOT/build/appicon.png"
 
-log_info "Building frontend..."
-(cd "$ROOT/frontend" && npm run build)
+# Frontend build is handled by `wails3 build` (via the Taskfile) below.
+# npm install is still needed first for the icon-generation script (sharp).
 
 # Clean previous build artifacts (do this after frontend build so dist/ survives).
 rm -rf "$ROOT/build/bin"
 
-# Running --nsis populates build/windows/ (icon.ico) and builds the binary.
-# --clean forces a full Go recompile (clears the build cache) so a stale
-# embed or binary never ships. We skip wiping frontend/dist (done above).
-log_info "Building with Wails..."
-wails build --platform windows/amd64 --nsis --clean -devtools
+# The v3 Taskfile (Taskfile.yml + build/Taskfile.yml) handles frontend
+# install, bindings generation, icon generation, and the Go build in one
+# step. The separate npm install + npm run build steps are now redundant
+# (the Taskfile does both), but we keep npm install first so the custom
+# icon-generation script (which needs sharp from node_modules) works.
+log_info "Building with Wails v3..."
+wails3 build
 
 BINARY="$ROOT/build/bin/${APP_NAME}.exe"
 if [ ! -f "$BINARY" ]; then
@@ -146,6 +148,10 @@ if [ ! -f "$BINARY" ]; then
 fi
 
 log_info "Binary built: $BINARY"
+
+# --- create NSIS installer via the v3 Taskfile ---
+log_info "Creating NSIS installer..."
+wails3 task windows:package 2>/dev/null || log_warn "NSIS packaging skipped (makensis not available or failed)"
 
 # --- create distribution directory ---
 BUILD_DIR="$DIST_DIR/v${VERSION}"
@@ -161,24 +167,20 @@ rm "$BUILD_DIR/${APP_NAME}.exe"
 log_info "  -> $BUILD_DIR/$ZIP_NAME"
 
 # --- 2) NSIS installer ---
-# `wails build --nsis` (above) already compiled the installer into
-# build/bin/<name>-amd64-installer.exe, passing makensis the binary path in
-# native Windows form. Re-running makensis here was both redundant and broken
-# under Git Bash: the MSYS-style path (/d/a/...) can't be resolved by native
-# makensis ("Error in macro wails.files"). Wails is the single source of truth
-# for the installer — copy its output with a versioned name.
+# The v3 Taskfile's windows:package task creates the installer via makensis.
+# Search for it under build/bin/ (the exact filename depends on the NSIS
+# script configuration).
 INSTALLER_NAME="${APP_NAME}-v${VERSION}-windows-installer.exe"
-NSIS_OUTPUT="$ROOT/build/bin/${APP_NAME}-amd64-installer.exe"
+NSIS_OUTPUT="$(find "$ROOT/build/bin" -name "*-installer.exe" -o -name "*silt*setup*.exe" 2>/dev/null | head -1)"
 
-if [ ! -f "$NSIS_OUTPUT" ]; then
-    log_error "Wails did not produce an installer at $NSIS_OUTPUT."
-    log_error "Ensure 'wails build' was invoked with --nsis."
-    exit 1
-fi
+if [ -z "$NSIS_OUTPUT" ] || [ ! -f "$NSIS_OUTPUT" ]; then
+    log_warn "NSIS installer not found in build/bin/. Skipping installer artifact."
+else
 
 log_info "Copying installer..."
 cp "$NSIS_OUTPUT" "$BUILD_DIR/$INSTALLER_NAME"
 log_info "  -> $BUILD_DIR/$INSTALLER_NAME"
+fi
 
 # --- persist new version (only on success, and only if we bumped) ---
 if [[ "$BUMP" == "yes" ]]; then

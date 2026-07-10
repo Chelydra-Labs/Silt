@@ -10,7 +10,7 @@ const { listThemesMock, eventsOnMock, injectTokensMock } = vi.hoisted(() => ({
   injectTokensMock: vi.fn()
 }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   ApplyTheme: vi.fn(),
   GetActiveTheme: vi.fn(),
   ListThemes: listThemesMock,
@@ -19,16 +19,41 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   PickExportPath: vi.fn(),
   PickThemeFile: vi.fn()
 }))
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: eventsOnMock,
-  EventsOff: vi.fn(),
-  EventsEmit: vi.fn()
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: eventsOnMock,
+    Off: vi.fn(),
+    Emit: vi.fn()
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 vi.mock('./inject', () => ({
   injectTokens: injectTokensMock
 }))
 
-import { _resetForTests, initThemes, loadThemes, themesState } from './store.svelte'
+import {
+  _resetForTests,
+  initThemes,
+  loadThemes,
+  themesState
+} from './store.svelte'
 
 const sampleThemes = {
   themes: [
@@ -93,7 +118,10 @@ describe('theme listing store', () => {
 
   it('initThemes subscribes to the backend "themes:changed" event', () => {
     initThemes()
-    expect(eventsOnMock).toHaveBeenCalledWith('themes:changed', expect.any(Function))
+    expect(eventsOnMock).toHaveBeenCalledWith(
+      'themes:changed',
+      expect.any(Function)
+    )
   })
 
   it('themes:changed event triggers a re-fetch of ListThemes', async () => {
@@ -101,11 +129,13 @@ describe('theme listing store', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(listThemesMock).toHaveBeenCalledTimes(1)
 
-    // Extract the handler that initThemes passed to EventsOn and
+    // Extract the handler that initThemes passed to Events.On and
     // invoke it manually; the handler is debounced (100ms trailing
     // edge) so advance fake timers past the debounce window.
     vi.useFakeTimers()
-    const calls = eventsOnMock.mock.calls as unknown as Array<[string, () => void]>
+    const calls = eventsOnMock.mock.calls as unknown as Array<
+      [string, () => void]
+    >
     const handler = calls[0]?.[1]
     expect(typeof handler).toBe('function')
     handler()

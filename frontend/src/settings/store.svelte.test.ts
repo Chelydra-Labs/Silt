@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   SetShowFormatToolbar: vi.fn().mockResolvedValue(undefined)
 }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   GetSystemConfig: vi.fn(),
   GetConfigLoadError: vi.fn(),
   SaveSystemConfig: vi.fn(),
@@ -20,8 +20,28 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   SetTypewriterMode: vi.fn(),
   SetOpenDevtoolsOnStartup: mocks.SetOpenDevtoolsOnStartup
 }))
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: vi.fn(() => () => {})
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn(() => () => {})
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 import { settings, toggleDevMode, toggleFormatToolbar } from './store.svelte'

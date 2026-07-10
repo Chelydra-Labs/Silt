@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   activeNotebook: 'Work'
 }))
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   AddAttachment: mocks.addAttachment,
   OpenAttachment: vi.fn(),
   DeleteAttachment: vi.fn()

@@ -14,7 +14,7 @@
     GetGrantedCapabilities,
     GetNetworkAudit,
     CheckPluginUpdate
-  } from '../../../wailsjs/go/main/App.js'
+  } from '../../../bindings/silt/app.js'
   import { loadPlugins, teardownPlugin } from '../../plugins/loader'
   import { firstPartyPlugins } from '../../plugins/registry'
   import { loadedPlugins } from '../../plugins/store.svelte'
@@ -47,8 +47,10 @@
     loadError?: string
     /** Capabilities requested by the manifest (#113): cap id → qualifier (true | "notebook" | "vault"). */
     requestedCapabilities?: Record<string, true | string>
-    /** Capabilities currently granted to this plugin (cap id → qualifier). */
-    grantedCapabilities?: Record<string, string>
+    /** Capabilities currently granted to this plugin (cap id → qualifier).
+     *  Values are `string | undefined` because the Wails v3 binding generates
+     *  Go map[string]string values as optional. */
+    grantedCapabilities?: Record<string, string | undefined>
     /** Declarative settings schema (#103), read from the manifest. */
     settingsSchema?: SettingSchema[]
     /** Optional update URL for distribution-v2 update checks (#111). */

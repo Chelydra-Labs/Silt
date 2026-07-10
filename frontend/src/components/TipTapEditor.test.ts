@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => ({
   eventsOn: vi.fn(() => () => {})
 }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   ResolveBlockReference: mocks.resolveBlockReference,
   PluginMutateBlock: mocks.pluginMutateBlock,
   FetchPageBlocks: mocks.fetchPageBlocks,
@@ -38,8 +38,28 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   ReleaseFocusLock: mocks.releaseFocusLock
 }))
 
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: mocks.eventsOn
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mocks.eventsOn
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 describe('TipTapEditor smart-graph content (#127)', () => {

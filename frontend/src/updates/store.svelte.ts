@@ -16,12 +16,8 @@ import {
   InstallUpdate,
   GetUpdateSettings,
   SetUpdateSettings
-} from '../../wailsjs/go/main/App.js'
-import {
-  EventsOn,
-  BrowserOpenURL,
-  Quit
-} from '../../wailsjs/runtime/runtime.js'
+} from '../../bindings/silt/app.js'
+import { Events, Browser, Application } from '@wailsio/runtime'
 import { pushNotification } from '../notifications/store.svelte'
 
 export type UpdateStatus =
@@ -178,7 +174,7 @@ export async function startupCheck(): Promise<void> {
       : {
           label: 'View',
           run: () => {
-            if (releaseUrl) BrowserOpenURL(releaseUrl)
+            if (releaseUrl) Browser.OpenURL(releaseUrl)
           }
         },
     autoDismissMs: 15_000
@@ -203,7 +199,7 @@ export async function downloadAndInstall(assetUrl: string): Promise<void> {
     const res = (await InstallUpdate(localPath)) as { willQuit?: boolean }
     if (res?.willQuit) {
       // status stays 'installing' ("Silt will restart"); the window is exiting.
-      Quit()
+      Application.Quit()
     } else {
       updateState.status = 'available'
       pushNotification({
@@ -227,22 +223,20 @@ export async function downloadAndInstall(assetUrl: string): Promise<void> {
 
 function subscribeProgress(): void {
   unsubscribeProgress()
-  progressUnsub = EventsOn(
-    'update:download:progress',
-    (p: { received: number; total: number }) => {
-      if (!p) return
-      if (p.total > 0) {
-        updateState.downloadProgress = Math.min(
-          100,
-          Math.round((p.received / p.total) * 100)
-        )
-      } else {
-        // Unknown total: show an indeterminate hint via a negative sentinel
-        // the UI can render as a busy bar.
-        updateState.downloadProgress = -1
-      }
+  progressUnsub = Events.On('update:download:progress', (ev: any) => {
+    const p: { received: number; total: number } = ev.data
+    if (!p) return
+    if (p.total > 0) {
+      updateState.downloadProgress = Math.min(
+        100,
+        Math.round((p.received / p.total) * 100)
+      )
+    } else {
+      // Unknown total: show an indeterminate hint via a negative sentinel
+      // the UI can render as a busy bar.
+      updateState.downloadProgress = -1
     }
-  )
+  })
 }
 
 function unsubscribeProgress(): void {

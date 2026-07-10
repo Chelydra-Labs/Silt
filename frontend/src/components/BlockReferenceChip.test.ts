@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   resolveBlockReference: vi.fn()
 }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   ResolveBlockReference: mocks.resolveBlockReference
 }))
 

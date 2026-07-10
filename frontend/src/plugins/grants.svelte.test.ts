@@ -8,11 +8,31 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 const mockGetGranted = vi.hoisted(() => vi.fn(() => Promise.resolve({})))
 const mockEventsOn = vi.hoisted(() => vi.fn())
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   GetGrantedCapabilities: mockGetGranted
 }))
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: mockEventsOn
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mockEventsOn
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 vi.mock('./registry', () => ({
   firstPartyPlugins: () => []

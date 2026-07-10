@@ -49,7 +49,7 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   ListPlugins: vi.fn().mockResolvedValue([]),
   PluginRawQuery: vi.fn(),
   GetPluginSettingsForNotebook: vi.fn().mockResolvedValue({}),

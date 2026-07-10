@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => ({
   }))
 }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   PluginRawQuery: mocks.pluginRawQuery,
   PluginMutateBlock: mocks.pluginMutateBlock,
   PluginUpdateBlockState: mocks.pluginUpdateBlockState,

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
-  import { QueryTagHierarchy } from '../../wailsjs/go/main/App.js'
+  import { QueryTagHierarchy } from '../../bindings/silt/app.js'
   import TagTreeNode from './TagTreeNode.svelte'
 
   interface TagNode {

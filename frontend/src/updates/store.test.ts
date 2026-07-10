@@ -29,17 +29,41 @@ const mocks = vi.hoisted(() => ({
   Quit: vi.fn()
 }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   CheckForUpdates: mocks.CheckForUpdates,
   DownloadUpdate: mocks.DownloadUpdate,
   InstallUpdate: mocks.InstallUpdate,
   GetUpdateSettings: mocks.GetUpdateSettings,
   SetUpdateSettings: mocks.SetUpdateSettings
 }))
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: mocks.EventsOn,
-  BrowserOpenURL: mocks.BrowserOpenURL,
-  Quit: mocks.Quit
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mocks.EventsOn
+  },
+  Browser: {
+    OpenURL: mocks.BrowserOpenURL
+  },
+  Application: {
+    Quit: mocks.Quit
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 describe('updates/store.svelte (#312)', () => {

@@ -9,17 +9,12 @@
   // the duration of the hover; pressing Esc or moving focus off the row
   // restores the active theme.
   import { onMount } from 'svelte'
-  import {
-    OnFileDrop,
-    OnFileDropOff
-  } from '../../../wailsjs/runtime/runtime.js'
   import { injectTokens } from '../../theme/inject'
   import { displayFamilyName } from '../../theme/fonts'
   import {
     applyTheme,
     clearStatus,
     exportActiveTheme,
-    importThemeFromPath,
     loadThemes,
     pickAndImportTheme,
     restoreActiveTheme,
@@ -52,19 +47,13 @@
       void loadThemes()
     }
     // Drag-drop: a *.json file dropped anywhere on the tab is imported
-    // through the same code path as the picker button. The Wails
-    // OnFileDrop runtime gives OS file paths (no frontend FS access),
-    // satisfying the issue #48 AC.
-    const onDrop = (_x: number, _y: number, paths: string[]) => {
-      for (const p of paths) {
-        if (p.toLowerCase().endsWith('.json')) {
-          void importThemeFromPath(p)
-        }
-      }
-    }
-    OnFileDrop(onDrop, true)
+    // through the same code path as the picker button.
+    // TODO(wails-v3): restore drag-drop import. The v3 runtime dropped the
+    // global OnFileDrop/OnFileDropOff pair in favour of the per-element
+    // `data-file-drop-target` HTML attribute + the window's EnableFileDrop
+    // option. Wire the drop zone up against that API and re-enable the
+    // .json import path below.
     return () => {
-      OnFileDropOff()
       // Clear any in-flight preview so a navigated-away tab doesn't
       // leave the page in a non-active theme.
       previewId = null

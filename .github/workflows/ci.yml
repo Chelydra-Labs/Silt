@@ -4,14 +4,14 @@ name: CI
 # contributor has not installed the hooks locally.
 #
 # Note on generated assets: both `frontend/dist/` (the vite build output) and
-# `frontend/wailsjs/` (the Go→JS binding stubs) are gitignored build artifacts.
+# `frontend/bindings/` (the Go→JS binding stubs) are gitignored build artifacts.
 # They are NOT committed, so a fresh CI checkout has neither. The flow below
 # regenerates them in the right order before any step that consumes them:
 #   1. npm install                (the `prepare` script seeds a placeholder
 #                                  frontend/dist/.gitkeep AND regenerates
-#                                  frontend/wailsjs/ from live Go App sigs)
+#                                  frontend/bindings/ from live Go App sigs)
 #   2. npm run build              (real vite build → real frontend/dist, and
-#                                  resolves the wailsjs imports)
+#                                  resolves the bindings imports)
 #   3. npm run check / go build / go test
 
 on:
@@ -39,13 +39,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Wails CLI
-        # wails generate module reflects the Go App signatures into JS.
+        # wails3 generate bindings reflects the Go App signatures into JS.
         # Derive the CLI version from go.mod so CI always matches the
         # library the project actually builds against (a hardcoded pin here
         # would silently drift the moment go.mod bumps wails).
         run: |
-          WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
-          go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
+          WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
+          go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -53,7 +53,7 @@ jobs:
         # and may not include all Linux-specific optional dependencies
         # (e.g. @esbuild/linux-x64). npm install resolves missing platform
         # packages; npm ci requires a perfectly synced lockfile. The `prepare`
-        # script also regenerates frontend/wailsjs/ from the live Go App
+        # script also regenerates frontend/bindings/ from the live Go App
         # signatures (CONTRIBUTING.md §"Wails bindings"), and seeds a
         # placeholder frontend/dist/.gitkeep that lets `vite build` overwrite.
         run: npm install

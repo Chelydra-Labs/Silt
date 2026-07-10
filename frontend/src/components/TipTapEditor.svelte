@@ -57,7 +57,7 @@
     SuggestContext,
     MentionContext
   } from '../lib/editor'
-  import { DistinctOwners } from '../../wailsjs/go/main/App.js'
+  import { DistinctOwners } from '../../bindings/silt/app.js'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
   import { pushNotification } from '../notifications/store.svelte'

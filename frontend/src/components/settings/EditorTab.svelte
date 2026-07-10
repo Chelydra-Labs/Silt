@@ -6,7 +6,7 @@
     reloadFromBackend
   } from '../../settings/store.svelte'
   import type { SystemConfig } from '../../settings/store.svelte'
-  import type { config } from '../../../wailsjs/go/models.js'
+  import type * as config from '../../../bindings/silt/backend/config/models.js'
   import { displayFamilyName } from '../../theme/fonts'
   import { themeState } from '../../theme/store.svelte'
   import FontSelect from './FontSelect.svelte'

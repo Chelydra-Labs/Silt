@@ -9,7 +9,7 @@ import CrashingSettings from './__fixtures__/CrashingSettings.svelte'
 import PluginSettingsPanel from './PluginSettingsPanel.svelte'
 import type { RegisteredPlugin } from '../../plugins/sdk'
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   GetPluginSettingsForNotebook: vi.fn().mockResolvedValue({}),
   UpdatePluginSetting: vi.fn().mockResolvedValue(undefined)
 }))

@@ -25,13 +25,33 @@ const mocks = vi.hoisted(() => ({
   eventsOn: vi.fn(() => () => {})
 }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   ResolveBlockReference: mocks.resolveBlockReference,
   MutateBlock: mocks.mutateBlock
 }))
 
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: mocks.eventsOn
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mocks.eventsOn
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 // Mock RichText with a proper Svelte stub component (RichText.stub.svelte)
@@ -105,7 +125,7 @@ describe('EmbedPortal (#127)', () => {
     })
     render(EmbedPortal, { props: { uuid: FIXTURE_UUID } })
     await tick()
-    // EventsOn should have been called for block:changed subscription.
+    // Events.On should have been called for block:changed subscription.
     expect(mocks.eventsOn).toHaveBeenCalledWith(
       'block:changed',
       expect.any(Function)

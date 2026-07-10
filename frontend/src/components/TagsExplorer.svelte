@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { QueryBlocksByTag } from '../../wailsjs/go/main/App.js'
+  import { QueryBlocksByTag } from '../../bindings/silt/app.js'
 
   interface Props {
     selectedTag?: string

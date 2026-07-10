@@ -96,7 +96,7 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   GetAIProviderConfig: mocks.GetAIProviderConfig,
   UpdateAIProviderConfig: mocks.UpdateAIProviderConfig,
   SetAIAPIKey: mocks.SetAIAPIKey,

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { SearchBlocks } from '../../wailsjs/go/main/App.js'
+  import { SearchBlocks } from '../../bindings/silt/app.js'
 
   interface Props {
     onPick: (blockId: string) => void

@@ -7,8 +7,6 @@ import (
 	goruntime "runtime"
 	"silt/backend/plugins"
 	"unicode/utf8"
-
-	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // =========================================================================
@@ -73,10 +71,7 @@ func (a *App) PluginOpenUrl(pluginID, sessionToken, url string) error {
 	if !isSafeUrl(url) {
 		return fmt.Errorf("URL scheme is not allowed (only http, https, mailto)")
 	}
-	if a.ctx == nil {
-		return fmt.Errorf("application context not ready")
-	}
-	wruntime.BrowserOpenURL(a.ctx, url)
+	a.browserOpenURL(url)
 	return nil
 }
 
@@ -90,14 +85,11 @@ func (a *App) PluginPickOpenFile(pluginID, sessionToken, filterPattern string) (
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return "", err
 	}
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
-	return wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{
-		Title: "Select a file",
-		Filters: []wruntime.FileFilter{
-			{DisplayName: "All files", Pattern: filterPattern},
-		},
+	return a.openFileDialog("Select a file", []FileFilter{
+		{DisplayName: "All files", Pattern: filterPattern},
 	})
 }
 
@@ -107,13 +99,10 @@ func (a *App) PluginPickSaveFile(pluginID, sessionToken, defaultFilename string)
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return "", err
 	}
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
-	return wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{
-		Title:           "Save file",
-		DefaultFilename: defaultFilename,
-	})
+	return a.saveFileDialog("Save file", defaultFilename, nil)
 }
 
 // PluginClipboardReadText reads the system clipboard. Gated by os-clipboard.
@@ -125,10 +114,10 @@ func (a *App) PluginClipboardReadText(pluginID, sessionToken string) (string, er
 	if err := a.requireGrant(pluginID, plugins.CapOSClipboard); err != nil {
 		return "", err
 	}
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
-	return wruntime.ClipboardGetText(a.ctx)
+	return a.clipboardGetText()
 }
 
 // PluginClipboardWriteText writes text to the system clipboard. Gated by
@@ -140,14 +129,14 @@ func (a *App) PluginClipboardWriteText(pluginID, sessionToken, text string) erro
 	if err := a.requireGrant(pluginID, plugins.CapOSClipboard); err != nil {
 		return err
 	}
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return fmt.Errorf("application context not ready")
 	}
-	wruntime.ClipboardSetText(a.ctx, text)
+	a.clipboardSetText(text)
 	return nil
 }
 
-// PluginNotify shows a desktop notification. Wails v2 has no native
+// PluginNotify shows a desktop notification. Wails has no native
 // notification runtime API, so this falls back to a cross-platform OS command
 // (osascript on macOS, notify-send on Linux, msg/PowerShell on Windows). Gated
 // by os-notify. A failure to spawn the notifier is non-fatal (logged) — a

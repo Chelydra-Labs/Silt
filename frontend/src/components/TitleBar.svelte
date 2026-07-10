@@ -3,12 +3,7 @@
   import logo from '../assets/logo.svg'
   import { settings } from '../settings/store.svelte'
   import { resolveHotkeyDisplay } from '../settings/hotkeys'
-  import {
-    WindowMinimise,
-    WindowToggleMaximise,
-    WindowIsMaximised,
-    Quit
-  } from '../../wailsjs/runtime/runtime.js'
+  import { Window, Application } from '@wailsio/runtime'
 
   interface Props {
     sidebarCollapsed: boolean
@@ -34,7 +29,7 @@
 
   async function syncMaximised() {
     try {
-      maximised = await WindowIsMaximised()
+      maximised = await Window.IsMaximised()
     } catch {
       // runtime not ready (e.g. during SSR/check); leave as-is
     }
@@ -59,7 +54,7 @@
   )
 
   function handleToggleMax() {
-    WindowToggleMaximise()
+    Window.ToggleMaximise()
     // Optimistic flip; resize listener will correct it if the platform
     // refuses the toggle.
     maximised = !maximised
@@ -140,7 +135,7 @@
     {#if !isMac}
       <div class="flex items-center h-full">
         <button
-          onclick={() => WindowMinimise()}
+          onclick={() => Window.Minimise()}
           aria-label="Minimize"
           title="Minimize"
           class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
@@ -158,7 +153,7 @@
           >
         </button>
         <button
-          onclick={() => Quit()}
+          onclick={() => Application.Quit()}
           aria-label="Close"
           title="Close"
           class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none"

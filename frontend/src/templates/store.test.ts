@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // Mock the Wails-bound functions before importing the store.
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   ListTemplates: vi.fn(),
   GetTemplate: vi.fn(),
   RenderTemplate: vi.fn(),
@@ -12,8 +12,28 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   RenderTemplateBlocks: vi.fn()
 }))
 
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: vi.fn()
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn()
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 import {
@@ -24,11 +44,11 @@ import {
 } from './store.svelte'
 
 // Import the mocked modules to configure their behavior.
-import { ListTemplates } from '../../wailsjs/go/main/App.js'
-import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+import { ListTemplates } from '../../bindings/silt/app.js'
+import { Events } from '@wailsio/runtime'
 
 const mockListTemplates = vi.mocked(ListTemplates)
-const mockEventsOn = vi.mocked(EventsOn)
+const mockEventsOn = vi.mocked(Events.On)
 
 describe('templates store', () => {
   beforeEach(() => {

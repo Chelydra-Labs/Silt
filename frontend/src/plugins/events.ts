@@ -4,7 +4,7 @@
 //
 // Two event transports feed the same dispatcher:
 //   1. Wails host events (block:changed, config:changed) arrive via
-//      EventsOn from wailsjs/runtime/runtime.js — subscribed lazily on the
+//      Events.On from @wailsio/runtime — subscribed lazily on the
 //      first subscriber.
 //   2. Frontend-internal events (active-notebook:changed, selection:changed)
 //      are dispatched in-process via `dispatch` (the navigator + the editor
@@ -15,7 +15,7 @@
 // removes every subscription for a plugin — the loader calls it on disable /
 // uninstall / vault-close.
 
-import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime.js'
+import { Events } from '@wailsio/runtime'
 import type { PluginEventName, PluginEventPayload } from './sdk'
 type AnyCb = (payload: any) => void
 
@@ -26,11 +26,11 @@ interface Subscription {
 // subscribers[eventName] -> Map<pluginID, Set<Subscription>>
 const subscribers = new Map<PluginEventName, Map<string, Set<Subscription>>>()
 
-// Wails event names that need a single global EventsOn listener (the rest are
+// Wails event names that need a single global Events.On listener (the rest are
 // dispatched in-process). The handler just forwards the payload into dispatch.
 const wailsHostEvents: PluginEventName[] = ['block:changed', 'config:changed']
 
-// Track which Wails listeners are active so we EventsOff on the last unsubscribe.
+// Track which Wails listeners are active so we Events.Off on the last unsubscribe.
 const activeWailsListeners = new Set<PluginEventName>()
 
 /**
@@ -65,9 +65,7 @@ export function subscribe<E extends PluginEventName>(
   // shape (single source of truth lives in sdk.ts payload types).
   if (wailsHostEvents.includes(event) && !activeWailsListeners.has(event)) {
     activeWailsListeners.add(event)
-    EventsOn(event, (payload) =>
-      dispatch(event, payload as PluginEventPayload<E>)
-    )
+    Events.On(event, (ev) => dispatch(event, ev.data as PluginEventPayload<E>))
   }
 
   return () => {
@@ -85,7 +83,7 @@ export function subscribe<E extends PluginEventName>(
       const empty = !remaining || remaining.size === 0
       if (empty && activeWailsListeners.has(event)) {
         activeWailsListeners.delete(event)
-        EventsOff(event)
+        Events.Off(event)
       }
     }
   }
@@ -137,7 +135,7 @@ export function cleanupPlugin(pluginID: string): void {
         activeWailsListeners.has(event)
       ) {
         activeWailsListeners.delete(event)
-        EventsOff(event)
+        Events.Off(event)
       }
     }
   }
@@ -149,7 +147,7 @@ export function cleanupPlugin(pluginID: string): void {
  */
 export function clearAllSubscribers(): void {
   for (const event of activeWailsListeners) {
-    EventsOff(event)
+    Events.Off(event)
   }
   activeWailsListeners.clear()
   subscribers.clear()

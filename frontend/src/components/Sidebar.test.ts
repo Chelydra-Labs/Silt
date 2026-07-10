@@ -28,7 +28,7 @@ const mockPlugins = vi.hoisted(() => ({
 }))
 const mockGetSessionToken = vi.hoisted(() => vi.fn(() => 'tok-test'))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   ListNavigation: mocks.listNavigation,
   CreateNotebook: mocks.createNotebook,
   CreateSection: mocks.createSection,

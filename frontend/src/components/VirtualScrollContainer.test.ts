@@ -25,13 +25,33 @@ const mocks = vi.hoisted(() => ({
   onToggleViewMode: vi.fn()
 }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   FetchPageBlocks: vi.fn(() => Promise.resolve([])),
   RenamePage: vi.fn(() => Promise.resolve(undefined))
 }))
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
+vi.mock('@wailsio/runtime', () => ({
   // VSC stores the returned unsubscribe and calls it on destroy; return a noop.
-  EventsOn: vi.fn(() => () => {})
+  Events: {
+    On: vi.fn(() => () => {})
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 vi.mock('./TipTapEditor.svelte', () => ({ default: TipTapEditorStub }))

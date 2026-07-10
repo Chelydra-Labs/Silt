@@ -12,7 +12,7 @@
 // overrides them once the config IPC returns.
 
 import { settings } from './store.svelte'
-import type { config } from '../../wailsjs/go/models.js'
+import type * as config from '../../bindings/silt/backend/config/models.js'
 import { sanitizeFontFamilyCSS } from '../theme/sanitize'
 
 type EditorConfig = config.EditorConfig
@@ -35,7 +35,9 @@ function sanitizeCSSValue(v: string): string {
  * values so the index.css fallbacks remain in effect until a valid config
  * arrives. Font-family values are sanitized to prevent CSS injection.
  */
-export function injectEditorTokens(editor: EditorConfig | null | undefined): void {
+export function injectEditorTokens(
+  editor: EditorConfig | null | undefined
+): void {
   if (!editor) return
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null
   if (!el) {
@@ -45,10 +47,16 @@ export function injectEditorTokens(editor: EditorConfig | null | undefined): voi
   }
 
   const tokens: Record<string, string> = {}
-  if (editor.font_family) tokens['--editor-font-family'] = sanitizeCSSValue(editor.font_family)
-  if (editor.mono_font_family) tokens['--editor-mono-font-family'] = sanitizeCSSValue(editor.mono_font_family)
-  if (editor.font_size_px > 0) tokens['--editor-font-size'] = `${editor.font_size_px}px`
-  if (editor.line_height > 0) tokens['--editor-line-height'] = String(editor.line_height)
+  if (editor.font_family)
+    tokens['--editor-font-family'] = sanitizeCSSValue(editor.font_family)
+  if (editor.mono_font_family)
+    tokens['--editor-mono-font-family'] = sanitizeCSSValue(
+      editor.mono_font_family
+    )
+  if (editor.font_size_px > 0)
+    tokens['--editor-font-size'] = `${editor.font_size_px}px`
+  if (editor.line_height > 0)
+    tokens['--editor-line-height'] = String(editor.line_height)
 
   let css = ':root{'
   for (const [name, value] of Object.entries(tokens)) {

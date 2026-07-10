@@ -18,19 +18,39 @@ const mockUnregisterSession = vi.hoisted(() =>
 const mockEventsOn = vi.hoisted(() => vi.fn())
 const mockEventsOff = vi.hoisted(() => vi.fn())
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   ListPlugins: mockListPlugins,
   ReadPluginSource: mockReadPluginSource,
   RegisterPluginSession: mockRegisterSession,
   UnregisterPluginSession: mockUnregisterSession
 }))
-// EventsOff is exercised by first-party plugins that unsubscribe their ctx.on
+// Events.Off is exercised by first-party plugins that unsubscribe their ctx.on
 // listeners on onVaultClose (silt-ai-summary unsubscribes editor:save,
 // active-notebook:changed, and config:changed). The mock must support it so
 // plugin cleanup doesn't throw.
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: mockEventsOn,
-  EventsOff: mockEventsOff
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mockEventsOn,
+    Off: mockEventsOff
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 async function sha256Hex(text: string): Promise<string> {
@@ -129,7 +149,7 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
   // transitions: false at start, true at end of loadPlugins, false again
   // when vault:closing fires, true again on the next loadPlugins.
   //
-  // wireLifecycleOnce is module-scope idempotent: EventsOn only fires on
+  // wireLifecycleOnce is module-scope idempotent: Events.On only fires on
   // the FIRST loadPlugins call in this file (likely from the integrity
   // describe block above). We capture that callback once and reuse it —
   // do NOT reset mockEventsOn or the call record is lost.

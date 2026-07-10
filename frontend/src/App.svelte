@@ -15,9 +15,9 @@
     PickLinkedNotebook,
     UnlinkNotebook,
     CreateStandaloneTask
-  } from '../wailsjs/go/main/App.js'
-  import { EventsOn } from '../wailsjs/runtime/runtime.js'
-  import type { config } from '../wailsjs/go/models.js'
+  } from '../bindings/silt/app.js'
+  import { Events } from '@wailsio/runtime'
+  import type * as config from '../bindings/silt/backend/config/models.js'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -532,54 +532,52 @@
     let prevDisabled: string[] = settings.config?.plugins?.disabled ?? []
     // Initialize the tab hot-reload baseline from the settings store.
     prevOpenTabsKey = tabSetKey(settings.config?.ui?.open_tabs)
-    const offConfigChangedReload = EventsOn(
-      'config:changed',
-      (cfg: SystemConfig) => {
-        const next = (cfg?.plugins?.disabled ?? []) as string[]
-        if (!arraysEqual(prevDisabled, next)) {
-          prevDisabled = [...next]
-          loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
-            console.error('Plugin reload after config change failed:', e)
+    const offConfigChangedReload = Events.On('config:changed', (ev: any) => {
+      const cfg: SystemConfig = ev.data
+      const next = (cfg?.plugins?.disabled ?? []) as string[]
+      if (!arraysEqual(prevDisabled, next)) {
+        prevDisabled = [...next]
+        loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
+          console.error('Plugin reload after config change failed:', e)
+        )
+      }
+      // Re-hydrate tabs if the external ui.open_tabs block changed
+      // (user hand-edited config.yaml or another process wrote it).
+      // tabSetKey is intentionally locator-only: a view-mode change must
+      // NOT trigger a full re-hydrate (that would rebuild tabs and remount
+      // editors on every in-app toggle, since the frontend's own
+      // persistTabs write also fires config:changed).
+      const nextTabsKey = tabSetKey(cfg?.ui?.open_tabs)
+      if (nextTabsKey !== prevOpenTabsKey) {
+        prevOpenTabsKey = nextTabsKey
+        void loadPersistedTabs()
+      }
+      // Reconcile per-tab view_mode from an external config.yaml edit
+      // in place — no re-hydrate, no editor remount. The frontend's own
+      // writes match the in-memory state, so they produce no diff here;
+      // only an external hand-edit (or another process) flips a mode.
+      const externalTabs = cfg?.ui?.open_tabs ?? []
+      if (externalTabs.length > 0) {
+        for (const ref of externalTabs) {
+          const tab = openTabs.find(
+            (t) =>
+              t.notebook === ref.notebook &&
+              t.section === (ref.section ?? '') &&
+              t.page === ref.page
           )
-        }
-        // Re-hydrate tabs if the external ui.open_tabs block changed
-        // (user hand-edited config.yaml or another process wrote it).
-        // tabSetKey is intentionally locator-only: a view-mode change must
-        // NOT trigger a full re-hydrate (that would rebuild tabs and remount
-        // editors on every in-app toggle, since the frontend's own
-        // persistTabs write also fires config:changed).
-        const nextTabsKey = tabSetKey(cfg?.ui?.open_tabs)
-        if (nextTabsKey !== prevOpenTabsKey) {
-          prevOpenTabsKey = nextTabsKey
-          void loadPersistedTabs()
-        }
-        // Reconcile per-tab view_mode from an external config.yaml edit
-        // in place — no re-hydrate, no editor remount. The frontend's own
-        // writes match the in-memory state, so they produce no diff here;
-        // only an external hand-edit (or another process) flips a mode.
-        const externalTabs = cfg?.ui?.open_tabs ?? []
-        if (externalTabs.length > 0) {
-          for (const ref of externalTabs) {
-            const tab = openTabs.find(
-              (t) =>
-                t.notebook === ref.notebook &&
-                t.section === (ref.section ?? '') &&
-                t.page === ref.page
-            )
-            if (!tab) continue
-            const mode = ref.view_mode === 'source' ? 'source' : 'edit'
-            if (tab.viewMode !== mode) {
-              openTabs = setTabViewModeState(
-                { tabs: openTabs, activeId: activeTabId },
-                tab.id,
-                mode
-              ).tabs
-              // Do NOT schedulePersistTabs — this change is already on disk.
-            }
+          if (!tab) continue
+          const mode = ref.view_mode === 'source' ? 'source' : 'edit'
+          if (tab.viewMode !== mode) {
+            openTabs = setTabViewModeState(
+              { tabs: openTabs, activeId: activeTabId },
+              tab.id,
+              mode
+            ).tabs
+            // Do NOT schedulePersistTabs — this change is already on disk.
           }
         }
       }
-    )
+    })
 
     function handleOpenSettings(e: Event) {
       const detail = (e as CustomEvent).detail
@@ -804,8 +802,8 @@
     window.addEventListener('silt:change-vault', handleSwitchVault)
     window.addEventListener('page-renamed', handlePageRenamed)
     // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
-    // be received via EventsOn — a DOM addEventListener would never fire.
-    const offPluginsChanged = EventsOn('plugins:changed', () =>
+    // be received via Events.On — a DOM addEventListener would never fire.
+    const offPluginsChanged = Events.On('plugins:changed', () =>
       handlePluginsChanged()
     )
     // `vault:moved` fires after a successful vault Move/Copy-Switch (#141).
@@ -814,35 +812,33 @@
     // so the UI reflects the new workspace. If the optional old-vault removal
     // didn't happen, payload.warning carries the reason → surface a non-
     // blocking toast (the move itself succeeded).
-    const offVaultMoved = EventsOn(
-      'vault:moved',
-      (e: { from?: string; to?: string; warning?: string }) => {
-        activeNotebook = ''
-        activeSection = ''
-        activePage = ''
-        openTabs = []
-        activeTabId = ''
-        activeView = 'notes'
-        showSettings = false
-        // Drop any editor reconciliation handles tied to the old vault so a
-        // teardown that bypassed Svelte $effect cleanup can't leave a stale
-        // editor buffer flushing into the new vault (#345).
-        clearAllEditors()
-        loadConfig().catch((e) =>
-          console.error('Post-move config reload failed:', e)
-        )
-        window.dispatchEvent(new CustomEvent('refresh-navigation'))
-        if (e?.warning) {
-          pushNotification({ kind: 'error', message: e.warning })
-        }
+    const offVaultMoved = Events.On('vault:moved', (ev: any) => {
+      const e: { from?: string; to?: string; warning?: string } = ev.data
+      activeNotebook = ''
+      activeSection = ''
+      activePage = ''
+      openTabs = []
+      activeTabId = ''
+      activeView = 'notes'
+      showSettings = false
+      // Drop any editor reconciliation handles tied to the old vault so a
+      // teardown that bypassed Svelte $effect cleanup can't leave a stale
+      // editor buffer flushing into the new vault (#345).
+      clearAllEditors()
+      loadConfig().catch((e) =>
+        console.error('Post-move config reload failed:', e)
+      )
+      window.dispatchEvent(new CustomEvent('refresh-navigation'))
+      if (e?.warning) {
+        pushNotification({ kind: 'error', message: e.warning })
       }
-    )
+    })
     // F20: trust-anchor fingerprint mismatch — the backend detected that
     // vault_path or trusted_publishers changed since last launch (possible
     // tampering, or a legit external edit). Show a confirmation modal; the
     // user can confirm (clears the sentinel) or dismiss (mismatch persists
     // on next launch).
-    const offSettingsMismatch = EventsOn(
+    const offSettingsMismatch = Events.On(
       'settings:fingerprint-mismatch',
       () => {
         showSettingsMismatch = true
@@ -850,16 +846,17 @@
     )
     // F4: grants migration — the vault's legacy config.yaml carries a grants
     // block this host has never seen. Show a one-time confirmation modal.
-    const offGrantsMigration = EventsOn(
+    const offGrantsMigration = Events.On(
       'grants:migration-required',
-      (grants: Record<string, Record<string, string>>) => {
+      (ev: any) => {
+        const grants: Record<string, Record<string, string>> = ev.data
         pendingLegacyGrants = grants
         showGrantsMigration = true
       }
     )
     // F3: linked-notebook quarantined — the root was moved or tampered with.
     // Refresh the quarantine list so the modal shows the latest set.
-    const offLinkedQuarantined = EventsOn(
+    const offLinkedQuarantined = Events.On(
       'linked-notebook:quarantined',
       async () => {
         try {
@@ -875,7 +872,8 @@
     // with no clue why — the user sees a dead frame. Surface it as a sticky
     // error toast so the cause is visible. (Wails delivers OnStartup after
     // the frontend mounts, so this listener is registered in time.)
-    const offVaultInitError = EventsOn('vault:init-error', (msg: string) => {
+    const offVaultInitError = Events.On('vault:init-error', (ev: any) => {
+      const msg: string = ev.data
       pushNotification({
         kind: 'error',
         message: `Vault failed to initialize: ${msg}`,
@@ -884,30 +882,26 @@
     })
     // Non-fatal init warnings (symlink skips, permission errors during scan).
     // These don't block usage but explain missing/partial content.
-    const offVaultInitWarnings = EventsOn(
-      'vault:init-warnings',
-      (warnings: string[]) => {
-        if (!warnings?.length) return
-        pushNotification({
-          kind: 'info',
-          message: `Vault initialized with warnings: ${warnings.join('; ')}`,
-          autoDismissMs: 0
-        })
-      }
-    )
+    const offVaultInitWarnings = Events.On('vault:init-warnings', (ev: any) => {
+      const warnings: string[] = ev.data
+      if (!warnings?.length) return
+      pushNotification({
+        kind: 'info',
+        message: `Vault initialized with warnings: ${warnings.join('; ')}`,
+        autoDismissMs: 0
+      })
+    })
     // Mass id re-mint detection (#443): an external tool/sync stripped the
     // block-identity comments from a previously-indexed file, so the parser
     // re-minted fresh UUIDs — which can break note-to-note links pointing at
     // those blocks. The toast (built by reMintToast) is sticky, leads with
     // the user-visible impact, and offers a "Show file" CTA. The builder is
     // extracted so its payload-shaping contract is unit-testable.
-    const offReMintWarning = EventsOn(
-      'index:re-mint-warning',
-      (w: ReMintWarning) => {
-        if (!w) return
-        pushNotification(reMintToast(w, openPage))
-      }
-    )
+    const offReMintWarning = Events.On('index:re-mint-warning', (ev: any) => {
+      const w: ReMintWarning = ev.data
+      if (!w) return
+      pushNotification(reMintToast(w, openPage))
+    })
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)

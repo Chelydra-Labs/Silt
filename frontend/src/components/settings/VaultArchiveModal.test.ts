@@ -33,15 +33,38 @@ const runtimeMocks = vi.hoisted(() => {
         progressHandler = null
       }
     }),
-    emit: (p: unknown) => progressHandler?.(p)
+    // v3 Events.On callbacks receive a WailsEvent whose `.data` carries the
+    // emitted payload; emit wraps the payload so the captured cb sees the
+    // same shape the real runtime delivers.
+    emit: (p: unknown) => progressHandler?.({ data: p })
   }
 })
 
-vi.mock('../../../wailsjs/go/main/App.js', () => mocks)
-vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: runtimeMocks.EventsOn,
-  EventsOff: vi.fn(),
-  EventsEmit: vi.fn()
+vi.mock('../../../bindings/silt/app.js', () => mocks)
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: runtimeMocks.EventsOn,
+    Off: vi.fn(),
+    Emit: vi.fn()
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 describe('VaultArchiveModal', () => {
@@ -82,7 +105,11 @@ describe('VaultArchiveModal', () => {
     const primary = await screen.findByRole('button', { name: 'Export vault' })
     await waitFor(() => expect(primary).not.toBeDisabled())
     await fireEvent.click(primary)
-    await waitFor(() => expect(mocks.ExportVault).toHaveBeenCalledWith('/backups/vault.silt-vault'))
+    await waitFor(() =>
+      expect(mocks.ExportVault).toHaveBeenCalledWith(
+        '/backups/vault.silt-vault'
+      )
+    )
     // Success card surfaces the file count + path.
     expect(await screen.findByText(/Archived 12 files/)).toBeInTheDocument()
     expect(screen.getByText('/backups/vault.silt-vault')).toBeInTheDocument()
@@ -150,7 +177,10 @@ describe('VaultArchiveModal', () => {
     await waitFor(() => expect(primary).not.toBeDisabled())
     await fireEvent.click(primary)
     await waitFor(() =>
-      expect(mocks.ImportVault).toHaveBeenCalledWith('/a/vault.silt-vault', '/new/empty')
+      expect(mocks.ImportVault).toHaveBeenCalledWith(
+        '/a/vault.silt-vault',
+        '/new/empty'
+      )
     )
     expect(await screen.findByText(/Imported 7 files/)).toBeInTheDocument()
   })
@@ -170,7 +200,9 @@ describe('VaultArchiveModal', () => {
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Choose…' }))
     await tick()
-    await fireEvent.click(await screen.findByRole('button', { name: 'Export vault' }))
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Export vault' })
+    )
     // Emit a synthetic progress event.
     runtimeMocks.emit({ phase: 'export', current: 3, total: 10 })
     await tick()
