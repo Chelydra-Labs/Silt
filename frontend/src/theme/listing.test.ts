@@ -21,9 +21,7 @@ vi.mock('../../bindings/silt/app.js', () => ({
 }))
 vi.mock('@wailsio/runtime', () => ({
   Events: {
-    On: eventsOnMock,
-    Off: vi.fn(),
-    Emit: vi.fn()
+    On: eventsOnMock
   },
   Call: { ByID: vi.fn(), ByName: vi.fn() },
   CancellablePromise: class {

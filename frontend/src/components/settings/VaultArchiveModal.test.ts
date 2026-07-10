@@ -43,9 +43,7 @@ const runtimeMocks = vi.hoisted(() => {
 vi.mock('../../../bindings/silt/app.js', () => mocks)
 vi.mock('@wailsio/runtime', () => ({
   Events: {
-    On: runtimeMocks.EventsOn,
-    Off: vi.fn(),
-    Emit: vi.fn()
+    On: runtimeMocks.EventsOn
   },
   Call: { ByID: vi.fn(), ByName: vi.fn() },
   CancellablePromise: class {

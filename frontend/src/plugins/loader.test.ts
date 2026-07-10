@@ -18,8 +18,6 @@ const mockUnregisterSession = vi.hoisted(() =>
 const mockEventsOn = vi.hoisted(() =>
   vi.fn((_event: string, _cb: (payload: unknown) => void) => () => {})
 )
-const mockEventsOff = vi.hoisted(() => vi.fn())
-
 vi.mock('../../bindings/silt/app.js', () => ({
   ListPlugins: mockListPlugins,
   ReadPluginSource: mockReadPluginSource,
@@ -28,12 +26,10 @@ vi.mock('../../bindings/silt/app.js', () => ({
 }))
 // Events.On returns a per-listener disposer (v3 contract). The mock mirrors
 // that so cleanupPlugin / clearAllSubscribers can call the captured disposer
-// without throwing. Off is kept as a no-op safety net for any code that still
-// references it directly.
+// without throwing.
 vi.mock('@wailsio/runtime', () => ({
   Events: {
-    On: mockEventsOn,
-    Off: mockEventsOff
+    On: mockEventsOn
   },
   Call: { ByID: vi.fn(), ByName: vi.fn() },
   CancellablePromise: class {
