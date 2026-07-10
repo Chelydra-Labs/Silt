@@ -20,7 +20,11 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    // Build/emit is handled by Vite; svelte-check only typechecks. Emit-on
+    // would trip TS6089 ("would overwrite input file") for the generated
+    // Wails bindings/*.js that src imports under allowJs/checkJs.
+    "noEmit": true
   },
   "include": [
     "src/**/*.d.ts",
