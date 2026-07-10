@@ -1193,27 +1193,6 @@
       displayedTabs.length > 0
   )
 
-  $effect(() => {
-    console.log(
-      '[Silt] notesReady:',
-      notesReady,
-      '| activeView:',
-      activeView,
-      '| notebook:',
-      activeNotebook,
-      '| section:',
-      activeSection,
-      '| page:',
-      activePage,
-      '| activeTabId:',
-      activeTabId,
-      '| displayedTabs:',
-      displayedTabs.length,
-      '| openTabs:',
-      openTabs.length
-    )
-  })
-
   function openSettings(tab: string = '') {
     settingsTab = tab || 'general'
     showSettings = true
