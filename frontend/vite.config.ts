@@ -11,6 +11,14 @@ export default defineConfig({
     tailwindcss(),
     svelte()
   ],
+  server: {
+    // Pin the IPv4 loopback. On Windows, Vite's default `localhost` binds
+    // IPv6 (::1) while the Wails v3 dev proxy dials 127.0.0.1 (IPv4), and the
+    // mismatch makes asset proxying fail with "connectex: ... actively refused".
+    host: '127.0.0.1',
+    port: Number(process.env.WAILS_VITE_PORT) || 9245,
+    strictPort: true
+  },
   resolve: {
     preserveSymlinks: true
   }
