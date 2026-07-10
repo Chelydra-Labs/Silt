@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -51,6 +52,12 @@ func (a *App) emitOrQueue(name string, data ...any) {
 	if !a.frontendReady {
 		if len(a.startupEvents) < maxStartupEvents {
 			a.startupEvents = append(a.startupEvents, startupEvent{Name: name, Payload: payload})
+		} else if !a.startupDropLogged {
+			// Frontend never marked ready (broken build / JS error) and the
+			// queue is full — log once so the otherwise-silent loss is
+			// diagnosable instead of vanishing without a trace.
+			a.startupDropLogged = true
+			log.Printf("silt: startup event queue capped at %d; dropping further events (first dropped %q) — frontend never called MarkFrontendReady", maxStartupEvents, name)
 		}
 		a.startupEventsMu.Unlock()
 		return // queued — GetStartupEvents replays once the frontend mounts
@@ -65,7 +72,12 @@ func (a *App) emitOrQueue(name string, data ...any) {
 // package, so we match on the error string. This restores the documented
 // "Returns \"\" on cancel" contract that every picker callsite relies on.
 func normalizeCancel(path string, err error) (string, error) {
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "cancel") {
+	// v3 returns ("", ErrorCancelled) on user cancel, so a genuine cancel
+	// always carries an empty path. Require path == "" in addition to the
+	// substring match so a real error whose message merely contains "cancel"
+	// (e.g. an I/O failure on a path like .../cancelled-meeting.md) is not
+	// swallowed as a successful empty cancel.
+	if err != nil && path == "" && strings.Contains(strings.ToLower(err.Error()), "cancel") {
 		return "", nil
 	}
 	return path, err

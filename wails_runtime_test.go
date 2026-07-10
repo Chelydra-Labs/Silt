@@ -53,6 +53,16 @@ func TestNormalizeCancel(t *testing.T) {
 			wantPath: "/partial/path",
 			wantErr:  errors.New("I/O timeout"),
 		},
+		{
+			// Guards normalizeCancel against substring false-positives: an
+			// error mentioning "cancel" but carrying a real path is NOT a
+			// user-initiated cancel and must be surfaced, not swallowed.
+			name:     "cancel word in error with non-empty path is not a cancel",
+			path:     "/notes/cancelled-meeting.md",
+			err:      errors.New("permission denied: cancelled-meeting.md"),
+			wantPath: "/notes/cancelled-meeting.md",
+			wantErr:  errors.New("permission denied: cancelled-meeting.md"),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -54,16 +54,17 @@ type App struct {
 	// MarkFrontendReady flips frontendReady; GetStartupEvents drains the slice
 	// on mount so the frontend can replay missed startup events through the
 	// same handlers its Events.On listeners use. Guarded by startupEventsMu.
-	startupEvents   []startupEvent
-	startupEventsMu sync.Mutex
-	frontendReady   bool
-	db              *db.DatabaseManager
-	coordinator     *core.ExecutionCoordinator
-	watcher         *monitor.DirectoryWatcher
-	tracker         *monitor.WriteTracker
-	vaultPath       string
-	spacesPerTab    int
-	wg              sync.WaitGroup
+	startupEvents     []startupEvent
+	startupEventsMu   sync.Mutex
+	frontendReady     bool
+	startupDropLogged bool
+	db                *db.DatabaseManager
+	coordinator       *core.ExecutionCoordinator
+	watcher           *monitor.DirectoryWatcher
+	tracker           *monitor.WriteTracker
+	vaultPath         string
+	spacesPerTab      int
+	wg                sync.WaitGroup
 
 	// cfg is the parsed .system/config.yaml, the single source of truth for
 	// non-vault-path settings. configMu guards it; it is replaced wholesale on
