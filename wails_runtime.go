@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// maxStartupEvents bounds the pre-mount event queue so a frontend that never
+// calls MarkFrontendReady (broken build, JS error) can't grow it unbounded.
+// 200 is generous — real startup emits ~10 distinct event types.
+const maxStartupEvents = 200
+
 // FileFilter mirrors the v2 runtime.FileFilter for dialog filter specs.
 // Kept as a plain struct so dialog wrappers don't leak Wails types into
 // the call sites.
@@ -23,7 +28,7 @@ func (a *App) emit(name string, data ...any) {
 	a.wailsApp.Event.Emit(name, data...)
 }
 
-// emitOrQueue emits a Wails event AND, until MarkFrontendReady signals the
+// emitOrQueue emits a Wails event OR, until MarkFrontendReady signals the
 // frontend has mounted its listeners, appends a copy to startupEvents so
 // GetStartupEvents can replay it. In Wails v3, ServiceStartup runs before the
 // webview exists, so a plain emit there is silently dropped — the queue is the
@@ -31,6 +36,12 @@ func (a *App) emit(name string, data ...any) {
 // copy, no lock on the hot path). The stored payload is data[0] (or nil when
 // data is empty), matching how Wails delivers a single-arg event as ev.data on
 // the JS side. Startup emits use exactly one arg, so this is exact.
+//
+// The queue and live emit are mutually exclusive (OR, not AND): a pre-ready
+// event is queued ONLY (replayed once by GetStartupEvents); a post-ready event
+// is emitted ONLY. Emitting AND queueing during the IPC round-trip gap between
+// listener registration and MarkFrontendReady would double-deliver (live +
+// replay), surfacing two modals/toasts for a single event.
 func (a *App) emitOrQueue(name string, data ...any) {
 	var payload any
 	if len(data) > 0 {
@@ -38,7 +49,11 @@ func (a *App) emitOrQueue(name string, data ...any) {
 	}
 	a.startupEventsMu.Lock()
 	if !a.frontendReady {
-		a.startupEvents = append(a.startupEvents, startupEvent{Name: name, Payload: payload})
+		if len(a.startupEvents) < maxStartupEvents {
+			a.startupEvents = append(a.startupEvents, startupEvent{Name: name, Payload: payload})
+		}
+		a.startupEventsMu.Unlock()
+		return // queued — GetStartupEvents replays once the frontend mounts
 	}
 	a.startupEventsMu.Unlock()
 	a.emit(name, data...)

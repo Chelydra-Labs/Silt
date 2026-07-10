@@ -14,6 +14,9 @@
   import { stripMarkdown } from '../../lib/markdownToPlainText'
 
   let version = $state('…')
+  // Guards against a double-click racing two concurrent download+install
+  // cycles before the store transitions status out of 'available'.
+  let installInFlight = $state(false)
 
   onMount(async () => {
     try {
@@ -51,8 +54,13 @@
   }
 
   async function onInstall() {
-    if (!updateState.assetUrl) return
-    await downloadAndInstall(updateState.assetUrl)
+    if (!updateState.assetUrl || installInFlight) return
+    installInFlight = true
+    try {
+      await downloadAndInstall(updateState.assetUrl)
+    } finally {
+      installInFlight = false
+    }
   }
 
   // External links keep real <a> semantics (links list, ctrl/middle-click,
@@ -141,9 +149,10 @@
                 <button
                   type="button"
                   onclick={onInstall}
-                  class="font-label-sm-bold text-[12px] px-3 py-1.5 rounded-md bg-accent-primary-start text-surface-app hover:brightness-110 border-none cursor-pointer"
+                  disabled={installInFlight}
+                  class="font-label-sm-bold text-[12px] px-3 py-1.5 rounded-md bg-accent-primary-start text-surface-app hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
                 >
-                  Install update
+                  {installInFlight ? 'Downloading…' : 'Install update'}
                 </button>
               {/if}
               <a

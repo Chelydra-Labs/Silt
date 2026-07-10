@@ -46,13 +46,10 @@
     if (themesState.items.length === 0 && !themesState.loading) {
       void loadThemes()
     }
-    // Drag-drop: a *.json file dropped anywhere on the tab is imported
-    // through the same code path as the picker button.
-    // TODO(wails-v3): restore drag-drop import. The v3 runtime dropped the
-    // global OnFileDrop/OnFileDropOff pair in favour of the per-element
-    // `data-file-drop-target` HTML attribute + the window's EnableFileDrop
-    // option. Wire the drop zone up against that API and re-enable the
-    // .json import path below.
+    // Theme import is via the "Import .json" button only. The v2 global
+    // drag-drop was removed in the v3 migration (v3's per-element file-drop
+    // API requires a cross-boundary integration that is deferred to a
+    // follow-up; the button path is fully functional).
     return () => {
       // Clear any in-flight preview so a navigated-away tab doesn't
       // leave the page in a non-active theme.

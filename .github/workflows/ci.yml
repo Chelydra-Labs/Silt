@@ -27,6 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install Linux webview dependencies
+        # Wails v3 on Linux builds against GTK4 + WebKitGTK 6.0 via CGO.
+        # ubuntu-latest doesn't ship the -dev packages, so install them
+        # before any Go compile / test / govulncheck step.
+        run: |
+          sudo apt update
+          sudo apt install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev
+
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -125,6 +133,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # gitleaks needs full history
+
+      - name: Install Linux webview dependencies
+        # govulncheck analyzes Wails v3's CGO packages, which need the same
+        # GTK4 / WebKitGTK 6.0 dev headers as the build job.
+        run: |
+          sudo apt update
+          sudo apt install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev
 
       - uses: actions/setup-go@v6
         with:

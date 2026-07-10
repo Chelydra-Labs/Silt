@@ -4,6 +4,7 @@
     dismissNotification
   } from '../notifications/store.svelte'
   import { onMount } from 'svelte'
+  import { fly } from 'svelte/transition'
 
   // Toast container (#86). Renders the global notification stack in the
   // bottom-right corner. Each toast is a `role="status"` (info/success) or
@@ -11,6 +12,16 @@
   // glass styling + token-bound colors. Auto-dismiss is driven by the store
   // (the store schedules the dismiss; this component is purely presentational).
   let list: HTMLDivElement | null = $state(null)
+
+  // Respect prefers-reduced-motion: 0-duration transitions are a no-op so
+  // toasts still appear/disappear instantly for users who opt out. matchMedia
+  // may be absent (jsdom tests) — fall back to the default duration.
+  const motionMs =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 0
+      : 200
 
   onMount(() => {
     return () => {
@@ -38,6 +49,7 @@
         ' pointer-events-auto flex items-start gap-2 rounded-lg border px-3 py-2 shadow-lg backdrop-blur'}
       role={n.kind === 'error' ? 'alert' : 'status'}
       aria-live={n.kind === 'error' ? 'assertive' : 'polite'}
+      in:fly={{ duration: motionMs, y: 12 }}
     >
       <span
         class="material-symbols-outlined mt-0.5 text-[18px]"

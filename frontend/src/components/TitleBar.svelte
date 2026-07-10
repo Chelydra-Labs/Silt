@@ -96,9 +96,6 @@
               class="font-headline-md text-headline-md text-surface-titlebar-text font-bold tracking-tight whitespace-nowrap group-hover:text-accent-primary-start transition-colors duration-300"
               >Silt</span
             >
-            {#if isMac}
-              <!-- Add a tiny dot next to the wordmark on macOS to fill space if needed, or leave it clean -->
-            {/if}
           {/if}
         </div>
       {/if}
@@ -114,6 +111,7 @@
   <!-- Right: search + window controls -->
   <div class="flex items-center gap-2 flex-shrink-0 h-full pr-2">
     <button
+      type="button"
       onclick={onSearchClick}
       aria-label="Search"
       title={`Search${(() => {
@@ -123,7 +121,7 @@
         )
         return h ? ` (${h})` : ''
       })()}`}
-      class="flex items-center justify-center h-9 w-9 rounded-lg text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none"
+      class="flex items-center justify-center h-9 w-9 rounded-lg text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
     >
       <span class="material-symbols-outlined text-[20px]">search</span>
     </button>
@@ -134,32 +132,35 @@
     {#if !isMac}
       <div class="flex items-center h-full">
         <button
+          type="button"
           onclick={async () => {
             await Window.Minimise()
           }}
           aria-label="Minimize"
           title="Minimize"
-          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
           <span class="material-symbols-outlined text-[18px]">remove</span>
         </button>
         <button
+          type="button"
           onclick={handleToggleMax}
           aria-label={maximised ? 'Restore' : 'Maximize'}
           title={maximised ? 'Restore' : 'Maximize'}
-          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
           <span class="material-symbols-outlined text-[18px]"
             >{maximised ? 'fullscreen_exit' : 'crop_square'}</span
           >
         </button>
         <button
+          type="button"
           onclick={async () => {
             await RequestClose()
           }}
           aria-label="Close"
           title="Close"
-          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
           <span class="material-symbols-outlined text-[18px]">close</span>
         </button>

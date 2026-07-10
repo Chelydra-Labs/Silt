@@ -1,8 +1,27 @@
 package main
 
 import (
+	"log"
+
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
+
+// safeMenuCallback wraps a menu/tray OnClick closure so a panic (nil receiver,
+// platform-specific window API quirk, future nil-deref) is recovered and logged
+// instead of crashing the process. The callbacks run on a Wails event-dispatch
+// goroutine with no recovery, so without this a panic is fatal —
+// ServiceShutdown never runs, the WAL is not checkpointed, and in-flight plugin
+// hooks are skipped. The cost is trivial; the resilience gain is significant.
+func safeMenuCallback(name string, fn func(*application.Context)) func(*application.Context) {
+	return func(ctx *application.Context) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("menu/tray callback %q panic recovered: %v", name, r)
+			}
+		}()
+		fn(ctx)
+	}
+}
 
 // setupMenus creates the platform-aware application menu and wires menu items
 // to frontend actions via Wails events (#503). Standard editing roles (Undo,
@@ -19,15 +38,15 @@ func setupMenus(app *application.App, siltApp *App) {
 
 	// --- File ---
 	fileMenu := menu.AddSubmenu("File")
-	fileMenu.Add("New Page").SetAccelerator("Ctrl+N").OnClick(func(ctx *application.Context) {
+	fileMenu.Add("New Page").SetAccelerator("Ctrl+N").OnClick(safeMenuCallback("new-page", func(ctx *application.Context) {
 		siltApp.emit("menu:new-page")
-	})
-	fileMenu.Add("Open Vault...").SetAccelerator("Ctrl+O").OnClick(func(ctx *application.Context) {
+	}))
+	fileMenu.Add("Open Vault...").SetAccelerator("Ctrl+O").OnClick(safeMenuCallback("open-vault", func(ctx *application.Context) {
 		siltApp.emit("menu:open-vault")
-	})
-	fileMenu.Add("Save").SetAccelerator("Ctrl+S").OnClick(func(ctx *application.Context) {
+	}))
+	fileMenu.Add("Save").SetAccelerator("Ctrl+S").OnClick(safeMenuCallback("save", func(ctx *application.Context) {
 		siltApp.emit("menu:save")
-	})
+	}))
 	fileMenu.AddSeparator()
 	fileMenu.AddRole(application.Quit)
 
@@ -43,28 +62,28 @@ func setupMenus(app *application.App, siltApp *App) {
 
 	// --- View ---
 	viewMenu := menu.AddSubmenu("View")
-	viewMenu.Add("Toggle Sidebar").SetAccelerator("Ctrl+B").OnClick(func(ctx *application.Context) {
+	viewMenu.Add("Toggle Sidebar").SetAccelerator("Ctrl+B").OnClick(safeMenuCallback("toggle-sidebar", func(ctx *application.Context) {
 		siltApp.emit("menu:toggle-sidebar")
-	})
-	viewMenu.Add("Toggle Format Toolbar").OnClick(func(ctx *application.Context) {
+	}))
+	viewMenu.Add("Toggle Format Toolbar").OnClick(safeMenuCallback("toggle-format-toolbar", func(ctx *application.Context) {
 		siltApp.emit("menu:toggle-format-toolbar")
-	})
-	viewMenu.Add("Find...").SetAccelerator("Ctrl+F").OnClick(func(ctx *application.Context) {
+	}))
+	viewMenu.Add("Find...").SetAccelerator("Ctrl+F").OnClick(safeMenuCallback("find", func(ctx *application.Context) {
 		siltApp.emit("menu:find")
-	})
-	viewMenu.Add("Focus Mode").OnClick(func(ctx *application.Context) {
+	}))
+	viewMenu.Add("Focus Mode").OnClick(safeMenuCallback("focus-mode", func(ctx *application.Context) {
 		siltApp.emit("menu:focus-mode")
-	})
+	}))
 	viewMenu.AddSeparator()
-	viewMenu.Add("Settings...").SetAccelerator("Ctrl+,").OnClick(func(ctx *application.Context) {
+	viewMenu.Add("Settings...").SetAccelerator("Ctrl+,").OnClick(safeMenuCallback("settings", func(ctx *application.Context) {
 		siltApp.emit("menu:settings")
-	})
+	}))
 
 	// --- Help ---
 	helpMenu := menu.AddSubmenu("Help")
-	helpMenu.Add("About Silt").OnClick(func(ctx *application.Context) {
+	helpMenu.Add("About Silt").OnClick(safeMenuCallback("about", func(ctx *application.Context) {
 		siltApp.emit("menu:about")
-	})
+	}))
 
 	app.Menu.SetApplicationMenu(menu)
 }

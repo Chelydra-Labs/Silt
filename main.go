@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"silt/backend/config"
@@ -81,17 +82,30 @@ func shouldOpenDevtools() bool {
 	return cfg.UI.OpenDevtoolsOnStartup != nil && *cfg.UI.OpenDevtoolsOnStartup
 }
 
+// clearCacheOnVersionChange wipes the WebView2 user-data directory when the app
+// version changes, preventing stale EBWebView corruption from carrying over
+// across upgrades (#342). Windows-only: macOS (WKWebView) and Linux (WebKitGTK)
+// don't read WebviewUserDataPath. Errors are logged (not swallowed) so a failed
+// cache clear — the function's entire purpose — leaves a diagnostic trace.
 func clearCacheOnVersionChange(cacheDir, currentVersion string) {
 	markerFile := filepath.Join(cacheDir, ".silt-version")
 	stored, err := os.ReadFile(markerFile)
 	if err == nil && strings.TrimSpace(string(stored)) == currentVersion {
 		return
 	}
-	os.RemoveAll(cacheDir)
-	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+	if err := os.RemoveAll(cacheDir); err != nil {
+		// Removal failed (files locked by a still-running instance, AV lock,
+		// permissions). Do NOT write the marker so the next launch retries.
+		log.Printf("clearCacheOnVersionChange: RemoveAll(%q) failed: %v — stale cache may persist; retry on next launch", cacheDir, err)
 		return
 	}
-	os.WriteFile(markerFile, []byte(currentVersion), 0644)
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+		log.Printf("clearCacheOnVersionChange: MkdirAll(%q) failed: %v", cacheDir, err)
+		return
+	}
+	if err := os.WriteFile(markerFile, []byte(currentVersion), 0600); err != nil {
+		log.Printf("clearCacheOnVersionChange: WriteFile(%q) failed: %v", markerFile, err)
+	}
 }
 
 func main() {
@@ -99,12 +113,16 @@ func main() {
 
 	// Single WebView2 cache folder, cleared on version change to prevent
 	// stale EBWebView corruption from carrying over across upgrades (#342).
-	webviewCacheDir := filepath.Join(os.Getenv("APPDATA"), "Silt", "webview2")
-	if os.Getenv("APPDATA") == "" {
-		home, _ := os.UserHomeDir()
-		webviewCacheDir = filepath.Join(home, ".config", "silt", "webview2")
+	// Windows-only: the WebviewUserDataPath option is a no-op on macOS/Linux.
+	webviewCacheDir := ""
+	if runtime.GOOS == "windows" {
+		webviewCacheDir = filepath.Join(os.Getenv("APPDATA"), "Silt", "webview2")
+		if os.Getenv("APPDATA") == "" {
+			home, _ := os.UserHomeDir()
+			webviewCacheDir = filepath.Join(home, ".config", "silt", "webview2")
+		}
+		clearCacheOnVersionChange(webviewCacheDir, appVersion)
 	}
-	clearCacheOnVersionChange(webviewCacheDir, appVersion)
 
 	// The embed directive captures frontend/dist/* with the directory
 	// prefix. Sub it to root so AssetFileServerFS serves /index.html etc.

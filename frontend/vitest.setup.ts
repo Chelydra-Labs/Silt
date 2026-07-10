@@ -8,3 +8,31 @@ import '@testing-library/jest-dom/vitest'
 if (typeof document !== 'undefined') {
   document.elementFromPoint = vi.fn(() => document.body)
 }
+
+// Svelte 5 transitions (transition:fly/fade) call element.animate(), which
+// jsdom does not implement. Polyfill globally so any component using a
+// transition renders in tests without per-file stubs.
+if (typeof Element !== 'undefined' && !Element.prototype.animate) {
+  Element.prototype.animate = function (
+    this: Element,
+    _keyframes: Keyframe[] | PropertyIndexedKeyframes | null,
+    options?: number | KeyframeAnimationOptions
+  ): Animation {
+    return {
+      cancel: () => {},
+      finish: () => {},
+      oncancel: null,
+      onfinish: null,
+      onremove: null,
+      play: () => {},
+      pause: () => {},
+      reverse: () => {},
+      playbackRate: 1,
+      currentTime: 0,
+      startTime: 0,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true
+    } as unknown as Animation
+  }
+}

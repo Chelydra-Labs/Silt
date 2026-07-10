@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"log"
 
 	"silt/backend/vault"
 
@@ -66,19 +67,21 @@ func (a *App) Quit() {
 // and attaches the main window so a single click toggles visibility (#501).
 func setupTray(app *application.App, siltApp *App, window application.Window) *application.SystemTray {
 	menu := app.NewMenu()
-	menu.Add("Show Silt").OnClick(func(ctx *application.Context) {
+	menu.Add("Show Silt").OnClick(safeMenuCallback("tray-show", func(ctx *application.Context) {
 		window.Show().Focus()
-	})
-	menu.Add("Hide Silt").OnClick(func(ctx *application.Context) {
+	}))
+	menu.Add("Hide Silt").OnClick(safeMenuCallback("tray-hide", func(ctx *application.Context) {
 		window.Hide()
-	})
+	}))
 	menu.AddSeparator()
-	menu.Add("Quit Silt").OnClick(func(ctx *application.Context) {
+	menu.Add("Quit Silt").OnClick(safeMenuCallback("tray-quit", func(ctx *application.Context) {
 		siltApp.Quit()
-	})
+	}))
 
 	tray := app.SystemTray.New()
-	tray.SetIcon(trayIconBytes)
+	if err := tray.SetIcon(trayIconBytes); err != nil {
+		log.Printf("tray: SetIcon failed: %v", err)
+	}
 	tray.SetTooltip("Silt")
 	tray.SetMenu(menu)
 	tray.AttachWindow(window)
