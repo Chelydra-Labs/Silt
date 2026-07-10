@@ -36,7 +36,15 @@ export async function loadConfig(): Promise<void> {
   settings.loading = true
   settings.error = ''
   try {
-    settings.config = await GetSystemConfig()
+    // v3's GetSystemConfig returns a SystemConfig class instance (via
+    // createFrom). Svelte 5's $state proxy doesn't deeply track nested
+    // mutations on class instances — the prototype chain interferes with
+    // the proxy's set trap. Converting to a plain object ensures every
+    // nested property write (cfg.editor.focus_mode = next, etc.) triggers
+    // reactivity. Events (config:changed) deliver plain objects already,
+    // so only the initial load needs this conversion.
+    const raw = await GetSystemConfig()
+    settings.config = JSON.parse(JSON.stringify(raw))
     settings.dirty = false
     // Surface a startup config-load error that was emitted before this
     // frontend subscribed to config:error (one-shot: retrieved then cleared
@@ -163,12 +171,6 @@ export function initConfigHotReload(): void {
   if (offConfigChanged) return // idempotent
   offConfigChanged = Events.On('config:changed', (ev: any) => {
     const cfg: SystemConfig = ev.data
-    console.log(
-      '[config:changed] received, focus_mode=',
-      cfg?.editor?.focus_mode,
-      'show_format_toolbar=',
-      cfg?.ui?.show_format_toolbar
-    )
     settings.config = cfg
     settings.error = ''
     if (settings.dirty) {
@@ -208,7 +210,6 @@ export async function toggleFormatToolbar(): Promise<boolean | null> {
     cfg.ui.show_format_toolbar = next
     return next
   } catch (e) {
-    console.error('[toggleFormatToolbar] SetShowFormatToolbar failed:', e)
     settings.error = errMsg(e)
     return null
   } finally {
@@ -233,7 +234,6 @@ export async function toggleFocusMode(): Promise<boolean | null> {
     cfg.editor.focus_mode = next
     return next
   } catch (e) {
-    console.error('[toggleFocusMode] SetFocusMode failed:', e)
     settings.error = errMsg(e)
     return null
   } finally {

@@ -38,7 +38,7 @@ vi.mock('@wailsio/runtime', () => ({
     OpenURL: mocks.BrowserOpenURL
   },
   Events: {
-    On: vi.fn(),
+    On: vi.fn(() => () => {}),
     Off: vi.fn(),
     Emit: vi.fn()
   },

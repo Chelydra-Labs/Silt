@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../../bindings/silt/app.js', () => mocks)
 vi.mock('@wailsio/runtime', () => ({
   Events: {
-    On: vi.fn(),
+    On: vi.fn(() => () => {}),
     Off: vi.fn(),
     Emit: vi.fn()
   },

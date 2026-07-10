@@ -30,7 +30,7 @@ vi.mock('../../../bindings/silt/app.js', () => ({
 }))
 vi.mock('@wailsio/runtime', () => ({
   Events: {
-    On: vi.fn(),
+    On: vi.fn(() => () => {}),
     Off: vi.fn(),
     Emit: vi.fn()
   },
