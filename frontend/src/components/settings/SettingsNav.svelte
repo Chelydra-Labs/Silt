@@ -62,8 +62,8 @@
       tabindex={section === sec.id ? 0 : -1}
       class="relative flex items-center gap-3 pl-5 pr-4 py-2.5 mx-2 rounded-lg font-label-sm text-label-sm transition-all border-none cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 {section ===
       sec.id
-        ? 'bg-active text-accent-primary-start'
-        : 'text-text-muted hover:bg-hover hover:text-text-primary'}"
+        ? 'bg-hover text-accent-primary-start'
+        : 'text-surface-sidebar-text-muted hover:bg-hover hover:text-surface-sidebar-text'}"
     >
       {#if section === sec.id}
         <div
