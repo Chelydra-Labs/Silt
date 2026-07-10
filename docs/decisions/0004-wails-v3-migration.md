@@ -16,6 +16,12 @@ accepted v3 alpha stability ("the API is reasonably stable, and
 applications are running in production") and removed macOS from scope
 (owner does not use a Mac).
 
+The v2 baseline (captured before migration) was: Go 18 packages passing
+`-race`, frontend 134 files / 1933 tests passing, svelte-check 0 errors,
+187 exported App methods, 18 Go events, 67 frontend binding imports, 43
+frontend runtime imports. All counts were verified against the inventory
+tool output after migration.
+
 ## Decision
 
 Upgrade to Wails v3 `v3.0.0-alpha2.117` on a single migration branch.
@@ -72,6 +78,34 @@ Linux only; macOS is out of scope.
    is retained. Per-plugin isolated webviews (#502) are deferred to a
    follow-up — the Go-layer session/capability boundary remains the
    security control.
+
+9. **WebView2 cache:** v3's `WindowsOptions.WebviewUserDataPath` replaces
+   v2's `WebviewUserDataPath`. `clearCacheOnVersionChange` is preserved:
+   it deletes the cache directory and writes a `.silt-version` marker when
+   the app version changes, preventing stale EBWebView corruption across
+   upgrades (#342). The cache lives at `%APPDATA%/Silt/webview2` (Windows)
+   or `~/.config/silt/webview2` (Linux fallback).
+
+10. **Signing/notarization:** macOS code signing and notarization are out
+    of scope (macOS removed). Windows signing via SignPath is configured in
+    the release workflow when available; Linux artifacts are unsigned (cosign
+    is a future option). No credentials are stored in source.
+
+### Spike evidence
+
+A compatibility spike against `v3.0.0-alpha2.117` confirmed:
+- Service lifecycle (`ServiceStartup`/`ServiceShutdown`) fires correctly
+- `application.New()` + `WebviewWindow` produces a working frameless window
+- `AssetOptions.Middleware` intercepts requests before the embed handler
+- `Event.Emit` delivers single-arg data as the raw payload (not array-wrapped)
+- `MarshalError` returns `[]byte` (valid JSON or nil for default handling)
+- `wails3 generate bindings` produces TypeScript bindings in `frontend/bindings/`
+- `wails3 build` produces a working Windows binary
+- Taskfile-based build system works with platform-specific includes
+
+No API gaps blocked the migration. The `OnFileDrop`/`OnFileDropOff` v2 API
+has no direct v3 equivalent (v3 uses `data-file-drop-target` + `EnableFileDrop`
+window option); file drop is stubbed pending this migration.
 
 ## Consequences
 
