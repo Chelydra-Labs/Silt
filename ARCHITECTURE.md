@@ -977,16 +977,25 @@ CSP: `connect-src 'none'` blocks direct fetch/XHR/WebSocket from inside the
 iframe. All network traffic routes through the postMessage bridge → `ctx.fetch`
 (SSRF-defended + audit-logged).
 
-**Plugin webview isolation (#502).** Wails v3's browser-process options are
-application-global on Windows, so per-window network isolation is not
-available. The existing iframe sandbox (CSP `connect-src 'none'` + postMessage
-bridge + Go-proxied `PluginFetch` with SSRF defense) remains the security
-boundary. Per-plugin rendering isolation via dedicated v3 webview windows is
-deferred to the existing #502 — prototyping isolated webviews, the shared-code
-bundling a first-party plugin currently relies on, and the lifecycle/token
-handoff turned out to be too complex and excessive churn for this migration,
-and the Go-layer capability/session boundary already enforces the load-bearing
-security control. #502 is the single tracker; no duplicate was opened.
+**Plugin webview isolation (#502).** Per-plugin isolated webviews will
+**not** be implemented. Wails v3's service bindings are
+**application-global**: every registered service is reachable from every
+window, and there is no per-window binding scope or capability model
+that could restrict which `Plugin*` methods a given window may call (the
+`WebviewWindowOptions.Permissions` map covers only webview-level OS
+permissions — camera/mic/geo/clipboard — not Go-binding access). A
+spike against `v3.0.0-alpha2.117` confirmed multi-window creation works
+but binding isolation does not exist, so #502's acceptance criterion
+(enforcing capabilities per-plugin-webview via the Wails 3 capability
+model) is unachievable. The existing boundary remains authoritative: the
+iframe sandbox (CSP `connect-src 'none'` + postMessage bridge +
+Go-proxied `PluginFetch` with SSRF defense) for rendered plugin UI, plus
+the Go-layer session verification (`validatePluginSession`) and
+capability grants (`requireGrant`) for every privileged binding —
+together they enforce the property #502 was after (a plugin cannot
+escalate beyond its grants or impersonate another plugin). See ADR
+`docs/decisions/0005-plugin-webview-isolation-wontfix.md`; #151/#152
+stay blocked on a Wails v3 capability that does not exist today.
 
 **Rate limiting.** `PluginFetch` is throttled by a per-plugin token-
 bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
