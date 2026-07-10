@@ -9,3 +9,12 @@ frontend/package-lock.json merge=union
 *.go  text eol=lf
 *.mod text eol=lf
 *.sum text eol=lf
+
+# Pin build scripts + Taskfile/nfpm YAML to LF in both repo and working tree.
+# These run on Linux/CI bash and wails3/go tooling that expects LF; without a
+# pin, a contributor whose core.autocrlf differs could commit a CRLF blob that
+# breaks CI bash (shebangs) the same way a stale build does. Mirrors the *.go
+# rule above.
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
