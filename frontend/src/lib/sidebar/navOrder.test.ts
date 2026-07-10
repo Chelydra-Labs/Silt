@@ -3,7 +3,7 @@ import { sortByName, NavOrderManager } from './navOrder'
 import type { NavOrderState } from './navOrder'
 
 // Mock the Wails IPC bindings.
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   GetNavOrder: vi.fn().mockResolvedValue({
     notebooks: ['Work', 'Personal'],
     sections: { Work: ['Journal', 'Projects'] },
@@ -67,7 +67,7 @@ describe('NavOrderManager', () => {
   })
 
   it('persists section order', async () => {
-    const { SetNavOrder } = await import('../../../wailsjs/go/main/App.js')
+    const { SetNavOrder } = await import('../../../bindings/silt/app.js')
     let state: NavOrderState | null = null
     const manager = new NavOrderManager({
       onStateChange: (s) => {
@@ -88,7 +88,7 @@ describe('NavOrderManager', () => {
   })
 
   it('persists page order', async () => {
-    const { SetNavOrder } = await import('../../../wailsjs/go/main/App.js')
+    const { SetNavOrder } = await import('../../../bindings/silt/app.js')
     const manager = new NavOrderManager({ onStateChange: () => {} })
 
     await manager.load()
@@ -102,7 +102,7 @@ describe('NavOrderManager', () => {
   })
 
   it('persists root-level page order through the empty-section key (#369)', async () => {
-    const { SetNavOrder } = await import('../../../wailsjs/go/main/App.js')
+    const { SetNavOrder } = await import('../../../bindings/silt/app.js')
     const manager = new NavOrderManager({ onStateChange: () => {} })
 
     await manager.load()
@@ -121,7 +121,7 @@ describe('NavOrderManager', () => {
   })
 
   it('load() is a no-op on IPC failure', async () => {
-    const { GetNavOrder } = await import('../../../wailsjs/go/main/App.js')
+    const { GetNavOrder } = await import('../../../bindings/silt/app.js')
     vi.mocked(GetNavOrder).mockRejectedValueOnce(new Error('no vault'))
     const manager = new NavOrderManager({ onStateChange: () => {} })
 

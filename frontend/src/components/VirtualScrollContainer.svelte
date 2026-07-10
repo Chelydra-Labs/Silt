@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
-  import { FetchPageBlocks, RenamePage } from '../../wailsjs/go/main/App.js'
-  import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+  import { FetchPageBlocks, RenamePage } from '../../bindings/silt/app.js'
+  import { Events } from '@wailsio/runtime'
   import TipTapEditor from './TipTapEditor.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import FindBar from './editor/FindBar.svelte'
@@ -90,12 +90,7 @@
   )
 
   $effect(() => {
-    console.log('[VSC] mount:', { notebook, section, page, viewMode, isActive })
-  })
-
-  $effect(() => {
     if (notebook && page) {
-      console.log('[VSC] loading page:', { notebook, section, page })
       untrack(() => loadPage(true))
     }
   })
@@ -112,19 +107,17 @@
   // handles applying the update when the user is not actively editing.
   $effect(() => {
     // Read props at the top of the effect so it re-subscribes when the user
-    // navigates to a different page (#64). Without this, the EventsOn closure
+    // navigates to a different page (#64). Without this, the Events.On closure
     // would filter against stale values after navigation.
     const nb = notebook,
       sec = section,
       pg = page
-    const off = EventsOn(
-      'block:changed',
-      (ev: { notebook: string; section: string; page: string }) => {
-        if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
-          loadPage(false)
-        }
+    const off = Events.On('block:changed', (event: any) => {
+      const ev: { notebook: string; section: string; page: string } = event.data
+      if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
+        loadPage(false)
       }
-    )
+    })
     return () => off()
   })
 
@@ -139,16 +132,9 @@
     try {
       const result = await FetchPageBlocks(reqNotebook, reqSection, reqPage)
       if (notebook !== reqNotebook || page !== reqPage) {
-        console.log('[VSC] loadPage stale, discarding:', {
-          reqNotebook,
-          reqPage,
-          currentNotebook: notebook,
-          currentPage: page
-        })
         return
       }
       blocks = result || []
-      console.log('[VSC] loadPage success:', blocks.length, 'blocks')
     } catch (e) {
       if (notebook !== reqNotebook || page !== reqPage) return
       loadError = e instanceof Error ? e.message : String(e)

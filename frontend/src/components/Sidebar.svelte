@@ -18,7 +18,7 @@
     DeleteSection,
     DeleteNotebook,
     MovePage
-  } from '../../wailsjs/go/main/App.js'
+  } from '../../bindings/silt/app.js'
   import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
   import { DragDropManager } from '../lib/sidebar/useDragDrop'
   import type { NavNotebook, NavigationTree } from '../lib/sidebar/types'

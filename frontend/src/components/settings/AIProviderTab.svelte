@@ -26,9 +26,9 @@
     ListModels,
     GetAIAudit,
     ClearAIAudit
-  } from '../../../wailsjs/go/main/App.js'
-  import type { main } from '../../../wailsjs/go/models'
-  import type { ai as aiTypes } from '../../../wailsjs/go/models'
+  } from '../../../bindings/silt/app.js'
+  import type * as main from '../../../bindings/silt/models.js'
+  import type * as aiTypes from '../../../bindings/silt/backend/ai/models.js'
 
   type Which = 'chat' | 'embedding'
 

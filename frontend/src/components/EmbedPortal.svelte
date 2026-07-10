@@ -3,8 +3,8 @@
   import {
     ResolveBlockReference,
     MutateBlock
-  } from '../../wailsjs/go/main/App.js'
-  import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+  } from '../../bindings/silt/app.js'
+  import { Events } from '@wailsio/runtime'
   import RichText from './RichText.svelte'
   import { coerceIPCError } from '../lib/ipcError'
 
@@ -127,7 +127,8 @@
     } satisfies EmbedChain)
     load()
     // Live sync: refresh when the source block changes anywhere.
-    offEvent = EventsOn('block:changed', (ev: any) => {
+    offEvent = Events.On('block:changed', (event: any) => {
+      const ev = event.data
       if (ev && ev.id === uuid && !editing && !saveTimer) {
         load()
       }

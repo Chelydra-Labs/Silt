@@ -16,8 +16,8 @@
     RenderTemplate,
     CreatePageFromTemplate,
     RenderTemplateBlocks
-  } from '../../wailsjs/go/main/App.js'
-  import type { templates as tpl } from '../../wailsjs/go/models'
+  } from '../../bindings/silt/app.js'
+  import type * as tpl from '../../bindings/silt/backend/templates/models.js'
   import {
     templatesState,
     loadTemplates,
@@ -34,7 +34,7 @@
     onClose: () => void
     onCreatedPage?: (page: string) => void
     onInsertBlocks?: (
-      blocks: import('../../wailsjs/go/models').parser.ParsedBlock[]
+      blocks: import('../../bindings/silt/backend/parser/models.js').ParsedBlock[]
     ) => void
   }
 

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // errBlockBeingEdited is the sentinel returned by MutateBlock when the target
@@ -61,7 +60,7 @@ func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBl
 
 // DistinctOwners returns the sorted, de-duplicated set of task owners in the
 // vault, optionally narrowed by an ASCII-case-insensitive prefix — the source
-// for the @-mention typeahead (#184, #332). Read-only projection of the tasks
+// for the mention typeahead (#184, #332). Read-only projection of the tasks
 // index; no mention state is persisted to SQLite. An empty prefix returns the
 // full set so the editor's focus-load can seed the cache.
 func (a *App) DistinctOwners(prefix string) ([]string, error) {
@@ -395,10 +394,7 @@ func (a *App) QueryTasks(filter parser.TaskQueryFilter) ([]parser.TaskResult, er
 // emitBlockChanged broadcasts a block:changed event so live embeds/references
 // refresh whenever a block is mutated through any code path.
 func (a *App) emitBlockChanged(id, notebook, section, page, fileDate string) {
-	if a.ctx == nil {
-		return
-	}
-	runtime.EventsEmit(a.ctx, "block:changed", parser.BlockChangedEvent{
+	a.emit("block:changed", parser.BlockChangedEvent{
 		ID: id, Notebook: notebook, Section: section, Page: page, FileDate: fileDate,
 	})
 }

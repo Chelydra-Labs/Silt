@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { SearchBlocksPaged } from '../../wailsjs/go/main/App.js'
+  import { SearchBlocksPaged } from '../../bindings/silt/app.js'
   import { STANDALONE_TASKS_NOTEBOOK } from '../lib/standaloneTasksNav'
 
   interface TaskResult {

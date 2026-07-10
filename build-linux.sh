@@ -73,14 +73,16 @@ bump_patch() {
 check_tool go
 check_tool node
 check_tool npm
-check_tool wails
+check_tool wails3
 check_tool gcc
 check_tool dpkg-deb
 
 # webkit2gtk is required to compile the Wails webview layer. Ubuntu 24.04+
 # ships only webkit2gtk-4.1 (the 4.0 dev package was dropped); older distros
 # (Ubuntu 22.04, Debian bullseye) ship 4.0. Detect whichever is present and
-# set the matching Wails build tag so the binary links against the installed ABI.
+# set the matching build tag so the binary links against the installed ABI.
+# In v3 the tag is surfaced to the build via the Taskfile (or WAILS_TAGS env
+# if the Taskfile reads it); record it here so the wiring is local.
 WEBKIT_TAG=""
 if pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
     WEBKIT_TAG="webkit2_41"
@@ -89,7 +91,7 @@ if pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
 elif pkg-config --exists webkit2gtk-4.0 2>/dev/null; then
     WEBKIT_TAG=""
     WEBKIT_DEB="libwebkit2gtk-4.0-37"
-    log_info "Found webkit2gtk-4.0 (default Wails tag)"
+    log_info "Found webkit2gtk-4.0 (default tag)"
 else
     log_error "Neither webkit2gtk-4.1 nor webkit2gtk-4.0 was found."
     log_error "Install the dev package, e.g.:"
@@ -146,18 +148,20 @@ NODE_PATH="$ROOT/frontend/node_modules" node "$ROOT/scripts/generate-icon.mjs" \
     "$ROOT/frontend/src/assets/logo.svg" \
     "$ROOT/build/appicon.png"
 
-log_info "Building frontend..."
-(cd "$ROOT/frontend" && npm run build)
+# Frontend build is handled by `wails3 build` (via the Taskfile) below.
+# npm install is still needed first for the icon-generation script (sharp).
 
 # --- backend build (linux/amd64) ---
 rm -rf "$ROOT/build/bin"
 
-log_info "Building with Wails (linux/amd64)..."
-WAILS_ARGS=(build -devtools --platform linux/amd64 --clean)
+# The v3 Taskfile handles frontend build + bindings + Go build in one step.
+# The webkit tag is passed via EXTRA_TAGS so the Taskfile's go build picks it up.
+log_info "Building with Wails v3 (linux/amd64)..."
 if [[ -n "$WEBKIT_TAG" ]]; then
-    WAILS_ARGS+=(-tags "$WEBKIT_TAG")
+    wails3 build -tags "$WEBKIT_TAG"
+else
+    wails3 build
 fi
-wails "${WAILS_ARGS[@]}"
 
 BINARY="$ROOT/build/bin/${APP_NAME}"
 if [ ! -f "$BINARY" ]; then
@@ -165,6 +169,12 @@ if [ ! -f "$BINARY" ]; then
     exit 1
 fi
 log_info "Binary built: $BINARY ($(du -h "$BINARY" | cut -f1))"
+
+# --- create AppImage + .deb via the custom packaging logic below ---
+# (wails3 task linux:package is NOT called here — the Taskfile and this
+# script use different packaging methods. The script's manual AppImage/deb
+# packaging below is the release path; calling the Taskfile would produce
+# duplicate artifacts in build/bin/ that are never picked up.)
 
 # --- distribution directory ---
 BUILD_DIR="$DIST_DIR/v${VERSION}"

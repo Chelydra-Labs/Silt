@@ -2,7 +2,7 @@
 // Mirrors SPECS.md §8.2.
 
 // Plugins must reach the backend through the PluginContext SDK (ctx.*) rather
-// than the raw Wails bindings (wailsjs/go/main/App.js) — the raw surface will
+// than the raw Wails bindings (bindings/silt/app.js) — the raw surface will
 // break when per-plugin isolated webviews land (#152). This is enforced by code
 // review and the SDK contract, NOT by a runtime probe: a module-load check on
 // window.go.main.App can't tell a plugin's raw import from the SDK bridge's own
@@ -357,7 +357,7 @@ export interface PluginContext {
   /**
    * FTS5 block search (#303 dependency picker, embed insertion). Returns
    * matching blocks with breadcrumb + clean-content metadata. Wraps the
-   * SearchBlocks binding so plugin code never imports wailsjs/go/main/App.js
+   * SearchBlocks binding so plugin code never imports bindings/silt/app.js
    * directly (AGENTS.md — deprecated, breaks on per-plugin webviews #151/#152).
    */
   searchBlocks: (query: string) => Promise<SearchHit[]>

@@ -2,7 +2,7 @@
   // Network activity viewer for a plugin (#115). Shows the host+status audit
   // log entries for this plugin (never the body). Loads on expand and can be
   // refreshed.
-  import { GetNetworkAudit } from '../../../wailsjs/go/main/App.js'
+  import { GetNetworkAudit } from '../../../bindings/silt/app.js'
   import { onMount } from 'svelte'
 
   interface Props {

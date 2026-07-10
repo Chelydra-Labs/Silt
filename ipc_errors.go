@@ -109,21 +109,21 @@ type capabilityDeniedPayload struct {
 	Disabled   bool   `json:"disabled,omitempty"`
 }
 
-// formatIPCError serializes an error into the JSON-string form the Wails
-// ErrorFormatter returns. It recognizes the three user-facing sentinels this
-// contract migrates (#478): *IPCError (covers errBlockBeingEdited +
+// formatIPCError serializes an error into the JSON-byte form the Wails v3
+// MarshalError callback returns. It recognizes the three user-facing sentinels
+// this contract migrates (#478): *IPCError (covers errBlockBeingEdited +
 // errVaultClosing via their helper constructors) and *CapabilityDeniedError.
-// Any other error is returned as its plain prose string (the pre-contract
-// behavior), so unmigrated sentinels keep working while the frontend falls
-// back to substring matching for them.
-func formatIPCError(err error) any {
+// Any other error returns nil to fall back to Wails' default error handling
+// (the pre-contract behavior), so unmigrated sentinels keep working while the
+// frontend falls back to substring matching for them.
+func formatIPCError(err error) []byte {
 	if err == nil {
 		return nil
 	}
 	var ipc *IPCError
 	if errors.As(err, &ipc) {
 		b, _ := json.Marshal(ipcErrorPayload{Code: string(ipc.Code), Message: ipc.Message})
-		return string(b)
+		return b
 	}
 	var cap *plugins.CapabilityDeniedError
 	if errors.As(err, &cap) {
@@ -136,7 +136,7 @@ func formatIPCError(err error) any {
 			Granted:    cap.Granted,
 			Disabled:   cap.Disabled,
 		})
-		return string(b)
+		return b
 	}
-	return err.Error()
+	return nil
 }

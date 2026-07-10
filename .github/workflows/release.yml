@@ -224,11 +224,11 @@ jobs:
         # `release` needs the whole `build` matrix — no Release is created.
         shell: bash
         run: |
-          WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
-          go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
+          WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
+          go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      # frontend/wailsjs/ is gitignored — a fresh checkout has none. `npm
+      # frontend/bindings/ is gitignored — a fresh checkout has none. `npm
       # install` triggers the `prepare` script, which regenerates the bindings
       # and seeds a placeholder frontend/dist/.gitkeep so the subsequent vite
       # build can write the real assets. Same flow as ci.yml.
@@ -239,7 +239,7 @@ jobs:
         shell: bash
         run: |
           rm -rf frontend/dist frontend/.vite frontend/node_modules/.vite
-      - name: Install frontend dependencies (regenerates wailsjs/)
+      - name: Install frontend dependencies (regenerates bindings/)
         shell: bash
         run: |
           cd frontend

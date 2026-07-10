@@ -25,16 +25,33 @@ export interface ClipboardDeps {
   menu: () => ClipboardMenuState | null
 }
 
-/** writeText but never throws — clipboard permissions are best-effort. */
-async function writeTextSilent(text: string): Promise<void> {
-  await navigator.clipboard.writeText(text).catch(() => {})
+/**
+ * Write text to the clipboard, surfacing a failure toast so the user knows a
+ * copy/cut didn't land. Mirrors pasteFromClipboard's failure feedback — without
+ * this, every copy/cut menu action fails silently if the clipboard is
+ * unavailable, which undermines trust exactly when the user is about to paste.
+ */
+async function writeTextOrNotify(
+  deps: ClipboardDeps,
+  text: string
+): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    deps.notify({
+      kind: 'error',
+      message: 'Copy failed: clipboard could not be written.'
+    })
+    return false
+  }
 }
 
 export function cutSelection(deps: ClipboardDeps): void {
   const { editor } = deps
   const { selection } = editor.state
   const text = editor.state.doc.textBetween(selection.from, selection.to, '\n')
-  void writeTextSilent(text)
+  void writeTextOrNotify(deps, text)
   editor.commands.deleteSelection()
 }
 
@@ -42,7 +59,7 @@ export function copySelection(deps: ClipboardDeps): void {
   const { editor } = deps
   const { selection } = editor.state
   const text = editor.state.doc.textBetween(selection.from, selection.to, '\n')
-  void writeTextSilent(text)
+  void writeTextOrNotify(deps, text)
 }
 
 export async function pasteFromClipboard(deps: ClipboardDeps): Promise<void> {
@@ -87,7 +104,7 @@ export async function copyAsMarkdown(deps: ClipboardDeps): Promise<void> {
     })
     md = parts.join('\n')
   }
-  await writeTextSilent(md)
+  await writeTextOrNotify(deps, md)
 }
 
 export async function copyAsPlainText(deps: ClipboardDeps): Promise<void> {
@@ -96,20 +113,20 @@ export async function copyAsPlainText(deps: ClipboardDeps): Promise<void> {
   const text = selection.empty
     ? ''
     : editor.state.doc.textBetween(selection.from, selection.to, '\n')
-  await writeTextSilent(text)
+  await writeTextOrNotify(deps, text)
 }
 
 export async function copyBlockReference(deps: ClipboardDeps): Promise<void> {
   const id = deps.menu()?.activeBlockId
   if (id) {
-    await writeTextSilent(`((${id}))`)
+    await writeTextOrNotify(deps, `((${id}))`)
   }
 }
 
 export async function copyBlockEmbed(deps: ClipboardDeps): Promise<void> {
   const id = deps.menu()?.activeBlockId
   if (id) {
-    await writeTextSilent(`{{embed:${id}}}`)
+    await writeTextOrNotify(deps, `{{embed:${id}}}`)
   }
 }
 

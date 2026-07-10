@@ -20,11 +20,29 @@ const mocks = vi.hoisted(() => ({
   SwitchVault: vi.fn()
 }))
 
-vi.mock('../../../wailsjs/go/main/App.js', () => mocks)
-vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: vi.fn(),
-  EventsOff: vi.fn(),
-  EventsEmit: vi.fn()
+vi.mock('../../../bindings/silt/app.js', () => mocks)
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn(() => () => {})
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 describe('VaultActionModal', () => {

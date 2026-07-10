@@ -30,14 +30,34 @@ const mocks = vi.hoisted(() => ({
   setAutoCheckImpl: null as ((_on: boolean) => void) | null
 }))
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   GetAppVersion: mocks.GetAppVersion
 }))
-vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
-  BrowserOpenURL: mocks.BrowserOpenURL,
-  EventsOn: vi.fn(),
-  EventsOff: vi.fn(),
-  EventsEmit: vi.fn()
+vi.mock('@wailsio/runtime', () => ({
+  Browser: {
+    OpenURL: mocks.BrowserOpenURL
+  },
+  Events: {
+    On: vi.fn(() => () => {})
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 vi.mock('../../updates/store.svelte', () => ({
   updateState: mocks.updateState,

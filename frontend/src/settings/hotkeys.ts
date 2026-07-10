@@ -165,7 +165,7 @@ export function configKeyToProseMirrorKey(
 export function resolveShortcut(
   configKey: string,
   defaultPmKey: string,
-  hotkeys: Record<string, string>
+  hotkeys: Record<string, string | undefined>
 ): string {
   const configBinding = hotkeys[configKey]
   const converted = configKeyToProseMirrorKey(configBinding)
@@ -184,7 +184,7 @@ export function resolveShortcut(
  */
 export function resolveHotkeyDisplay(
   action: string,
-  hotkeys: Record<string, string>
+  hotkeys: Record<string, string | undefined>
 ): string {
   const binding = hotkeys[action]
   return binding ?? ''

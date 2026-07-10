@@ -70,8 +70,28 @@ if (!Element.prototype.animate) {
   } as unknown as Element['animate']
 }
 
-vi.mock('../../../../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: vi.fn(() => () => {})
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn(() => () => {})
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 import TaskSubEditorModal from './TaskSubEditorModal.svelte'

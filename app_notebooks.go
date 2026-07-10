@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // CreateNotebook creates a top-level notebook folder under the vault root.
@@ -83,12 +82,10 @@ func (a *App) OpenNotebook(folderPath string) (string, error) {
 // cancelled. Keeping the dialog on the Go side matches InitializeVault and
 // avoids depending on frontend runtime dialog bindings.
 func (a *App) PickNotebookFolder() (string, error) {
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
-	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Open Notebook Folder",
-	})
+	selectedPath, err := a.openDirectoryDialog("Open Notebook Folder")
 	if err != nil {
 		return "", fmt.Errorf("failed to open folder picker: %w", err)
 	}
@@ -268,12 +265,10 @@ func (a *App) UnlinkNotebook(id string) error {
 // external folder. Returns the linked notebook, or a zero value (no error) when
 // the user cancels.
 func (a *App) PickLinkedNotebook() (config.LinkedNotebook, error) {
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return config.LinkedNotebook{}, fmt.Errorf("application context not ready")
 	}
-	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Link External Notebook Folder",
-	})
+	selectedPath, err := a.openDirectoryDialog("Link External Notebook Folder")
 	if err != nil {
 		return config.LinkedNotebook{}, fmt.Errorf("failed to open folder picker: %w", err)
 	}
@@ -430,9 +425,7 @@ func (a *App) invalidateLinkedConfig(source string) {
 // the old config. Called from the watcher goroutine.
 func (a *App) onLinkedConfigChange(source string) {
 	a.invalidateLinkedConfig(source)
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "linked-config:changed", source)
-	}
+	a.emit("linked-config:changed", source)
 }
 
 // onReMintWarning is the watcher hook for the mass-re-mint heuristic (#443).
@@ -444,9 +437,7 @@ func (a *App) onLinkedConfigChange(source string) {
 // recovery path. Called from the watcher goroutine; only touches the event
 // emitter (no locks).
 func (a *App) onReMintWarning(w monitor.ReMintWarning) {
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "index:re-mint-warning", w)
-	}
+	a.emit("index:re-mint-warning", w)
 }
 
 // quarantineLink adds a linked notebook ID to the quarantine set and emits
@@ -468,13 +459,11 @@ func (a *App) quarantineLink(id, reason string) {
 		}
 	}
 	a.configMu.Unlock()
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "linked-notebook:quarantined", map[string]string{
-			"id":           id,
-			"display_name": displayName,
-			"reason":       reason,
-		})
-	}
+	a.emitOrQueue("linked-notebook:quarantined", map[string]string{
+		"id":           id,
+		"display_name": displayName,
+		"reason":       reason,
+	})
 	log.Printf("quarantineLink: %s (%s) quarantined: %s", id, displayName, reason)
 }
 

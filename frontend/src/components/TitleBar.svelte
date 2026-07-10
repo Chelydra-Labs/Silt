@@ -3,12 +3,8 @@
   import logo from '../assets/logo.svg'
   import { settings } from '../settings/store.svelte'
   import { resolveHotkeyDisplay } from '../settings/hotkeys'
-  import {
-    WindowMinimise,
-    WindowToggleMaximise,
-    WindowIsMaximised,
-    Quit
-  } from '../../wailsjs/runtime/runtime.js'
+  import { Window } from '@wailsio/runtime'
+  import { RequestClose } from '../../bindings/silt/app.js'
 
   interface Props {
     sidebarCollapsed: boolean
@@ -34,7 +30,7 @@
 
   async function syncMaximised() {
     try {
-      maximised = await WindowIsMaximised()
+      maximised = await Window.IsMaximised()
     } catch {
       // runtime not ready (e.g. during SSR/check); leave as-is
     }
@@ -58,16 +54,14 @@
     sidebarCollapsed ? trafficPx : trafficPx + sidebarWidth
   )
 
-  function handleToggleMax() {
-    WindowToggleMaximise()
-    // Optimistic flip; resize listener will correct it if the platform
-    // refuses the toggle.
-    maximised = !maximised
+  async function handleToggleMax() {
+    await Window.ToggleMaximise()
+    await syncMaximised()
   }
 </script>
 
 <header
-  class="drag-region bg-surface-titlebar flex justify-between items-center h-14 w-full z-50 fixed top-0 border-b border-surface-titlebar-border select-none"
+  class="drag-region bg-surface-titlebar flex justify-between items-center h-12 w-full z-50 fixed top-0 border-b border-surface-titlebar-border select-none"
 >
   <!-- Left: brand zone (matches sidebar width) + sidebar toggle at the boundary -->
   <div class="flex items-center min-w-0 h-full flex-grow">
@@ -102,9 +96,6 @@
               class="font-headline-md text-headline-md text-surface-titlebar-text font-bold tracking-tight whitespace-nowrap group-hover:text-accent-primary-start transition-colors duration-300"
               >Silt</span
             >
-            {#if isMac}
-              <!-- Add a tiny dot next to the wordmark on macOS to fill space if needed, or leave it clean -->
-            {/if}
           {/if}
         </div>
       {/if}
@@ -120,6 +111,7 @@
   <!-- Right: search + window controls -->
   <div class="flex items-center gap-2 flex-shrink-0 h-full pr-2">
     <button
+      type="button"
       onclick={onSearchClick}
       aria-label="Search"
       title={`Search${(() => {
@@ -129,7 +121,7 @@
         )
         return h ? ` (${h})` : ''
       })()}`}
-      class="flex items-center justify-center h-9 w-9 rounded-lg text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none"
+      class="flex items-center justify-center h-9 w-9 rounded-lg text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
     >
       <span class="material-symbols-outlined text-[20px]">search</span>
     </button>
@@ -140,30 +132,44 @@
     {#if !isMac}
       <div class="flex items-center h-full">
         <button
-          onclick={() => WindowMinimise()}
+          type="button"
+          onclick={async () => {
+            await Window.Minimise()
+          }}
           aria-label="Minimize"
           title="Minimize"
-          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
-          <span class="material-symbols-outlined text-[18px]">remove</span>
+          <span
+            class="material-symbols-outlined text-[14px] window-control-icon"
+            >remove</span
+          >
         </button>
         <button
+          type="button"
           onclick={handleToggleMax}
           aria-label={maximised ? 'Restore' : 'Maximize'}
           title={maximised ? 'Restore' : 'Maximize'}
-          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
-          <span class="material-symbols-outlined text-[18px]"
+          <span
+            class="material-symbols-outlined text-[14px] window-control-icon"
             >{maximised ? 'fullscreen_exit' : 'crop_square'}</span
           >
         </button>
         <button
-          onclick={() => Quit()}
+          type="button"
+          onclick={async () => {
+            await RequestClose()
+          }}
           aria-label="Close"
           title="Close"
-          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none"
+          class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
-          <span class="material-symbols-outlined text-[18px]">close</span>
+          <span
+            class="material-symbols-outlined text-[14px] window-control-icon"
+            >close</span
+          >
         </button>
       </div>
     {/if}
@@ -171,6 +177,9 @@
 </header>
 
 <style>
+  .window-control-icon {
+    font-weight: 300;
+  }
   .drag-region {
     --wails-draggable: drag;
   }

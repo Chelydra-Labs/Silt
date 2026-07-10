@@ -3,18 +3,20 @@ package main
 import (
 	"embed"
 	"errors"
+	"io/fs"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"silt/backend/config"
 	"silt/backend/themes"
 	"silt/backend/vault"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
@@ -29,8 +31,8 @@ var assets embed.FS
 // different bg.void used to show the default void for a few ms until the
 // runtime injector caught up; the cache lookup short-circuits that gap
 // because it serves the on-disk theme from a single read at startup.
-func launchBackgroundColour() *options.RGBA {
-	fallback := func() *options.RGBA { return &options.RGBA{R: 12, G: 12, B: 14, A: 1} } // #0c0c0e
+func launchBackgroundColour() application.RGBA {
+	fallback := func() application.RGBA { return application.RGBA{Red: 12, Green: 12, Blue: 14, Alpha: 1} }
 	settings, err := vault.LoadSettings()
 	if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 		// No settings → no active id → embedded default bg.void (always
@@ -39,7 +41,7 @@ func launchBackgroundColour() *options.RGBA {
 			mode := effectiveMode("")
 			r, g, b, ok := themes.HexToRGB(th.BGVoid(mode))
 			if ok {
-				return &options.RGBA{R: r, G: g, B: b, A: 1}
+				return application.RGBA{Red: r, Green: g, Blue: b, Alpha: 1}
 			}
 		}
 		return fallback()
@@ -54,7 +56,7 @@ func launchBackgroundColour() *options.RGBA {
 		if th, perr := themes.ParseDefault(); perr == nil {
 			r, g, b, ok := themes.HexToRGB(th.BGVoid(mode))
 			if ok {
-				return &options.RGBA{R: r, G: g, B: b, A: 1}
+				return application.RGBA{Red: r, Green: g, Blue: b, Alpha: 1}
 			}
 		}
 		return fallback()
@@ -63,7 +65,7 @@ func launchBackgroundColour() *options.RGBA {
 	if !ok {
 		return fallback()
 	}
-	return &options.RGBA{R: r, G: g, B: b, A: 1}
+	return application.RGBA{Red: r, Green: g, Blue: b, Alpha: 1}
 }
 
 func shouldOpenDevtools() bool {
@@ -81,17 +83,84 @@ func shouldOpenDevtools() bool {
 	return cfg.UI.OpenDevtoolsOnStartup != nil && *cfg.UI.OpenDevtoolsOnStartup
 }
 
+// clearCacheOnVersionChange wipes the WebView2 user-data directory when the app
+// version changes, preventing stale EBWebView corruption from carrying over
+// across upgrades (#342). Windows-only: macOS (WKWebView) and Linux (WebKitGTK)
+// don't read WebviewUserDataPath. Errors are logged (not swallowed) so a failed
+// cache clear — the function's entire purpose — leaves a diagnostic trace.
 func clearCacheOnVersionChange(cacheDir, currentVersion string) {
 	markerFile := filepath.Join(cacheDir, ".silt-version")
 	stored, err := os.ReadFile(markerFile)
 	if err == nil && strings.TrimSpace(string(stored)) == currentVersion {
 		return
 	}
-	os.RemoveAll(cacheDir)
-	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+	if err := os.RemoveAll(cacheDir); err != nil {
+		// Removal failed (files locked by a still-running instance, AV lock,
+		// permissions). Do NOT write the marker so the next launch retries.
+		log.Printf("clearCacheOnVersionChange: RemoveAll(%q) failed: %v — stale cache may persist; retry on next launch", cacheDir, err)
 		return
 	}
-	os.WriteFile(markerFile, []byte(currentVersion), 0644)
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+		log.Printf("clearCacheOnVersionChange: MkdirAll(%q) failed: %v", cacheDir, err)
+		return
+	}
+	if err := os.WriteFile(markerFile, []byte(currentVersion), 0600); err != nil {
+		log.Printf("clearCacheOnVersionChange: WriteFile(%q) failed: %v", markerFile, err)
+	}
+}
+
+// themeFileDropTargetID is the stable DOM id of the Appearance-tab drop zone.
+// The frontend marks that element with `data-file-drop-target`; Wails echoes the
+// element back as DropTargetDetails.ElementID, so the backend can route only
+// theme drops to the importer instead of fanning every OS file drop (editor,
+// attachments, etc.) through the theme path.
+const themeFileDropTargetID = "theme-file-drop-target"
+
+// themeFilesDroppedEvent bridges an OS file drop on the Appearance target to the
+// frontend theme importer. The payload is the dropped paths as []string,
+// matching the existing native-picker import path so the component can reuse it.
+const themeFilesDroppedEvent = "theme:files-dropped"
+
+// themeDropPaths returns the file paths to forward to the theme importer for a
+// window file-drop, or nil when the drop did not land on the Appearance target
+// or carried no files. Pure (no App / WindowEvent dependency) so the routing
+// rule is unit-testable without a live webview.
+func themeDropPaths(details *application.DropTargetDetails, files []string) []string {
+	if details == nil || details.ElementID != themeFileDropTargetID {
+		return nil
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	return files
+}
+
+// setupMainWindowEvents wires the file-drop bridge and the native close
+// interceptor onto the *WebviewWindow returned by NewWithOptions. The file-drop
+// handler routes only Appearance-target drops (see themeDropPaths) to the theme
+// importer; the close hook always cancels the native window destroy and
+// delegates to RequestClose, so close-to-tray hides and otherwise Quit runs the
+// full ServiceShutdown drain (the single WAL/in-flight-call checkpoint path).
+func setupMainWindowEvents(window *application.WebviewWindow, siltApp *App) {
+	window.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {
+		ctx := event.Context()
+		if ctx == nil {
+			return
+		}
+		paths := themeDropPaths(ctx.DropTargetDetails(), ctx.DroppedFiles())
+		if len(paths) == 0 {
+			return
+		}
+		siltApp.emit(themeFilesDroppedEvent, paths)
+	})
+
+	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		// Always cancel the native close: a hidden-to-tray window must survive,
+		// and the quit path goes through Quit()/ServiceShutdown rather than the
+		// OS destroying the window out from under the drain.
+		event.Cancel()
+		siltApp.RequestClose()
+	})
 }
 
 func main() {
@@ -99,58 +168,98 @@ func main() {
 
 	// Single WebView2 cache folder, cleared on version change to prevent
 	// stale EBWebView corruption from carrying over across upgrades (#342).
-	webviewCacheDir := filepath.Join(os.Getenv("APPDATA"), "Silt", "webview2")
-	if os.Getenv("APPDATA") == "" {
-		home, _ := os.UserHomeDir()
-		webviewCacheDir = filepath.Join(home, ".config", "silt", "webview2")
+	// Windows-only: the WebviewUserDataPath option is a no-op on macOS/Linux.
+	webviewCacheDir := ""
+	if runtime.GOOS == "windows" {
+		webviewCacheDir = filepath.Join(os.Getenv("APPDATA"), "Silt", "webview2")
+		if os.Getenv("APPDATA") == "" {
+			home, _ := os.UserHomeDir()
+			webviewCacheDir = filepath.Join(home, ".config", "silt", "webview2")
+		}
+		clearCacheOnVersionChange(webviewCacheDir, appVersion)
 	}
-	clearCacheOnVersionChange(webviewCacheDir, appVersion)
 
-	err := wails.Run(&options.App{
-		Title:            "Silt",
-		Width:            1024,
-		Height:           768,
-		WindowStartState: options.Maximised,
-		Frameless:        true,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-			// Serve per-theme background assets (<id>.assets/<file>) from
-			// the CURRENT themes directory. Wails tries the embedded
-			// Assets first and only falls through to Handler on a miss, so
-			// this only receives the dynamic background-image references —
-			// every regular frontend asset still loads from the embed. The
-			// resolver reads vaultPath under vaultMu on each request so a
-			// vault open/switch after startup is reflected immediately.
-			Handler: themeAssetHandler(func() string {
-				app.vaultMu.RLock()
-				defer app.vaultMu.RUnlock()
-				return app.themesDir()
+	// The embed directive captures frontend/dist/* with the directory
+	// prefix. Sub it to root so AssetFileServerFS serves /index.html etc.
+	frontendFS, err := fs.Sub(assets, "frontend/dist")
+	if err != nil {
+		log.Fatalf("failed to create frontend sub-FS: %v", err)
+	}
+
+	// Theme asset handler: serves per-theme background images
+	// (<themeID>.assets/<file>) from the CURRENT themes directory, which
+	// is dynamic (vault open/switch after startup). The resolver reads
+	// vaultPath under vaultMu on each request.
+	themeHandler := themeAssetHandler(func() string {
+		app.vaultMu.RLock()
+		defer app.vaultMu.RUnlock()
+		return app.themesDir()
+	})
+
+	wailsApp := application.New(application.Options{
+		Name: "Silt",
+		Services: []application.Service{
+			application.NewServiceWithOptions(app, application.ServiceOptions{
+				// #478: serialize IPCError-carriers as a JSON string on
+				// the Wails error envelope so the frontend can map on a
+				// stable code instead of substring-matching Go prose.
+				MarshalError: formatIPCError,
 			}),
 		},
-		Debug: options.Debug{
-			OpenInspectorOnStartup: shouldOpenDevtools(),
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(frontendFS),
+			// Intercept theme background asset requests (<id>.assets/<file>)
+			// before they hit the embed handler — those files are not in the
+			// embed and are resolved from the dynamic themes directory.
+			Middleware: func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					rel := strings.TrimPrefix(r.URL.Path, "/")
+					if strings.Contains(rel, ".assets/") && themes.IsValidThemeID(strings.SplitN(rel, ".assets/", 2)[0]) {
+						themeHandler.ServeHTTP(w, r)
+						return
+					}
+					next.ServeHTTP(w, r)
+				})
+			},
 		},
-		Windows: &windows.Options{
+		Windows: application.WindowsOptions{
 			WebviewUserDataPath: webviewCacheDir,
-		},
-		// OS-level window paint colour shown before the webview renders,
-		// resolved from the active theme mode's bg.void so there is no
-		// pre-CSS flash that matches no token.
-		BackgroundColour: launchBackgroundColour(),
-		// #478: serialize IPCError-carriers (errBlockBeingEdited,
-		// errVaultClosing) and CapabilityDeniedError as a JSON string on the
-		// Wails error envelope so the frontend can map on a stable code
-		// instead of substring-matching Go prose. Unmigrated sentinels fall
-		// through to plain err.Error() (the pre-contract behavior).
-		ErrorFormatter: formatIPCError,
-		OnStartup:      app.startup,
-		OnShutdown:     app.shutdown,
-		Bind: []interface{}{
-			app,
 		},
 	})
 
-	if err != nil {
-		println("Error:", err.Error())
+	// Set the app reference before Run so ServiceStartup (and every IPC
+	// handler) can emit events, open dialogs, etc. application.Get() is
+	// the fallback used inside ServiceStartup.
+	app.wailsApp = wailsApp
+
+	// Native application menu (#503) — standard editing roles + custom
+	// items that emit frontend events.
+	setupMenus(wailsApp, app)
+
+	// Main window — frameless, maximized, with the theme-aware launch colour.
+	// EnableFileDrop lets OS files dragged onto a `data-file-drop-target`
+	// element raise WindowFilesDropped; setupMainWindowEvents routes only the
+	// Appearance-target drop to the theme importer.
+	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:                  "Silt",
+		Width:                  1024,
+		Height:                 768,
+		StartState:             application.WindowStateMaximised,
+		Frameless:              true,
+		BackgroundColour:       launchBackgroundColour(),
+		EnableFileDrop:         true,
+		OpenInspectorOnStartup: shouldOpenDevtools(),
+	})
+	// Bind window-event hooks on the concrete *WebviewWindow straight after
+	// creation, before it is narrowed to the application.Window interface.
+	setupMainWindowEvents(mainWindow, app)
+	app.mainWindow = mainWindow
+
+	// System tray (#501) — icon with Show/Hide/Quit menu, window toggle
+	// on click, and close-to-tray support via RequestClose.
+	setupTray(wailsApp, app, mainWindow)
+
+	if err := wailsApp.Run(); err != nil {
+		log.Fatalf("Error: %s", err.Error())
 	}
 }

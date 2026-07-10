@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import WorkspaceTab from './WorkspaceTab.svelte'
+  import GeneralTab from './GeneralTab.svelte'
   import EditorTab from './EditorTab.svelte'
   import HotkeysTab from './HotkeysTab.svelte'
   import AppearanceTab from './AppearanceTab.svelte'
@@ -24,7 +24,7 @@
   }
 
   let {
-    activeTab = $bindable('workspace'),
+    activeTab = $bindable('general'),
     onClose,
     activeNotebook,
     activeSection,
@@ -84,7 +84,7 @@
   })
 
   const tabs = $derived([
-    { id: 'workspace', label: 'Workspace', icon: 'folder' },
+    { id: 'general', label: 'General', icon: 'settings' },
     { id: 'editor', label: 'Editor', icon: 'edit_note' },
     { id: 'appearance', label: 'Appearance', icon: 'palette' },
     { id: 'ai', label: 'AI Provider', icon: 'smart_toy' },
@@ -188,13 +188,6 @@
       )
     }
     lastPlugins = activeTab
-  })
-
-  // Map legacy 'general' tab selection to the new 'workspace' tab
-  $effect(() => {
-    if (activeTab === 'general') {
-      activeTab = 'workspace'
-    }
   })
 
   // #214: if the active plugin tab disappears (plugin disabled/uninstalled/
@@ -313,17 +306,17 @@
           'plugins',
           'about'
         ].includes(activeTab) || activeTab.startsWith('plugin:')}
-        class:flex={['workspace', 'editor', 'hotkeys'].includes(activeTab)}
-        class:flex-col={['workspace', 'editor', 'hotkeys'].includes(activeTab)}
-        class:overflow-hidden={['workspace', 'editor', 'hotkeys'].includes(
+        class:flex={['general', 'editor', 'hotkeys'].includes(activeTab)}
+        class:flex-col={['general', 'editor', 'hotkeys'].includes(activeTab)}
+        class:overflow-hidden={['general', 'editor', 'hotkeys'].includes(
           activeTab
         )}
       >
-        {#if settings.loading && !settings.config}
+        {#if settings.loading && !settings.config && activeTab !== 'general'}
           <div class="p-8 text-text-muted animate-pulse font-body-md">
             Loading settings…
           </div>
-        {:else if !settings.config && settings.error}
+        {:else if !settings.config && settings.error && activeTab !== 'general'}
           <div class="p-8">
             <div
               class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md max-w-xl"
@@ -332,8 +325,8 @@
               <span class="flex-1">{settings.error}</span>
             </div>
           </div>
-        {:else if activeTab === 'workspace'}
-          <WorkspaceTab />
+        {:else if activeTab === 'general'}
+          <GeneralTab />
         {:else if activeTab === 'editor'}
           <EditorTab />
         {:else if activeTab === 'appearance'}

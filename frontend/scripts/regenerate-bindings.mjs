@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// Regenerate frontend/wailsjs/go/main/App.{js,d.ts} and models.ts from the
-// live Go signatures on `App`. Runs `wails generate module` after ensuring
-// the `frontend/dist` placeholder exists (required because main.go declares
-// `//go:embed all:frontend/dist` which fails Go compilation if the dir is
-// absent). Tolerates a missing `wails` CLI: most contributors have it
-// installed, but CI's `npm audit` job and brand-new contributors don't, and
-// `npm install` should never fail because of an unrelated dev tool. When
-// `wails` is absent we print a one-line pointer and exit 0 — the binding
-// staleness is a hotfix-vs-day-1 tradeoff, not a fatal error.
+// Regenerate frontend/bindings/ (the Go→JS/TS IPC stubs) from the live Go
+// signatures on `App`. Runs `wails3 generate bindings -d frontend/bindings`
+// after ensuring the `frontend/dist` placeholder exists (required because
+// main.go declares `//go:embed all:frontend/dist` which fails Go compilation
+// if the dir is absent). Tolerates a missing `wails3` CLI: most contributors
+// have it installed, but CI's `npm audit` job and brand-new contributors
+// don't, and `npm install` should never fail because of an unrelated dev
+// tool. When `wails3` is absent we print a one-line pointer and exit 0 — the
+// binding staleness is a hotfix-vs-day-1 tradeoff, not a fatal error.
 //
 // Lives at frontend/scripts/ so it can be invoked from package.json
 // (`generate` for explicit refresh, `prepare` for auto-on-install). Cross-
@@ -36,7 +36,7 @@ function ensureDistPlaceholder() {
 
 function hasWailsCli() {
   const probe = process.platform === 'win32' ? 'where' : 'which'
-  const result = spawnSync(probe, ['wails'], { stdio: 'ignore' })
+  const result = spawnSync(probe, ['wails3'], { stdio: 'ignore' })
   return result.status === 0
 }
 
@@ -48,18 +48,22 @@ if (SKIP_FLAG === '1' || SKIP_FLAG === 'true') {
 
 if (!hasWailsCli()) {
   console.log(
-    '[regenerate-bindings] `wails` CLI not found on PATH — skipping. ' +
-      'The frontend/wailsjs/ bindings will be stale until you run ' +
-      '`go install github.com/wailsapp/wails/v2/cmd/wails@latest` and ' +
-      're-run `npm run generate` (or `wails dev` / `wails build`).'
+    '[regenerate-bindings] `wails3` CLI not found on PATH — skipping. ' +
+      'The frontend/bindings/ stubs will be stale until you run ' +
+      '`go install github.com/wailsapp/wails/v3/cmd/wails3@latest` and ' +
+      're-run `npm run generate` (or `wails3 dev` / `wails3 build`).'
   )
   process.exit(0)
 }
 
 ensureDistPlaceholder()
 
-const result = spawnSync('wails', ['generate', 'module'], {
-  cwd: REPO_ROOT,
-  stdio: 'inherit'
-})
+const result = spawnSync(
+  'wails3',
+  ['generate', 'bindings', '-d', 'frontend/bindings'],
+  {
+    cwd: REPO_ROOT,
+    stdio: 'inherit'
+  }
+)
 process.exit(result.status ?? 1)

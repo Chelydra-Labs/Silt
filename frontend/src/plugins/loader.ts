@@ -4,8 +4,8 @@ import {
   RegisterPluginSession,
   UnregisterPluginSession,
   ClosePluginDB
-} from '../../wailsjs/go/main/App.js'
-import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+} from '../../bindings/silt/app.js'
+import { Events } from '@wailsio/runtime'
 import { getFirstParty, firstPartyPlugins } from './registry'
 import { makePluginContext } from './context'
 import { setActiveLocation } from './location.svelte'
@@ -214,7 +214,7 @@ function wireLifecycleOnce() {
   if (lifecycleWired) return
   lifecycleWired = true
 
-  EventsOn('vault:closing', () => {
+  Events.On('vault:closing', () => {
     // Mark loaders not-ready BEFORE any teardown so Sidebar/PluginView
     // suspend context construction while sessionTokens is being cleared
     // and before the next loadPlugins re-registers them. Without this,

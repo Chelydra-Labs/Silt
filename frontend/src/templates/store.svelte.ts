@@ -4,9 +4,9 @@
 // template appears immediately (mirrors the theme listing store). Svelte 5
 // $state runes in a .svelte.ts module (matches theme/store.svelte.ts and
 // settings/store.svelte.ts).
-import { ListTemplates } from '../../wailsjs/go/main/App.js'
-import { EventsOn } from '../../wailsjs/runtime/runtime.js'
-import type { templates } from '../../wailsjs/go/models'
+import { ListTemplates } from '../../bindings/silt/app.js'
+import { Events } from '@wailsio/runtime'
+import type * as templates from '../../bindings/silt/backend/templates/models.js'
 
 export interface TemplatesListingState {
   items: templates.TemplateSummary[]
@@ -106,7 +106,7 @@ export function initTemplates(): () => void {
   void loadTemplates()
   // Debounce so a burst of changes coalesces into one ListTemplates call.
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
-  offTemplatesChanged = EventsOn('templates:changed', () => {
+  offTemplatesChanged = Events.On('templates:changed', () => {
     if (reloadTimer !== null) clearTimeout(reloadTimer)
     reloadTimer = setTimeout(() => {
       reloadTimer = null

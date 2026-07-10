@@ -95,20 +95,20 @@ Each concern in Silt has a single source of truth. Refer to these documents for 
 
 ### Prerequisites
 
-Ensure you have **Go (v1.26+)**, **Node.js (v20+)**, and the **Wails CLI** globally configured.
+Ensure you have **Go (v1.26+)**, **Node.js (v22+)**, and the **Wails CLI** globally configured.
 
 ### Setting Up a Local Build
 
 ```bash
 git clone https://github.com/Chelydra-Labs/Silt.git
 cd Silt
-wails dev
+wails3 dev
 ```
 
 ### Production Bundling
 
 ```bash
-wails build -clean
+wails3 build
 ```
 
 For the full release pipeline (including icon generation, NSIS installers, and portable ZIP packages), refer to the release script ([`build.sh`](build.sh)) or ([`build-linux.sh`](build-linux.sh)).

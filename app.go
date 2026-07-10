@@ -23,7 +23,7 @@ import (
 	"silt/backend/templates"
 	"silt/backend/vault"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed VERSION
@@ -33,15 +33,38 @@ var versionBytes []byte
 // VERSION file. Used for plugin minSiltVersion enforcement.
 var appVersion = strings.TrimSpace(string(versionBytes))
 
+// startupEvent is one queued event emitted before the frontend mounted its
+// Events.On listeners. In Wails v3, ServiceStartup fires before the webview
+// exists, so a plain emit is lost; emitOrQueue stashes a copy here for
+// GetStartupEvents to replay on mount. Payload is the first data arg (or nil),
+// matching how Wails delivers a single-arg event as ev.data on the JS side.
+type startupEvent struct {
+	Name    string
+	Payload any
+}
+
 type App struct {
-	ctx          context.Context
-	db           *db.DatabaseManager
-	coordinator  *core.ExecutionCoordinator
-	watcher      *monitor.DirectoryWatcher
-	tracker      *monitor.WriteTracker
-	vaultPath    string
-	spacesPerTab int
-	wg           sync.WaitGroup
+	ctx      context.Context
+	wailsApp *application.App
+	// mainWindow is the primary webview window, stored so RequestClose can
+	// hide it to the tray without going through v3's unexported windows map.
+	mainWindow application.Window
+	// startupEvents captures events emitted before the frontend mounted.
+	// emitOrQueue appends here (in addition to emitting) until
+	// MarkFrontendReady flips frontendReady; GetStartupEvents drains the slice
+	// on mount so the frontend can replay missed startup events through the
+	// same handlers its Events.On listeners use. Guarded by startupEventsMu.
+	startupEvents     []startupEvent
+	startupEventsMu   sync.Mutex
+	frontendReady     bool
+	startupDropLogged bool
+	db                *db.DatabaseManager
+	coordinator       *core.ExecutionCoordinator
+	watcher           *monitor.DirectoryWatcher
+	tracker           *monitor.WriteTracker
+	vaultPath         string
+	spacesPerTab      int
+	wg                sync.WaitGroup
 
 	// cfg is the parsed .system/config.yaml, the single source of truth for
 	// non-vault-path settings. configMu guards it; it is replaced wholesale on
@@ -235,37 +258,62 @@ func NewApp() *App {
 	}
 }
 
-func (a *App) startup(ctx context.Context) {
+// ServiceStartup is the Wails v3 service lifecycle hook (replaces the v2
+// OnStartup callback). The context is valid until just before shutdown.
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	a.ctx = ctx
+	a.wailsApp = application.Get()
 	a.aiCtx, a.aiCtxCancel = context.WithCancel(context.Background())
 	settings, err := vault.LoadSettings()
 	if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 		// The settings file exists on disk but is unreadable or
 		// malformed. Don't silently fall through to "no vault" — the
 		// user has a vault setup, something is just broken.
-		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "vault:init-error",
-				fmt.Sprintf("failed to load settings.json: %v", err))
-		}
-		return
+		a.emitOrQueue("vault:init-error",
+			fmt.Sprintf("failed to load settings.json: %v", err))
+		return nil
 	}
 	// F20: settings loaded fine but the trust-anchor fingerprint changed
 	// since last launch (possible tampering, or a legit external edit the
 	// user hasn't acknowledged yet). Surface a confirmation dialog so the
 	// user can accept or reject the change. The settings are still used
 	// in-memory (they are valid JSON with a valid schema).
-	if errors.Is(err, vault.ErrSettingsFingerprintMismatch) && a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "settings:fingerprint-mismatch", nil)
+	if errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
+		a.emitOrQueue("settings:fingerprint-mismatch", nil)
 	}
 	if settings.VaultPath != "" {
 		if _, statErr := os.Stat(settings.VaultPath); statErr == nil {
 			if initErr := a.initializeVaultServices(settings.VaultPath); initErr != nil {
-				if a.ctx != nil {
-					runtime.EventsEmit(a.ctx, "vault:init-error", initErr.Error())
-				}
+				a.emitOrQueue("vault:init-error", initErr.Error())
 			}
 		}
 	}
+	return nil
+}
+
+// GetStartupEvents returns events queued during ServiceStartup (before the
+// frontend mounted its Events.On listeners) and clears the queue. In Wails v3,
+// ServiceStartup fires before the webview exists, so emits like
+// vault:init-error and settings:fingerprint-mismatch are lost; emitOrQueue
+// stashed them for this retrieval. The frontend calls this on mount (after
+// MarkFrontendReady) and dispatches each entry through the same handler its
+// Events.On listener would have used.
+func (a *App) GetStartupEvents() []startupEvent {
+	a.startupEventsMu.Lock()
+	defer a.startupEventsMu.Unlock()
+	out := a.startupEvents
+	a.startupEvents = nil
+	return out
+}
+
+// MarkFrontendReady signals that the frontend has finished registering its
+// Events.On listeners. After this, emitOrQueue stops queueing (events reliably
+// reach the live listeners). Call once on mount, before GetStartupEvents.
+// Idempotent.
+func (a *App) MarkFrontendReady() {
+	a.startupEventsMu.Lock()
+	a.frontendReady = true
+	a.startupEventsMu.Unlock()
 }
 
 // ConfirmSettingsChange is the F20 user-ack binding. When the frontend detects
@@ -353,17 +401,17 @@ func (a *App) DeclineGrantsMigration() error {
 	return nil
 }
 
-func (a *App) shutdown(ctx context.Context) {
+// ServiceShutdown is the Wails v3 service lifecycle hook (replaces the v2
+// OnShutdown callback). Called after all OnShutdown hooks, in reverse
+// registration order.
+func (a *App) ServiceShutdown() error {
 	// Cancel in-flight AI HTTP calls so they don't outlive the process.
 	if a.aiCtxCancel != nil {
 		a.aiCtxCancel()
 	}
 	// Emit vault:closing so the frontend plugin loader runs every plugin's
-	// onVaultClose/onShutdown hook (#106) before IPC tears down. Best-effort:
-	// a nil ctx (headless test) skips the emit.
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "vault:closing", struct{}{})
-	}
+	// onVaultClose/onShutdown hook (#106) before IPC tears down.
+	a.emit("vault:closing", struct{}{})
 	// Wait for any in-flight Wails-bound calls (UpdateBlockState,
 	// QueryTasks) to complete before tearing
 	// down the DB, tracker, and watcher. Without this a fast window
@@ -382,6 +430,7 @@ func (a *App) shutdown(ctx context.Context) {
 	// already-closed handles.
 	a.teardownVaultServices()
 	a.vaultMu.Unlock()
+	return nil
 }
 
 // teardownVaultServices closes and nils every vault-scoped service in the
@@ -518,10 +567,8 @@ func (a *App) CloseVault() error {
 	// Emit vault:closing BEFORE teardown so the frontend plugin loader can run
 	// every plugin's onVaultClose hook (#106) while IPC is still live. The
 	// event is best-effort: if no frontend is mounted (e.g. headless test),
-	// the emit is a no-op (a.ctx == nil guard).
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "vault:closing", struct{}{})
-	}
+	// the emit is a no-op (a.emit guards wailsApp == nil internally).
+	a.emit("vault:closing", struct{}{})
 	// Hold the write lock across the teardown so concurrent readers can't
 	// dereference a service pointer mid-close.
 	a.vaultMu.Lock()
@@ -560,8 +607,8 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// the initial index is built. A missing/invalid config is non-fatal —
 	// defaults keep the vault usable — but a parse error is surfaced.
 	cfg, cfgErr := config.Load(vaultPath)
-	if cfgErr != nil && a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "config:error", cfgErr.Error())
+	if cfgErr != nil {
+		a.emit("config:error", cfgErr.Error())
 	}
 	// F4: load the per-host grants store BEFORE applyConfigLocked so the
 	// first-party seed merges into the real store, not a transient empty one.
@@ -606,8 +653,8 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 				break
 			}
 		}
-		if hasThirdParty && a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "grants:migration-required", legacy)
+		if hasThirdParty {
+			a.emitOrQueue("grants:migration-required", legacy)
 		}
 	}
 
@@ -746,8 +793,8 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			log.Printf("initializeVaultServices: post-index checkpoint: %v", err)
 		}
 	}
-	if len(allWarnings) > 0 && a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "vault:init-warnings", allWarnings)
+	if len(allWarnings) > 0 {
+		a.emitOrQueue("vault:init-warnings", allWarnings)
 	}
 
 	watcher, err := monitor.NewDirectoryWatcher(vaultPath, dbMgr, tracker, coord, a.spacesPerTab)
@@ -782,7 +829,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	if a.ctx != nil {
 		cw, wErr := config.NewConfigWatcher(vaultPath,
 			func(reloaded config.SystemConfig) { a.applyConfig(reloaded) },
-			func(e error) { runtime.EventsEmit(a.ctx, "config:error", e.Error()) })
+			func(e error) { a.emit("config:error", e.Error()) })
 		if wErr != nil {
 			log.Printf("config watcher disabled: %v", wErr)
 		} else {
@@ -798,7 +845,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	if a.ctx != nil {
 		tw, tErr := templates.NewTemplateWatcher(a.templatesDir(), func() {
 			templates.InvalidateTemplateCache()
-			runtime.EventsEmit(a.ctx, "templates:changed", struct{}{})
+			a.emit("templates:changed", struct{}{})
 		})
 		if tErr != nil {
 			log.Printf("template watcher disabled: %v", tErr)
@@ -819,8 +866,8 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 
 	// Report any paths the watcher could not subscribe to (fsnotify
 	// limits, permissions, etc.) so the UI can inform the user.
-	if failed := watcher.FailedPaths(); len(failed) > 0 && a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "vault:watch-coverage", failed)
+	if failed := watcher.FailedPaths(); len(failed) > 0 {
+		a.emitOrQueue("vault:watch-coverage", failed)
 	}
 
 	return nil
@@ -841,9 +888,7 @@ func (a *App) GetAppVersion() string {
 
 // InitializeVault prompts the user for a folder, sets it up, and loads the services.
 func (a *App) InitializeVault() (bool, error) {
-	selectedPath, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Silt Vault Directory",
-	})
+	selectedPath, err := a.openDirectoryDialog("Select Silt Vault Directory")
 	if err != nil {
 		return false, fmt.Errorf("failed to select vault folder: %w", err)
 	}
@@ -880,9 +925,7 @@ func (a *App) InitializeVault() (bool, error) {
 // Copy so the frontend can show its own confirmation modal between the pick
 // and the commit, mirroring the delete flows (#141).
 func (a *App) PickVaultDestination() (string, error) {
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Destination for Silt Vault",
-	})
+	return a.openDirectoryDialog("Select Destination for Silt Vault")
 }
 
 // CopyVault duplicates the active vault tree at destPath, EXCLUDING the
@@ -1047,16 +1090,14 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 	//    user is told the original folder is still on disk — the move itself
 	//    succeeded, so this is non-blocking (surfaced as a toast, not an error
 	//    return).
-	if a.ctx != nil {
-		payload := map[string]string{
-			"from": src,
-			"to":   dest,
-		}
-		if result.RemoveOldErr != "" {
-			payload["warning"] = "Vault moved, but the original folder could not be removed: " + result.RemoveOldErr
-		}
-		runtime.EventsEmit(a.ctx, "vault:moved", payload)
+	payload := map[string]string{
+		"from": src,
+		"to":   dest,
 	}
+	if result.RemoveOldErr != "" {
+		payload["warning"] = "Vault moved, but the original folder could not be removed: " + result.RemoveOldErr
+	}
+	a.emit("vault:moved", payload)
 	return result, nil
 }
 
@@ -1157,12 +1198,10 @@ func (a *App) SwitchVault(path string) error {
 	if switchErr != nil {
 		return switchErr
 	}
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "vault:moved", map[string]string{
-			"from": "",
-			"to":   abs,
-		})
-	}
+	a.emit("vault:moved", map[string]string{
+		"from": "",
+		"to":   abs,
+	})
 	return nil
 }
 
@@ -1172,15 +1211,11 @@ func (a *App) SwitchVault(path string) error {
 // name (e.g. "<vault-name>.silt-vault"); pass "" to let the OS pick a default.
 // Mirrors PickExportPath (theme export) — the same SaveFileDialog surface.
 func (a *App) PickVaultExportPath(defaultFilename string) (string, error) {
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
-	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "Export Silt vault",
-		DefaultFilename: defaultFilename,
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Silt Vault (*.silt-vault)", Pattern: "*.silt-vault"},
-		},
+	return a.saveFileDialog("Export Silt vault", defaultFilename, []FileFilter{
+		{DisplayName: "Silt Vault (*.silt-vault)", Pattern: "*.silt-vault"},
 	})
 }
 
@@ -1209,13 +1244,11 @@ func (a *App) ExportVault(destPath string) (vault.ExportResult, error) {
 	}
 	vaultName := filepath.Base(filepath.Clean(src))
 	return vault.ExportVaultTree(src, destPath, vaultName, appVersion, func(phase string, current, total int) {
-		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "vault:archive:progress", map[string]any{
-				"phase":   phase,
-				"current": current,
-				"total":   total,
-			})
-		}
+		a.emit("vault:archive:progress", map[string]any{
+			"phase":   phase,
+			"current": current,
+			"total":   total,
+		})
 	})
 }
 
@@ -1224,14 +1257,11 @@ func (a *App) ExportVault(destPath string) (vault.ExportResult, error) {
 // path to ImportVault. Mirrors PickPluginArchive (the .silt-plugin picker) —
 // the same OpenFileDialog surface.
 func (a *App) PickVaultArchive() (string, error) {
-	if a.ctx == nil {
+	if a.wailsApp == nil {
 		return "", fmt.Errorf("application context not ready")
 	}
-	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Import Silt vault",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Silt Vault (*.silt-vault)", Pattern: "*.silt-vault"},
-		},
+	return a.openFileDialog("Import Silt vault", []FileFilter{
+		{DisplayName: "Silt Vault (*.silt-vault)", Pattern: "*.silt-vault"},
 	})
 }
 
@@ -1254,13 +1284,11 @@ func (a *App) ImportVault(archivePath, destPath string) (vault.ImportResult, err
 	defer a.wg.Done()
 
 	res, err := vault.ImportVaultTree(archivePath, destPath, func(phase string, current, total int) {
-		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "vault:archive:progress", map[string]any{
-				"phase":   phase,
-				"current": current,
-				"total":   total,
-			})
-		}
+		a.emit("vault:archive:progress", map[string]any{
+			"phase":   phase,
+			"current": current,
+			"total":   total,
+		})
 	})
 	if err != nil {
 		return vault.ImportResult{}, err

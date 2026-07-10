@@ -72,7 +72,7 @@ import {
   PluginListNavigation,
   GetNetworkAudit,
   ClearNetworkAudit
-} from '../../wailsjs/go/main/App.js'
+} from '../../bindings/silt/app.js'
 import { getActiveLocation } from './location.svelte'
 import { subscribe } from './events'
 import {
@@ -379,7 +379,7 @@ export function makePluginContext(
         ['%{{embed:' + id + '}}%']
       ),
     // FTS5 block search — wraps the SearchBlocks binding so plugin code (the
-    // dependency picker, #303) never imports wailsjs/go/main/App.js directly
+    // dependency picker, #303) never imports bindings/silt/app.js directly
     // (AGENTS.md — deprecated, breaks on per-plugin webviews #151/#152).
     searchBlocks: (query) => SearchBlocks(query),
     // Task-only search for the dependency picker: filters server-side via
@@ -437,7 +437,12 @@ export function makePluginContext(
           blockId: op.blockId ?? '',
           notebook: op.notebook ?? '',
           section: op.section ?? '',
-          page: op.page ?? ''
+          page: op.page ?? '',
+          // The SDK does not pre-mint block UUIDs; the backend mints one on
+          // create. Omitting the key on the wire is correct (JSON drops
+          // undefined), but the Wails v3 binding marks this omitempty field
+          // as required, so we set it to undefined to satisfy the type.
+          newId: undefined
         }))
       ).then(() => true),
 
@@ -550,7 +555,7 @@ export function makePluginContext(
         timeout: opts?.timeoutMs ?? 0
       }).then((res) => ({
         status: res?.status ?? 0,
-        headers: res?.headers ?? {},
+        headers: (res?.headers ?? {}) as Record<string, string>,
         body: res?.body ?? '',
         ok: !!res?.ok,
         truncated: !!res?.truncated

@@ -15,22 +15,40 @@ const mockRegisterSession = vi.hoisted(() =>
 const mockUnregisterSession = vi.hoisted(() =>
   vi.fn(() => Promise.resolve(undefined))
 )
-const mockEventsOn = vi.hoisted(() => vi.fn())
-const mockEventsOff = vi.hoisted(() => vi.fn())
-
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+const mockEventsOn = vi.hoisted(() =>
+  vi.fn((_event: string, _cb: (payload: unknown) => void) => () => {})
+)
+vi.mock('../../bindings/silt/app.js', () => ({
   ListPlugins: mockListPlugins,
   ReadPluginSource: mockReadPluginSource,
   RegisterPluginSession: mockRegisterSession,
   UnregisterPluginSession: mockUnregisterSession
 }))
-// EventsOff is exercised by first-party plugins that unsubscribe their ctx.on
-// listeners on onVaultClose (silt-ai-summary unsubscribes editor:save,
-// active-notebook:changed, and config:changed). The mock must support it so
-// plugin cleanup doesn't throw.
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: mockEventsOn,
-  EventsOff: mockEventsOff
+// Events.On returns a per-listener disposer (v3 contract). The mock mirrors
+// that so cleanupPlugin / clearAllSubscribers can call the captured disposer
+// without throwing.
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mockEventsOn
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 async function sha256Hex(text: string): Promise<string> {
@@ -129,7 +147,7 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
   // transitions: false at start, true at end of loadPlugins, false again
   // when vault:closing fires, true again on the next loadPlugins.
   //
-  // wireLifecycleOnce is module-scope idempotent: EventsOn only fires on
+  // wireLifecycleOnce is module-scope idempotent: Events.On only fires on
   // the FIRST loadPlugins call in this file (likely from the integrity
   // describe block above). We capture that callback once and reuse it —
   // do NOT reset mockEventsOn or the call record is lost.

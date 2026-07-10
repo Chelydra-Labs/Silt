@@ -73,6 +73,13 @@ type AppSettings struct {
 	// so it is outside the §0 rule-4 reproducibility contract that governs
 	// SQLite. settings.json is its own (non-SQLite) source of truth.
 	LastUpdateCheck string `json:"last_update_check,omitempty"`
+
+	// CloseToTray gates whether closing the main window hides to the system
+	// tray instead of quitting (#501). Pointer so an absent field resolves
+	// to default-off (nil → false); a user who turns it on persists an
+	// explicit true. User-global, pre-vault: the window exists before any
+	// vault is open, so this cannot live in vault config.yaml.
+	CloseToTray *bool `json:"close_to_tray,omitempty"`
 }
 
 // AutoCheckUpdatesEnabled reports whether the startup update check should run,

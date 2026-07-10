@@ -2,7 +2,7 @@ import {
   GetCustomDictionary,
   AddCustomDictionaryWord,
   RemoveCustomDictionaryWord
-} from '../../../../wailsjs/go/main/App.js'
+} from '../../../../bindings/silt/app.js'
 
 /**
  * Reactive custom-spellcheck-dictionary store (#196). Backs both the editor

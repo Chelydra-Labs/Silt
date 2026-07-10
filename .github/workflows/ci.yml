@@ -4,14 +4,14 @@ name: CI
 # contributor has not installed the hooks locally.
 #
 # Note on generated assets: both `frontend/dist/` (the vite build output) and
-# `frontend/wailsjs/` (the Go→JS binding stubs) are gitignored build artifacts.
+# `frontend/bindings/` (the Go→JS binding stubs) are gitignored build artifacts.
 # They are NOT committed, so a fresh CI checkout has neither. The flow below
 # regenerates them in the right order before any step that consumes them:
 #   1. npm install                (the `prepare` script seeds a placeholder
 #                                  frontend/dist/.gitkeep AND regenerates
-#                                  frontend/wailsjs/ from live Go App sigs)
+#                                  frontend/bindings/ from live Go App sigs)
 #   2. npm run build              (real vite build → real frontend/dist, and
-#                                  resolves the wailsjs imports)
+#                                  resolves the bindings imports)
 #   3. npm run check / go build / go test
 
 on:
@@ -27,6 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install Linux webview dependencies
+        # Wails v3 on Linux builds against GTK4 + WebKitGTK 6.0 via CGO.
+        # ubuntu-latest doesn't ship the -dev packages, so install them
+        # before any Go compile / test / govulncheck step.
+        run: |
+          sudo apt update
+          sudo apt install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev
+
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -34,18 +42,18 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Wails CLI
-        # wails generate module reflects the Go App signatures into JS.
+        # wails3 generate bindings reflects the Go App signatures into JS.
         # Derive the CLI version from go.mod so CI always matches the
         # library the project actually builds against (a hardcoded pin here
         # would silently drift the moment go.mod bumps wails).
         run: |
-          WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)
-          go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
+          WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
+          go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -53,7 +61,7 @@ jobs:
         # and may not include all Linux-specific optional dependencies
         # (e.g. @esbuild/linux-x64). npm install resolves missing platform
         # packages; npm ci requires a perfectly synced lockfile. The `prepare`
-        # script also regenerates frontend/wailsjs/ from the live Go App
+        # script also regenerates frontend/bindings/ from the live Go App
         # signatures (CONTRIBUTING.md §"Wails bindings"), and seeds a
         # placeholder frontend/dist/.gitkeep that lets `vite build` overwrite.
         run: npm install
@@ -72,6 +80,35 @@ jobs:
 
       - name: Build Go
         run: go build ./...
+
+      - name: Wails3 build smoke test
+        # Verifies the full v3 build pipeline (Taskfile + bindings + frontend + Go binary)
+        # produces a working binary, not just that Go compiles.
+        run: wails3 build
+
+      - name: go vet
+        # Standard static analysis. Runs alongside the project's custom
+        # withaipreflightdefer vettool below — both are go vet checks.
+        run: go vet ./...
+
+      - name: Binding parity check
+        # Replaces the old ">=180 methods" floor with an exact, deterministic
+        # comparison against the checked-in fixture at
+        # cmd/inventory/current-approved-v3.json. The gate FAILS on any
+        # missing, extra, or changed *App method signature (the IPC contract),
+        # so an accidental binding removal/rename/change is caught here rather
+        # than silently breaking the frontend at runtime. A deliberate surface
+        # change (new/removed/renamed binding) is made review-visible by
+        # regenerating the fixture in the same PR:
+        #
+        #   go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json
+        #
+        # Non-method sections (events, frontend imports) are reported as
+        # informational drift and do not fail the gate (they churn on routine
+        # feature work). The inventory is derived purely from source with
+        # repo-relative, forward-slashed paths, so the fixture is byte-identical
+        # across Windows/Linux/macOS — no platform-specific path noise.
+        run: go run -tags tools ./cmd/inventory/ -compare cmd/inventory/current-approved-v3.json
 
       - name: withAIPreflight defer-contract analyzer
         # Builds the vettool (gated out of the prod binary via //go:build tools)
@@ -108,6 +145,13 @@ jobs:
         with:
           fetch-depth: 0 # gitleaks needs full history
 
+      - name: Install Linux webview dependencies
+        # govulncheck analyzes Wails v3's CGO packages, which need the same
+        # GTK4 / WebKitGTK 6.0 dev headers as the build job.
+        run: |
+          sudo apt update
+          sudo apt install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev
+
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -120,7 +164,10 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          # Aligned with the build-and-test job (22) and the README's stated
+          # Node prerequisite, so the security gate audits the same LTS line
+          # the app actually ships on.
+          node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 

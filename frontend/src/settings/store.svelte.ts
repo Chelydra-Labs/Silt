@@ -8,9 +8,9 @@ import {
   SetFocusMode,
   SetTypewriterMode,
   SetOpenDevtoolsOnStartup
-} from '../../wailsjs/go/main/App.js'
-import { EventsOn } from '../../wailsjs/runtime/runtime.js'
-import type { config } from '../../wailsjs/go/models.js'
+} from '../../bindings/silt/app.js'
+import { Events } from '@wailsio/runtime'
+import type * as config from '../../bindings/silt/backend/config/models.js'
 
 export type SystemConfig = config.SystemConfig
 
@@ -36,7 +36,15 @@ export async function loadConfig(): Promise<void> {
   settings.loading = true
   settings.error = ''
   try {
-    settings.config = await GetSystemConfig()
+    // v3's GetSystemConfig returns a SystemConfig class instance (via
+    // createFrom). Svelte 5's $state proxy doesn't deeply track nested
+    // mutations on class instances — the prototype chain interferes with
+    // the proxy's set trap. Converting to a plain object ensures every
+    // nested property write (cfg.editor.focus_mode = next, etc.) triggers
+    // reactivity. Events (config:changed) deliver plain objects already,
+    // so only the initial load needs this conversion.
+    const raw = await GetSystemConfig()
+    settings.config = JSON.parse(JSON.stringify(raw))
     settings.dirty = false
     // Surface a startup config-load error that was emitted before this
     // frontend subscribed to config:error (one-shot: retrieved then cleared
@@ -161,14 +169,16 @@ let offConfigError: (() => void) | null = null
 
 export function initConfigHotReload(): void {
   if (offConfigChanged) return // idempotent
-  offConfigChanged = EventsOn('config:changed', (cfg: SystemConfig) => {
+  offConfigChanged = Events.On('config:changed', (ev: any) => {
+    const cfg: SystemConfig = ev.data
     settings.config = cfg
     settings.error = ''
     if (settings.dirty) {
       settings.pendingExternal = true
     }
   })
-  offConfigError = EventsOn('config:error', (msg: string) => {
+  offConfigError = Events.On('config:error', (ev: any) => {
+    const msg: string = ev.data
     // A reload failed to parse (e.g. external edit broke the YAML). Keep the
     // last-good config; surface a non-blocking error so the user knows.
     settings.error = msg
@@ -263,8 +273,7 @@ export async function toggleTypewriterMode(): Promise<boolean | null> {
  * structuredClone, which throws DataCloneError on a Svelte 5 $state proxy in
  * the webview (silently swallowed), so the toggle never flips. Same
  * single-field-write contract as toggleFormatToolbar — avoids clobbering an
- * unsaved EditorTab draft (the duplicate DevTools checkbox there re-hydrates
- * from this same field). Returns the new effective value, or null on error.
+ * unsaved EditorTab draft. Returns the new effective value, or null on error.
  */
 export async function toggleDevMode(): Promise<boolean | null> {
   const cfg = settings.config

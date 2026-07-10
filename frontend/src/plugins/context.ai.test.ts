@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => ({
   }))
 }))
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   PluginAIComplete: mocks.pluginAIComplete,
   PluginAIEmbed: mocks.pluginAIEmbed
 }))

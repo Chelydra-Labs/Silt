@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { fade } from 'svelte/transition'
-  import { ResolveBlockReference } from '../../wailsjs/go/main/App.js'
+  import { ResolveBlockReference } from '../../bindings/silt/app.js'
 
   interface Props {
     uuid: string

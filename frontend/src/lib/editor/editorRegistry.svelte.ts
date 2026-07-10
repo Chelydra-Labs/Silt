@@ -32,6 +32,18 @@ export interface EditorHandle {
 
 const editors = new Map<string, EditorHandle>()
 
+/** Build the registry lookup key for a page triple. This is the canonical
+ *  `${notebook}\x00${section}\x00${page}` format the editor registers under;
+ *  centralizing it here keeps consumers (menu Save, future writers) from
+ *  drifting out of sync with the registration key. */
+export function editorKey(
+  notebook: string,
+  section: string,
+  page: string
+): string {
+  return `${notebook}\x00${section}\x00${page}`
+}
+
 /** Register a mounted editor. Returns an unregister function. */
 export function registerEditor(handle: EditorHandle): () => void {
   editors.set(handle.key, handle)

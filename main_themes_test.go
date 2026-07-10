@@ -77,12 +77,9 @@ func TestLaunchBackgroundColour_TracksActiveCustom(t *testing.T) {
 	themes.InvalidateThemeCache()
 
 	c := launchBackgroundColour()
-	if c == nil {
-		t.Fatal("expected non-nil RGBA")
-	}
-	// warm-test's dark.bg.void is #102030 → R=16, G=32, B=48
-	if c.R != 16 || c.G != 32 || c.B != 48 {
-		t.Errorf("expected #102030 (16,32,48), got (%d,%d,%d)", c.R, c.G, c.B)
+	// warm-test's dark.bg.void is #102030 → Red=16, Green=32, Blue=48
+	if c.Red != 16 || c.Green != 32 || c.Blue != 48 {
+		t.Errorf("expected #102030 (16,32,48), got (%d,%d,%d)", c.Red, c.Green, c.Blue)
 	}
 }
 
@@ -93,9 +90,6 @@ func TestLaunchBackgroundColour_DefaultWhenNoSettings(t *testing.T) {
 	themes.InvalidateThemeCache()
 
 	c := launchBackgroundColour()
-	if c == nil {
-		t.Fatal("expected non-nil RGBA")
-	}
 	dt, err := themes.ParseDefault()
 	if err != nil {
 		t.Fatalf("ParseDefault: %v", err)
@@ -104,8 +98,8 @@ func TestLaunchBackgroundColour_DefaultWhenNoSettings(t *testing.T) {
 	if !ok {
 		t.Fatal("embedded default dark bg.void unparseable")
 	}
-	if c.R != r || c.G != g || c.B != b {
-		t.Errorf("expected default bg.void (%d,%d,%d), got (%d,%d,%d)", r, g, b, c.R, c.G, c.B)
+	if c.Red != r || c.Green != g || c.Blue != b {
+		t.Errorf("expected default bg.void (%d,%d,%d), got (%d,%d,%d)", r, g, b, c.Red, c.Green, c.Blue)
 	}
 }
 
@@ -128,9 +122,6 @@ func TestLaunchBackgroundColour_InvalidActiveIDFallsBack(t *testing.T) {
 	themes.InvalidateThemeCache()
 
 	c := launchBackgroundColour()
-	if c == nil {
-		t.Fatal("expected non-nil RGBA")
-	}
 	dt, err := themes.ParseDefault()
 	if err != nil {
 		t.Fatalf("ParseDefault: %v", err)
@@ -139,7 +130,7 @@ func TestLaunchBackgroundColour_InvalidActiveIDFallsBack(t *testing.T) {
 	if !ok {
 		t.Fatal("embedded default dark bg.void unparseable")
 	}
-	if c.R != r || c.G != g || c.B != b {
-		t.Errorf("expected default fallback (%d,%d,%d), got (%d,%d,%d)", r, g, b, c.R, c.G, c.B)
+	if c.Red != r || c.Green != g || c.Blue != b {
+		t.Errorf("expected default fallback (%d,%d,%d), got (%d,%d,%d)", r, g, b, c.Red, c.Green, c.Blue)
 	}
 }

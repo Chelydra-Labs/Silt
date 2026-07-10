@@ -6,7 +6,7 @@
     reloadFromBackend
   } from '../../settings/store.svelte'
   import type { SystemConfig } from '../../settings/store.svelte'
-  import type { config } from '../../../wailsjs/go/models.js'
+  import type * as config from '../../../bindings/silt/backend/config/models.js'
   import { displayFamilyName } from '../../theme/fonts'
   import { themeState } from '../../theme/store.svelte'
   import FontSelect from './FontSelect.svelte'
@@ -363,23 +363,6 @@
               />
               <span class="text-text-primary text-[13px] font-body-md">
                 Focus mode (dim inactive paragraphs)
-              </span>
-            </label>
-
-            <label class="flex items-center gap-2.5 cursor-pointer select-none">
-              <input
-                checked={draft.ui?.open_devtools_on_startup === true}
-                onchange={(e: Event) => {
-                  draftUI().open_devtools_on_startup = (
-                    e.currentTarget as HTMLInputElement
-                  ).checked
-                  touch()
-                }}
-                type="checkbox"
-                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
-              />
-              <span class="text-text-primary text-[13px] font-body-md">
-                Open DevTools on startup
               </span>
             </label>
 

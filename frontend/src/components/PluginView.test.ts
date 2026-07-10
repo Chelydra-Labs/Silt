@@ -22,7 +22,7 @@ const mockMakePluginContext = vi.hoisted(() =>
 )
 const mockGetSessionToken = vi.hoisted(() => vi.fn(() => 'tok'))
 
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   PluginRawQuery: vi.fn(),
   PluginMutateBlock: vi.fn(),
   PluginUpdateBlockState: vi.fn()

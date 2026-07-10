@@ -38,7 +38,7 @@ the pre-push hook, and how release notes are generated.
 git config core.hooksPath .githooks
 
 # Run the app:
-wails dev
+wails3 dev
 
 # Run the Go test suite with the race detector:
 go test -race -count=1 ./...
@@ -110,23 +110,23 @@ Do **not** attempt to resolve conflict markers in the lockfile by hand.
 
 ## Wails bindings — auto-regenerated on `npm install`
 
-The Go→JS IPC layer is **generated**: every method exported on `App` in
-`app.go` is reflected into `frontend/wailsjs/go/main/App.{js,d.ts}` and the
-types into `frontend/wailsjs/go/models.ts`. The frontend imports those
-generated files; they must match the live Go signatures or the frontend calls a
-function that does not exist (or with the wrong arg shape).
+The Go→JS IPC layer is **generated**: every method exposed on `App` in
+`app.go` is reflected into `frontend/bindings/` (the JS/TS stubs + models).
+The frontend imports those generated files; they must match the live Go
+signatures or the frontend calls a function that does not exist (or with the
+wrong arg shape).
 
-`frontend/wailsjs/` is **gitignored** — it is a build artifact, never
+`frontend/bindings/` is **gitignored** — it is a build artifact, never
 committed. Binding regeneration is now automatic:
 
 - `npm install` runs the `prepare` script (`scripts/regenerate-bindings.mjs`),
-  which calls `wails generate module` from the project root. A fresh clone
-  produces a working `frontend/wailsjs/` without a manual step, so a newly-
-  added Go method can never silently drift from the frontend imports a user
-  has.
+  which calls `wails3 generate bindings -d frontend/bindings` from the
+  project root. A fresh clone produces a working `frontend/bindings/` without
+  a manual step, so a newly-added Go method can never silently drift from the
+  frontend imports a user has.
 
-If the `wails` CLI is not on `PATH` (e.g. a brand-new machine that hasn't run
-`go install github.com/wailsapp/wails/v2/cmd/wails@latest` yet), the script
+If the `wails3` CLI is not on `PATH` (e.g. a brand-new machine that hasn't run
+`go install github.com/wailsapp/wails/v3/cmd/wails3@latest` yet), the script
 prints a one-line pointer and exits 0 — `npm install` is never blocked by an
 unrelated dev-tool install.
 
@@ -151,7 +151,7 @@ seconds before you push, so you're not waiting on CI for a broken build.
 full pipeline on Linux (go test -race, npm build, svelte-check, binding
 regeneration), including the cross-platform signal the local Windows hook
 can't give (symlink + fsnotify tests that skip on Windows). Frontend
-validation is left to CI: your IDE + `wails dev` cover live editing, and CI
+validation is left to CI: your IDE + `wails3 dev` cover live editing, and CI
 re-validates authoritatively on push.
 
 Documentation-only / asset-only pushes are exempt automatically.
@@ -160,7 +160,7 @@ Documentation-only / asset-only pushes are exempt automatically.
 
 See [`TESTING.md`](./TESTING.md) for the full test matrix (per-package
 coverage, the startup benchmark budget, and the manual verification checklist
-for `wails dev`).
+for `wails3 dev`).
 
 ## Architecture
 

@@ -46,9 +46,9 @@ Repo-specific rules that augment the global `~/.config/opencode/AGENTS.md`.
 - Follow `ARCHITECTURE.md` (topology, SQLite schema, IPC contract) and
   `SPECS.md` (file format, plugin SDK, config schema) as the sources of truth.
 - Plugin JS runs in the main webview; the SDK (`PluginContext`) is the
-  contract — direct Wails binding access (`wailsjs/go/main/App.js`) is
+  contract — direct Wails binding access (`bindings/silt/app.js`) is
   deprecated and will break when per-plugin webviews land (#151/#152).
-- Frontend tests mock `../../wailsjs/go/main/App.js` via `vi.mock` +
+- Frontend tests mock `../../bindings/silt/app.js` via `vi.mock` +
   `vi.hoisted` (see `frontend/src/components/settings/AppearanceTab.test.ts`
   for the canonical pattern). Never hit real IPC in a test.
 - Keep `PLAN.md` as a temporary planning artifact — never stage, commit, or

@@ -12,9 +12,10 @@ import {
   ListThemes,
   PickExportPath,
   PickThemeFile
-} from '../../wailsjs/go/main/App.js'
-import { EventsOn } from '../../wailsjs/runtime/runtime.js'
-import type { themes } from '../../wailsjs/go/models'
+} from '../../bindings/silt/app.js'
+import { Events } from '@wailsio/runtime'
+import type * as themes from '../../bindings/silt/backend/themes/models.js'
+import type { ActiveThemeResult } from '../../bindings/silt/models.js'
 import { injectTokens } from './inject'
 
 export type ThemeMode = 'dark' | 'light' | 'system'
@@ -219,25 +220,23 @@ export async function initTheme(): Promise<void> {
   // (the common case -- our own applyTheme call), skip the redundant
   // GetActiveTheme round-trip + re-inject. Falls through to a re-fetch when
   // the change is external or the local state hasn't caught up yet.
-  EventsOn(
-    'theme:changed',
-    async (payload: { id?: string; mode?: string } | null) => {
-      if (
-        payload &&
-        payload.id === themeState.id &&
-        payload.mode === themeState.mode
-      ) {
-        return
-      }
-      try {
-        const res = await GetActiveTheme()
-        applyResult(res)
-      } catch (err) {
-        console.error('theme: failed to apply theme:changed event:', err)
-        themeState.error = err instanceof Error ? err.message : String(err)
-      }
+  Events.On('theme:changed', async (ev: any) => {
+    const payload: { id?: string; mode?: string } | null = ev.data
+    if (
+      payload &&
+      payload.id === themeState.id &&
+      payload.mode === themeState.mode
+    ) {
+      return
     }
-  )
+    try {
+      const res = await GetActiveTheme()
+      applyResult(res)
+    } catch (err) {
+      console.error('theme: failed to apply theme:changed event:', err)
+      themeState.error = err instanceof Error ? err.message : String(err)
+    }
+  })
 
   try {
     const res = await GetActiveTheme()
@@ -251,20 +250,17 @@ export async function initTheme(): Promise<void> {
 }
 
 /** Apply an IPC result to the store and inject the effective tokens. */
-function applyResult(res: {
-  id: string
-  name: string
-  mode: string
-  dark_tokens: Record<string, string>
-  light_tokens: Record<string, string>
-}): void {
+function applyResult(res: ActiveThemeResult): void {
   themeState.id = res.id
   themeState.name = res.name
   themeState.mode = (VALID_MODES as readonly string[]).includes(res.mode)
     ? (res.mode as ThemeMode)
     : 'dark'
-  themeState.darkTokens = res.dark_tokens || {}
-  themeState.lightTokens = res.light_tokens || {}
+  // The backend always populates both token maps (Go doc: "always present");
+  // the per-value `| undefined` is a Wails v3 binding-generator artifact for
+  // map[string]string, not real optionality — narrow at this IPC boundary.
+  themeState.darkTokens = res.dark_tokens as Record<string, string>
+  themeState.lightTokens = res.light_tokens as Record<string, string>
   themeState.error = null
   restoreActiveTheme()
 }
@@ -347,13 +343,20 @@ export async function pickAndImportTheme(): Promise<string | null> {
   return importThemeFromPath(path)
 }
 
-/** Import a theme from a known path (used by both the picker button and
- * the OnFileDrop drop zone). */
+/** Import a theme from a known path (used by the picker button). */
 export async function importThemeFromPath(
   path: string
 ): Promise<string | null> {
   try {
     const res = await ImportTheme(path)
+    if (!res) {
+      setStatus({
+        kind: 'error',
+        message: 'Theme import returned no result.',
+        fields: []
+      })
+      return null
+    }
     if (res.validation_errors?.length) {
       setStatus({
         kind: 'error',
@@ -451,7 +454,7 @@ export function initThemes(): () => void {
   // than N concurrent round-trips whose responses may arrive
   // out-of-order.
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
-  offThemesChanged = EventsOn('themes:changed', () => {
+  offThemesChanged = Events.On('themes:changed', () => {
     if (reloadTimer !== null) clearTimeout(reloadTimer)
     reloadTimer = setTimeout(() => {
       reloadTimer = null

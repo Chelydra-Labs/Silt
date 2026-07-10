@@ -5,7 +5,7 @@ import type { NavSection } from './types'
 import { NavOrderManager } from './navOrder'
 
 // Mock the Wails IPC bindings.
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   MovePage: vi.fn().mockResolvedValue(undefined),
   GetNavOrder: vi.fn().mockResolvedValue({}),
   SetNavOrder: vi.fn().mockResolvedValue(undefined)
@@ -123,7 +123,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop reorders sections via navOrder', async () => {
-    const { SetNavOrder } = await import('../../../wailsjs/go/main/App.js')
+    const { SetNavOrder } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
@@ -138,7 +138,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop reorders root-level pages via persistPageOrder (#369)', async () => {
-    const { SetNavOrder } = await import('../../../wailsjs/go/main/App.js')
+    const { SetNavOrder } = await import('../../../bindings/silt/app.js')
     // Synthetic root section (name === '') supplies the section-less page
     // list the sidebar renders at Sidebar.svelte:866.
     const rootPages: NavSection[] = [
@@ -202,7 +202,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop page→section calls MovePage', async () => {
-    const { MovePage } = await import('../../../wailsjs/go/main/App.js')
+    const { MovePage } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
@@ -227,7 +227,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop same-section page→section is a no-op', async () => {
-    const { MovePage } = await import('../../../wailsjs/go/main/App.js')
+    const { MovePage } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
@@ -240,7 +240,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop page→__root__ moves the page out of its section', async () => {
-    const { MovePage } = await import('../../../wailsjs/go/main/App.js')
+    const { MovePage } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
@@ -259,7 +259,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop page→__root__ is a no-op when the page is already at root', async () => {
-    const { MovePage } = await import('../../../wailsjs/go/main/App.js')
+    const { MovePage } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()

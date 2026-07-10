@@ -8,8 +8,8 @@
 // Refreshed from GetGrantedCapabilities on boot + on every plugins:changed
 // event. First-party plugins are implicitly granted every capability.
 
-import { GetGrantedCapabilities } from '../../wailsjs/go/main/App.js'
-import { EventsOn } from '../../wailsjs/runtime/runtime.js'
+import { GetGrantedCapabilities } from '../../bindings/silt/app.js'
+import { Events } from '@wailsio/runtime'
 import { firstPartyPlugins } from './registry'
 
 const ALL_CAPS = [
@@ -88,7 +88,7 @@ export function initGrants(): void {
   wired = true
   refreshFirstPartyIDs()
   void refreshGrants()
-  EventsOn('plugins:changed', () => void refreshGrants())
+  Events.On('plugins:changed', () => void refreshGrants())
 }
 
 /** Test-only: reset the cache + wiring state. */

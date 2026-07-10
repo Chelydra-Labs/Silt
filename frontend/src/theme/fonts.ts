@@ -139,6 +139,7 @@ import '@fontsource/crimson-pro/latin-700.css'
 // documented at the top of this file. The 400 weight is the default
 // Material Symbols Outlined rendering; the codebase does not override the
 // weight via CSS, so a single weight file matches the prior rendering.
+import '@fontsource/material-symbols-outlined/300.css'
 import '@fontsource/material-symbols-outlined/400.css'
 
 export type FontCategory = 'sans' | 'mono' | 'display' | 'serif'

@@ -5,10 +5,10 @@
     MoveVault,
     CopyVault,
     SwitchVault
-  } from '../../../wailsjs/go/main/App.js'
+  } from '../../../bindings/silt/app.js'
 
   // CopyVault's runtime return shape (matches main.CopyResult in
-  // wailsjs/go/models.ts). Declared locally so this component does not depend
+  // bindings/silt/models.js.ts). Declared locally so this component does not depend
   // on the generated `main` namespace import path.
   interface CopyResultShape {
     files_copied: number

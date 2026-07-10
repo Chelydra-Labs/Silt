@@ -19,11 +19,33 @@ const mocks = vi.hoisted(() => ({
 
 // Mirror the exact specifier TitleBar.svelte imports (same directory, so the
 // relative path resolves to the same absolute module the component sees).
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  WindowMinimise: mocks.WindowMinimise,
-  WindowToggleMaximise: mocks.WindowToggleMaximise,
-  WindowIsMaximised: mocks.WindowIsMaximised,
-  Quit: mocks.Quit
+vi.mock('@wailsio/runtime', () => ({
+  Window: {
+    Minimise: mocks.WindowMinimise,
+    ToggleMaximise: mocks.WindowToggleMaximise,
+    IsMaximised: mocks.WindowIsMaximised
+  },
+  Application: {
+    Quit: mocks.Quit
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 import TitleBar from './TitleBar.svelte'

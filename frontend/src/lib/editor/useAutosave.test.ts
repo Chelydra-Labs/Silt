@@ -3,7 +3,7 @@ import { AutosaveManager } from './useAutosave'
 import type { AutosaveDeps } from './useAutosave'
 
 // Mock the Wails IPC binding.
-vi.mock('../../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../../bindings/silt/app.js', () => ({
   SaveFileBlocks: vi.fn().mockResolvedValue(undefined)
 }))
 
@@ -52,7 +52,7 @@ describe('AutosaveManager', () => {
   })
 
   it('saves after the configured delay', async () => {
-    const { SaveFileBlocks } = await import('../../../wailsjs/go/main/App.js')
+    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)
 
@@ -64,13 +64,18 @@ describe('AutosaveManager', () => {
     // Advance past the delay.
     await vi.advanceTimersByTimeAsync(150)
 
-    expect(SaveFileBlocks).toHaveBeenCalledWith('Work', 'Journal', '2026-06-22', expect.any(Array))
+    expect(SaveFileBlocks).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      '2026-06-22',
+      expect.any(Array)
+    )
     expect(deps.onStateChange).toHaveBeenCalledWith(false, null)
     expect(deps.onUpdate).toHaveBeenCalled()
   })
 
   it('debounces rapid triggers', async () => {
-    const { SaveFileBlocks } = await import('../../../wailsjs/go/main/App.js')
+    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)
 
@@ -85,7 +90,7 @@ describe('AutosaveManager', () => {
   })
 
   it('flush() saves immediately', async () => {
-    const { SaveFileBlocks } = await import('../../../wailsjs/go/main/App.js')
+    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)
 
@@ -96,7 +101,7 @@ describe('AutosaveManager', () => {
   })
 
   it('flush() is a no-op when no save is pending', async () => {
-    const { SaveFileBlocks } = await import('../../../wailsjs/go/main/App.js')
+    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)
 
@@ -106,7 +111,7 @@ describe('AutosaveManager', () => {
   })
 
   it('reports errors via onStateChange', async () => {
-    const { SaveFileBlocks } = await import('../../../wailsjs/go/main/App.js')
+    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
     vi.mocked(SaveFileBlocks).mockRejectedValueOnce(new Error('disk full'))
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)
@@ -130,7 +135,7 @@ describe('AutosaveManager', () => {
   })
 
   it('does not save when editor is null', async () => {
-    const { SaveFileBlocks } = await import('../../../wailsjs/go/main/App.js')
+    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps({ getEditor: () => null })
     const autosave = new AutosaveManager(deps)
 
@@ -156,7 +161,7 @@ describe('AutosaveManager', () => {
   })
 
   it('reads current identity after a page rename (stale-capture regression)', async () => {
-    const { SaveFileBlocks } = await import('../../../wailsjs/go/main/App.js')
+    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
     let currentPage = 'OldPage'
     const deps = makeDeps({ getPage: () => currentPage })
     const autosave = new AutosaveManager(deps)
@@ -164,13 +169,23 @@ describe('AutosaveManager', () => {
     // Save with the original page name.
     autosave.trigger()
     await vi.advanceTimersByTimeAsync(150)
-    expect(SaveFileBlocks).toHaveBeenCalledWith('Work', 'Journal', 'OldPage', expect.any(Array))
+    expect(SaveFileBlocks).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'OldPage',
+      expect.any(Array)
+    )
 
     // Simulate a rename: the getter now returns the new name.
     currentPage = 'RenamedPage'
     vi.mocked(SaveFileBlocks).mockClear()
     autosave.trigger()
     await vi.advanceTimersByTimeAsync(150)
-    expect(SaveFileBlocks).toHaveBeenCalledWith('Work', 'Journal', 'RenamedPage', expect.any(Array))
+    expect(SaveFileBlocks).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'RenamedPage',
+      expect.any(Array)
+    )
   })
 })

@@ -1,16 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { EventsOn } from '../../../wailsjs/runtime/runtime.js'
+  import { Events } from '@wailsio/runtime'
   import {
     PickVaultExportPath,
     ExportVault,
     PickVaultArchive,
     PickVaultDestination,
     ImportVault
-  } from '../../../wailsjs/go/main/App.js'
+  } from '../../../bindings/silt/app.js'
 
   // ExportVault's runtime return shape (matches main.ExportResult in
-  // wailsjs/go/models.ts). Declared locally so this component does not depend
+  // bindings/silt/models.js.ts). Declared locally so this component does not depend
   // on the generated `main` namespace import path.
   interface ExportResultShape {
     files_archived: number
@@ -74,7 +74,8 @@
   // emitting when the call returns. Re-mounting (re-opening) re-subscribes.
   let offProgress: (() => void) | null = null
   $effect(() => {
-    offProgress = EventsOn('vault:archive:progress', (p: any) => {
+    offProgress = Events.On('vault:archive:progress', (ev: any) => {
+      const p: any = ev.data
       if (p && typeof p.current === 'number' && typeof p.total === 'number') {
         progress = {
           phase: String(p.phase ?? ''),

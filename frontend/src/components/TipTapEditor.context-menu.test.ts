@@ -60,7 +60,7 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../wailsjs/go/main/App.js', () => ({
+vi.mock('../../bindings/silt/app.js', () => ({
   SaveFileBlocks: mocks.saveFileBlocks,
   AcquireFocusLock: mocks.acquireFocusLock,
   RefreshFocusLock: mocks.refreshFocusLock,
@@ -69,8 +69,28 @@ vi.mock('../../wailsjs/go/main/App.js', () => ({
   DistinctOwners: mocks.distinctOwners
 }))
 
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: mocks.eventsOn
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mocks.eventsOn
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 
 vi.mock('../settings/store.svelte', () => ({
@@ -92,6 +112,20 @@ vi.mock('../plugins/events', () => ({
 
 vi.mock('../lib/perf/frame-budget', () => ({
   measureFrameBudget: vi.fn((_label: string, fn: () => unknown) => fn())
+}))
+
+// The real dictionary module fetches the bundled Hunspell assets via a
+// relative URL; Node's fetch has no base to resolve it (ERR_INVALID_URL).
+// These tests cover context-menu/@-mention mechanics, not spellcheck, so a
+// benign stub keeps the editor mounted without the failed-fetch noise.
+vi.mock('../lib/editor/spellcheck/dictionary', () => ({
+  loadDictionary: vi.fn().mockResolvedValue({ loaded: true }),
+  isDictionaryLoaded: vi.fn(() => true),
+  resetDictionary: vi.fn(),
+  setCustomWords: vi.fn(),
+  checkWord: vi.fn(() => true),
+  ignoreWordSession: vi.fn(),
+  suggest: vi.fn(() => [])
 }))
 
 async function openContextMenu(container: HTMLElement): Promise<void> {

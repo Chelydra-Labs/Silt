@@ -33,7 +33,7 @@ verification gates for Silt.
   there are no Playwright/Selenium-style end-to-end tests against the rendered
   app (see AGENTS.md). Cover interactions at the **IPC boundary** instead:
   mock the Wails bindings (`vi.mock` + `vi.hoisted` on
-  `../../wailsjs/go/main/App.js`) and assert the contract — never hit live IPC.
+  `../../bindings/silt/app.js`) and assert the contract — never hit live IPC.
 - **Frontend:** Vitest (jsdom).
 - **Backend:** Go's `testing` package, run with `-race`.
 
@@ -91,7 +91,7 @@ go test -bench=. -count=3 ./backend/db/        # warm-restart diff
 
 Interactions the jsdom layer cannot drive — HTML5 drag-drop, real
 `DataTransfer`, layout-driven coordinates, native pickers — are verified
-manually against `wails dev`. Grouped by surface; each item is pass/fail.
+manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
 
 **Onboarding & vault lifecycle**
 - [ ] First run shows the empty state; "Initialize Workspace" opens the native
@@ -204,7 +204,7 @@ manually against `wails dev`. Grouped by surface; each item is pass/fail.
 
 ## Known gaps
 
-- No Wails integration test (requires the `wails dev` runtime) — covered by the
+- No Wails integration test (requires the `wails3 dev` runtime) — covered by the
   manual matrix above.
 - No watcher e2e against real fsnotify events.
 - HTML5 drag-drop end-to-end (Board, block reorder) has no jsdom equivalent —

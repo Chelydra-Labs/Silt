@@ -20,6 +20,7 @@ pnpm-debug.log*
 frontend/dist/
 frontend/node_modules/
 frontend/wailsjs/
+frontend/bindings/
 
 # IDEs/OS
 .idea/
@@ -104,3 +105,6 @@ pr_body.md
 frontend/package.json.md5
 .gobins/
 .system/
+
+# Taskfile cache (wails3 build system)
+.task/

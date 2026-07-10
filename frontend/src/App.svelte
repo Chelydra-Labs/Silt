@@ -14,10 +14,12 @@
     ResolveQuarantinedLinks,
     PickLinkedNotebook,
     UnlinkNotebook,
-    CreateStandaloneTask
-  } from '../wailsjs/go/main/App.js'
-  import { EventsOn } from '../wailsjs/runtime/runtime.js'
-  import type { config } from '../wailsjs/go/models.js'
+    CreateStandaloneTask,
+    MarkFrontendReady,
+    GetStartupEvents
+  } from '../bindings/silt/app.js'
+  import { Events } from '@wailsio/runtime'
+  import type * as config from '../bindings/silt/backend/config/models.js'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -45,7 +47,11 @@
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { matchHotkey } from './settings/hotkeys'
   import { findBarState } from './lib/editor/search/findBarState.svelte'
-  import { clearAllEditors } from './lib/editor/editorRegistry.svelte'
+  import {
+    clearAllEditors,
+    editorKey,
+    getEditor
+  } from './lib/editor/editorRegistry.svelte'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import PluginModalHost from './components/PluginModalHost.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
@@ -532,54 +538,52 @@
     let prevDisabled: string[] = settings.config?.plugins?.disabled ?? []
     // Initialize the tab hot-reload baseline from the settings store.
     prevOpenTabsKey = tabSetKey(settings.config?.ui?.open_tabs)
-    const offConfigChangedReload = EventsOn(
-      'config:changed',
-      (cfg: SystemConfig) => {
-        const next = (cfg?.plugins?.disabled ?? []) as string[]
-        if (!arraysEqual(prevDisabled, next)) {
-          prevDisabled = [...next]
-          loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
-            console.error('Plugin reload after config change failed:', e)
+    const offConfigChangedReload = Events.On('config:changed', (ev: any) => {
+      const cfg: SystemConfig = ev.data
+      const next = (cfg?.plugins?.disabled ?? []) as string[]
+      if (!arraysEqual(prevDisabled, next)) {
+        prevDisabled = [...next]
+        loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
+          console.error('Plugin reload after config change failed:', e)
+        )
+      }
+      // Re-hydrate tabs if the external ui.open_tabs block changed
+      // (user hand-edited config.yaml or another process wrote it).
+      // tabSetKey is intentionally locator-only: a view-mode change must
+      // NOT trigger a full re-hydrate (that would rebuild tabs and remount
+      // editors on every in-app toggle, since the frontend's own
+      // persistTabs write also fires config:changed).
+      const nextTabsKey = tabSetKey(cfg?.ui?.open_tabs)
+      if (nextTabsKey !== prevOpenTabsKey) {
+        prevOpenTabsKey = nextTabsKey
+        void loadPersistedTabs()
+      }
+      // Reconcile per-tab view_mode from an external config.yaml edit
+      // in place — no re-hydrate, no editor remount. The frontend's own
+      // writes match the in-memory state, so they produce no diff here;
+      // only an external hand-edit (or another process) flips a mode.
+      const externalTabs = cfg?.ui?.open_tabs ?? []
+      if (externalTabs.length > 0) {
+        for (const ref of externalTabs) {
+          const tab = openTabs.find(
+            (t) =>
+              t.notebook === ref.notebook &&
+              t.section === (ref.section ?? '') &&
+              t.page === ref.page
           )
-        }
-        // Re-hydrate tabs if the external ui.open_tabs block changed
-        // (user hand-edited config.yaml or another process wrote it).
-        // tabSetKey is intentionally locator-only: a view-mode change must
-        // NOT trigger a full re-hydrate (that would rebuild tabs and remount
-        // editors on every in-app toggle, since the frontend's own
-        // persistTabs write also fires config:changed).
-        const nextTabsKey = tabSetKey(cfg?.ui?.open_tabs)
-        if (nextTabsKey !== prevOpenTabsKey) {
-          prevOpenTabsKey = nextTabsKey
-          void loadPersistedTabs()
-        }
-        // Reconcile per-tab view_mode from an external config.yaml edit
-        // in place — no re-hydrate, no editor remount. The frontend's own
-        // writes match the in-memory state, so they produce no diff here;
-        // only an external hand-edit (or another process) flips a mode.
-        const externalTabs = cfg?.ui?.open_tabs ?? []
-        if (externalTabs.length > 0) {
-          for (const ref of externalTabs) {
-            const tab = openTabs.find(
-              (t) =>
-                t.notebook === ref.notebook &&
-                t.section === (ref.section ?? '') &&
-                t.page === ref.page
-            )
-            if (!tab) continue
-            const mode = ref.view_mode === 'source' ? 'source' : 'edit'
-            if (tab.viewMode !== mode) {
-              openTabs = setTabViewModeState(
-                { tabs: openTabs, activeId: activeTabId },
-                tab.id,
-                mode
-              ).tabs
-              // Do NOT schedulePersistTabs — this change is already on disk.
-            }
+          if (!tab) continue
+          const mode = ref.view_mode === 'source' ? 'source' : 'edit'
+          if (tab.viewMode !== mode) {
+            openTabs = setTabViewModeState(
+              { tabs: openTabs, activeId: activeTabId },
+              tab.id,
+              mode
+            ).tabs
+            // Do NOT schedulePersistTabs — this change is already on disk.
           }
         }
       }
-    )
+    })
 
     function handleOpenSettings(e: Event) {
       const detail = (e as CustomEvent).detail
@@ -804,8 +808,8 @@
     window.addEventListener('silt:change-vault', handleSwitchVault)
     window.addEventListener('page-renamed', handlePageRenamed)
     // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
-    // be received via EventsOn — a DOM addEventListener would never fire.
-    const offPluginsChanged = EventsOn('plugins:changed', () =>
+    // be received via Events.On — a DOM addEventListener would never fire.
+    const offPluginsChanged = Events.On('plugins:changed', () =>
       handlePluginsChanged()
     )
     // `vault:moved` fires after a successful vault Move/Copy-Switch (#141).
@@ -814,60 +818,67 @@
     // so the UI reflects the new workspace. If the optional old-vault removal
     // didn't happen, payload.warning carries the reason → surface a non-
     // blocking toast (the move itself succeeded).
-    const offVaultMoved = EventsOn(
-      'vault:moved',
-      (e: { from?: string; to?: string; warning?: string }) => {
-        activeNotebook = ''
-        activeSection = ''
-        activePage = ''
-        openTabs = []
-        activeTabId = ''
-        activeView = 'notes'
-        showSettings = false
-        // Drop any editor reconciliation handles tied to the old vault so a
-        // teardown that bypassed Svelte $effect cleanup can't leave a stale
-        // editor buffer flushing into the new vault (#345).
-        clearAllEditors()
-        loadConfig().catch((e) =>
-          console.error('Post-move config reload failed:', e)
-        )
-        window.dispatchEvent(new CustomEvent('refresh-navigation'))
-        if (e?.warning) {
-          pushNotification({ kind: 'error', message: e.warning })
-        }
+    const offVaultMoved = Events.On('vault:moved', (ev: any) => {
+      const e: { from?: string; to?: string; warning?: string } = ev.data
+      activeNotebook = ''
+      activeSection = ''
+      activePage = ''
+      openTabs = []
+      activeTabId = ''
+      activeView = 'notes'
+      showSettings = false
+      // Drop any editor reconciliation handles tied to the old vault so a
+      // teardown that bypassed Svelte $effect cleanup can't leave a stale
+      // editor buffer flushing into the new vault (#345).
+      clearAllEditors()
+      loadConfig().catch((e) =>
+        console.error('Post-move config reload failed:', e)
+      )
+      window.dispatchEvent(new CustomEvent('refresh-navigation'))
+      if (e?.warning) {
+        pushNotification({ kind: 'error', message: e.warning })
       }
-    )
+    })
     // F20: trust-anchor fingerprint mismatch — the backend detected that
     // vault_path or trusted_publishers changed since last launch (possible
     // tampering, or a legit external edit). Show a confirmation modal; the
     // user can confirm (clears the sentinel) or dismiss (mismatch persists
-    // on next launch).
-    const offSettingsMismatch = EventsOn(
+    // on next launch). Extracted to a named handler so both the live
+    // Events.On listener and the startup-event replay (dispatchStartupEvent)
+    // run the exact same code.
+    function handleSettingsMismatch() {
+      showSettingsMismatch = true
+    }
+    const offSettingsMismatch = Events.On(
       'settings:fingerprint-mismatch',
-      () => {
-        showSettingsMismatch = true
-      }
+      handleSettingsMismatch
     )
     // F4: grants migration — the vault's legacy config.yaml carries a grants
     // block this host has never seen. Show a one-time confirmation modal.
-    const offGrantsMigration = EventsOn(
+    function handleGrantsMigration(
+      grants: Record<string, Record<string, string>>
+    ) {
+      pendingLegacyGrants = grants
+      showGrantsMigration = true
+    }
+    const offGrantsMigration = Events.On(
       'grants:migration-required',
-      (grants: Record<string, Record<string, string>>) => {
-        pendingLegacyGrants = grants
-        showGrantsMigration = true
+      (ev: any) => {
+        handleGrantsMigration(ev.data)
       }
     )
     // F3: linked-notebook quarantined — the root was moved or tampered with.
     // Refresh the quarantine list so the modal shows the latest set.
-    const offLinkedQuarantined = EventsOn(
-      'linked-notebook:quarantined',
-      async () => {
-        try {
-          quarantinedLinks = await ResolveQuarantinedLinks()
-        } catch (e) {
-          console.error('ResolveQuarantinedLinks failed:', e)
-        }
+    async function handleLinkedQuarantined() {
+      try {
+        quarantinedLinks = await ResolveQuarantinedLinks()
+      } catch (e) {
+        console.error('ResolveQuarantinedLinks failed:', e)
       }
+    }
+    const offLinkedQuarantined = Events.On(
+      'linked-notebook:quarantined',
+      handleLinkedQuarantined
     )
     // Vault init failed during startup (settings.json unreadable, DB open
     // failed, network-filesystem vault, watcher start failed, …). Without
@@ -875,24 +886,44 @@
     // with no clue why — the user sees a dead frame. Surface it as a sticky
     // error toast so the cause is visible. (Wails delivers OnStartup after
     // the frontend mounts, so this listener is registered in time.)
-    const offVaultInitError = EventsOn('vault:init-error', (msg: string) => {
+    function handleVaultInitError(msg: string) {
       pushNotification({
         kind: 'error',
         message: `Vault failed to initialize: ${msg}`,
         autoDismissMs: 0
       })
+    }
+    const offVaultInitError = Events.On('vault:init-error', (ev: any) => {
+      handleVaultInitError(ev.data)
     })
     // Non-fatal init warnings (symlink skips, permission errors during scan).
     // These don't block usage but explain missing/partial content.
-    const offVaultInitWarnings = EventsOn(
-      'vault:init-warnings',
-      (warnings: string[]) => {
-        if (!warnings?.length) return
-        pushNotification({
-          kind: 'info',
-          message: `Vault initialized with warnings: ${warnings.join('; ')}`,
-          autoDismissMs: 0
-        })
+    function handleVaultInitWarnings(warnings: string[]) {
+      if (!warnings?.length) return
+      pushNotification({
+        kind: 'info',
+        message: `Vault initialized with warnings: ${warnings.join('; ')}`,
+        autoDismissMs: 0
+      })
+    }
+    const offVaultInitWarnings = Events.On('vault:init-warnings', (ev: any) => {
+      handleVaultInitWarnings(ev.data)
+    })
+    // fsnotify subscription failures (watch limit, permissions). File-change
+    // watching is degraded for these paths — indexing and autosave
+    // reconciliation may not track external edits to them.
+    function handleVaultWatchCoverage(failedPaths: string[]) {
+      if (!failedPaths?.length) return
+      pushNotification({
+        kind: 'info',
+        message: `File watching unavailable for ${failedPaths.length} path(s). External edits to these folders won't auto-sync.`,
+        autoDismissMs: 0
+      })
+    }
+    const offVaultWatchCoverage = Events.On(
+      'vault:watch-coverage',
+      (ev: any) => {
+        handleVaultWatchCoverage(ev.data)
       }
     )
     // Mass id re-mint detection (#443): an external tool/sync stripped the
@@ -901,13 +932,89 @@
     // those blocks. The toast (built by reMintToast) is sticky, leads with
     // the user-visible impact, and offers a "Show file" CTA. The builder is
     // extracted so its payload-shaping contract is unit-testable.
-    const offReMintWarning = EventsOn(
-      'index:re-mint-warning',
-      (w: ReMintWarning) => {
-        if (!w) return
-        pushNotification(reMintToast(w, openPage))
-      }
+    const offReMintWarning = Events.On('index:re-mint-warning', (ev: any) => {
+      const w: ReMintWarning = ev.data
+      if (!w) return
+      pushNotification(reMintToast(w, openPage))
+    })
+
+    // Native menu events (#503) — the Go-side menu items emit these; wire
+    // them to the same handlers the keyboard shortcuts use so menu and
+    // hotkey actions are indistinguishable.
+    const offMenuNewPage = Events.On('menu:new-page', () => {
+      templatePickerMode = 'new-page'
+      showTemplatePicker = !showTemplatePicker
+    })
+    const offMenuOpenVault = Events.On('menu:open-vault', () => {
+      void handleSwitchVault()
+    })
+    const offMenuSave = Events.On('menu:save', () => void handleMenuSave())
+    const offMenuToggleSidebar = Events.On('menu:toggle-sidebar', () => {
+      sidebarCollapsed = !sidebarCollapsed
+      manuallyCollapsed = sidebarCollapsed
+    })
+    const offMenuToggleFormatToolbar = Events.On(
+      'menu:toggle-format-toolbar',
+      () => void toggleFormatToolbar()
     )
+    const offMenuFind = Events.On('menu:find', () => {
+      findBarState.openFind()
+    })
+    const offMenuFocusMode = Events.On('menu:focus-mode', () => {
+      void toggleFocusMode()
+    })
+    const offMenuSettings = Events.On('menu:settings', () => {
+      openSettings('general')
+    })
+    const offMenuAbout = Events.On('menu:about', () => {
+      openSettings('about')
+    })
+
+    // Wails v3 fires ServiceStartup before the webview exists, so every
+    // startup-time emit (vault:init-error, settings:fingerprint-mismatch,
+    // grants:migration-required, vault:init-warnings, vault:watch-coverage,
+    // linked-notebook:quarantined) is lost — no JS listener was registered
+    // yet. The backend stashes those via emitOrQueue; here we mark the
+    // frontend ready (stop queueing), drain the queue, and replay each event
+    // through the same named handler its live Events.On listener uses, so a
+    // startup event is indistinguishable from a live one to the handler.
+    function dispatchStartupEvent(name: string, data: any): void {
+      switch (name) {
+        case 'settings:fingerprint-mismatch':
+          handleSettingsMismatch()
+          break
+        case 'grants:migration-required':
+          handleGrantsMigration(data)
+          break
+        case 'linked-notebook:quarantined':
+          void handleLinkedQuarantined()
+          break
+        case 'vault:init-error':
+          handleVaultInitError(data)
+          break
+        case 'vault:init-warnings':
+          handleVaultInitWarnings(data)
+          break
+        case 'vault:watch-coverage':
+          handleVaultWatchCoverage(data)
+          break
+        default:
+          break
+      }
+    }
+
+    void (async () => {
+      try {
+        await MarkFrontendReady()
+        const missed = await GetStartupEvents()
+        for (const ev of missed ?? []) {
+          dispatchStartupEvent(ev.Name, ev.Payload)
+        }
+      } catch (e) {
+        console.error('Startup event replay failed:', e)
+      }
+    })()
+
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
@@ -929,7 +1036,17 @@
       offLinkedQuarantined()
       offVaultInitError()
       offVaultInitWarnings()
+      offVaultWatchCoverage()
       offReMintWarning()
+      offMenuNewPage()
+      offMenuOpenVault()
+      offMenuSave()
+      offMenuToggleSidebar()
+      offMenuToggleFormatToolbar()
+      offMenuFind()
+      offMenuFocusMode()
+      offMenuSettings()
+      offMenuAbout()
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()
@@ -1094,30 +1211,41 @@
       displayedTabs.length > 0
   )
 
-  $effect(() => {
-    console.log(
-      '[Silt] notesReady:',
-      notesReady,
-      '| activeView:',
-      activeView,
-      '| notebook:',
-      activeNotebook,
-      '| section:',
-      activeSection,
-      '| page:',
-      activePage,
-      '| activeTabId:',
-      activeTabId,
-      '| displayedTabs:',
-      displayedTabs.length,
-      '| openTabs:',
-      openTabs.length
-    )
-  })
-
   function openSettings(tab: string = '') {
     settingsTab = tab || 'general'
     showSettings = true
+  }
+
+  // Native menu Save (#503): flush the active editor's pending autosave
+  // directly. There is no global Ctrl+S keymap, so the previous handler —
+  // which synthesized a keydown — was a silent no-op. The editor already
+  // debounces autosave; this is the explicit "save now" path, and it targets
+  // the editor mounted for the active page. With no page context (Tasks view,
+  // sidebar browsing, onboarding) or no mounted editor, there is nothing to
+  // flush — return quietly. A flush that reports failure or rejects surfaces
+  // through the existing notification channel.
+  async function handleMenuSave(): Promise<void> {
+    if (!activePage) return
+    const editor = getEditor(
+      editorKey(activeNotebook, activeSection, activePage)
+    )
+    if (!editor) return
+    try {
+      const ok = await editor.flush()
+      if (!ok) {
+        pushNotification({
+          kind: 'error',
+          message:
+            'Could not save the current page — unsaved edits are still pending.'
+        })
+      }
+    } catch (e) {
+      console.error('menu:save flush failed:', e)
+      pushNotification({
+        kind: 'error',
+        message: 'Could not save the current page.'
+      })
+    }
   }
 
   // Ordered view cycle for the cycle_view_layout hotkey (default Ctrl+Alt+V).
@@ -1188,7 +1316,7 @@
       {/if}
     </TitleBar>
 
-    <div class="flex-1 flex mt-14 w-full relative min-h-0">
+    <div class="flex-1 flex mt-12 w-full relative min-h-0">
       <!-- Activity Bar -->
       <div
         class="w-12 bg-surface-activitybar border-r border-surface-activitybar-border flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"
@@ -1230,7 +1358,7 @@
         </div>
 
         <button
-          onclick={() => openSettings('workspace')}
+          onclick={() => openSettings('general')}
           class="w-9 h-9 rounded-lg flex items-center justify-center text-surface-activitybar-text-muted hover:text-accent-primary-start hover:bg-hover hover:scale-105 active:scale-95 transition-all cursor-pointer border-none bg-transparent focus:outline-none"
           aria-label="Settings"
           title="Settings"

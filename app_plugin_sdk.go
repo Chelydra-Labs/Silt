@@ -13,8 +13,6 @@ import (
 	"silt/backend/vault"
 	"strings"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // maxPluginQueryRows caps the number of rows returned by PluginRawQuery so a
@@ -464,13 +462,11 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 // refreshes editor settings, hotkeys, and per-plugin settings.
 func (a *App) applyConfig(cfg config.SystemConfig) {
 	quarantined := a.applyConfigLocked(cfg)
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "config:changed", cfg)
-		// F3: emit linked-notebook:quarantined for any links whose root_path
-		// changed in the external edit (synced-vault attack vector).
-		for _, q := range quarantined {
-			runtime.EventsEmit(a.ctx, "linked-notebook:quarantined", q)
-		}
+	a.emit("config:changed", cfg)
+	// F3: emit linked-notebook:quarantined for any links whose root_path
+	// changed in the external edit (synced-vault attack vector).
+	for _, q := range quarantined {
+		a.emit("linked-notebook:quarantined", q)
 	}
 }
 

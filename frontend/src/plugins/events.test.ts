@@ -4,23 +4,50 @@
 
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 
-// Hoisted mock state for the Wails runtime. EventsOn/EventsOff are tracked so
-// the bus's lazy attach/detach can be asserted.
+// Hoisted mock state for the Wails runtime. Events.On is tracked so the bus's
+// lazy attach/detach can be asserted. v3's Events.On returns a per-listener
+// disposer function (NOT Events.Off(name), which removes ALL listeners for a
+// name across the entire app). The mock mirrors that contract.
 const mocks = vi.hoisted(() => ({
   listeners: new Map<string, ((payload: unknown) => void)[]>(),
-  eventsOn: vi.fn(),
-  eventsOff: vi.fn()
+  eventsOn: vi.fn()
 }))
 
-vi.mock('../../wailsjs/runtime/runtime.js', () => ({
-  EventsOn: (event: string, cb: (payload: unknown) => void) => {
-    mocks.eventsOn(event, cb)
-    if (!mocks.listeners.has(event)) mocks.listeners.set(event, [])
-    mocks.listeners.get(event)!.push(cb)
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: (event: string, cb: (payload: unknown) => void) => {
+      mocks.eventsOn(event, cb)
+      if (!mocks.listeners.has(event)) mocks.listeners.set(event, [])
+      mocks.listeners.get(event)!.push(cb)
+      // Return a per-listener disposer that removes only this callback,
+      // mirroring v3's Events.On contract.
+      return () => {
+        const arr = mocks.listeners.get(event)
+        if (arr) {
+          const idx = arr.indexOf(cb)
+          if (idx >= 0) arr.splice(idx, 1)
+          if (arr.length === 0) mocks.listeners.delete(event)
+        }
+      }
+    }
   },
-  EventsOff: (event: string) => {
-    mocks.eventsOff(event)
-    mocks.listeners.delete(event)
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
   }
 }))
 
@@ -34,18 +61,19 @@ import {
 } from './events'
 
 function emitHost(event: string, payload: unknown) {
-  for (const cb of mocks.listeners.get(event) ?? []) cb(payload)
+  // v3 Events.On callbacks receive a WailsEvent whose `.data` carries the
+  // emitted payload; simulate the same shape here.
+  for (const cb of mocks.listeners.get(event) ?? []) cb({ data: payload })
 }
 
 describe('plugin event bus (#106)', () => {
   beforeEach(() => {
-    // Tear down live subscribers FIRST (it calls EventsOff for active host
-    // listeners), THEN clear the mock call records so per-test assertions
-    // only see calls made during the test itself.
+    // Tear down live subscribers FIRST (it calls the captured disposers for
+    // active host listeners), THEN clear the mock call records so per-test
+    // assertions only see calls made during the test itself.
     clearAllSubscribers()
     mocks.listeners.clear()
     mocks.eventsOn.mockClear()
-    mocks.eventsOff.mockClear()
   })
 
   it('delivers an in-process dispatch to a subscriber', () => {
@@ -102,9 +130,11 @@ describe('plugin event bus (#106)', () => {
     const off2 = subscribe('p2', 'block:changed', vi.fn())
     expect(mocks.eventsOn).toHaveBeenCalledTimes(1)
     off1()
-    expect(mocks.eventsOff).not.toHaveBeenCalled() // still one subscriber
+    // Still one subscriber — Wails listener must remain attached.
+    expect(mocks.listeners.has('block:changed')).toBe(true)
     off2()
-    expect(mocks.eventsOff).toHaveBeenCalledWith('block:changed')
+    // Last subscriber gone — the captured disposer tears down the Wails listener.
+    expect(mocks.listeners.has('block:changed')).toBe(false)
   })
 
   it('cleanupPlugin removes every subscription for a plugin across events', () => {

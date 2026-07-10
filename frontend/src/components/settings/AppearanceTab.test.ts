@@ -66,15 +66,42 @@ const mocks = vi.hoisted(() => ({
   clearStatus: vi.fn(),
   exportActiveTheme: vi.fn(),
   importThemeFromPath: vi.fn(),
-  pickAndImportTheme: vi.fn()
+  pickAndImportTheme: vi.fn(),
+  setStatus: vi.fn(),
+  // Captured Events.On registrations keyed by event name, plus the disposers
+  // returned (so the unmount-disposal and drop-handler contracts can be
+  // asserted without hitting the real Wails runtime).
+  eventsHandlers: {} as Record<string, (ev: any) => void>,
+  eventsDisposers: {} as Record<string, () => void>
 }))
 
-vi.mock('../../../wailsjs/runtime/runtime.js', () => ({
-  OnFileDrop: vi.fn(),
-  OnFileDropOff: vi.fn(),
-  EventsOn: vi.fn(),
-  EventsOff: vi.fn(),
-  EventsEmit: vi.fn()
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn((name: string, handler: (ev: any) => void) => {
+      mocks.eventsHandlers[name] = handler
+      const off = vi.fn()
+      mocks.eventsDisposers[name] = off
+      return off
+    })
+  },
+  Call: { ByID: vi.fn(), ByName: vi.fn() },
+  CancellablePromise: class {
+    then() {
+      return this
+    }
+    catch() {
+      return this
+    }
+    finally() {
+      return this
+    }
+  },
+  Create: {
+    Nullable: (fn: any) => fn,
+    Array: () => [],
+    Map: () => ({}),
+    Any: {}
+  }
 }))
 vi.mock('../../theme/inject', () => ({ injectTokens: mocks.injectTokens }))
 vi.mock('../../theme/store.svelte', () => ({
@@ -88,6 +115,7 @@ vi.mock('../../theme/store.svelte', () => ({
   clearStatus: mocks.clearStatus,
   exportActiveTheme: mocks.exportActiveTheme,
   importThemeFromPath: mocks.importThemeFromPath,
+  setStatus: mocks.setStatus,
   pickAndImportTheme: mocks.pickAndImportTheme
 }))
 
@@ -98,6 +126,11 @@ describe('AppearanceTab picker a11y (#50)', () => {
     mocks.applyTheme.mockReset()
     mocks.restoreActiveTheme.mockReset()
     mocks.injectTokens.mockReset()
+    mocks.importThemeFromPath.mockReset()
+    mocks.setStatus.mockReset()
+    // Fresh event capture so a prior render's handler/disposer can't leak in.
+    mocks.eventsHandlers = {}
+    mocks.eventsDisposers = {}
     // Each test starts with no preview-token data; the Esc test
     // populates this for the focus-driven preview path.
     mocks.themesState.flatTokens = {}
@@ -408,6 +441,77 @@ describe('AppearanceTab picker a11y (#50)', () => {
       expect(cfChip.style.backgroundColor).not.toBe(
         terraChip.style.backgroundColor
       )
+    })
+  })
+
+  describe('theme drag-drop import', () => {
+    // The backend (main.go) forwards only OS drops that land on
+    // #theme-file-drop-target, emitting theme:files-dropped with the paths.
+    // The component reuses importThemeFromPath (the picker's import path) so
+    // feedback flows through the same themeStatus live region.
+
+    it('marks the list wrapper as a Wails file-drop target', () => {
+      render(AppearanceTab)
+      const target = document.getElementById('theme-file-drop-target')
+      expect(target).not.toBeNull()
+      expect(target).toHaveAttribute('data-file-drop-target')
+    })
+
+    it('subscribes to theme:files-dropped on mount and disposes on unmount', () => {
+      const { unmount } = render(AppearanceTab)
+      const handler = mocks.eventsHandlers['theme:files-dropped']
+      expect(typeof handler).toBe('function')
+      const off = mocks.eventsDisposers['theme:files-dropped']
+      expect(off).not.toBeUndefined()
+      unmount()
+      expect(off).toHaveBeenCalledTimes(1)
+    })
+
+    it('imports a single dropped .json path via importThemeFromPath', async () => {
+      render(AppearanceTab)
+      const handler = mocks.eventsHandlers['theme:files-dropped']
+      handler({ data: ['/users/me/themes/dusk.json'] })
+      await tick()
+      expect(mocks.importThemeFromPath).toHaveBeenCalledTimes(1)
+      expect(mocks.importThemeFromPath).toHaveBeenCalledWith(
+        '/users/me/themes/dusk.json'
+      )
+      // Success path delegates feedback to the store, not the component.
+      expect(mocks.setStatus).not.toHaveBeenCalled()
+    })
+
+    it('rejects a drop of multiple files without importing', async () => {
+      render(AppearanceTab)
+      const handler = mocks.eventsHandlers['theme:files-dropped']
+      handler({ data: ['/a/dusk.json', '/b/frost.json'] })
+      await tick()
+      expect(mocks.importThemeFromPath).not.toHaveBeenCalled()
+      expect(mocks.setStatus).toHaveBeenCalledTimes(1)
+      const [status] = mocks.setStatus.mock.calls[0]
+      expect(status.kind).toBe('error')
+      expect(status.message).toMatch(/one theme file at a time/i)
+    })
+
+    it('rejects a drop with no .json path (non-theme file)', async () => {
+      render(AppearanceTab)
+      const handler = mocks.eventsHandlers['theme:files-dropped']
+      handler({ data: ['/users/me/image.png'] })
+      await tick()
+      expect(mocks.importThemeFromPath).not.toHaveBeenCalled()
+      expect(mocks.setStatus).toHaveBeenCalledTimes(1)
+      const [status] = mocks.setStatus.mock.calls[0]
+      expect(status.kind).toBe('error')
+      expect(status.message).toMatch(/drop a theme \.json/i)
+    })
+
+    it('ignores a malformed payload without importing or erroring', async () => {
+      render(AppearanceTab)
+      const handler = mocks.eventsHandlers['theme:files-dropped']
+      handler({ data: 'not-an-array' })
+      handler(undefined)
+      await tick()
+      expect(mocks.importThemeFromPath).not.toHaveBeenCalled()
+      expect(mocks.setStatus).not.toHaveBeenCalled()
     })
   })
 })

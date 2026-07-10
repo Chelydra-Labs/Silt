@@ -252,6 +252,9 @@
     background: transparent;
     flex: 1;
     min-width: 0;
+    position: relative;
+    z-index: 10;
+    top: 1px;
   }
 
   .tab-strip {
@@ -341,10 +344,10 @@
 
   .tab-button.active {
     color: var(--color-accent-primary-start);
-    background: var(--color-surface-app);
+    background: var(--color-surface-editor);
     height: 100%;
     margin-top: 0;
-    border: 1px solid var(--color-surface-app-border);
+    border: 1px solid var(--color-surface-editor-border);
     border-bottom: none;
     z-index: 2;
   }

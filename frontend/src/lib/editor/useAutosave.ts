@@ -1,5 +1,6 @@
 import type { Editor } from 'svelte-tiptap'
-import { SaveFileBlocks } from '../../../wailsjs/go/main/App.js'
+import { SaveFileBlocks } from '../../../bindings/silt/app.js'
+import type { ParsedBlock as BindingParsedBlock } from '../../../bindings/silt/backend/parser/models.js'
 import { measureFrameBudget } from '../perf/frame-budget'
 import { docToBlocks } from './converters'
 import { pushNotification } from '../../notifications/store.svelte'
@@ -100,7 +101,11 @@ export class AutosaveManager {
           this.deps.getNotebook(),
           this.deps.getSection(),
           this.deps.getPage(),
-          updatedBlocks
+          // The editor's ParsedBlock is a slim view of the wire type; the
+          // extra fields (pinned, progress, created_at, …) are omitempty in
+          // Go and the Wails v3 generator marks them required, so bridge via
+          // unknown at this IPC boundary.
+          updatedBlocks as unknown as BindingParsedBlock[]
         )
         this.deps.onStateChange(false, null)
         this.emitSaveState(false, null)

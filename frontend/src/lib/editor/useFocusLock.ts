@@ -2,7 +2,7 @@ import {
   AcquireFocusLock,
   ReleaseFocusLock,
   RefreshFocusLock
-} from '../../../wailsjs/go/main/App.js'
+} from '../../../bindings/silt/app.js'
 
 export interface FocusLockDeps {
   getNotebook: () => string

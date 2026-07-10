@@ -57,7 +57,7 @@
     SuggestContext,
     MentionContext
   } from '../lib/editor'
-  import { DistinctOwners } from '../../wailsjs/go/main/App.js'
+  import { DistinctOwners } from '../../bindings/silt/app.js'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
   import { pushNotification } from '../notifications/store.svelte'
@@ -873,7 +873,11 @@
 
   $effect(() => {
     const editor = editorInstance
-    if (!editor) return
+    // Guard like every other view-access site: during edit↔source switches
+    // svelte-tiptap tears the editor down, nulling editorView. isDestroyed is
+    // `editorView?.isDestroyed ?? true`, so it's true exactly when view.dom
+    // would throw "view is not available" — bail before touching the proxy.
+    if (!editor || editor.isDestroyed) return
     if (settings.config?.editor?.spellcheck_enabled === false) return
     const dom = editor.view.dom as HTMLElement
     const onContext = (e: MouseEvent) => {
