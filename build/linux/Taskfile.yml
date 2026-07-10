@@ -100,14 +100,17 @@ tasks:
         sh: 'wails3 tool docker-mounts'
 
   package:
-    summary: Packages the application for Linux
+    summary: Packages the application for Linux (.deb + .AppImage — the release set)
+    desc: |
+      The single Linux packaging source of truth. Produces the .deb and the
+      .AppImage that releases ship; .rpm/.archlinux are available as standalone
+      create:rpm / create:aur tasks for anyone who wants them. Threads EXTRA_TAGS
+      (e.g. EXTRA_TAGS=gtk3) through to the native Go build.
     deps:
       - task: build
     cmds:
       - task: create:appimage
       - task: create:deb
-      - task: create:rpm
-      - task: create:aur
 
   create:appimage:
     summary: Creates an AppImage
@@ -121,10 +124,10 @@ tasks:
       - wails3 generate appimage -binary "{{.APP_NAME}}" -icon {{.ICON}} -desktopfile {{.DESKTOP_FILE}} -outputdir {{.OUTPUT_DIR}} -builddir {{.ROOT_DIR}}/build/linux/appimage/build
     vars:
       APP_NAME: '{{.APP_NAME}}'
-      APP_BINARY: '../../../bin/{{.APP_NAME}}'
+      APP_BINARY: '{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}'
       ICON: '{{.APP_NAME}}.png'
       DESKTOP_FILE: '../{{.APP_NAME}}.desktop'
-      OUTPUT_DIR: '../../../bin'
+      OUTPUT_DIR: '{{.ROOT_DIR}}/{{.BIN_DIR}}'
 
   create:deb:
     summary: Creates a deb package
@@ -153,17 +156,17 @@ tasks:
   generate:deb:
     summary: Creates a deb package
     cmds:
-      - wails3 tool package -name "{{.APP_NAME}}" -format deb -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/bin
+      - wails3 tool package -name "{{.APP_NAME}}" -format deb -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/{{.BIN_DIR}}
 
   generate:rpm:
     summary: Creates a rpm package
     cmds:
-      - wails3 tool package -name "{{.APP_NAME}}" -format rpm -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/bin
+      - wails3 tool package -name "{{.APP_NAME}}" -format rpm -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/{{.BIN_DIR}}
 
   generate:aur:
     summary: Creates a arch linux packager package
     cmds:
-      - wails3 tool package -name "{{.APP_NAME}}" -format archlinux -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/bin
+      - wails3 tool package -name "{{.APP_NAME}}" -format archlinux -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/{{.BIN_DIR}}
 
   generate:dotdesktop:
     summary: Generates a `.desktop` file
