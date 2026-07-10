@@ -2,8 +2,9 @@
 
 // Command inventory scans the Silt codebase and emits a deterministic JSON
 // inventory of the Wails IPC surface: exported *App methods, Go-side
-// runtime.EventsEmit event names, frontend imports of the generated App
-// bindings and the wails runtime, and frontend EventsOn subscriptions.
+// a.emit / a.wailsApp.Event.Emit event names, frontend imports of the
+// generated App bindings and the @wailsio/runtime package, and frontend
+// Events.On subscriptions.
 //
 // The "tools" build tag keeps this binary out of the production build. Run with:
 //
@@ -184,7 +185,7 @@ func collapseWS(s string) string {
 
 // scanGoEvents walks every .go file under root (skipping _test.go and the
 // usual non-source directories) and collects the string-literal event names
-// passed to runtime.EventsEmit.
+// passed to a.emit / a.wailsApp.Event.Emit (the v3 event-emission wrappers).
 func scanGoEvents(root string) []string {
 	seen := map[string]struct{}{}
 	fset := token.NewFileSet()
@@ -215,24 +216,27 @@ func scanGoEvents(root string) []string {
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) < 2 {
+			if !ok || len(call.Args) < 1 {
 				return true
 			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel == nil || sel.Sel.Name != "EventsEmit" {
+			if !ok || sel.Sel == nil {
 				return true
 			}
-			// Receiver ident should be "runtime"; we don't resolve imports
-			// (would pull in go/types), so an ident-name check is enough.
-			if id, ok := sel.X.(*ast.Ident); !ok || id.Name != "runtime" {
+			// v3 emits events via a.emit(name, ...) or, at the lowest level,
+			// a.wailsApp.Event.Emit(name, ...). Both take the event name as
+			// Args[0] (no ctx parameter, unlike v2's EventsEmit). We match on
+			// the method name ("emit" / "Emit") without resolving the full
+			// receiver chain (that would pull in go/types); the method name
+			// plus Args[0]-is-a-string-literal check is specific enough.
+			if sel.Sel.Name != "emit" && sel.Sel.Name != "Emit" {
 				return true
 			}
-			// Wails signature is EventsEmit(ctx, eventName, optionalData...),
-			// so the name is normally Args[1]. Scanning Args[1:] for the first
-			// string literal tolerates unusual shapes per the spec ("first or
-			// second argument after ctx") and silently skips calls where the
-			// name is a variable (e.g. updateProgressEvent).
-			for _, arg := range call.Args[1:] {
+			// Scanning Args[0:] for the first string literal tolerates unusual
+			// shapes and silently skips calls where the name is a variable
+			// (e.g. updateProgressEvent, or the name parameter forwarded by
+			// the emit/emitOrQueue wrappers themselves).
+			for _, arg := range call.Args {
 				lit, ok := arg.(*ast.BasicLit)
 				if !ok || lit.Kind != token.STRING {
 					continue
@@ -251,17 +255,19 @@ func scanGoEvents(root string) []string {
 }
 
 var (
-	// A string literal containing the respective wails path. Covers both the
-	// extensionless and .js import forms used in the frontend.
-	bindingPathRE = regexp.MustCompile(`['"\x60][^'"\x60]*wailsjs/go/main/App[^'"\x60]*['"\x60]`)
-	runtimePathRE = regexp.MustCompile(`['"\x60][^'"\x60]*wailsjs/runtime/runtime[^'"\x60]*['"\x60]`)
-	// eventsOnRE captures the event-name string literal handed to EventsOn.
-	// \s* spans the newlines seen in this codebase's multi-line calls.
-	eventsOnRE = regexp.MustCompile(`EventsOn\(\s*['"\x60]([^'"\x60]+)['"\x60]`)
+	// A string literal containing the respective v3 binding/runtime import
+	// path. Covers both the extensionless and .js import forms used in the
+	// frontend.
+	bindingPathRE = regexp.MustCompile(`['"\x60][^'"\x60]*bindings/silt/app[^'"\x60]*['"\x60]`)
+	runtimePathRE = regexp.MustCompile(`['"\x60][^'"\x60]*@wailsio/runtime[^'"\x60]*['"\x60]`)
+	// eventsOnRE captures the event-name string literal handed to Events.On
+	// (the v3 runtime API; v2 used EventsOn). \s* spans the newlines seen in
+	// this codebase's multi-line calls.
+	eventsOnRE = regexp.MustCompile(`Events\.On\s*\(\s*['"\x60]([^'"\x60]+)['"\x60]`)
 )
 
 // scanFrontend walks .ts/.svelte files under frontendRoot and records which
-// files import the App bindings / wails runtime, plus the set of EventsOn
+// files import the App bindings / @wailsio/runtime, plus the set of Events.On
 // event-name string literals. Paths are repo-relative with forward slashes.
 func scanFrontend(frontendRoot string) (bindingImports, runtimeImports, frontendEvents []string) {
 	bindSet := map[string]struct{}{}

@@ -46,6 +46,9 @@ type startupEvent struct {
 type App struct {
 	ctx      context.Context
 	wailsApp *application.App
+	// mainWindow is the primary webview window, stored so RequestClose can
+	// hide it to the tray without going through v3's unexported windows map.
+	mainWindow application.Window
 	// startupEvents captures events emitted before the frontend mounted.
 	// emitOrQueue appends here (in addition to emitting) until
 	// MarkFrontendReady flips frontendReady; GetStartupEvents drains the slice

@@ -3,7 +3,8 @@
   import logo from '../assets/logo.svg'
   import { settings } from '../settings/store.svelte'
   import { resolveHotkeyDisplay } from '../settings/hotkeys'
-  import { Window, Application } from '@wailsio/runtime'
+  import { Window } from '@wailsio/runtime'
+  import { RequestClose } from '../../bindings/silt/app.js'
 
   interface Props {
     sidebarCollapsed: boolean
@@ -154,7 +155,7 @@
         </button>
         <button
           onclick={async () => {
-            await Application.Quit()
+            await RequestClose()
           }}
           aria-label="Close"
           title="Close"

@@ -237,7 +237,7 @@ These components receive `{ ctx, manifest }` as props — the same `PluginContex
 ### 7.1 Trust boundary and binding identity (#151, #152)
 
 **The SDK (`PluginContext`) is the contract.** Plugin authors MUST use the SDK
-methods provided through `ctx.*`. Importing `wailsjs/go/main/App.js` directly
+methods provided through `ctx.*`. Importing `bindings/silt/app.js` directly
 and calling the raw Wails bindings is a **violation of the trust model** and
 will break when per-plugin isolated webviews land (#152 long-term).
 
@@ -252,7 +252,7 @@ binding — it doesn't have the target plugin's token.
 first gate on every privileged `Plugin*` binding — file I/O, OS integration,
 network/fetch, page/section/notebook CRUD, block CRUD, raw query, file pickers,
 clipboard, notifications, and surface registration. A malicious plugin that
-bypasses the SDK (imports `wailsjs/go/main/App.js` directly) and calls any
+bypasses the SDK (imports `bindings/silt/app.js` directly) and calls any
 binding with a different `pluginID` is rejected at the session boundary before
 `requireGrant` runs. Spoofing a first-party pluginID (which is implicitly
 granted every capability) does not help the attacker: it does not have that

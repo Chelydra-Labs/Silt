@@ -159,8 +159,12 @@ func main() {
 	// the fallback used inside ServiceStartup.
 	app.wailsApp = wailsApp
 
+	// Native application menu (#503) — standard editing roles + custom
+	// items that emit frontend events.
+	setupMenus(wailsApp, app)
+
 	// Main window — frameless, maximized, with the theme-aware launch colour.
-	wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:                  "Silt",
 		Width:                  1024,
 		Height:                 768,
@@ -169,6 +173,11 @@ func main() {
 		BackgroundColour:       launchBackgroundColour(),
 		OpenInspectorOnStartup: shouldOpenDevtools(),
 	})
+	app.mainWindow = mainWindow
+
+	// System tray (#501) — icon with Show/Hide/Quit menu, window toggle
+	// on click, and close-to-tray support via RequestClose.
+	setupTray(wailsApp, app, mainWindow)
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatalf("Error: %s", err.Error())

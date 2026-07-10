@@ -137,16 +137,16 @@ The Silt system runs as a single local process. The operating system boundary se
 |                │                                              ▲                   |
 |                ▼ (UI Event)                                   │ (Events/Data)     |
 |   +───────────────────────────────────────────────────────────┼───────────────+   |
-|   │ Wails JS Runtime (IPC Bridge)                             │               │   |
+|   │ Wails v3 Runtime (@wailsio/runtime)                       │               │   |
 |   +───────────────────────────────────────────────────────────┼───────────────+   |
 +────────────────┼──────────────────────────────────────────────┼────────────────---+
                  │                                              │
-                 │ JSON RPC (WebKit MessagePorts)               │ IPC Event Dispatch
+                 │ JSON RPC (WebView2 IPC)                      │ IPC Event Dispatch
                  ▼                                              │
 +────────────────┼──────────────────────────────────────────────┼────────────────---+
 |                │          BACKEND PROCESS BOUNDARY (Go Core)  │                   |
 |   +────────────▼───────────────+                              │                   |
-|   │ Wails Binding Router       │                              │                   |
+|   │ Wails v3 Service Dispatcher│                              │                   |
 |   +────────────┬───────────────+                              │                   |
 |                │ (Internal Calls)                             │                   |
 |                ▼                                              │                   |
@@ -421,7 +421,7 @@ merged settings for the current notebook.
 
 4. Wails Bridge & IPC API Contract
 
-Communication between Svelte and Go occurs over a typed JSON bridge. The following API commands are registered with the Wails framework.
+Communication between Svelte and Go occurs over a typed JSON bridge. The following API commands are registered with the Wails v3 framework as a single service.
 
 4.1 Block Mutation Envelope
 
@@ -445,7 +445,7 @@ type TaskQueryFilter struct {
 
 4.3 IPC Service Surface
 
-All bindings hang off the single Wails-bound `App` (`Bind: { app }`) and are
+All bindings hang off the single Wails v3 service (`*App` registered via `application.NewServiceWithOptions`) and are
 auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
 - **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `UpdateBlockState`
@@ -525,15 +525,15 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`
 files; this list is the contract surface, not the source.
 
-**Error envelope (#478).** Every bound method returns `(T, error)`. Wails v2
-delivers the error to TypeScript as an `Error` whose `.message` is
-`err.Error()` — custom Go error-struct fields do NOT survive the bridge (the
-JS runtime wraps every value in `new Error(t.error)`, flattening objects to
-`"[object Object]"`). The stable, machine-readable error-code contract is
-therefore carried as a **JSON string** on `.message`: the App's
-`ErrorFormatter` (`main.go`, `formatIPCError`) serializes an `*IPCError`
-(`ipc_errors.go`) or `*plugins.CapabilityDeniedError` to
-`'{"code":"...","message":"..."}'`, which survives `new Error()` intact. The
+**Error envelope (#478).** Every bound method returns `(T, error)`. Wails v3
+delivers the error to TypeScript as an `Error` whose `.message` is the JSON
+string from `MarshalError` (`formatIPCError` serializes an `*IPCError` or
+`*plugins.CapabilityDeniedError` to `'{"code":"...","message":"..."}'`). The
+stable, machine-readable error-code contract is therefore carried as a
+**JSON string** on `.message`: the App's `MarshalError` callback (`main.go`,
+`formatIPCError`) serializes an `*IPCError` (`ipc_errors.go`) or
+`*plugins.CapabilityDeniedError` to `'{"code":"...","message":"..."}'`, which
+survives `new Error()` intact. The
 frontend `coerceIPCError` (`frontend/src/lib/ipcError.ts`) JSON-parses
 `.message` to recover `{code, message}`; non-JSON prose (an unmigrated
 sentinel) falls through to the raw message. Stable codes live in
@@ -657,6 +657,28 @@ Pipeline (single source of truth shared with SPECS.md §6.5 / docs/TEMPLATES.md)
 **IPC.** `ListTemplates`, `GetTemplate`, `RenderTemplate`, `RenderTemplateBlocks`, `SaveUserTemplate`, `DeleteUserTemplate`, `ReloadTemplates`, `RegisterPluginTemplates`/`UnregisterPluginTemplates` (plugin-provided templates, deduped last), `CreatePageFromTemplate`. Emits `templates:changed`. `CreatePageFromTemplate` renders + prepends standard frontmatter + writes atomically + indexes, composing with the `CreatePage` path.
 
 **Frontend** (`frontend/src/templates`): `store.svelte.ts` (`templatesState` listing + `templates:changed` subscription); `TemplatePicker.svelte` (modal: search, category groups, live preview, placeholder form; new-page or insert-at-cursor). Entry points: New Page → From Template (`Ctrl+Shift+T`) and the `/template` slash command.
+
+
+4.6 System Tray & Native Menus (#501, #503)
+
+The v3 migration adds a system tray and native application menu.
+
+**System tray (#501).** `setupTray` (tray.go) creates a `SystemTray` with the
+app icon, a context menu (Show/Hide/Quit), and attaches the main window so a
+single click toggles visibility. Close-to-tray is a user-global setting
+(`settings.json` `close_to_tray`, default off). The `RequestClose` IPC binding
+checks the setting: if enabled, the window hides instead of quitting; the tray
+Quit item is the canonical quit path. The tray keeps the process alive —
+`wailsApp.Run()` does not exit until `Quit()` is explicitly called.
+
+**Native menus (#503).** `setupMenus` (menus.go) creates a platform-aware
+application menu: File (New Page, Open Vault, Save, Quit), Edit (Undo, Redo,
+Cut, Copy, Paste, Select All via standard v3 roles), View (Toggle Sidebar,
+Toggle Format Toolbar, Find, Focus Mode, Settings), Help (About). Custom
+items emit Wails events (`menu:new-page`, `menu:save`, etc.) that App.svelte
+listens for and dispatches to the same handlers the keyboard shortcuts use.
+Standard editing roles use v3's built-in platform handling so keyboard
+shortcuts work natively without custom JS dispatch.
 
 
 5. Svelte 5 Frontend Architecture
@@ -946,6 +968,14 @@ CSP: `connect-src 'none'` blocks direct fetch/XHR/WebSocket from inside the
 iframe. All network traffic routes through the postMessage bridge → `ctx.fetch`
 (SSRF-defended + audit-logged).
 
+**Plugin webview isolation (#502).** Wails v3's browser-process options are
+application-global on Windows, so per-window network isolation is not
+available. The existing iframe sandbox (CSP `connect-src 'none'` + postMessage
+bridge + Go-proxied `PluginFetch` with SSRF defense) remains the security
+boundary. Per-plugin rendering isolation via dedicated v3 webview windows is
+deferred until the milestone owner updates #502's definition of done to accept
+the Go-layer boundary as sufficient.
+
 **Rate limiting.** `PluginFetch` is throttled by a per-plugin token-
 bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
 Buckets are evicted on uninstall.
@@ -1050,7 +1080,7 @@ PluginContext is a thin frontend wrapper over four Wails bindings on App:
 
 7.5 Smart Graph Events
 
-Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, Notebook, Section, Page, FileDate}) so live embeds (`{{embed:uuid}}`) and references (`((uuid))`) refresh in real time. Emitted from MutateBlock, UpdateBlockState, and the post-write path of SaveFileBlocks; emission no-ops when ctx is nil (tests). The frontend EmbedPortal subscribes via EventsOn and re-fetches its source block when the event matches its uuid (a module-scoped render-stack guard stops recursive embed loops). When a block transitions to DONE, `UpdateBlockState` also fans the event out to every dependent task (those `[blocked_by::]` the just-completed block) so the silt-tasks "blocked" badge and the DONE-confirm guard re-evaluate (#301).
+Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, Notebook, Section, Page, FileDate}) so live embeds (`{{embed:uuid}}`) and references (`((uuid))`) refresh in real time. Emitted from MutateBlock, UpdateBlockState, and the post-write path of SaveFileBlocks; emission no-ops when ctx is nil (tests). The frontend EmbedPortal subscribes via `Events.On` (v3 runtime) and re-fetches its source block when the event matches its uuid (a module-scoped render-stack guard stops recursive embed loops). When a block transitions to DONE, `UpdateBlockState` also fans the event out to every dependent task (those `[blocked_by::]` the just-completed block) so the silt-tasks "blocked" badge and the DONE-confirm guard re-evaluate (#301).
 
 ---
 

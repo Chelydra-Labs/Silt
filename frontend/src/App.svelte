@@ -917,6 +917,43 @@
       pushNotification(reMintToast(w, openPage))
     })
 
+    // Native menu events (#503) — the Go-side menu items emit these; wire
+    // them to the same handlers the keyboard shortcuts use so menu and
+    // hotkey actions are indistinguishable.
+    const offMenuNewPage = Events.On('menu:new-page', () => {
+      templatePickerMode = 'new-page'
+      showTemplatePicker = !showTemplatePicker
+    })
+    const offMenuOpenVault = Events.On('menu:open-vault', () => {
+      void handleSwitchVault()
+    })
+    const offMenuSave = Events.On('menu:save', () => {
+      // The editor auto-saves; dispatch Ctrl+S to force an immediate flush.
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 's', ctrlKey: true })
+      )
+    })
+    const offMenuToggleSidebar = Events.On('menu:toggle-sidebar', () => {
+      sidebarCollapsed = !sidebarCollapsed
+      manuallyCollapsed = sidebarCollapsed
+    })
+    const offMenuToggleFormatToolbar = Events.On(
+      'menu:toggle-format-toolbar',
+      () => void toggleFormatToolbar()
+    )
+    const offMenuFind = Events.On('menu:find', () => {
+      findBarState.openFind()
+    })
+    const offMenuFocusMode = Events.On('menu:focus-mode', () => {
+      void toggleFocusMode()
+    })
+    const offMenuSettings = Events.On('menu:settings', () => {
+      openSettings('general')
+    })
+    const offMenuAbout = Events.On('menu:about', () => {
+      openSettings('about')
+    })
+
     // Wails v3 fires ServiceStartup before the webview exists, so every
     // startup-time emit (vault:init-error, settings:fingerprint-mismatch,
     // grants:migration-required, vault:init-warnings, vault:watch-coverage,
@@ -983,6 +1020,15 @@
       offVaultInitError()
       offVaultInitWarnings()
       offReMintWarning()
+      offMenuNewPage()
+      offMenuOpenVault()
+      offMenuSave()
+      offMenuToggleSidebar()
+      offMenuToggleFormatToolbar()
+      offMenuFind()
+      offMenuFocusMode()
+      offMenuSettings()
+      offMenuAbout()
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()

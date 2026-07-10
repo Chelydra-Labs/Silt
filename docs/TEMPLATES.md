@@ -292,7 +292,7 @@ The template picker reuses the same modal chrome and Refined Cyber-Ink token sys
 
 ## Testing
 
-Manual verification (under 2 minutes with `wails dev`):
+Manual verification (under 2 minutes with `wails3 dev`):
 
 1. **Ctrl+Shift+T** opens the template picker; all 10 built-ins are listed, grouped by category.
 2. Select **Daily Note** — the preview shows today's date and weekday.

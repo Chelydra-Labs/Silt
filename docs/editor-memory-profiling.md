@@ -52,10 +52,10 @@ Lifecycle correctness relied on by this change:
 
 ## Profiling methodology (run before changing the cap or adding keepalive)
 
-Interactive measurement requires the GUI webview (`wails dev`) — the headless
+Interactive measurement requires the GUI webview (`wails3 dev`) — the headless
 CI model can't drive it (see `AGENTS.md` — no Playwright). To gather data:
 
-1. `wails dev`, open DevTools → Performance / Memory.
+1. `wails3 dev`, open DevTools → Performance / Memory.
 2. Raise `ui.max_open_tabs` to `32` in `.system/config.yaml`; restart.
 3. Take a baseline heap snapshot with **1** tab open in Edit mode.
 4. Open tabs to the cap (32), all in **Edit** mode; snapshot. The delta ÷ 31 is
