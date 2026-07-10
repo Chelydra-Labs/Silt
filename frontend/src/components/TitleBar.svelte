@@ -61,7 +61,7 @@
 </script>
 
 <header
-  class="drag-region bg-surface-titlebar flex justify-between items-center h-14 w-full z-50 fixed top-0 border-b border-surface-titlebar-border select-none"
+  class="drag-region bg-surface-titlebar flex justify-between items-center h-12 w-full z-50 fixed top-0 border-b border-surface-titlebar-border select-none"
 >
   <!-- Left: brand zone (matches sidebar width) + sidebar toggle at the boundary -->
   <div class="flex items-center min-w-0 h-full flex-grow">
@@ -140,7 +140,10 @@
           title="Minimize"
           class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
-          <span class="material-symbols-outlined text-[18px]">remove</span>
+          <span
+            class="material-symbols-outlined text-[14px] window-control-icon"
+            >remove</span
+          >
         </button>
         <button
           type="button"
@@ -149,7 +152,8 @@
           title={maximised ? 'Restore' : 'Maximize'}
           class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
-          <span class="material-symbols-outlined text-[18px]"
+          <span
+            class="material-symbols-outlined text-[14px] window-control-icon"
             >{maximised ? 'fullscreen_exit' : 'crop_square'}</span
           >
         </button>
@@ -162,7 +166,10 @@
           title="Close"
           class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
-          <span class="material-symbols-outlined text-[18px]">close</span>
+          <span
+            class="material-symbols-outlined text-[14px] window-control-icon"
+            >close</span
+          >
         </button>
       </div>
     {/if}
@@ -170,6 +177,9 @@
 </header>
 
 <style>
+  .window-control-icon {
+    font-weight: 300;
+  }
   .drag-region {
     --wails-draggable: drag;
   }

@@ -1266,7 +1266,7 @@
       {/if}
     </TitleBar>
 
-    <div class="flex-1 flex mt-14 w-full relative min-h-0">
+    <div class="flex-1 flex mt-12 w-full relative min-h-0">
       <!-- Activity Bar -->
       <div
         class="w-12 bg-surface-activitybar border-r border-surface-activitybar-border flex flex-col items-center py-4 justify-between h-full select-none z-50 flex-shrink-0"

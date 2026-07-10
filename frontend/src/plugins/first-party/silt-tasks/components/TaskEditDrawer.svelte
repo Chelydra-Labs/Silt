@@ -721,7 +721,7 @@
   <div
     bind:this={panelRef}
     transition:fly={{ x: 320, duration: 200 }}
-    class="fixed right-0 top-14 h-[calc(100vh-56px)] w-96 bg-surface-card border-l border-surface-card-border z-40 overflow-y-auto custom-scrollbar focus:outline-none shadow-2xl"
+    class="fixed right-0 top-12 h-[calc(100vh-48px)] w-96 bg-surface-card border-l border-surface-card-border z-40 overflow-y-auto custom-scrollbar focus:outline-none shadow-2xl"
     role="dialog"
     aria-modal="false"
     aria-labelledby="task-edit-drawer-title"
