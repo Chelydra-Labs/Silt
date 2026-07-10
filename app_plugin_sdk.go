@@ -697,6 +697,7 @@ func (a *App) SetShowFormatToolbar(value bool) error {
 // SetFocusMode atomically writes the editor focus-mode flag. Same rationale as
 // SetShowFormatToolbar — avoids clobbering an unsaved settings draft.
 func (a *App) SetFocusMode(value bool) error {
+	log.Printf("[SetFocusMode] called with value=%v, vaultPath=%q", value, a.vaultPath)
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
@@ -705,7 +706,12 @@ func (a *App) SetFocusMode(value bool) error {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	a.cfg.Editor.FocusMode = &value
-	return a.saveConfigTracked(a.cfg)
+	if err := a.saveConfigTracked(a.cfg); err != nil {
+		log.Printf("[SetFocusMode] saveConfigTracked failed: %v", err)
+		return err
+	}
+	log.Printf("[SetFocusMode] success, focus_mode=%v", value)
+	return nil
 }
 
 // SetOpenDevtoolsOnStartup atomically writes the Dev Mode (open DevTools on
