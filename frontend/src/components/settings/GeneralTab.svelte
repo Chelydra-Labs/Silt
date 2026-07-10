@@ -1,7 +1,48 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+  import { GetCloseToTray, SetCloseToTray } from '../../../bindings/silt/app.js'
   import { settings, reloadFromBackend } from '../../settings/store.svelte'
   import VaultActionModal from './VaultActionModal.svelte'
   import VaultArchiveModal from './VaultArchiveModal.svelte'
+
+  // Close-to-tray is a user-global window behaviour (#501). Its state lives on
+  // the tab rather than in the vault-scoped config store — the window exists
+  // before any vault opens, so this section renders regardless of config load.
+  let closeToTray = $state(false)
+  let closeToTrayInflight = $state(false)
+  let closeToTrayError = $state('')
+
+  onMount(async () => {
+    // Hydrate the toggle from the persisted preference. If the user flipped
+    // it before this resolved (closeToTrayInflight), their explicit choice
+    // wins — don't clobber it with the stale on-disk value. Default-off on
+    // any read failure matches the backend's nil-pointer semantics.
+    try {
+      const v = await GetCloseToTray()
+      if (!closeToTrayInflight) closeToTray = !!v
+    } catch {
+      closeToTray = false
+    }
+  })
+
+  // Optimistic flip + revert-on-failure. The inflight guard stops a second
+  // rapid click from racing the pending write and leaving the toggle out of
+  // sync with disk.
+  async function setCloseToTray(on: boolean) {
+    if (closeToTrayInflight) return
+    closeToTrayInflight = true
+    closeToTrayError = ''
+    closeToTray = on
+    try {
+      await SetCloseToTray(on)
+    } catch (e) {
+      closeToTray = !on
+      closeToTrayError = 'Could not save the close-to-tray preference.'
+      console.error('SetCloseToTray failed:', e)
+    } finally {
+      closeToTrayInflight = false
+    }
+  }
 
   // Workspace relocation + portable-archive menu (#141, #143).
   // Provides options to move, copy, export, or import the vault.
@@ -62,10 +103,63 @@
 
 <svelte:window onclick={handleWindowClick} />
 
-{#if !settings.config}
-  <div class="p-8 text-text-muted font-body-md">No configuration loaded.</div>
-{:else}
-  <div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar h-full">
+<div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar h-full">
+  <!-- Window: user-global, renders regardless of vault config. -->
+  <section class="max-w-xl">
+    <h3
+      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+    >
+      Window
+    </h3>
+    <div
+      class="bg-surface-panel border border-surface-panel-border rounded-lg px-4 py-3 space-y-2"
+    >
+      <label
+        class="flex items-center justify-between gap-3 {closeToTrayInflight
+          ? ''
+          : 'cursor-pointer'}"
+      >
+        <span class="text-text-primary text-[12px] font-body-md">
+          Close to tray
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={closeToTray}
+          aria-label="Close to tray"
+          disabled={closeToTrayInflight}
+          onclick={() => setCloseToTray(!closeToTray)}
+          class="relative w-9 h-5 rounded-full transition-colors border-none {closeToTrayInflight
+            ? 'cursor-wait opacity-60'
+            : 'cursor-pointer'} {closeToTray
+            ? 'bg-accent-primary-start'
+            : 'bg-surface-panel-border'}"
+        >
+          <span
+            class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-surface-panel transition-transform {closeToTray
+              ? 'translate-x-4'
+              : ''}"
+          ></span>
+        </button>
+      </label>
+      <p class="text-text-muted text-[11px] font-label-sm leading-relaxed">
+        Closing the window hides Silt to the tray instead of quitting. Use Quit
+        in the tray menu to exit.
+      </p>
+      {#if closeToTrayError}
+        <p
+          class="text-status-danger text-[12px] font-body-md flex items-center gap-1.5"
+          role="alert"
+        >
+          <span class="material-symbols-outlined text-[16px]">error</span>
+          {closeToTrayError}
+        </p>
+      {/if}
+    </div>
+  </section>
+
+  <!-- Workspace: vault-scoped. Unavailable until config loads. -->
+  {#if settings.config}
     <!-- External update notice -->
     {#if settings.pendingExternal}
       <div
@@ -210,8 +304,55 @@
         Move, copy, back up, or migrate this workspace from the actions menu.
       </p>
     </section>
-  </div>
-{/if}
+  {:else if settings.loading}
+    <section class="max-w-xl">
+      <h3
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      >
+        Workspace
+      </h3>
+      <p class="text-text-muted text-[13px] font-body-md animate-pulse">
+        Loading workspace…
+      </p>
+    </section>
+  {:else if settings.error}
+    <!-- Config failed to load: surface the backend's actual error so the
+         user can act on it (e.g. malformed YAML) rather than the generic
+         no-workspace copy. -->
+    <section class="max-w-xl">
+      <h3
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      >
+        Workspace
+      </h3>
+      <div
+        class="flex items-start gap-2 p-3 rounded-lg bg-surface-panel border border-surface-panel-border text-status-danger text-[12px] font-body-md"
+        role="alert"
+      >
+        <span class="material-symbols-outlined text-[18px]">error</span>
+        <span class="flex-1">
+          Couldn't load workspace settings: {settings.error}
+        </span>
+      </div>
+    </section>
+  {:else}
+    <section class="max-w-xl">
+      <h3
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      >
+        Workspace
+      </h3>
+      <div
+        class="flex items-start gap-2 p-3 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted text-[12px] font-body-md"
+      >
+        <span class="material-symbols-outlined text-[18px]">folder_off</span>
+        <span class="flex-1">
+          No workspace configuration loaded. Open a vault to manage its path.
+        </span>
+      </div>
+    </section>
+  {/if}
+</div>
 
 {#if vaultAction}
   {#if vaultAction === 'move' || vaultAction === 'copy'}

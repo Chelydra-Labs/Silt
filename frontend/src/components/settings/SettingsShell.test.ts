@@ -183,7 +183,7 @@ describe('SettingsShell ARIA tablist/tabpanel contract (#356)', () => {
       expect(tab.getAttribute('aria-controls')).toBe(panel.id)
     }
 
-    // Core tab (workspace is the default active tab).
+    // Core tab (general is the default active tab).
     assertContract()
 
     // Dynamic plugin tab.

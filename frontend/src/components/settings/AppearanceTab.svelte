@@ -9,15 +9,18 @@
   // the duration of the hover; pressing Esc or moving focus off the row
   // restores the active theme.
   import { onMount } from 'svelte'
+  import { Events } from '@wailsio/runtime'
   import { injectTokens } from '../../theme/inject'
   import { displayFamilyName } from '../../theme/fonts'
   import {
     applyTheme,
     clearStatus,
     exportActiveTheme,
+    importThemeFromPath,
     loadThemes,
     pickAndImportTheme,
     restoreActiveTheme,
+    setStatus,
     systemScheme,
     themeState,
     themesState,
@@ -46,16 +49,51 @@
     if (themesState.items.length === 0 && !themesState.loading) {
       void loadThemes()
     }
-    // Theme import is via the "Import .json" button only. The v2 global
-    // drag-drop was removed in the v3 migration (v3's per-element file-drop
-    // API requires a cross-boundary integration that is deferred to a
-    // follow-up; the button path is fully functional).
+    // Drag-drop import: the backend (main.go) only forwards OS file drops
+    // that land on #theme-file-drop-target, emitting theme:files-dropped
+    // with the dropped paths. We reuse importThemeFromPath — the exact
+    // function the picker button's pickAndImportTheme calls after the native
+    // open dialog — so success/error feedback routes through the same
+    // themeStatus live region either way. Capture the disposer for unmount.
+    const offDrop = Events.On('theme:files-dropped', (ev: any) => {
+      handleDroppedFiles(ev?.data)
+    })
     return () => {
       // Clear any in-flight preview so a navigated-away tab doesn't
       // leave the page in a non-active theme.
       previewId = null
+      offDrop()
     }
   })
+
+  // Accepts the backend's dropped-paths payload and imports exactly one
+  // theme .json. Anything else (no file, a non-json file, or several files)
+  // is reported through themeStatus so the guidance is announced in the
+  // same live region the picker uses — no separate toast path.
+  function handleDroppedFiles(paths: unknown): void {
+    if (!Array.isArray(paths)) return
+    const json = paths.filter(
+      (p): p is string =>
+        typeof p === 'string' && p.toLowerCase().endsWith('.json')
+    )
+    if (json.length === 0) {
+      setStatus({
+        kind: 'error',
+        message: 'Drop a theme .json file to import it.',
+        fields: []
+      })
+      return
+    }
+    if (json.length > 1) {
+      setStatus({
+        kind: 'error',
+        message: 'Drop one theme file at a time.',
+        fields: []
+      })
+      return
+    }
+    void importThemeFromPath(json[0])
+  }
 
   // --- Mode toggle ---------------------------------------------------------
 
@@ -169,8 +207,8 @@
 
   // Active-theme typography overrides (theme-level; both modes carry the same
   // --font-* values). When non-empty, the Appearance tab surfaces an indicator
-  // so the user knows the active theme is overriding their General-tab font
-  // choices, and the General tab shows a "Reset to theme default" affordance.
+  // so the user knows the active theme is overriding their Editor-tab font
+  // choices, and the Editor tab shows a "Reset to theme default" affordance.
   let themeTypographyOverrides = $derived.by(() => {
     const tokens = themeState.darkTokens
     const out: { label: string; value: string }[] = []
@@ -300,7 +338,7 @@
         {/each}
       </div>
       <p class="text-text-muted text-[11px] font-label-sm mt-2">
-        Body and Mono can be overridden in General (or reset there to inherit
+        Body and Mono can be overridden in Editor (or reset there to inherit
         these). Headline is set by the theme only.
       </p>
     </section>
@@ -321,124 +359,137 @@
       </span>
     </div>
 
-    {#if themesState.loading && themesState.items.length === 0}
-      <div
-        class="text-text-muted text-[12px] font-body-md animate-pulse py-8 text-center"
-      >
-        Loading themes…
-      </div>
-    {:else if themesState.loadError}
-      <div
-        class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
-        role="alert"
-      >
-        <span class="material-symbols-outlined text-[18px]">error</span>
-        <span class="flex-1"
-          >Failed to load themes: {themesState.loadError}</span
+    <!-- Drop target: Wails adds .file-drop-target-active to this element
+         while OS files are dragged over it (main.go only forwards drops that
+         land here). Wraps all list states so a drop registers whether the
+         list is populated, loading, or empty. -->
+    <div
+      id="theme-file-drop-target"
+      data-file-drop-target
+      class="rounded-xl transition motion-reduce:transition-none"
+    >
+      {#if themesState.loading && themesState.items.length === 0}
+        <div
+          class="text-text-muted text-[12px] font-body-md animate-pulse py-8 text-center"
         >
-      </div>
-    {:else if themesState.items.length === 0}
-      <div class="text-text-muted text-[12px] font-body-md py-8 text-center">
-        No themes available. Import a theme .json to get started.
-      </div>
-    {:else}
-      <div role="listbox" aria-label="Available themes" class="space-y-2">
-        {#each themesState.items as theme, i (theme.id)}
-          {@const active = isActive(theme)}
-          {@const modeTokens =
-            themesState.flatTokens[theme.id]?.[effectiveMode]}
-          <button
-            type="button"
-            id={`theme-row-${theme.id}`}
-            role="option"
-            aria-selected={active}
-            tabindex={focusIndex === i || (focusIndex === null && i === 0)
-              ? 0
-              : -1}
-            bind:this={rowRefs[i]}
-            onclick={() => selectTheme(theme.id)}
-            onmouseenter={() => onRowEnter(theme.id)}
-            onmouseleave={onRowLeave}
-            onfocus={() => {
-              focusIndex = i
-              onRowEnter(theme.id)
-            }}
-            onblur={onRowLeave}
-            onkeydown={(e) => onRowKey(e, i)}
-            class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border motion-reduce:transition-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 cursor-pointer"
-            class:bg-surface-panel={!active}
-            class:border-surface-panel-border={!active}
-            class:hover:border-border-active={!active}
-            class:border-l-4={active}
-            class:border-l-accent-primary-start={active}
-            class:bg-accent-primary-glow={active}
-            class:border-accent-primary-start={active}
+          Loading themes…
+        </div>
+      {:else if themesState.loadError}
+        <div
+          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
+          role="alert"
+        >
+          <span class="material-symbols-outlined text-[18px]">error</span>
+          <span class="flex-1"
+            >Failed to load themes: {themesState.loadError}</span
           >
-            <!-- Swatch: a mini theme card (#405). The dominant visual identity
-                 of a theme is its surface temperature (warm Linen taupe, cool
-                 Frost, neutral Graphite), not its accents — so the base chip
-                 is filled with the theme's app surface bg (read from
-                 flatTokens, the same map the injector writes). The two accent
-                 starts render as dots on the chip so the accents are still
-                 visible but the surface reads first. Data-driven: no per-theme
-                 branching. -->
-            <div class="flex items-center gap-1.5 flex-shrink-0">
-              <span
-                aria-hidden="true"
-                class="theme-swatch-chip"
-                style="background-color: {modeTokens?.['--color-surface-app'] ??
-                  'var(--color-surface-app)'}"
-              >
+        </div>
+      {:else if themesState.items.length === 0}
+        <div class="text-text-muted text-[12px] font-body-md py-8 text-center">
+          No themes available. Import or drop a theme .json to get started.
+        </div>
+      {:else}
+        <div role="listbox" aria-label="Available themes" class="space-y-2">
+          {#each themesState.items as theme, i (theme.id)}
+            {@const active = isActive(theme)}
+            {@const modeTokens =
+              themesState.flatTokens[theme.id]?.[effectiveMode]}
+            <button
+              type="button"
+              id={`theme-row-${theme.id}`}
+              role="option"
+              aria-selected={active}
+              tabindex={focusIndex === i || (focusIndex === null && i === 0)
+                ? 0
+                : -1}
+              bind:this={rowRefs[i]}
+              onclick={() => selectTheme(theme.id)}
+              onmouseenter={() => onRowEnter(theme.id)}
+              onmouseleave={onRowLeave}
+              onfocus={() => {
+                focusIndex = i
+                onRowEnter(theme.id)
+              }}
+              onblur={onRowLeave}
+              onkeydown={(e) => onRowKey(e, i)}
+              class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg border motion-reduce:transition-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 cursor-pointer"
+              class:bg-surface-panel={!active}
+              class:border-surface-panel-border={!active}
+              class:hover:border-border-active={!active}
+              class:border-l-4={active}
+              class:border-l-accent-primary-start={active}
+              class:bg-accent-primary-glow={active}
+              class:border-accent-primary-start={active}
+            >
+              <!-- Swatch: a mini theme card (#405). The dominant visual identity
+                   of a theme is its surface temperature (warm Linen taupe, cool
+                   Frost, neutral Graphite), not its accents — so the base chip
+                   is filled with the theme's app surface bg (read from
+                   flatTokens, the same map the injector writes). The two accent
+                   starts render as dots on the chip so the accents are still
+                   visible but the surface reads first. Data-driven: no per-theme
+                   branching. -->
+              <div class="flex items-center gap-1.5 flex-shrink-0">
                 <span
-                  class="theme-swatch-dot"
+                  aria-hidden="true"
+                  class="theme-swatch-chip"
                   style="background-color: {modeTokens?.[
-                    '--color-accent-primary-start'
-                  ] ??
-                    theme.swatches?.[0] ??
-                    'var(--color-accent-primary-start)'}"
-                ></span>
-                <span
-                  class="theme-swatch-dot"
-                  style="background-color: {modeTokens?.[
-                    '--color-accent-secondary-start'
-                  ] ??
-                    theme.swatches?.[1] ??
-                    'var(--color-accent-secondary-start)'}"
-                ></span>
-              </span>
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <span
-                  class="text-text-primary text-[13px] font-body-md truncate"
+                    '--color-surface-app'
+                  ] ?? 'var(--color-surface-app)'}"
                 >
-                  {theme.name}
-                </span>
-                {#if active}
                   <span
-                    class="text-[10px] text-accent-primary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0"
+                    class="theme-swatch-dot"
+                    style="background-color: {modeTokens?.[
+                      '--color-accent-primary-start'
+                    ] ??
+                      theme.swatches?.[0] ??
+                      'var(--color-accent-primary-start)'}"
+                  ></span>
+                  <span
+                    class="theme-swatch-dot"
+                    style="background-color: {modeTokens?.[
+                      '--color-accent-secondary-start'
+                    ] ??
+                      theme.swatches?.[1] ??
+                      'var(--color-accent-secondary-start)'}"
+                  ></span>
+                </span>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span
+                    class="text-text-primary text-[13px] font-body-md truncate"
                   >
-                    Active
+                    {theme.name}
                   </span>
+                  {#if active}
+                    <span
+                      class="text-[10px] text-accent-primary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0"
+                    >
+                      Active
+                    </span>
+                  {/if}
+                </div>
+                {#if theme.author || theme.description}
+                  <div
+                    class="text-text-muted text-[11px] font-label-sm truncate"
+                  >
+                    {theme.author ? `by ${theme.author}` : ''}
+                    {theme.author && theme.description ? ' · ' : ''}
+                    {theme.description ?? ''}
+                  </div>
                 {/if}
               </div>
-              {#if theme.author || theme.description}
-                <div class="text-text-muted text-[11px] font-label-sm truncate">
-                  {theme.author ? `by ${theme.author}` : ''}
-                  {theme.author && theme.description ? ' · ' : ''}
-                  {theme.description ?? ''}
-                </div>
-              {/if}
-            </div>
-            <span
-              class="material-symbols-outlined text-text-muted text-[18px] flex-shrink-0"
-            >
-              {active ? 'check_circle' : 'chevron_right'}
-            </span>
-          </button>
-        {/each}
-      </div>
-    {/if}
+              <span
+                class="material-symbols-outlined text-text-muted text-[18px] flex-shrink-0"
+              >
+                {active ? 'check_circle' : 'chevron_right'}
+              </span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
   </section>
 
   <!-- Custom theme import/export -->
@@ -468,6 +519,9 @@
         Export active
       </button>
     </div>
+    <p class="text-text-muted text-[11px] font-label-sm mt-2">
+      You can also drag and drop a .json theme file onto the list above.
+    </p>
   </section>
 
   <!-- Live status region (a11y: aria-live="polite" for success/info, role="alert" for errors) -->
@@ -526,6 +580,21 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+  }
+
+  /* Active drag visual for the theme drop target. Wails toggles
+     .file-drop-target-active on #theme-file-drop-target while OS files are
+     dragged over it; targeted via :global because Wails adds the class at
+     runtime (a scoped selector wouldn't catch it). Inset ring + tint — no
+     border, so there's no layout shift when the affordance appears.
+     `transition` on the element smooths both the ring and the tint in/out. */
+  :global(#theme-file-drop-target.file-drop-target-active) {
+    background-color: color-mix(
+      in srgb,
+      var(--color-accent-primary-start) 10%,
+      transparent
+    );
+    box-shadow: inset 0 0 0 2px var(--color-accent-primary-start);
   }
 
   /* Mini theme-card swatch (#405): a base chip filled with the theme's app

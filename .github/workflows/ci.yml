@@ -86,18 +86,29 @@ jobs:
         # produces a working binary, not just that Go compiles.
         run: wails3 build
 
+      - name: go vet
+        # Standard static analysis. Runs alongside the project's custom
+        # withaipreflightdefer vettool below — both are go vet checks.
+        run: go vet ./...
+
       - name: Binding parity check
-        # Verifies the App method surface hasn't drifted from the expected count.
-        # The inventory tool scans Go AST for exported *App methods and frontend
-        # imports of the generated bindings.
-        run: |
-          go run -tags tools ./cmd/inventory/ > /tmp/inventory.json 2>/dev/null
-          METHODS=$(node -e "const d=require('/tmp/inventory.json'); console.log(d.methods.length)")
-          if [ "$METHODS" -lt 180 ]; then
-            echo "::error::Method count dropped to $METHODS (expected ~187). Check for accidentally removed bindings."
-            exit 1
-          fi
-          echo "Method count: $METHODS (OK)"
+        # Replaces the old ">=180 methods" floor with an exact, deterministic
+        # comparison against the checked-in fixture at
+        # cmd/inventory/current-approved-v3.json. The gate FAILS on any
+        # missing, extra, or changed *App method signature (the IPC contract),
+        # so an accidental binding removal/rename/change is caught here rather
+        # than silently breaking the frontend at runtime. A deliberate surface
+        # change (new/removed/renamed binding) is made review-visible by
+        # regenerating the fixture in the same PR:
+        #
+        #   go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json
+        #
+        # Non-method sections (events, frontend imports) are reported as
+        # informational drift and do not fail the gate (they churn on routine
+        # feature work). The inventory is derived purely from source with
+        # repo-relative, forward-slashed paths, so the fixture is byte-identical
+        # across Windows/Linux/macOS — no platform-specific path noise.
+        run: go run -tags tools ./cmd/inventory/ -compare cmd/inventory/current-approved-v3.json
 
       - name: withAIPreflight defer-contract analyzer
         # Builds the vettool (gated out of the prod binary via //go:build tools)
@@ -153,7 +164,10 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          # Aligned with the build-and-test job (22) and the README's stated
+          # Node prerequisite, so the security gate audits the same LTS line
+          # the app actually ships on.
+          node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 

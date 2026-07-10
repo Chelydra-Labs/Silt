@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"silt/backend/themes"
 )
 
 // mustParseURL builds a *url.URL for a raw path. Using url.Parse (not
@@ -329,5 +333,191 @@ func TestThemeAssetHandler_RejectsNonGetHead(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 for POST", resp.StatusCode)
+	}
+}
+
+// TestThemeAssetHandler_RangeRequestServesPartialContent: http.ServeContent
+// (which the handler delegates to) honors a Range request, returning 206
+// Partial Content with exactly the requested byte range. The webview's image
+// loader emits Range requests for progressive/large background loads, so a
+// regression here would show up as broken partial fetches.
+func TestThemeAssetHandler_RangeRequestServesPartialContent(t *testing.T) {
+	themesDir := t.TempDir()
+	img := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 10, 20, 30, 40, 50, 60, 70, 80}
+	buildAssetTree(t, themesDir, "terra-test", "photo.png", img)
+
+	h := themeAssetHandler(func() string { return themesDir })
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/terra-test.assets/photo.png", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Range", "bytes=0-3") // first 4 bytes (PNG magic)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206 Partial Content", resp.StatusCode)
+	}
+	if resp.ContentLength != 4 {
+		t.Errorf("Content-Length = %d, want 4 (bytes 0-3)", resp.ContentLength)
+	}
+	if ar := resp.Header.Get("Accept-Ranges"); ar != "bytes" {
+		t.Errorf("Accept-Ranges = %q, want %q", ar, "bytes")
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	want := img[:4]
+	if !bytes.Equal(body, want) {
+		t.Errorf("partial body = %v, want %v (first 4 bytes)", body, want)
+	}
+}
+
+// TestThemeAssetHandler_ConditionalRequestNotModified: ServeContent honors
+// If-Modified-Since against the file's mtime. Sending the exact mtime yields
+// 304 Not Modified (empty body); sending a timestamp from before the mtime
+// serves the full body. The webview revalidates cached theme backgrounds this
+// way, so a 200-every-time regression would needlessly re-download.
+func TestThemeAssetHandler_ConditionalRequestNotModified(t *testing.T) {
+	themesDir := t.TempDir()
+	img := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4}
+	p := buildAssetTree(t, themesDir, "terra-test", "photo.png", img)
+
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("stat asset: %v", err)
+	}
+	modTime := fi.ModTime()
+
+	h := themeAssetHandler(func() string { return themesDir })
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	get := func(ims time.Time) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/terra-test.assets/photo.png", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("If-Modified-Since", ims.UTC().Format(http.TimeFormat))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		return resp
+	}
+
+	// Fresh revalidation with the asset's own mtime → not modified.
+	resp := get(modTime)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304 for matching If-Modified-Since", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) != 0 {
+		t.Errorf("304 response should have an empty body, got %d bytes", len(body))
+	}
+
+	// A stale validator (a day before the mtime) → the asset is newer than
+	// the client thinks, so the full body is served.
+	resp2 := get(modTime.Add(-24 * time.Hour))
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for stale If-Modified-Since", resp2.StatusCode)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	if !bytes.Equal(body2, img) {
+		t.Errorf("full body = %v, want %v", body2, img)
+	}
+}
+
+// themeAssetMiddleware mirrors the AssetOptions.Middleware closure wired in
+// main.go: it routes "<validId>.assets/<file>" requests to the per-theme
+// handler and falls through to Wails' embedded AssetFileServerFS (next) for
+// everything else. main.go owns the real closure; this in-test copy pins the
+// routing CONTRACT so a change to the predicate is surfaced here. Promoting
+// this into a shared helper would mean editing main.go, which a different
+// lane owns — so the duplication is deliberate and annotated rather than
+// hidden behind an abstraction neither side can wire.
+func themeAssetMiddleware(themeHandler, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rel := strings.TrimPrefix(r.URL.Path, "/")
+		if strings.Contains(rel, ".assets/") && themes.IsValidThemeID(strings.SplitN(rel, ".assets/", 2)[0]) {
+			themeHandler.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// TestThemeAssetMiddleware_FallsThroughToEmbeddedHandler: a non-theme path
+// (index.html, /assets/*.js, bare "/") must reach the embedded handler (next),
+// not the theme handler — those files live in the Wails frontend embed, not on
+// disk. A valid-id ".assets/" path routes to the theme handler; an invalid-id
+// ".assets/" path falls through (the IsValidThemeID gate rejects it before the
+// theme handler ever touches the filesystem).
+func TestThemeAssetMiddleware_FallsThroughToEmbeddedHandler(t *testing.T) {
+	themesDir := t.TempDir()
+	img := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 9, 9}
+	buildAssetTree(t, themesDir, "terra-test", "photo.png", img)
+
+	themeHandler := themeAssetHandler(func() string { return themesDir })
+	// embedded stands in for Wails' AssetFileServerFS. The marker header lets
+	// the test prove a request reached `next` rather than being intercepted.
+	embedded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Served-By", "embedded")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("embedded-bundle"))
+	})
+	srv := httptest.NewServer(themeAssetMiddleware(themeHandler, embedded))
+	defer srv.Close()
+
+	// Valid theme-asset path → theme handler serves the on-disk asset, and
+	// must NOT reach the embedded handler.
+	resp, err := http.Get(srv.URL + "/terra-test.assets/photo.png")
+	if err != nil {
+		t.Fatalf("GET theme asset: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.Header.Get("X-Served-By") == "embedded" {
+		t.Error("valid theme-asset path routed to embedded handler; should have gone to the theme handler")
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("theme asset status = %d, want 200", resp.StatusCode)
+	}
+	if !bytes.Equal(body, img) {
+		t.Errorf("theme asset body = %v, want the on-disk asset bytes %v", body, img)
+	}
+
+	// Non-asset paths → embedded handler.
+	for _, p := range []string{"/index.html", "/assets/app.js", "/"} {
+		resp, err := http.Get(srv.URL + p)
+		if err != nil {
+			t.Fatalf("GET %s: %v", p, err)
+		}
+		resp.Body.Close()
+		if got := resp.Header.Get("X-Served-By"); got != "embedded" {
+			t.Errorf("%s: X-Served-By = %q, want %q (should fall through to embedded)", p, got, "embedded")
+		}
+	}
+
+	// A ".assets/" segment with an INVALID theme id (uppercase is outside
+	// the [a-z0-9_-] set) must fall through to embedded too — the middleware's
+	// IsValidThemeID gate is what keeps malformed/probe paths off the theme
+	// handler before it could touch the filesystem.
+	resp, err = http.Get(srv.URL + "/Terra-Test.assets/x.png")
+	if err != nil {
+		t.Fatalf("GET invalid-id asset: %v", err)
+	}
+	resp.Body.Close()
+	if got := resp.Header.Get("X-Served-By"); got != "embedded" {
+		t.Errorf("invalid-id .assets path: X-Served-By = %q, want %q (should fall through, not reach theme handler)", got, "embedded")
 	}
 }

@@ -6,13 +6,30 @@
 // generated App bindings and the @wailsio/runtime package, and frontend
 // Events.On subscriptions.
 //
-// The "tools" build tag keeps this binary out of the production build. Run with:
+// The "tools" build tag keeps this binary out of the production build.
 //
+// Modes (selected by flag):
+//
+//	# Print the live inventory to stdout (ad-hoc inspection):
 //	go run -tags tools ./cmd/inventory/
+//
+//	# Compare the live surface against the checked-in fixture. CI's binding
+//	# parity gate runs this — it fails on any missing/extra/changed method
+//	# signature (the IPC contract) and reports drift in the other sections.
+//	go run -tags tools ./cmd/inventory/ -compare ./cmd/inventory/current-approved-v3.json
+//
+//	# Regenerate the checked-in fixture after an INTENTIONAL surface change
+//	# (new/removed/renamed binding). Re-run -compare afterwards to confirm.
+//	go run -tags tools ./cmd/inventory/ -update ./cmd/inventory/current-approved-v3.json
+//
+// All three modes derive the surface purely from source (AST scans + repo-
+// relative, forward-slashed paths), so the fixture is byte-identical across
+// Windows / Linux / macOS checkouts — no platform-specific path noise.
 package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -46,16 +63,66 @@ type Inventory struct {
 }
 
 func main() {
-	root := "."
-	if len(os.Args) > 1 {
-		root = os.Args[1]
+	comparePath := flag.String("compare", "", "compare the live surface against the fixture at this path; exit 1 on any method-signature drift")
+	updatePath := flag.String("update", "", "write the live inventory into the fixture at this path (regenerate after an intentional surface change)")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(),
+			"usage: inventory [flags] [repo-root]\n\n  flags:\n    -compare <path>\n    -update <path>\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+	root := flag.Arg(0)
+	if root == "" {
+		root = "."
 	}
 
+	switch {
+	case *updatePath != "":
+		inv := buildInventory(root)
+		if err := writeFixture(*updatePath, inv); err != nil {
+			fmt.Fprintln(os.Stderr, "update:", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "inventory: fixture written to %s (%d methods)\n", *updatePath, len(inv.Methods))
+	case *comparePath != "":
+		inv := buildInventory(root)
+		want, err := readFixture(*comparePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "compare:", err)
+			os.Exit(1)
+		}
+		diff := compareInventories(want, inv)
+		fmt.Print(renderDiff(diff))
+		if !diff.MethodsEqual() {
+			fmt.Fprintf(os.Stderr, "inventory: METHOD-SIGNATURE DRIFT — regenerate with: go run -tags tools ./cmd/inventory/ -update %s\n", *comparePath)
+			os.Exit(1)
+		}
+	default:
+		// No flag: emit the live inventory to stdout (ad-hoc inspection).
+		inv := buildInventory(root)
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(inv); err != nil {
+			fmt.Fprintln(os.Stderr, "encode:", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr,
+			"inventory: methods=%d (plugin=%d) go_events=%d frontend_binding_imports=%d frontend_runtime_imports=%d frontend_events=%d\n",
+			len(inv.Methods), inv.PluginMethodCount, len(inv.GoEvents), len(inv.FrontendBindingImports), len(inv.FrontendRuntimeImports), len(inv.FrontendEvents),
+		)
+	}
+}
+
+// buildInventory composes the full IPC-surface report for the repo at root.
+// The scanning functions are deterministic and source-derived only, so the
+// returned Inventory is byte-stable across platforms (see renderSignature /
+// scanFrontend for the path-normalization details).
+func buildInventory(root string) Inventory {
 	methods, pluginCount := scanMethods(root)
 	goEvents := scanGoEvents(root)
 	bindImports, runtimeImports, feEvents := scanFrontend(filepath.Join(root, defaultFrontendSrc))
 
-	inv := Inventory{
+	return Inventory{
 		Methods:                methods,
 		GoEvents:               goEvents,
 		FrontendBindingImports: bindImports,
@@ -63,18 +130,6 @@ func main() {
 		FrontendEvents:         feEvents,
 		PluginMethodCount:      pluginCount,
 	}
-
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(inv); err != nil {
-		fmt.Fprintln(os.Stderr, "encode:", err)
-		os.Exit(1)
-	}
-
-	fmt.Fprintf(os.Stderr,
-		"inventory: methods=%d (plugin=%d) go_events=%d frontend_binding_imports=%d frontend_runtime_imports=%d frontend_events=%d\n",
-		len(methods), pluginCount, len(goEvents), len(bindImports), len(runtimeImports), len(feEvents),
-	)
 }
 
 // scanMethods walks only the top-level .go files in root (no subdirectories,

@@ -1,0 +1,961 @@
+{
+  "schema": "current-approved-v3",
+  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json",
+  "description": "Approved Wails v3 IPC surface snapshot. The CI parity gate fails on any missing/extra/changed *App method signature versus this file. Other sections (events, frontend imports) are tracked for review visibility and refreshed whenever the fixture is regenerated.",
+  "inventory": {
+    "methods": [
+      {
+        "name": "AcquireFocusLock",
+        "signature": "AcquireFocusLock(notebook, section, page string) error"
+      },
+      {
+        "name": "AddAttachment",
+        "signature": "AddAttachment(srcPath, notebook string) (string, error)"
+      },
+      {
+        "name": "AddCustomDictionaryWord",
+        "signature": "AddCustomDictionaryWord(word string) ([]string, error)"
+      },
+      {
+        "name": "AddTrustedPublisher",
+        "signature": "AddTrustedPublisher(publisher string) error"
+      },
+      {
+        "name": "AppendDismissedTip",
+        "signature": "AppendDismissedTip(tipID string) error"
+      },
+      {
+        "name": "AppendTaskComment",
+        "signature": "AppendTaskComment(taskID, text, author, ts string) (string, error)"
+      },
+      {
+        "name": "ApplyTheme",
+        "signature": "ApplyTheme(id, mode string) (ActiveThemeResult, error)"
+      },
+      {
+        "name": "CheckForUpdates",
+        "signature": "CheckForUpdates() (updates.UpdateInfo, error)"
+      },
+      {
+        "name": "CheckPluginUpdate",
+        "signature": "CheckPluginUpdate(pluginID, currentVersion, updateUrl string) (PluginUpdateInfo, error)"
+      },
+      {
+        "name": "ClearAIAPIKey",
+        "signature": "ClearAIAPIKey(which string) error"
+      },
+      {
+        "name": "ClearAIAudit",
+        "signature": "ClearAIAudit() error"
+      },
+      {
+        "name": "ClearAuditLog",
+        "signature": "ClearAuditLog() error"
+      },
+      {
+        "name": "ClearNetworkAudit",
+        "signature": "ClearNetworkAudit() error"
+      },
+      {
+        "name": "ClosePluginDB",
+        "signature": "ClosePluginDB(pluginID string) error"
+      },
+      {
+        "name": "CloseVault",
+        "signature": "CloseVault() error"
+      },
+      {
+        "name": "ConfirmGrantsMigration",
+        "signature": "ConfirmGrantsMigration(legacyGrants map[string]map[string]string) error"
+      },
+      {
+        "name": "ConfirmSettingsChange",
+        "signature": "ConfirmSettingsChange() error"
+      },
+      {
+        "name": "CopyAIAPIKey",
+        "signature": "CopyAIAPIKey(from, to string) error"
+      },
+      {
+        "name": "CopyVault",
+        "signature": "CopyVault(destPath string) (vault.CopyResult, error)"
+      },
+      {
+        "name": "CreateNotebook",
+        "signature": "CreateNotebook(name string) error"
+      },
+      {
+        "name": "CreatePage",
+        "signature": "CreatePage(notebook, section, page, dateStr string) (string, error)"
+      },
+      {
+        "name": "CreatePageFromTemplate",
+        "signature": "CreatePageFromTemplate(notebook, section, page, dateStr, templateID string, vars map[string]string) (string, error)"
+      },
+      {
+        "name": "CreateSection",
+        "signature": "CreateSection(notebook, section string) error"
+      },
+      {
+        "name": "CreateStandaloneTask",
+        "signature": "CreateStandaloneTask(title, dueDate, status string) (string, error)"
+      },
+      {
+        "name": "DeclineGrantsMigration",
+        "signature": "DeclineGrantsMigration() error"
+      },
+      {
+        "name": "DeleteAttachment",
+        "signature": "DeleteAttachment(notebook, relPath string) error"
+      },
+      {
+        "name": "DeleteNotebook",
+        "signature": "DeleteNotebook(notebook string) error"
+      },
+      {
+        "name": "DeletePage",
+        "signature": "DeletePage(notebook, section, page string) error"
+      },
+      {
+        "name": "DeleteSection",
+        "signature": "DeleteSection(notebook, section string) error"
+      },
+      {
+        "name": "DeleteUserTemplate",
+        "signature": "DeleteUserTemplate(id string) error"
+      },
+      {
+        "name": "DisablePlugin",
+        "signature": "DisablePlugin(pluginID string) error"
+      },
+      {
+        "name": "DistinctOwners",
+        "signature": "DistinctOwners(prefix string) ([]string, error)"
+      },
+      {
+        "name": "DownloadUpdate",
+        "signature": "DownloadUpdate(assetURL string) (string, error)"
+      },
+      {
+        "name": "EnablePlugin",
+        "signature": "EnablePlugin(pluginID string) error"
+      },
+      {
+        "name": "ExportActiveTheme",
+        "signature": "ExportActiveTheme(dstPath string) error"
+      },
+      {
+        "name": "ExportVault",
+        "signature": "ExportVault(destPath string) (vault.ExportResult, error)"
+      },
+      {
+        "name": "FetchPageBlocks",
+        "signature": "FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error)"
+      },
+      {
+        "name": "FetchSubtree",
+        "signature": "FetchSubtree(blockID string) ([]parser.ParsedBlock, error)"
+      },
+      {
+        "name": "GetAIAudit",
+        "signature": "GetAIAudit() ([]AIAuditEntry, error)"
+      },
+      {
+        "name": "GetAIProviderConfig",
+        "signature": "GetAIProviderConfig() (AIPublicConfig, error)"
+      },
+      {
+        "name": "GetActiveTheme",
+        "signature": "GetActiveTheme() (ActiveThemeResult, error)"
+      },
+      {
+        "name": "GetAppVersion",
+        "signature": "GetAppVersion() string"
+      },
+      {
+        "name": "GetAuditLog",
+        "signature": "GetAuditLog() ([]AuditEntry, error)"
+      },
+      {
+        "name": "GetCloseToTray",
+        "signature": "GetCloseToTray() bool"
+      },
+      {
+        "name": "GetConfigLoadError",
+        "signature": "GetConfigLoadError() string"
+      },
+      {
+        "name": "GetCustomDictionary",
+        "signature": "GetCustomDictionary() ([]string, error)"
+      },
+      {
+        "name": "GetGrantedCapabilities",
+        "signature": "GetGrantedCapabilities() (map[string]map[string]string, error)"
+      },
+      {
+        "name": "GetLocalAuthor",
+        "signature": "GetLocalAuthor() string"
+      },
+      {
+        "name": "GetNavOrder",
+        "signature": "GetNavOrder() (config.NavOrder, error)"
+      },
+      {
+        "name": "GetNetworkAudit",
+        "signature": "GetNetworkAudit() ([]NetworkAuditEntry, error)"
+      },
+      {
+        "name": "GetOpenTabs",
+        "signature": "GetOpenTabs() (OpenTabsResult, error)"
+      },
+      {
+        "name": "GetPluginRegistry",
+        "signature": "GetPluginRegistry() (parser.PluginRegistry, error)"
+      },
+      {
+        "name": "GetPluginSettingsForNotebook",
+        "signature": "GetPluginSettingsForNotebook(pluginID, notebookName string) (map[string]any, error)"
+      },
+      {
+        "name": "GetSidebarWidth",
+        "signature": "GetSidebarWidth() int"
+      },
+      {
+        "name": "GetStartupEvents",
+        "signature": "GetStartupEvents() []startupEvent"
+      },
+      {
+        "name": "GetSystemConfig",
+        "signature": "GetSystemConfig() (config.SystemConfig, error)"
+      },
+      {
+        "name": "GetTaskBlockers",
+        "signature": "GetTaskBlockers(blockID string) ([]parser.TaskResult, error)"
+      },
+      {
+        "name": "GetTemplate",
+        "signature": "GetTemplate(id string) (templates.Template, error)"
+      },
+      {
+        "name": "GetTrustedPublishers",
+        "signature": "GetTrustedPublishers() ([]string, error)"
+      },
+      {
+        "name": "GetUpdateSettings",
+        "signature": "GetUpdateSettings() (UpdateSettingsResult, error)"
+      },
+      {
+        "name": "ImportTheme",
+        "signature": "ImportTheme(srcPath string) (*themes.ImportResult, error)"
+      },
+      {
+        "name": "ImportVault",
+        "signature": "ImportVault(archivePath, destPath string) (vault.ImportResult, error)"
+      },
+      {
+        "name": "InitializeVault",
+        "signature": "InitializeVault() (bool, error)"
+      },
+      {
+        "name": "InstallPlugin",
+        "signature": "InstallPlugin(archivePath string) (parser.PluginManifest, error)"
+      },
+      {
+        "name": "InstallUpdate",
+        "signature": "InstallUpdate(localPath string) (InstallUpdateResult, error)"
+      },
+      {
+        "name": "IsVaultInitialized",
+        "signature": "IsVaultInitialized() bool"
+      },
+      {
+        "name": "LinkNotebook",
+        "signature": "LinkNotebook(folderPath string) (config.LinkedNotebook, error)"
+      },
+      {
+        "name": "ListModels",
+        "signature": "ListModels(which string, force bool) ([]ai.AIModel, error)"
+      },
+      {
+        "name": "ListNavigation",
+        "signature": "ListNavigation() (parser.NavigationTree, error)"
+      },
+      {
+        "name": "ListPlugins",
+        "signature": "ListPlugins() ([]parser.PluginInfo, error)"
+      },
+      {
+        "name": "ListTemplates",
+        "signature": "ListTemplates() (*templates.ListTemplatesResult, error)"
+      },
+      {
+        "name": "ListThemes",
+        "signature": "ListThemes() (*themes.ListThemesResult, error)"
+      },
+      {
+        "name": "MarkFrontendReady",
+        "signature": "MarkFrontendReady()"
+      },
+      {
+        "name": "MovePage",
+        "signature": "MovePage(notebook, fromSection, toSection, page string) error"
+      },
+      {
+        "name": "MoveVault",
+        "signature": "MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult, error)"
+      },
+      {
+        "name": "MutateBlock",
+        "signature": "MutateBlock(blockID, newText string) error"
+      },
+      {
+        "name": "OpenAttachment",
+        "signature": "OpenAttachment(notebook, relPath string) error"
+      },
+      {
+        "name": "OpenNotebook",
+        "signature": "OpenNotebook(folderPath string) (string, error)"
+      },
+      {
+        "name": "PickBackgroundImage",
+        "signature": "PickBackgroundImage(zone string) (*BackgroundImageResult, error)"
+      },
+      {
+        "name": "PickExportPath",
+        "signature": "PickExportPath(defaultFilename string) (string, error)"
+      },
+      {
+        "name": "PickLinkedNotebook",
+        "signature": "PickLinkedNotebook() (config.LinkedNotebook, error)"
+      },
+      {
+        "name": "PickNotebookFolder",
+        "signature": "PickNotebookFolder() (string, error)"
+      },
+      {
+        "name": "PickPluginArchive",
+        "signature": "PickPluginArchive() (string, error)"
+      },
+      {
+        "name": "PickThemeFile",
+        "signature": "PickThemeFile() (string, error)"
+      },
+      {
+        "name": "PickVaultArchive",
+        "signature": "PickVaultArchive() (string, error)"
+      },
+      {
+        "name": "PickVaultDestination",
+        "signature": "PickVaultDestination() (string, error)"
+      },
+      {
+        "name": "PickVaultExportPath",
+        "signature": "PickVaultExportPath(defaultFilename string) (string, error)"
+      },
+      {
+        "name": "PluginAIComplete",
+        "signature": "PluginAIComplete(pluginID, sessionToken string, input PluginAICompleteInput) (ai.CompleteResult, error)"
+      },
+      {
+        "name": "PluginAIEmbed",
+        "signature": "PluginAIEmbed(pluginID, sessionToken string, input PluginAIEmbedInput) (ai.EmbedResult, error)"
+      },
+      {
+        "name": "PluginAppendTaskComment",
+        "signature": "PluginAppendTaskComment(pluginID, sessionToken, taskID, text, author, ts string) (string, error)"
+      },
+      {
+        "name": "PluginApplyBlocks",
+        "signature": "PluginApplyBlocks(pluginID, sessionToken string, ops []PluginCreateBlockOp) error"
+      },
+      {
+        "name": "PluginClipboardReadText",
+        "signature": "PluginClipboardReadText(pluginID, sessionToken string) (string, error)"
+      },
+      {
+        "name": "PluginClipboardWriteText",
+        "signature": "PluginClipboardWriteText(pluginID, sessionToken, text string) error"
+      },
+      {
+        "name": "PluginCreateBlock",
+        "signature": "PluginCreateBlock(pluginID, sessionToken, afterID, notebook, section, page, blockType, text string) (string, error)"
+      },
+      {
+        "name": "PluginCreateNotebook",
+        "signature": "PluginCreateNotebook(pluginID, sessionToken, name string) error"
+      },
+      {
+        "name": "PluginCreatePage",
+        "signature": "PluginCreatePage(pluginID, sessionToken, notebook, section, page, dateStr string) (string, error)"
+      },
+      {
+        "name": "PluginCreateSection",
+        "signature": "PluginCreateSection(pluginID, sessionToken, notebook, section string) error"
+      },
+      {
+        "name": "PluginCreateTask",
+        "signature": "PluginCreateTask(pluginID, sessionToken, title, dueDate, status string) (string, error)"
+      },
+      {
+        "name": "PluginDBExec",
+        "signature": "PluginDBExec(pluginID, sessionToken, sqlText string, params []any) error"
+      },
+      {
+        "name": "PluginDBMigrate",
+        "signature": "PluginDBMigrate(pluginID, sessionToken string, version int, sqlText string) error"
+      },
+      {
+        "name": "PluginDBQuery",
+        "signature": "PluginDBQuery(pluginID, sessionToken, sqlText string, params []any) (PluginRawQueryResult, error)"
+      },
+      {
+        "name": "PluginDeleteBlock",
+        "signature": "PluginDeleteBlock(pluginID, sessionToken, blockID string) error"
+      },
+      {
+        "name": "PluginDeleteFile",
+        "signature": "PluginDeleteFile(pluginID, sessionToken, notebook, relPath string) error"
+      },
+      {
+        "name": "PluginDeletePage",
+        "signature": "PluginDeletePage(pluginID, sessionToken, notebook, section, page string) error"
+      },
+      {
+        "name": "PluginFetch",
+        "signature": "PluginFetch(pluginID, sessionToken string, input PluginFetchInput) (PluginFetchResult, error)"
+      },
+      {
+        "name": "PluginListDir",
+        "signature": "PluginListDir(pluginID, sessionToken, notebook, relPath string) ([]string, error)"
+      },
+      {
+        "name": "PluginListNavigation",
+        "signature": "PluginListNavigation(pluginID, sessionToken string) (parser.NavigationTree, error)"
+      },
+      {
+        "name": "PluginMoveBlock",
+        "signature": "PluginMoveBlock(pluginID, sessionToken, blockID, afterID, notebook, section, page string) error"
+      },
+      {
+        "name": "PluginMutateBlock",
+        "signature": "PluginMutateBlock(pluginID, sessionToken, blockID, newText string) (bool, error)"
+      },
+      {
+        "name": "PluginNotify",
+        "signature": "PluginNotify(pluginID, sessionToken, title, body string) error"
+      },
+      {
+        "name": "PluginOpenInNativeHandler",
+        "signature": "PluginOpenInNativeHandler(pluginID, sessionToken, notebook, relPath string) error"
+      },
+      {
+        "name": "PluginOpenUrl",
+        "signature": "PluginOpenUrl(pluginID, sessionToken, url string) error"
+      },
+      {
+        "name": "PluginPickOpenFile",
+        "signature": "PluginPickOpenFile(pluginID, sessionToken, filterPattern string) (string, error)"
+      },
+      {
+        "name": "PluginPickSaveFile",
+        "signature": "PluginPickSaveFile(pluginID, sessionToken, defaultFilename string) (string, error)"
+      },
+      {
+        "name": "PluginRawQuery",
+        "signature": "PluginRawQuery(pluginID, sessionToken, sqlText string, params []any) (PluginRawQueryResult, error)"
+      },
+      {
+        "name": "PluginReadFile",
+        "signature": "PluginReadFile(pluginID, sessionToken, notebook, relPath string) (pluginFileResult, error)"
+      },
+      {
+        "name": "PluginReadPluginAsset",
+        "signature": "PluginReadPluginAsset(pluginID, sessionToken, relPath string) (string, error)"
+      },
+      {
+        "name": "PluginRegisterSurface",
+        "signature": "PluginRegisterSurface(pluginID, sessionToken, surfaceID, kind, label string) error"
+      },
+      {
+        "name": "PluginRenamePage",
+        "signature": "PluginRenamePage(pluginID, sessionToken, notebook, section, oldName, newName string) error"
+      },
+      {
+        "name": "PluginResolveAsset",
+        "signature": "PluginResolveAsset(pluginID, sessionToken, notebook, relPath string) (string, error)"
+      },
+      {
+        "name": "PluginResolveNotebookRoot",
+        "signature": "PluginResolveNotebookRoot(pluginID, sessionToken, notebook string) (string, error)"
+      },
+      {
+        "name": "PluginSaveSubtreeBlocks",
+        "signature": "PluginSaveSubtreeBlocks(pluginID, sessionToken, blockID string, children []parser.ParsedBlock) (bool, error)"
+      },
+      {
+        "name": "PluginScratchDir",
+        "signature": "PluginScratchDir(pluginID, sessionToken, notebook string) (string, error)"
+      },
+      {
+        "name": "PluginSetTaskBlockedBy",
+        "signature": "PluginSetTaskBlockedBy(pluginID, sessionToken, blockID string, depIDs []string) (bool, error)"
+      },
+      {
+        "name": "PluginSetTaskDueDate",
+        "signature": "PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate string) (bool, error)"
+      },
+      {
+        "name": "PluginSetTaskOrder",
+        "signature": "PluginSetTaskOrder(pluginID, sessionToken, blockID string, order int) (bool, error)"
+      },
+      {
+        "name": "PluginSetTaskOrders",
+        "signature": "PluginSetTaskOrders(pluginID, sessionToken string, ids []string, orders []int) (bool, error)"
+      },
+      {
+        "name": "PluginSetTaskOwner",
+        "signature": "PluginSetTaskOwner(pluginID, sessionToken, blockID, owner string) (bool, error)"
+      },
+      {
+        "name": "PluginSetTaskPriority",
+        "signature": "PluginSetTaskPriority(pluginID, sessionToken, blockID string, priority int) (bool, error)"
+      },
+      {
+        "name": "PluginSetTaskRecurrence",
+        "signature": "PluginSetTaskRecurrence(pluginID, sessionToken, blockID, recurrenceRule string) (bool, error)"
+      },
+      {
+        "name": "PluginSetTaskTags",
+        "signature": "PluginSetTaskTags(pluginID, sessionToken, blockID string, tags []string) (bool, error)"
+      },
+      {
+        "name": "PluginSetTaskTitle",
+        "signature": "PluginSetTaskTitle(pluginID, sessionToken, blockID, title string) (bool, error)"
+      },
+      {
+        "name": "PluginUpdateBlockState",
+        "signature": "PluginUpdateBlockState(pluginID, sessionToken, blockID, status string) (bool, error)"
+      },
+      {
+        "name": "PluginUpdateTaskMeta",
+        "signature": "PluginUpdateTaskMeta(pluginID, sessionToken, blockID string, pin int, progress int) (bool, error)"
+      },
+      {
+        "name": "PluginVaultScratchDir",
+        "signature": "PluginVaultScratchDir(pluginID, sessionToken string) (string, error)"
+      },
+      {
+        "name": "PluginWriteFile",
+        "signature": "PluginWriteFile(pluginID, sessionToken, notebook, relPath string, data []byte) error"
+      },
+      {
+        "name": "QueryBlocksByTag",
+        "signature": "QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error)"
+      },
+      {
+        "name": "QueryTagHierarchy",
+        "signature": "QueryTagHierarchy() ([]parser.TagNode, error)"
+      },
+      {
+        "name": "QueryTasks",
+        "signature": "QueryTasks(filter parser.TaskQueryFilter) ([]parser.TaskResult, error)"
+      },
+      {
+        "name": "Quit",
+        "signature": "Quit()"
+      },
+      {
+        "name": "ReadPluginSource",
+        "signature": "ReadPluginSource(pluginID string) (string, error)"
+      },
+      {
+        "name": "RefreshFocusLock",
+        "signature": "RefreshFocusLock(notebook, section, page string) error"
+      },
+      {
+        "name": "RegisterPluginSession",
+        "signature": "RegisterPluginSession(pluginID string) (string, error)"
+      },
+      {
+        "name": "RegisterPluginTemplates",
+        "signature": "RegisterPluginTemplates(pluginID string, tpls []*templates.Template) error"
+      },
+      {
+        "name": "ReleaseFocusLock",
+        "signature": "ReleaseFocusLock(notebook, section, page string) error"
+      },
+      {
+        "name": "ReloadTemplates",
+        "signature": "ReloadTemplates() error"
+      },
+      {
+        "name": "RemoveCustomDictionaryWord",
+        "signature": "RemoveCustomDictionaryWord(word string) ([]string, error)"
+      },
+      {
+        "name": "RemoveTrustedPublisher",
+        "signature": "RemoveTrustedPublisher(publisher string) error"
+      },
+      {
+        "name": "RenameNotebook",
+        "signature": "RenameNotebook(oldName, newName string) error"
+      },
+      {
+        "name": "RenamePage",
+        "signature": "RenamePage(notebook, section, oldName, newName string) error"
+      },
+      {
+        "name": "RenameSection",
+        "signature": "RenameSection(notebook, oldName, newName string) error"
+      },
+      {
+        "name": "RenderTemplate",
+        "signature": "RenderTemplate(id string, vars map[string]string) (string, error)"
+      },
+      {
+        "name": "RenderTemplateBlocks",
+        "signature": "RenderTemplateBlocks(id string, vars map[string]string) ([]parser.ParsedBlock, error)"
+      },
+      {
+        "name": "RequestCapability",
+        "signature": "RequestCapability(pluginID, capability, qualifier string) error"
+      },
+      {
+        "name": "RequestClose",
+        "signature": "RequestClose()"
+      },
+      {
+        "name": "ResolveBlockReference",
+        "signature": "ResolveBlockReference(blockID string) (parser.BlockReference, error)"
+      },
+      {
+        "name": "ResolveQuarantinedLinks",
+        "signature": "ResolveQuarantinedLinks() ([]QuarantinedLinkInfo, error)"
+      },
+      {
+        "name": "RevokeCapability",
+        "signature": "RevokeCapability(pluginID, capability string) error"
+      },
+      {
+        "name": "SaveFileBlocks",
+        "signature": "SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error"
+      },
+      {
+        "name": "SaveSubtreeBlocks",
+        "signature": "SaveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (bool, error)"
+      },
+      {
+        "name": "SaveSystemConfig",
+        "signature": "SaveSystemConfig(cfg config.SystemConfig) error"
+      },
+      {
+        "name": "SaveUserTemplate",
+        "signature": "SaveUserTemplate(t templates.Template) error"
+      },
+      {
+        "name": "SearchBlocks",
+        "signature": "SearchBlocks(query string) ([]parser.TaskResult, error)"
+      },
+      {
+        "name": "SearchBlocksPaged",
+        "signature": "SearchBlocksPaged(query string, offset, limit int, filters db.SearchFilters) (parser.SearchResult, error)"
+      },
+      {
+        "name": "ServiceShutdown",
+        "signature": "ServiceShutdown() error"
+      },
+      {
+        "name": "ServiceStartup",
+        "signature": "ServiceStartup(ctx context.Context, _ application.ServiceOptions) error"
+      },
+      {
+        "name": "SetAIAPIKey",
+        "signature": "SetAIAPIKey(which, key string) error"
+      },
+      {
+        "name": "SetCloseToTray",
+        "signature": "SetCloseToTray(enabled bool) error"
+      },
+      {
+        "name": "SetFocusMode",
+        "signature": "SetFocusMode(value bool) error"
+      },
+      {
+        "name": "SetNavOrder",
+        "signature": "SetNavOrder(order config.NavOrder) error"
+      },
+      {
+        "name": "SetOpenDevtoolsOnStartup",
+        "signature": "SetOpenDevtoolsOnStartup(value bool) error"
+      },
+      {
+        "name": "SetOpenTabs",
+        "signature": "SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) error"
+      },
+      {
+        "name": "SetShowFormatToolbar",
+        "signature": "SetShowFormatToolbar(value bool) error"
+      },
+      {
+        "name": "SetSidebarWidth",
+        "signature": "SetSidebarWidth(px int) error"
+      },
+      {
+        "name": "SetTaskBlockedBy",
+        "signature": "SetTaskBlockedBy(blockID string, depIDs []string) error"
+      },
+      {
+        "name": "SetTaskOrder",
+        "signature": "SetTaskOrder(blockID string, order int) error"
+      },
+      {
+        "name": "SetTaskOrders",
+        "signature": "SetTaskOrders(ids []string, orders []int) error"
+      },
+      {
+        "name": "SetTaskOwner",
+        "signature": "SetTaskOwner(blockID, owner string) error"
+      },
+      {
+        "name": "SetTaskPriority",
+        "signature": "SetTaskPriority(blockID string, priority int) error"
+      },
+      {
+        "name": "SetTaskRecurrence",
+        "signature": "SetTaskRecurrence(blockID, recurrenceRule string) error"
+      },
+      {
+        "name": "SetTaskTags",
+        "signature": "SetTaskTags(blockID string, tags []string) error"
+      },
+      {
+        "name": "SetTaskTitle",
+        "signature": "SetTaskTitle(blockID, title string) error"
+      },
+      {
+        "name": "SetTypewriterMode",
+        "signature": "SetTypewriterMode(value bool) error"
+      },
+      {
+        "name": "SetUpdateSettings",
+        "signature": "SetUpdateSettings(autoCheck bool) error"
+      },
+      {
+        "name": "SetUseKeyring",
+        "signature": "SetUseKeyring(on bool) error"
+      },
+      {
+        "name": "SwitchVault",
+        "signature": "SwitchVault(path string) error"
+      },
+      {
+        "name": "TestAIConnection",
+        "signature": "TestAIConnection(which string) (AIProbeResult, error)"
+      },
+      {
+        "name": "UninstallPlugin",
+        "signature": "UninstallPlugin(pluginID string) error"
+      },
+      {
+        "name": "UnlinkNotebook",
+        "signature": "UnlinkNotebook(id string) error"
+      },
+      {
+        "name": "UnregisterPluginSession",
+        "signature": "UnregisterPluginSession(token string) error"
+      },
+      {
+        "name": "UnregisterPluginTemplates",
+        "signature": "UnregisterPluginTemplates(pluginID string)"
+      },
+      {
+        "name": "UpdateAIProviderConfig",
+        "signature": "UpdateAIProviderConfig(which string, patch AIProviderPatch) error"
+      },
+      {
+        "name": "UpdateBlockState",
+        "signature": "UpdateBlockState(blockID string, newState string) error"
+      },
+      {
+        "name": "UpdatePluginSetting",
+        "signature": "UpdatePluginSetting(pluginID string, key string, value any) error"
+      },
+      {
+        "name": "ValidatePluginArchive",
+        "signature": "ValidatePluginArchive(archivePath string) (parser.PluginValidationResult, error)"
+      }
+    ],
+    "go_events": [
+      "block:changed",
+      "config:changed",
+      "config:error",
+      "index:re-mint-warning",
+      "linked-config:changed",
+      "linked-notebook:quarantined",
+      "menu:about",
+      "menu:find",
+      "menu:focus-mode",
+      "menu:new-page",
+      "menu:open-vault",
+      "menu:save",
+      "menu:settings",
+      "menu:toggle-format-toolbar",
+      "menu:toggle-sidebar",
+      "plugins:changed",
+      "templates:changed",
+      "theme:changed",
+      "themes:changed",
+      "vault:archive:progress",
+      "vault:closing",
+      "vault:moved"
+    ],
+    "frontend_binding_imports": [
+      "frontend/src/App.menu-save.test.ts",
+      "frontend/src/App.svelte",
+      "frontend/src/components/BlockPickerModal.svelte",
+      "frontend/src/components/BlockReferenceChip.svelte",
+      "frontend/src/components/BlockReferenceChip.test.ts",
+      "frontend/src/components/EmbedPortal.svelte",
+      "frontend/src/components/EmbedPortal.test.ts",
+      "frontend/src/components/PluginView.test.ts",
+      "frontend/src/components/SearchModal.svelte",
+      "frontend/src/components/Sidebar.svelte",
+      "frontend/src/components/Sidebar.test.ts",
+      "frontend/src/components/TagSidebarPanel.svelte",
+      "frontend/src/components/TagsExplorer.svelte",
+      "frontend/src/components/TipTapEditor.context-menu.test.ts",
+      "frontend/src/components/TipTapEditor.svelte",
+      "frontend/src/components/TipTapEditor.test.ts",
+      "frontend/src/components/TitleBar.svelte",
+      "frontend/src/components/VirtualScrollContainer.svelte",
+      "frontend/src/components/VirtualScrollContainer.test.ts",
+      "frontend/src/components/editor/EmbedBlockNodeView.svelte",
+      "frontend/src/components/editor/GlobalReplaceModal.svelte",
+      "frontend/src/components/editor/GlobalReplaceModal.test.ts",
+      "frontend/src/components/editor/PluginNoteBanners.test.ts",
+      "frontend/src/components/settings/AIProviderTab.svelte",
+      "frontend/src/components/settings/AIProviderTab.test.ts",
+      "frontend/src/components/settings/AboutTab.svelte",
+      "frontend/src/components/settings/AboutTab.test.ts",
+      "frontend/src/components/settings/GeneralTab.svelte",
+      "frontend/src/components/settings/GeneralTab.test.ts",
+      "frontend/src/components/settings/NetworkAuditViewer.svelte",
+      "frontend/src/components/settings/PluginSettingsPanel.test.ts",
+      "frontend/src/components/settings/PluginsTab.svelte",
+      "frontend/src/components/settings/PluginsTab.test.ts",
+      "frontend/src/components/settings/SettingsForm.test.ts",
+      "frontend/src/components/settings/SettingsShell.test.ts",
+      "frontend/src/components/settings/VaultActionModal.svelte",
+      "frontend/src/components/settings/VaultActionModal.test.ts",
+      "frontend/src/components/settings/VaultArchiveModal.svelte",
+      "frontend/src/components/settings/VaultArchiveModal.test.ts",
+      "frontend/src/lib/editor/nodeview-test-harness.test.ts",
+      "frontend/src/lib/editor/nodeview-test-harness.ts",
+      "frontend/src/lib/editor/spellcheck/customDictionary.svelte.ts",
+      "frontend/src/lib/editor/useAutosave.test.ts",
+      "frontend/src/lib/editor/useAutosave.ts",
+      "frontend/src/lib/editor/useFocusLock.test.ts",
+      "frontend/src/lib/editor/useFocusLock.ts",
+      "frontend/src/lib/sidebar/navOrder.test.ts",
+      "frontend/src/lib/sidebar/navOrder.ts",
+      "frontend/src/lib/sidebar/useDragDrop.test.ts",
+      "frontend/src/lib/sidebar/useDragDrop.ts",
+      "frontend/src/plugins/context.ai.test.ts",
+      "frontend/src/plugins/context.test.ts",
+      "frontend/src/plugins/context.ts",
+      "frontend/src/plugins/first-party/silt-attachments/index.test.ts",
+      "frontend/src/plugins/grants.svelte.test.ts",
+      "frontend/src/plugins/grants.svelte.ts",
+      "frontend/src/plugins/loader.test.ts",
+      "frontend/src/plugins/loader.ts",
+      "frontend/src/plugins/sdk.ts",
+      "frontend/src/settings/store.svelte.test.ts",
+      "frontend/src/settings/store.svelte.ts",
+      "frontend/src/templates/TemplatePicker.svelte",
+      "frontend/src/templates/TemplatePicker.test.ts",
+      "frontend/src/templates/store.svelte.ts",
+      "frontend/src/templates/store.test.ts",
+      "frontend/src/theme/listing.test.ts",
+      "frontend/src/theme/store.svelte.ts",
+      "frontend/src/theme/store.test.ts",
+      "frontend/src/updates/store.svelte.ts",
+      "frontend/src/updates/store.test.ts"
+    ],
+    "frontend_runtime_imports": [
+      "frontend/src/App.menu-save.test.ts",
+      "frontend/src/App.svelte",
+      "frontend/src/components/EmbedPortal.svelte",
+      "frontend/src/components/EmbedPortal.test.ts",
+      "frontend/src/components/TipTapEditor.context-menu.test.ts",
+      "frontend/src/components/TipTapEditor.test.ts",
+      "frontend/src/components/TitleBar.svelte",
+      "frontend/src/components/TitleBar.test.ts",
+      "frontend/src/components/VirtualScrollContainer.svelte",
+      "frontend/src/components/VirtualScrollContainer.test.ts",
+      "frontend/src/components/editor/GlobalReplaceModal.test.ts",
+      "frontend/src/components/settings/AboutTab.svelte",
+      "frontend/src/components/settings/AboutTab.test.ts",
+      "frontend/src/components/settings/AppearanceTab.svelte",
+      "frontend/src/components/settings/AppearanceTab.test.ts",
+      "frontend/src/components/settings/GeneralTab.test.ts",
+      "frontend/src/components/settings/VaultActionModal.test.ts",
+      "frontend/src/components/settings/VaultArchiveModal.svelte",
+      "frontend/src/components/settings/VaultArchiveModal.test.ts",
+      "frontend/src/lib/editor/nodeview-test-harness.test.ts",
+      "frontend/src/plugins/events.test.ts",
+      "frontend/src/plugins/events.ts",
+      "frontend/src/plugins/first-party/silt-tasks/Sidebar.test.ts",
+      "frontend/src/plugins/first-party/silt-tasks/TasksHub.test.ts",
+      "frontend/src/plugins/first-party/silt-tasks/components/CommentThread.test.ts",
+      "frontend/src/plugins/first-party/silt-tasks/components/DependencyPicker.test.ts",
+      "frontend/src/plugins/first-party/silt-tasks/components/TaskEditDrawer.test.ts",
+      "frontend/src/plugins/first-party/silt-tasks/components/TaskSubEditorModal.test.ts",
+      "frontend/src/plugins/first-party/silt-tasks/views/BoardView.test.ts",
+      "frontend/src/plugins/first-party/silt-tasks/views/CalendarView.test.ts",
+      "frontend/src/plugins/grants.svelte.test.ts",
+      "frontend/src/plugins/grants.svelte.ts",
+      "frontend/src/plugins/loader.test.ts",
+      "frontend/src/plugins/loader.ts",
+      "frontend/src/settings/store.svelte.test.ts",
+      "frontend/src/settings/store.svelte.ts",
+      "frontend/src/templates/TemplatePicker.test.ts",
+      "frontend/src/templates/store.svelte.ts",
+      "frontend/src/templates/store.test.ts",
+      "frontend/src/theme/listing.test.ts",
+      "frontend/src/theme/store.svelte.ts",
+      "frontend/src/theme/store.test.ts",
+      "frontend/src/updates/store.svelte.ts",
+      "frontend/src/updates/store.test.ts"
+    ],
+    "frontend_events": [
+      "block:changed",
+      "config:changed",
+      "config:error",
+      "grants:migration-required",
+      "index:re-mint-warning",
+      "linked-notebook:quarantined",
+      "menu:about",
+      "menu:find",
+      "menu:focus-mode",
+      "menu:new-page",
+      "menu:open-vault",
+      "menu:save",
+      "menu:settings",
+      "menu:toggle-format-toolbar",
+      "menu:toggle-sidebar",
+      "plugins:changed",
+      "settings:fingerprint-mismatch",
+      "templates:changed",
+      "theme:changed",
+      "theme:files-dropped",
+      "themes:changed",
+      "update:download:progress",
+      "vault:archive:progress",
+      "vault:closing",
+      "vault:init-error",
+      "vault:init-warnings",
+      "vault:moved"
+    ],
+    "plugin_method_count": 49
+  }
+}

@@ -566,7 +566,7 @@ Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
   |   background.go  per-zone background asset pipeline      |
   |   theme.go       Theme schema + Flatten (token emission) |
   +----------------------------------------------------------+
-          │  Wails JSON RPC (single Bind: { app })
+          │  Wails v3 JSON RPC (single App service)
           │   ListThemes / GetActiveTheme / ApplyTheme
           │   ImportTheme / ExportActiveTheme / PickThemeFile
           │   PickBackgroundImage   (per-zone background asset pick)
@@ -632,7 +632,7 @@ Pipeline (single source of truth shared with SPECS.md §6.5 / docs/TEMPLATES.md)
   |   cache.go      mtime-aware CachedGetTemplate            |
   |   watcher.go    fsnotify on .system/templates/           |
   +----------------------------------------------------------+
-          │  Wails JSON RPC (single Bind: { app })
+          │  Wails v3 JSON RPC (single App service)
           │   ListTemplates / GetTemplate / RenderTemplate
           │   RenderTemplateBlocks / SaveUserTemplate
           │   DeleteUserTemplate / ReloadTemplates
@@ -665,20 +665,29 @@ The v3 migration adds a system tray and native application menu.
 
 **System tray (#501).** `setupTray` (tray.go) creates a `SystemTray` with the
 app icon, a context menu (Show/Hide/Quit), and attaches the main window so a
-single click toggles visibility. Close-to-tray is a user-global setting
-(`settings.json` `close_to_tray`, default off). The `RequestClose` IPC binding
-checks the setting: if enabled, the window hides instead of quitting; the tray
-Quit item is the canonical quit path. The tray keeps the process alive —
-`wailsApp.Run()` does not exit until `Quit()` is explicitly called.
+single click toggles visibility. Close-to-tray is a user-global, **default-off**
+setting at Settings → General → Window (`settings.json` `close_to_tray`). A
+native `WindowClosing` hook (`main.go`, `setupMainWindowEvents`) always cancels
+the OS-level close (titlebar button, Alt+F4, taskbar close) and routes it
+through `RequestClose`, which checks the setting: enabled → the window hides
+and the process + tray remain; disabled (or the tray Quit item) → `Quit()`
+runs the canonical `ServiceShutdown` drain (WAL checkpoint, in-flight call
+drain, plugin `onVaultClose` hooks) so there is one quit path. The tray keeps
+the process alive — `wailsApp.Run()` does not exit until `Quit()` is explicitly
+called. The OS-close interception (#510) is implemented but awaits Windows/Linux
+desktop smoke before it is considered proven.
 
 **Native menus (#503).** `setupMenus` (menus.go) creates a platform-aware
 application menu: File (New Page, Open Vault, Save, Quit), Edit (Undo, Redo,
 Cut, Copy, Paste, Select All via standard v3 roles), View (Toggle Sidebar,
 Toggle Format Toolbar, Find, Focus Mode, Settings), Help (About). Custom
 items emit Wails events (`menu:new-page`, `menu:save`, etc.) that App.svelte
-listens for and dispatches to the same handlers the keyboard shortcuts use.
-Standard editing roles use v3's built-in platform handling so keyboard
-shortcuts work natively without custom JS dispatch.
+listens for. Most route to the same handlers the keyboard shortcuts use; the
+exception is Save, which flushes the active editor directly (`editor.flush()`)
+rather than synthesizing a Ctrl+S keystroke, so the save runs against the
+focused page without depending on editor focus state. Standard editing roles
+use v3's built-in platform handling so keyboard shortcuts work natively
+without custom JS dispatch.
 
 
 5. Svelte 5 Frontend Architecture
@@ -925,7 +934,7 @@ resolve each id:
 plugin.init(ctx: PluginContext)   ←   sqliteQuery (SELECT/WITH-only),
                                       mutateBlock, updateBlockState,
                                       updateTaskMeta, ctx.on (typed event bus)
-plugin.onVaultOpen(ctx)             ←   v2 lifecycle hook
+plugin.onVaultOpen(ctx)             ←   plugin lifecycle hook
          │
          ▼
 App view router renders plugin:<id> via PluginView (incl. the silt-tasks hub)
@@ -973,8 +982,11 @@ application-global on Windows, so per-window network isolation is not
 available. The existing iframe sandbox (CSP `connect-src 'none'` + postMessage
 bridge + Go-proxied `PluginFetch` with SSRF defense) remains the security
 boundary. Per-plugin rendering isolation via dedicated v3 webview windows is
-deferred until the milestone owner updates #502's definition of done to accept
-the Go-layer boundary as sufficient.
+deferred to the existing #502 — prototyping isolated webviews, the shared-code
+bundling a first-party plugin currently relies on, and the lifecycle/token
+handoff turned out to be too complex and excessive churn for this migration,
+and the Go-layer capability/session boundary already enforces the load-bearing
+security control. #502 is the single tracker; no duplicate was opened.
 
 **Rate limiting.** `PluginFetch` is throttled by a per-plugin token-
 bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
@@ -1098,7 +1110,7 @@ A dedicated fsnotify watcher observes the .system parent directory (not the file
 
 8.3 Settings Menu (frontend)
 
-The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. The SettingsShell is a full-screen frosted overlay with a left tab rail (General / Appearance / Plugins / About), roving keyboard navigation (Arrow/Home/End, Esc to close), and ARIA tablist semantics. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable (all plugins — first-party via config.yaml `plugins.disabled` list, third-party via `.disabled` sentinel), uninstall (third-party only), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The titlebar extension icon opens Settings → Plugins.
+The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. The SettingsShell is a full-screen frosted overlay with a left tab rail (General / Editor / Appearance / AI Provider / Hotkeys / Plugins / plugin tabs / optional Dev / About — `plugin:<id>` tabs are appended by plugins with bespoke settings pages, and the Dev tab appears only in dev mode), roving keyboard navigation (Arrow/Home/End, Esc to close), and ARIA tablist semantics. The former Workspace tab was folded into **General**, which now carries a **Window** section (user-global, pre-vault: close-to-tray) above a **Workspace** section (vault-scoped: move/copy/switch/export-import) — the split keeps user-global controls rendering before any vault is open. **AI Provider** is a separate core tab by design: it owns shared AI infrastructure and credentials (provider config, API key/keyring, connection test, audit log) that every plugin consumer routes through. Plugin-owned AI features — the `silt-ai-summary` note banner and similar — are plugin behavior rendered through the plugin surface system, not a tab concern; shared infrastructure/security and per-plugin feature behavior stay separate. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable (all plugins — first-party via config.yaml `plugins.disabled` list, third-party via `.disabled` sentinel), uninstall (third-party only), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The titlebar extension icon opens Settings → Plugins.
 
 8.4 Editor Config Consumer (frontend)
 

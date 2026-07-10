@@ -104,8 +104,15 @@ A compatibility spike against `v3.0.0-alpha2.117` confirmed:
 - Taskfile-based build system works with platform-specific includes
 
 No API gaps blocked the migration. The `OnFileDrop`/`OnFileDropOff` v2 API
-has no direct v3 equivalent (v3 uses `data-file-drop-target` + `EnableFileDrop`
-window option); file drop is stubbed pending this migration.
+has no direct v3 equivalent; v3 exposes file drop via the window option
+`EnableFileDrop` plus a per-element `data-file-drop-target` attribute and the
+`WindowFilesDropped` Go event. The migration ports Appearance theme-JSON import
+onto that surface: the main window sets `EnableFileDrop: true`, the Appearance
+drop zone carries `data-file-drop-target` with the id `theme-file-drop-target`,
+`setupMainWindowEvents` (main.go) routes only Appearance-target drops through
+`themeDropPaths` and emits the `theme:files-dropped` bridge event, and
+`AppearanceTab.svelte` reuses the native-picker import path. The routing rule
+is unit-tested (`main_filedrop_test.go`).
 
 ## Consequences
 
@@ -114,8 +121,9 @@ window option); file drop is stubbed pending this migration.
   `frontend/bindings/`
 - Frontend runtime moves from `wailsjs/runtime/runtime.js` to the
   `@wailsio/runtime` npm package
-- `ARCHITECTURE.md` §4 (Wails Bridge) requires updating to describe the
-  v3 service model (deferred to Phase 6)
+- `ARCHITECTURE.md` §4 (Wails Bridge) now describes the v3 service model,
+  single `App` service, error envelope, tray, and native menus
 - The `--wails-draggable` CSS property is preserved (v3 still supports it)
-- File drop (`OnFileDrop`/`OnFileDropOff`) is stubbed pending v3's
-  `data-file-drop-target` + `EnableFileDrop` window option migration
+- File drop is implemented via `EnableFileDrop` + `data-file-drop-target` +
+  the `WindowFilesDropped` event + the `theme:files-dropped` bridge (see
+  spike evidence above); it is no longer stubbed

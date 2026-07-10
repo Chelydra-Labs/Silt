@@ -16,6 +16,7 @@ import (
 	"silt/backend/vault"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
@@ -108,6 +109,60 @@ func clearCacheOnVersionChange(cacheDir, currentVersion string) {
 	}
 }
 
+// themeFileDropTargetID is the stable DOM id of the Appearance-tab drop zone.
+// The frontend marks that element with `data-file-drop-target`; Wails echoes the
+// element back as DropTargetDetails.ElementID, so the backend can route only
+// theme drops to the importer instead of fanning every OS file drop (editor,
+// attachments, etc.) through the theme path.
+const themeFileDropTargetID = "theme-file-drop-target"
+
+// themeFilesDroppedEvent bridges an OS file drop on the Appearance target to the
+// frontend theme importer. The payload is the dropped paths as []string,
+// matching the existing native-picker import path so the component can reuse it.
+const themeFilesDroppedEvent = "theme:files-dropped"
+
+// themeDropPaths returns the file paths to forward to the theme importer for a
+// window file-drop, or nil when the drop did not land on the Appearance target
+// or carried no files. Pure (no App / WindowEvent dependency) so the routing
+// rule is unit-testable without a live webview.
+func themeDropPaths(details *application.DropTargetDetails, files []string) []string {
+	if details == nil || details.ElementID != themeFileDropTargetID {
+		return nil
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	return files
+}
+
+// setupMainWindowEvents wires the file-drop bridge and the native close
+// interceptor onto the *WebviewWindow returned by NewWithOptions. The file-drop
+// handler routes only Appearance-target drops (see themeDropPaths) to the theme
+// importer; the close hook always cancels the native window destroy and
+// delegates to RequestClose, so close-to-tray hides and otherwise Quit runs the
+// full ServiceShutdown drain (the single WAL/in-flight-call checkpoint path).
+func setupMainWindowEvents(window *application.WebviewWindow, siltApp *App) {
+	window.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {
+		ctx := event.Context()
+		if ctx == nil {
+			return
+		}
+		paths := themeDropPaths(ctx.DropTargetDetails(), ctx.DroppedFiles())
+		if len(paths) == 0 {
+			return
+		}
+		siltApp.emit(themeFilesDroppedEvent, paths)
+	})
+
+	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		// Always cancel the native close: a hidden-to-tray window must survive,
+		// and the quit path goes through Quit()/ServiceShutdown rather than the
+		// OS destroying the window out from under the drain.
+		event.Cancel()
+		siltApp.RequestClose()
+	})
+}
+
 func main() {
 	app := NewApp()
 
@@ -182,6 +237,9 @@ func main() {
 	setupMenus(wailsApp, app)
 
 	// Main window — frameless, maximized, with the theme-aware launch colour.
+	// EnableFileDrop lets OS files dragged onto a `data-file-drop-target`
+	// element raise WindowFilesDropped; setupMainWindowEvents routes only the
+	// Appearance-target drop to the theme importer.
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:                  "Silt",
 		Width:                  1024,
@@ -189,8 +247,12 @@ func main() {
 		StartState:             application.WindowStateMaximised,
 		Frameless:              true,
 		BackgroundColour:       launchBackgroundColour(),
+		EnableFileDrop:         true,
 		OpenInspectorOnStartup: shouldOpenDevtools(),
 	})
+	// Bind window-event hooks on the concrete *WebviewWindow straight after
+	// creation, before it is narrowed to the application.Window interface.
+	setupMainWindowEvents(mainWindow, app)
 	app.mainWindow = mainWindow
 
 	// System tray (#501) — icon with Show/Hide/Quit menu, window toggle

@@ -47,7 +47,11 @@
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { matchHotkey } from './settings/hotkeys'
   import { findBarState } from './lib/editor/search/findBarState.svelte'
-  import { clearAllEditors } from './lib/editor/editorRegistry.svelte'
+  import {
+    clearAllEditors,
+    editorKey,
+    getEditor
+  } from './lib/editor/editorRegistry.svelte'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import PluginModalHost from './components/PluginModalHost.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
@@ -927,12 +931,7 @@
     const offMenuOpenVault = Events.On('menu:open-vault', () => {
       void handleSwitchVault()
     })
-    const offMenuSave = Events.On('menu:save', () => {
-      // The editor auto-saves; dispatch Ctrl+S to force an immediate flush.
-      document.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 's', ctrlKey: true })
-      )
-    })
+    const offMenuSave = Events.On('menu:save', () => void handleMenuSave())
     const offMenuToggleSidebar = Events.On('menu:toggle-sidebar', () => {
       sidebarCollapsed = !sidebarCollapsed
       manuallyCollapsed = sidebarCollapsed
@@ -1198,6 +1197,38 @@
     showSettings = true
   }
 
+  // Native menu Save (#503): flush the active editor's pending autosave
+  // directly. There is no global Ctrl+S keymap, so the previous handler —
+  // which synthesized a keydown — was a silent no-op. The editor already
+  // debounces autosave; this is the explicit "save now" path, and it targets
+  // the editor mounted for the active page. With no page context (Tasks view,
+  // sidebar browsing, onboarding) or no mounted editor, there is nothing to
+  // flush — return quietly. A flush that reports failure or rejects surfaces
+  // through the existing notification channel.
+  async function handleMenuSave(): Promise<void> {
+    if (!activePage) return
+    const editor = getEditor(
+      editorKey(activeNotebook, activeSection, activePage)
+    )
+    if (!editor) return
+    try {
+      const ok = await editor.flush()
+      if (!ok) {
+        pushNotification({
+          kind: 'error',
+          message:
+            'Could not save the current page — unsaved edits are still pending.'
+        })
+      }
+    } catch (e) {
+      console.error('menu:save flush failed:', e)
+      pushNotification({
+        kind: 'error',
+        message: 'Could not save the current page.'
+      })
+    }
+  }
+
   // Ordered view cycle for the cycle_view_layout hotkey (default Ctrl+Alt+V).
   // If the current view is not in the list (e.g. a plugin view), jump to
   // 'notes' as the anchor.
@@ -1308,7 +1339,7 @@
         </div>
 
         <button
-          onclick={() => openSettings('workspace')}
+          onclick={() => openSettings('general')}
           class="w-9 h-9 rounded-lg flex items-center justify-center text-surface-activitybar-text-muted hover:text-accent-primary-start hover:bg-hover hover:scale-105 active:scale-95 transition-all cursor-pointer border-none bg-transparent focus:outline-none"
           aria-label="Settings"
           title="Settings"

@@ -273,8 +273,7 @@ export async function toggleTypewriterMode(): Promise<boolean | null> {
  * structuredClone, which throws DataCloneError on a Svelte 5 $state proxy in
  * the webview (silently swallowed), so the toggle never flips. Same
  * single-field-write contract as toggleFormatToolbar — avoids clobbering an
- * unsaved EditorTab draft (the duplicate DevTools checkbox there re-hydrates
- * from this same field). Returns the new effective value, or null on error.
+ * unsaved EditorTab draft. Returns the new effective value, or null on error.
  */
 export async function toggleDevMode(): Promise<boolean | null> {
   const cfg = settings.config

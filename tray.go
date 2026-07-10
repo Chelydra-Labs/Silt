@@ -33,6 +33,14 @@ func (a *App) SetCloseToTray(enabled bool) error {
 	return vault.SaveSettings(settings)
 }
 
+// GetCloseToTray returns the current close-to-tray preference so the frontend
+// can initialise its toggle to the persisted value on mount. Mirrors
+// SetCloseToTray (user-global settings.json). Default-off when unset. Touches
+// only settings on disk, so it is safe to call pre-init (wailsApp nil).
+func (a *App) GetCloseToTray() bool {
+	return closeToTrayEnabled()
+}
+
 // RequestClose is the canonical window-close handler. When close-to-tray is
 // enabled, the window hides to the tray instead of quitting (#501). The tray
 // Quit menu item and the "quit" hotkey call Quit() directly to bypass this.

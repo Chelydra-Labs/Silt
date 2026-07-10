@@ -26,6 +26,30 @@ func TestSetCloseToTray(t *testing.T) {
 	}
 }
 
+// TestGetCloseToTray: the getter is the frontend's source of truth for the
+// toggle's initial state, so it must default off (no settings.json) and mirror
+// every SetCloseToTray round-trip — otherwise the UI would show the wrong
+// switch position on mount after a toggle+restart.
+func TestGetCloseToTray(t *testing.T) {
+	configDirOverride(t)
+	app := &App{}
+	if app.GetCloseToTray() {
+		t.Fatalf("GetCloseToTray() = true; want false when CloseToTray is unset")
+	}
+	if err := app.SetCloseToTray(true); err != nil {
+		t.Fatalf("SetCloseToTray(true) failed: %v", err)
+	}
+	if !app.GetCloseToTray() {
+		t.Fatalf("GetCloseToTray() = false after SetCloseToTray(true)")
+	}
+	if err := app.SetCloseToTray(false); err != nil {
+		t.Fatalf("SetCloseToTray(false) failed: %v", err)
+	}
+	if app.GetCloseToTray() {
+		t.Fatalf("GetCloseToTray() = true after SetCloseToTray(false)")
+	}
+}
+
 // TestRequestClose_NoWailsApp: RequestClose is a safe no-op when wailsApp is
 // nil — the guard returns before touching the window or re-reading settings.
 func TestRequestClose_NoWailsApp(t *testing.T) {
@@ -37,12 +61,4 @@ func TestRequestClose_NoWailsApp(t *testing.T) {
 func TestQuit_NoWailsApp(t *testing.T) {
 	app := &App{}
 	app.Quit() // must not panic
-}
-
-// TestTrayEventNames: the tray's close/quit entry points must be safe no-ops
-// when wailsApp is nil.
-func TestTrayEventNames(t *testing.T) {
-	app := &App{}
-	app.RequestClose()
-	app.Quit()
 }

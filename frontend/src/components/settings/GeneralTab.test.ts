@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  waitFor
+} from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => {
   const baseConfig = {
@@ -22,8 +28,9 @@ const mocks = vi.hoisted(() => {
     plugins: { active: [], disabled: [], plugin_settings: {} }
   }
   return {
+    baseConfig,
     settings: {
-      config: baseConfig,
+      config: baseConfig as typeof baseConfig | null,
       loading: false,
       saving: false,
       error: '',
@@ -56,7 +63,9 @@ const appMocks = vi.hoisted(() => ({
   PickVaultExportPath: vi.fn(),
   ExportVault: vi.fn(),
   PickVaultArchive: vi.fn(),
-  ImportVault: vi.fn()
+  ImportVault: vi.fn(),
+  GetCloseToTray: vi.fn().mockResolvedValue(false),
+  SetCloseToTray: vi.fn().mockResolvedValue(undefined)
 }))
 vi.mock('../../../bindings/silt/app.js', () => appMocks)
 vi.mock('@wailsio/runtime', () => ({
@@ -90,9 +99,9 @@ vi.mock('../../settings/store.svelte', () => ({
 }))
 vi.mock('../../theme/store.svelte', () => ({ themeState: mocks.themeState }))
 
-import WorkspaceTab from './WorkspaceTab.svelte'
+import GeneralTab from './GeneralTab.svelte'
 
-describe('WorkspaceTab vault relocate menu (#141)', () => {
+describe('GeneralTab vault relocate menu (#141)', () => {
   beforeEach(() => {
     mocks.settings.dirty = false
     appMocks.PickVaultDestination.mockClear()
@@ -107,7 +116,7 @@ describe('WorkspaceTab vault relocate menu (#141)', () => {
   afterEach(() => cleanup())
 
   it('renders the vault actions kebab button', async () => {
-    render(WorkspaceTab)
+    render(GeneralTab)
     await tick()
     expect(
       screen.getByRole('button', { name: 'Vault actions' })
@@ -115,7 +124,7 @@ describe('WorkspaceTab vault relocate menu (#141)', () => {
   })
 
   it('opening the menu reveals Move, Copy, Export, and Import actions', async () => {
-    render(WorkspaceTab)
+    render(GeneralTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -137,7 +146,7 @@ describe('WorkspaceTab vault relocate menu (#141)', () => {
   })
 
   it('Switch vault dispatches the silt:change-vault event', async () => {
-    render(WorkspaceTab)
+    render(GeneralTab)
     await tick()
     const handler = vi.fn()
     window.addEventListener('silt:change-vault', handler)
@@ -151,7 +160,7 @@ describe('WorkspaceTab vault relocate menu (#141)', () => {
   })
 
   it('selecting Move opens the VaultActionModal in move mode', async () => {
-    render(WorkspaceTab)
+    render(GeneralTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -164,7 +173,7 @@ describe('WorkspaceTab vault relocate menu (#141)', () => {
   })
 
   it('selecting Export opens the VaultArchiveModal in export mode', async () => {
-    render(WorkspaceTab)
+    render(GeneralTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -179,7 +188,7 @@ describe('WorkspaceTab vault relocate menu (#141)', () => {
   })
 
   it('selecting Import opens the VaultArchiveModal in import mode', async () => {
-    render(WorkspaceTab)
+    render(GeneralTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -194,7 +203,7 @@ describe('WorkspaceTab vault relocate menu (#141)', () => {
   })
 
   it('Escape on a menu item collapses the menu', async () => {
-    render(WorkspaceTab)
+    render(GeneralTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -206,7 +215,7 @@ describe('WorkspaceTab vault relocate menu (#141)', () => {
   })
 
   it('clicking outside the menu collapses it', async () => {
-    render(WorkspaceTab)
+    render(GeneralTab)
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Vault actions' }))
     await tick()
@@ -216,5 +225,122 @@ describe('WorkspaceTab vault relocate menu (#141)', () => {
     await fireEvent.click(document.body)
     await tick()
     expect(screen.queryByRole('menuitem', { name: /Move vault/ })).toBeNull()
+  })
+})
+
+// Close-to-tray is a user-global window preference (#501). Its state lives on
+// the tab, not in the vault-scoped config store. These tests pin the
+// hydration-from-disk, optimistic-toggle-persist, failure-revert-with-alert,
+// and inflight rapid-click guard contracts.
+describe('GeneralTab close-to-tray toggle (#501)', () => {
+  beforeEach(() => {
+    mocks.settings.config = mocks.baseConfig
+    mocks.settings.error = ''
+    mocks.settings.loading = false
+    appMocks.GetCloseToTray.mockReset()
+    appMocks.SetCloseToTray.mockReset()
+    appMocks.GetCloseToTray.mockResolvedValue(false)
+    appMocks.SetCloseToTray.mockResolvedValue(undefined)
+  })
+  afterEach(() => cleanup())
+
+  it('hydrates the toggle from the persisted preference (on)', async () => {
+    appMocks.GetCloseToTray.mockResolvedValue(true)
+    render(GeneralTab)
+    const sw = screen.getByRole('switch', { name: 'Close to tray' })
+    // onMount awaits GetCloseToTray then flips the state. waitFor rides
+    // the microtask boundary between the resolved mock and the $state write.
+    await waitFor(() => {
+      expect(sw).toHaveAttribute('aria-checked', 'true')
+    })
+    expect(appMocks.GetCloseToTray).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists a successful toggle and stays flipped', async () => {
+    render(GeneralTab)
+    const sw = screen.getByRole('switch', { name: 'Close to tray' })
+    expect(sw).toHaveAttribute('aria-checked', 'false')
+    await fireEvent.click(sw)
+    await tick()
+    expect(appMocks.SetCloseToTray).toHaveBeenCalledWith(true)
+    expect(sw).toHaveAttribute('aria-checked', 'true')
+    // No error surfaced on success.
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('reverts the toggle on failure and surfaces role=alert', async () => {
+    appMocks.SetCloseToTray.mockRejectedValue(new Error('disk full'))
+    render(GeneralTab)
+    const sw = screen.getByRole('switch', { name: 'Close to tray' })
+    await fireEvent.click(sw)
+    await tick()
+    expect(appMocks.SetCloseToTray).toHaveBeenCalledWith(true)
+    // Reverted to the pre-toggle state.
+    expect(sw).toHaveAttribute('aria-checked', 'false')
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toMatch(/could not save/i)
+  })
+
+  it('ignores a rapid second click while a write is inflight', async () => {
+    // Hold the write open so the toggle stays inflight across the
+    // second click — exercises the `if (closeToTrayInflight) return` guard.
+    let resolveWrite!: () => void
+    appMocks.SetCloseToTray.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+    )
+    render(GeneralTab)
+    const sw = screen.getByRole('switch', { name: 'Close to tray' })
+    await fireEvent.click(sw)
+    await tick()
+    expect(appMocks.SetCloseToTray).toHaveBeenCalledTimes(1)
+    // The toggle is disabled mid-write (the visual half of the guard).
+    expect(sw).toBeDisabled()
+    // Rapid second click — the inflight guard returns early.
+    await fireEvent.click(sw)
+    await tick()
+    expect(appMocks.SetCloseToTray).toHaveBeenCalledTimes(1)
+    resolveWrite()
+    await tick()
+  })
+})
+
+// When config is absent but the backend reported a load error, the
+// Workspace section must surface the actual error (so the user can act
+// on a broken config.yaml) instead of the generic no-workspace copy.
+// The Window section stays available regardless — it's user-global.
+describe('GeneralTab Workspace config-error surface', () => {
+  beforeEach(() => {
+    mocks.settings.config = null
+    mocks.settings.loading = false
+    mocks.settings.error = ''
+  })
+  afterEach(() => {
+    mocks.settings.config = mocks.baseConfig
+    mocks.settings.error = ''
+    mocks.settings.loading = false
+    cleanup()
+  })
+
+  it('shows the actual config error when config is absent but settings.error is set', () => {
+    mocks.settings.error = 'yaml: did not find expected key at line 5'
+    render(GeneralTab)
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain(
+      'yaml: did not find expected key at line 5'
+    )
+    // The generic no-workspace message is not shown.
+    expect(screen.queryByText(/No workspace configuration loaded/i)).toBeNull()
+  })
+
+  it('keeps the Window section available when the workspace errors', () => {
+    mocks.settings.error = 'config load failed'
+    render(GeneralTab)
+    // Close-to-tray is user-global — always renders, independent of config.
+    expect(
+      screen.getByRole('switch', { name: 'Close to tray' })
+    ).toBeInTheDocument()
   })
 })

@@ -368,23 +368,6 @@
 
             <label class="flex items-center gap-2.5 cursor-pointer select-none">
               <input
-                checked={draft.ui?.open_devtools_on_startup === true}
-                onchange={(e: Event) => {
-                  draftUI().open_devtools_on_startup = (
-                    e.currentTarget as HTMLInputElement
-                  ).checked
-                  touch()
-                }}
-                type="checkbox"
-                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
-              />
-              <span class="text-text-primary text-[13px] font-body-md">
-                Open DevTools on startup
-              </span>
-            </label>
-
-            <label class="flex items-center gap-2.5 cursor-pointer select-none">
-              <input
                 checked={draft.editor?.spellcheck_enabled !== false}
                 onchange={(e: Event) => {
                   draftEditor().spellcheck_enabled = (
