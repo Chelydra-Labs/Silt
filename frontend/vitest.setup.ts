@@ -1,4 +1,4 @@
-import { vi } from 'vitest'
+import { vi, afterAll } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 
 // jsdom omits or stubs layout-dependent DOM APIs that TipTap v3's Placeholder
@@ -16,7 +16,7 @@ if (typeof Element !== 'undefined' && !Element.prototype.animate) {
   Element.prototype.animate = function (
     this: Element,
     _keyframes: Keyframe[] | PropertyIndexedKeyframes | null,
-    options?: number | KeyframeAnimationOptions
+    _options?: number | KeyframeAnimationOptions
   ): Animation {
     return {
       cancel: () => {},
@@ -36,3 +36,28 @@ if (typeof Element !== 'undefined' && !Element.prototype.animate) {
     } as unknown as Animation
   }
 }
+
+// The Wails v3 runtime's drag.js calls window.setInterval at module-load time
+// (a 50ms poll for environment readiness, up to 100 ticks). On CI the interval
+// outlives the jsdom environment teardown and its callback throws an uncaught
+// exception. Track real (non-faked) intervals and clear them once after the
+// entire file finishes so they can't fire post-teardown. afterAll (not
+// afterEach) avoids interfering with per-test waitFor polling intervals.
+const _realSetInterval = globalThis.setInterval.bind(globalThis)
+const _pendingIntervals = new Set<ReturnType<typeof setInterval>>()
+globalThis.setInterval = ((
+  handler: TimerHandler,
+  timeout?: number,
+  ...args: unknown[]
+) => {
+  const id = _realSetInterval(handler, timeout, ...args)
+  _pendingIntervals.add(id)
+  return id
+}) as typeof setInterval
+
+afterAll(() => {
+  for (const id of _pendingIntervals) {
+    globalThis.clearInterval(id)
+  }
+  _pendingIntervals.clear()
+})
