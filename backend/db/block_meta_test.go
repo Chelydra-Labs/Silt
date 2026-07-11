@@ -63,7 +63,7 @@ func TestIndexFileBlocks_BlockMetaProjection(t *testing.T) {
 	}
 	for _, c := range cases {
 		var author, timestamp sql.NullString
-		err := dm.db.QueryRow(
+		err := dm.SQLDB().QueryRow(
 			"SELECT author, timestamp FROM block_meta WHERE block_id = ?", c.id,
 		).Scan(&author, &timestamp)
 		if c.wantRow {
@@ -91,7 +91,7 @@ func TestIndexFileBlocks_BlockMetaProjection(t *testing.T) {
 	// Total row count: only noteBoth + noteAuthor (noneNote has no row,
 	// taskID is NOTE-only-projection so never gets one).
 	var rowCount int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM block_meta").Scan(&rowCount); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM block_meta").Scan(&rowCount); err != nil {
 		t.Fatalf("count block_meta: %v", err)
 	}
 	if rowCount != 2 {
@@ -120,7 +120,7 @@ func TestIndexFileBlocks_BlockMetaReindexNoStaleRows(t *testing.T) {
 		t.Fatalf("first index: %v", err)
 	}
 	var n int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM block_meta").Scan(&n); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM block_meta").Scan(&n); err != nil {
 		t.Fatalf("count after first: %v", err)
 	}
 	if n != 2 {
@@ -139,7 +139,7 @@ func TestIndexFileBlocks_BlockMetaReindexNoStaleRows(t *testing.T) {
 
 	// Expect exactly 2 rows: keep + addNew. `clear` must be gone (no
 	// accumulation of stale rows; the cleared token deletes the row).
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM block_meta").Scan(&n); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM block_meta").Scan(&n); err != nil {
 		t.Fatalf("count after reindex: %v", err)
 	}
 	if n != 2 {
@@ -148,14 +148,14 @@ func TestIndexFileBlocks_BlockMetaReindexNoStaleRows(t *testing.T) {
 
 	// `clear` should have no row now (tokens were removed).
 	var dummy string
-	err := dm.db.QueryRow("SELECT author FROM block_meta WHERE block_id = ?", clear).Scan(&dummy)
+	err := dm.SQLDB().QueryRow("SELECT author FROM block_meta WHERE block_id = ?", clear).Scan(&dummy)
 	if err == nil {
 		t.Errorf("expected `clear` block_meta row to be deleted after tokens removed, but found author=%q", dummy)
 	}
 
 	// `keep` should still carry its values (upsert overwrote, not duplicated).
 	var author, timestamp string
-	if err := dm.db.QueryRow("SELECT author, timestamp FROM block_meta WHERE block_id = ?", keep).Scan(&author, &timestamp); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT author, timestamp FROM block_meta WHERE block_id = ?", keep).Scan(&author, &timestamp); err != nil {
 		t.Errorf("keep row lost after reindex: %v", err)
 	}
 	if author != "Alice" || timestamp != "2026-07-06T10:00:00" {
@@ -188,7 +188,7 @@ func TestIndexScanResults_BlockMetaProjection(t *testing.T) {
 	}
 
 	var author, timestamp string
-	if err := dm.db.QueryRow(
+	if err := dm.SQLDB().QueryRow(
 		"SELECT author, timestamp FROM block_meta WHERE block_id = ?", noteWithBoth,
 	).Scan(&author, &timestamp); err != nil {
 		t.Fatalf("expected block_meta row for %s: %v", noteWithBoth, err)
@@ -199,7 +199,7 @@ func TestIndexScanResults_BlockMetaProjection(t *testing.T) {
 
 	// NOTE without tokens → no row.
 	var dummy string
-	err := dm.db.QueryRow("SELECT author FROM block_meta WHERE block_id = ?", noteWithout).Scan(&dummy)
+	err := dm.SQLDB().QueryRow("SELECT author FROM block_meta WHERE block_id = ?", noteWithout).Scan(&dummy)
 	if err == nil {
 		t.Errorf("expected NO block_meta row for token-less NOTE, got author=%q", dummy)
 	}

@@ -46,7 +46,7 @@ func TestIndexFileBlocks_LifecycleProjection(t *testing.T) {
 	for _, c := range cases {
 		var created, completed sql.NullString
 		var order sql.NullInt64
-		if err := dm.db.QueryRow(
+		if err := dm.SQLDB().QueryRow(
 			"SELECT created_at, completed_at, manual_order FROM tasks WHERE block_id = ?", c.id,
 		).Scan(&created, &completed, &order); err != nil {
 			t.Fatalf("select lifecycle for %s: %v", c.id, err)
@@ -105,7 +105,7 @@ func TestIndex_LifecycleRecoveryFromMarkdown(t *testing.T) {
 	}
 
 	// Wipe the index rows entirely (simulating an index deletion / corruption).
-	if _, err := dm.db.Exec("DELETE FROM blocks WHERE id = ?", taskID); err != nil {
+	if _, err := dm.SQLDB().Exec("DELETE FROM blocks WHERE id = ?", taskID); err != nil {
 		t.Fatalf("wipe: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestIndex_LifecycleRecoveryFromMarkdown(t *testing.T) {
 	}
 	var created, completed string
 	var order int
-	if err := dm.db.QueryRow(
+	if err := dm.SQLDB().QueryRow(
 		"SELECT created_at, completed_at, manual_order FROM tasks WHERE block_id = ?", taskID,
 	).Scan(&created, &completed, &order); err != nil {
 		// Columns are nullable; a bare Scan into non-nullable types fails on

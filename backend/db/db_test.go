@@ -65,7 +65,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 	}
 
 	var blockCount int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM blocks").Scan(&blockCount); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks").Scan(&blockCount); err != nil {
 		t.Fatalf("count blocks: %v", err)
 	}
 	if blockCount != 2 {
@@ -73,7 +73,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 	}
 
 	var taskCount int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM tasks").Scan(&taskCount); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM tasks").Scan(&taskCount); err != nil {
 		t.Fatalf("count tasks: %v", err)
 	}
 	if taskCount != 1 {
@@ -81,7 +81,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 	}
 
 	var tagCount int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM tags").Scan(&tagCount); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM tags").Scan(&tagCount); err != nil {
 		t.Fatalf("count tags: %v", err)
 	}
 	// The task raw text has no inline #tag, so only the frontmatter tag is indexed.
@@ -102,7 +102,7 @@ func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocksWithInlineTag, nil); err != nil {
 		t.Fatalf("index inline tags: %v", err)
 	}
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM tags WHERE block_id = ?", "33333333-3333-3333-3333-333333333333").Scan(&tagCount); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM tags WHERE block_id = ?", "33333333-3333-3333-3333-333333333333").Scan(&tagCount); err != nil {
 		t.Fatalf("count inline tags: %v", err)
 	}
 	if tagCount != 2 {
@@ -145,7 +145,7 @@ func TestIndexFileBlocks_PinnedProjection(t *testing.T) {
 	}
 	for _, c := range cases {
 		var got sql.NullInt64
-		if err := dm.db.QueryRow("SELECT pinned FROM tasks WHERE block_id = ?", c.id).Scan(&got); err != nil {
+		if err := dm.SQLDB().QueryRow("SELECT pinned FROM tasks WHERE block_id = ?", c.id).Scan(&got); err != nil {
 			t.Fatalf("select pinned for %s: %v", c.id, err)
 		}
 		if got.Valid != c.valid {
@@ -199,7 +199,7 @@ func TestIndexScanResults_PinnedProjection(t *testing.T) {
 	}
 	for _, c := range cases {
 		var got sql.NullInt64
-		if err := dm.db.QueryRow("SELECT pinned FROM tasks WHERE block_id = ?", c.id).Scan(&got); err != nil {
+		if err := dm.SQLDB().QueryRow("SELECT pinned FROM tasks WHERE block_id = ?", c.id).Scan(&got); err != nil {
 			t.Fatalf("select pinned for %s: %v", c.id, err)
 		}
 		if got.Valid != c.valid {
@@ -237,7 +237,7 @@ func TestIndexFileBlocks_BlockedByProjection(t *testing.T) {
 	}
 
 	edgesFor := func(id string) []string {
-		rows, err := dm.db.Query("SELECT blocked_by_id FROM task_dependencies WHERE block_id = ? ORDER BY blocked_by_id", id)
+		rows, err := dm.SQLDB().Query("SELECT blocked_by_id FROM task_dependencies WHERE block_id = ? ORDER BY blocked_by_id", id)
 		if err != nil {
 			t.Fatalf("select deps for %s: %v", id, err)
 		}
@@ -322,7 +322,7 @@ func TestIndexScanResults_BlockedByProjection(t *testing.T) {
 		t.Fatalf("expected 1 file indexed, got %d", count)
 	}
 	var got string
-	if err := dm.db.QueryRow("SELECT blocked_by_id FROM task_dependencies WHERE block_id = ?", subject).Scan(&got); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT blocked_by_id FROM task_dependencies WHERE block_id = ?", subject).Scan(&got); err != nil {
 		t.Fatalf("select dep for %s: %v", subject, err)
 	}
 	if got != dep {
@@ -355,7 +355,7 @@ func TestTaskDependencies_CascadeDelete(t *testing.T) {
 		t.Fatalf("re-index without blocker: %v", err)
 	}
 	var n int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	// dependent's edge referenced blocker; on re-index dependent has no
@@ -387,7 +387,7 @@ func TestIndexFileBlocks_DanglingBlockedByRefSkipped(t *testing.T) {
 		t.Fatalf("dangling ref should be skipped, not abort: %v", err)
 	}
 	var n int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 0 {
@@ -419,7 +419,7 @@ func TestIndexScanResults_DanglingBlockedByRefSkipped(t *testing.T) {
 		t.Errorf("expected 1 file indexed, got %d", count)
 	}
 	var n int
-	dm.db.QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n)
+	dm.SQLDB().QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n)
 	if n != 0 {
 		t.Errorf("expected 0 edges (ghost skipped), got %d", n)
 	}
@@ -483,7 +483,7 @@ func TestIndexFileBlocks_HandEditedCycleStillIndexes(t *testing.T) {
 	}
 	// Both edges are cached despite the cycle.
 	var n int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM task_dependencies").Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 2 {
@@ -567,7 +567,7 @@ func TestPluginRawQuery_PinnedFilterRegression(t *testing.T) {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
-	rows, err := dm.db.Query(
+	rows, err := dm.SQLDB().Query(
 		"SELECT b.id FROM blocks b JOIN tasks t ON b.id = t.block_id WHERE t.pinned = 1",
 	)
 	if err != nil {
@@ -606,7 +606,7 @@ func TestBlocksSource_DefaultsVault(t *testing.T) {
 	}
 
 	var source string
-	if err := dm.db.QueryRow("SELECT source FROM blocks WHERE id = ?", id).Scan(&source); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT source FROM blocks WHERE id = ?", id).Scan(&source); err != nil {
 		t.Fatalf("select source: %v", err)
 	}
 	if source != "vault" {
@@ -624,7 +624,7 @@ func TestBlocksSource_DefaultsVault(t *testing.T) {
 	// The source-aware covering index exists (pre-source idx_blocks_file was
 	// dropped on migration).
 	var n int
-	if err := dm.db.QueryRow(
+	if err := dm.SQLDB().QueryRow(
 		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_blocks_src_file'",
 	).Scan(&n); err != nil {
 		t.Fatalf("check index: %v", err)
@@ -639,7 +639,7 @@ func TestBlocksSource_DefaultsVault(t *testing.T) {
 func TestSchema_TagsRawPathIndex(t *testing.T) {
 	dm := newTestDB(t)
 	var n int
-	if err := dm.db.QueryRow(
+	if err := dm.SQLDB().QueryRow(
 		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_tags_raw_path'",
 	).Scan(&n); err != nil {
 		t.Fatalf("check index: %v", err)
@@ -666,7 +666,7 @@ func TestIndexFileBlocks_ReplacesExistingRows(t *testing.T) {
 	}
 
 	var count int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM blocks").Scan(&count); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks").Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if count != 2 {
@@ -675,7 +675,7 @@ func TestIndexFileBlocks_ReplacesExistingRows(t *testing.T) {
 
 	// Old task row should be gone (CASCADE).
 	var oldTasks int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM tasks WHERE block_id = ?", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").Scan(&oldTasks); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM tasks WHERE block_id = ?", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").Scan(&oldTasks); err != nil {
 		t.Fatalf("old task count: %v", err)
 	}
 	if oldTasks != 0 {
@@ -697,7 +697,7 @@ func TestIndexFileBlocks_EmptyBlocksCommits(t *testing.T) {
 	}
 
 	var count int
-	if err := dm.db.QueryRow("SELECT COUNT(*) FROM blocks").Scan(&count); err != nil {
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM blocks").Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if count != 0 {
@@ -719,7 +719,7 @@ func TestClearFileBlocks_CascadesToTasksAndTags(t *testing.T) {
 
 	for _, table := range []string{"blocks", "tasks", "tags"} {
 		var c int
-		if err := dm.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&c); err != nil {
+		if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&c); err != nil {
 			t.Fatalf("count %s: %v", table, err)
 		}
 		if c != 0 {
@@ -863,7 +863,7 @@ func TestIndexFileBlocks_AttachesFrontmatterTagsByLoopIndex(t *testing.T) {
 	// to all blocks, and not be silently dropped due to the line-number check.
 	for _, wantID := range []string{"11111111-1111-1111-1111-111111111111"} {
 		var got int
-		if err := dm.db.QueryRow(
+		if err := dm.SQLDB().QueryRow(
 			"SELECT COUNT(*) FROM tags WHERE block_id = ? AND raw_path IN ('welcome','tutorial')", wantID,
 		).Scan(&got); err != nil {
 			t.Fatalf("count tags for %s: %v", wantID, err)
@@ -875,7 +875,7 @@ func TestIndexFileBlocks_AttachesFrontmatterTagsByLoopIndex(t *testing.T) {
 
 	// Second block should not have those tags attached.
 	var got int
-	if err := dm.db.QueryRow(
+	if err := dm.SQLDB().QueryRow(
 		"SELECT COUNT(*) FROM tags WHERE block_id = ?", "22222222-2222-2222-2222-222222222222",
 	).Scan(&got); err != nil {
 		t.Fatalf("count tags for second block: %v", err)
@@ -922,7 +922,7 @@ func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
 
 	// Old metadata key should have zero rows.
 	var oldRows int
-	if err := dm.db.QueryRow(
+	if err := dm.SQLDB().QueryRow(
 		"SELECT COUNT(*) FROM blocks WHERE notebook = ? AND section = ?",
 		"Work", "Journal",
 	).Scan(&oldRows); err != nil {
@@ -934,7 +934,7 @@ func TestIndexFileBlocks_ReindexAfterFrontmatterMetadataChange(t *testing.T) {
 
 	// New metadata key should have exactly one row, with the updated status.
 	var newStatus string
-	if err := dm.db.QueryRow(
+	if err := dm.SQLDB().QueryRow(
 		"SELECT t.status FROM blocks b JOIN tasks t ON b.id = t.block_id WHERE b.notebook = ? AND b.section = ? AND b.id = ?",
 		"Personal", "Journal", "11111111-1111-1111-1111-111111111111",
 	).Scan(&newStatus); err != nil {
@@ -1167,7 +1167,7 @@ func TestIndexScanResults_SourceAwareBatch(t *testing.T) {
 		source, notebook, page string
 	}
 	got := []row{}
-	rows, err := dm.db.Query("SELECT source, notebook, page FROM blocks ORDER BY source")
+	rows, err := dm.SQLDB().Query("SELECT source, notebook, page FROM blocks ORDER BY source")
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
@@ -1226,7 +1226,7 @@ func TestIndexScanResults_LinkedSourceScopedClear(t *testing.T) {
 	}
 
 	var n int
-	if err := dm.db.QueryRow(
+	if err := dm.SQLDB().QueryRow(
 		"SELECT COUNT(*) FROM blocks WHERE notebook = ? AND section = ? AND page = ?",
 		"Work", "Journal", "Daily",
 	).Scan(&n); err != nil {
@@ -1658,7 +1658,7 @@ func TestAtomicWrite_KillMidWriteRecoversViaWAL(t *testing.T) {
 	// SIGKILL/power loss — WAL is abandoned, not checkpointed).
 	// DatabaseManager.Close() runs PRAGMA wal_checkpoint(TRUNCATE) first;
 	// we bypass that by closing the raw handle directly.
-	if err := dm.db.Close(); err != nil {
+	if err := dm.SQLDB().Close(); err != nil {
 		t.Fatalf("raw close: %v", err)
 	}
 

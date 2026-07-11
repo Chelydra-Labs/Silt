@@ -52,8 +52,12 @@ func warnOnDependencyCycle(blocks []parser.ParsedBlock) {
 // with the exact same mtime (Unix nanoseconds) and size. A warm restart uses
 // this to skip re-parsing files the user has not touched since the last index.
 func (dm *DatabaseManager) IsFileUnchanged(path string, mtime, size int64) (bool, error) {
+	db, err := dm.handle()
+	if err != nil {
+		return false, ErrDBClosed
+	}
 	var fmtime, fsize int64
-	err := dm.db.QueryRow("SELECT mtime, size FROM files WHERE path = ?", path).Scan(&fmtime, &fsize)
+	err = db.QueryRow("SELECT mtime, size FROM files WHERE path = ?", path).Scan(&fmtime, &fsize)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -68,6 +72,10 @@ func (dm *DatabaseManager) IsFileUnchanged(path string, mtime, size int64) (bool
 // (used by the bulk startup reindex so all per-file rows commit atomically);
 // otherwise it runs against the shared connection.
 func (dm *DatabaseManager) MarkFileIndexed(tx *sql.Tx, path string, mtime, size int64) error {
+	db, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
 	now := time.Now().UnixNano()
 	if tx != nil {
 		_, err := tx.Exec(
@@ -76,7 +84,7 @@ func (dm *DatabaseManager) MarkFileIndexed(tx *sql.Tx, path string, mtime, size 
 			path, mtime, size, now)
 		return err
 	}
-	_, err := dm.db.Exec(
+	_, err = db.Exec(
 		"INSERT INTO files (path, mtime, size, indexed_at) VALUES (?, ?, ?, ?) "+
 			"ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size, indexed_at=excluded.indexed_at",
 		path, mtime, size, now)
@@ -89,11 +97,15 @@ func (dm *DatabaseManager) MarkFileIndexed(tx *sql.Tx, path string, mtime, size 
 // callers can surface them as one-time init warnings (a renamed file shows up
 // as "pruned old path + indexed new path").
 func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error) {
+	db, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
 	// Build the parameter list for the "NOT IN (...)" clause. A single
 	// round-trip DELETE keeps this cheap even for thousands of files.
 	if len(seenPaths) == 0 {
 		// No files on disk at all: drop every recorded row.
-		_, err := dm.db.Exec("DELETE FROM files")
+		_, err = db.Exec("DELETE FROM files")
 		return nil, err
 	}
 	placeholders := make([]string, len(seenPaths))
@@ -104,7 +116,7 @@ func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error)
 	}
 
 	// Collect the about-to-be-pruned paths first so we can report them.
-	rows, err := dm.db.Query(
+	rows, err := db.Query(
 		"SELECT path FROM files WHERE path NOT IN ("+strings.Join(placeholders, ",")+")", args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query stale files: %w", err)
@@ -126,7 +138,7 @@ func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error)
 	}
 
 	if len(pruned) > 0 {
-		if _, err := dm.db.Exec(
+		if _, err := db.Exec(
 			"DELETE FROM files WHERE path NOT IN ("+strings.Join(placeholders, ",")+")", args...); err != nil {
 			return nil, fmt.Errorf("failed to prune stale files: %w", err)
 		}
@@ -138,14 +150,22 @@ func (dm *DatabaseManager) PruneStaleFiles(seenPaths []string) ([]string, error)
 // watcher when a file is removed or renamed so the next startup scan does not
 // treat the path as "unchanged" and skip re-indexing the new occupant.
 func (dm *DatabaseManager) ForgetFile(path string) error {
-	_, err := dm.db.Exec("DELETE FROM files WHERE path = ?", path)
+	db, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
+	_, err = db.Exec("DELETE FROM files WHERE path = ?", path)
 	return err
 }
 
 // KnownFiles returns the full path→FileStat map currently recorded in the
 // index. Used for diagnostics (e.g. surfacing how many files are tracked).
 func (dm *DatabaseManager) KnownFiles() (map[string]FileStat, error) {
-	rows, err := dm.db.Query("SELECT path, mtime, size, indexed_at FROM files")
+	db, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	rows, err := db.Query("SELECT path, mtime, size, indexed_at FROM files")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query known files: %w", err)
 	}
@@ -191,15 +211,18 @@ func ExtractTags(text string) []string {
 // notebook sharing a display name with a vault notebook cannot clear the
 // vault's rows (#100).
 func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section, page string) error {
+	db, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
 	if source == "" {
 		source = "vault"
 	}
 	query := "DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?"
-	var err error
 	if tx != nil {
 		_, err = tx.Exec(query, source, notebook, section, page)
 	} else {
-		_, err = dm.db.Exec(query, source, notebook, section, page)
+		_, err = db.Exec(query, source, notebook, section, page)
 	}
 	return err
 }
@@ -210,10 +233,14 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 // at the TARGET page by the first pass. A non-scoped delete would remove it
 // from the target too (#104 concurrency fix).
 func (dm *DatabaseManager) DeleteBlockFromPage(blockID, source, notebook, section, page string) error {
+	db, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
 	if source == "" {
 		source = "vault"
 	}
-	_, err := dm.db.Exec(
+	_, err = db.Exec(
 		"DELETE FROM blocks WHERE id = ? AND source = ? AND notebook = ? AND section = ? AND page = ?",
 		blockID, source, notebook, section, page)
 	return err
@@ -225,10 +252,14 @@ func (dm *DatabaseManager) DeleteBlockFromPage(blockID, source, notebook, sectio
 // per-block mutex entries (#122) for blocks that no longer exist. Scoped by
 // source (#100).
 func (dm *DatabaseManager) BlockIDsForPage(source, notebook, section, page string) ([]string, error) {
+	db, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
 	if source == "" {
 		source = "vault"
 	}
-	rows, err := dm.db.Query(
+	rows, err := db.Query(
 		"SELECT id FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 		source, notebook, section, page,
 	)
@@ -254,11 +285,15 @@ func (dm *DatabaseManager) BlockIDsForPage(source, notebook, section, page strin
 // (#443). The count is derived working memory (ARCHITECTURE.md §0 rule 4): no
 // schema change, re-derivable from the blocks table on demand.
 func (dm *DatabaseManager) CountBlocksForPage(source, notebook, section, page string) (int, error) {
+	db, err := dm.handle()
+	if err != nil {
+		return 0, ErrDBClosed
+	}
 	if source == "" {
 		source = "vault"
 	}
 	var n int
-	err := dm.db.QueryRow(
+	err = db.QueryRow(
 		"SELECT COUNT(*) FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 		source, notebook, section, page,
 	).Scan(&n)
@@ -275,6 +310,10 @@ func (dm *DatabaseManager) CountBlocksForPage(source, notebook, section, page st
 // maintainer can grep the output without changing the call signature or
 // the public API.
 func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, fileWarnings ...string) error {
+	db, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
 	if source == "" {
 		source = "vault"
 	}
@@ -282,7 +321,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 		log.Printf("db.IndexFileBlocks(%s/%s/%s/%s): %s", source, notebook, section, page, w)
 	}
 
-	tx, err := dm.db.Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -553,7 +592,11 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 // reported a per-file error. Callers should surface the skipped set so
 // users can distinguish a fully-loaded vault from one with unreadable files.
 func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, []string, error) {
-	tx, err := dm.db.Begin()
+	db, err := dm.handle()
+	if err != nil {
+		return 0, nil, ErrDBClosed
+	}
+	tx, err := db.Begin()
 	if err != nil {
 		return 0, nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -832,9 +875,13 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 // for a given source. Used by UnlinkNotebook to drop a linked notebook's
 // local index rows without touching the external files (#100).
 func (dm *DatabaseManager) ClearSourceBlocks(source string) error {
+	db, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
 	if source == "" {
 		return nil
 	}
-	_, err := dm.db.Exec("DELETE FROM blocks WHERE source = ?", source)
+	_, err = db.Exec("DELETE FROM blocks WHERE source = ?", source)
 	return err
 }

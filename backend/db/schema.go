@@ -6,8 +6,12 @@ import (
 )
 
 func (dm *DatabaseManager) initSchema() error {
+	db, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
 	// Foreign-key enforcement is per-connection.
-	if _, err := dm.db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
+	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
 		return fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
@@ -16,7 +20,7 @@ func (dm *DatabaseManager) initSchema() error {
 	// here means the first on-disk open creates a WAL-mode file and every
 	// later connection — including the plugin read-only handle — inherits it
 	// without re-running the pragma.
-	if _, err := dm.db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
+	if _, err := db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
 		return fmt.Errorf("failed to set journal mode: %w", err)
 	}
 
@@ -26,7 +30,7 @@ func (dm *DatabaseManager) initSchema() error {
 	// expected — only assert for on-disk databases.
 	if dm.path != "" {
 		var mode string
-		if err := dm.db.QueryRow("PRAGMA journal_mode;").Scan(&mode); err != nil {
+		if err := db.QueryRow("PRAGMA journal_mode;").Scan(&mode); err != nil {
 			return fmt.Errorf("failed to read journal mode: %w", err)
 		}
 		if !strings.EqualFold(mode, "wal") {
@@ -48,7 +52,7 @@ func (dm *DatabaseManager) initSchema() error {
 		"PRAGMA busy_timeout = 5000;",
 	}
 	for _, p := range pragmas {
-		if _, err := dm.db.Exec(p); err != nil {
+		if _, err := db.Exec(p); err != nil {
 			return fmt.Errorf("failed to apply pragma %q: %w", p, err)
 		}
 	}
@@ -78,7 +82,7 @@ func (dm *DatabaseManager) initSchema() error {
 		line_number INTEGER NOT NULL,
 		FOREIGN KEY(parent_id) REFERENCES blocks(id) ON DELETE SET NULL
 	);`
-	if _, err := dm.db.Exec(createBlocksTable); err != nil {
+	if _, err := db.Exec(createBlocksTable); err != nil {
 		return fmt.Errorf("failed to create blocks table: %w", err)
 	}
 
@@ -89,7 +93,7 @@ func (dm *DatabaseManager) initSchema() error {
 		{"source", "TEXT NOT NULL DEFAULT 'vault'"},
 	} {
 		alter := fmt.Sprintf("ALTER TABLE blocks ADD COLUMN %s %s", col.name, col.defn)
-		if _, err := dm.db.Exec(alter); err != nil {
+		if _, err := db.Exec(alter); err != nil {
 			if !strings.Contains(err.Error(), "duplicate column name") {
 				return fmt.Errorf("failed to migrate blocks table (add %s): %w", col.name, err)
 			}
@@ -115,7 +119,7 @@ func (dm *DatabaseManager) initSchema() error {
 		manual_order INTEGER,               -- 1-based [order:: N] sort position; NULL when absent (no backfill) (#417)
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
-	if _, err := dm.db.Exec(createTasksTable); err != nil {
+	if _, err := db.Exec(createTasksTable); err != nil {
 		return fmt.Errorf("failed to create tasks table: %w", err)
 	}
 
@@ -141,7 +145,7 @@ func (dm *DatabaseManager) initSchema() error {
 		{"manual_order", "INTEGER"},
 	} {
 		alter := fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s", col.name, col.defn)
-		if _, err := dm.db.Exec(alter); err != nil {
+		if _, err := db.Exec(alter); err != nil {
 			// "duplicate column name" → already migrated; ignore.
 			// Any other error is real.
 			if !strings.Contains(err.Error(), "duplicate column name") {
@@ -161,7 +165,7 @@ func (dm *DatabaseManager) initSchema() error {
 		PRIMARY KEY(block_id, raw_path),
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
-	if _, err := dm.db.Exec(createTagsTable); err != nil {
+	if _, err := db.Exec(createTagsTable); err != nil {
 		return fmt.Errorf("failed to create tags table: %w", err)
 	}
 
@@ -182,10 +186,10 @@ func (dm *DatabaseManager) initSchema() error {
 		FOREIGN KEY(block_id)      REFERENCES blocks(id) ON DELETE CASCADE,
 		FOREIGN KEY(blocked_by_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
-	if _, err := dm.db.Exec(createTaskDepsTable); err != nil {
+	if _, err := db.Exec(createTaskDepsTable); err != nil {
 		return fmt.Errorf("failed to create task_dependencies table: %w", err)
 	}
-	if _, err := dm.db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_deps_blocked_by ON task_dependencies(blocked_by_id)`); err != nil {
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_task_deps_blocked_by ON task_dependencies(blocked_by_id)`); err != nil {
 		return fmt.Errorf("failed to create task_dependencies reverse-lookup index: %w", err)
 	}
 
@@ -208,7 +212,7 @@ func (dm *DatabaseManager) initSchema() error {
 		timestamp TEXT,
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
-	if _, err := dm.db.Exec(createBlockMetaTable); err != nil {
+	if _, err := db.Exec(createBlockMetaTable); err != nil {
 		return fmt.Errorf("failed to create block_meta table: %w", err)
 	}
 
@@ -225,7 +229,7 @@ func (dm *DatabaseManager) initSchema() error {
 		size       INTEGER NOT NULL,
 		indexed_at INTEGER NOT NULL
 	);`
-	if _, err := dm.db.Exec(createFilesTable); err != nil {
+	if _, err := db.Exec(createFilesTable); err != nil {
 		return fmt.Errorf("failed to create files table: %w", err)
 	}
 
@@ -251,7 +255,7 @@ func (dm *DatabaseManager) initSchema() error {
 	}
 
 	for _, idxQuery := range indexes {
-		if _, err := dm.db.Exec(idxQuery); err != nil {
+		if _, err := db.Exec(idxQuery); err != nil {
 			return fmt.Errorf("failed to create index: %w", err)
 		}
 	}
@@ -275,8 +279,12 @@ func (dm *DatabaseManager) initSchema() error {
 // blocks table. Idempotent: a no-op on every subsequent open where the FTS
 // table already exists and the triggers are in place.
 func (dm *DatabaseManager) ensureFTS() error {
+	db, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
 	var ftsExists int
-	if err := dm.db.QueryRow(
+	if err := db.QueryRow(
 		"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='blocks_fts'").Scan(&ftsExists); err != nil {
 		return fmt.Errorf("failed to check blocks_fts existence: %w", err)
 	}
@@ -306,7 +314,7 @@ func (dm *DatabaseManager) ensureFTS() error {
 		END;`,
 	}
 	for _, q := range createFTS {
-		if _, err := dm.db.Exec(q); err != nil {
+		if _, err := db.Exec(q); err != nil {
 			return fmt.Errorf("failed to create FTS object: %w", err)
 		}
 	}
@@ -314,7 +322,7 @@ func (dm *DatabaseManager) ensureFTS() error {
 	// First creation: populate FTS from whatever blocks rows already exist
 	// (the migration case — an upgraded vault with blocks but no FTS yet).
 	if ftsExists == 0 {
-		if _, err := dm.db.Exec("INSERT INTO blocks_fts(blocks_fts) VALUES ('rebuild');"); err != nil {
+		if _, err := db.Exec("INSERT INTO blocks_fts(blocks_fts) VALUES ('rebuild');"); err != nil {
 			return fmt.Errorf("failed to rebuild FTS index: %w", err)
 		}
 	}
@@ -326,6 +334,10 @@ func (dm *DatabaseManager) ensureFTS() error {
 // sync triggers (none in normal operation, but available for recovery). On an
 // empty blocks table this is a no-op.
 func (dm *DatabaseManager) RebuildFTSIndex() error {
-	_, err := dm.db.Exec("INSERT INTO blocks_fts(blocks_fts) VALUES ('rebuild');")
+	db, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
+	_, err = db.Exec("INSERT INTO blocks_fts(blocks_fts) VALUES ('rebuild');")
 	return err
 }
