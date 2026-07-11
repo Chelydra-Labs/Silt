@@ -131,6 +131,15 @@ embed credentials in the UA and leak them across a redirect.
 Plugin UI surfaces run in sandboxed `<iframe srcdoc>` with a restrictive
 CSP (`connect-src 'none'`). The postMessage bridge uses `'null'` as the
 targetOrigin (correct for a sandboxed iframe without `allow-same-origin`).
+Callback/registration APIs (`on`, `registerSlashCommand`, `registerSurface`)
+are not bridged — functions do not survive structured clone; register from
+main-webview `init()` only.
+
+Capability denials and rate-limit hits accumulate in a session-scoped
+in-memory counter (`GetPluginSecurityStats`) and emit a structured
+`security:event` Wails event so Settings → Plugins can show a warning badge
+(#518). Counters clear on vault close and plugin uninstall; they are not
+persisted.
 
 ### 4.7 Grant provenance (F4)
 

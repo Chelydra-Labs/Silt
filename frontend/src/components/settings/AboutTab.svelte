@@ -81,11 +81,13 @@
       <h3 class="font-headline-md text-headline-md text-text-primary font-bold">
         Silt
       </h3>
-      <p class="text-text-muted text-[12px] font-label-sm">Version {version}</p>
+      <p class="text-text-muted text-type-sm font-label-sm">
+        Version {version}
+      </p>
     </div>
   </div>
 
-  <p class="text-text-primary text-[13px] font-body-md mb-6">
+  <p class="text-text-primary text-type-md font-body-md mb-6">
     Capture ideas. Connect them. Get work done. A fast, private workspace for
     your notes and tasks.
   </p>
@@ -93,7 +95,7 @@
   <!-- Updates (#312) -->
   <section class="mb-6">
     <h3
-      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
     >
       Updates
     </h3>
@@ -108,26 +110,26 @@
           disabled={updateState.status === 'checking' ||
             updateState.status === 'downloading' ||
             updateState.status === 'installing'}
-          class="font-label-sm-bold text-[12px] px-3 py-1.5 rounded-md bg-accent-primary-start text-surface-app hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
+          class="font-label-sm-bold text-type-sm px-3 py-1.5 rounded-md bg-accent-primary-start text-surface-app hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
         >
           {updateState.status === 'checking'
             ? 'Checking…'
             : 'Check for updates'}
         </button>
-        <span class="text-text-muted text-[11px] font-label-sm">
+        <span class="text-text-muted text-type-xs font-label-sm">
           Last checked: {formatLastChecked(updateState.lastChecked)}
         </span>
       </div>
 
       <!-- Live status region: polite so screen readers announce results
            without stealing focus. -->
-      <div class="text-[12px] font-body-md" role="status" aria-live="polite">
+      <div class="text-type-sm font-body-md" role="status" aria-live="polite">
         {#if updateState.status === 'checking'}
           <p class="text-text-muted">Checking GitHub Releases…</p>
         {:else if updateState.status === 'up-to-date'}
           <p class="text-text-muted">
             <span
-              class="material-symbols-outlined text-[16px] align-middle mr-1"
+              class="material-symbols-outlined text-icon-md align-middle mr-1"
               >check_circle</span
             >
             You're up to date.
@@ -139,7 +141,7 @@
             </p>
             {#if notesExcerpt(updateState.releaseNotes)}
               <pre
-                class="text-text-muted text-[11px] whitespace-pre-wrap bg-surface-panel/40 rounded-md p-2 border border-surface-panel-border"
+                class="text-text-muted text-type-xs whitespace-pre-wrap bg-surface-panel/40 rounded-md p-2 border border-surface-panel-border"
                 style="font-family: var(--editor-mono-font-family, var(--font-mono, monospace))">{notesExcerpt(
                   updateState.releaseNotes
                 )}</pre>
@@ -150,7 +152,7 @@
                   type="button"
                   onclick={onInstall}
                   disabled={installInFlight}
-                  class="font-label-sm-bold text-[12px] px-3 py-1.5 rounded-md bg-accent-primary-start text-surface-app hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
+                  class="font-label-sm-bold text-type-sm px-3 py-1.5 rounded-md bg-accent-primary-start text-surface-app hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
                 >
                   {installInFlight ? 'Downloading…' : 'Install update'}
                 </button>
@@ -158,7 +160,7 @@
               <a
                 href={updateState.releaseUrl}
                 onclick={openExternal}
-                class="font-label-sm-bold text-[12px] underline text-accent-primary-start hover:brightness-110"
+                class="font-label-sm-bold text-type-sm underline text-accent-primary-start hover:brightness-110"
               >
                 View full notes
               </a>
@@ -203,10 +205,10 @@
       <!-- Errors get the alert role so they are announced assertively. -->
       {#if updateState.status === 'error'}
         <p
-          class="text-status-danger text-[12px] font-body-md flex items-center gap-1.5"
+          class="text-status-danger text-type-sm font-body-md flex items-center gap-1.5"
           role="alert"
         >
-          <span class="material-symbols-outlined text-[16px]">error</span>
+          <span class="material-symbols-outlined text-icon-md">error</span>
           {updateState.error}
         </p>
       {/if}
@@ -219,7 +221,7 @@
           ? ''
           : 'cursor-pointer'}"
       >
-        <span class="text-text-primary text-[12px] font-body-md">
+        <span class="text-text-primary text-type-sm font-body-md">
           Automatically check for updates
         </span>
         <button
@@ -247,11 +249,11 @@
 
   <section>
     <h3
-      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-2"
+      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-2"
     >
       Links
     </h3>
-    <ul class="space-y-1.5 text-[13px] font-body-md">
+    <ul class="space-y-1.5 text-type-md font-body-md">
       <li>
         <span class="text-text-muted">Source:</span>
         <a
@@ -275,7 +277,7 @@
 
   <section class="border-t border-surface-panel-border pt-4 mt-4">
     <h4
-      class="font-label-sm-bold text-text-primary uppercase tracking-wider text-[10px] mb-3"
+      class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs mb-3"
     >
       Developer
     </h4>
@@ -302,18 +304,18 @@
             true}
         ></span>
       </button>
-      <span class="text-text-primary text-[13px] font-body-md ml-2"
+      <span class="text-text-primary text-type-md font-body-md ml-2"
         >Dev Mode</span
       >
       <p
-        class="text-text-muted/70 text-[11px] font-body-md leading-relaxed pl-1"
+        class="text-text-muted/70 text-type-xs font-body-md leading-relaxed pl-1"
       >
         Enables the Dev tab in Settings with diagnostic tools.
       </p>
       {#if settings.error}
         <p
           role="alert"
-          class="text-status-danger text-[11px] font-body-md leading-relaxed pl-1"
+          class="text-status-danger text-type-xs font-body-md leading-relaxed pl-1"
         >
           {settings.error}
         </p>
@@ -321,11 +323,11 @@
     </div>
   </section>
 
-  <p class="text-text-muted text-[11px] font-label-sm mt-8">
+  <p class="text-text-muted text-type-xs font-label-sm mt-8">
     Built with Go, Svelte 5, and Wails.
   </p>
 
-  <p class="text-text-muted text-[11px] font-label-sm mt-1">
+  <p class="text-text-muted text-type-xs font-label-sm mt-1">
     A <a
       href="https://chelydra.dev"
       onclick={openExternal}

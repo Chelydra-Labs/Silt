@@ -213,6 +213,10 @@
         "signature": "GetPluginRegistry() (parser.PluginRegistry, error)"
       },
       {
+        "name": "GetPluginSecurityStats",
+        "signature": "GetPluginSecurityStats() []PluginSecurityStats"
+      },
+      {
         "name": "GetPluginSettingsForNotebook",
         "signature": "GetPluginSettingsForNotebook(pluginID, notebookName string) (map[string]any, error)"
       },
@@ -802,6 +806,7 @@
       "menu:toggle-format-toolbar",
       "menu:toggle-sidebar",
       "plugins:changed",
+      "security:event",
       "templates:changed",
       "theme:changed",
       "themes:changed",
@@ -844,7 +849,7 @@
       "frontend/src/components/settings/PluginsTab.svelte",
       "frontend/src/components/settings/PluginsTab.test.ts",
       "frontend/src/components/settings/SettingsForm.test.ts",
-      "frontend/src/components/settings/SettingsShell.test.ts",
+      "frontend/src/components/settings/SettingsPanel.test.ts",
       "frontend/src/components/settings/VaultActionModal.svelte",
       "frontend/src/components/settings/VaultActionModal.test.ts",
       "frontend/src/components/settings/VaultArchiveModal.svelte",
@@ -898,6 +903,8 @@
       "frontend/src/components/settings/AppearanceTab.svelte",
       "frontend/src/components/settings/AppearanceTab.test.ts",
       "frontend/src/components/settings/GeneralTab.test.ts",
+      "frontend/src/components/settings/PluginsTab.svelte",
+      "frontend/src/components/settings/PluginsTab.test.ts",
       "frontend/src/components/settings/VaultActionModal.test.ts",
       "frontend/src/components/settings/VaultArchiveModal.svelte",
       "frontend/src/components/settings/VaultArchiveModal.test.ts",
@@ -944,6 +951,7 @@
       "menu:toggle-format-toolbar",
       "menu:toggle-sidebar",
       "plugins:changed",
+      "security:event",
       "settings:fingerprint-mismatch",
       "templates:changed",
       "theme:changed",
@@ -954,7 +962,8 @@
       "vault:closing",
       "vault:init-error",
       "vault:init-warnings",
-      "vault:moved"
+      "vault:moved",
+      "vault:watch-coverage"
     ],
     "plugin_method_count": 49
   }

@@ -111,7 +111,7 @@
       <div
         role="presentation"
         aria-hidden="true"
-        class="px-6 pt-4 pb-1 text-surface-sidebar-text-muted text-[10px] uppercase tracking-widest font-label-sm-bold select-none {i ===
+        class="px-6 pt-4 pb-1 text-surface-sidebar-text-muted text-type-2xs uppercase tracking-widest font-label-sm-bold select-none {i ===
         0
           ? 'pt-1'
           : ''}"
@@ -136,10 +136,10 @@
       >
         {#if section === sec.id}
           <div
-            class="absolute left-1.5 top-2.5 bottom-2.5 w-0.5 rounded-full bg-accent-primary-start shadow-[0_0_8px_var(--color-accent-primary-start)]"
+            class="absolute left-1.5 top-2.5 bottom-2.5 w-0.5 rounded-full bg-accent-primary-start shadow-accent-glow"
           ></div>
         {/if}
-        <span class="material-symbols-outlined text-[20px]" aria-hidden="true"
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
           >{sec.icon}</span
         >
         {sec.label}

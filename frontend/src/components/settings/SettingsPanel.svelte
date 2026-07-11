@@ -113,7 +113,7 @@
         {activeSectionMeta?.label ?? section}
       </h2>
       {#if activeSectionMeta?.description}
-        <p class="text-text-muted text-[12px] font-body-md mt-0.5 truncate">
+        <p class="text-text-muted text-type-sm font-body-md mt-0.5 truncate">
           {activeSectionMeta.description}
         </p>
       {/if}
@@ -143,9 +143,9 @@
     {:else if !settings.config && settings.error && section !== 'general'}
       <div class="p-8">
         <div
-          class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md max-w-xl"
+          class="flex items-start gap-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-type-sm font-body-md max-w-xl"
         >
-          <span class="material-symbols-outlined text-[18px]">error</span>
+          <span class="material-symbols-outlined text-icon-lg">error</span>
           <span class="flex-1">{settings.error}</span>
         </div>
       </div>

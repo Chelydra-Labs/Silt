@@ -506,8 +506,23 @@ const off = ctx.registerSurface({
 })
 ```
 
-The iframe's `window.__siltCtx` is a postMessage proxy for the full
-PluginContext. Theme tokens are injected as CSS custom properties.
+The iframe's `window.__siltCtx` is a postMessage proxy for **data-only**
+PluginContext RPC methods (serializable args + Promise results). Theme
+tokens are injected as CSS custom properties.
+
+**Registration APIs cannot cross the iframe bridge.** `postMessage` uses
+the structured clone algorithm: function arguments (`onSelect`, event
+callbacks) cannot be cloned (engines throw `DataCloneError`, or would arrive
+unusable if stripped). Call these from the plugin's main-webview `init()`
+(where the loader runs `index.js`), not from surface HTML:
+
+- `ctx.on(...)` / event subscriptions
+- `ctx.registerSlashCommand(...)`
+- `ctx.registerSurface(...)`
+- `ctx.provideDecorations(...)`
+
+Host→surface events (e.g. banner dismiss) use the dedicated
+`silt:surface:event` channel, not `ctx.on` from inside the iframe.
 
 ### 8.9 First-party primary sidebar (`sidebarComponent`)
 

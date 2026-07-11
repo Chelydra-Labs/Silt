@@ -107,9 +107,15 @@
     `<html><head>${cspMeta}<style>${themeCss()}</style></head><body>${surface.html}${bridgeScript}</body></html>`
   )
 
-  // Explicit allowlist of proxiable PluginContext method names. Anything not
-  // in this set is rejected, so a future non-gated host-internal function can
-  // never be invoked by a plugin surface (#117 hardening).
+  // Explicit allowlist of proxiable PluginContext method names. Data-in /
+  // data-out RPC only (serializable args + Promise results). Callback-based
+  // APIs (on, registerSlashCommand, registerSurface, provideDecorations) are
+  // intentionally excluded: postMessage uses structured clone, so functions
+  // become null and cannot cross the iframe boundary (#516). Registration
+  // must run from the plugin's main-webview init(); surface events use the
+  // host→iframe silt:surface:event channel instead of ctx.on.
+  // Anything not in this set is rejected so a future non-gated host-internal
+  // function can never be invoked by a plugin surface (#117 hardening).
   const allowedMethods = new Set([
     'sqliteQuery',
     'mutateBlock',
@@ -119,7 +125,6 @@
     'getSetting',
     'updatePluginSetting',
     'openSettings',
-    'on',
     'queryByTag',
     'queryByDateRange',
     'fullTextSearch',
@@ -151,9 +156,16 @@
     'clipboardWrite',
     'notify',
     'fetch',
+    'readPluginAsset'
+  ])
+
+  // Registration / callback methods that must run from main-webview init().
+  // Surfaced with a clearer error when a surface HTML wrongly proxies them.
+  const registrationMethods = new Set([
+    'on',
     'registerSlashCommand',
     'registerSurface',
-    'readPluginAsset'
+    'provideDecorations'
   ])
 
   function handleRequest(ev: MessageEvent) {
@@ -182,12 +194,15 @@
       !allowedMethods.has(msg.method) ||
       typeof ctxProxy[msg.method] !== 'function'
     ) {
+      const error = registrationMethods.has(msg.method)
+        ? `Blocked method: ${msg.method} cannot cross the iframe bridge (functions do not survive structured clone). Call it from plugin init() in the main webview; use silt:surface:event for host→surface events.`
+        : `Blocked or unknown method: ${msg.method}`
       iframeEl?.contentWindow?.postMessage(
         {
           __siltSurface: 'response',
           seq: msg.seq,
           ok: false,
-          error: `Blocked or unknown method: ${msg.method}`
+          error
         },
         'null'
       )

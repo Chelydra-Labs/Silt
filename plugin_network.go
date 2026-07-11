@@ -123,6 +123,7 @@ func (a *App) PluginFetch(pluginID, sessionToken string, input PluginFetchInput)
 	if a.rateLimiter != nil && !a.rateLimiter.allow(a.vaultPath, pluginID) {
 		rps, burst := resolvePluginRatelimit(a.vaultPath, pluginID)
 		a.vaultMu.RUnlock()
+		a.recordRateLimited(pluginID)
 		return PluginFetchResult{}, fmt.Errorf("plugin %q fetch rate limit exceeded (max %.1f rps, burst %d); retry after a short delay", pluginID, rps, burst)
 	}
 	a.vaultClosingWG.Add(1)

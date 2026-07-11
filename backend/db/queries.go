@@ -25,8 +25,13 @@ type BlockLocation struct {
 // block UUID. This is the typed API replacement for the raw SQLDB().QueryRow
 // calls that were scattered across app.go write paths.
 func (dm *DatabaseManager) GetBlockLocation(blockID string) (BlockLocation, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return BlockLocation{}, ErrDBClosed
+	}
+	defer release()
 	var loc BlockLocation
-	err := dm.db.QueryRow(
+	err = db.QueryRow(
 		"SELECT COALESCE(source, 'vault'), notebook, section, page, type FROM blocks WHERE id = ?",
 		blockID,
 	).Scan(&loc.Source, &loc.Notebook, &loc.Section, &loc.Page, &loc.BlockType)
@@ -40,10 +45,15 @@ func (dm *DatabaseManager) GetBlockLocation(blockID string) (BlockLocation, erro
 // A page is a single file; all blocks share the same (notebook, section,
 // page) and are ordered by line_number. Each block carries its own file_date.
 func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page string) ([]parser.ParsedBlock, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
 	if source == "" {
 		source = "vault"
 	}
-	rows, err := dm.db.Query(`
+	rows, err := db.Query(`
 		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
 		       b.file_date,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
@@ -104,6 +114,11 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 
 // QueryTasksWithFilters fetches task results matching the provided query filters.
 func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) ([]parser.TaskResult, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
 	baseQuery := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
 		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned, t.recur, t.created_at, t.completed_at, t.manual_order
@@ -160,7 +175,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 
 	baseQuery += " ORDER BY b.file_date DESC, b.line_number ASC"
 
-	rows, err := dm.db.Query(baseQuery, args...)
+	rows, err := db.Query(baseQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query tasks: %w", err)
 	}
@@ -244,7 +259,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		tagPlaceholders[i] = "?"
 	}
 	tagQuery := "SELECT block_id, raw_path FROM tags WHERE block_id IN (" + strings.Join(tagPlaceholders, ",") + ") ORDER BY block_id, raw_path"
-	tagRows, err := dm.db.Query(tagQuery, blockIDs...)
+	tagRows, err := db.Query(tagQuery, blockIDs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query task tags: %w", err)
 	}
@@ -274,7 +289,7 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	// block_id. The Kanban/Agenda badge and the dependency picker read this
 	// list without re-parsing markdown.
 	depQuery := "SELECT block_id, blocked_by_id FROM task_dependencies WHERE block_id IN (" + strings.Join(tagPlaceholders, ",") + ") ORDER BY block_id, blocked_by_id"
-	depRows, err := dm.db.Query(depQuery, blockIDs...)
+	depRows, err := db.Query(depQuery, blockIDs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query task dependencies: %w", err)
 	}
@@ -306,7 +321,12 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 // block that happens to carry several nested tags (e.g. #work and
 // #work/project/milestone-one).
 func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
-	rows, err := dm.db.Query("SELECT raw_path, block_id FROM tags")
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	rows, err := db.Query("SELECT raw_path, block_id FROM tags")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query tag hierarchy: %w", err)
 	}
@@ -413,6 +433,11 @@ func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 // QueryBlocksByTag returns blocks whose tag path equals tagPath or is nested
 // beneath it (prefix semantics, so #work matches #work/project/milestone-one).
 func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
 	tagPath = strings.TrimSpace(strings.TrimPrefix(tagPath, "#"))
 	if tagPath == "" {
 		return []parser.TaskResult{}, nil
@@ -427,7 +452,7 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 		ORDER BY b.notebook, b.section, b.page, b.file_date DESC, b.line_number ASC
 		LIMIT 500
 	`
-	rows, err := dm.db.Query(query, tagPath, tagPath+"/%")
+	rows, err := db.Query(query, tagPath, tagPath+"/%")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query blocks by tag: %w", err)
 	}
@@ -487,7 +512,12 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 // binary collation by default (uppercase before lowercase), so casing only
 // affects ordering, not selection.
 func (dm *DatabaseManager) DistinctOwners(prefix string) ([]string, error) {
-	rows, err := dm.db.Query(
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	rows, err := db.Query(
 		"SELECT DISTINCT owner FROM tasks WHERE owner != '' AND owner LIKE ? ORDER BY owner",
 		prefix+"%",
 	)
@@ -520,7 +550,12 @@ func (dm *DatabaseManager) DistinctOwners(prefix string) ([]string, error) {
 // means the task is actionable (no open prerequisites). The reverse index
 // idx_task_deps_blocked_by serves this lookup without a scan.
 func (dm *DatabaseManager) OpenBlockers(blockID string) ([]string, error) {
-	rows, err := dm.db.Query(
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	rows, err := db.Query(
 		`SELECT d.blocked_by_id FROM task_dependencies d
 		 JOIN tasks t ON t.block_id = d.blocked_by_id
 		 WHERE d.block_id = ? AND t.status != 'DONE'
@@ -550,7 +585,12 @@ func (dm *DatabaseManager) OpenBlockers(blockID string) ([]string, error) {
 // reactive fan-out). The reverse index serves this lookup. An empty slice
 // means nothing depends on blockID.
 func (dm *DatabaseManager) DependentsOf(blockID string) ([]string, error) {
-	rows, err := dm.db.Query(
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	rows, err := db.Query(
 		"SELECT block_id FROM task_dependencies WHERE blocked_by_id = ? ORDER BY block_id",
 		blockID,
 	)
@@ -578,6 +618,11 @@ func (dm *DatabaseManager) DependentsOf(blockID string) ([]string, error) {
 // Edges outside the requested set are irrelevant to a local cycle check and
 // omitted to keep the payload bounded.
 func (dm *DatabaseManager) DependencyEdges(blockIDs []string) (map[string][]string, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
 	if len(blockIDs) == 0 {
 		return map[string][]string{}, nil
 	}
@@ -592,7 +637,7 @@ func (dm *DatabaseManager) DependencyEdges(blockIDs []string) (map[string][]stri
 	query := "SELECT block_id, blocked_by_id FROM task_dependencies WHERE block_id IN (" + strings.Join(placeholders, ",") + ") OR blocked_by_id IN (" + strings.Join(placeholders, ",") + ")"
 	// Duplicate args for the second IN clause.
 	fullArgs := append(args, args...)
-	rows, err := dm.db.Query(query, fullArgs...)
+	rows, err := db.Query(query, fullArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query dependency edges: %w", err)
 	}
@@ -617,6 +662,11 @@ func (dm *DatabaseManager) DependencyEdges(blockIDs []string) (map[string][]stri
 // or a non-task block would otherwise persist as a broken edge the index can't
 // resolve (OpenBlockers JOINs tasks, so a non-task blocker never surfaces).
 func (dm *DatabaseManager) ValidTaskBlockIDs(ids []string) (map[string]bool, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
 	out := make(map[string]bool, len(ids))
 	if len(ids) == 0 {
 		return out, nil
@@ -628,7 +678,7 @@ func (dm *DatabaseManager) ValidTaskBlockIDs(ids []string) (map[string]bool, err
 		args[i] = id
 	}
 	query := "SELECT id FROM blocks WHERE type = 'TASK' AND id IN (" + strings.Join(placeholders, ",") + ")"
-	rows, err := dm.db.Query(query, args...)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query valid task block ids: %w", err)
 	}

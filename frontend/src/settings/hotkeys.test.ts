@@ -3,8 +3,130 @@ import {
   configKeyToProseMirrorKey,
   resolveShortcut,
   resolveHotkeyDisplay,
-  matchHotkey
+  matchHotkey,
+  formatHotkey,
+  parseHotkey,
+  hotkeyFromKeyboardEvent
 } from './hotkeys'
+
+describe('formatHotkey + parseHotkey round-trip (#519)', () => {
+  it.each([
+    'Ctrl+Shift+9',
+    'Ctrl+Alt+2',
+    'Meta+K',
+    'Ctrl+/',
+    'Ctrl+Shift+Escape',
+    // Capture-widget long forms (KeyboardEvent.key) must round-trip (#521 review).
+    'Ctrl+Shift+ArrowUp',
+    'Ctrl+Shift+ArrowDown',
+    'Ctrl+Space'
+  ])('round-trips %s', (binding) => {
+    const parsed = parseHotkey(binding)
+    expect(parsed).not.toBeNull()
+    const formatted = formatHotkey(parsed!)
+    expect(parseHotkey(formatted)).toEqual(parsed)
+  })
+
+  it('formats with stable modifier order Ctrl+Alt+Shift+Meta', () => {
+    expect(
+      formatHotkey({
+        ctrl: true,
+        alt: true,
+        shift: true,
+        meta: true,
+        key: 'p'
+      })
+    ).toBe('Ctrl+Alt+Shift+Meta+P')
+  })
+
+  it('formats Space as a named token (not a trailing space)', () => {
+    expect(
+      formatHotkey({
+        ctrl: true,
+        shift: false,
+        alt: false,
+        meta: false,
+        key: ' '
+      })
+    ).toBe('Ctrl+Space')
+    expect(parseHotkey('Ctrl+Space')).toEqual({
+      ctrl: true,
+      shift: false,
+      alt: false,
+      meta: false,
+      key: ' '
+    })
+  })
+
+  it('formats arrow keys as ArrowUp (not Arrowup)', () => {
+    expect(
+      formatHotkey({
+        ctrl: true,
+        shift: true,
+        alt: false,
+        meta: false,
+        key: 'arrowup'
+      })
+    ).toBe('Ctrl+Shift+ArrowUp')
+  })
+})
+
+describe('hotkeyFromKeyboardEvent (#519)', () => {
+  function keyEvent(partial: Partial<KeyboardEvent>): KeyboardEvent {
+    return {
+      key: 'a',
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+      ...partial
+    } as KeyboardEvent
+  }
+
+  it('returns null for pure modifier keys', () => {
+    expect(hotkeyFromKeyboardEvent(keyEvent({ key: 'Control' }))).toBeNull()
+    expect(hotkeyFromKeyboardEvent(keyEvent({ key: 'Shift' }))).toBeNull()
+  })
+
+  it('returns null for Dead and Unidentified (IME / international layouts)', () => {
+    expect(hotkeyFromKeyboardEvent(keyEvent({ key: 'Dead' }))).toBeNull()
+    expect(
+      hotkeyFromKeyboardEvent(keyEvent({ key: 'Unidentified' }))
+    ).toBeNull()
+  })
+
+  it('captures Ctrl+Shift+9', () => {
+    const h = hotkeyFromKeyboardEvent(
+      keyEvent({ key: '9', ctrlKey: true, shiftKey: true })
+    )
+    expect(h).toEqual({
+      ctrl: true,
+      shift: true,
+      alt: false,
+      meta: false,
+      key: '9'
+    })
+    expect(formatHotkey(h!)).toBe('Ctrl+Shift+9')
+  })
+
+  it('captures ArrowUp and formats for PM conversion', () => {
+    const h = hotkeyFromKeyboardEvent(
+      keyEvent({ key: 'ArrowUp', ctrlKey: true, shiftKey: true })
+    )
+    expect(h?.key).toBe('arrowup')
+    expect(formatHotkey(h!)).toBe('Ctrl+Shift+ArrowUp')
+    expect(configKeyToProseMirrorKey(formatHotkey(h!))).toBe(
+      'Mod-Shift-ArrowUp'
+    )
+  })
+
+  it('captures Space as a named Space token', () => {
+    const h = hotkeyFromKeyboardEvent(keyEvent({ key: ' ', ctrlKey: true }))
+    expect(h?.key).toBe(' ')
+    expect(formatHotkey(h!)).toBe('Ctrl+Space')
+    expect(parseHotkey(formatHotkey(h!))).not.toBeNull()
+  })
+})
 
 describe('configKeyToProseMirrorKey', () => {
   it('converts Ctrl+Shift+9 → Mod-Shift-9', () => {
@@ -17,6 +139,20 @@ describe('configKeyToProseMirrorKey', () => {
 
   it('converts Ctrl+Shift+Up → Mod-Shift-ArrowUp', () => {
     expect(configKeyToProseMirrorKey('Ctrl+Shift+Up')).toBe('Mod-Shift-ArrowUp')
+  })
+
+  it('converts capture-widget long form Ctrl+Shift+ArrowUp → Mod-Shift-ArrowUp', () => {
+    // formatHotkey emits ArrowUp; parseHotkey lowercases to arrowup; PM needs ArrowUp.
+    expect(configKeyToProseMirrorKey('Ctrl+Shift+ArrowUp')).toBe(
+      'Mod-Shift-ArrowUp'
+    )
+    expect(configKeyToProseMirrorKey('Ctrl+Shift+ArrowDown')).toBe(
+      'Mod-Shift-ArrowDown'
+    )
+  })
+
+  it('converts Ctrl+Space → Mod- (space key)', () => {
+    expect(configKeyToProseMirrorKey('Ctrl+Space')).toBe('Mod- ')
   })
 
   it('converts Ctrl+Shift+Down → Mod-Shift-ArrowDown', () => {

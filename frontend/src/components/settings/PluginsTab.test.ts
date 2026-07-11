@@ -37,6 +37,10 @@ const mocks = vi.hoisted(() => ({
   // exercises them; they're mocked so module resolution is total.
   checkPluginUpdate: vi.fn(),
   getNetworkAudit: vi.fn(),
+  getPluginSecurityStats: vi.fn().mockResolvedValue([]),
+  // Matches the real Events.On signature: (eventName, callback) => cancel.
+  // Declaring the arity here keeps mockImplementation callers type-safe.
+  eventsOn: vi.fn((_name: string, _cb: () => void) => () => {}),
   setConfig: (next: any) => {
     mocks.configNoPlugins = next
   }
@@ -54,7 +58,14 @@ vi.mock('../../../bindings/silt/app.js', () => ({
   RevokeCapability: vi.fn(),
   GetGrantedCapabilities: mocks.getGrantedCapabilities,
   CheckPluginUpdate: mocks.checkPluginUpdate,
-  GetNetworkAudit: mocks.getNetworkAudit
+  GetNetworkAudit: mocks.getNetworkAudit,
+  GetPluginSecurityStats: mocks.getPluginSecurityStats
+}))
+
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mocks.eventsOn
+  }
 }))
 
 vi.mock('../../plugins/loader', () => ({
@@ -92,10 +103,12 @@ describe('PluginsTab first-party disable guard', () => {
     mocks.loadPlugins.mockReset()
     mocks.saveConfig.mockReset()
     mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
     mocks.listPlugins.mockResolvedValue([])
     mocks.loadPlugins.mockResolvedValue(undefined)
     mocks.saveConfig.mockResolvedValue(true)
     mocks.getGrantedCapabilities.mockResolvedValue({})
+    mocks.getPluginSecurityStats.mockResolvedValue([])
     mocks.configNoPlugins = {} // no `plugins` key
   })
 
@@ -163,8 +176,10 @@ describe('PluginsTab AI setup nudge', () => {
     mocks.loadPlugins.mockReset()
     mocks.saveConfig.mockReset()
     mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
     mocks.checkPluginUpdate.mockReset()
     mocks.getNetworkAudit.mockReset()
+    mocks.getPluginSecurityStats.mockResolvedValue([])
     mocks.listPlugins.mockResolvedValue([])
     mocks.loadPlugins.mockResolvedValue(undefined)
     mocks.saveConfig.mockResolvedValue(true)
@@ -332,5 +347,108 @@ describe('PluginsTab AI setup nudge', () => {
     expect(
       screen.queryByRole('button', { name: /AI setup needed/i })
     ).toBeNull()
+  })
+})
+
+describe('PluginsTab security stats badge (#518)', () => {
+  beforeEach(() => {
+    mocks.listPlugins.mockReset()
+    mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
+    mocks.checkPluginUpdate.mockReset()
+    mocks.listPlugins.mockResolvedValue([
+      {
+        id: 'noisy',
+        name: 'Noisy Plugin',
+        version: '1.0.0',
+        author: 'X',
+        description: '',
+        icon: 'extension',
+        capabilities: { network: true }
+      }
+    ])
+    mocks.getGrantedCapabilities.mockResolvedValue({})
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+    mocks.configNoPlugins = {
+      plugins: { active: [], disabled: [], plugin_settings: {} }
+    }
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('shows a denial/rate-limit badge when security stats are non-zero', async () => {
+    mocks.getPluginSecurityStats.mockResolvedValue([
+      {
+        pluginId: 'noisy',
+        denials: 3,
+        rateLimited: 2,
+        lastCapability: 'network'
+      }
+    ])
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    const badge = screen.getByRole('status', {
+      name: /3 capability denials.*2 rate-limit hits/i
+    })
+    expect(badge).toBeTruthy()
+    expect(badge.textContent).toMatch(/3 denied/i)
+    expect(badge.textContent).toMatch(/2 limited/i)
+  })
+
+  it('hides the badge when stats are empty', async () => {
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    expect(screen.queryByRole('status', { name: /denied|limited/i })).toBeNull()
+  })
+
+  it('subscribes to security:event and refreshes the badge live', async () => {
+    let securityHandler: (() => void) | undefined
+    mocks.eventsOn.mockImplementation((name: string, cb: () => void) => {
+      if (name === 'security:event') securityHandler = cb
+      return () => {}
+    })
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    expect(mocks.eventsOn).toHaveBeenCalledWith(
+      'security:event',
+      expect.any(Function)
+    )
+    expect(securityHandler).toBeTypeOf('function')
+    expect(screen.queryByRole('status', { name: /denied|limited/i })).toBeNull()
+
+    mocks.getPluginSecurityStats.mockResolvedValue([
+      {
+        pluginId: 'noisy',
+        denials: 1,
+        rateLimited: 0,
+        lastCapability: 'network'
+      }
+    ])
+    securityHandler!()
+    await flush()
+
+    expect(
+      screen.getByRole('status', { name: /1 capability denial/i })
+    ).toBeTruthy()
   })
 })

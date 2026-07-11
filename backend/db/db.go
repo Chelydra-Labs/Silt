@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite"
 	// sqlite-vec: registers vec0 virtual tables + vec_distance_* on every
@@ -37,8 +39,20 @@ func IsNetworkFS(path string) error {
 // without erroring (#79).
 var ErrWALRejected = errors.New("WAL mode rejected by the filesystem")
 
+// ErrDBClosed is returned by DatabaseManager methods after Close. Callers
+// (including vault-switch IPC that races teardown) get a loud sentinel instead
+// of a nil-deref panic (#517).
+var ErrDBClosed = errors.New("database manager is closed")
+
 type DatabaseManager struct {
-	db   *sql.DB
+	// dbMu serializes Close against in-flight ops that hold a read lease via
+	// withDB (#517). The handle pointer itself is also published through
+	// atomic ops so a bare field read cannot tear; withDB is the contract
+	// for package methods.
+	dbMu sync.RWMutex
+	// db is the live handle. nil after Close. Use withDB / handle() rather
+	// than reading this field directly from new code.
+	db   atomic.Pointer[sql.DB]
 	path string // "" for the in-memory shared-cache DB; otherwise the on-disk file path
 }
 
@@ -89,20 +103,51 @@ func NewDatabaseManager(dbPath string) (*DatabaseManager, error) {
 	// still helps (OS-level sync blocking moves to the WAL append path).
 	sqlDB.SetMaxOpenConns(1)
 
-	dm := &DatabaseManager{db: sqlDB, path: dbPath}
+	dm := &DatabaseManager{path: dbPath}
+	dm.db.Store(sqlDB)
 	if err := dm.initSchema(); err != nil {
 		sqlDB.Close()
+		dm.db.Store(nil)
 		return nil, err
 	}
 
 	return dm, nil
 }
 
+// handle returns the live *sql.DB under a read lease so Close waits for the
+// caller to finish. The returned release func MUST be deferred on the success
+// path (not called when err != nil). Nested calls that would re-enter handle
+// while the lease is held deadlock — pass *sql.DB into helpers, or when a
+// *sql.Tx is already open skip handle and use the tx only (#517).
+func (dm *DatabaseManager) handle() (db *sql.DB, release func(), err error) {
+	dm.dbMu.RLock()
+	db = dm.db.Load()
+	if db == nil {
+		dm.dbMu.RUnlock()
+		return nil, func() {}, ErrDBClosed
+	}
+	return db, dm.dbMu.RUnlock, nil
+}
+
+// withDB runs fn while holding a read lock so Close (write lock) waits for
+// in-flight work. Post-close calls return ErrDBClosed (#517).
+func (dm *DatabaseManager) withDB(fn func(db *sql.DB) error) error {
+	db, release, err := dm.handle()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return fn(db)
+}
+
 // SQLDB exposes the underlying *sql.DB handle. Callers MUST serialize access
 // through core.ExecutionCoordinator (e.g. WithDBRead/WithDBWrite) to avoid
 // race conditions on the shared database.
+//
+// Returns nil after Close. Prefer DatabaseManager methods (withDB) over
+// long-lived use of this pointer across vault teardown (#517).
 func (dm *DatabaseManager) SQLDB() *sql.DB {
-	return dm.db
+	return dm.db.Load()
 }
 
 // Path returns the on-disk index path ("" for the in-memory DB). Used by the
@@ -118,13 +163,14 @@ func (dm *DatabaseManager) IsOnDisk() bool {
 }
 
 func (dm *DatabaseManager) Close() error {
-	if dm.db == nil {
+	// Write lock waits for in-flight withDB readers, then swaps the handle
+	// to nil so new callers see ErrDBClosed / nil SQLDB (#517).
+	dm.dbMu.Lock()
+	defer dm.dbMu.Unlock()
+	db := dm.db.Swap(nil)
+	if db == nil {
 		return nil // already closed (idempotent)
 	}
-	// Nil the field first so a second Close (e.g. test cleanup after a manual
-	// close) is a no-op instead of double-checkpointing.
-	db := dm.db
-	dm.db = nil
 	// Merge any pending WAL frames into the main file on a clean close so the
 	// WAL does not grow unbounded across sessions. On in-memory databases this
 	// is a no-op. A checkpoint failure is logged but not surfaced: SQLite
@@ -132,12 +178,17 @@ func (dm *DatabaseManager) Close() error {
 	if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
 		log.Printf("db.Close: wal_checkpoint failed: %v", err)
 	}
+	// sql.DB.Close waits for queries that have already started, then
+	// rejects new ones — covers callers that used handle()/SQLDB() without
+	// withDB for a single op.
 	return db.Close()
 }
 
 // Checkpoint forces a WAL checkpoint (TRUNCATE). Called on shutdown and after
 // the startup reindex pass to keep the WAL file bounded. No-op on in-memory.
 func (dm *DatabaseManager) Checkpoint() error {
-	_, err := dm.db.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
-	return err
+	return dm.withDB(func(db *sql.DB) error {
+		_, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
+		return err
+	})
 }

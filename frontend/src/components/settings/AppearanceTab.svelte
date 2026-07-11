@@ -365,7 +365,7 @@
   <section aria-labelledby="mode-heading">
     <h3
       id="mode-heading"
-      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
     >
       Mode
     </h3>
@@ -392,8 +392,9 @@
           class:ring-1={active}
           class:ring-accent-primary-start={active}
         >
-          <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
-            >{m.icon}</span
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">{m.icon}</span
           >
           {m.label}
           {#if m.id === 'system'}
@@ -404,7 +405,7 @@
         </button>
       {/each}
     </div>
-    <p class="text-text-muted text-[11px] font-label-sm mt-2">
+    <p class="text-text-muted text-type-xs font-label-sm mt-2">
       "System" follows your OS appearance preference. Switching mode does not
       change the active theme.
     </p>
@@ -423,24 +424,24 @@
     <section aria-labelledby="typo-heading">
       <h3
         id="typo-heading"
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
       >
         Theme typography
       </h3>
       <div
         class="flex flex-wrap items-start gap-x-4 gap-y-1.5 bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2.5"
       >
-        <span class="text-text-muted text-[11px] font-label-sm">
+        <span class="text-text-muted text-type-xs font-label-sm">
           This theme sets its own fonts:
         </span>
         {#each themeTypographyOverrides as o (o.label)}
-          <span class="text-text-primary text-[12px] font-body-md">
+          <span class="text-text-primary text-type-sm font-body-md">
             <span class="text-text-muted">{o.label}:</span>
             {displayFamilyName(o.value)}
           </span>
         {/each}
       </div>
-      <p class="text-text-muted text-[11px] font-label-sm mt-2">
+      <p class="text-text-muted text-type-xs font-label-sm mt-2">
         Body and Mono can be overridden in Editor (or reset there to inherit
         these). Headline is set by the theme only.
       </p>
@@ -452,11 +453,11 @@
     <div class="flex items-center justify-between mb-3">
       <h3
         id="theme-heading"
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px]"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs"
       >
         Theme
       </h3>
-      <span class="text-text-muted text-[11px] font-label-sm">
+      <span class="text-text-muted text-type-xs font-label-sm">
         {themesState.items.length}
         {themesState.items.length === 1 ? 'theme' : 'themes'}
       </span>
@@ -472,16 +473,16 @@
         class="flex items-center gap-3 mb-4 rounded-lg border border-accent-secondary-start/50 bg-accent-secondary-start/10 px-3 py-2.5"
       >
         <span
-          class="material-symbols-outlined text-accent-secondary-start text-[18px] flex-shrink-0"
+          class="material-symbols-outlined text-accent-secondary-start text-icon-lg flex-shrink-0"
           aria-hidden="true">visibility</span
         >
         <div class="flex-1 min-w-0">
           <div
-            class="text-text-primary text-[12px] font-label-sm-bold truncate"
+            class="text-text-primary text-type-sm font-label-sm-bold truncate"
           >
             Previewing {previewName}
           </div>
-          <div class="text-text-muted text-[11px] font-label-sm">
+          <div class="text-text-muted text-type-xs font-label-sm">
             Not saved yet. Apply to keep, or Revert.
           </div>
         </div>
@@ -490,8 +491,9 @@
           onclick={commitPreview}
           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-primary-start/20 border border-accent-primary-start/50 text-accent-primary-start font-label-sm-bold hover:brightness-110 motion-reduce:transition-none transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
-          <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
-            >check</span
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">check</span
           >
           Apply
         </button>
@@ -500,8 +502,9 @@
           onclick={revertPreview}
           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-border-active motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
-          <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
-            >undo</span
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">undo</span
           >
           Revert
         </button>
@@ -519,28 +522,29 @@
     >
       {#if themesState.loading && themesState.items.length === 0}
         <div
-          class="text-text-muted text-[12px] font-body-md animate-pulse py-8 text-center"
+          class="text-text-muted text-type-sm font-body-md animate-pulse py-8 text-center"
         >
           Loading themes…
         </div>
       {:else if themesState.loadError}
         <div
-          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
+          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
           role="alert"
         >
-          <span class="material-symbols-outlined text-[18px]" aria-hidden="true"
-            >error</span
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true">error</span
           >
           <span class="flex-1"
             >Failed to load themes: {themesState.loadError}</span
           >
         </div>
       {:else if themesState.items.length === 0}
-        <div class="text-text-muted text-[12px] font-body-md py-8 text-center">
+        <div class="text-text-muted text-type-sm font-body-md py-8 text-center">
           No themes available. Import or drop a theme .json to get started.
         </div>
       {:else}
-        <div class="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
+        <div class="grid grid-cols-1 lg:grid-cols-settings-theme gap-4">
           <!-- Card grid -->
           <div
             role="group"
@@ -603,20 +607,20 @@
                   </span>
                   {#if active}
                     <span
-                      class="inline-flex items-center gap-1 text-[10px] text-accent-primary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0"
+                      class="inline-flex items-center gap-1 text-type-2xs text-accent-primary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0"
                     >
                       <span
-                        class="material-symbols-outlined text-[14px]"
+                        class="material-symbols-outlined text-icon-sm"
                         aria-hidden="true">check_circle</span
                       >
                       Active
                     </span>
                   {:else if previewing}
                     <span
-                      class="inline-flex items-center gap-1 text-[10px] text-accent-secondary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0"
+                      class="inline-flex items-center gap-1 text-type-2xs text-accent-secondary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0"
                     >
                       <span
-                        class="material-symbols-outlined text-[14px]"
+                        class="material-symbols-outlined text-icon-sm"
                         aria-hidden="true">visibility</span
                       >
                       Preview
@@ -625,12 +629,12 @@
                 </div>
                 <div class="min-w-0">
                   <div
-                    class="text-text-primary text-[13px] font-body-md truncate"
+                    class="text-text-primary text-type-md font-body-md truncate"
                   >
                     {theme.name}
                   </div>
                   <div
-                    class="text-text-muted text-[11px] font-label-sm truncate"
+                    class="text-text-muted text-type-xs font-label-sm truncate"
                   >
                     {theme.author
                       ? `by ${theme.author}`
@@ -648,7 +652,7 @@
           >
             <h4
               id="theme-details-heading"
-              class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+              class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
             >
               Theme details
             </h4>
@@ -657,26 +661,26 @@
               {@const detailPreviewing = isPreviewing(detailTheme.id)}
               <div class="flex items-start justify-between gap-2 mb-3">
                 <h5
-                  class="text-text-primary text-[16px] font-headline-md leading-tight"
+                  class="text-text-primary text-type-lg font-headline-md leading-tight"
                 >
                   {detailTheme.name}
                 </h5>
                 {#if detailActive}
                   <span
-                    class="inline-flex items-center gap-1 text-[10px] text-accent-primary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0 mt-1"
+                    class="inline-flex items-center gap-1 text-type-2xs text-accent-primary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0 mt-1"
                   >
                     <span
-                      class="material-symbols-outlined text-[13px]"
+                      class="material-symbols-outlined text-type-md"
                       aria-hidden="true">check_circle</span
                     >
                     Active
                   </span>
                 {:else if detailPreviewing}
                   <span
-                    class="inline-flex items-center gap-1 text-[10px] text-accent-secondary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0 mt-1"
+                    class="inline-flex items-center gap-1 text-type-2xs text-accent-secondary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0 mt-1"
                   >
                     <span
-                      class="material-symbols-outlined text-[13px]"
+                      class="material-symbols-outlined text-type-md"
                       aria-hidden="true">visibility</span
                     >
                     Preview
@@ -698,13 +702,13 @@
 
               {#if detailTheme.description}
                 <p
-                  class="text-text-muted text-[12px] font-body-md mb-3 leading-relaxed"
+                  class="text-text-muted text-type-sm font-body-md mb-3 leading-relaxed"
                 >
                   {detailTheme.description}
                 </p>
               {/if}
 
-              <dl class="space-y-1.5 text-[12px] font-body-md">
+              <dl class="space-y-1.5 text-type-sm font-body-md">
                 {#if detailTheme.author}
                   <div class="flex gap-2">
                     <dt class="text-text-muted w-20 flex-shrink-0">Author</dt>
@@ -737,13 +741,13 @@
 
               {#if previewTheme === null}
                 <p
-                  class="text-text-muted text-[11px] font-label-sm mt-4 pt-3 border-t border-surface-panel-border"
+                  class="text-text-muted text-type-xs font-label-sm mt-4 pt-3 border-t border-surface-panel-border"
                 >
                   Click a theme to preview it. Double-click or Apply to keep it.
                 </p>
               {/if}
             {:else}
-              <p class="text-text-muted text-[12px] font-body-md">
+              <p class="text-text-muted text-type-sm font-body-md">
                 Select a theme to see its details.
               </p>
             {/if}
@@ -757,7 +761,7 @@
   <section aria-labelledby="custom-heading">
     <h3
       id="custom-heading"
-      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
     >
       Custom themes
     </h3>
@@ -767,7 +771,7 @@
         onclick={handleImport}
         class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 motion-reduce:transition-none transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
       >
-        <span class="material-symbols-outlined text-[18px]" aria-hidden="true"
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
           >upload</span
         >
         Import .json
@@ -778,13 +782,13 @@
         disabled={!themeState.id}
         class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-accent-primary-start motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        <span class="material-symbols-outlined text-[18px]" aria-hidden="true"
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
           >download</span
         >
         Export active
       </button>
     </div>
-    <p class="text-text-muted text-[11px] font-label-sm mt-2">
+    <p class="text-text-muted text-type-xs font-label-sm mt-2">
       You can also drag and drop a .json theme file onto the grid above.
     </p>
   </section>
@@ -794,13 +798,13 @@
     <div
       role={statusAriaRole(themeStatus) ?? undefined}
       aria-live={themeStatus.kind === 'error' ? 'assertive' : 'polite'}
-      class="rounded-lg px-3 py-2 text-[12px] font-body-md {statusClasses(
+      class="rounded-lg px-3 py-2 text-type-sm font-body-md {statusClasses(
         themeStatus
       )}"
     >
       <div class="flex items-start gap-2">
         <span
-          class="material-symbols-outlined text-[16px] flex-shrink-0"
+          class="material-symbols-outlined text-icon-md flex-shrink-0"
           aria-hidden="true"
         >
           {themeStatus.kind === 'error'
@@ -815,7 +819,7 @@
             <ul class="mt-1.5 ml-4 list-disc space-y-0.5">
               {#each themeStatus.fields as f (f.field)}
                 <li>
-                  <code class="font-mono text-[11px]">{f.field}</code>: {f.message}
+                  <code class="font-mono text-type-xs">{f.field}</code>: {f.message}
                 </li>
               {/each}
             </ul>
@@ -823,7 +827,7 @@
           <button
             type="button"
             onclick={() => clearStatus()}
-            class="mt-1.5 text-[11px] font-label-sm-bold underline opacity-70 hover:opacity-100 bg-transparent border-none cursor-pointer"
+            class="mt-1.5 text-type-xs font-label-sm-bold underline opacity-70 hover:opacity-100 bg-transparent border-none cursor-pointer"
           >
             Dismiss
           </button>

@@ -137,6 +137,33 @@
     color-mix(in oklch, var(--color-surface-app) 35%, transparent);
   --shadow-lg: 0 12px 32px
     color-mix(in oklch, var(--color-surface-app) 30%, transparent);
+  /* Accent edge glow (nav active rail, focus chrome) — token for former
+     shadow-[0_0_8px_var(--color-accent-primary-start)] (#520). */
+  --shadow-accent-glow: 0 0 8px var(--color-accent-primary-start);
+
+  /*
+   * UI type scale (#520) — discrete sizes for chrome (settings, nav, badges).
+   * Prefer these over Tailwind arbitrary text-[Npx]. Editor body still uses
+   * --editor-font-size via .font-body-md.
+   */
+  --text-type-3xs: 0.5625rem; /* 9px — micro badges */
+  --text-type-2xs: 0.625rem; /* 10px — section labels, chips */
+  --text-type-xs: 0.6875rem; /* 11px — secondary helper */
+  --text-type-sm: 0.75rem; /* 12px — compact body / form labels */
+  --text-type-md: 0.8125rem; /* 13px — primary settings body */
+  --text-type-lg: 1rem; /* 16px — emphasis / large labels */
+  --text-type-xl: 1.125rem; /* 18px — summary figures, titles */
+
+  /* Icon glyph sizes (Material Symbols) */
+  --text-icon-xs: 0.75rem; /* 12px */
+  --text-icon-sm: 0.875rem; /* 14px */
+  --text-icon-md: 1rem; /* 16px */
+  --text-icon-lg: 1.125rem; /* 18px */
+  --text-icon-xl: 1.5rem; /* 24px */
+
+  /* Named grid templates */
+  --grid-template-columns-settings-theme: 2fr 1fr;
+  --grid-template-columns-auto-fr: auto 1fr;
 
   /* Effect tokens (optional; themes override for personality). */
   --focus-glow: none;

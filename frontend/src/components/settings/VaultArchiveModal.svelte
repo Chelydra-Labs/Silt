@@ -254,7 +254,7 @@
   >
     <div class="flex items-start gap-3 mb-4">
       <span
-        class="material-symbols-outlined text-accent-primary-start text-[24px] mt-0.5"
+        class="material-symbols-outlined text-accent-primary-start text-icon-xl mt-0.5"
       >
         {mode === 'export' ? 'archive' : 'unarchive'}
       </span>
@@ -265,7 +265,7 @@
         >
           {mode === 'export' ? 'Export vault' : 'Import vault'}
         </h2>
-        <p class="text-text-muted text-[12px] font-body-md mt-1">
+        <p class="text-text-muted text-type-sm font-body-md mt-1">
           {#if mode === 'export'}
             Back up or migrate this vault as a single portable <strong
               >.silt-vault</strong
@@ -284,17 +284,17 @@
       <!-- Pickers -->
       {#if mode === 'export'}
         <div class="mb-4">
-          <span class="text-text-muted text-[11px] font-label-sm-bold"
+          <span class="text-text-muted text-type-xs font-label-sm-bold"
             >Archive file</span
           >
           <div
             class="flex items-center gap-2 mt-1.5 bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2"
           >
-            <span class="material-symbols-outlined text-text-muted text-[18px]"
+            <span class="material-symbols-outlined text-text-muted text-icon-lg"
               >archive</span
             >
             <span
-              class="text-text-primary text-[13px] font-body-md truncate flex-1"
+              class="text-text-primary text-type-md font-body-md truncate flex-1"
             >
               {exportDest || 'No file selected'}
             </span>
@@ -303,28 +303,28 @@
               bind:this={firstBtn}
               onclick={chooseExportDest}
               disabled={busy}
-              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-type-sm font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Choose…
             </button>
           </div>
-          <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
+          <p class="text-text-muted text-type-xs font-label-sm mt-1.5">
             Pick where to save the <strong>.silt-vault</strong> archive.
           </p>
         </div>
       {:else}
         <div class="mb-4">
-          <span class="text-text-muted text-[11px] font-label-sm-bold"
+          <span class="text-text-muted text-type-xs font-label-sm-bold"
             >Archive</span
           >
           <div
             class="flex items-center gap-2 mt-1.5 bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2"
           >
-            <span class="material-symbols-outlined text-text-muted text-[18px]"
+            <span class="material-symbols-outlined text-text-muted text-icon-lg"
               >archive</span
             >
             <span
-              class="text-text-primary text-[13px] font-body-md truncate flex-1"
+              class="text-text-primary text-type-md font-body-md truncate flex-1"
             >
               {archivePath || 'No archive selected'}
             </span>
@@ -333,24 +333,24 @@
               bind:this={firstBtn}
               onclick={chooseArchive}
               disabled={busy}
-              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-type-sm font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Choose…
             </button>
           </div>
         </div>
         <div class="mb-4">
-          <span class="text-text-muted text-[11px] font-label-sm-bold"
+          <span class="text-text-muted text-type-xs font-label-sm-bold"
             >Destination folder</span
           >
           <div
             class="flex items-center gap-2 mt-1.5 bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2"
           >
-            <span class="material-symbols-outlined text-text-muted text-[18px]"
+            <span class="material-symbols-outlined text-text-muted text-icon-lg"
               >folder</span
             >
             <span
-              class="text-text-primary text-[13px] font-body-md truncate flex-1"
+              class="text-text-primary text-type-md font-body-md truncate flex-1"
             >
               {importDest || 'No folder selected'}
             </span>
@@ -358,32 +358,32 @@
               type="button"
               onclick={chooseImportDest}
               disabled={busy}
-              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-type-sm font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Choose…
             </button>
           </div>
-          <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
+          <p class="text-text-muted text-type-xs font-label-sm mt-1.5">
             The destination must be an empty folder on a local drive.
           </p>
         </div>
       {/if}
 
-      <p class="text-text-muted text-[11px] font-label-sm mb-4">
-        <span class="material-symbols-outlined text-[14px] align-middle mr-0.5"
+      <p class="text-text-muted text-type-xs font-label-sm mb-4">
+        <span class="material-symbols-outlined text-icon-sm align-middle mr-0.5"
           >link_off</span
         >
         Linked notebooks are external folders and are never included in the archive.
       </p>
 
       <!-- Live region: streaming progress + errors -->
-      <div aria-live="polite" class="min-h-[20px]">
+      <div aria-live="polite" class="min-h-5">
         {#if busy && progress}
           <div
-            class="mb-1 flex items-center justify-between text-accent-primary-start text-[12px] font-body-md"
+            class="mb-1 flex items-center justify-between text-accent-primary-start text-type-sm font-body-md"
           >
             <span class="flex items-center gap-2">
-              <span class="material-symbols-outlined text-[16px] animate-spin"
+              <span class="material-symbols-outlined text-icon-md animate-spin"
                 >progress_activity</span
               >
               <span>{progressLabel}</span>
@@ -403,14 +403,14 @@
               style="width: {pct}%"
             ></div>
           </div>
-          <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
+          <p class="text-text-muted text-type-xs font-label-sm mt-1.5">
             This can't be cancelled mid-write — please wait for it to finish.
           </p>
         {:else if busy}
           <div
-            class="flex items-center gap-2 text-accent-primary-start text-[12px] font-body-md"
+            class="flex items-center gap-2 text-accent-primary-start text-type-sm font-body-md"
           >
-            <span class="material-symbols-outlined text-[16px] animate-spin"
+            <span class="material-symbols-outlined text-icon-md animate-spin"
               >progress_activity</span
             >
             <span
@@ -419,7 +419,7 @@
                 : 'Verifying archive…'}</span
             >
           </div>
-          <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
+          <p class="text-text-muted text-type-xs font-label-sm mt-1.5">
             This can't be cancelled mid-write — please wait for it to finish.
           </p>
         {/if}
@@ -427,9 +427,9 @@
       {#if error}
         <div
           role="alert"
-          class="flex items-start gap-2 mt-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md"
+          class="flex items-start gap-2 mt-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-type-sm font-body-md"
         >
-          <span class="material-symbols-outlined text-[18px]">error</span>
+          <span class="material-symbols-outlined text-icon-lg">error</span>
           <span class="flex-1">{error}</span>
         </div>
       {/if}
@@ -457,17 +457,17 @@
       <!-- Success -->
       <div
         role="status"
-        class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-[12px] font-body-md"
+        class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-type-sm font-body-md"
       >
-        <span class="material-symbols-outlined text-[18px]">check_circle</span>
+        <span class="material-symbols-outlined text-icon-lg">check_circle</span>
         <div class="flex-1">
           {#if done.kind === 'export'}
             <p>Archived {done.files} files ({fmtBytes(done.bytes)}).</p>
-            <p class="text-text-muted text-[11px] font-label-sm mt-1 truncate">
+            <p class="text-text-muted text-type-xs font-label-sm mt-1 truncate">
               {done.path}
             </p>
             {#if done.skippedSymlinks > 0}
-              <p class="text-status-warn text-[11px] font-label-sm mt-1">
+              <p class="text-status-warn text-type-xs font-label-sm mt-1">
                 {done.skippedSymlinks} symlink(s) skipped — not included in the archive.
               </p>
             {/if}
@@ -476,7 +476,7 @@
               Imported {done.files} files ({fmtBytes(done.bytes)}). The vault is
               now open.
             </p>
-            <p class="text-text-muted text-[11px] font-label-sm mt-1 truncate">
+            <p class="text-text-muted text-type-xs font-label-sm mt-1 truncate">
               {done.path}
             </p>
           {/if}

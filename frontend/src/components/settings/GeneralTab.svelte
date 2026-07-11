@@ -144,16 +144,16 @@
       class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
     >
       <span
-        class="material-symbols-outlined text-text-muted text-[18px]"
+        class="material-symbols-outlined text-text-muted text-icon-lg"
         aria-hidden="true">folder</span
       >
       <span class="min-w-0 flex-1">
         <span
-          class="block text-[9px] uppercase tracking-widest text-text-muted font-label-sm-bold"
+          class="block text-type-3xs uppercase tracking-widest text-text-muted font-label-sm-bold"
           >Vault</span
         >
         <span
-          class="block text-[12px] text-text-primary font-body-md truncate"
+          class="block text-type-sm text-text-primary font-body-md truncate"
           title={settings.config?.notebooks.path || 'No workspace'}
         >
           {settings.config?.notebooks.path
@@ -169,7 +169,7 @@
       class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
     >
       <span
-        class="material-symbols-outlined text-text-muted text-[18px]"
+        class="material-symbols-outlined text-text-muted text-icon-lg"
         aria-hidden="true"
         >{themeState.mode === 'dark'
           ? 'dark_mode'
@@ -179,10 +179,12 @@
       >
       <span class="min-w-0 flex-1">
         <span
-          class="block text-[9px] uppercase tracking-widest text-text-muted font-label-sm-bold"
+          class="block text-type-3xs uppercase tracking-widest text-text-muted font-label-sm-bold"
           >Theme</span
         >
-        <span class="block text-[12px] text-text-primary font-body-md truncate">
+        <span
+          class="block text-type-sm text-text-primary font-body-md truncate"
+        >
           {themeName}
         </span>
       </span>
@@ -194,17 +196,19 @@
       class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
     >
       <span
-        class="material-symbols-outlined text-[18px] {aiNeedsSetup
+        class="material-symbols-outlined text-icon-lg {aiNeedsSetup
           ? 'text-status-warn'
           : 'text-accent-primary-start'}"
         aria-hidden="true">smart_toy</span
       >
       <span class="min-w-0 flex-1">
         <span
-          class="block text-[9px] uppercase tracking-widest text-text-muted font-label-sm-bold"
+          class="block text-type-3xs uppercase tracking-widest text-text-muted font-label-sm-bold"
           >AI</span
         >
-        <span class="block text-[12px] text-text-primary font-body-md truncate">
+        <span
+          class="block text-type-sm text-text-primary font-body-md truncate"
+        >
           {aiNeedsSetup ? 'Setup needed' : 'Configured'}
         </span>
       </span>
@@ -216,15 +220,17 @@
       class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
     >
       <span
-        class="material-symbols-outlined text-text-muted text-[18px]"
+        class="material-symbols-outlined text-text-muted text-icon-lg"
         aria-hidden="true">extension</span
       >
       <span class="min-w-0 flex-1">
         <span
-          class="block text-[9px] uppercase tracking-widest text-text-muted font-label-sm-bold"
+          class="block text-type-3xs uppercase tracking-widest text-text-muted font-label-sm-bold"
           >Plugins</span
         >
-        <span class="block text-[12px] text-text-primary font-body-md truncate">
+        <span
+          class="block text-type-sm text-text-primary font-body-md truncate"
+        >
           {pluginCount}
           {pluginCount === 1 ? 'plugin' : 'plugins'}
         </span>
@@ -235,7 +241,7 @@
   <!-- Window: user-global, renders regardless of vault config. -->
   <section>
     <h3
-      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
     >
       Window
     </h3>
@@ -247,7 +253,7 @@
           ? ''
           : 'cursor-pointer'}"
       >
-        <span class="text-text-primary text-[12px] font-body-md">
+        <span class="text-text-primary text-type-sm font-body-md">
           Close to tray
         </span>
         <button
@@ -270,16 +276,16 @@
           ></span>
         </button>
       </label>
-      <p class="text-text-muted text-[11px] font-label-sm leading-relaxed">
+      <p class="text-text-muted text-type-xs font-label-sm leading-relaxed">
         Closing the window hides Silt to the tray instead of quitting. Use Quit
         in the tray menu to exit.
       </p>
       {#if closeToTrayError}
         <p
-          class="text-status-danger text-[12px] font-body-md flex items-center gap-1.5"
+          class="text-status-danger text-type-sm font-body-md flex items-center gap-1.5"
           role="alert"
         >
-          <span class="material-symbols-outlined text-[16px]">error</span>
+          <span class="material-symbols-outlined text-icon-md">error</span>
           {closeToTrayError}
         </p>
       {/if}
@@ -291,9 +297,9 @@
     <!-- External update notice -->
     {#if settings.pendingExternal}
       <div
-        class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-[12px] font-body-md"
+        class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-type-sm font-body-md"
       >
-        <span class="material-symbols-outlined text-[18px]">sync</span>
+        <span class="material-symbols-outlined text-icon-lg">sync</span>
         <span class="flex-1"> Settings were updated externally. </span>
         <button
           onclick={async () => {
@@ -310,18 +316,18 @@
     <!-- Vault path + relocate menu -->
     <section id="general-workspace">
       <h3
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
       >
         Workspace
       </h3>
       <div
         class="flex items-center gap-2 bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2.5"
       >
-        <span class="material-symbols-outlined text-text-muted text-[18px]"
+        <span class="material-symbols-outlined text-text-muted text-icon-lg"
           >folder</span
         >
         <span
-          class="text-text-primary text-[13px] font-body-md truncate flex-1"
+          class="text-text-primary text-type-md font-body-md truncate flex-1"
           title={settings.config.notebooks.path || ''}
         >
           {settings.config.notebooks.path || '—'}
@@ -338,7 +344,8 @@
             title="Vault actions"
             class="flex-shrink-0 p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-hover border-none bg-transparent cursor-pointer transition-colors"
           >
-            <span class="material-symbols-outlined text-[20px]">more_vert</span>
+            <span class="material-symbols-outlined text-icon-lg">more_vert</span
+            >
           </button>
           {#if vaultMenuOpen}
             <div
@@ -352,10 +359,10 @@
                 role="menuitem"
                 onclick={() => openAction('move')}
                 onkeydown={(e) => handleMenuItemKeydown(e, 0)}
-                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-type-sm font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
               >
                 <span
-                  class="material-symbols-outlined text-[18px] text-text-muted"
+                  class="material-symbols-outlined text-icon-lg text-text-muted"
                   >drive_file_move</span
                 >
                 Move vault…
@@ -366,10 +373,10 @@
                 role="menuitem"
                 onclick={() => openAction('copy')}
                 onkeydown={(e) => handleMenuItemKeydown(e, 1)}
-                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-type-sm font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
               >
                 <span
-                  class="material-symbols-outlined text-[18px] text-text-muted"
+                  class="material-symbols-outlined text-icon-lg text-text-muted"
                   >content_copy</span
                 >
                 Copy vault…
@@ -381,10 +388,10 @@
                 role="menuitem"
                 onclick={() => openAction('export')}
                 onkeydown={(e) => handleMenuItemKeydown(e, 2)}
-                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-type-sm font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
               >
                 <span
-                  class="material-symbols-outlined text-[18px] text-text-muted"
+                  class="material-symbols-outlined text-icon-lg text-text-muted"
                   >archive</span
                 >
                 Export vault…
@@ -395,10 +402,10 @@
                 role="menuitem"
                 onclick={() => openAction('import')}
                 onkeydown={(e) => handleMenuItemKeydown(e, 3)}
-                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-type-sm font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
               >
                 <span
-                  class="material-symbols-outlined text-[18px] text-text-muted"
+                  class="material-symbols-outlined text-icon-lg text-text-muted"
                   >unarchive</span
                 >
                 Import vault…
@@ -416,10 +423,10 @@
                   window.dispatchEvent(new CustomEvent('silt:change-vault'))
                 }}
                 onkeydown={(e) => handleMenuItemKeydown(e, 4)}
-                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-[12px] font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
+                class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-text-primary text-type-sm font-body-md hover:bg-hover border-none bg-transparent cursor-pointer"
               >
                 <span
-                  class="material-symbols-outlined text-[18px] text-text-muted"
+                  class="material-symbols-outlined text-icon-lg text-text-muted"
                   >swap_horiz</span
                 >
                 Switch vault…
@@ -428,18 +435,18 @@
           {/if}
         </div>
       </div>
-      <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
+      <p class="text-text-muted text-type-xs font-label-sm mt-1.5">
         Move, copy, back up, or migrate this workspace from the actions menu.
       </p>
     </section>
   {:else if settings.loading}
     <section>
       <h3
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
       >
         Workspace
       </h3>
-      <p class="text-text-muted text-[13px] font-body-md animate-pulse">
+      <p class="text-text-muted text-type-md font-body-md animate-pulse">
         Loading workspace…
       </p>
     </section>
@@ -449,15 +456,15 @@
          no-workspace copy. -->
     <section>
       <h3
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
       >
         Workspace
       </h3>
       <div
-        class="flex items-start gap-2 p-3 rounded-lg bg-surface-panel border border-surface-panel-border text-status-danger text-[12px] font-body-md"
+        class="flex items-start gap-2 p-3 rounded-lg bg-surface-panel border border-surface-panel-border text-status-danger text-type-sm font-body-md"
         role="alert"
       >
-        <span class="material-symbols-outlined text-[18px]">error</span>
+        <span class="material-symbols-outlined text-icon-lg">error</span>
         <span class="flex-1">
           Couldn't load workspace settings: {settings.error}
         </span>
@@ -466,14 +473,14 @@
   {:else}
     <section>
       <h3
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
       >
         Workspace
       </h3>
       <div
-        class="flex items-start gap-2 p-3 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted text-[12px] font-body-md"
+        class="flex items-start gap-2 p-3 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted text-type-sm font-body-md"
       >
-        <span class="material-symbols-outlined text-[18px]">folder_off</span>
+        <span class="material-symbols-outlined text-icon-lg">folder_off</span>
         <span class="flex-1">
           No workspace configuration loaded. Open a vault to manage its path.
         </span>

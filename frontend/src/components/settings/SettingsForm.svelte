@@ -72,12 +72,12 @@
 </script>
 
 {#if schema.length === 0}
-  <p class="text-text-muted text-[11px] font-body-md italic">No settings.</p>
+  <p class="text-text-muted text-type-xs font-body-md italic">No settings.</p>
 {:else}
   <div class="space-y-3">
     {#if scopeLabel}
       <p
-        class="text-text-muted text-[10px] font-label-sm uppercase tracking-wider"
+        class="text-text-muted text-type-2xs font-label-sm uppercase tracking-wider"
       >
         Editing {scopeLabel} settings
       </p>
@@ -86,7 +86,7 @@
       <div class="flex flex-col gap-1">
         <label
           for="setting-{pluginID}-{field.key}"
-          class="text-text-primary text-[11px] font-label-sm-bold"
+          class="text-text-primary text-type-xs font-label-sm-bold"
         >
           {field.label}
         </label>
@@ -100,14 +100,14 @@
             class="toggle-switch"
             onclick={() => (draft[field.key] = !draft[field.key])}
           >
-            <span class="material-symbols-outlined text-[18px]">
+            <span class="material-symbols-outlined text-icon-lg">
               {draft[field.key] ? 'toggle_on' : 'toggle_off'}
             </span>
           </button>
         {:else if field.type === 'select'}
           <select
             id="setting-{pluginID}-{field.key}"
-            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-[12px] font-body-md"
+            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-type-sm font-body-md"
             bind:value={draft[field.key]}
           >
             {#each field.options ?? [] as opt}
@@ -125,7 +125,7 @@
           <input
             type="text"
             id="setting-{pluginID}-{field.key}"
-            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
+            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-type-sm font-body-md w-full"
             placeholder={fieldLabel(field.type)}
             value={Array.isArray(draft[field.key])
               ? draft[field.key].join(', ')
@@ -141,7 +141,7 @@
           <input
             type="text"
             id="setting-{pluginID}-{field.key}"
-            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full font-mono"
+            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-type-sm font-body-md w-full font-mono"
             placeholder="e.g. Ctrl+Shift+A"
             bind:value={draft[field.key]}
             onkeydown={(e) => {
@@ -163,7 +163,7 @@
           <input
             type="number"
             id="setting-{pluginID}-{field.key}"
-            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
+            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-type-sm font-body-md w-full"
             placeholder={fieldLabel(field.type)}
             min={field.min}
             max={field.max}
@@ -173,7 +173,7 @@
           <input
             type="text"
             id="setting-{pluginID}-{field.key}"
-            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-[12px] font-body-md w-full"
+            class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-type-sm font-body-md w-full"
             placeholder={fieldLabel(field.type)}
             minlength={field.minLength}
             maxlength={field.maxLength}
@@ -181,7 +181,7 @@
           />
         {/if}
         {#if field.help}
-          <span class="text-text-muted text-[10px] font-body-md"
+          <span class="text-text-muted text-type-2xs font-body-md"
             >{field.help}</span
           >
         {/if}
@@ -189,21 +189,21 @@
     {/each}
 
     {#if error}
-      <p class="text-error text-[11px] font-body-md">{error}</p>
+      <p class="text-error text-type-xs font-body-md">{error}</p>
     {/if}
     {#if dirty}
       <div class="flex gap-2 pt-1">
         <button
           onclick={save}
           disabled={saving}
-          class="bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold px-3 py-1 rounded hover:brightness-110 cursor-pointer disabled:opacity-50 text-[11px]"
+          class="bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold px-3 py-1 rounded hover:brightness-110 cursor-pointer disabled:opacity-50 text-type-xs"
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
         <button
           onclick={revert}
           disabled={saving}
-          class="text-text-muted hover:text-text-primary border border-surface-panel-border font-label-sm-bold px-3 py-1 rounded cursor-pointer disabled:opacity-50 text-[11px]"
+          class="text-text-muted hover:text-text-primary border border-surface-panel-border font-label-sm-bold px-3 py-1 rounded cursor-pointer disabled:opacity-50 text-type-xs"
         >
           Revert
         </button>

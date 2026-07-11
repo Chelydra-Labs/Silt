@@ -659,6 +659,7 @@ func (a *App) withAIPreflight(pluginID, sessionToken, which string) (ai.AIProvid
 	}
 	if a.rateLimiter != nil && !a.rateLimiter.allow(a.vaultPath, pluginID) {
 		a.vaultMu.RUnlock()
+		a.recordRateLimited(pluginID)
 		rps, burst := resolvePluginRatelimit(a.vaultPath, pluginID)
 		return ai.AIProvider{}, "", nil, fmt.Errorf("plugin %q AI rate limit exceeded (max %.1f rps, burst %d); retry after a short delay", pluginID, rps, burst)
 	}

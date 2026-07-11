@@ -88,6 +88,11 @@ const searchFlatCap = 500
 // cannot survive a window-function subquery wrap. Tag hydration is a single
 // secondary SELECT (no N+1).
 func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, filters SearchFilters) (parser.SearchResult, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return parser.SearchResult{}, ErrDBClosed
+	}
+	defer release()
 	query = strings.TrimSpace(query)
 	if query == "" || offset < 0 || limit <= 0 {
 		return parser.SearchResult{Results: []parser.TaskResult{}, Total: 0, Offset: offset, Limit: limit}, nil
@@ -150,7 +155,7 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 		ORDER BY ` + order + `
 		LIMIT ?`
 	args = append(args, searchFlatCap)
-	rows, err := dm.db.Query(pageQuery, args...)
+	rows, err := db.Query(pageQuery, args...)
 	if err != nil {
 		return parser.SearchResult{}, fmt.Errorf("failed to search blocks: %w", err)
 	}
@@ -225,7 +230,7 @@ func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, fi
 			placeholders[i] = "?"
 		}
 		tagQuery := "SELECT block_id, raw_path FROM tags WHERE block_id IN (" + strings.Join(placeholders, ",") + ") ORDER BY block_id, raw_path"
-		tagRows, err := dm.db.Query(tagQuery, blockIDs...)
+		tagRows, err := db.Query(tagQuery, blockIDs...)
 		if err != nil {
 			return parser.SearchResult{}, fmt.Errorf("failed to query search tags: %w", err)
 		}

@@ -56,6 +56,7 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
   it('the bridge fetch method is in the allowedMethods set (proxies through host)', () => {
     // Verify that 'fetch' is in the allowedMethods set used by the bridge.
     // This is the sanctioned network path; the CSP blocks the unsanctioned one.
+    // Data-only RPC set — callback methods pruned in #516.
     const allowedMethods = new Set([
       'sqliteQuery',
       'mutateBlock',
@@ -65,7 +66,6 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
       'getSetting',
       'updatePluginSetting',
       'openSettings',
-      'on',
       'queryByTag',
       'queryByDateRange',
       'fullTextSearch',
@@ -97,8 +97,6 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
       'clipboardWrite',
       'notify',
       'fetch',
-      'registerSlashCommand',
-      'registerSurface',
       'readPluginAsset'
     ])
     expect(allowedMethods.has('fetch')).toBe(true)
@@ -106,6 +104,57 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
     // reachable (#355): the documented ctx.updatePluginSetting('dismissed_notes',
     // [...]) pattern runs through this bridge for sandboxed third-party banners.
     expect(allowedMethods.has('updatePluginSetting')).toBe(true)
+  })
+
+  it('callback/registration methods are pruned from allowedMethods (#516)', () => {
+    // Functions do not survive structured clone across postMessage. Allowing
+    // these names makes plugins think ctx.on / register* work from surface
+    // HTML when the host receives null callbacks.
+    const start = componentSource.indexOf('const allowedMethods = new Set([')
+    const end = componentSource.indexOf('])', start)
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    const allowlistBlock = componentSource.slice(start, end + 2)
+    for (const method of [
+      'on',
+      'registerSlashCommand',
+      'registerSurface',
+      'provideDecorations'
+    ]) {
+      expect(allowlistBlock).not.toContain(`'${method}'`)
+    }
+    expect(componentSource).toContain('registrationMethods')
+    expect(componentSource).toContain('structured clone')
+  })
+})
+
+describe('PluginSurfaceFrame structured-clone callback contract (#516)', () => {
+  it('function-typed values cannot be structured-cloned (postMessage contract)', () => {
+    // Regression guard: a future "fix" that re-allows registerSlashCommand
+    // with host-side closures would execute iframe-supplied logic with host
+    // privileges. postMessage uses structured clone; functions throw
+    // DataCloneError (they never arrive as invocable host callbacks).
+    const payload = {
+      __siltSurface: 'request',
+      method: 'registerSlashCommand',
+      args: [
+        {
+          id: 'x',
+          label: 'X',
+          onSelect: () => {
+            throw new Error('must not run on host')
+          }
+        }
+      ]
+    }
+    expect(() => structuredClone(payload)).toThrow()
+    try {
+      structuredClone(payload)
+      expect.unreachable('structuredClone must reject functions')
+    } catch (e) {
+      // Node/happy-dom may throw DOMException or a DataCloneError-named error.
+      expect((e as Error).name).toBe('DataCloneError')
+    }
   })
 })
 

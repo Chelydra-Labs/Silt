@@ -103,6 +103,10 @@ func (a *App) UninstallPlugin(pluginID string) error {
 	if a.rateLimiter != nil {
 		a.rateLimiter.evict(pluginID)
 	}
+	// Drop security counters so a reinstall starts clean (#518).
+	if a.securityStats != nil {
+		a.securityStats.evict(pluginID)
+	}
 	// Best-effort grant cleanup; a failure here must not mask the successful
 	// uninstall (the folder is already gone). The grants block is harmless if
 	// it lingers, but cleaning it keeps the manager UI honest.

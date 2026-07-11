@@ -212,7 +212,7 @@ without rebuilding the whole index on every launch.
 Connections are opened by `db.NewDatabaseManager(dbPath)` (pass `""` for an ephemeral in-memory shared-cache DB, used in tests and before a vault is open). The DB runs in **WAL mode** — persistent in the file header, so every later connection (including the plugin SDK's read-only handle) inherits it without re-running the pragma. Per-connection pragmas are configured for WAL safety and performance; see
 `backend/db/schema.go` for the values.
 
-Concurrency: WAL allows unlimited readers alongside a single writer; readers never block writers and the writer never blocks readers. The Go-level `core.ExecutionCoordinator` serializes all access (`SetMaxOpenConns(1)`) so the locking story stays simple. Clean shutdown runs `PRAGMA wal_checkpoint(TRUNCATE)` (in `DatabaseManager.Close` and after each startup re-index pass) so the WAL does not grow unbounded across sessions; on a crash, SQLite auto-recovery replays the WAL on the next open.
+Concurrency: WAL allows unlimited readers alongside a single writer; readers never block writers and the writer never blocks readers. The Go-level `core.ExecutionCoordinator` serializes all access (`SetMaxOpenConns(1)`) so the locking story stays simple. `DatabaseManager` additionally owns its handle lifecycle: package methods take a read lease via `handle()` / `withDB` (nested helpers must not re-enter `handle` — use `*sql.Tx` or `ensureFTSOn(db)`); `Close` takes the write lock, swaps the live `*sql.DB` to nil, checkpoints, and closes so leases drain first and post-close calls return `ErrDBClosed` instead of nil-derefing (vault-switch races). Raw `SQLDB()` is still used by some App IPC paths — migrating those is tracked separately (#522). The coordinator cannot stop a third party from closing the handle; the manager is self-protecting at the package API. Clean shutdown runs `PRAGMA wal_checkpoint(TRUNCATE)` (in `DatabaseManager.Close` and after each startup re-index pass) so the WAL does not grow unbounded across sessions; on a crash, SQLite auto-recovery replays the WAL on the next open.
 
 Caveat: WAL relies on shared memory and therefore does **not** work on network filesystems (NFS/SMB). Local-first single-user desktop is the supported deployment; a vault on a network mount will fail to open the index with a clear error rather than silently corrupt.
 
@@ -1001,7 +1001,12 @@ stay blocked on a Wails v3 capability that does not exist today.
 
 **Rate limiting.** `PluginFetch` is throttled by a per-plugin token-
 bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
-Buckets are evicted on uninstall.
+Buckets are evicted on uninstall. Capability denials (`requireGrant`) and
+rate-limit rejects (fetch + AI) also increment a session-scoped in-memory
+per-plugin counter (`GetPluginSecurityStats`) and emit a structured
+`security:event` Wails event so Settings → Plugins can show a warning badge
+(#518). Counters clear on vault close and per-plugin uninstall — not
+persisted (not markdown-reproducible).
 
 **Network audit log.** `auditNetwork` appends to the in-memory log
 (capped 500 entries) under `networkAuditMu`, then enqueues a disk-write op
@@ -1062,13 +1067,16 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
   render a compiled Svelte component (passed via the surface's `component`
   field, mounted directly with `{ ctx, onDismiss }` props — `silt-ai-summary`
   is the reference consumer), third-party via the iframe bridge. The
-  bridge is bidirectional: iframe→host requests (PluginContext proxy) AND
-  host→iframe events. The close affordance sends a `dismiss` event (iframe
-  path) or invokes the component's `onDismiss` prop (first-party path) so the
-  plugin can persist dismissal state (`updatePluginSetting('<id>',
-  'dismissed_notes', [...])`) — `updatePluginSetting` is in the bridge's
-  `allowedMethods` so the documented pattern is reachable from a sandboxed
-  banner. When more than two banners stack, the host collapses them into a
+  bridge is bidirectional: iframe→host **data-only** RPC requests
+  (serializable args/results; callback methods like `on` /
+  `registerSlashCommand` / `registerSurface` are not in `allowedMethods`
+  because functions do not survive structured clone — those run from
+  main-webview `init()` only) AND host→iframe events (`silt:surface:event`).
+  The close affordance sends a `dismiss` event (iframe path) or invokes the
+  component's `onDismiss` prop (first-party path) so the plugin can persist
+  dismissal state (`updatePluginSetting('<id>', 'dismissed_notes', [...])`) —
+  `updatePluginSetting` is in the bridge's `allowedMethods` so the
+  documented pattern is reachable from a sandboxed banner. When more than two banners stack, the host collapses them into a
   single expandable summary. Bespoke plugin settings pages
   mount inside a `<svelte:boundary>` so a component that throws on render
   cannot crash the focus-trapped Settings dialog.
