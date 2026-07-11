@@ -116,6 +116,25 @@
     void applyTheme(themeState.id || 'cyber_forest', mode)
   }
 
+  // Roving-tabindex + Arrow navigation for the mode radiogroup (WAI-ARIA:
+  // only the checked radio is a Tab stop; Arrow keys move focus + selection).
+  let modeRefs: HTMLButtonElement[] = $state([])
+
+  function onModeKeydown(e: KeyboardEvent, index: number) {
+    const len = modes.length
+    let next = -1
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      next = (index + 1) % len
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      next = (index - 1 + len) % len
+    } else {
+      return
+    }
+    e.preventDefault()
+    setMode(modes[next].id)
+    modeRefs[next]?.focus()
+  }
+
   // --- Theme cards ---------------------------------------------------------
 
   function isActive(t: { id: string }): boolean {
@@ -140,7 +159,10 @@
     if (previewTheme === null) return
     const id = previewTheme
     const ok = await applyTheme(id, themeState.mode)
-    if (ok) previewTheme = null
+    // Only clear if the user hasn't staged a different preview during the
+    // async write — otherwise we'd null a freshly-staged theme B and the
+    // restore $effect would flash the workspace back to the active theme.
+    if (ok && previewTheme === id) previewTheme = null
   }
 
   // Double-click commits directly. The preceding single-clicks have already
@@ -344,13 +366,16 @@
       aria-label="Color mode"
       class="inline-flex bg-surface-panel border border-surface-panel-border rounded-lg p-1 gap-1"
     >
-      {#each modes as m (m.id)}
+      {#each modes as m, i (m.id)}
         {@const active = themeState.mode === m.id}
         <button
+          bind:this={modeRefs[i]}
           type="button"
           role="radio"
           aria-checked={active}
+          tabindex={active ? 0 : -1}
           onclick={() => setMode(m.id)}
+          onkeydown={(e) => onModeKeydown(e, i)}
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-label-sm text-label-sm motion-reduce:transition-none transition-colors border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
           class:bg-hover={active}
           class:text-accent-primary-start={active}

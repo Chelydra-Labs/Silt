@@ -9,7 +9,7 @@
   // and the settings search box, so every section reads as one designed
   // surface. Width is driven per-section via the `width` field
   // ('form' → centered max-w-4xl, 'wide' → full panel width).
-  import { onMount, tick } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
   import GeneralTab from './GeneralTab.svelte'
   import EditorTab from './EditorTab.svelte'
   import HotkeysTab from './HotkeysTab.svelte'
@@ -92,6 +92,12 @@
       ringAnchor = null
     }, 1600)
   }
+
+  // Clear the anchor-ring timer on teardown so it can't write ringAnchor
+  // ($state) after the component has unmounted.
+  onDestroy(() => {
+    if (ringTimer) clearTimeout(ringTimer)
+  })
 </script>
 
 <div class="flex-1 min-w-0 flex flex-col overflow-hidden">

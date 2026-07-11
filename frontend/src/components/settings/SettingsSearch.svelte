@@ -8,6 +8,7 @@
   // Keyboard model is scoped to the combobox (input + listbox) so it doesn't
   // collide with the sidebar nav's roving-tabindex handler: Arrow/Enter here
   // only act when the popover is open and focus is in the search field.
+  import { onDestroy } from 'svelte'
   import { searchSettings, type SettingsIndexEntry } from './settingsIndex'
   import { getSettingsSections } from './settingsSections.svelte'
 
@@ -22,6 +23,7 @@
   let activeIndex = $state(0) // highlighted result in the listbox
   let open = $state(false)
   let inputEl = $state<HTMLInputElement | null>(null)
+  let blurTimer: ReturnType<typeof setTimeout> | null = null
 
   // Section labels for the "· Section" suffix in each result row.
   let sections = $derived(getSettingsSections())
@@ -66,32 +68,53 @@
   // intercepted, and only while the popover is open. This keeps Tab (and
   // every other key) flowing normally, and avoids swallowing the sidebar
   // nav's Arrow/Home/End model (that handler is on a different element).
+  // Scroll the active (aria-activedescendant-tracked) option into view so the
+  // highlighted row never scrolls off the max-h-72 listbox (WAI-ARIA combobox).
+  // Optional-chained on the method: scrollIntoView is a standard browser DOM
+  // API absent in the jsdom test env, where it degrades to a no-op.
+  function scrollActiveIntoView(): void {
+    document
+      .getElementById(`silt-settings-search-result-${activeIndex}`)
+      ?.scrollIntoView?.({ block: 'nearest' })
+  }
+
+  // Scoped keyboard handler: Escape always clears (even on an empty-result
+  // popover); Arrow/Enter only act when there are results to navigate, so the
+  // cursor isn't stranded by a preventDefault on an empty listbox.
   function onInputKeydown(e: KeyboardEvent) {
-    if (!open) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      query = ''
+      open = false
+      return
+    }
+    if (!open || results.length === 0) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       activeIndex = Math.min(results.length - 1, activeIndex + 1)
+      scrollActiveIntoView()
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       activeIndex = Math.max(0, activeIndex - 1)
+      scrollActiveIntoView()
     } else if (e.key === 'Enter') {
       e.preventDefault()
       const entry = results[activeIndex]
       if (entry) commit(entry)
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      query = ''
-      open = false
     }
   }
 
   function onInputBlur() {
     // Defer close so a click on a result row registers before the popover is
     // torn down (mousedown focuses, then blur would fire, then click).
-    setTimeout(() => {
+    blurTimer = setTimeout(() => {
       if (!inputEl || document.activeElement !== inputEl) open = false
     }, 120)
   }
+
+  onDestroy(() => {
+    if (blurTimer) clearTimeout(blurTimer)
+  })
 
   function onInputFocus() {
     if (results.length > 0) open = true
@@ -111,6 +134,7 @@
       onblur={onInputBlur}
       onfocus={onInputFocus}
       type="text"
+      aria-label="Search settings"
       placeholder="Search settings…"
       role="combobox"
       aria-expanded={open}

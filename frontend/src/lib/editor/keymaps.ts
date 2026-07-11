@@ -688,7 +688,7 @@ function buildFormatMarkShortcuts(
     editor.chain().focus().toggleHighlight().run()
     return true
   }
-  map[pm('format_subscript', 'Mod-,')] = () => {
+  map[pm('format_subscript', 'Mod-Shift-,')] = () => {
     editor.chain().focus().toggleSubscript().run()
     return true
   }
