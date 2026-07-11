@@ -38,7 +38,9 @@ const mocks = vi.hoisted(() => ({
   checkPluginUpdate: vi.fn(),
   getNetworkAudit: vi.fn(),
   getPluginSecurityStats: vi.fn().mockResolvedValue([]),
-  eventsOn: vi.fn(() => () => {}),
+  // Matches the real Events.On signature: (eventName, callback) => cancel.
+  // Declaring the arity here keeps mockImplementation callers type-safe.
+  eventsOn: vi.fn((_name: string, _cb: () => void) => () => {}),
   setConfig: (next: any) => {
     mocks.configNoPlugins = next
   }
