@@ -93,6 +93,67 @@ export function parseHotkey(s: string | undefined | null): ParsedHotkey | null {
   return { ctrl, shift, alt, meta, key }
 }
 
+/**
+ * Format a ParsedHotkey to the canonical config binding string
+ * (e.g. "Ctrl+Shift+9"). Modifier order is stable: Ctrl, Alt, Shift, Meta.
+ */
+export function formatHotkey(h: ParsedHotkey): string {
+  const parts: string[] = []
+  if (h.ctrl) parts.push('Ctrl')
+  if (h.alt) parts.push('Alt')
+  if (h.shift) parts.push('Shift')
+  if (h.meta) parts.push('Meta')
+  // Display single-character keys uppercased for letters; keep symbols as-is.
+  const key =
+    h.key.length === 1 && /[a-z]/.test(h.key) ? h.key.toUpperCase() : h.key
+  // Named special keys for readability (Escape not escape).
+  const named =
+    key === 'escape'
+      ? 'Escape'
+      : key === 'enter'
+        ? 'Enter'
+        : key === 'tab'
+          ? 'Tab'
+          : key === 'backspace'
+            ? 'Backspace'
+            : key === 'delete'
+              ? 'Delete'
+              : key.startsWith('arrow')
+                ? key.charAt(0).toUpperCase() + key.slice(1)
+                : key
+  parts.push(named)
+  return parts.join('+')
+}
+
+const MODIFIER_KEYS = new Set(['control', 'shift', 'alt', 'meta', 'altgraph'])
+
+/**
+ * Build a ParsedHotkey from a KeyboardEvent during capture mode.
+ * Returns null for pure-modifier keydowns (user is still holding modifiers).
+ */
+export function hotkeyFromKeyboardEvent(e: KeyboardEvent): ParsedHotkey | null {
+  const raw = e.key
+  if (!raw) return null
+  if (MODIFIER_KEYS.has(raw.toLowerCase())) return null
+
+  let key = raw
+  // Prefer e.key logical value; normalize aliases the same way parseHotkey does.
+  if (key.length === 1) {
+    key = key.toLowerCase()
+  } else {
+    key = key.toLowerCase()
+    key = KEY_ALIASES[key] ?? key
+  }
+
+  return {
+    ctrl: e.ctrlKey,
+    shift: e.shiftKey,
+    alt: e.altKey,
+    meta: e.metaKey,
+    key
+  }
+}
+
 /** True if a KeyboardEvent matches the given binding string. */
 export function matchHotkey(
   e: KeyboardEvent,

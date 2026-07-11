@@ -3,8 +3,70 @@ import {
   configKeyToProseMirrorKey,
   resolveShortcut,
   resolveHotkeyDisplay,
-  matchHotkey
+  matchHotkey,
+  formatHotkey,
+  parseHotkey,
+  hotkeyFromKeyboardEvent
 } from './hotkeys'
+
+describe('formatHotkey + parseHotkey round-trip (#519)', () => {
+  it.each([
+    'Ctrl+Shift+9',
+    'Ctrl+Alt+2',
+    'Meta+K',
+    'Ctrl+/',
+    'Ctrl+Shift+Escape'
+  ])('round-trips %s', (binding) => {
+    const parsed = parseHotkey(binding)
+    expect(parsed).not.toBeNull()
+    const formatted = formatHotkey(parsed!)
+    expect(parseHotkey(formatted)).toEqual(parsed)
+  })
+
+  it('formats with stable modifier order Ctrl+Alt+Shift+Meta', () => {
+    expect(
+      formatHotkey({
+        ctrl: true,
+        alt: true,
+        shift: true,
+        meta: true,
+        key: 'p'
+      })
+    ).toBe('Ctrl+Alt+Shift+Meta+P')
+  })
+})
+
+describe('hotkeyFromKeyboardEvent (#519)', () => {
+  function keyEvent(partial: Partial<KeyboardEvent>): KeyboardEvent {
+    return {
+      key: 'a',
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+      ...partial
+    } as KeyboardEvent
+  }
+
+  it('returns null for pure modifier keys', () => {
+    expect(hotkeyFromKeyboardEvent(keyEvent({ key: 'Control' }))).toBeNull()
+    expect(hotkeyFromKeyboardEvent(keyEvent({ key: 'Shift' }))).toBeNull()
+  })
+
+  it('captures Ctrl+Shift+9', () => {
+    const h = hotkeyFromKeyboardEvent(
+      keyEvent({ key: '9', ctrlKey: true, shiftKey: true })
+    )
+    expect(h).toEqual({
+      ctrl: true,
+      shift: true,
+      alt: false,
+      meta: false,
+      key: '9'
+    })
+    expect(formatHotkey(h!)).toBe('Ctrl+Shift+9')
+  })
+})
 
 describe('configKeyToProseMirrorKey', () => {
   it('converts Ctrl+Shift+9 → Mod-Shift-9', () => {

@@ -7,6 +7,7 @@
   } from '../../settings/store.svelte'
   import type { SystemConfig } from '../../settings/store.svelte'
   import { parseHotkey } from '../../settings/hotkeys'
+  import HotkeyCaptureInput from './HotkeyCaptureInput.svelte'
 
   interface Props {
     ringAnchor?: string | null
@@ -109,36 +110,35 @@
           ? 'ring-2 ring-accent-primary-start transition-shadow'
           : ''}"
       >
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
           <h4
-            class="font-label-sm-bold text-text-primary uppercase tracking-wider text-[10px]"
+            class="font-label-sm-bold text-text-primary uppercase tracking-wider text-xs"
           >
             Keyboard Shortcuts
           </h4>
-          <span class="text-text-muted text-[10px]">
-            Leave empty to disable. Modifiers+key (e.g. Ctrl+Shift+9,
-            Ctrl+Alt+2).
+          <span class="text-text-muted text-xs">
+            Click a field and press a shortcut. Clear or Backspace to disable.
           </span>
         </div>
         <div class="grid grid-cols-2 gap-x-6 gap-y-3">
           {#each hotkeyEntries as [key, value] (key)}
-            <label class="flex flex-col gap-1">
+            <div class="flex flex-col gap-1">
               <span
-                class="text-text-muted text-[10px] font-semibold uppercase tracking-wider truncate"
+                class="text-text-muted text-xs font-semibold uppercase tracking-wider truncate"
                 title={prettyLabel(key)}
+                id="hotkey-label-{key}"
               >
                 {prettyLabel(key)}
               </span>
-              <input
-                {value}
-                oninput={(e) => {
-                  draft!.hotkeys[key] = e.currentTarget.value
+              <HotkeyCaptureInput
+                value={value ?? ''}
+                label={prettyLabel(key)}
+                onchange={(next) => {
+                  draft!.hotkeys[key] = next
                   touch()
                 }}
-                type="text"
-                class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-1.5 text-text-primary text-[12px] font-mono outline-none focus:border-accent-primary-start transition-colors w-full"
               />
-            </label>
+            </div>
           {/each}
         </div>
       </div>
