@@ -170,6 +170,10 @@ type App struct {
 	// mutex; eviction happens on uninstall.
 	rateLimiter *pluginRateLimiter
 
+	// securityStats rolls up per-plugin capability denials and rate-limit
+	// hits for Settings → Plugins observability (#518). Session memory only.
+	securityStats *pluginSecurityStats
+
 	// pluginSessions maps session tokens → pluginIDs for binding-identity
 	// verification (#151). The loader calls RegisterPluginSession at load
 	// time; privileged bindings validate the token before proceeding so a
@@ -247,6 +251,7 @@ func NewApp() *App {
 	return &App{
 		spacesPerTab:   4,
 		rateLimiter:    newPluginRateLimiter(),
+		securityStats:  newPluginSecurityStats(),
 		pluginSessions: make(map[string]string),
 		aiModelCache:   make(map[string][]ai.AIModel),
 		// keyringStore is the OS credential store for AI provider keys (#218).
@@ -492,6 +497,11 @@ func (a *App) teardownVaultServices() {
 	}
 	a.coordinator = nil
 	a.vaultPath = ""
+	// Session security aggregates are vault-scoped in practice; clear on
+	// vault close so the next vault doesn't inherit denial badges (#518).
+	if a.securityStats != nil {
+		a.securityStats.clear()
+	}
 	// F4: clear the per-host grants store so a subsequent vault open starts
 	// fresh (LoadGrants + seedFirstPartyGrants repopulate). The on-disk file
 	// is untouched — it persists across vault sessions.

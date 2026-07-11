@@ -1001,7 +1001,12 @@ stay blocked on a Wails v3 capability that does not exist today.
 
 **Rate limiting.** `PluginFetch` is throttled by a per-plugin token-
 bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
-Buckets are evicted on uninstall.
+Buckets are evicted on uninstall. Capability denials (`requireGrant`) and
+rate-limit rejects (fetch + AI) also increment a session-scoped in-memory
+per-plugin counter (`GetPluginSecurityStats`) and emit a structured
+`security:event` Wails event so Settings → Plugins can show a warning badge
+(#518). Counters clear on vault close and per-plugin uninstall — not
+persisted (not markdown-reproducible).
 
 **Network audit log.** `auditNetwork` appends to the in-memory log
 (capped 500 entries) under `networkAuditMu`, then enqueues a disk-write op

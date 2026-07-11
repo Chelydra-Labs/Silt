@@ -13,8 +13,10 @@
     RevokeCapability,
     GetGrantedCapabilities,
     GetNetworkAudit,
+    GetPluginSecurityStats,
     CheckPluginUpdate
   } from '../../../bindings/silt/app.js'
+  import { Events } from '@wailsio/runtime'
   import { loadPlugins, teardownPlugin } from '../../plugins/loader'
   import { firstPartyPlugins } from '../../plugins/registry'
   import { loadedPlugins } from '../../plugins/store.svelte'
@@ -24,6 +26,16 @@
   import SettingsForm from './SettingsForm.svelte'
   import NetworkAuditViewer from './NetworkAuditViewer.svelte'
   import type { SettingSchema } from '../../plugins/sdk'
+
+  /** Session security aggregate from GetPluginSecurityStats (#518). */
+  interface SecurityStats {
+    pluginId: string
+    denials: number
+    rateLimited: number
+    lastDenialAt?: number
+    lastRateAt?: number
+    lastCapability?: string
+  }
 
   interface Props {
     activeNotebook: string
@@ -82,6 +94,8 @@
   let loading = $state(true)
   let expanded = $state<string | null>(null)
   let grantBusy = $state<string>('') // "<pluginId>:<cap>" while a grant/revoke is in flight
+  /** pluginId → session security stats (#518). */
+  let securityByPlugin = $state<Record<string, SecurityStats>>({})
 
   // Install flow state.
   let installing = $state(false)
@@ -89,6 +103,35 @@
   let previewError = $state('')
   let pendingPath = $state('')
   let actionError = $state('')
+
+  async function refreshSecurityStats() {
+    try {
+      const rows = ((await GetPluginSecurityStats()) ?? []) as SecurityStats[]
+      const next: Record<string, SecurityStats> = {}
+      for (const row of rows) {
+        if (row?.pluginId) next[row.pluginId] = row
+      }
+      securityByPlugin = next
+    } catch {
+      // Non-fatal: badge is best-effort observability.
+      securityByPlugin = {}
+    }
+  }
+
+  function securityTitle(st: SecurityStats): string {
+    const parts: string[] = []
+    if (st.denials > 0) {
+      parts.push(
+        `${st.denials} capability denial${st.denials === 1 ? '' : 's'}${st.lastCapability ? ` (last: ${st.lastCapability})` : ''}`
+      )
+    }
+    if (st.rateLimited > 0) {
+      parts.push(
+        `${st.rateLimited} rate-limit hit${st.rateLimited === 1 ? '' : 's'}`
+      )
+    }
+    return parts.join('; ') || 'Security events this session'
+  }
 
   async function refresh() {
     loading = true
@@ -101,6 +144,7 @@
       // v2 capability grants (#113): pluginID → cap → qualifier. First-party
       // plugins are not surfaced here (they are implicitly granted).
       const grants = (await GetGrantedCapabilities()) ?? {}
+      await refreshSecurityStats()
 
       const merged: Card[] = []
 
@@ -359,7 +403,14 @@
   }
 
   onMount(() => {
-    refresh()
+    void refresh()
+    // Live refresh when Go emits a denial / rate-limit aggregate (#518).
+    const off = Events.On('security:event', () => {
+      void refreshSecurityStats()
+    })
+    return () => {
+      off?.()
+    }
   })
 </script>
 
@@ -531,6 +582,27 @@
                     class="text-[9px] text-error bg-error/10 border border-error/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
                     >error</span
                   >
+                {/if}
+                {#if securityByPlugin[card.id] && (securityByPlugin[card.id].denials > 0 || securityByPlugin[card.id].rateLimited > 0)}
+                  {@const st = securityByPlugin[card.id]}
+                  <span
+                    role="status"
+                    title={securityTitle(st)}
+                    aria-label={securityTitle(st)}
+                    class="inline-flex items-center gap-0.5 text-[9px] text-status-warn bg-status-warn/10 border border-status-warn/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
+                  >
+                    <span
+                      class="material-symbols-outlined text-[11px]"
+                      aria-hidden="true">shield</span
+                    >
+                    {#if st.denials > 0 && st.rateLimited > 0}
+                      {st.denials} denied · {st.rateLimited} limited
+                    {:else if st.denials > 0}
+                      {st.denials} denied
+                    {:else}
+                      {st.rateLimited} limited
+                    {/if}
+                  </span>
                 {/if}
                 {#if needsAISetup(card)}
                   <button

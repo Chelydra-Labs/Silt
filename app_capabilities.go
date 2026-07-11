@@ -82,6 +82,7 @@ func (a *App) isPluginDisabled(pluginID string) bool {
 // file writes) read it via grantedQualifier after a successful requireGrant.
 func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 	if !plugins.IsValidID(pluginID) {
+		// Invalid IDs are not counted toward per-plugin security stats.
 		return &plugins.CapabilityDeniedError{
 			Plugin:     "<invalid>",
 			Capability: string(cap),
@@ -89,7 +90,6 @@ func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 		}
 	}
 	a.configMu.RLock()
-	defer a.configMu.RUnlock()
 	// #359: a disabled plugin is blocked at the binding layer even if its
 	// grants and session token are still live. Checked under configMu (which
 	// guards a.cfg) — see isPluginDisabled for the sentinel re-read rationale.
@@ -97,22 +97,28 @@ func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 	// and the frontend SDK can distinguish "disabled" from "ungranted" and
 	// show the right message without parsing the error string.
 	if a.isPluginDisabled(pluginID) {
-		return &plugins.CapabilityDeniedError{
+		derr := &plugins.CapabilityDeniedError{
 			Plugin:     pluginID,
 			Capability: string(cap),
 			Requested:  plugins.QualGranted,
 			Disabled:   true,
 		}
+		a.configMu.RUnlock()
+		a.recordCapabilityDenied(pluginID, string(cap))
+		return derr
 	}
 	// F4: grants now live in the per-host store (a.grants), not vault-scoped
 	// config.yaml. A synced vault's legacy grants block is ignored on load.
 	if a.grants != nil {
 		if _, ok := a.grants[pluginID]; ok {
 			if qual, ok := a.grants[pluginID][string(cap)]; ok && qual != "" {
+				a.configMu.RUnlock()
 				return nil
 			}
 		}
 	}
+	a.configMu.RUnlock()
+	a.recordCapabilityDenied(pluginID, string(cap))
 	return &plugins.CapabilityDeniedError{
 		Plugin:     pluginID,
 		Capability: string(cap),
