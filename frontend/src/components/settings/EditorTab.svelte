@@ -12,6 +12,11 @@
   import FontSelect from './FontSelect.svelte'
   import { customDictionary } from '../../lib/editor/spellcheck/customDictionary.svelte'
 
+  interface Props {
+    ringAnchor?: string | null
+  }
+  let { ringAnchor = null }: Props = $props()
+
   let draft = $state<SystemConfig | null>(null)
   let lastSaved = $state<SystemConfig | null>(null)
 
@@ -94,6 +99,18 @@
     draft = deepClone(lastSaved)
     settings.dirty = false
   }
+
+  // Settings-search anchor landing: briefly ring the targeted card so the user
+  // can see where the jump landed.
+  function ringClass(id: string): string {
+    return ringAnchor === id
+      ? 'ring-2 ring-accent-primary-start transition-shadow'
+      : ''
+  }
+
+  // Cross-link to Appearance (typography overrides live there too). Kept cheap:
+  // a one-line hint that only renders when the active theme sets fonts.
+  let themeSetsFonts = $derived(Boolean(themeBodyFont || themeMonoFont))
 </script>
 
 {#if !draft}
@@ -125,13 +142,37 @@
 
       <!-- Typography Card -->
       <div
-        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-5"
+        id="editor-typography"
+        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-5 {ringClass(
+          'editor-typography'
+        )}"
       >
         <h4
           class="font-label-sm-bold text-text-primary uppercase tracking-wider text-[10px]"
         >
           Typography
         </h4>
+        {#if themeSetsFonts}
+          <!-- Cross-link to Appearance: when the active theme sets fonts, the
+               "reset to theme default" buttons above point here; this hint
+               sends users the other way to change the theme-level fonts. -->
+          <p class="text-text-muted text-[11px] font-label-sm -mt-3">
+            The active theme sets its own fonts. Change the theme in
+            <button
+              type="button"
+              aria-label="Go to Appearance settings"
+              onclick={() =>
+                window.dispatchEvent(
+                  new CustomEvent('silt:settings-jump', {
+                    detail: { section: 'appearance' }
+                  })
+                )}
+              class="text-accent-primary-start underline hover:brightness-110 bg-transparent border-none cursor-pointer p-0 font-label-sm"
+            >
+              Appearance
+            </button>.
+          </p>
+        {/if}
         <div class="grid grid-cols-2 gap-4">
           <label class="flex flex-col gap-1.5">
             <span
@@ -245,7 +286,10 @@
 
       <!-- Preferences Card -->
       <div
-        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-5"
+        id="editor-preferences"
+        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-5 {ringClass(
+          'editor-preferences'
+        )}"
       >
         <h4
           class="font-label-sm-bold text-text-primary uppercase tracking-wider text-[10px]"

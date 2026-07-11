@@ -13,7 +13,7 @@ fi
 # This ensures the system knows how to handle your custom protocols.
 if command -v update-mime-database >/dev/null 2>&1; then
   echo "Updating MIME database..."
-  update-mime-database -n /usr/share/mime
+  update-mime-database /usr/share/mime
 else
   echo "Warning: update-mime-database command not found. Custom URL schemes may not be immediately recognized." >&2
 fi

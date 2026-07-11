@@ -86,11 +86,11 @@ describe('resolveShortcut', () => {
     )
   })
 
-  it('returns the default when config entry is empty string', () => {
+  it('returns "" (disabled) when config entry is an empty string', () => {
+    // "Leave empty to disable" (HotkeysTab): an explicitly cleared binding must
+    // NOT restore the default. Callers drop the '' entry from the keymap.
     const hotkeys = { toggle_quote: '' }
-    expect(resolveShortcut('toggle_quote', 'Mod-Shift-9', hotkeys)).toBe(
-      'Mod-Shift-9'
-    )
+    expect(resolveShortcut('toggle_quote', 'Mod-Shift-9', hotkeys)).toBe('')
   })
 
   it('returns the default when config entry is invalid', () => {

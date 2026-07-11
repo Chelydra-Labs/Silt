@@ -100,6 +100,13 @@ export function matchHotkey(
 ): boolean {
   const h = parseHotkey(binding)
   if (!h) return false
+  // Compares against e.key (the logical glyph). For Shift + a punctuation key
+  // whose shifted glyph differs from the base (e.g. "," -> "<" on US layouts),
+  // e.key is the shifted glyph, so a binding like "Ctrl+Shift+," would never
+  // match here. No global default uses such a chord today — the only Shift+
+  // punctuation default (format_subscript) is consumed by the editor keymap,
+  // not this path. If a global Shift+punctuation binding is ever added, fall
+  // back to e.code (layout-stable) when e.key doesn't match.
   return (
     e.ctrlKey === h.ctrl &&
     e.shiftKey === h.shift &&
@@ -159,8 +166,12 @@ export function configKeyToProseMirrorKey(
 /**
  * Resolve a keyboard shortcut from config, falling back to a default
  * ProseMirror key string. Reads hotkeys[configKey], converts via
- * configKeyToProseMirrorKey, and returns the result. Falls back to
- * defaultPmKey if the config entry is absent, empty, or unparseable.
+ * configKeyToProseMirrorKey, and returns the result.
+ *
+ * An explicitly empty binding ("") means the user disabled the shortcut
+ * ("Leave empty to disable" in HotkeysTab) — returns '' so callers omit the
+ * keymap entry instead of restoring the default. Only an ABSENT (undefined)
+ * or unparseable entry falls back to defaultPmKey.
  */
 export function resolveShortcut(
   configKey: string,
@@ -168,6 +179,8 @@ export function resolveShortcut(
   hotkeys: Record<string, string | undefined>
 ): string {
   const configBinding = hotkeys[configKey]
+  // Explicitly empty = disabled (HotkeysTab "Leave empty to disable").
+  if (configBinding === '') return ''
   const converted = configKeyToProseMirrorKey(configBinding)
   return converted || defaultPmKey
 }

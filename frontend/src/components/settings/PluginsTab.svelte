@@ -363,7 +363,7 @@
   })
 </script>
 
-<div class="p-6 max-w-3xl">
+<div class="p-6 max-w-6xl mx-auto w-full">
   <!-- Install flow -->
   <section class="mb-6">
     <button
@@ -410,7 +410,7 @@
           <ul class="mb-2 space-y-0.5">
             {#each preview.warnings as w}
               <li
-                class="text-yellow-300/80 text-[11px] font-body-md flex items-start gap-1"
+                class="text-status-warn text-[11px] font-body-md flex items-start gap-1"
               >
                 <span class="material-symbols-outlined text-[13px] mt-0.5"
                   >warning</span
@@ -556,7 +556,7 @@
             <!-- Expand details -->
             <button
               onclick={() => (expanded = expanded === card.id ? null : card.id)}
-              aria-label={expanded === card.id ? 'Collapse' : 'Details'}
+              aria-label={`${card.name}: ${expanded === card.id ? 'Collapse' : 'Details'}`}
               title="Details"
               class="text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
             >
@@ -568,7 +568,7 @@
             <button
               onclick={() => toggle(card)}
               title={card.disabled ? 'Enable' : 'Disable'}
-              aria-label={card.disabled ? 'Enable' : 'Disable'}
+              aria-label={`${card.name}: ${card.disabled ? 'Enable' : 'Disable'}`}
               class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
             >
               <span class="material-symbols-outlined text-[20px]">
@@ -579,7 +579,7 @@
               <button
                 onclick={() => uninstall(card)}
                 title="Uninstall"
-                aria-label="Uninstall"
+                aria-label={`${card.name}: Uninstall`}
                 class="text-text-muted hover:text-error border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
               >
                 <span class="material-symbols-outlined text-[18px]">delete</span

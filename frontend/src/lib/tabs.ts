@@ -49,7 +49,8 @@ export type ViewMode = 'edit' | 'source'
 
 /**
  * A single open tab. `id` is the stable slot id; `preview` distinguishes the
- * transient preview tab from dedicated pinned tabs.
+ * transient preview tab from dedicated pinned tabs. Every tab points at a
+ * page locator (notebook/section/page) — Settings is a view, not a tab.
  */
 export interface TabEntry extends PageRef {
   id: string

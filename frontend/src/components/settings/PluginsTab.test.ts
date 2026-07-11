@@ -115,10 +115,11 @@ describe('PluginsTab first-party disable guard', () => {
     const kanbanCard = screen.getByText('Tasks').closest('div')
     expect(kanbanCard).toBeTruthy()
 
-    // The Disable toggle is a button with aria-label="Disable" inside the
-    // first-party card row. Click it; without the guard, this throws
+    // The Disable toggle is a button with an aria-label of "<plugin>:
+    // Disable" (prefixed with the plugin name so SR users can attribute it
+    // among many cards). Click it; without the guard, this throws
     // "Cannot read properties of undefined (reading 'disabled')".
-    const disableBtn = screen.getByRole('button', { name: 'Disable' })
+    const disableBtn = screen.getByRole('button', { name: /: Disable$/ })
 
     await expect(fireEvent.click(disableBtn)).resolves.not.toThrow()
 

@@ -330,6 +330,15 @@ func ValidateHotkeys(hotkeys map[string]string) error {
 			return fmt.Errorf("invalid hotkey for %q: %q has no key (only modifiers)", action, binding)
 		}
 	}
+	// NOTE: no cross-action duplicate-chord check. Several defaults share a
+	// chord by design and are disambiguated by focus context — e.g. Ctrl+B is
+	// toggle_sidebar (global, fires when the editor is not focused) AND
+	// format_bold (consumed by the editor's ProseMirror keymap when focused).
+	// A blanket duplicate detector would reject every config built from these
+	// defaults. The one known *unintended* collision — format_subscript ↔
+	// open_settings on Ctrl+, after the #511 move — is resolved deterministically
+	// in normalize() instead, since the YAML merge can't tell a persisted old
+	// default from an explicit choice.
 	return nil
 }
 
@@ -381,7 +390,11 @@ func Defaults() SystemConfig {
 			"focus_sidebar":        "Ctrl+Shift+B",
 			// cycle_view_layout → Ctrl+Alt+V. Alt+Tab is the OS window-switcher
 			// on Windows/Linux (captured before the app sees it) and never fired.
-			"cycle_view_layout":    "Ctrl+Alt+V",
+			"cycle_view_layout": "Ctrl+Alt+V",
+			// open_settings → Ctrl+, (the universal settings convention; VS Code
+			// and most editors). #511 opens settings as a workspace tab. Note this
+			// freed Ctrl+, from format_subscript, which moved to Ctrl+Shift+, below.
+			"open_settings":        "Ctrl+,",
 			"indent_block":         "Tab",
 			"unindent_block":       "Shift+Tab",
 			"open_template_picker": "Ctrl+Shift+T",
@@ -409,7 +422,7 @@ func Defaults() SystemConfig {
 			"format_code":        "Ctrl+E",
 			"format_link":        "Ctrl+K",
 			"format_highlight":   "Ctrl+Shift+H",
-			"format_subscript":   "Ctrl+,",
+			"format_subscript":   "Ctrl+Shift,",
 			"format_superscript": "Ctrl+.",
 			// Heading level hotkeys (#169). Standard heading-level bindings.
 			"set_h1":   "Ctrl+Alt+1",
@@ -714,6 +727,16 @@ func normalize(cfg SystemConfig) SystemConfig {
 	// synced vault's legacy `grants:` block is silently ignored by yaml.v3.
 	if cfg.Hotkeys == nil {
 		cfg.Hotkeys = map[string]string{}
+	}
+	// format_subscript ↔ open_settings upgrade migration (#511). The Ctrl+,
+	// chord moved from format_subscript to the new open_settings default, but
+	// the YAML merge decodes-over-Defaults and can't tell a persisted old
+	// default from an explicit choice — so a config saved before this change
+	// ends up with format_subscript AND open_settings both at "Ctrl+,". Move
+	// subscript to its new home (Ctrl+Shift,) only when the exact collision is
+	// present, so a user who customized either binding is never touched.
+	if cfg.Hotkeys["format_subscript"] == "Ctrl+," && cfg.Hotkeys["open_settings"] == "Ctrl+," {
+		cfg.Hotkeys["format_subscript"] = "Ctrl+Shift,"
 	}
 	if cfg.UI.NavOrder.Sections == nil {
 		cfg.UI.NavOrder.Sections = map[string][]string{}

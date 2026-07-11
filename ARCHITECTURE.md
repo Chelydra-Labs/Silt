@@ -603,7 +603,7 @@ Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
 
 **IPC.** `ListThemes`, `GetActiveTheme`, `ApplyTheme`, `ImportTheme`, `ExportActiveTheme`, `PickThemeFile`, and `PickBackgroundImage` (picks a per-zone background image and runs it through the asset pipeline in `background.go` — small files inline as base64 data URIs, larger files into a per-theme assets directory, then cache-invalidate and emit `themes:changed`). `ApplyTheme` persists to `settings.json` and emits `theme:changed`; `ImportTheme` emits `themes:changed` (the listing event — distinct from the active-theme event). `GetActiveTheme` returns both dark + light maps so the frontend resolves "system" locally without a second round-trip.
 
-**Frontend** (`frontend/src/theme`): `store.svelte.ts` holds `themeState` (active id/name/mode + token maps) and `themesState` (listing + flat tokens for previews); `inject.ts` rewrites a single `<style id="silt-theme">:root{…}</style>` (one DOM write → one recalc → same-tick repaint); `AppearanceTab.svelte` is the accessible picker.
+**Frontend** (`frontend/src/theme`): `store.svelte.ts` holds `themeState` (active id/name/mode + token maps) and `themesState` (listing + flat tokens for previews); `inject.ts` rewrites a single `<style id="silt-theme">:root{…}</style>` (one DOM write → one recalc → same-tick repaint); `AppearanceTab.svelte` is the accessible picker — a card grid + details pane with a **two-stage preview** (hover highlights the card only; single-click stages a workspace-wide preview with an Apply/Revert banner; double-click/Apply commits; Revert/Esc restores). No category filters: every theme is dual-mode (dark + light maps), so the Dark/Light/System mode toggle is the per-theme mode selector.
 
 **Launch background.** `main.go` resolves the webview `BackgroundColour` from the in-process theme cache so a non-default active theme's app-zone background (`surfaces.app.bg`) is used for the pre-CSS paint; it falls back to the embedded default when no settings exist or the active id is invalid.
 
@@ -674,8 +674,10 @@ and the process + tray remain; disabled (or the tray Quit item) → `Quit()`
 runs the canonical `ServiceShutdown` drain (WAL checkpoint, in-flight call
 drain, plugin `onVaultClose` hooks) so there is one quit path. The tray keeps
 the process alive — `wailsApp.Run()` does not exit until `Quit()` is explicitly
-called. The OS-close interception (#510) is implemented but awaits Windows/Linux
-desktop smoke before it is considered proven.
+called. The OS-close interception routes every close gesture (titlebar
+button, Alt+F4, taskbar close) through `RequestClose`, so close-to-tray and a
+full quit share one decision path; the routing logic is unit-tested
+(`tray_test.go`).
 
 **Native menus (#503).** `setupMenus` (menus.go) creates a platform-aware
 application menu: File (New Page, Open Vault, Save, Quit), Edit (Undo, Redo,
@@ -977,16 +979,25 @@ CSP: `connect-src 'none'` blocks direct fetch/XHR/WebSocket from inside the
 iframe. All network traffic routes through the postMessage bridge → `ctx.fetch`
 (SSRF-defended + audit-logged).
 
-**Plugin webview isolation (#502).** Wails v3's browser-process options are
-application-global on Windows, so per-window network isolation is not
-available. The existing iframe sandbox (CSP `connect-src 'none'` + postMessage
-bridge + Go-proxied `PluginFetch` with SSRF defense) remains the security
-boundary. Per-plugin rendering isolation via dedicated v3 webview windows is
-deferred to the existing #502 — prototyping isolated webviews, the shared-code
-bundling a first-party plugin currently relies on, and the lifecycle/token
-handoff turned out to be too complex and excessive churn for this migration,
-and the Go-layer capability/session boundary already enforces the load-bearing
-security control. #502 is the single tracker; no duplicate was opened.
+**Plugin webview isolation (#502).** Per-plugin isolated webviews will
+**not** be implemented. Wails v3's service bindings are
+**application-global**: every registered service is reachable from every
+window, and there is no per-window binding scope or capability model
+that could restrict which `Plugin*` methods a given window may call (the
+`WebviewWindowOptions.Permissions` map covers only webview-level OS
+permissions — camera/mic/geo/clipboard — not Go-binding access). A
+spike against `v3.0.0-alpha2.117` confirmed multi-window creation works
+but binding isolation does not exist, so #502's acceptance criterion
+(enforcing capabilities per-plugin-webview via the Wails 3 capability
+model) is unachievable. The existing boundary remains authoritative: the
+iframe sandbox (CSP `connect-src 'none'` + postMessage bridge +
+Go-proxied `PluginFetch` with SSRF defense) for rendered plugin UI, plus
+the Go-layer session verification (`validatePluginSession`) and
+capability grants (`requireGrant`) for every privileged binding —
+together they enforce the property #502 was after (a plugin cannot
+escalate beyond its grants or impersonate another plugin). See ADR
+`docs/decisions/0005-plugin-webview-isolation-wontfix.md`; #151/#152
+stay blocked on a Wails v3 capability that does not exist today.
 
 **Rate limiting.** `PluginFetch` is throttled by a per-plugin token-
 bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
@@ -1110,7 +1121,7 @@ A dedicated fsnotify watcher observes the .system parent directory (not the file
 
 8.3 Settings Menu (frontend)
 
-The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. The SettingsShell is a full-screen frosted overlay with a left tab rail (General / Editor / Appearance / AI Provider / Hotkeys / Plugins / plugin tabs / optional Dev / About — `plugin:<id>` tabs are appended by plugins with bespoke settings pages, and the Dev tab appears only in dev mode), roving keyboard navigation (Arrow/Home/End, Esc to close), and ARIA tablist semantics. The former Workspace tab was folded into **General**, which now carries a **Window** section (user-global, pre-vault: close-to-tray) above a **Workspace** section (vault-scoped: move/copy/switch/export-import) — the split keeps user-global controls rendering before any vault is open. **AI Provider** is a separate core tab by design: it owns shared AI infrastructure and credentials (provider config, API key/keyring, connection test, audit log) that every plugin consumer routes through. Plugin-owned AI features — the `silt-ai-summary` note banner and similar — are plugin behavior rendered through the plugin surface system, not a tab concern; shared infrastructure/security and per-plugin feature behavior stay separate. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable (all plugins — first-party via config.yaml `plugins.disabled` list, third-party via `.disabled` sentinel), uninstall (third-party only), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The titlebar extension icon opens Settings → Plugins.
+The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. Settings is a first-class **view** (`activeView === 'settings'`), matching how the Tasks/Tags plugin views own the sidebar rather than a modal or a workspace tab: the **Sidebar** renders `SettingsNav` (the section list — General / Editor / Appearance / AI Provider / Hotkeys / Plugins / `plugin:<id>` bespoke-settings tabs / Dev (dev mode only) / About — as a `role="tablist"` with roving keyboard navigation Arrow/Home/End), and the **content area** renders `SettingsPanel` (`role="tabpanel"`) for the active section. The section list is a single shared module (`settingsSections.svelte.ts`) consumed by both; the active section (`settingsSection`, default 'general') is the single source of truth, bind-chained App → Sidebar → SettingsNav. Settings opens via the activity-bar gear button (highlighted when active), the `open_settings` hotkey (`Ctrl+,`), the native File→Settings / Help→About menus, and the plugin `'open-settings'` / `open-plugin-manager` events; it is session-only by construction (`activeView` is not persisted). The former `SettingsShell` modal overlay was decomposed into `SettingsNav` + `SettingsPanel`, dropping the modal focus-trap — dismissal is by switching views. The former Workspace tab was folded into **General**, which now carries a **Window** section (user-global, pre-vault: close-to-tray) above a **Workspace** section (vault-scoped: move/copy/switch/export-import) — the split keeps user-global controls rendering before any vault is open. **AI Provider** is a separate core tab by design: it owns shared AI infrastructure and credentials (provider config, API key/keyring, connection test, audit log) that every plugin consumer routes through. Plugin-owned AI features — the `silt-ai-summary` note banner and similar — are plugin behavior rendered through the plugin surface system, not a tab concern; shared infrastructure/security and per-plugin feature behavior stay separate. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable (all plugins — first-party via config.yaml `plugins.disabled` list, third-party via `.disabled` sentinel), uninstall (third-party only), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The titlebar extension icon opens Settings → Plugins.
 
 8.4 Editor Config Consumer (frontend)
 
@@ -1149,7 +1160,9 @@ convention-anchored (see SPECS.md sample): Google Docs wins ties over MS
 Office; Office/Docs win over code editors for shared actions; VS Code/Sublime/
 Notepad++ fill gaps where Office/Docs have no opinion. Windows/Linux only
 (`Ctrl` everywhere). Spellcheck deliberately has no hotkey (wavy underline +
-right-click + a FormatToolbar button). `Load()` decodes over
+right-click + a FormatToolbar button). Settings opens on `open_settings`
+(`Ctrl+,`, the universal settings convention); `Ctrl+,` was freed by moving
+`format_subscript` to `Ctrl+Shift,`. `Load()` decodes over
 `Defaults()`, which is the single source of truth for hotkeys. Paste is not in the hotkey map:
 `Ctrl+V` is ProseMirror's native rich paste, `Ctrl+Shift+V` inserts the
 clipboard as plain text (PlainPaste extension, lib/editor/plainPaste.ts).

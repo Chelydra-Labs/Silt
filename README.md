@@ -75,6 +75,9 @@ Each concern in Silt has a single source of truth. Refer to these documents for 
 > 4. Click **Apply** or **OK**, then run/extract the file.
 
 ### Linux
+> [!NOTE]
+> **Minimum distro:** Silt links against WebKitGTK 6.0 (the Wails v3 default Linux stack), which ships in **Ubuntu 24.04+ / Debian 13 / Fedora 39+**. Older releases (e.g. Ubuntu 22.04) lack `libwebkitgtk-6.0` and can't run the AppImage or resolve the `.deb`'s dependencies.
+
 1. Download the latest AppImage (`Silt-*.AppImage`) or Debian package (`silt_*_debian_amd64.deb`) from [GitHub Releases](https://github.com/Chelydra-Labs/Silt/releases).
 2. Choose one of the following installation paths:
    - **AppImage (Universal):**
@@ -84,7 +87,7 @@ Each concern in Silt has a single source of truth. Refer to these documents for 
      ./Silt-*.AppImage
      ```
    - **Debian / Ubuntu Package:**
-     Install via `apt` (which resolves required webview dependencies like WebKit2GTK):
+      Install via `apt` (which resolves required webview dependencies like WebKitGTK):
      ```bash
      sudo apt install ./silt_*_debian_amd64.deb
      ```

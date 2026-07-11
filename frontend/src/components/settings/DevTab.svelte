@@ -1,7 +1,7 @@
 <script lang="ts">
 </script>
 
-<div class="p-6 max-w-2xl space-y-6">
+<div class="p-6 max-w-4xl mx-auto w-full space-y-6">
   <div
     class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
   >
@@ -12,7 +12,7 @@
     </h4>
 
     <div class="space-y-3">
-      <p class="text-text-muted/70 text-[12px] font-body-md leading-relaxed">
+      <p class="text-text-muted text-[12px] font-body-md leading-relaxed">
         Dev Mode is enabled — the Dev tab appears in the settings sidebar.
         Disable it on the <strong>About</strong> page.
       </p>
@@ -23,10 +23,10 @@
         <p class="text-text-primary text-[13px] font-body-md font-semibold">
           Chromium DevTools
         </p>
-        <p class="text-text-muted/70 text-[11px] font-body-md leading-relaxed">
+        <p class="text-text-muted text-[11px] font-body-md leading-relaxed">
           Inspect the DOM, view console errors, and debug rendering issues.
         </p>
-        <p class="text-text-muted/70 text-[11px] font-body-md leading-relaxed">
+        <p class="text-text-muted text-[11px] font-body-md leading-relaxed">
           Press <kbd
             class="inline-block px-1.5 py-0.5 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-[10px] font-mono"
             >Ctrl+Shift+F12</kbd
@@ -40,7 +40,7 @@
         <p class="text-text-primary text-[13px] font-body-md font-semibold">
           State Debug Badge
         </p>
-        <p class="text-text-muted/70 text-[11px] font-body-md leading-relaxed">
+        <p class="text-text-muted text-[11px] font-body-md leading-relaxed">
           A red badge appears at the bottom of the content area showing the
           current navigation state (<code>view</code>, <code>nb</code>,
           <code>pg</code>,
