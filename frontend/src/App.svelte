@@ -665,80 +665,73 @@
         }
       }
 
+      // Global actions are mutually exclusive: the first chord that matches
+      // wins and the rest are skipped, so two global actions a user remapped
+      // to the same chord can't double-fire. The intentional global-vs-editor
+      // overlap (e.g. Ctrl+B = toggle_sidebar globally, format_bold in-editor)
+      // is resolved by the ProseMirror guard above, which returns before this
+      // chain runs when the editor is focused.
       if (matchHotkey(e, hotkeys.open_search)) {
         e.preventDefault()
         showSearch = !showSearch
-      }
-      if (matchHotkey(e, hotkeys.find_in_page)) {
+      } else if (matchHotkey(e, hotkeys.find_in_page)) {
         e.preventDefault()
         findBarState.openFind()
-      }
-      if (matchHotkey(e, hotkeys.replace)) {
+      } else if (matchHotkey(e, hotkeys.replace)) {
         e.preventDefault()
         findBarState.openReplace()
-      }
-      if (matchHotkey(e, hotkeys.global_replace)) {
+      } else if (matchHotkey(e, hotkeys.global_replace)) {
         e.preventDefault()
         showGlobalReplace = !showGlobalReplace
-      }
-      if (matchHotkey(e, hotkeys.toggle_sidebar)) {
+      } else if (matchHotkey(e, hotkeys.toggle_sidebar)) {
         e.preventDefault()
         sidebarCollapsed = !sidebarCollapsed
         manuallyCollapsed = sidebarCollapsed
-      }
-      if (matchHotkey(e, hotkeys.focus_sidebar)) {
+      } else if (matchHotkey(e, hotkeys.focus_sidebar)) {
         e.preventDefault()
         void focusSidebar()
-      }
-      if (matchHotkey(e, hotkeys.cycle_view_layout)) {
+      } else if (matchHotkey(e, hotkeys.cycle_view_layout)) {
         e.preventDefault()
         cycleView()
-      }
-      if (matchHotkey(e, hotkeys.open_template_picker)) {
+      } else if (matchHotkey(e, hotkeys.open_template_picker)) {
         e.preventDefault()
         templatePickerMode = 'new-page'
         showTemplatePicker = !showTemplatePicker
-      }
-      if (matchHotkey(e, hotkeys.new_task)) {
+      } else if (matchHotkey(e, hotkeys.new_task)) {
         e.preventDefault()
         showQuickAdd = !showQuickAdd
-      }
-      if (matchHotkey(e, hotkeys.toggle_view_mode)) {
+      } else if (matchHotkey(e, hotkeys.toggle_view_mode)) {
         e.preventDefault()
         // Flip the active tab's view mode directly (#195) — no window-event
         // indirection, App owns the per-tab state.
         if (activeTabId) handleToggleViewMode(activeTabId)
-      }
-      if (matchHotkey(e, hotkeys.toggle_format_toolbar)) {
+      } else if (matchHotkey(e, hotkeys.toggle_format_toolbar)) {
         e.preventDefault()
         void toggleFormatToolbar()
-      }
-      if (matchHotkey(e, hotkeys.toggle_focus_mode)) {
+      } else if (matchHotkey(e, hotkeys.toggle_focus_mode)) {
         e.preventDefault()
         void toggleFocusMode()
-      }
-      if (matchHotkey(e, hotkeys.toggle_typewriter_mode)) {
+      } else if (matchHotkey(e, hotkeys.toggle_typewriter_mode)) {
         e.preventDefault()
         void toggleTypewriterMode()
-      }
-      if (hotkeys.open_settings && matchHotkey(e, hotkeys.open_settings)) {
+      } else if (
+        hotkeys.open_settings &&
+        matchHotkey(e, hotkeys.open_settings)
+      ) {
         e.preventDefault()
         openSettings()
         return
-      }
-      // Tab-strip hotkeys (#142). Ctrl+Tab / Ctrl+Shift+Tab cycle MRU;
-      // Ctrl+W closes the active tab. All three are remappable / disable-
-      // able (empty string) from Settings → General. No-op when 0 tabs.
-      if (displayedTabs.length > 0) {
+      } else if (displayedTabs.length > 0) {
+        // Tab-strip hotkeys (#142). Ctrl+Tab / Ctrl+Shift+Tab cycle MRU;
+        // Ctrl+W closes the active tab. All three are remappable / disable-
+        // able (empty string) from Settings → General. No-op when 0 tabs.
         if (matchHotkey(e, hotkeys.next_tab)) {
           e.preventDefault()
           handleCycleTab(1)
-        }
-        if (matchHotkey(e, hotkeys.prev_tab)) {
+        } else if (matchHotkey(e, hotkeys.prev_tab)) {
           e.preventDefault()
           handleCycleTab(-1)
-        }
-        if (matchHotkey(e, hotkeys.close_tab)) {
+        } else if (matchHotkey(e, hotkeys.close_tab)) {
           e.preventDefault()
           // Guard: only close if the active tab is visible in the current
           // notebook's displayed set (#142 review: closing a hidden tab

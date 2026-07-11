@@ -137,8 +137,16 @@ rm -rf "$ROOT/build/bin"
 # (linux:build:native), then creates the .AppImage + .deb. EXTRA_TAGS=gtk3
 # selects the GTK3 + WebKit2GTK 4.1 stack (the only GTK3 variant in wails3 v3).
 # VERSION + GOARCH are exported so nfpm can interpolate them in the .deb.
+# GOARCH defaults to the host arch so the .deb's arch metadata matches the
+# binary the native build actually produced (the Taskfile's build:native
+# targets the host ARCH). Override with GOARCH=... for cross-arch packaging.
 log_info "Building + packaging (.AppImage + .deb) with Wails v3 linux Taskfile..."
-export VERSION GOARCH=amd64
+case "$(uname -m)" in
+  aarch64|arm64) DEFAULT_GOARCH=arm64 ;;
+  *) DEFAULT_GOARCH=amd64 ;;
+esac
+export VERSION
+export GOARCH="${GOARCH:-$DEFAULT_GOARCH}"
 wails3 task linux:package EXTRA_TAGS=gtk3
 
 # --- collect artifacts into the distribution directory ---

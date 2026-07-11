@@ -157,16 +157,25 @@ tasks:
 
   generate:deb:
     summary: Creates a deb package
+    env:
+      # Default so direct `wails3 task linux:package` (without build-linux.sh
+      # exporting VERSION) still yields a valid package; the wrapper's real
+      # version takes precedence when set.
+      VERSION: '{{.VERSION | default "0.0.0-dev"}}'
     cmds:
       - wails3 tool package -name "{{.APP_NAME}}" -format deb -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/{{.BIN_DIR}}
 
   generate:rpm:
     summary: Creates a rpm package
+    env:
+      VERSION: '{{.VERSION | default "0.0.0-dev"}}'
     cmds:
       - wails3 tool package -name "{{.APP_NAME}}" -format rpm -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/{{.BIN_DIR}}
 
   generate:aur:
     summary: Creates a arch linux packager package
+    env:
+      VERSION: '{{.VERSION | default "0.0.0-dev"}}'
     cmds:
       - wails3 tool package -name "{{.APP_NAME}}" -format archlinux -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/{{.BIN_DIR}}
 

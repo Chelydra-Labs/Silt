@@ -10,6 +10,7 @@
   // Look & feel, …). The dividers are purely presentational — the tablist
   // stays ONE flat list of tabs, so roving tabindex + Arrow/Home/End traverse
   // every section regardless of which group it sits in.
+  import { tick } from 'svelte'
   import {
     getSettingsSections,
     SETTINGS_GROUP_LABELS,
@@ -25,8 +26,13 @@
   let sections = $derived(getSettingsSections())
   let navRefs: HTMLButtonElement[] = $state([])
 
-  function selectSection(id: string) {
+  async function selectSection(id: string) {
     section = id
+    // Await the DOM update so navRefs reflects the (possibly just-changed)
+    // section list before focusing — a plugin tab added dynamically isn't
+    // bound to navRefs synchronously, so focusing without the tick could
+    // target a stale/undefined ref.
+    await tick()
     const idx = sections.findIndex((s) => s.id === id)
     navRefs[idx]?.focus()
   }
