@@ -143,8 +143,9 @@
           ?.scrollIntoView({ block: 'start', behavior: 'smooth' })}
       class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
     >
-      <span class="material-symbols-outlined text-text-muted text-[18px]"
-        >folder</span
+      <span
+        class="material-symbols-outlined text-text-muted text-[18px]"
+        aria-hidden="true">folder</span
       >
       <span class="min-w-0 flex-1">
         <span
@@ -167,7 +168,9 @@
       onclick={() => jumpTo('appearance')}
       class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
     >
-      <span class="material-symbols-outlined text-text-muted text-[18px]"
+      <span
+        class="material-symbols-outlined text-text-muted text-[18px]"
+        aria-hidden="true"
         >{themeState.mode === 'dark'
           ? 'dark_mode'
           : themeState.mode === 'light'
@@ -193,7 +196,8 @@
       <span
         class="material-symbols-outlined text-[18px] {aiNeedsSetup
           ? 'text-status-warn'
-          : 'text-accent-primary-start'}">smart_toy</span
+          : 'text-accent-primary-start'}"
+        aria-hidden="true">smart_toy</span
       >
       <span class="min-w-0 flex-1">
         <span
@@ -211,8 +215,9 @@
       onclick={() => jumpTo('plugins')}
       class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
     >
-      <span class="material-symbols-outlined text-text-muted text-[18px]"
-        >extension</span
+      <span
+        class="material-symbols-outlined text-text-muted text-[18px]"
+        aria-hidden="true">extension</span
       >
       <span class="min-w-0 flex-1">
         <span

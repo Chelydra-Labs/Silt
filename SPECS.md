@@ -813,7 +813,7 @@ already live on disk today:
 - Footnotes (`[^1]`) — de-facto on GitHub since 2021
 
 Sub/super uses HTML `<sub>`/`<sup>` (GFM reserves `~` for strikethrough,
-so Pandoc's `~sub~`/`^sup^` is not GFM-compatible). The `Ctrl+,` /
+so Pandoc's `~sub~`/`^sup^` is not GFM-compatible). The `Ctrl+Shift+,` /
 `Ctrl+.` hotkeys toggle these marks.
 
 ## Inline Formatting
@@ -1000,6 +1000,10 @@ hotkeys:
   open_search: "Ctrl+Shift+F"
   # open_command_palette → Alt+Q (the "search the app" convention).
   open_command_palette: "Alt+Q"
+  # open_settings → Ctrl+, (the universal settings convention; freed from
+  # format_subscript, which moved to Ctrl+Shift, below). #511 made settings a
+  # first-class sidebar-owned view.
+  open_settings: "Ctrl+,"
   # cycle_view_layout → Ctrl+Alt+V (Alt+Tab is the OS window-switcher).
   cycle_view_layout: "Ctrl+Alt+V"
   indent_block: "Tab"
@@ -1023,7 +1027,7 @@ hotkeys:
   format_code: "Ctrl+E"
   format_link: "Ctrl+K"
   format_highlight: "Ctrl+Shift+H"
-  format_subscript: "Ctrl+,"
+  format_subscript: "Ctrl+Shift,"
   format_superscript: "Ctrl+."
   # Heading level hotkeys.
   set_h1: "Ctrl+Alt+1"

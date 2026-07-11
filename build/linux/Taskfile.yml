@@ -159,9 +159,11 @@ tasks:
     summary: Creates a deb package
     env:
       # Default so direct `wails3 task linux:package` (without build-linux.sh
-      # exporting VERSION) still yields a valid package; the wrapper's real
-      # version takes precedence when set.
+      # exporting VERSION/GOARCH) still yields a valid package; the wrapper's
+      # real values take precedence when set. GOARCH mirrors build:native's
+      # default (host arch) since nfpm.yaml interpolates arch: ${GOARCH}.
       VERSION: '{{.VERSION | default "0.0.0-dev"}}'
+      GOARCH: '{{.GOARCH | default ARCH}}'
     cmds:
       - wails3 tool package -name "{{.APP_NAME}}" -format deb -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/{{.BIN_DIR}}
 
@@ -169,6 +171,7 @@ tasks:
     summary: Creates a rpm package
     env:
       VERSION: '{{.VERSION | default "0.0.0-dev"}}'
+      GOARCH: '{{.GOARCH | default ARCH}}'
     cmds:
       - wails3 tool package -name "{{.APP_NAME}}" -format rpm -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/{{.BIN_DIR}}
 
@@ -176,6 +179,7 @@ tasks:
     summary: Creates a arch linux packager package
     env:
       VERSION: '{{.VERSION | default "0.0.0-dev"}}'
+      GOARCH: '{{.GOARCH | default ARCH}}'
     cmds:
       - wails3 tool package -name "{{.APP_NAME}}" -format archlinux -config ./build/linux/nfpm/nfpm.yaml -out {{.ROOT_DIR}}/{{.BIN_DIR}}
 

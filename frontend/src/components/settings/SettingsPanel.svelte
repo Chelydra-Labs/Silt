@@ -7,8 +7,8 @@
   //
   // The panel owns the shared section header (title + one-line description)
   // and the settings search box, so every section reads as one designed
-  // surface. Width is driven per-section via the `width` field
-  // ('form' → centered max-w-4xl, 'wide' → full panel width).
+  // surface. Content width is set by each tab's own root container
+  // (form-style tabs center at max-w-4xl; grid/list tabs use max-w-6xl).
   import { onMount, onDestroy, tick } from 'svelte'
   import GeneralTab from './GeneralTab.svelte'
   import EditorTab from './EditorTab.svelte'

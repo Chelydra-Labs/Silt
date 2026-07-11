@@ -36,12 +36,11 @@ export const SETTINGS_GROUP_LABELS: Record<SettingsGroup, string> = {
 }
 
 /**
- * The unified content width each section's body uses, driven from the panel
- * header so every tab shares one designed surface. Form-style tabs center at
- * `max-w-4xl`; grid/list tabs (themes, plugins, AI) use the full panel width.
+ * The unified content width each section's body uses is applied directly by
+ * each tab's root container (form-style tabs center at `max-w-4xl`; grid/list
+ * tabs like themes/plugins/AI use `max-w-6xl`). There is no `width` field on
+ * SettingsSection — the per-tab class is the single source of truth.
  */
-export type SettingsWidth = 'form' | 'wide'
-
 export interface SettingsSection {
   id: string
   label: string
@@ -50,8 +49,6 @@ export interface SettingsSection {
   description: string
   /** Visual cluster in the sidebar nav. */
   group: SettingsGroup
-  /** Content measure applied by SettingsPanel's scroll container. */
-  width: SettingsWidth
   /** Present only on `plugin:*` sections — the bespoke-settings plugin. */
   plugin?: RegisteredPlugin
 }
@@ -102,7 +99,6 @@ export function getSettingsSections(): SettingsSection[] {
         group: plugin.manifest.id.startsWith('silt-ai-')
           ? 'intelligence'
           : 'customize',
-        width: 'wide',
         plugin
       })
     }
@@ -122,7 +118,6 @@ export function getSettingsSections(): SettingsSection[] {
         group: plugin.manifest.id.startsWith('silt-ai-')
           ? 'intelligence'
           : 'customize',
-        width: 'wide',
         plugin
       })
       seen.add(id)
@@ -135,48 +130,42 @@ export function getSettingsSections(): SettingsSection[] {
       label: 'General',
       icon: 'settings',
       description: 'Workspace, window, and update preferences.',
-      group: 'workspace',
-      width: 'form'
+      group: 'workspace'
     },
     {
       id: 'editor',
       label: 'Editor',
       icon: 'edit_note',
       description: 'Typography, writing aids, and editor behaviour.',
-      group: 'look-feel',
-      width: 'form'
+      group: 'look-feel'
     },
     {
       id: 'appearance',
       label: 'Appearance',
       icon: 'palette',
       description: 'Themes, color mode, and custom theme import.',
-      group: 'look-feel',
-      width: 'wide'
+      group: 'look-feel'
     },
     {
       id: 'ai',
       label: 'AI Provider',
       icon: 'smart_toy',
       description: 'Chat and embedding models, keys, and connection tests.',
-      group: 'intelligence',
-      width: 'wide'
+      group: 'intelligence'
     },
     {
       id: 'hotkeys',
       label: 'Hotkeys',
       icon: 'keyboard',
       description: 'Keyboard shortcuts for commands and navigation.',
-      group: 'customize',
-      width: 'form'
+      group: 'customize'
     },
     {
       id: 'plugins',
       label: 'Plugins',
       icon: 'extension',
       description: 'Install, enable, and manage capabilities.',
-      group: 'customize',
-      width: 'wide'
+      group: 'customize'
     },
     ...pluginSections,
     ...(devMode
@@ -186,8 +175,7 @@ export function getSettingsSections(): SettingsSection[] {
             label: 'Dev',
             icon: 'code',
             description: 'Diagnostic tools for development.',
-            group: 'about' as const,
-            width: 'form' as const
+            group: 'about' as const
           } satisfies SettingsSection
         ]
       : []),
@@ -196,8 +184,28 @@ export function getSettingsSections(): SettingsSection[] {
       label: 'About',
       icon: 'info',
       description: 'Version, updates, and developer mode.',
-      group: 'about',
-      width: 'form'
+      group: 'about'
     }
   ]
+}
+
+/** Section shown when an unknown section id is requested — a typo'd
+ * `ctx.openSettings('foo')` from a plugin, or a stale persisted id. 'general'
+ * is the always-present landing tab. */
+export const FALLBACK_SETTINGS_SECTION = 'general'
+
+/**
+ * Resolve a requested settings-section id to a known one, falling back to the
+ * default when it is absent or unknown. Pure (takes the known-id list) so it
+ * can be unit-tested without mounting the reactive registry. Centralizes the
+ * validation that both the open-settings path (PluginContext.openSettings →
+ * App.openSettings) and the in-view section jump share, so a bad id never
+ * renders a blank panel or a dangling `aria-labelledby`. */
+export function resolveSettingsSectionId(
+  requested: string | undefined | null,
+  knownIds: string[]
+): string {
+  return requested && knownIds.includes(requested)
+    ? requested
+    : FALLBACK_SETTINGS_SECTION
 }

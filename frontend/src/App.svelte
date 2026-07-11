@@ -30,7 +30,10 @@
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
   import SettingsPanel from './components/settings/SettingsPanel.svelte'
-  import { getSettingsSections } from './components/settings/settingsSections.svelte'
+  import {
+    getSettingsSections,
+    resolveSettingsSectionId
+  } from './components/settings/settingsSections.svelte'
   import QuickAddTask from './plugins/first-party/silt-tasks/components/QuickAddTask.svelte'
   import { loadPlugins } from './plugins/loader'
   import {
@@ -602,11 +605,13 @@
     function handleSettingsJump(e: Event) {
       const detail = (e as CustomEvent).detail
       if (!detail || typeof detail.section !== 'string') return
-      // Validate against the live section registry so a typo'd id from a
-      // future dispatcher can't render an empty/broken panel. Falls back to
-      // 'general' on a miss rather than silently navigating nowhere.
-      const known = getSettingsSections().some((s) => s.id === detail.section)
-      settingsSection = known ? detail.section : 'general'
+      // Validate against the live section registry via the shared resolver so
+      // a typo'd id from a future dispatcher can't render an empty/broken
+      // panel. Falls back to 'general' on a miss rather than navigating nowhere.
+      settingsSection = resolveSettingsSectionId(
+        detail.section,
+        getSettingsSections().map((s) => s.id)
+      )
     }
     // Move keyboard focus into the active sidebar (#326 item 8). Expands the
     // sidebar if collapsed, then focuses the first focusable element inside it
@@ -1234,7 +1239,15 @@
   // their page when they leave Settings. The section persists across opens so
   // re-entering Settings returns the user to the panel they last visited.
   function openSettings(section: string = 'general') {
-    settingsSection = section
+    // Validate against the live section registry so an unknown id (e.g. a
+    // typo'd ctx.openSettings('foo') from a plugin) can't render a blank
+    // panel or point aria-labelledby at a nonexistent tab. Falls back to
+    // 'general'. Mirrors the validation in handleSettingsJump via the shared
+    // resolver so both entry paths are consistent.
+    settingsSection = resolveSettingsSectionId(
+      section,
+      getSettingsSections().map((s) => s.id)
+    )
     activeView = 'settings'
   }
 

@@ -578,12 +578,26 @@ export function insertTable(editor: Editor, rows = 3, cols = 3): boolean {
   return true
 }
 
+// Drop keymap entries whose key is '' — resolveShortcut returns '' when the
+// user explicitly cleared a binding ("Leave empty to disable" in HotkeysTab),
+// so the entry must be omitted rather than left at (or restored to) its
+// default. An empty string is never a valid ProseMirror key, so removing it is
+// safe. (Format marks coexist with TipTap StarterKit defaults; clearing such a
+// binding here removes Silt's override but not the StarterKit's own default —
+// a deeper change reserved for a follow-up.)
+function omitDisabled(
+  map: Record<string, () => boolean>
+): Record<string, () => boolean> {
+  delete map['']
+  return map
+}
+
 // Build the config-driven editor shortcut map (#311). Reads config.hotkeys
 // at editor-creation time and converts each binding to the ProseMirror keymap
-// format via resolveShortcut. Falls back to hardcoded defaults when the config
-// entry is absent or empty. Covers all editor-scoped remappable shortcuts:
-// heading levels, alignment, quote/details toggles, table row/col inserts,
-// and inline format marks.
+// format via resolveShortcut. Absent entries fall back to hardcoded defaults;
+// an explicitly empty entry disables the shortcut. Covers all editor-scoped
+// remappable shortcuts: heading levels, alignment, quote/details toggles,
+// table row/col inserts, and inline format marks.
 function buildConfigDrivenShortcuts(
   editor: Editor
 ): Record<string, () => boolean> {
@@ -654,7 +668,7 @@ function buildConfigDrivenShortcuts(
       ? (editor.chain().focus().addColumnAfter().run(), true)
       : false
 
-  return map
+  return omitDisabled(map)
 }
 
 // Register config-driven bindings for inline format marks (bold, italic, etc.)
@@ -697,7 +711,7 @@ function buildFormatMarkShortcuts(
     return true
   }
 
-  return map
+  return omitDisabled(map)
 }
 
 export const SiltBlockKeymaps = Extension.create({

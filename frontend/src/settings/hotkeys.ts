@@ -166,8 +166,12 @@ export function configKeyToProseMirrorKey(
 /**
  * Resolve a keyboard shortcut from config, falling back to a default
  * ProseMirror key string. Reads hotkeys[configKey], converts via
- * configKeyToProseMirrorKey, and returns the result. Falls back to
- * defaultPmKey if the config entry is absent, empty, or unparseable.
+ * configKeyToProseMirrorKey, and returns the result.
+ *
+ * An explicitly empty binding ("") means the user disabled the shortcut
+ * ("Leave empty to disable" in HotkeysTab) — returns '' so callers omit the
+ * keymap entry instead of restoring the default. Only an ABSENT (undefined)
+ * or unparseable entry falls back to defaultPmKey.
  */
 export function resolveShortcut(
   configKey: string,
@@ -175,6 +179,8 @@ export function resolveShortcut(
   hotkeys: Record<string, string | undefined>
 ): string {
   const configBinding = hotkeys[configKey]
+  // Explicitly empty = disabled (HotkeysTab "Leave empty to disable").
+  if (configBinding === '') return ''
   const converted = configKeyToProseMirrorKey(configBinding)
   return converted || defaultPmKey
 }

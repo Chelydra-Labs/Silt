@@ -27,7 +27,11 @@ vi.mock('../../plugins/surfaces', () => ({
 }))
 
 import { searchSettings, getSettingsIndex } from './settingsIndex'
-import { getSettingsSections } from './settingsSections.svelte'
+import {
+  getSettingsSections,
+  resolveSettingsSectionId,
+  FALLBACK_SETTINGS_SECTION
+} from './settingsSections.svelte'
 
 describe('settingsIndex — sectionId validity (drift guard)', () => {
   beforeEach(() => {
@@ -56,6 +60,47 @@ describe('settingsIndex — sectionId validity (drift guard)', () => {
     })
     const ids = getSettingsIndex().map((e) => e.sectionId)
     expect(ids).toContain('plugin:my-plugin')
+  })
+})
+
+describe('resolveSettingsSectionId — invalid-section fallback', () => {
+  // Pins the contract that a bad section id never renders a blank panel or a
+  // dangling aria-labelledby: both the open-settings path (PluginContext →
+  // App.openSettings) and the in-view jump fall back to 'general'.
+  const known = ['general', 'editor', 'appearance', 'plugins']
+
+  it('returns the requested id when it is known', () => {
+    expect(resolveSettingsSectionId('appearance', known)).toBe('appearance')
+    expect(resolveSettingsSectionId('plugins', known)).toBe('plugins')
+  })
+
+  it('falls back when the id is unknown', () => {
+    expect(resolveSettingsSectionId('typo', known)).toBe(
+      FALLBACK_SETTINGS_SECTION
+    )
+    expect(resolveSettingsSectionId('plugin:nope', known)).toBe(
+      FALLBACK_SETTINGS_SECTION
+    )
+  })
+
+  it('falls back when the id is absent/empty', () => {
+    expect(resolveSettingsSectionId(undefined, known)).toBe(
+      FALLBACK_SETTINGS_SECTION
+    )
+    expect(resolveSettingsSectionId('', known)).toBe(FALLBACK_SETTINGS_SECTION)
+    expect(resolveSettingsSectionId(null, known)).toBe(
+      FALLBACK_SETTINGS_SECTION
+    )
+  })
+
+  it('resolves against the live registry (every real section id passes)', () => {
+    const live = getSettingsSections().map((s) => s.id)
+    for (const id of live) {
+      expect(resolveSettingsSectionId(id, live)).toBe(id)
+    }
+    expect(resolveSettingsSectionId('not-a-section', live)).toBe(
+      FALLBACK_SETTINGS_SECTION
+    )
   })
 })
 
