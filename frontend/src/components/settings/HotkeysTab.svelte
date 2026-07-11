@@ -124,6 +124,7 @@
           {#each hotkeyEntries as [key, value] (key)}
             <div class="flex flex-col gap-1">
               <span
+                id="hotkey-label-{key}"
                 class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider truncate"
                 title={prettyLabel(key)}
               >
@@ -132,6 +133,7 @@
               <HotkeyCaptureInput
                 value={value ?? ''}
                 label={prettyLabel(key)}
+                labelId="hotkey-label-{key}"
                 onchange={(next) => {
                   draft!.hotkeys[key] = next
                   touch()

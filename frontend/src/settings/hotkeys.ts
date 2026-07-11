@@ -96,6 +96,10 @@ export function parseHotkey(s: string | undefined | null): ParsedHotkey | null {
 /**
  * Format a ParsedHotkey to the canonical config binding string
  * (e.g. "Ctrl+Shift+9"). Modifier order is stable: Ctrl, Alt, Shift, Meta.
+ *
+ * Named tokens (Space, ArrowUp, Escape, …) must re-parse via parseHotkey and
+ * convert via configKeyToProseMirrorKey — capture uses KeyboardEvent.key forms
+ * that free-typed short names (Up) also accept.
  */
 export function formatHotkey(h: ParsedHotkey): string {
   const parts: string[] = []
@@ -106,21 +110,25 @@ export function formatHotkey(h: ParsedHotkey): string {
   // Display single-character keys uppercased for letters; keep symbols as-is.
   const key =
     h.key.length === 1 && /[a-z]/.test(h.key) ? h.key.toUpperCase() : h.key
-  // Named special keys for readability (Escape not escape).
+  // Named special keys for readability and stable re-parse tokens.
+  // Space must be "Space" not " " — parseHotkey filters empty segments after trim.
+  // Arrows must be ArrowUp (not Arrowup) so PM_KEY_NORMALIZE / PM can match.
   const named =
-    key === 'escape'
-      ? 'Escape'
-      : key === 'enter'
-        ? 'Enter'
-        : key === 'tab'
-          ? 'Tab'
-          : key === 'backspace'
-            ? 'Backspace'
-            : key === 'delete'
-              ? 'Delete'
-              : key.startsWith('arrow')
-                ? key.charAt(0).toUpperCase() + key.slice(1)
-                : key
+    key === ' ' || key === 'space'
+      ? 'Space'
+      : key === 'escape'
+        ? 'Escape'
+        : key === 'enter'
+          ? 'Enter'
+          : key === 'tab'
+            ? 'Tab'
+            : key === 'backspace'
+              ? 'Backspace'
+              : key === 'delete'
+                ? 'Delete'
+                : key.startsWith('arrow') && key.length > 5
+                  ? 'Arrow' + key.charAt(5).toUpperCase() + key.slice(6)
+                  : key
   parts.push(named)
   return parts.join('+')
 }
@@ -129,11 +137,12 @@ const MODIFIER_KEYS = new Set(['control', 'shift', 'alt', 'meta', 'altgraph'])
 
 /**
  * Build a ParsedHotkey from a KeyboardEvent during capture mode.
- * Returns null for pure-modifier keydowns (user is still holding modifiers).
+ * Returns null for pure-modifier keydowns (user is still holding modifiers)
+ * and for Dead/Unidentified keys (IME composition / international layouts).
  */
 export function hotkeyFromKeyboardEvent(e: KeyboardEvent): ParsedHotkey | null {
   const raw = e.key
-  if (!raw) return null
+  if (!raw || raw === 'Dead' || raw === 'Unidentified') return null
   if (MODIFIER_KEYS.has(raw.toLowerCase())) return null
 
   let key = raw
@@ -192,12 +201,20 @@ export function matchHotkey(
 // - Punctuation keys (., /, ,) are single-character key names.
 
 // Map arrow/direction names from config notation to KeyboardEvent.key names.
+// Short forms (up) come from free-typed config; long forms (arrowup) come from
+// the capture widget (KeyboardEvent.key lowercased) and formatHotkey output
+// after parseHotkey normalizes "ArrowUp" → "arrowup".
 const PM_KEY_NORMALIZE: Record<string, string> = {
   up: 'ArrowUp',
   down: 'ArrowDown',
   left: 'ArrowLeft',
   right: 'ArrowRight',
+  arrowup: 'ArrowUp',
+  arrowdown: 'ArrowDown',
+  arrowleft: 'ArrowLeft',
+  arrowright: 'ArrowRight',
   space: ' ',
+  ' ': ' ',
   esc: 'Escape',
   del: 'Delete'
 }

@@ -411,4 +411,42 @@ describe('PluginsTab security stats badge (#518)', () => {
 
     expect(screen.queryByRole('status', { name: /denied|limited/i })).toBeNull()
   })
+
+  it('subscribes to security:event and refreshes the badge live', async () => {
+    let securityHandler: (() => void) | undefined
+    mocks.eventsOn.mockImplementation((name: string, cb: () => void) => {
+      if (name === 'security:event') securityHandler = cb
+      return () => {}
+    })
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    expect(mocks.eventsOn).toHaveBeenCalledWith(
+      'security:event',
+      expect.any(Function)
+    )
+    expect(securityHandler).toBeTypeOf('function')
+    expect(screen.queryByRole('status', { name: /denied|limited/i })).toBeNull()
+
+    mocks.getPluginSecurityStats.mockResolvedValue([
+      {
+        pluginId: 'noisy',
+        denials: 1,
+        rateLimited: 0,
+        lastCapability: 'network'
+      }
+    ])
+    securityHandler!()
+    await flush()
+
+    expect(
+      screen.getByRole('status', { name: /1 capability denial/i })
+    ).toBeTruthy()
+  })
 })

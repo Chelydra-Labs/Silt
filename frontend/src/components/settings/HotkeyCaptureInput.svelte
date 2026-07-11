@@ -7,11 +7,13 @@
 
   interface Props {
     value: string
-    /** Accessible name for the binding field (action label). */
+    /** Human label for help text and fallback accessible name. */
     label: string
+    /** Optional id of the visible label element for aria-labelledby. */
+    labelId?: string
     onchange: (next: string) => void
   }
-  let { value, label, onchange }: Props = $props()
+  let { value, label, labelId, onchange }: Props = $props()
 
   let capturing = $state(false)
   const helpId = $derived(
@@ -32,9 +34,23 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
-    if (!capturing) return
+    // Idle: Enter/Space activates capture (keyboard-friendly; bare focus does not).
+    if (!capturing) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        startCapture()
+      }
+      return
+    }
 
-    if (e.key === 'Escape') {
+    // Escape alone cancels; Escape+modifiers is a real binding (e.g. Ctrl+Escape).
+    if (
+      e.key === 'Escape' &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey &&
+      !e.shiftKey
+    ) {
       e.preventDefault()
       e.stopPropagation()
       cancelCapture()
@@ -79,9 +95,7 @@
   let display = $derived(
     capturing ? 'Press a shortcut…' : value.trim() === '' ? '' : value
   )
-  let isValid = $derived(
-    value === undefined || value.trim() === '' || parseHotkey(value) !== null
-  )
+  let isValid = $derived(value.trim() === '' || parseHotkey(value) !== null)
 </script>
 
 <div class="flex flex-col gap-1">
@@ -90,11 +104,11 @@
       type="text"
       readonly
       value={display}
-      aria-label={label}
+      aria-label={labelId ? undefined : label}
+      aria-labelledby={labelId}
       aria-invalid={!isValid}
       aria-describedby={helpId}
       placeholder="Click, then press keys"
-      onfocus={startCapture}
       onclick={startCapture}
       onkeydown={onKeyDown}
       onblur={onBlur}
@@ -129,7 +143,8 @@
     {#if capturing}
       Press a shortcut for {label}. Escape cancels. Backspace clears.
     {:else}
-      Click the field, then press a keyboard shortcut. Leave empty to disable.
+      Click the field or press Enter, then press a keyboard shortcut. Leave
+      empty to disable.
     {/if}
   </p>
 </div>
