@@ -41,6 +41,80 @@ func (dm *DatabaseManager) GetBlockLocation(blockID string) (BlockLocation, erro
 	return loc, err
 }
 
+// PageBlockCount is one GROUP BY row from CountBlocksGroupedByPage — block
+// totals per (source, notebook, section, page) for the navigation tree.
+type PageBlockCount struct {
+	Source   string
+	Notebook string
+	Section  string
+	Page     string
+	Count    int
+}
+
+// CountBlocksGroupedByPage returns block counts keyed by page location.
+// Used by ListNavigation so App IPC does not hold a raw SQLDB() pointer
+// across the query (lease-aware; post-close returns ErrDBClosed).
+func (dm *DatabaseManager) CountBlocksGroupedByPage() ([]PageBlockCount, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	rows, err := db.Query(
+		`SELECT COALESCE(source, 'vault'), notebook, section, page, COUNT(*)
+		 FROM blocks
+		 GROUP BY COALESCE(source, 'vault'), notebook, section, page`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("count blocks by page: %w", err)
+	}
+	defer rows.Close()
+	var out []PageBlockCount
+	for rows.Next() {
+		var row PageBlockCount
+		if err := rows.Scan(&row.Source, &row.Notebook, &row.Section, &row.Page, &row.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// GetBlockReference loads hover/nav fields for a ((uuid)) reference.
+// Missing IDs return Exists=false with a nil error (broken-link chip).
+// Post-close returns ErrDBClosed.
+func (dm *DatabaseManager) GetBlockReference(blockID string) (parser.BlockReference, error) {
+	ref := parser.BlockReference{ID: blockID}
+	db, release, err := dm.handle()
+	if err != nil {
+		return ref, ErrDBClosed
+	}
+	defer release()
+	var bType, raw, clean, notebook, section, page, fileDate string
+	var ln int
+	err = db.QueryRow(
+		`SELECT type, raw_content, clean_content, notebook, section, page, file_date, line_number
+		 FROM blocks WHERE id = ?`,
+		blockID,
+	).Scan(&bType, &raw, &clean, &notebook, &section, &page, &fileDate, &ln)
+	if err == sql.ErrNoRows {
+		return ref, nil
+	}
+	if err != nil {
+		return ref, err
+	}
+	ref.Exists = true
+	ref.Type = bType
+	ref.RawText = raw
+	ref.CleanText = clean
+	ref.Notebook = notebook
+	ref.Section = section
+	ref.Page = page
+	ref.FileDate = fileDate
+	ref.LineNumber = ln
+	return ref, nil
+}
+
 // FetchPageBlocks returns a flat ordered list of all blocks for a page.
 // A page is a single file; all blocks share the same (notebook, section,
 // page) and are ordered by line_number. Each block carries its own file_date.

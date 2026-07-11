@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"silt/backend/config"
+	"silt/backend/db"
 	"silt/backend/monitor"
 	"silt/backend/parser"
 	"strconv"
@@ -641,34 +642,27 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 	// Post-commit files-table pass: record mtime+size for each successfully
 	// indexed file so a warm restart skips re-parsing it. A file is
 	// considered indexed iff IndexScanResults counted it (Err == nil &&
-	// Notebook != ""). Mirrors the vault startup scan's MarkFileIndexed loop,
-	// but batched: a single transaction inside WithDBWrite, so N files cost
-	// one commit (not N auto-committed statements) and the coordinator keeps
-	// serializing writes against concurrent IPC. Unbatched, this defeated
-	// #134's purpose on large linked mounts (WAL-checkpoint thrash) and raced
-	// other writers.
+	// Notebook != ""). Batched under one lease + transaction via
+	// MarkFilesIndexed so App does not hold SQLDB().Begin across teardown.
+	var fileStats []db.FileIndexStat
+	for _, res := range results {
+		if res.Err != nil || res.Notebook == "" {
+			continue
+		}
+		if res.MTime.IsZero() {
+			// No stat → can't record a skip key; leave it to be re-parsed
+			// next time rather than risk a false "unchanged".
+			continue
+		}
+		fileStats = append(fileStats, db.FileIndexStat{
+			Path:  res.Path,
+			MTime: res.MTime.UnixNano(),
+			Size:  res.Size,
+		})
+	}
 	a.coordinator.WithDBWrite(func() {
-		tx, err := a.db.SQLDB().Begin()
-		if err != nil {
-			log.Printf("LinkNotebook(%s): begin files-tx failed: %v", ln.DisplayName, err)
-			return
-		}
-		defer tx.Rollback()
-		for _, res := range results {
-			if res.Err != nil || res.Notebook == "" {
-				continue
-			}
-			if res.MTime.IsZero() {
-				// No stat → can't record a skip key; leave it to be re-parsed
-				// next time rather than risk a false "unchanged".
-				continue
-			}
-			if err := a.db.MarkFileIndexed(tx, res.Path, res.MTime.UnixNano(), res.Size); err != nil {
-				log.Printf("LinkNotebook(%s): MarkFileIndexed(%s): %v", ln.DisplayName, res.Path, err)
-			}
-		}
-		if err := tx.Commit(); err != nil {
-			log.Printf("LinkNotebook(%s): files-tx commit failed: %v", ln.DisplayName, err)
+		if err := a.db.MarkFilesIndexed(fileStats); err != nil {
+			log.Printf("LinkNotebook(%s): MarkFilesIndexed: %v", ln.DisplayName, err)
 		}
 	})
 	return indexedCount, nil

@@ -698,6 +698,9 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		return fmt.Errorf("failed to start database: %w", err)
 	}
 
+	// SQLDB() only at vault open: handle is live and single-threaded here.
+	// Query/write paths must use DatabaseManager package methods (handle/
+	// withDB) so Close returns ErrDBClosed instead of nil-derefing.
 	coord := core.NewExecutionCoordinator(dbMgr.SQLDB())
 	tracker := monitor.NewWriteTracker()
 

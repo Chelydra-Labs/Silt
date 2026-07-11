@@ -412,28 +412,20 @@ func (a *App) ResolveBlockReference(blockID string) (parser.BlockReference, erro
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	var out parser.BlockReference
 	err := a.coordinator.WithDBReadResult(func() error {
-		row := a.db.SQLDB().QueryRow(
-			"SELECT type, raw_content, clean_content, notebook, section, page, file_date, line_number FROM blocks WHERE id = ?",
-			blockID,
-		)
-		var bType, raw, clean, notebook, section, page, fileDate string
-		var ln int
-		if err := row.Scan(&bType, &raw, &clean, &notebook, &section, &page, &fileDate, &ln); err != nil {
-			return nil // not found → Exists stays false
+		// Lease-aware typed lookup — no raw SQLDB() across vault teardown.
+		got, err := a.db.GetBlockReference(blockID)
+		if err != nil {
+			return err
 		}
-		ref.Exists = true
-		ref.Type = bType
-		ref.RawText = raw
-		ref.CleanText = clean
-		ref.Notebook = notebook
-		ref.Section = section
-		ref.Page = page
-		ref.FileDate = fileDate
-		ref.LineNumber = ln
+		out = got
 		return nil
 	})
-	return ref, err
+	if err != nil {
+		return ref, err
+	}
+	return out, nil
 }
 
 // MutateBlock rewrites the body text of a block (identified by UUID) in its
