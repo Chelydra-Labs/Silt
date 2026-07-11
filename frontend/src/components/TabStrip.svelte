@@ -214,7 +214,8 @@
           <div class="tab-action-slot">
             {#if showDirtyIndicators && tab.saveError}
               <span class="tab-save-state error" aria-hidden="true">
-                <span class="material-symbols-outlined text-[12px]">error</span>
+                <span class="material-symbols-outlined text-icon-xs">error</span
+                >
               </span>
             {:else if showDirtyIndicators && tab.dirty}
               <span class="dirty-dot" aria-hidden="true"></span>
@@ -231,7 +232,7 @@
               }}
             >
               <span
-                class="material-symbols-outlined text-[14px]"
+                class="material-symbols-outlined text-icon-sm"
                 aria-hidden="true">close</span
               >
             </span>

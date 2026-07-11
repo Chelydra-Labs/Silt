@@ -22,11 +22,11 @@
 <div
   role="alert"
   aria-live="assertive"
-  class="m-6 p-4 rounded-lg border border-error/40 bg-error/10 text-status-danger font-body-md text-[13px] flex flex-col gap-3"
+  class="m-6 p-4 rounded-lg border border-error/40 bg-error/10 text-status-danger font-body-md text-type-md flex flex-col gap-3"
 >
   <div class="flex items-start gap-2">
     <span
-      class="material-symbols-outlined text-[18px] mt-0.5"
+      class="material-symbols-outlined text-icon-lg mt-0.5"
       aria-hidden="true">error</span
     >
     <div class="flex-1">

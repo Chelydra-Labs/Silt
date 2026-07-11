@@ -526,7 +526,7 @@
     >
       {manifest?.name ?? 'Tasks'}
       <span
-        class="text-text-muted text-[12px] font-body-md normal-case font-normal ml-1"
+        class="text-text-muted text-type-sm font-body-md normal-case font-normal ml-1"
         aria-live="polite"
         data-testid="tasks-hub-count"
       >
@@ -540,7 +540,7 @@
              rather than dimming this label, so the dirty state is prominent
              without making the name harder to read. -->
         <span
-          class="text-text-muted text-[12px] font-body-md normal-case font-normal ml-2 flex items-center gap-1"
+          class="text-text-muted text-type-sm font-body-md normal-case font-normal ml-2 flex items-center gap-1"
           data-testid="tasks-hub-active-view"
         >
           <span aria-hidden="true">·</span>
@@ -585,10 +585,10 @@
           : 'Save current view'}
         data-testid="tasks-hub-bookmark"
         data-popover-state={savedViewPopover}
-        class="flex items-center gap-1 px-2 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors"
+        class="flex items-center gap-1 px-2 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors"
       >
         <span
-          class="material-symbols-outlined text-[16px] {activeViewMatchesState
+          class="material-symbols-outlined text-icon-md {activeViewMatchesState
             ? 'fill-accent-primary-start text-accent-primary-start'
             : ''}"
           aria-hidden="true"
@@ -611,12 +611,12 @@
       {#if savedViewPopover === 'save'}
         <div
           transition:fly={{ y: -4, duration: 100 }}
-          class="absolute z-50 mt-1 top-full left-0 min-w-[240px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
+          class="absolute z-50 mt-1 top-full left-0 min-w-60 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
           role="dialog"
           aria-label="Save current view"
           data-testid="tasks-hub-save-view-popover"
         >
-          <label class="block text-[11px] font-label-sm text-text-muted mb-1">
+          <label class="block text-type-xs font-label-sm text-text-muted mb-1">
             View name
             <input
               type="text"
@@ -628,12 +628,12 @@
                 if (e.key === 'Enter') void commitSaveNew()
                 else if (e.key === 'Escape') closePopover()
               }}
-              class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-[12px] outline-none focus:border-accent-primary-start"
+              class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm outline-none focus:border-accent-primary-start"
             />
           </label>
           {#if savedViewError}
             <p
-              class="mt-1 text-error text-[11px] font-body-md"
+              class="mt-1 text-error text-type-xs font-body-md"
               role="alert"
               data-testid="tasks-hub-save-view-error"
             >
@@ -645,14 +645,14 @@
               type="button"
               onclick={closePopover}
               data-testid="tasks-hub-save-view-cancel"
-              class="px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
+              class="px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
               >Cancel</button
             >
             <button
               type="button"
               onclick={() => void commitSaveNew()}
               data-testid="tasks-hub-save-view-commit"
-              class="px-2 py-1 rounded text-[11px] font-label-sm bg-accent-primary-start text-text-primary border-none cursor-pointer"
+              class="px-2 py-1 rounded text-type-xs font-label-sm bg-accent-primary-start text-text-primary border-none cursor-pointer"
               >Save</button
             >
           </div>
@@ -660,12 +660,12 @@
       {:else if savedViewPopover === 'rename'}
         <div
           transition:fly={{ y: -4, duration: 100 }}
-          class="absolute z-50 mt-1 top-full left-0 min-w-[240px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
+          class="absolute z-50 mt-1 top-full left-0 min-w-60 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
           role="dialog"
           aria-label={`Rename ${activeSavedView?.name ?? 'view'}`}
           data-testid="tasks-hub-rename-view-popover"
         >
-          <label class="block text-[11px] font-label-sm text-text-muted mb-1">
+          <label class="block text-type-xs font-label-sm text-text-muted mb-1">
             New name
             <input
               type="text"
@@ -676,11 +676,11 @@
                 if (e.key === 'Enter') void commitRename()
                 else if (e.key === 'Escape') closePopover()
               }}
-              class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-[12px] outline-none focus:border-accent-primary-start"
+              class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm outline-none focus:border-accent-primary-start"
             />
           </label>
           {#if savedViewError}
-            <p class="mt-1 text-error text-[11px] font-body-md" role="alert">
+            <p class="mt-1 text-error text-type-xs font-body-md" role="alert">
               {savedViewError}
             </p>
           {/if}
@@ -689,14 +689,14 @@
               type="button"
               onclick={closePopover}
               data-testid="tasks-hub-rename-view-cancel"
-              class="px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
+              class="px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
               >Cancel</button
             >
             <button
               type="button"
               onclick={() => void commitRename()}
               data-testid="tasks-hub-rename-view-commit"
-              class="px-2 py-1 rounded text-[11px] font-label-sm bg-accent-primary-start text-text-primary border-none cursor-pointer"
+              class="px-2 py-1 rounded text-type-xs font-label-sm bg-accent-primary-start text-text-primary border-none cursor-pointer"
               >Rename</button
             >
           </div>
@@ -704,7 +704,7 @@
       {:else if savedViewPopover === 'menu'}
         <div
           transition:fly={{ y: -4, duration: 100 }}
-          class="absolute z-50 mt-1 top-full left-0 min-w-[200px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+          class="absolute z-50 mt-1 top-full left-0 min-w-50 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
           role="dialog"
           aria-label={`Actions for ${activeSavedView?.name ?? 'view'}`}
           data-testid="tasks-hub-view-menu"
@@ -714,10 +714,10 @@
               type="button"
               onclick={() => void commitUpdateActive()}
               data-testid="tasks-hub-update-view"
-              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
+              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
             >
               <span
-                class="material-symbols-outlined text-[14px]"
+                class="material-symbols-outlined text-icon-sm"
                 aria-hidden="true">save</span
               >
               <span>Update “{activeSavedView?.name}”</span>
@@ -726,10 +726,10 @@
               type="button"
               onclick={openSaveComposer}
               data-testid="tasks-hub-save-as-new"
-              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
+              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
             >
               <span
-                class="material-symbols-outlined text-[14px]"
+                class="material-symbols-outlined text-icon-sm"
                 aria-hidden="true">add</span
               >
               <span>Save as new…</span>
@@ -744,10 +744,10 @@
                 void tick().then(() => composerInput?.focus())
               }}
               data-testid="tasks-hub-rename-view"
-              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
+              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
             >
               <span
-                class="material-symbols-outlined text-[14px]"
+                class="material-symbols-outlined text-icon-sm"
                 aria-hidden="true">edit</span
               >
               <span>Rename…</span>
@@ -761,10 +761,10 @@
                 : undefined}
               onclick={() => requestDelete()}
               data-testid="tasks-hub-delete-view"
-              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-error text-left border-none bg-transparent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-error text-left border-none bg-transparent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
             >
               <span
-                class="material-symbols-outlined text-[14px]"
+                class="material-symbols-outlined text-icon-sm"
                 aria-hidden="true">delete</span
               >
               <span>Delete{activeSavedView?.system ? ' (system)' : ''}</span>
@@ -794,13 +794,14 @@
           data-testid={`tasks-hub-mode-${m.value}`}
           onclick={() => chooseMode(m.value)}
           title={`${m.label} mode (Ctrl+Shift+V)`}
-          class="flex items-center gap-1.5 px-2.5 py-1 rounded text-[12px] font-label-sm transition-colors border-none cursor-pointer {hubState.displayMode ===
+          class="flex items-center gap-1.5 px-2.5 py-1 rounded text-type-sm font-label-sm transition-colors border-none cursor-pointer {hubState.displayMode ===
           m.value
             ? 'bg-accent-primary-start text-text-primary'
             : 'bg-transparent text-text-muted hover:bg-hover hover:text-text-primary'}"
         >
-          <span class="material-symbols-outlined text-[14px]" aria-hidden="true"
-            >{m.icon}</span
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">{m.icon}</span
           >
           <span aria-hidden="true">{m.label}</span>
         </button>

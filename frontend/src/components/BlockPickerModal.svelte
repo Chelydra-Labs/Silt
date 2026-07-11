@@ -79,21 +79,21 @@
     aria-modal="true"
     aria-label="Embed a block"
     tabindex="-1"
-    class="relative w-full max-w-2xl glass-palette border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
+    class="relative w-full max-w-2xl glass-palette border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[31.25rem]"
     style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 92%, transparent);"
   >
     <div class="px-5 py-3 border-b border-surface-modal-border">
       <h2 class="font-headline-md text-headline-md text-text-primary">
         Embed a block
       </h2>
-      <p class="text-text-muted text-[12px] font-body-md mt-0.5">
+      <p class="text-text-muted text-type-sm font-body-md mt-0.5">
         Search for the block to embed live.
       </p>
     </div>
     <div
       class="flex items-center gap-3 px-4 py-3 border-b border-surface-modal-border"
     >
-      <span class="material-symbols-outlined text-text-muted text-[22px]"
+      <span class="material-symbols-outlined text-text-muted text-icon-xl"
         >search</span
       >
       <input
@@ -103,7 +103,7 @@
         onkeydown={handleKeydown}
         type="text"
         placeholder="Search blocks to embed…"
-        class="bg-transparent border-none outline-none text-text-primary text-[15px] font-body-md w-full focus:ring-0 placeholder:text-text-muted"
+        class="bg-transparent border-none outline-none text-text-primary text-type-lg font-body-md w-full focus:ring-0 placeholder:text-text-muted"
       />
       {#if query}
         <button
@@ -116,12 +116,12 @@
           }}
           class="p-1 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none flex-shrink-0"
         >
-          <span class="material-symbols-outlined text-[18px]">close</span>
+          <span class="material-symbols-outlined text-icon-lg">close</span>
         </button>
       {/if}
       {#if loading}
         <span
-          class="material-symbols-outlined text-accent-primary-start animate-spin text-[20px] flex-shrink-0"
+          class="material-symbols-outlined text-accent-primary-start animate-spin text-type-2xl flex-shrink-0"
           >sync</span
         >
       {/if}
@@ -143,14 +143,14 @@
             class:bg-accent-primary-glow={idx === selectedIdx}
           >
             <div
-              class="flex items-center gap-1.5 text-[10px] text-text-muted uppercase tracking-widest font-label-sm-bold"
+              class="flex items-center gap-1.5 text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold"
             >
               <span>{res.notebook}</span>
-              <span class="material-symbols-outlined text-[10px]"
+              <span class="material-symbols-outlined text-type-2xs"
                 >chevron_right</span
               >
               <span>{res.section}</span>
-              <span class="material-symbols-outlined text-[10px]"
+              <span class="material-symbols-outlined text-type-2xs"
                 >chevron_right</span
               >
               <span>{res.page}</span>

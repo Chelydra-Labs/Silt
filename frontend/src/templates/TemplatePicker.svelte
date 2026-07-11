@@ -335,7 +335,7 @@
       class="flex items-center gap-3 border-b border-surface-modal-border px-5 py-3"
     >
       <span
-        class="material-symbols-outlined text-[22px] text-accent-primary-start"
+        class="material-symbols-outlined text-icon-xl text-accent-primary-start"
         >description</span
       >
       <h2 class="flex-1 text-sm font-semibold text-text-primary">
@@ -346,7 +346,7 @@
         class="rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
         aria-label="Close template picker"
       >
-        <span class="material-symbols-outlined text-[20px]">close</span>
+        <span class="material-symbols-outlined text-type-2xl">close</span>
       </button>
     </div>
 
@@ -354,7 +354,7 @@
     <div class="flex min-h-0 flex-1">
       <!-- Left: search + list -->
       <div
-        class="flex w-[320px] shrink-0 flex-col border-r border-surface-modal-border"
+        class="flex w-80 shrink-0 flex-col border-r border-surface-modal-border"
       >
         <div class="border-b border-surface-modal-border px-4 py-3">
           <input
@@ -416,7 +416,7 @@
                   : 'hover:bg-hover'}"
               >
                 <span
-                  class="material-symbols-outlined mt-0.5 text-[18px] text-accent-secondary-start"
+                  class="material-symbols-outlined mt-0.5 text-icon-lg text-accent-secondary-start"
                 >
                   {t.icon || 'description'}
                 </span>
@@ -432,7 +432,7 @@
                   {/if}
                 </span>
                 {#if t.source === 'builtin'}
-                  <span class="shrink-0 text-[10px] uppercase text-text-muted"
+                  <span class="shrink-0 text-type-2xs uppercase text-text-muted"
                     >built-in</span
                   >
                 {/if}

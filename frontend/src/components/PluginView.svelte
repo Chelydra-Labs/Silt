@@ -72,7 +72,7 @@
 {:else if !plugin}
   <div class="flex-1 p-8 flex flex-col select-none">
     <div class="flex items-center gap-3 mb-3">
-      <span class="material-symbols-outlined text-text-muted text-[28px]"
+      <span class="material-symbols-outlined text-text-muted text-icon-2xl"
         >extension_off</span
       >
       <div>
@@ -81,7 +81,7 @@
         >
           {pluginId}
         </h1>
-        <p class="text-text-muted text-[12px] font-body-md">
+        <p class="text-text-muted text-type-sm font-body-md">
           plugin not registered
         </p>
       </div>

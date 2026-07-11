@@ -52,7 +52,7 @@
       in:fly={{ duration: motionMs, y: 12 }}
     >
       <span
-        class="material-symbols-outlined mt-0.5 text-[18px]"
+        class="material-symbols-outlined mt-0.5 text-icon-lg"
         aria-hidden="true"
       >
         {n.kind === 'error'
@@ -82,7 +82,7 @@
         aria-label="Dismiss notification"
         class="shrink-0 rounded p-0.5 opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start"
       >
-        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
           >close</span
         >
       </button>

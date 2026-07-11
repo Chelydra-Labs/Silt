@@ -51,7 +51,7 @@
         <div
           class="flex items-center justify-between px-4 py-2 border-b border-surface-modal-border"
         >
-          <span class="text-text-primary text-[13px] font-label-sm-bold"
+          <span class="text-text-primary text-type-md font-label-sm-bold"
             >{surface.label}</span
           >
           <button
@@ -59,7 +59,7 @@
             aria-label="Close modal"
             class="text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer p-1 rounded"
           >
-            <span class="material-symbols-outlined text-[18px]">close</span>
+            <span class="material-symbols-outlined text-icon-lg">close</span>
           </button>
         </div>
         <div class="h-[60vh]">

@@ -653,7 +653,7 @@
   <section aria-labelledby="tasks-smart-lists-heading">
     <h3
       id="tasks-smart-lists-heading"
-      class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+      class="px-2 font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
     >
       Smart Lists
       <span
@@ -679,13 +679,13 @@
               }}
               onkeydown={onListKeydown}
               onfocus={() => (listFocusIdx = i)}
-              class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-[12px] font-body-md cursor-pointer border-none bg-transparent transition-colors
+              class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-type-sm font-body-md cursor-pointer border-none bg-transparent transition-colors
               {selected
                 ? 'bg-accent-primary-glow text-accent-primary-start'
                 : 'text-text-primary hover:bg-hover'}"
             >
               <span
-                class="material-symbols-outlined text-[14px]"
+                class="material-symbols-outlined text-icon-sm"
                 class:text-error={item.id === 'overdue'}
                 class:text-accent-primary-start={item.id !== 'overdue'}
               >
@@ -701,7 +701,7 @@
               </span>
               <span class="flex-1 truncate">{item.label}</span>
               <span
-                class="text-[10px] text-text-muted bg-surface-popover px-1.5 py-0.5 rounded-sm font-label-sm"
+                class="text-type-2xs text-text-muted bg-surface-popover px-1.5 py-0.5 rounded-sm font-label-sm"
                 aria-label="{counts[item.id as keyof Counts]} tasks"
                 data-testid={`count-${item.id}`}
               >
@@ -713,7 +713,7 @@
       </ul>
     {:else}
       <p
-        class="mt-1 px-2 py-2 text-[11px] font-body-md text-text-muted"
+        class="mt-1 px-2 py-2 text-type-xs font-body-md text-text-muted"
         data-testid="calendar-empty-state"
       >
         No active tasks — set a due date on a task to populate this view.
@@ -724,9 +724,9 @@
         type="button"
         onclick={() => clearActiveFilter()}
         data-testid="clear-filter"
-        class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors"
+        class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors"
       >
-        <span class="material-symbols-outlined text-[12px]">close</span>
+        <span class="material-symbols-outlined text-icon-xs">close</span>
         Clear filter
       </button>
     {/if}
@@ -736,7 +736,7 @@
   <section aria-labelledby="tasks-saved-views-heading">
     <h3
       id="tasks-saved-views-heading"
-      class="px-2 font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+      class="px-2 font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
     >
       Saved Views
     </h3>
@@ -756,7 +756,7 @@
           ondrop={(e) => onViewDrop(e, view)}
         >
           <div
-            class="flex items-center gap-0.5 px-1 py-0.5 rounded text-[12px] font-body-md border transition-colors
+            class="flex items-center gap-0.5 px-1 py-0.5 rounded text-type-sm font-body-md border transition-colors
               {isActive
               ? 'bg-accent-primary-glow border-accent-primary-start/30 text-accent-primary-start'
               : 'text-text-primary hover:bg-hover border-transparent'}
@@ -779,7 +779,7 @@
                 aria-hidden="true"
                 data-testid={`grip-${view.id}`}
               >
-                <span class="material-symbols-outlined text-[14px]"
+                <span class="material-symbols-outlined text-icon-sm"
                   >drag_indicator</span
                 >
               </span>
@@ -812,7 +812,7 @@
                     else cancelRename()
                   }
                 }}
-                class="flex-1 min-w-0 px-1.5 py-1 rounded bg-surface-panel border border-accent-primary-start text-text-primary text-[12px] outline-none"
+                class="flex-1 min-w-0 px-1.5 py-1 rounded bg-surface-panel border border-accent-primary-start text-text-primary text-type-sm outline-none"
               />
               {#if renameError}
                 <span class="sr-only" role="alert">{renameError}</span>
@@ -839,7 +839,7 @@
 
             {#if view.system}
               <span
-                class="material-symbols-outlined text-[11px] text-text-muted/50"
+                class="material-symbols-outlined text-type-xs text-text-muted/50"
                 aria-label="Built-in view"
                 title="Built-in view — can't be modified">lock</span
               >
@@ -858,7 +858,7 @@
                   ? 'opacity-100'
                   : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}"
               >
-                <span class="material-symbols-outlined text-[14px]"
+                <span class="material-symbols-outlined text-icon-sm"
                   >more_horiz</span
                 >
               </button>
@@ -874,7 +874,7 @@
     <div class="flex items-center justify-between px-2">
       <h3
         id="tasks-mini-heading"
-        class="font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+        class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
       >
         Jump to Date
       </h3>
@@ -886,7 +886,7 @@
         aria-controls="tasks-mini-calendar-content"
         class="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-hover border-none bg-transparent cursor-pointer flex items-center transition-colors"
       >
-        <span class="material-symbols-outlined text-[14px]">
+        <span class="material-symbols-outlined text-icon-sm">
           {calendarExpanded ? 'expand_less' : 'expand_more'}
         </span>
       </button>
@@ -900,11 +900,11 @@
             aria-label="Previous month"
             class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
           >
-            <span class="material-symbols-outlined text-[14px]"
+            <span class="material-symbols-outlined text-icon-sm"
               >chevron_left</span
             >
           </button>
-          <span class="text-text-primary text-[11px] font-label-sm-bold">
+          <span class="text-text-primary text-type-xs font-label-sm-bold">
             {MONTHS[miniCursor.getMonth()]}
             {miniCursor.getFullYear()}
           </span>
@@ -914,7 +914,7 @@
             aria-label="Next month"
             class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
           >
-            <span class="material-symbols-outlined text-[14px]"
+            <span class="material-symbols-outlined text-icon-sm"
               >chevron_right</span
             >
           </button>
@@ -935,7 +935,7 @@
             {#each DOW as d}
               <div
                 role="columnheader"
-                class="text-center text-[9px] uppercase tracking-widest font-label-sm-bold text-text-muted py-0.5"
+                class="text-center text-type-3xs uppercase tracking-widest font-label-sm-bold text-text-muted py-0.5"
               >
                 {d}
               </div>
@@ -963,7 +963,7 @@
                   aria-label={`${key}${count ? ', ' + count + ' task' + (count === 1 ? '' : 's') : ''}`}
                   aria-current={key === activeFocusDate ? 'date' : undefined}
                   data-testid={`mini-day-${key}`}
-                  class="aspect-square flex flex-col items-center justify-center rounded text-[10px] font-label-sm cursor-pointer border-none bg-transparent
+                  class="aspect-square flex flex-col items-center justify-center rounded text-type-2xs font-label-sm cursor-pointer border-none bg-transparent
                     {inMonth
                     ? 'text-text-primary hover:bg-hover'
                     : 'text-text-muted/50'}
@@ -988,9 +988,9 @@
             type="button"
             onclick={() => clearFocusDate()}
             data-testid="clear-focus"
-            class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-[11px] font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors"
+            class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors"
           >
-            <span class="material-symbols-outlined text-[12px]">close</span>
+            <span class="material-symbols-outlined text-icon-xs">close</span>
             Clear jump date
           </button>
         {/if}
@@ -1029,7 +1029,7 @@
         onclick={() => void overwriteView(v)}
         data-testid="manage-update-view"
       >
-        <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
           >save</span
         >
         <span>Update "{v.name}"</span>
@@ -1041,7 +1041,7 @@
       onclick={() => startRename(v)}
       data-testid="manage-rename-view"
     >
-      <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
         >edit</span
       >
       <span>Rename…</span>
@@ -1055,7 +1055,7 @@
       data-testid="manage-move-up"
       class="disabled:opacity-40 disabled:cursor-not-allowed"
     >
-      <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
         >arrow_upward</span
       >
       <span>Move up</span>
@@ -1069,7 +1069,7 @@
       data-testid="manage-move-down"
       class="disabled:opacity-40 disabled:cursor-not-allowed"
     >
-      <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
         >arrow_downward</span
       >
       <span>Move down</span>
@@ -1082,7 +1082,7 @@
       data-testid="manage-delete-view"
       class="text-status-danger"
     >
-      <span class="material-symbols-outlined text-[16px]" aria-hidden="true"
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
         >delete</span
       >
       <span>Delete…</span>

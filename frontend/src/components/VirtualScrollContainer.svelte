@@ -344,20 +344,21 @@
   >
     <div class="relative z-[1] flex flex-col">
       <nav
-        class="mb-6 flex items-center gap-1.5 text-text-muted/60 text-[11px] font-medium tracking-wider uppercase font-body"
+        class="mb-6 flex items-center gap-1.5 text-text-muted/60 text-type-xs font-medium tracking-wider uppercase font-body"
       >
         <span class="hover:text-text-primary transition-colors cursor-pointer"
           >{notebook}</span
         >
         {#if section}
-          <span class="material-symbols-outlined text-[12px] text-text-muted/30"
+          <span
+            class="material-symbols-outlined text-icon-xs text-text-muted/30"
             >chevron_right</span
           >
           <span class="hover:text-text-primary transition-colors cursor-pointer"
             >{section}</span
           >
         {/if}
-        <span class="material-symbols-outlined text-[12px] text-text-muted/30"
+        <span class="material-symbols-outlined text-icon-xs text-text-muted/30"
           >chevron_right</span
         >
         <span
@@ -464,7 +465,7 @@
         : 'Enter Focus Mode (Ctrl+Shift+D)'}
       aria-label="Toggle Focus Mode"
     >
-      <span class="material-symbols-outlined text-[18px]"
+      <span class="material-symbols-outlined text-icon-lg"
         >center_focus_strong</span
       >
     </button>
@@ -480,7 +481,7 @@
         : 'Show Formatting Toolbar (Ctrl+Shift+F)'}
       aria-label="Toggle Formatting Toolbar"
     >
-      <span class="material-symbols-outlined text-[18px]">text_format</span>
+      <span class="material-symbols-outlined text-icon-lg">text_format</span>
     </button>
 
     <div class="w-px h-4 bg-surface-popover-border mx-0.5"></div>
@@ -498,7 +499,7 @@
       aria-pressed={viewMode === 'source'}
       aria-keyshortcuts={viewModeHotkey}
     >
-      <span class="material-symbols-outlined text-[18px]">
+      <span class="material-symbols-outlined text-icon-lg">
         {viewMode === 'edit' ? 'code' : 'menu_book'}
       </span>
     </button>
@@ -507,7 +508,7 @@
   <!-- Floating Editor Status Bar (Word Count) -->
   {#if showWordCount && wordCount > 0 && viewMode === 'edit'}
     <div
-      class="absolute bottom-6 right-6 z-40 flex items-center px-3 py-1.5 bg-surface-popover/60 backdrop-blur-md border border-surface-popover-border/50 rounded-full shadow-lg text-[11px] font-medium tracking-wide text-text-muted transition-all duration-300 opacity-60 hover:opacity-100"
+      class="absolute bottom-6 right-6 z-40 flex items-center px-3 py-1.5 bg-surface-popover/60 backdrop-blur-md border border-surface-popover-border/50 rounded-full shadow-lg text-type-xs font-medium tracking-wide text-text-muted transition-all duration-300 opacity-60 hover:opacity-100"
     >
       <div class="font-mono text-text-muted/80" role="status" aria-live="off">
         {wordCount}

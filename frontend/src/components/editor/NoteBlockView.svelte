@@ -13,13 +13,13 @@
 </script>
 
 <NodeViewWrapper
-  class="group flex items-start gap-3 py-1 min-h-[32px]"
+  class="group flex items-start gap-3 py-1 min-h-8"
   data-align={align}
   data-depth={depth}
   data-id={node.attrs.id}
 >
   <span
-    class="silt-drag-handle-inline material-symbols-outlined text-text-muted hover:text-primary transition-colors duration-150 mt-0.5 select-none text-[18px] opacity-0 group-hover:opacity-100"
+    class="silt-drag-handle-inline material-symbols-outlined text-text-muted hover:text-primary transition-colors duration-150 mt-0.5 select-none text-icon-lg opacity-0 group-hover:opacity-100"
     class:group-hover:opacity-100={!isEmpty}
     spellcheck="false"
     draggable="true"
@@ -34,7 +34,7 @@
     {#if /^\d+/.test(bullet)}
       <!-- Numbered marker -->
       <span
-        class="text-text-muted/70 text-[14px] leading-[22px] select-none font-mono min-w-[18px] text-right"
+        class="text-text-muted/70 text-icon-sm leading-[22px] select-none font-mono min-w-[1.125rem] text-right"
         aria-hidden="true"
       >
         {bullet.trim()}
@@ -60,7 +60,7 @@
     style="text-align: {align}"
   >
     <NodeViewContent
-      class="whitespace-pre-wrap break-words min-h-[22px] focus:outline-none"
+      class="whitespace-pre-wrap break-words min-h-5.5 focus:outline-none"
     />
   </svelte:element>
 </NodeViewWrapper>

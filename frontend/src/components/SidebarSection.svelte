@@ -144,7 +144,7 @@
     aria-selected={activeSection === sectionKey}
   >
     <span
-      class="material-symbols-outlined text-[16px] transition-transform"
+      class="material-symbols-outlined text-icon-md transition-transform"
       class:rotate-90={isExpanded}
       class:text-accent-primary-start={activeSection === sectionKey}
       class:text-surface-sidebar-text-muted={activeSection !== sectionKey}
@@ -152,13 +152,13 @@
       chevron_right
     </span>
     <span
-      class="font-semibold text-[13px] text-surface-sidebar-text truncate flex-1"
+      class="font-semibold text-type-md text-surface-sidebar-text truncate flex-1"
     >
       {section.name ? section.name : 'Pages (no section)'}
     </span>
     {#if totalCount > 0}
       <span
-        class="text-[9px] font-label-sm text-surface-sidebar-text-muted bg-surface-card border border-surface-sidebar-border rounded-full px-1.5 py-0.5"
+        class="text-type-3xs font-label-sm text-surface-sidebar-text-muted bg-surface-card border border-surface-sidebar-border rounded-full px-1.5 py-0.5"
       >
         {totalCount}
       </span>
@@ -172,7 +172,7 @@
       title="New page in this section"
       class="opacity-30 group-hover:opacity-100 text-surface-sidebar-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
     >
-      <span class="material-symbols-outlined text-[16px]">add</span>
+      <span class="material-symbols-outlined text-icon-md">add</span>
     </button>
   </div>
 
@@ -185,7 +185,7 @@
     >
       {#if section.pages.length === 0 && (!section.children || section.children.length === 0)}
         <div
-          class="text-surface-sidebar-text-muted text-[11px] font-body-md py-1.5 px-2 italic"
+          class="text-surface-sidebar-text-muted text-type-xs font-body-md py-1.5 px-2 italic"
         >
           No pages. Click + to add one.
         </div>
@@ -212,7 +212,7 @@
             ondrop={(e) =>
               onDrop(e, 'page', pg.name, activeNotebook, sectionKey)}
             ondragend={onDragEnd}
-            class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
+            class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-type-md font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
             class:bg-hover={isActive}
             class:text-surface-sidebar-text={isActive}
             class:font-medium={isActive}
@@ -230,7 +230,7 @@
           >
             {#if isActive}
               <span
-                class="absolute left-0 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
+                class="absolute left-0 top-1 bottom-1 w-0.5 bg-accent-primary-start rounded-full"
               ></span>
             {/if}
             <span class="truncate flex-1" title={pg.name}>{pg.name}</span>

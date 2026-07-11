@@ -645,7 +645,7 @@
 
 <aside
   data-sidebar
-  class="bg-surface-sidebar border-r border-surface-sidebar-border flex flex-col py-[4px] h-full flex-shrink-0 select-none z-40"
+  class="bg-surface-sidebar border-r border-surface-sidebar-border flex flex-col py-1 h-full flex-shrink-0 select-none z-40"
   style:width={collapsed ? '0px' : sidebarWidth + 'px'}
   style:transition={sidebarDragging ? 'none' : 'all 200ms ease-out'}
   style:overflow={collapsed ? 'hidden' : 'visible'}
@@ -685,7 +685,7 @@
           tabindex="0"
         >
           <span
-            class="material-symbols-outlined text-accent-primary-start text-[20px]"
+            class="material-symbols-outlined text-accent-primary-start text-type-2xl"
             >menu_book</span
           >
           <div class="flex flex-col min-w-0 flex-1">
@@ -694,12 +694,12 @@
               >{activeNotebook || 'No Notebook'}</span
             >
             <span
-              class="text-surface-sidebar-text-muted text-[9px] uppercase tracking-widest font-label-sm-bold"
+              class="text-surface-sidebar-text-muted text-type-3xs uppercase tracking-widest font-label-sm-bold"
               >Active Notebook</span
             >
           </div>
           <span
-            class="material-symbols-outlined text-surface-sidebar-text-muted text-[18px] group-hover:text-accent-primary-start transition-colors"
+            class="material-symbols-outlined text-surface-sidebar-text-muted text-icon-lg group-hover:text-accent-primary-start transition-colors"
           >
             {showNotebookDropdown ? 'expand_less' : 'expand_more'}
           </span>
@@ -718,7 +718,7 @@
           >
             {#if tree.notebooks.length === 0}
               <div
-                class="px-4 py-3 text-surface-sidebar-text-muted text-[12px] font-body-md"
+                class="px-4 py-3 text-surface-sidebar-text-muted text-type-sm font-body-md"
               >
                 No notebooks yet.
               </div>
@@ -729,7 +729,7 @@
                   class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent"
                 >
                   <span
-                    class="material-symbols-outlined text-accent-primary-start text-[18px]"
+                    class="material-symbols-outlined text-accent-primary-start text-icon-lg"
                     >folder_special</span
                   >
                   <span
@@ -738,7 +738,7 @@
                   >
                   {#if nb.source && nb.source !== 'vault'}
                     <span
-                      class="material-symbols-outlined text-[14px] {nb.disconnected
+                      class="material-symbols-outlined text-icon-sm {nb.disconnected
                         ? 'text-status-warn'
                         : 'text-surface-sidebar-text-muted'}"
                       title={nb.disconnected
@@ -752,7 +752,7 @@
                   {/if}
                   {#if nb.name === activeNotebook}
                     <span
-                      class="material-symbols-outlined text-accent-primary-start text-[16px]"
+                      class="material-symbols-outlined text-accent-primary-start text-icon-md"
                       >check</span
                     >
                   {/if}
@@ -768,7 +768,7 @@
                 }}
                 class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-accent-primary-start"
               >
-                <span class="material-symbols-outlined text-[18px]"
+                <span class="material-symbols-outlined text-icon-lg"
                   >create_new_folder</span
                 >
                 <span class="font-label-sm text-label-sm">New Notebook</span>
@@ -778,7 +778,7 @@
                 disabled={creating}
                 class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-surface-sidebar-text-muted disabled:opacity-50"
               >
-                <span class="material-symbols-outlined text-[18px]"
+                <span class="material-symbols-outlined text-icon-lg"
                   >folder_open</span
                 >
                 <span class="font-label-sm text-label-sm">Open Notebook…</span>
@@ -789,7 +789,7 @@
                 title="Link a folder that lives outside the vault (e.g. a synced SharePoint mount); it is edited in place, never copied in."
                 class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-surface-sidebar-text-muted disabled:opacity-50"
               >
-                <span class="material-symbols-outlined text-[18px]"
+                <span class="material-symbols-outlined text-icon-lg"
                   >add_link</span
                 >
                 <span class="font-label-sm text-label-sm"
@@ -815,7 +815,7 @@
             aria-label="New Section"
             class="w-full bg-transparent border-none text-surface-sidebar-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
           >
-            <span class="material-symbols-outlined text-[20px]"
+            <span class="material-symbols-outlined text-type-2xl"
               >create_new_folder</span
             >
           </button>
@@ -829,7 +829,8 @@
             aria-label="New Page"
             class="w-full bg-transparent border-none text-surface-sidebar-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
           >
-            <span class="material-symbols-outlined text-[20px]">note_add</span>
+            <span class="material-symbols-outlined text-type-2xl">note_add</span
+            >
           </button>
         </span>
         <div class="w-px bg-surface-sidebar-border my-1.5 flex-shrink-0"></div>
@@ -842,7 +843,7 @@
             aria-label="New Page from Template"
             class="w-full bg-transparent border-none text-surface-sidebar-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
           >
-            <span class="material-symbols-outlined text-[20px]"
+            <span class="material-symbols-outlined text-type-2xl"
               >content_copy</span
             >
           </button>
@@ -850,10 +851,10 @@
       </div>
       {#if nextStep}
         <div
-          class="px-2 pb-2 text-[10px] text-surface-sidebar-text-muted font-label-sm flex items-center gap-1"
+          class="px-2 pb-2 text-type-2xs text-surface-sidebar-text-muted font-label-sm flex items-center gap-1"
         >
           <span
-            class="material-symbols-outlined text-[12px] text-accent-primary-start/70"
+            class="material-symbols-outlined text-icon-xs text-accent-primary-start/70"
             >info</span
           >
           {nextStep}
@@ -867,7 +868,7 @@
       >
         {#if !activeNotebookObj}
           <div
-            class="text-surface-sidebar-text-muted py-10 text-center font-body-md text-[13px] border border-dashed border-surface-sidebar-border rounded-lg mx-1"
+            class="text-surface-sidebar-text-muted py-10 text-center font-body-md text-type-md border border-dashed border-surface-sidebar-border rounded-lg mx-1"
           >
             {#if tree.notebooks.length === 0}
               No notebooks yet.<br />Create or open one to begin.
@@ -878,7 +879,7 @@
         {:else}
           {#if hasNoContent}
             <div
-              class="text-surface-sidebar-text-muted py-6 text-center font-body-md text-[13px] border border-dashed border-surface-sidebar-border rounded-lg mx-1"
+              class="text-surface-sidebar-text-muted py-6 text-center font-body-md text-type-md border border-dashed border-surface-sidebar-border rounded-lg mx-1"
             >
               No sections or pages yet.<br />Create one to get started.
             </div>
@@ -935,7 +936,7 @@
                   ondrop={(e) =>
                     handleDrop(e, 'page', pg.name, activeNotebook, '')}
                   ondragend={handleDragEnd}
-                  class="relative w-full text-left pl-[28px] pr-2 py-1.5 rounded text-[13px] font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
+                  class="relative w-full text-left pl-7 pr-2 py-1.5 rounded text-type-md font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
                   class:bg-hover={isActive}
                   class:text-accent-primary-start={isActive}
                   class:text-surface-sidebar-text-muted={!isActive}
@@ -952,7 +953,7 @@
                 >
                   {#if isActive}
                     <span
-                      class="absolute left-1 top-1 bottom-1 w-[2px] bg-accent-primary-start rounded-full"
+                      class="absolute left-1 top-1 bottom-1 w-0.5 bg-accent-primary-start rounded-full"
                     ></span>
                   {/if}
                   <span class="truncate flex-1" title={pg.name}>{pg.name}</span>
@@ -965,7 +966,7 @@
              page is actively dragged over it. -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
-            class="mx-1 mt-1 rounded transition-colors min-h-[24px]"
+            class="mx-1 mt-1 rounded transition-colors min-h-6"
             class:drag-over-into={dropTarget?.level === 'section' &&
               dropTarget.name === '__root__'}
             ondragover={(e) => {
@@ -984,7 +985,7 @@
           >
             {#if dragItem?.level === 'page'}
               <div
-                class="text-surface-sidebar-text-muted text-[11px] font-body-md py-1.5 px-2 text-center border border-dashed border-surface-sidebar-border rounded"
+                class="text-surface-sidebar-text-muted text-type-xs font-body-md py-1.5 px-2 text-center border border-dashed border-surface-sidebar-border rounded"
               >
                 Drop to move to notebook root
               </div>
@@ -1004,10 +1005,10 @@
       aria-live="assertive"
     >
       <span
-        class="material-symbols-outlined text-status-danger text-[18px]"
+        class="material-symbols-outlined text-status-danger text-icon-lg"
         aria-hidden="true">error</span
       >
-      <span class="text-surface-sidebar-text text-[13px] font-body-md"
+      <span class="text-surface-sidebar-text text-type-md font-body-md"
         >{dndError}</span
       >
     </div>
@@ -1038,7 +1039,7 @@
             {editingMode === 'rename' ? 'Rename' : 'New'}
             {createMode === 'notebook' ? 'Notebook' : 'Section'}
           </h2>
-          <p class="text-text-muted text-[12px] font-body-md mt-0.5">
+          <p class="text-text-muted text-type-sm font-body-md mt-0.5">
             {#if createMode === 'notebook'}
               in this vault
             {:else if createMode === 'section'}
@@ -1063,10 +1064,10 @@
               : createMode === 'notebook'
                 ? 'Notebook name…'
                 : 'Section name…'}
-            class="w-full bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2.5 text-text-primary text-[14px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+            class="w-full bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2.5 text-text-primary text-icon-sm font-body-md outline-none focus:border-accent-primary-start transition-colors"
           />
           {#if createError}
-            <p class="text-error text-[12px] font-body-md mt-2">
+            <p class="text-error text-type-sm font-body-md mt-2">
               {createError}
             </p>
           {/if}
@@ -1108,7 +1109,8 @@
       title="Hide sidebar (Ctrl+B)"
       class="p-1.5 rounded hover:bg-hover text-surface-sidebar-text-muted hover:text-accent-primary-start transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none flex items-center justify-center hover:scale-105 active:scale-95"
     >
-      <span class="material-symbols-outlined text-[18px]">left_panel_close</span
+      <span class="material-symbols-outlined text-icon-lg"
+        >left_panel_close</span
       >
     </button>
 
@@ -1127,7 +1129,7 @@
   ariaLabel="Actions"
 >
   <button type="button" onclick={handleContextRename} role="menuitem">
-    <span class="material-symbols-outlined text-[16px]">edit</span>
+    <span class="material-symbols-outlined text-icon-md">edit</span>
     Rename
   </button>
   <button
@@ -1136,7 +1138,7 @@
     role="menuitem"
     class="text-status-danger"
   >
-    <span class="material-symbols-outlined text-[16px]">delete</span>
+    <span class="material-symbols-outlined text-icon-md">delete</span>
     Delete
   </button>
 </ContextMenu>
@@ -1165,7 +1167,7 @@
             ? 'Unlink Notebook?'
             : `Delete ${deleteTarget.level}?`}
         </h2>
-        <p class="text-text-muted text-[12px] font-body-md mt-1">
+        <p class="text-text-muted text-type-sm font-body-md mt-1">
           {#if deleteTargetLinked}
             Unlinking <strong>{deleteTarget.label}</strong> stops indexing it.
             Its files are left <strong>completely untouched</strong> — re-link the

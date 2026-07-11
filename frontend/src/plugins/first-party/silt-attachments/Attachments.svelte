@@ -19,7 +19,7 @@
 
 <div class="p-6 max-w-2xl">
   <h2 class="font-headline text-text-primary text-xl mb-2">{manifest.name}</h2>
-  <p class="text-text-muted text-[13px] font-body-md mb-4">
+  <p class="text-text-muted text-type-md font-body-md mb-4">
     Attach files (PDFs, images, documents) to your notes. Use the
     <code class="text-accent-primary-start">/attach</code> slash command in any note
     to pick a file — it is copied into the notebook and embedded as a block.
@@ -28,10 +28,10 @@
     class="p-4 rounded-lg border border-surface-panel-border bg-surface-panel/50 space-y-2"
   >
     <div
-      class="flex items-center gap-2 text-text-primary text-[12px] font-body-md"
+      class="flex items-center gap-2 text-text-primary text-type-sm font-body-md"
     >
       <span
-        class="material-symbols-outlined text-accent-primary-start text-[18px]"
+        class="material-symbols-outlined text-accent-primary-start text-icon-lg"
         >attach_file</span
       >
       Attachments live in
@@ -40,12 +40,12 @@
       >
     </div>
     <div
-      class="flex items-center gap-2 text-text-muted text-[11px] font-body-md"
+      class="flex items-center gap-2 text-text-muted text-type-xs font-body-md"
     >
-      <span class="material-symbols-outlined text-[14px]">info</span>
+      <span class="material-symbols-outlined text-icon-sm">info</span>
       Files are copied (not linked), so the notebook stays self-contained and portable.
     </div>
-    <p class="text-text-muted text-[11px] font-body-md pt-1">
+    <p class="text-text-muted text-type-xs font-body-md pt-1">
       Active notebook: <span class="text-text-primary"
         >{ctx.activeNotebook || '—'}</span
       >

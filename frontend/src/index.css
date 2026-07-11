@@ -153,6 +153,8 @@
   --text-type-md: 0.8125rem; /* 13px — primary settings body */
   --text-type-lg: 1rem; /* 16px — emphasis / large labels */
   --text-type-xl: 1.125rem; /* 18px — summary figures, titles */
+  --text-type-2xl: 1.25rem; /* 20px — section titles / modal headers */
+  --text-display-sm: 4rem; /* 64px — empty-state hero glyphs */
 
   /* Icon glyph sizes (Material Symbols) */
   --text-icon-xs: 0.75rem; /* 12px */
@@ -160,6 +162,7 @@
   --text-icon-md: 1rem; /* 16px */
   --text-icon-lg: 1.125rem; /* 18px */
   --text-icon-xl: 1.5rem; /* 24px */
+  --text-icon-2xl: 1.75rem; /* 28px — empty / notice glyphs */
 
   /* Named grid templates */
   --grid-template-columns-settings-theme: 2fr 1fr;

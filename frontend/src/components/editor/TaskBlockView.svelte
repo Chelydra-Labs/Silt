@@ -26,7 +26,7 @@
 </script>
 
 <NodeViewWrapper
-  class="group flex items-start gap-3 py-1 min-h-[32px]"
+  class="group flex items-start gap-3 py-1 min-h-8"
   data-depth={depth}
   data-id={node.attrs.id}
 >
@@ -34,7 +34,7 @@
        listens for dragstart on this span and populates `view.dragging` so
        BlockIndentOnDrop (#330) and native reorder both work. -->
   <span
-    class="silt-drag-handle-inline material-symbols-outlined text-text-muted hover:text-primary transition-colors duration-150 mt-0.5 select-none text-[18px] opacity-0 group-hover:opacity-100"
+    class="silt-drag-handle-inline material-symbols-outlined text-text-muted hover:text-primary transition-colors duration-150 mt-0.5 select-none text-icon-lg opacity-0 group-hover:opacity-100"
     class:group-hover:opacity-100={!isEmpty}
     spellcheck="false"
     draggable="true"
@@ -69,7 +69,7 @@
       class="w-5 h-5 mt-0.5 rounded done-check flex-shrink-0 flex items-center justify-center cursor-pointer focus:outline-none"
     >
       <span
-        class="material-symbols-outlined text-accent-primary-start text-[14px] font-bold select-none"
+        class="material-symbols-outlined text-accent-primary-start text-icon-sm font-bold select-none"
       >
         check
       </span>
@@ -79,39 +79,40 @@
   <!-- Content -->
   <div class="flex-1 flex flex-wrap items-center gap-2 min-w-0">
     <NodeViewContent
-      class="flex-1 whitespace-pre-wrap break-words min-h-[22px] min-w-[150px] focus:outline-none"
+      class="flex-1 whitespace-pre-wrap break-words min-h-5.5 min-w-[9.375rem] focus:outline-none"
     />
 
     <!-- Meta badges -->
     {#if status !== 'DONE'}
       {#if node.attrs.owner}
         <span
-          class="bg-accent-secondary-glow border border-accent-secondary-start/30 text-accent-secondary-start px-2 py-0.5 rounded text-[11px] font-label-sm select-none"
+          class="bg-accent-secondary-glow border border-accent-secondary-start/30 text-accent-secondary-start px-2 py-0.5 rounded text-type-xs font-label-sm select-none"
         >
           [{node.attrs.owner}]
         </span>
       {/if}
       {#if node.attrs.due_date}
         <span
-          class="bg-accent-primary-glow border border-accent-primary-start/30 text-accent-primary-start px-2 py-0.5 rounded text-[11px] font-label-sm select-none"
+          class="bg-accent-primary-glow border border-accent-primary-start/30 text-accent-primary-start px-2 py-0.5 rounded text-type-xs font-label-sm select-none"
         >
           {node.attrs.due_date}
         </span>
       {/if}
       {#if node.attrs.recurrence}
         <span
-          class="bg-accent-secondary-glow border border-accent-secondary-start/30 text-accent-secondary-start px-2 py-0.5 rounded text-[11px] font-label-sm select-none flex items-center gap-1"
+          class="bg-accent-secondary-glow border border-accent-secondary-start/30 text-accent-secondary-start px-2 py-0.5 rounded text-type-xs font-label-sm select-none flex items-center gap-1"
           title="Recurring: {node.attrs.recurrence}"
         >
-          <span class="material-symbols-outlined text-[11px]" aria-hidden="true"
-            >event_repeat</span
+          <span
+            class="material-symbols-outlined text-type-xs"
+            aria-hidden="true">event_repeat</span
           >
           {node.attrs.recurrence}
         </span>
       {/if}
       {#if priorityLabel(node.attrs.priority)}
         <span
-          class="bg-error-bg border border-error-border text-error px-2 py-0.5 rounded text-[11px] font-label-sm select-none"
+          class="bg-error-bg border border-error-border text-error px-2 py-0.5 rounded text-type-xs font-label-sm select-none"
         >
           {priorityLabel(node.attrs.priority)}
         </span>

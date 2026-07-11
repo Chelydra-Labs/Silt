@@ -101,10 +101,10 @@
 
 <div class="p-6 max-w-3xl space-y-6">
   <header class="space-y-1">
-    <h2 id="aisettings-title" class="text-text-primary text-[18px] font-bold">
+    <h2 id="aisettings-title" class="text-text-primary text-type-xl font-bold">
       {manifest?.name ?? 'AI Summary'}
     </h2>
-    <p class="text-text-muted text-[13px] font-body-md leading-relaxed">
+    <p class="text-text-muted text-type-md font-body-md leading-relaxed">
       {manifest?.description ??
         'A dismissible highlight at the top of each note with a summary plus new tasks, risks, and decisions.'}
     </p>
@@ -116,17 +116,17 @@
       role="status"
     >
       <span
-        class="material-symbols-outlined text-accent-primary-start text-[20px]"
+        class="material-symbols-outlined text-accent-primary-start text-type-2xl"
         aria-hidden="true">info</span
       >
       <div class="flex-1 space-y-2.5">
-        <p class="text-text-primary text-[12px] font-body-md leading-relaxed">
+        <p class="text-text-primary text-type-sm font-body-md leading-relaxed">
           No AI provider is configured yet — summaries need a chat model. Add
           one via your own local or OpenAI-compatible endpoint.
         </p>
         <button
           type="button"
-          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary-start text-surface-app font-label-sm-bold text-[11px] hover:brightness-110 transition-all cursor-pointer"
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary-start text-surface-app font-label-sm-bold text-type-xs hover:brightness-110 transition-all cursor-pointer"
           onclick={() => ctx.openSettings('ai')}
         >
           Open AI Provider settings
@@ -141,10 +141,10 @@
       class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 flex items-center justify-between gap-4"
     >
       <div>
-        <span class="text-text-primary text-[13px] font-semibold block">
+        <span class="text-text-primary text-type-md font-semibold block">
           Enable note summaries
         </span>
-        <span class="text-text-muted text-[11px] font-label-sm block mt-0.5">
+        <span class="text-text-muted text-type-xs font-label-sm block mt-0.5">
           Generate summaries automatically or on-demand at the top of each note.
         </span>
       </div>
@@ -173,10 +173,10 @@
       class="flex items-start gap-3 p-4 rounded-xl bg-surface-panel/10 border border-surface-panel-border border-l-4 border-l-accent-primary-start"
     >
       <span
-        class="material-symbols-outlined text-text-muted text-[18px] flex-shrink-0 mt-0.5"
+        class="material-symbols-outlined text-text-muted text-icon-lg flex-shrink-0 mt-0.5"
         aria-hidden="true">shield</span
       >
-      <p class="text-text-primary text-[12px] font-body-md leading-relaxed">
+      <p class="text-text-primary text-type-sm font-body-md leading-relaxed">
         Note content is sent only to your configured AI endpoint — local or
         remote — to generate the summary. No other note data is sent. See
         <strong class="text-accent-primary-start"
@@ -199,7 +199,7 @@
       >
         <h3
           id="ai-summary-trigger-label"
-          class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+          class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
         >
           Generation Trigger
         </h3>
@@ -225,16 +225,16 @@
               }}
             />
             <span
-              class="material-symbols-outlined text-[20px] flex-shrink-0 mt-0.5"
+              class="material-symbols-outlined text-type-2xl flex-shrink-0 mt-0.5"
               >autorenew</span
             >
             <div>
               <span
-                class="font-label-sm-bold text-[11px] uppercase tracking-wide block"
+                class="font-label-sm-bold text-type-xs uppercase tracking-wide block"
                 >Automatically on open</span
               >
               <span
-                class="text-[11px] font-label-sm block mt-0.5 text-text-muted"
+                class="text-type-xs font-label-sm block mt-0.5 text-text-muted"
                 >Generates or refreshes a summary as soon as you open a note.</span
               >
             </div>
@@ -256,16 +256,16 @@
               }}
             />
             <span
-              class="material-symbols-outlined text-[20px] flex-shrink-0 mt-0.5"
+              class="material-symbols-outlined text-type-2xl flex-shrink-0 mt-0.5"
               >ads_click</span
             >
             <div>
               <span
-                class="font-label-sm-bold text-[11px] uppercase tracking-wide block"
+                class="font-label-sm-bold text-type-xs uppercase tracking-wide block"
                 >Only on-demand</span
               >
               <span
-                class="text-[11px] font-label-sm block mt-0.5 text-text-muted"
+                class="text-type-xs font-label-sm block mt-0.5 text-text-muted"
                 >Summaries are only generated when you manually click
                 Regenerate.</span
               >
@@ -279,7 +279,7 @@
         class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
       >
         <h3
-          class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+          class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
         >
           Summary Structure
         </h3>
@@ -287,12 +287,12 @@
         <!-- Summary length -->
         <div class="flex flex-col gap-1.5">
           <label
-            class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+            class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
             for="summary-length-select">Summary length</label
           >
           <select
             id="summary-length-select"
-            class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all cursor-pointer max-w-md"
+            class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all cursor-pointer max-w-md"
             value={draft.summary_length}
             onchange={(e) =>
               void write(
@@ -309,7 +309,7 @@
         <!-- Facets to show -->
         <div class="space-y-2">
           <span
-            class="text-text-muted text-[10px] font-semibold uppercase tracking-wider block"
+            class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider block"
             >Facets to include</span
           >
           <div class="grid grid-cols-3 gap-2.5">
@@ -331,11 +331,11 @@
                       e.currentTarget.checked
                     )}
                 />
-                <span class="material-symbols-outlined text-[18px] mb-1"
+                <span class="material-symbols-outlined text-icon-lg mb-1"
                   >{icon}</span
                 >
                 <span
-                  class="font-label-sm-bold text-[11px] uppercase tracking-wide"
+                  class="font-label-sm-bold text-type-xs uppercase tracking-wide"
                   >{label}</span
                 >
               </label>
@@ -349,7 +349,7 @@
         class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
       >
         <h3
-          class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+          class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
         >
           Limits & Performance
         </h3>
@@ -357,12 +357,12 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <label class="flex flex-col gap-1.5">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Regenerate debounce (ms)</span
             >
             <input
               type="number"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
               aria-label="Regenerate debounce milliseconds after save"
               min="0"
               step="500"
@@ -377,12 +377,12 @@
 
           <label class="flex flex-col gap-1.5">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Max note size (chars)</span
             >
             <input
               type="number"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
               aria-label="Max note size characters"
               min="1000"
               step="1000"
@@ -397,7 +397,7 @@
         </div>
 
         <p
-          class="text-text-muted text-[11px] font-label-sm leading-relaxed mt-1"
+          class="text-text-muted text-type-xs font-label-sm leading-relaxed mt-1"
         >
           Notes larger than the max size will be skipped. Lowering this caps
           computation overhead on long note vaults.

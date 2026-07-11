@@ -1,13 +1,13 @@
-// Guard against arbitrary Tailwind sizing/type/shadow/grid values in the
-// settings UI (#520). Prefer named tokens from index.css @theme
-// (text-type-*, text-icon-*, grid-cols-settings-theme, shadow-accent-glow, …).
+// Guard against arbitrary Tailwind sizing/type/shadow/grid values in chrome UI
+// (#520 settings, #523 repo-wide). Prefer named tokens from index.css @theme
+// (text-type-*, text-icon-*, text-display-*, grid-cols-*, shadow-accent-glow, …).
 // Modeled on hardcoded-colors.test.ts.
 
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve, relative, join } from 'node:path'
 
-const settingsDir = resolve(__dirname, '../components/settings')
+const srcRoot = resolve(__dirname, '..')
 
 // Forbidden patterns in component class strings / style attributes.
 const FORBIDDEN: { name: string; re: RegExp }[] = [
@@ -30,12 +30,12 @@ function walkSvelte(dir: string): string[] {
   return out
 }
 
-describe('settings UI arbitrary-value guard (#520)', () => {
-  const files = walkSvelte(settingsDir)
-  expect(files.length).toBeGreaterThan(5)
+describe('chrome UI arbitrary-value guard (#523)', () => {
+  const files = walkSvelte(srcRoot)
+  expect(files.length).toBeGreaterThan(20)
 
   for (const file of files) {
-    const rel = relative(settingsDir, file).replace(/\\/g, '/')
+    const rel = relative(srcRoot, file).replace(/\\/g, '/')
     it(`${rel} has no forbidden arbitrary type/size/shadow/grid values`, () => {
       const text = readFileSync(file, 'utf-8')
       const violations: string[] = []
@@ -45,6 +45,8 @@ describe('settings UI arbitrary-value guard (#520)', () => {
         // Skip pure comments
         if (/^\s*\/\//.test(line) || /^\s*\*/.test(line)) continue
         for (const { name, re } of FORBIDDEN) {
+          // Reset lastIndex for global-safe reuse
+          re.lastIndex = 0
           if (re.test(line)) {
             violations.push(`  line ${i + 1} (${name}): ${line.trim()}`)
           }

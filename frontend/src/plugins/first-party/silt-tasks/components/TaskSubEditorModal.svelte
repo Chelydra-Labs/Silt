@@ -353,21 +353,21 @@
       class="flex items-center gap-3 px-5 py-3 border-b border-surface-modal-border flex-shrink-0"
     >
       <span
-        class="material-symbols-outlined text-accent-primary-start text-[20px]"
+        class="material-symbols-outlined text-accent-primary-start text-type-2xl"
         >zoom_in</span
       >
       <div class="min-w-0 flex-1">
         <div
-          class="text-[10px] text-text-muted uppercase tracking-widest font-label-sm-bold truncate"
+          class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold truncate"
         >
           {#if isStandalone}
             Standalone task
           {:else}
             {notebook}<span
-              class="material-symbols-outlined text-[10px] align-middle"
+              class="material-symbols-outlined text-type-2xs align-middle"
               >chevron_right</span
             >{section || '(none)'}<span
-              class="material-symbols-outlined text-[10px] align-middle"
+              class="material-symbols-outlined text-type-2xs align-middle"
               >chevron_right</span
             >{page}
           {/if}
@@ -385,7 +385,7 @@
         class="text-text-muted hover:text-text-primary transition-colors p-1 rounded"
         aria-label="Close sub-editor"
       >
-        <span class="material-symbols-outlined text-[20px]">close</span>
+        <span class="material-symbols-outlined text-type-2xl">close</span>
       </button>
     </header>
 
@@ -405,7 +405,7 @@
       class="flex items-center justify-between px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
     >
       <span
-        class="text-[11px] font-label-sm {saveError
+        class="text-type-xs font-label-sm {saveError
           ? 'text-status-danger'
           : unsavedChanges
             ? 'text-status-warn'
@@ -415,7 +415,7 @@
       >
         {statusText}
       </span>
-      <span class="text-[10px] text-text-muted font-label-sm">
+      <span class="text-type-2xs text-text-muted font-label-sm">
         Esc to close
       </span>
     </footer>
