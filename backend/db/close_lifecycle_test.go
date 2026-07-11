@@ -47,6 +47,15 @@ func TestClose_PostCloseReturnsErrDBClosed(t *testing.T) {
 	if _, err := dm.KnownFiles(); !errors.Is(err, ErrDBClosed) {
 		t.Fatalf("KnownFiles: want ErrDBClosed, got %v", err)
 	}
+	if _, err := dm.CountBlocksGroupedByPage(); !errors.Is(err, ErrDBClosed) {
+		t.Fatalf("CountBlocksGroupedByPage: want ErrDBClosed, got %v", err)
+	}
+	if _, err := dm.GetBlockReference("x"); !errors.Is(err, ErrDBClosed) {
+		t.Fatalf("GetBlockReference: want ErrDBClosed, got %v", err)
+	}
+	if err := dm.MarkFilesIndexed([]FileIndexStat{{Path: "/x.md", MTime: 1, Size: 1}}); !errors.Is(err, ErrDBClosed) {
+		t.Fatalf("MarkFilesIndexed: want ErrDBClosed, got %v", err)
+	}
 	if _, _, err := dm.handle(); !errors.Is(err, ErrDBClosed) {
 		t.Fatalf("handle: want ErrDBClosed, got %v", err)
 	}
