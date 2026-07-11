@@ -96,7 +96,7 @@
     onclick={startCapture}
     onkeydown={onKeyDown}
     onblur={onBlur}
-    class="bg-surface-panel border rounded-lg px-3 py-1.5 text-text-primary font-label-sm font-mono outline-none transition-colors w-full cursor-pointer
+    class="bg-surface-panel border rounded-lg px-3 py-1.5 text-text-primary text-type-sm font-mono outline-none transition-colors w-full cursor-pointer
       {capturing
       ? 'border-accent-primary-start ring-1 ring-accent-primary-start'
       : isValid
@@ -111,7 +111,7 @@
       title="Clear (disable)"
       class="flex-shrink-0 p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-hover border-none bg-transparent cursor-pointer"
     >
-      <span class="material-symbols-outlined text-sm" aria-hidden="true"
+      <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
         >close</span
       >
     </button>

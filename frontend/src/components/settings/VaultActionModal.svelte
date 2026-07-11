@@ -184,7 +184,7 @@
   >
     <div class="flex items-start gap-3 mb-4">
       <span
-        class="material-symbols-outlined text-accent-primary-start text-[24px] mt-0.5"
+        class="material-symbols-outlined text-accent-primary-start text-icon-xl mt-0.5"
       >
         {mode === 'move' ? 'drive_file_move' : 'content_copy'}
       </span>
@@ -195,7 +195,7 @@
         >
           {mode === 'move' ? 'Move vault' : 'Copy vault'}
         </h2>
-        <p class="text-text-muted text-[12px] font-body-md mt-1">
+        <p class="text-text-muted text-type-sm font-body-md mt-1">
           {#if mode === 'move'}
             Relocate this vault to a new folder. Your notes, config, themes,
             templates, and plugins come along; the search index is rebuilt at
@@ -212,17 +212,17 @@
     {#if !done}
       <!-- Destination picker -->
       <div class="mb-4">
-        <span class="text-text-muted text-[11px] font-label-sm-bold"
+        <span class="text-text-muted text-type-xs font-label-sm-bold"
           >Destination</span
         >
         <div
           class="flex items-center gap-2 mt-1.5 bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2"
         >
-          <span class="material-symbols-outlined text-text-muted text-[18px]"
+          <span class="material-symbols-outlined text-text-muted text-icon-lg"
             >folder</span
           >
           <span
-            class="text-text-primary text-[13px] font-body-md truncate flex-1"
+            class="text-text-primary text-type-md font-body-md truncate flex-1"
           >
             {destination || 'No folder selected'}
           </span>
@@ -231,12 +231,12 @@
             bind:this={destBtn}
             onclick={chooseDestination}
             disabled={busy}
-            class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-[12px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            class="flex-shrink-0 px-2.5 py-1 rounded-lg bg-hover border border-surface-modal-border text-text-primary hover:border-accent-primary-start text-type-sm font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Choose…
           </button>
         </div>
-        <p class="text-text-muted text-[11px] font-label-sm mt-1.5">
+        <p class="text-text-muted text-type-xs font-label-sm mt-1.5">
           The destination must be an empty folder on a local drive.
         </p>
       </div>
@@ -249,7 +249,7 @@
             type="checkbox"
             class="w-4 h-4 mt-0.5 accent-[var(--color-accent-primary-end)] cursor-pointer"
           />
-          <span class="text-text-primary text-[12px] font-body-md">
+          <span class="text-text-primary text-type-sm font-body-md">
             Delete the original vault after a successful move
           </span>
         </label>
@@ -263,27 +263,27 @@
               type="checkbox"
               class="w-4 h-4 accent-[#f43f5e] cursor-pointer"
             />
-            <span class="text-status-warn text-[11px] font-label-sm">
+            <span class="text-status-warn text-type-xs font-label-sm">
               I understand the original folder will be permanently deleted.
             </span>
           </label>
         {/if}
       {/if}
 
-      <p class="text-text-muted text-[11px] font-label-sm mb-4">
-        <span class="material-symbols-outlined text-[14px] align-middle mr-0.5"
+      <p class="text-text-muted text-type-xs font-label-sm mb-4">
+        <span class="material-symbols-outlined text-icon-sm align-middle mr-0.5"
           >link_off</span
         >
         Linked notebooks are external folders and are not affected.
       </p>
 
       <!-- Live region: status / errors -->
-      <div aria-live="polite" class="min-h-[20px]">
+      <div aria-live="polite" class="min-h-5">
         {#if busy}
           <div
-            class="flex items-center gap-2 text-accent-primary-start text-[12px] font-body-md"
+            class="flex items-center gap-2 text-accent-primary-start text-type-sm font-body-md"
           >
-            <span class="material-symbols-outlined text-[16px] animate-spin"
+            <span class="material-symbols-outlined text-icon-md animate-spin"
               >progress_activity</span
             >
             <span>{mode === 'move' ? 'Moving vault…' : 'Copying vault…'}</span>
@@ -293,9 +293,9 @@
       {#if error}
         <div
           role="alert"
-          class="flex items-start gap-2 mt-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md"
+          class="flex items-start gap-2 mt-2 p-3 rounded-lg bg-error/10 border border-error/30 text-error text-type-sm font-body-md"
         >
-          <span class="material-symbols-outlined text-[18px]">error</span>
+          <span class="material-symbols-outlined text-icon-lg">error</span>
           <span class="flex-1">{error}</span>
         </div>
       {/if}
@@ -323,16 +323,16 @@
       <!-- Copy success -->
       <div
         role="status"
-        class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-[12px] font-body-md"
+        class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-type-sm font-body-md"
       >
-        <span class="material-symbols-outlined text-[18px]">check_circle</span>
+        <span class="material-symbols-outlined text-icon-lg">check_circle</span>
         <div class="flex-1">
           <p>Copied {done.files} files ({fmtBytes(done.bytes)}).</p>
-          <p class="text-text-muted text-[11px] font-label-sm mt-1 truncate">
+          <p class="text-text-muted text-type-xs font-label-sm mt-1 truncate">
             {done.path}
           </p>
           {#if done.skippedSymlinks > 0}
-            <p class="text-status-warn text-[11px] font-label-sm mt-1">
+            <p class="text-status-warn text-type-xs font-label-sm mt-1">
               {done.skippedSymlinks} symlink(s) skipped — not included in the copy.
             </p>
           {/if}

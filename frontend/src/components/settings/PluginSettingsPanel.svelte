@@ -72,7 +72,7 @@
   <PluginSurfaceFrame surface={thirdPartySurfaces[0]} ctxProxy={ctx} />
 {:else if thirdPartySurfaces.length > 1}
   <!-- Misbehaving plugin registered multiple settings surfaces -->
-  <div class="p-6 text-status-danger font-body-md text-[13px]">
+  <div class="p-6 text-status-danger font-body-md text-type-md">
     This plugin registered {thirdPartySurfaces.length} settings surfaces. Only one
     settings surface per plugin is supported.
   </div>

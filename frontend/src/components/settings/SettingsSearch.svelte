@@ -124,7 +124,7 @@
 <div class="relative w-full max-w-sm" data-test-settings-search>
   <div class="relative">
     <span
-      class="material-symbols-outlined text-text-muted text-[18px] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+      class="material-symbols-outlined text-text-muted text-icon-lg absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
       aria-hidden="true">search</span
     >
     <input
@@ -145,7 +145,7 @@
         : undefined}
       autocomplete="off"
       spellcheck="false"
-      class="w-full pl-8 pr-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-[12px] font-body-md placeholder:text-text-muted outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+      class="w-full pl-8 pr-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm font-body-md placeholder:text-text-muted outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
     />
   </div>
 
@@ -164,7 +164,7 @@
         <li
           role="presentation"
           aria-hidden="true"
-          class="px-3 py-2 text-[12px] text-text-muted italic"
+          class="px-3 py-2 text-type-sm text-text-muted italic"
         >
           No matching settings
         </li>
@@ -185,11 +185,11 @@
                 ? 'bg-hover text-text-primary'
                 : 'bg-transparent text-text-primary hover:bg-hover'}"
             >
-              <span class="text-[12px] font-body-md truncate"
+              <span class="text-type-sm font-body-md truncate"
                 >{entry.label}</span
               >
               <span
-                class="text-[10px] font-label-sm text-text-muted flex-shrink-0 truncate"
+                class="text-type-2xs font-label-sm text-text-muted flex-shrink-0 truncate"
               >
                 {sectionLabel(entry.sectionId)}
               </span>

@@ -84,9 +84,9 @@
       <!-- External update notice -->
       {#if settings.pendingExternal}
         <div
-          class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-[12px] font-body-md"
+          class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-type-sm font-body-md"
         >
-          <span class="material-symbols-outlined text-[18px]">sync</span>
+          <span class="material-symbols-outlined text-icon-lg">sync</span>
           <span class="flex-1">
             Settings were updated externally. Your unsaved edits are preserved.
           </span>
@@ -112,11 +112,11 @@
       >
         <div class="flex items-center justify-between gap-3 flex-wrap">
           <h4
-            class="font-label-sm-bold text-text-primary uppercase tracking-wider text-xs"
+            class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs"
           >
             Keyboard Shortcuts
           </h4>
-          <span class="text-text-muted text-xs">
+          <span class="text-text-muted text-type-2xs">
             Click a field and press a shortcut. Clear or Backspace to disable.
           </span>
         </div>
@@ -124,7 +124,7 @@
           {#each hotkeyEntries as [key, value] (key)}
             <div class="flex flex-col gap-1">
               <span
-                class="text-text-muted text-xs font-semibold uppercase tracking-wider truncate"
+                class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider truncate"
                 title={prettyLabel(key)}
                 id="hotkey-label-{key}"
               >
@@ -146,9 +146,9 @@
       <!-- Error banner -->
       {#if settings.error}
         <div
-          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
+          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
         >
-          <span class="material-symbols-outlined text-[18px]">error</span>
+          <span class="material-symbols-outlined text-icon-lg">error</span>
           <span class="flex-1">{settings.error}</span>
         </div>
       {/if}

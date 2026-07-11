@@ -421,18 +421,18 @@
       onclick={chooseArchive}
       class="bg-accent-primary-glow border border-accent-primary-start/30 text-accent-primary-start font-label-sm-bold px-3 py-2 rounded flex items-center gap-2 hover:brightness-110 hover:border-accent-primary-start transition-all cursor-pointer"
     >
-      <span class="material-symbols-outlined text-[18px]">file_download</span>
+      <span class="material-symbols-outlined text-icon-lg">file_download</span>
       Install from .silt-plugin…
     </button>
     <button
       onclick={checkForUpdates}
-      class="ml-2 text-text-muted hover:text-accent-primary-start text-[11px] font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-1 cursor-pointer transition-colors"
+      class="ml-2 text-text-muted hover:text-accent-primary-start text-type-xs font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-1 cursor-pointer transition-colors"
     >
       Check for updates
     </button>
 
     {#if previewError}
-      <p class="text-error text-[12px] font-body-md mt-3">
+      <p class="text-error text-type-sm font-body-md mt-3">
         Validation failed: {previewError}
       </p>
     {/if}
@@ -445,15 +445,15 @@
           <span class="font-label-sm-bold text-text-primary"
             >{preview.manifest.name}</span
           >
-          <span class="text-[10px] text-text-muted"
+          <span class="text-type-2xs text-text-muted"
             >v{preview.manifest.version || '0.0.0'}</span
           >
-          <span class="text-[10px] text-text-muted"
+          <span class="text-type-2xs text-text-muted"
             >· {preview.manifest.id}</span
           >
         </div>
         {#if preview.manifest.description}
-          <p class="text-text-muted text-[12px] font-body-md mb-2">
+          <p class="text-text-muted text-type-sm font-body-md mb-2">
             {preview.manifest.description}
           </p>
         {/if}
@@ -461,9 +461,9 @@
           <ul class="mb-2 space-y-0.5">
             {#each preview.warnings as w}
               <li
-                class="text-status-warn text-[11px] font-body-md flex items-start gap-1"
+                class="text-status-warn text-type-xs font-body-md flex items-start gap-1"
               >
-                <span class="material-symbols-outlined text-[13px] mt-0.5"
+                <span class="material-symbols-outlined text-type-md mt-0.5"
                   >warning</span
                 >
                 {w}
@@ -474,17 +474,17 @@
         {#if preview.manifest.capabilities && Object.keys(preview.manifest.capabilities).length > 0}
           <div class="mb-2">
             <div
-              class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mb-1"
+              class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mb-1"
             >
               Requests capabilities
             </div>
             <ul class="space-y-0.5">
               {#each Object.keys(preview.manifest.capabilities) as cap}
                 <li
-                  class="text-[11px] text-text-primary font-body-md flex items-center gap-1.5"
+                  class="text-type-xs text-text-primary font-body-md flex items-center gap-1.5"
                 >
                   <span
-                    class="material-symbols-outlined text-[13px] text-accent-primary-start/70"
+                    class="material-symbols-outlined text-type-md text-accent-primary-start/70"
                     >key</span
                   >
                   {capabilityLabels[cap] ?? cap}{qualifierLabel(
@@ -493,7 +493,7 @@
                 </li>
               {/each}
             </ul>
-            <p class="text-text-muted text-[10px] mt-1 italic">
+            <p class="text-text-muted text-type-2xs mt-1 italic">
               You can grant or revoke each capability after install.
             </p>
           </div>
@@ -511,16 +511,16 @@
 
   {#if actionError}
     <div
-      class="flex items-start gap-2 p-3 mb-4 rounded-lg bg-error/10 border border-error/30 text-error text-[12px] font-body-md"
+      class="flex items-start gap-2 p-3 mb-4 rounded-lg bg-error/10 border border-error/30 text-error text-type-sm font-body-md"
     >
-      <span class="material-symbols-outlined text-[18px]">error</span>
+      <span class="material-symbols-outlined text-icon-lg">error</span>
       <span class="flex-1">{actionError}</span>
     </div>
   {/if}
 
   <!-- Plugin list -->
   <h3
-    class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-2"
+    class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-2"
   >
     Plugins
   </h3>
@@ -528,7 +528,7 @@
   {#if loading}
     <div class="text-text-muted py-4 animate-pulse font-body-md">Loading…</div>
   {:else if cards.length === 0}
-    <div class="text-text-muted py-4 font-body-md text-[13px]">
+    <div class="text-text-muted py-4 font-body-md text-type-md">
       No plugins installed. First-party plugins (Agenda, Calendar, Kanban,
       Attachments) are bundled.
     </div>
@@ -541,7 +541,7 @@
           <!-- Card row -->
           <div class="flex items-center gap-3 px-4 py-3">
             <span
-              class="material-symbols-outlined text-accent-primary-start/80 text-[24px]"
+              class="material-symbols-outlined text-accent-primary-start/80 text-icon-xl"
             >
               {card.icon || 'extension'}
             </span>
@@ -550,21 +550,23 @@
                 <span class="font-body-md text-text-primary truncate"
                   >{card.name}</span
                 >
-                <span class="text-[10px] text-text-muted">v{card.version}</span>
+                <span class="text-type-2xs text-text-muted"
+                  >v{card.version}</span
+                >
                 {#if card.updateAvailable}
                   <span
-                    class="text-[9px] text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
+                    class="text-type-3xs text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
                   >
                     Update available
                   </span>
                 {/if}
                 {#if card.author}
-                  <span class="text-[10px] text-text-muted truncate"
+                  <span class="text-type-2xs text-text-muted truncate"
                     >· {card.author}</span
                   >
                 {/if}
                 <span
-                  class={'text-[9px] rounded px-1.5 py-0.5 uppercase tracking-wider border ' +
+                  class={'text-type-3xs rounded px-1.5 py-0.5 uppercase tracking-wider border ' +
                     (card.source === 'first-party'
                       ? 'text-accent-primary-start border-accent-primary-start/40'
                       : 'text-text-muted border-surface-panel-border')}
@@ -573,13 +575,13 @@
                 </span>
                 {#if card.disabled}
                   <span
-                    class="text-[9px] text-text-muted bg-surface-panel border border-surface-panel-border rounded px-1.5 py-0.5 uppercase tracking-wider"
+                    class="text-type-3xs text-text-muted bg-surface-panel border border-surface-panel-border rounded px-1.5 py-0.5 uppercase tracking-wider"
                     >disabled</span
                   >
                 {/if}
                 {#if card.loadError}
                   <span
-                    class="text-[9px] text-error bg-error/10 border border-error/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
+                    class="text-type-3xs text-error bg-error/10 border border-error/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
                     >error</span
                   >
                 {/if}
@@ -589,10 +591,10 @@
                     role="status"
                     title={securityTitle(st)}
                     aria-label={securityTitle(st)}
-                    class="inline-flex items-center gap-0.5 text-[9px] text-status-warn bg-status-warn/10 border border-status-warn/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
+                    class="inline-flex items-center gap-0.5 text-type-3xs text-status-warn bg-status-warn/10 border border-status-warn/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
                   >
                     <span
-                      class="material-symbols-outlined text-[11px]"
+                      class="material-symbols-outlined text-type-xs"
                       aria-hidden="true">shield</span
                     >
                     {#if st.denials > 0 && st.rateLimited > 0}
@@ -610,17 +612,17 @@
                     onclick={() => onSwitchTab?.('ai')}
                     disabled={!onSwitchTab}
                     title="Open AI Provider settings"
-                    class="inline-flex items-center gap-0.5 text-[9px] text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider hover:bg-accent-primary-start/20 hover:border-accent-primary-start/60 transition-all motion-reduce:transition-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:cursor-default disabled:opacity-70"
+                    class="inline-flex items-center gap-0.5 text-type-3xs text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider hover:bg-accent-primary-start/20 hover:border-accent-primary-start/60 transition-all motion-reduce:transition-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:cursor-default disabled:opacity-70"
                   >
                     AI setup needed
                     <span
-                      class="material-symbols-outlined text-[11px]"
+                      class="material-symbols-outlined text-type-xs"
                       aria-hidden="true">arrow_forward</span
                     >
                   </button>
                 {/if}
               </div>
-              <div class="text-[10px] text-text-muted truncate font-label-sm">
+              <div class="text-type-2xs text-text-muted truncate font-label-sm">
                 {card.id}
               </div>
             </div>
@@ -632,7 +634,7 @@
               title="Details"
               class="text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
             >
-              <span class="material-symbols-outlined text-[18px]">
+              <span class="material-symbols-outlined text-icon-lg">
                 {expanded === card.id ? 'expand_less' : 'expand_more'}
               </span>
             </button>
@@ -643,7 +645,7 @@
               aria-label={`${card.name}: ${card.disabled ? 'Enable' : 'Disable'}`}
               class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
             >
-              <span class="material-symbols-outlined text-[20px]">
+              <span class="material-symbols-outlined text-icon-lg">
                 {card.disabled ? 'toggle_off' : 'toggle_on'}
               </span>
             </button>
@@ -654,7 +656,8 @@
                 aria-label={`${card.name}: Uninstall`}
                 class="text-text-muted hover:text-error border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
               >
-                <span class="material-symbols-outlined text-[18px]">delete</span
+                <span class="material-symbols-outlined text-icon-lg"
+                  >delete</span
                 >
               </button>
             {/if}
@@ -663,9 +666,9 @@
           <!-- Inline load error -->
           {#if card.loadError}
             <div
-              class="px-4 pb-2 -mt-1 text-error text-[11px] font-body-md flex items-center gap-1.5"
+              class="px-4 pb-2 -mt-1 text-error text-type-xs font-body-md flex items-center gap-1.5"
             >
-              <span class="material-symbols-outlined text-[14px]">error</span>
+              <span class="material-symbols-outlined text-icon-sm">error</span>
               {card.loadError}
             </div>
           {/if}
@@ -677,12 +680,12 @@
               class="px-4 py-3 border-t border-surface-panel-border bg-surface-panel/40 space-y-2"
             >
               {#if card.description}
-                <p class="text-text-muted text-[12px] font-body-md">
+                <p class="text-text-muted text-type-sm font-body-md">
                   {card.description}
                 </p>
               {/if}
               <dl
-                class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px] font-label-sm"
+                class="grid grid-cols-auto-fr gap-x-4 gap-y-1 text-type-xs font-label-sm"
               >
                 <dt class="text-text-muted">ID</dt>
                 <dd class="text-text-primary">{card.id}</dd>
@@ -715,20 +718,20 @@
                      offer a one-click switch instead of dead text. -->
                 <div>
                   <div
-                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                    class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
                   >
                     Plugin settings
                   </div>
                   {#if onSwitchTab}
                     <button
                       type="button"
-                      class="text-[12px] text-accent-primary-start hover:underline bg-transparent border-none cursor-pointer p-0 font-body-md"
+                      class="text-type-sm text-accent-primary-start hover:underline bg-transparent border-none cursor-pointer p-0 font-body-md"
                       onclick={() => onSwitchTab(`plugin:${card.id}`)}
                     >
                       Open the {card.name} settings tab
                     </button>
                   {:else}
-                    <p class="text-[12px] text-text-muted font-body-md">
+                    <p class="text-type-sm text-text-muted font-body-md">
                       This plugin has a dedicated settings page — open the
                       <strong>{card.name}</strong> tab on the left.
                     </p>
@@ -737,7 +740,7 @@
               {:else if card.settingsSchema && card.settingsSchema.length > 0}
                 <div>
                   <div
-                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                    class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
                   >
                     Plugin settings
                   </div>
@@ -750,12 +753,12 @@
               {:else if pluginSettings(card.id)}
                 <div>
                   <div
-                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                    class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
                   >
                     Plugin settings
                   </div>
                   <pre
-                    class="text-[10px] text-text-primary bg-surface-panel/60 border border-surface-panel-border rounded p-2 overflow-x-auto">{JSON.stringify(
+                    class="text-type-2xs text-text-primary bg-surface-panel/60 border border-surface-panel-border rounded p-2 overflow-x-auto">{JSON.stringify(
                       pluginSettings(card.id),
                       null,
                       2
@@ -766,19 +769,19 @@
               {#if card.requestedCapabilities && Object.keys(card.requestedCapabilities).length > 0}
                 <div>
                   <div
-                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                    class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
                     id="caps-{card.id}"
                   >
                     Capabilities
                   </div>
                   <ul
-                    class="text-[11px] font-body-md space-y-1"
+                    class="text-type-xs font-body-md space-y-1"
                     aria-labelledby="caps-{card.id}"
                   >
                     {#each Object.keys(card.requestedCapabilities) as cap}
                       <li class="flex items-center gap-2">
                         <span
-                          class="material-symbols-outlined text-[14px] text-text-muted"
+                          class="material-symbols-outlined text-icon-sm text-text-muted"
                         >
                           {isGranted(card, cap) ? 'lock_open' : 'lock'}
                         </span>
@@ -788,14 +791,14 @@
                           )}
                         </span>
                         {#if card.source === 'first-party'}
-                          <span class="text-[10px] text-text-muted italic"
+                          <span class="text-type-2xs text-text-muted italic"
                             >trusted</span
                           >
                         {:else if isGranted(card, cap)}
                           <button
                             onclick={() => revoke(card, cap)}
                             disabled={grantBusy === `${card.id}:${cap}`}
-                            class="text-text-muted hover:text-error text-[10px] font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
+                            class="text-text-muted hover:text-error text-type-2xs font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
                             aria-label="Revoke {capabilityLabels[cap] ?? cap}"
                           >
                             Revoke
@@ -804,7 +807,7 @@
                           <button
                             onclick={() => grant(card, cap)}
                             disabled={grantBusy === `${card.id}:${cap}`}
-                            class="text-accent-primary-start hover:brightness-110 text-[10px] font-label-sm-bold bg-transparent border border-accent-primary-start/40 rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
+                            class="text-accent-primary-start hover:brightness-110 text-type-2xs font-label-sm-bold bg-transparent border border-accent-primary-start/40 rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
                             aria-label="Grant {capabilityLabels[cap] ?? cap}"
                           >
                             Grant
@@ -819,10 +822,10 @@
               {#if card.source === 'first-party'}
                 <button
                   onclick={() => openPluginView(card.id)}
-                  class="mt-1 text-accent-primary-start text-[11px] font-label-sm-bold hover:brightness-110 bg-transparent border-none cursor-pointer flex items-center gap-1"
+                  class="mt-1 text-accent-primary-start text-type-xs font-label-sm-bold hover:brightness-110 bg-transparent border-none cursor-pointer flex items-center gap-1"
                 >
                   Open {card.name} view
-                  <span class="material-symbols-outlined text-[14px]"
+                  <span class="material-symbols-outlined text-icon-sm"
                     >arrow_forward</span
                   >
                 </button>
@@ -831,7 +834,7 @@
               {#if card.grantedCapabilities?.network}
                 <div>
                   <div
-                    class="text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
+                    class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
                   >
                     Network activity
                   </div>

@@ -131,6 +131,32 @@ elements to `--color-text-primary` surfaces each theme's distinct body-text colo
 The brand `<img>` logo (not the wordmark text) carries the brand identity; the
 accent token is never used as a decorative text color.
 
+### 2.1.1 UI type, icon, grid, and elevation tokens (chrome)
+
+In addition to themeable colors, chrome UI (settings, nav, badges) must use
+**named tokens** — never Tailwind arbitrary brackets (`text-[12px]`,
+`grid-cols-[2fr_1fr]`, `shadow-[…]`) in component `className`s.
+
+| Token utility | Size | Role |
+|---|---|---|
+| `text-type-3xs` | 9px | Micro badges |
+| `text-type-2xs` | 10px | Section labels, chips |
+| `text-type-xs` | 11px | Secondary helper copy |
+| `text-type-sm` | 12px | Compact body / form labels (aligns with `.font-label-sm`) |
+| `text-type-md` | 13px | Primary settings body |
+| `text-type-lg` | 16px | Emphasis labels |
+| `text-type-xl` | 18px | Summary figures / small titles |
+| `text-icon-xs` … `text-icon-xl` | 12–24px | Material Symbols glyph sizes |
+| `grid-cols-settings-theme` | `2fr 1fr` | Appearance theme card + details layout |
+| `shadow-sm` / `shadow-md` / `shadow-lg` | geometry ramp | Elevation |
+| `shadow-accent-glow` | accent halo | Active nav rail / focus chrome |
+
+Declared in `frontend/src/index.css` `@theme`. Prefer `.font-label-sm` /
+`.font-body-md` when the full font stack is needed. Adding a new size requires
+extending the scale first, then using the token — never a one-off arbitrary
+value. Enforced for `frontend/src/components/settings/**` by
+`frontend/src/theme/arbitrary-values.test.ts` (#520).
+
 
 2.2 First-Class Theme Palettes
 

@@ -37,15 +37,15 @@
 </script>
 
 {#if loading}
-  <p class="text-text-muted text-[10px] font-body-md">Loading…</p>
+  <p class="text-text-muted text-type-2xs font-body-md">Loading…</p>
 {:else if entries.length === 0}
-  <p class="text-text-muted text-[10px] font-body-md italic">
+  <p class="text-text-muted text-type-2xs font-body-md italic">
     No network activity recorded.
   </p>
 {:else}
   <div class="max-h-32 overflow-y-auto custom-scrollbar space-y-0.5">
     {#each entries.slice(-50) as entry}
-      <div class="flex items-center gap-2 text-[10px] font-body-md">
+      <div class="flex items-center gap-2 text-type-2xs font-body-md">
         <span
           class={entry.status >= 200 && entry.status < 300
             ? 'text-accent-primary-start'
@@ -63,7 +63,7 @@
   </div>
   <button
     onclick={load}
-    class="mt-1 text-text-muted hover:text-text-primary text-[10px] font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-0.5 cursor-pointer"
+    class="mt-1 text-text-muted hover:text-text-primary text-type-2xs font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-0.5 cursor-pointer"
   >
     Refresh
   </button>

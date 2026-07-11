@@ -226,12 +226,12 @@
     aria-label={label}
     onclick={toggle}
     onkeydown={onTriggerKey}
-    class="w-full flex items-center justify-between gap-2 bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer text-left"
+    class="w-full flex items-center justify-between gap-2 bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer text-left"
     style={triggerFontStyle}
   >
     <span class="truncate">{triggerLabel}</span>
     <span
-      class="material-symbols-outlined text-text-muted text-[18px] flex-shrink-0"
+      class="material-symbols-outlined text-text-muted text-icon-lg flex-shrink-0"
     >
       {open ? 'expand_less' : 'expand_more'}
     </span>
@@ -248,7 +248,7 @@
       {#each options as o, i (o.group + '|' + o.value)}
         {#if o.group !== '' && (i === 0 || options[i - 1].group !== o.group)}
           <div
-            class="px-3 pt-2 pb-1 text-text-muted text-[10px] font-label-sm-bold uppercase tracking-widest sticky top-0 bg-surface-popover"
+            class="px-3 pt-2 pb-1 text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest sticky top-0 bg-surface-popover"
           >
             {o.group}
           </div>
@@ -263,7 +263,7 @@
           style={o.cssFamily
             ? `font-family: ${sanitizeFontFamilyCSS(o.cssFamily)}`
             : ''}
-          class="w-full text-left px-3 py-1.5 text-[13px] text-text-primary outline-none hover:bg-hover focus:bg-hover transition-colors cursor-pointer {i ===
+          class="w-full text-left px-3 py-1.5 text-type-md text-text-primary outline-none hover:bg-hover focus:bg-hover transition-colors cursor-pointer {i ===
           selectedIndex
             ? 'font-label-sm-bold'
             : 'font-body-md'}"
@@ -272,7 +272,7 @@
             {o.label}
             {#if i === selectedIndex}
               <span
-                class="material-symbols-outlined text-accent-primary-start text-[16px] ml-auto"
+                class="material-symbols-outlined text-accent-primary-start text-icon-md ml-auto"
                 >check</span
               >
             {/if}

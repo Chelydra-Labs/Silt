@@ -643,23 +643,23 @@
 <div class="p-6 max-w-6xl mx-auto w-full space-y-6">
   {#if loading}
     <div
-      class="text-text-muted text-[12px] font-body-md animate-pulse py-8 text-center"
+      class="text-text-muted text-type-sm font-body-md animate-pulse py-8 text-center"
     >
       Loading AI configuration…
     </div>
   {:else if loadError && !config}
     <div
-      class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
+      class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
       role="alert"
     >
-      <span class="material-symbols-outlined text-[18px]" aria-hidden="true"
+      <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
         >error</span
       >
       <span class="flex-1">Failed to load AI configuration: {loadError}</span>
       <button
         type="button"
         onclick={() => void reload()}
-        class="text-[11px] font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
+        class="text-type-xs font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
       >
         Retry
       </button>
@@ -667,7 +667,7 @@
   {:else if config}
     <!-- Intro & nudge banner -->
     <section aria-label="AI provider overview">
-      <p class="text-text-primary text-[13px] font-body-md leading-relaxed">
+      <p class="text-text-primary text-type-md font-body-md leading-relaxed">
         Connect Silt to an AI model to power smart features like note
         summarization, semantic vault search, and task tracking. Choose a setup
         mode below to get started.
@@ -677,11 +677,11 @@
           class="mt-4 bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-xl p-4 flex items-start gap-3"
         >
           <span
-            class="material-symbols-outlined text-accent-primary-start text-[20px] mt-0.5 flex-shrink-0"
+            class="material-symbols-outlined text-accent-primary-start text-icon-lg mt-0.5 flex-shrink-0"
             aria-hidden="true">lightbulb</span
           >
           <div
-            class="flex-1 text-[12px] font-body-md text-text-primary leading-relaxed"
+            class="flex-1 text-type-sm font-body-md text-text-primary leading-relaxed"
           >
             <strong class="text-accent-primary-start"
               >Set up an AI provider.</strong
@@ -702,11 +702,11 @@
         <div class="space-y-0.5">
           <span
             id="sync-providers-label"
-            class="text-text-primary text-[13px] font-semibold block"
+            class="text-text-primary text-type-md font-semibold block"
           >
             Sync chat and embedding providers
           </span>
-          <span class="text-text-muted text-[11px] font-label-sm block">
+          <span class="text-text-muted text-type-xs font-label-sm block">
             Recommended. Share the same credentials, provider type, and base URL
             for both roles.
           </span>
@@ -743,7 +743,7 @@
             role="tab"
             aria-selected={activeRole === 'chat'}
             onclick={() => (activeRole = 'chat')}
-            class="flex-1 py-1.5 px-3 rounded-lg text-[11px] font-label-sm-bold transition-all cursor-pointer {activeRole ===
+            class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {activeRole ===
             'chat'
               ? 'bg-accent-primary-start text-surface-app shadow-md'
               : 'text-text-muted hover:text-text-primary'}"
@@ -755,7 +755,7 @@
             role="tab"
             aria-selected={activeRole === 'embedding'}
             onclick={() => (activeRole = 'embedding')}
-            class="flex-1 py-1.5 px-3 rounded-lg text-[11px] font-label-sm-bold transition-all cursor-pointer {activeRole ===
+            class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {activeRole ===
             'embedding'
               ? 'bg-accent-primary-start text-surface-app shadow-md'
               : 'text-text-muted hover:text-text-primary'}"
@@ -805,7 +805,7 @@
         <div>
           <span
             id="{idPrefix}-type-label"
-            class="text-text-muted text-[10px] font-semibold uppercase tracking-wider block mb-2"
+            class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider block mb-2"
           >
             {typeLabel}
           </span>
@@ -826,22 +826,22 @@
                   : 'bg-surface-panel/40 border-surface-panel-border text-text-muted hover:border-border-active hover:text-text-primary'}"
               >
                 <span
-                  class="material-symbols-outlined text-[16px]"
+                  class="material-symbols-outlined text-icon-md"
                   aria-hidden="true">{pt.icon}</span
                 >
-                <span class="font-label-sm-bold text-[11px]">{pt.label}</span>
+                <span class="font-label-sm-bold text-type-xs">{pt.label}</span>
               </button>
             {/each}
           </div>
 
           <!-- Privacy notice -->
           <p
-            class="text-[11px] font-label-sm mt-3 flex items-center gap-1.5 {isLocal
+            class="text-type-xs font-label-sm mt-3 flex items-center gap-1.5 {isLocal
               ? 'text-text-muted'
               : 'text-text-primary'}"
           >
             <span
-              class="material-symbols-outlined text-[14px]"
+              class="material-symbols-outlined text-icon-sm"
               aria-hidden="true"
             >
               {isLocal ? 'shield' : 'arrow_outward'}
@@ -860,7 +860,7 @@
           <!-- Base URL -->
           <div class="flex flex-col gap-1.5">
             <label
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               for="{idPrefix}-base-url"
             >
               Base URL
@@ -872,11 +872,11 @@
               onblur={() => void persistUrlOnBlur(which)}
               autocomplete="off"
               spellcheck="false"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
             />
             {#if isLocal}
-              <p class="text-text-muted text-[9px] font-label-sm mt-0.5">
-                Ollama default is <code class="font-mono text-[9px]"
+              <p class="text-text-muted text-type-3xs font-label-sm mt-0.5">
+                Ollama default is <code class="font-mono text-type-3xs"
                   >{LOCAL_DEFAULT}</code
                 >.
               </p>
@@ -886,7 +886,7 @@
           <!-- API Key input -->
           <div class="flex flex-col gap-1.5">
             <label
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               for="{idPrefix}-key"
             >
               API key
@@ -910,7 +910,7 @@
                     void saveKey(which)
                   }
                 }}
-                class="w-full bg-surface-panel border border-surface-panel-border rounded-lg pl-3 pr-24 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+                class="w-full bg-surface-panel border border-surface-panel-border rounded-lg pl-3 pr-24 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
               />
 
               <!-- Inline Action Controls -->
@@ -928,7 +928,7 @@
                   class="p-1 text-text-muted hover:text-text-primary bg-transparent border-none cursor-pointer"
                 >
                   <span
-                    class="material-symbols-outlined text-[16px]"
+                    class="material-symbols-outlined text-icon-md"
                     aria-hidden="true"
                   >
                     {showKey[which] ? 'visibility_off' : 'visibility'}
@@ -941,7 +941,7 @@
                   onclick={() => void saveKey(which)}
                   disabled={!apiKeyInputs[which].trim() || savingKey[which]}
                   aria-label="Save key"
-                  class="px-2 py-1 bg-accent-primary-start text-surface-app rounded-md font-label-sm-bold text-[10px] hover:brightness-110 transition-all cursor-pointer"
+                  class="px-2 py-1 bg-accent-primary-start text-surface-app rounded-md font-label-sm-bold text-type-2xs hover:brightness-110 transition-all cursor-pointer"
                   class:hidden={!apiKeyInputs[which].trim()}
                 >
                   Save
@@ -954,7 +954,7 @@
                     onclick={() => void clearKey(which)}
                     disabled={clearingKey[which]}
                     aria-label="Clear key"
-                    class="px-2 py-1 bg-surface-panel border border-surface-panel-border text-text-muted hover:text-error hover:border-error/30 rounded-md font-label-sm-bold text-[10px] transition-all cursor-pointer"
+                    class="px-2 py-1 bg-surface-panel border border-surface-panel-border text-text-muted hover:text-error hover:border-error/30 rounded-md font-label-sm-bold text-type-2xs transition-all cursor-pointer"
                     class:hidden={apiKeyInputs[which].trim()}
                   >
                     Clear
@@ -965,10 +965,10 @@
 
             {#if b.has_key && !apiKeyInputs[which].trim()}
               <p
-                class="text-[10px] font-label-sm text-accent-primary-start flex items-center gap-0.5 mt-0.5"
+                class="text-type-2xs font-label-sm text-accent-primary-start flex items-center gap-0.5 mt-0.5"
               >
                 <span
-                  class="material-symbols-outlined text-[12px]"
+                  class="material-symbols-outlined text-type-sm"
                   aria-hidden="true">check_circle</span
                 >
                 Key configured
@@ -976,10 +976,10 @@
             {/if}
             {#if keyringFellBack(which) && b.has_key}
               <p
-                class="text-[10px] font-label-sm text-status-warn flex items-center gap-0.5 mt-0.5"
+                class="text-type-2xs font-label-sm text-status-warn flex items-center gap-0.5 mt-0.5"
               >
                 <span
-                  class="material-symbols-outlined text-[12px]"
+                  class="material-symbols-outlined text-type-sm"
                   aria-hidden="true">warning</span
                 >
                 The keyring was unreachable; this key was saved to config.yaml instead.
@@ -987,7 +987,7 @@
             {/if}
             {#if keySavedFlash[which]}
               <p
-                class="text-[10px] font-label-sm text-accent-primary-start mt-0.5 font-semibold"
+                class="text-type-2xs font-label-sm text-accent-primary-start mt-0.5 font-semibold"
                 role="status"
               >
                 Key saved.
@@ -1006,15 +1006,15 @@
             <div class="flex flex-col gap-1.5">
               {#if !supportsEmbeddings(b.provider_type)}
                 <span
-                  class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+                  class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
                   >Embedding Model</span
                 >
                 <div
-                  class="flex items-start gap-2 px-3 py-2 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-[12px] font-body-md"
+                  class="flex items-start gap-2 px-3 py-2 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-type-sm font-body-md"
                   role="note"
                 >
                   <span
-                    class="material-symbols-outlined text-[16px] mt-0.5 flex-shrink-0"
+                    class="material-symbols-outlined text-icon-md mt-0.5 flex-shrink-0"
                     aria-hidden="true">block</span
                   >
                   <span class="flex-1"
@@ -1032,15 +1032,15 @@
           <div class="pt-1">
             {#if embedUnsupported}
               <span
-                class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+                class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
                 >Model</span
               >
               <div
-                class="flex items-start gap-2 px-3 py-2 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-[12px] font-body-md"
+                class="flex items-start gap-2 px-3 py-2 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-type-sm font-body-md"
                 role="note"
               >
                 <span
-                  class="material-symbols-outlined text-[16px] mt-0.5 flex-shrink-0"
+                  class="material-symbols-outlined text-icon-md mt-0.5 flex-shrink-0"
                   aria-hidden="true">block</span
                 >
                 <span class="flex-1"
@@ -1063,11 +1063,11 @@
               <div class="space-y-1">
                 {#if testResult.chat?.ok}
                   <p
-                    class="text-[12px] font-body-md text-accent-primary-start flex items-start gap-1.5"
+                    class="text-type-sm font-body-md text-accent-primary-start flex items-start gap-1.5"
                     role="status"
                   >
                     <span
-                      class="material-symbols-outlined text-[14px] mt-0.5"
+                      class="material-symbols-outlined text-icon-sm mt-0.5"
                       aria-hidden="true">check_circle</span
                     >
                     <span
@@ -1079,11 +1079,11 @@
                 {/if}
                 {#if testResult.chat && !testResult.chat.ok}
                   <p
-                    class="text-[12px] font-body-md text-error flex items-start gap-1.5"
+                    class="text-type-sm font-body-md text-error flex items-start gap-1.5"
                     role="alert"
                   >
                     <span
-                      class="material-symbols-outlined text-[14px] mt-0.5"
+                      class="material-symbols-outlined text-icon-sm mt-0.5"
                       aria-hidden="true">error</span
                     >
                     <span
@@ -1097,11 +1097,11 @@
                 {#if supportsEmbeddings(b.provider_type)}
                   {#if testResult.embedding?.ok}
                     <p
-                      class="text-[12px] font-body-md text-accent-primary-start flex items-start gap-1.5"
+                      class="text-type-sm font-body-md text-accent-primary-start flex items-start gap-1.5"
                       role="status"
                     >
                       <span
-                        class="material-symbols-outlined text-[14px] mt-0.5"
+                        class="material-symbols-outlined text-icon-sm mt-0.5"
                         aria-hidden="true">check_circle</span
                       >
                       <span
@@ -1113,11 +1113,11 @@
                   {/if}
                   {#if testResult.embedding && !testResult.embedding.ok}
                     <p
-                      class="text-[12px] font-body-md text-error flex items-start gap-1.5"
+                      class="text-type-sm font-body-md text-error flex items-start gap-1.5"
                       role="alert"
                     >
                       <span
-                        class="material-symbols-outlined text-[14px] mt-0.5"
+                        class="material-symbols-outlined text-icon-sm mt-0.5"
                         aria-hidden="true">error</span
                       >
                       <span
@@ -1133,11 +1133,11 @@
             {:else}
               {#if result?.ok}
                 <p
-                  class="text-[12px] font-body-md text-accent-primary-start flex items-start gap-1.5"
+                  class="text-type-sm font-body-md text-accent-primary-start flex items-start gap-1.5"
                   role="status"
                 >
                   <span
-                    class="material-symbols-outlined text-[14px] mt-0.5"
+                    class="material-symbols-outlined text-icon-sm mt-0.5"
                     aria-hidden="true">check_circle</span
                   >
                   <span
@@ -1149,11 +1149,11 @@
               {/if}
               {#if result && !result.ok}
                 <p
-                  class="text-[12px] font-body-md text-error flex items-start gap-1.5"
+                  class="text-type-sm font-body-md text-error flex items-start gap-1.5"
                   role="alert"
                 >
                   <span
-                    class="material-symbols-outlined text-[14px] mt-0.5"
+                    class="material-symbols-outlined text-icon-sm mt-0.5"
                     aria-hidden="true">error</span
                   >
                   <span
@@ -1181,13 +1181,13 @@
           >
             {#if testingNow || (syncProviders && which === 'chat' && (testing.chat || testing.embedding))}
               <span
-                class="material-symbols-outlined text-[16px] animate-spin"
+                class="material-symbols-outlined text-icon-md animate-spin"
                 aria-hidden="true">progress_activity</span
               >
               Testing…
             {:else}
               <span
-                class="material-symbols-outlined text-[16px]"
+                class="material-symbols-outlined text-icon-md"
                 aria-hidden="true">bolt</span
               >
               Test connection
@@ -1203,7 +1203,7 @@
 
       <div class="flex flex-col gap-1.5">
         <span
-          class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+          class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
           >{label}</span
         >
         <div class="flex items-center gap-2">
@@ -1220,7 +1220,7 @@
                 placeholder={w === 'chat'
                   ? 'gemini-2.0-flash, claude-3-5-sonnet-latest, llama3.1'
                   : 'text-embedding-3-small, nomic-embed-text'}
-                class="w-full bg-surface-panel border border-surface-panel-border rounded-lg pl-3 pr-8 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+                class="w-full bg-surface-panel border border-surface-panel-border rounded-lg pl-3 pr-8 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
               />
               {#if modelLists[w].length > 0}
                 <button
@@ -1230,7 +1230,8 @@
                   aria-label="Pick from list"
                   class="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary bg-transparent border-none cursor-pointer p-0"
                 >
-                  <span class="material-symbols-outlined text-[16px]">list</span
+                  <span class="material-symbols-outlined text-icon-md"
+                    >list</span
                   >
                 </button>
               {/if}
@@ -1248,7 +1249,7 @@
                     void persistProvider(w)
                   }
                 }}
-                class="w-full bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all cursor-pointer appearance-none pr-8"
+                class="w-full bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all cursor-pointer appearance-none pr-8"
               >
                 {#if !modelLists[w].some((m) => m.id === b.model)}
                   <option value={b.model}>{b.model || 'Select a model…'}</option
@@ -1261,7 +1262,7 @@
                 >
               </select>
               <span
-                class="material-symbols-outlined text-[16px] text-text-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                class="material-symbols-outlined text-icon-md text-text-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
                 aria-hidden="true"
               >
                 arrow_drop_down
@@ -1279,7 +1280,7 @@
             class="flex-shrink-0 flex items-center justify-center p-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted hover:text-text-primary hover:border-border-active transition-all cursor-pointer disabled:opacity-40"
           >
             <span
-              class="material-symbols-outlined text-[16px]"
+              class="material-symbols-outlined text-icon-md"
               class:animate-spin={modelLoading[w]}
             >
               {modelLoading[w] ? 'progress_activity' : 'refresh'}
@@ -1289,11 +1290,11 @@
 
         {#if modelError[w]}
           <p
-            class="text-[10px] font-label-sm text-error flex items-center gap-1 mt-0.5"
+            class="text-type-2xs font-label-sm text-error flex items-center gap-1 mt-0.5"
             role="alert"
           >
             <span
-              class="material-symbols-outlined text-[12px]"
+              class="material-symbols-outlined text-type-sm"
               aria-hidden="true">error</span
             >
             {modelError[w]}
@@ -1309,7 +1310,7 @@
         {#if w === 'chat'}
           <label class="flex flex-col gap-1.5" for="{idPrefix}-temperature">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Temperature</span
             >
             <input
@@ -1320,10 +1321,10 @@
               step="0.1"
               bind:value={b.temperature}
               onblur={() => void persistProvider(w)}
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
             />
             {#if advancedFieldError(w, 'temperature')}
-              <span class="text-error text-[10px] font-label-sm" role="alert"
+              <span class="text-error text-type-2xs font-label-sm" role="alert"
                 >{advancedFieldError(w, 'temperature')}</span
               >
             {/if}
@@ -1331,7 +1332,7 @@
 
           <label class="flex flex-col gap-1.5" for="{idPrefix}-max-tokens">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Max tokens</span
             >
             <input
@@ -1340,10 +1341,10 @@
               min="1"
               bind:value={b.max_tokens}
               onblur={() => void persistProvider(w)}
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
             />
             {#if advancedFieldError(w, 'max_tokens')}
-              <span class="text-error text-[10px] font-label-sm" role="alert"
+              <span class="text-error text-type-2xs font-label-sm" role="alert"
                 >{advancedFieldError(w, 'max_tokens')}</span
               >
             {/if}
@@ -1351,7 +1352,7 @@
 
           <label class="flex flex-col gap-1.5" for="{idPrefix}-reasoning">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Reasoning effort</span
             >
             <select
@@ -1362,7 +1363,7 @@
                 b.reasoning_effort = v || undefined
                 void persistProvider(w)
               }}
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all cursor-pointer"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all cursor-pointer"
             >
               <option value="">Default</option>
               <option value="none">None</option>
@@ -1378,7 +1379,7 @@
 
         <label class="flex flex-col gap-1.5" for="{idPrefix}-timeout">
           <span
-            class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+            class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
             >Timeout (ms)</span
           >
           <input
@@ -1388,10 +1389,10 @@
             step="500"
             bind:value={b.timeout_ms}
             onblur={() => void persistProvider(w)}
-            class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+            class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
           />
           {#if advancedFieldError(w, 'timeout_ms')}
-            <span class="text-error text-[10px] font-label-sm" role="alert"
+            <span class="text-error text-type-2xs font-label-sm" role="alert"
               >{advancedFieldError(w, 'timeout_ms')}</span
             >
           {/if}
@@ -1400,7 +1401,7 @@
         {#if w === 'embedding'}
           <label class="flex flex-col gap-1.5" for="{idPrefix}-dimensions">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Dimensions</span
             >
             <input
@@ -1409,10 +1410,10 @@
               min="1"
               bind:value={b.dimensions}
               onblur={() => void persistProvider(w)}
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
             />
             {#if advancedFieldError(w, 'dimensions')}
-              <span class="text-error text-[10px] font-label-sm" role="alert"
+              <span class="text-error text-type-2xs font-label-sm" role="alert"
                 >{advancedFieldError(w, 'dimensions')}</span
               >
             {/if}
@@ -1432,7 +1433,7 @@
         {#if !syncProviders}
           <h3
             id="chat-heading"
-            class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+            class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
           >
             Chat model
           </h3>
@@ -1448,7 +1449,7 @@
       >
         <h3
           id="embedding-heading"
-          class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
+          class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
         >
           Embedding model
         </h3>
@@ -1467,20 +1468,20 @@
         >
           <div class="flex items-center gap-2.5">
             <span
-              class="material-symbols-outlined text-[18px] text-text-muted"
+              class="material-symbols-outlined text-icon-lg text-text-muted"
               aria-hidden="true">tune</span
             >
             <div class="text-left">
-              <span class="text-[12px] font-semibold text-text-primary block"
+              <span class="text-type-sm font-semibold text-text-primary block"
                 >Advanced Options</span
               >
-              <span class="text-[10px] text-text-muted block mt-0.5"
+              <span class="text-type-2xs text-text-muted block mt-0.5"
                 >{tuningSummary}</span
               >
             </div>
           </div>
           <span
-            class="material-symbols-outlined text-[20px] text-text-muted transition-transform group-open:rotate-180"
+            class="material-symbols-outlined text-icon-lg text-text-muted transition-transform group-open:rotate-180"
             aria-hidden="true">expand_more</span
           >
         </summary>
@@ -1488,14 +1489,14 @@
           <div class="space-y-5">
             {#if syncProviders}
               <div>
-                <h4 class="text-[11px] font-semibold text-text-primary mb-3">
+                <h4 class="text-type-xs font-semibold text-text-primary mb-3">
                   Chat Tuning
                 </h4>
                 {@render advancedTuningGrid('chat')}
               </div>
               {#if supportsEmbeddings(config.chat.provider_type)}
                 <div class="border-t border-surface-panel-border/30 pt-4">
-                  <h4 class="text-[11px] font-semibold text-text-primary mb-3">
+                  <h4 class="text-type-xs font-semibold text-text-primary mb-3">
                     Embedding Tuning
                   </h4>
                   {@render advancedTuningGrid('embedding')}
@@ -1517,20 +1518,20 @@
         >
           <div class="flex items-center gap-2.5">
             <span
-              class="material-symbols-outlined text-[18px] text-text-muted"
+              class="material-symbols-outlined text-icon-lg text-text-muted"
               aria-hidden="true">vpn_key</span
             >
             <div class="text-left">
-              <span class="text-[12px] font-semibold text-text-primary block"
+              <span class="text-type-sm font-semibold text-text-primary block"
                 >Key storage</span
               >
-              <span class="text-[10px] text-text-muted block mt-0.5"
+              <span class="text-type-2xs text-text-muted block mt-0.5"
                 >{keyringSummary}</span
               >
             </div>
           </div>
           <span
-            class="material-symbols-outlined text-[20px] text-text-muted transition-transform group-open:rotate-180"
+            class="material-symbols-outlined text-icon-lg text-text-muted transition-transform group-open:rotate-180"
             aria-hidden="true">expand_more</span
           >
         </summary>
@@ -1539,16 +1540,16 @@
         >
           {#if !config.keyring_available}
             <div
-              class="flex items-start gap-2 p-3 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-[12px] font-body-md"
+              class="flex items-start gap-2 p-3 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-type-sm font-body-md"
               role="alert"
             >
               <span
-                class="material-symbols-outlined text-[18px] mt-0.5 flex-shrink-0"
+                class="material-symbols-outlined text-icon-lg mt-0.5 flex-shrink-0"
                 aria-hidden="true">warning</span
               >
               <span class="flex-1">
                 No OS keyring was found on this system. Keys will be stored in
-                <code class="font-mono text-[11px]">config.yaml</code> regardless
+                <code class="font-mono text-type-xs">config.yaml</code> regardless
                 of this setting.
               </span>
             </div>
@@ -1575,14 +1576,14 @@
               class:disabled={!config.keyring_available}
             ></span>
             <span class="flex-1">
-              <span class="text-text-primary text-[13px] font-body-md block">
+              <span class="text-text-primary text-type-md font-body-md block">
                 Store API keys in the OS keyring
               </span>
               <span
-                class="text-text-muted text-[11px] font-label-sm block mt-0.5"
+                class="text-text-muted text-type-xs font-label-sm block mt-0.5"
               >
                 When on, keys live in the OS keyring instead of the vault's
-                <code class="font-mono text-[11px]">config.yaml</code>, so they
+                <code class="font-mono text-type-xs">config.yaml</code>, so they
                 don't travel when the vault syncs. Turning this off leaves
                 existing keyring entries in place until you clear or re-enter
                 each key.
@@ -1602,49 +1603,49 @@
         >
           <div class="flex items-center gap-2.5">
             <span
-              class="material-symbols-outlined text-[18px] text-text-muted"
+              class="material-symbols-outlined text-icon-lg text-text-muted"
               aria-hidden="true">history</span
             >
             <div class="text-left">
               <!-- summaryEl in test queries exact text 'Plugin AI calls' -->
-              <span class="text-[12px] font-semibold text-text-primary block"
+              <span class="text-type-sm font-semibold text-text-primary block"
                 >Plugin AI calls</span
               >
-              <span class="text-[10px] text-text-muted block mt-0.5"
+              <span class="text-type-2xs text-text-muted block mt-0.5"
                 >{auditSummary}</span
               >
             </div>
           </div>
           <span
-            class="material-symbols-outlined text-[20px] text-text-muted transition-transform group-open:rotate-180"
+            class="material-symbols-outlined text-icon-lg text-text-muted transition-transform group-open:rotate-180"
             aria-hidden="true">expand_more</span
           >
         </summary>
         <div class="px-4 pb-4 border-t border-surface-panel-border/30 pt-4">
           {#if auditState === 'loading'}
             <div
-              class="text-text-muted text-[12px] font-body-md animate-pulse py-3"
+              class="text-text-muted text-type-sm font-body-md animate-pulse py-3"
             >
               Loading audit log…
             </div>
           {:else if auditError}
             <div
-              class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
+              class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
               role="alert"
             >
               <span
-                class="material-symbols-outlined text-[18px]"
+                class="material-symbols-outlined text-icon-lg"
                 aria-hidden="true">error</span
               >
               <span class="flex-1">Failed to load audit log: {auditError}</span>
             </div>
           {:else if audit.length === 0}
-            <p class="text-text-muted text-[12px] font-body-md py-3">
+            <p class="text-text-muted text-type-sm font-body-md py-3">
               No activity recorded yet.
             </p>
           {:else}
             <div class="overflow-x-auto">
-              <table class="w-full text-[11px] font-body-md border-collapse">
+              <table class="w-full text-type-xs font-body-md border-collapse">
                 <caption class="sr-only"> Recent plugin AI calls </caption>
                 <thead>
                   <tr
@@ -1652,37 +1653,37 @@
                   >
                     <th
                       scope="col"
-                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
                       >When</th
                     >
                     <th
                       scope="col"
-                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
                       >Plugin</th
                     >
                     <th
                       scope="col"
-                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
                       >Kind</th
                     >
                     <th
                       scope="col"
-                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
                       >Host</th
                     >
                     <th
                       scope="col"
-                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
                       >Model</th
                     >
                     <th
                       scope="col"
-                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
                       >Status</th
                     >
                     <th
                       scope="col"
-                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-[10px]"
+                      class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
                       >Tokens</th
                     >
                   </tr>
@@ -1697,29 +1698,28 @@
                       >
                       <td class="py-1.5 pr-3">{entry.plugin}</td>
                       <td class="py-1.5 pr-3 capitalize">{entry.kind}</td>
-                      <td class="py-1.5 pr-3 truncate max-w-[180px]"
-                        >{entry.host}</td
+                      <td class="py-1.5 pr-3 truncate max-w-44">{entry.host}</td
                       >
-                      <td class="py-1.5 pr-3 truncate max-w-[160px]"
+                      <td class="py-1.5 pr-3 truncate max-w-40"
                         >{entry.model}</td
                       >
                       <td class="py-1.5 pr-3">
                         {#if entry.status === 'ok'}
                           <span
-                            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent-primary-glow/20 border border-accent-primary-start text-accent-primary-start font-label-sm-bold text-[10px]"
+                            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent-primary-glow/20 border border-accent-primary-start text-accent-primary-start font-label-sm-bold text-type-2xs"
                           >
                             <span
-                              class="material-symbols-outlined text-[10px]"
+                              class="material-symbols-outlined text-type-2xs"
                               aria-hidden="true">check_circle</span
                             >
                             ok
                           </span>
                         {:else}
                           <span
-                            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-status-danger/10 text-status-danger font-label-sm-bold text-[10px]"
+                            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-status-danger/10 text-status-danger font-label-sm-bold text-type-2xs"
                           >
                             <span
-                              class="material-symbols-outlined text-[10px]"
+                              class="material-symbols-outlined text-type-2xs"
                               aria-hidden="true">error</span
                             >
                             {entry.status}
@@ -1741,7 +1741,7 @@
                 class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted font-label-sm-bold hover:text-error hover:border-error/50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
               >
                 <span
-                  class="material-symbols-outlined text-[16px]"
+                  class="material-symbols-outlined text-icon-md"
                   aria-hidden="true">delete_sweep</span
                 >
                 Clear log
@@ -1755,10 +1755,10 @@
     {#if loadError}
       <!-- Soft error banner -->
       <div
-        class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
+        class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
         role="alert"
       >
-        <span class="material-symbols-outlined text-[18px]" aria-hidden="true"
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
           >error</span
         >
         <span class="flex-1">{loadError}</span>
@@ -1768,7 +1768,7 @@
             loadError = null
             void reload()
           }}
-          class="text-[11px] font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
+          class="text-type-xs font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
         >
           Retry
         </button>

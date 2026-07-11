@@ -122,9 +122,9 @@
       <!-- External update notice -->
       {#if settings.pendingExternal}
         <div
-          class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-[12px] font-body-md"
+          class="flex items-start gap-2 p-3 rounded-lg bg-accent-primary-start/10 border border-accent-primary-start/30 text-accent-primary-start text-type-sm font-body-md"
         >
-          <span class="material-symbols-outlined text-[18px]">sync</span>
+          <span class="material-symbols-outlined text-icon-lg">sync</span>
           <span class="flex-1">
             Settings were updated externally. Your unsaved edits are preserved.
           </span>
@@ -148,7 +148,7 @@
         )}"
       >
         <h4
-          class="font-label-sm-bold text-text-primary uppercase tracking-wider text-[10px]"
+          class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs"
         >
           Typography
         </h4>
@@ -156,7 +156,7 @@
           <!-- Cross-link to Appearance: when the active theme sets fonts, the
                "reset to theme default" buttons above point here; this hint
                sends users the other way to change the theme-level fonts. -->
-          <p class="text-text-muted text-[11px] font-label-sm -mt-3">
+          <p class="text-text-muted text-type-xs font-label-sm -mt-3">
             The active theme sets its own fonts. Change the theme in
             <button
               type="button"
@@ -176,7 +176,7 @@
         <div class="grid grid-cols-2 gap-4">
           <label class="flex flex-col gap-1.5">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Font family</span
             >
             <div class="flex items-center gap-2">
@@ -197,7 +197,7 @@
                   aria-label="Reset body font to theme default"
                   class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
                 >
-                  <span class="material-symbols-outlined text-[18px]"
+                  <span class="material-symbols-outlined text-icon-lg"
                     >restart_alt</span
                   >
                 </button>
@@ -207,7 +207,7 @@
 
           <label class="flex flex-col gap-1.5">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Monospace font</span
             >
             <div class="flex items-center gap-2">
@@ -228,7 +228,7 @@
                   aria-label="Reset monospace font to theme default"
                   class="flex-shrink-0 px-2.5 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted hover:text-text-primary hover:border-accent-primary-start transition-colors cursor-pointer"
                 >
-                  <span class="material-symbols-outlined text-[18px]"
+                  <span class="material-symbols-outlined text-icon-lg"
                     >restart_alt</span
                   >
                 </button>
@@ -238,7 +238,7 @@
 
           <label class="flex flex-col gap-1.5">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Font size (px)</span
             >
             <input
@@ -247,13 +247,13 @@
               type="number"
               min="8"
               max="48"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
           </label>
 
           <label class="flex flex-col gap-1.5">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Line height</span
             >
             <input
@@ -263,13 +263,13 @@
               step="0.1"
               min="1"
               max="3"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
           </label>
 
           <label class="flex flex-col gap-1.5">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Tab width (spaces)</span
             >
             <input
@@ -278,7 +278,7 @@
               type="number"
               min="1"
               max="8"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
           </label>
         </div>
@@ -292,14 +292,14 @@
         )}"
       >
         <h4
-          class="font-label-sm-bold text-text-primary uppercase tracking-wider text-[10px]"
+          class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs"
         >
           Writing Preferences
         </h4>
         <div class="space-y-4">
           <label class="flex flex-col gap-1.5 max-w-xs">
             <span
-              class="text-text-muted text-[10px] font-semibold uppercase tracking-wider"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
               >Auto-save delay (ms)</span
             >
             <input
@@ -308,7 +308,7 @@
               type="number"
               min="0"
               step="100"
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
             />
           </label>
 
@@ -320,7 +320,7 @@
                 type="checkbox"
                 class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
-              <span class="text-text-primary text-[13px] font-body-md">
+              <span class="text-text-primary text-type-md font-body-md">
                 Highlight ancestor blocks on focus
               </span>
             </label>
@@ -337,7 +337,7 @@
                 type="checkbox"
                 class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
-              <span class="text-text-primary text-[13px] font-body-md">
+              <span class="text-text-primary text-type-md font-body-md">
                 Show format toolbar
               </span>
             </label>
@@ -354,7 +354,7 @@
                 type="checkbox"
                 class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
-              <span class="text-text-primary text-[13px] font-body-md">
+              <span class="text-text-primary text-type-md font-body-md">
                 Smart typography (em-dash, smart quotes)
               </span>
             </label>
@@ -371,7 +371,7 @@
                 type="checkbox"
                 class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
-              <span class="text-text-primary text-[13px] font-body-md">
+              <span class="text-text-primary text-type-md font-body-md">
                 Text and background color pickers
               </span>
             </label>
@@ -388,7 +388,7 @@
                 type="checkbox"
                 class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
-              <span class="text-text-primary text-[13px] font-body-md">
+              <span class="text-text-primary text-type-md font-body-md">
                 Show word count
               </span>
             </label>
@@ -405,7 +405,7 @@
                 type="checkbox"
                 class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
-              <span class="text-text-primary text-[13px] font-body-md">
+              <span class="text-text-primary text-type-md font-body-md">
                 Focus mode (dim inactive paragraphs)
               </span>
             </label>
@@ -422,7 +422,7 @@
                 type="checkbox"
                 class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
-              <span class="text-text-primary text-[13px] font-body-md">
+              <span class="text-text-primary text-type-md font-body-md">
                 Spellcheck (underline misspelled words)
               </span>
             </label>
@@ -439,7 +439,7 @@
                 type="checkbox"
                 class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
-              <span class="text-text-primary text-[13px] font-body-md">
+              <span class="text-text-primary text-type-md font-body-md">
                 Typewriter mode (keep active line centered)
               </span>
             </label>
@@ -454,10 +454,10 @@
       >
         <div class="flex items-center justify-between">
           <div>
-            <h3 class="text-text-primary text-[14px] font-label-sm-bold">
+            <h3 class="text-text-primary text-icon-sm font-label-sm-bold">
               Custom dictionary
             </h3>
-            <p class="text-text-muted text-[12px] font-body-md mt-0.5">
+            <p class="text-text-muted text-type-sm font-body-md mt-0.5">
               Words you've added so they aren't flagged. Right-click a
               misspelled word in the editor → "Add to dictionary", or add one
               here.
@@ -474,13 +474,13 @@
                 void customDictionary.add()
               }
             }}
-            class="flex-1 px-2.5 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-[13px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+            class="flex-1 px-2.5 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60"
           />
           <button
             type="button"
             onclick={() => void customDictionary.add()}
             disabled={!customDictionary.newWord.trim()}
-            class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-[13px] font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Add
           </button>
@@ -489,7 +489,7 @@
           <input
             bind:value={customDictionary.filter}
             placeholder="Filter words…"
-            class="w-full pl-2.5 pr-8 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-[13px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+            class="w-full pl-2.5 pr-8 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60"
           />
           {#if customDictionary.filter}
             <button
@@ -500,12 +500,12 @@
               }}
               class="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
             >
-              <span class="material-symbols-outlined text-[16px]">close</span>
+              <span class="material-symbols-outlined text-icon-md">close</span>
             </button>
           {/if}
         </div>
         {#if customDictionary.error}
-          <p class="text-error text-[12px] font-body-md">
+          <p class="text-error text-type-sm font-body-md">
             {customDictionary.error}
           </p>
         {/if}
@@ -513,7 +513,9 @@
           class="max-h-48 overflow-y-auto rounded-lg border border-surface-panel-border/60"
         >
           {#if customDictionary.filtered.length === 0}
-            <p class="text-text-muted text-[12px] font-body-md p-3 text-center">
+            <p
+              class="text-text-muted text-type-sm font-body-md p-3 text-center"
+            >
               {customDictionary.loading
                 ? 'Loading…'
                 : customDictionary.words.length === 0
@@ -525,7 +527,7 @@
               <div
                 class="flex items-center justify-between px-2.5 py-1.5 hover:bg-surface-panel/20"
               >
-                <span class="text-text-primary text-[13px] font-body-md"
+                <span class="text-text-primary text-type-md font-body-md"
                   >{word}</span
                 >
                 <button
@@ -545,9 +547,9 @@
       <!-- Error banner -->
       {#if settings.error}
         <div
-          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-[12px] font-body-md"
+          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
         >
-          <span class="material-symbols-outlined text-[18px]">error</span>
+          <span class="material-symbols-outlined text-icon-lg">error</span>
           <span class="flex-1">{settings.error}</span>
         </div>
       {/if}
