@@ -88,10 +88,11 @@ const searchFlatCap = 500
 // cannot survive a window-function subquery wrap. Tag hydration is a single
 // secondary SELECT (no N+1).
 func (dm *DatabaseManager) SearchBlocksPaged(query string, offset, limit int, filters SearchFilters) (parser.SearchResult, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return parser.SearchResult{}, ErrDBClosed
 	}
+	defer release()
 	query = strings.TrimSpace(query)
 	if query == "" || offset < 0 || limit <= 0 {
 		return parser.SearchResult{Results: []parser.TaskResult{}, Total: 0, Offset: offset, Limit: limit}, nil

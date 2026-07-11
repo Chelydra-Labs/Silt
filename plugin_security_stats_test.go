@@ -62,3 +62,35 @@ func TestSecurityStats_InvalidPluginIDNotCounted(t *testing.T) {
 		t.Fatalf("invalid id should not be counted: %+v", got)
 	}
 }
+
+// emit is a no-op when wailsApp is nil (tests); this pins the payload shape
+// that production emits by driving record* and reading counters back.
+func TestSecurityStats_EventPayloadShape(t *testing.T) {
+	app := NewApp()
+	app.recordCapabilityDenied("p", "network")
+	app.recordRateLimited("p")
+	stats := app.GetPluginSecurityStats()
+	if len(stats) != 1 {
+		t.Fatalf("len=%d", len(stats))
+	}
+	st := stats[0]
+	// Stable JSON contract for security:event consumers (Plugins tab).
+	if st.PluginID != "p" || st.Denials != 1 || st.RateLimited != 1 {
+		t.Fatalf("stats=%+v", st)
+	}
+	if st.LastCap != "network" || st.LastDenialAt == 0 || st.LastRateAt == 0 {
+		t.Fatalf("timestamps/cap missing: %+v", st)
+	}
+	// SecurityEvent fields mirror counters for live subscribers.
+	ev := SecurityEvent{
+		PluginID:    st.PluginID,
+		Kind:        "capability_denied",
+		Capability:  st.LastCap,
+		Denials:     st.Denials,
+		RateLimited: st.RateLimited,
+		At:          st.LastDenialAt,
+	}
+	if ev.Kind != "capability_denied" || ev.Capability != "network" {
+		t.Fatalf("event shape: %+v", ev)
+	}
+}

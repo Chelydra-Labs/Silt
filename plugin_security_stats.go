@@ -46,16 +46,6 @@ func (s *pluginSecurityStats) getOrCreate(pluginID string) *PluginSecurityStats 
 	return st
 }
 
-func (s *pluginSecurityStats) snapshot(pluginID string) PluginSecurityStats {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.byID[pluginID]
-	if !ok {
-		return PluginSecurityStats{PluginID: pluginID}
-	}
-	return *st
-}
-
 func (s *pluginSecurityStats) all() []PluginSecurityStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()

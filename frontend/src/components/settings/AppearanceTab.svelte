@@ -661,7 +661,7 @@
               {@const detailPreviewing = isPreviewing(detailTheme.id)}
               <div class="flex items-start justify-between gap-2 mb-3">
                 <h5
-                  class="text-text-primary text-icon-md font-headline-md leading-tight"
+                  class="text-text-primary text-type-lg font-headline-md leading-tight"
                 >
                   {detailTheme.name}
                 </h5>

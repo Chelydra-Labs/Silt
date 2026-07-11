@@ -511,10 +511,10 @@ PluginContext RPC methods (serializable args + Promise results). Theme
 tokens are injected as CSS custom properties.
 
 **Registration APIs cannot cross the iframe bridge.** `postMessage` uses
-the structured clone algorithm, so function arguments (`onSelect`, event
-callbacks) become `null` on the host. Call these from the plugin's
-main-webview `init()` (where the loader runs `index.js`), not from surface
-HTML:
+the structured clone algorithm: function arguments (`onSelect`, event
+callbacks) cannot be cloned (engines throw `DataCloneError`, or would arrive
+unusable if stripped). Call these from the plugin's main-webview `init()`
+(where the loader runs `index.js`), not from surface HTML:
 
 - `ctx.on(...)` / event subscriptions
 - `ctx.registerSlashCommand(...)`

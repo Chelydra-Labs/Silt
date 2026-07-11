@@ -114,27 +114,29 @@ func NewDatabaseManager(dbPath string) (*DatabaseManager, error) {
 	return dm, nil
 }
 
-// handle returns the live *sql.DB or ErrDBClosed. It does not hold dbMu —
-// callers that need Close to wait must use withDB. Prefer withDB for new
-// multi-statement work. Same-package code may use handle() for a single
-// Query/Exec after a nil check (sql.DB.Close waits for in-flight queries).
-func (dm *DatabaseManager) handle() (*sql.DB, error) {
-	db := dm.db.Load()
+// handle returns the live *sql.DB under a read lease so Close waits for the
+// caller to finish. The returned release func MUST be deferred on the success
+// path (not called when err != nil). Nested calls that would re-enter handle
+// while the lease is held deadlock — pass *sql.DB into helpers, or when a
+// *sql.Tx is already open skip handle and use the tx only (#517).
+func (dm *DatabaseManager) handle() (db *sql.DB, release func(), err error) {
+	dm.dbMu.RLock()
+	db = dm.db.Load()
 	if db == nil {
-		return nil, ErrDBClosed
+		dm.dbMu.RUnlock()
+		return nil, func() {}, ErrDBClosed
 	}
-	return db, nil
+	return db, dm.dbMu.RUnlock, nil
 }
 
 // withDB runs fn while holding a read lock so Close (write lock) waits for
 // in-flight work. Post-close calls return ErrDBClosed (#517).
 func (dm *DatabaseManager) withDB(fn func(db *sql.DB) error) error {
-	dm.dbMu.RLock()
-	defer dm.dbMu.RUnlock()
-	db := dm.db.Load()
-	if db == nil {
-		return ErrDBClosed
+	db, release, err := dm.handle()
+	if err != nil {
+		return err
 	}
+	defer release()
 	return fn(db)
 }
 

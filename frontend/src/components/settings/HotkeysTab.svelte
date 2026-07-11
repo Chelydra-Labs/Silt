@@ -126,7 +126,6 @@
               <span
                 class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider truncate"
                 title={prettyLabel(key)}
-                id="hotkey-label-{key}"
               >
                 {prettyLabel(key)}
               </span>

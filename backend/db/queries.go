@@ -25,10 +25,11 @@ type BlockLocation struct {
 // block UUID. This is the typed API replacement for the raw SQLDB().QueryRow
 // calls that were scattered across app.go write paths.
 func (dm *DatabaseManager) GetBlockLocation(blockID string) (BlockLocation, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return BlockLocation{}, ErrDBClosed
 	}
+	defer release()
 	var loc BlockLocation
 	err = db.QueryRow(
 		"SELECT COALESCE(source, 'vault'), notebook, section, page, type FROM blocks WHERE id = ?",
@@ -44,10 +45,11 @@ func (dm *DatabaseManager) GetBlockLocation(blockID string) (BlockLocation, erro
 // A page is a single file; all blocks share the same (notebook, section,
 // page) and are ordered by line_number. Each block carries its own file_date.
 func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page string) ([]parser.ParsedBlock, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
+	defer release()
 	if source == "" {
 		source = "vault"
 	}
@@ -112,10 +114,11 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 
 // QueryTasksWithFilters fetches task results matching the provided query filters.
 func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) ([]parser.TaskResult, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
+	defer release()
 	baseQuery := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
 		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned, t.recur, t.created_at, t.completed_at, t.manual_order
@@ -318,10 +321,11 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 // block that happens to carry several nested tags (e.g. #work and
 // #work/project/milestone-one).
 func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
+	defer release()
 	rows, err := db.Query("SELECT raw_path, block_id FROM tags")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query tag hierarchy: %w", err)
@@ -429,10 +433,11 @@ func (dm *DatabaseManager) QueryTagHierarchy() ([]parser.TagNode, error) {
 // QueryBlocksByTag returns blocks whose tag path equals tagPath or is nested
 // beneath it (prefix semantics, so #work matches #work/project/milestone-one).
 func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
+	defer release()
 	tagPath = strings.TrimSpace(strings.TrimPrefix(tagPath, "#"))
 	if tagPath == "" {
 		return []parser.TaskResult{}, nil
@@ -507,10 +512,11 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 // binary collation by default (uppercase before lowercase), so casing only
 // affects ordering, not selection.
 func (dm *DatabaseManager) DistinctOwners(prefix string) ([]string, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
+	defer release()
 	rows, err := db.Query(
 		"SELECT DISTINCT owner FROM tasks WHERE owner != '' AND owner LIKE ? ORDER BY owner",
 		prefix+"%",
@@ -544,10 +550,11 @@ func (dm *DatabaseManager) DistinctOwners(prefix string) ([]string, error) {
 // means the task is actionable (no open prerequisites). The reverse index
 // idx_task_deps_blocked_by serves this lookup without a scan.
 func (dm *DatabaseManager) OpenBlockers(blockID string) ([]string, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
+	defer release()
 	rows, err := db.Query(
 		`SELECT d.blocked_by_id FROM task_dependencies d
 		 JOIN tasks t ON t.block_id = d.blocked_by_id
@@ -578,10 +585,11 @@ func (dm *DatabaseManager) OpenBlockers(blockID string) ([]string, error) {
 // reactive fan-out). The reverse index serves this lookup. An empty slice
 // means nothing depends on blockID.
 func (dm *DatabaseManager) DependentsOf(blockID string) ([]string, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
+	defer release()
 	rows, err := db.Query(
 		"SELECT block_id FROM task_dependencies WHERE blocked_by_id = ? ORDER BY block_id",
 		blockID,
@@ -610,10 +618,11 @@ func (dm *DatabaseManager) DependentsOf(blockID string) ([]string, error) {
 // Edges outside the requested set are irrelevant to a local cycle check and
 // omitted to keep the payload bounded.
 func (dm *DatabaseManager) DependencyEdges(blockIDs []string) (map[string][]string, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
+	defer release()
 	if len(blockIDs) == 0 {
 		return map[string][]string{}, nil
 	}
@@ -653,10 +662,11 @@ func (dm *DatabaseManager) DependencyEdges(blockIDs []string) (map[string][]stri
 // or a non-task block would otherwise persist as a broken edge the index can't
 // resolve (OpenBlockers JOINs tasks, so a non-task blocker never surfaces).
 func (dm *DatabaseManager) ValidTaskBlockIDs(ids []string) (map[string]bool, error) {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
+	defer release()
 	out := make(map[string]bool, len(ids))
 	if len(ids) == 0 {
 		return out, nil

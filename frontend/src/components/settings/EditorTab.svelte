@@ -454,7 +454,7 @@
       >
         <div class="flex items-center justify-between">
           <div>
-            <h3 class="text-text-primary text-icon-sm font-label-sm-bold">
+            <h3 class="text-text-primary text-type-sm font-label-sm-bold">
               Custom dictionary
             </h3>
             <p class="text-text-muted text-type-sm font-body-md mt-0.5">

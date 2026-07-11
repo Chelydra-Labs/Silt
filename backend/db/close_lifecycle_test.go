@@ -47,7 +47,7 @@ func TestClose_PostCloseReturnsErrDBClosed(t *testing.T) {
 	if _, err := dm.KnownFiles(); !errors.Is(err, ErrDBClosed) {
 		t.Fatalf("KnownFiles: want ErrDBClosed, got %v", err)
 	}
-	if _, err := dm.handle(); !errors.Is(err, ErrDBClosed) {
+	if _, _, err := dm.handle(); !errors.Is(err, ErrDBClosed) {
 		t.Fatalf("handle: want ErrDBClosed, got %v", err)
 	}
 }
@@ -131,5 +131,45 @@ func TestClose_WithDBWaitsForInFlight(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Close did not return after withDB released")
+	}
+}
+
+// handle() leases must also block Close (package methods use handle, not only withDB).
+func TestClose_HandleLeaseBlocksClose(t *testing.T) {
+	dm, err := NewDatabaseManager("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var holdWG sync.WaitGroup
+	holdWG.Add(1)
+	entered := make(chan struct{})
+	go func() {
+		_, release, err := dm.handle()
+		if err != nil {
+			t.Errorf("handle: %v", err)
+			return
+		}
+		close(entered)
+		holdWG.Wait()
+		release()
+	}()
+	<-entered
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- dm.Close() }()
+
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned before handle release: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	holdWG.Done()
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return after handle release")
 	}
 }

@@ -1,15 +1,17 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 )
 
 func (dm *DatabaseManager) initSchema() error {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return ErrDBClosed
 	}
+	defer release()
 	// Foreign-key enforcement is per-connection.
 	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
 		return fmt.Errorf("failed to enable foreign keys: %w", err)
@@ -267,7 +269,8 @@ func (dm *DatabaseManager) initSchema() error {
 	// without each caller knowing about FTS. Created once; on first creation
 	// we rebuild from any pre-existing blocks rows so the migration is
 	// additive and lossless.
-	if err := dm.ensureFTS(); err != nil {
+	// Use ensureFTSOn (unlocked) — initSchema already holds the handle() lease.
+	if err := ensureFTSOn(db); err != nil {
 		return fmt.Errorf("failed to initialize FTS index: %w", err)
 	}
 
@@ -279,10 +282,17 @@ func (dm *DatabaseManager) initSchema() error {
 // blocks table. Idempotent: a no-op on every subsequent open where the FTS
 // table already exists and the triggers are in place.
 func (dm *DatabaseManager) ensureFTS() error {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return ErrDBClosed
 	}
+	defer release()
+	return ensureFTSOn(db)
+}
+
+// ensureFTSOn is the unlocked body of ensureFTS for callers that already hold
+// a handle() lease (initSchema) — re-entering handle() would deadlock (#517).
+func ensureFTSOn(db *sql.DB) error {
 	var ftsExists int
 	if err := db.QueryRow(
 		"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='blocks_fts'").Scan(&ftsExists); err != nil {
@@ -334,10 +344,11 @@ func (dm *DatabaseManager) ensureFTS() error {
 // sync triggers (none in normal operation, but available for recovery). On an
 // empty blocks table this is a no-op.
 func (dm *DatabaseManager) RebuildFTSIndex() error {
-	db, err := dm.handle()
+	db, release, err := dm.handle()
 	if err != nil {
 		return ErrDBClosed
 	}
+	defer release()
 	_, err = db.Exec("INSERT INTO blocks_fts(blocks_fts) VALUES ('rebuild');")
 	return err
 }
