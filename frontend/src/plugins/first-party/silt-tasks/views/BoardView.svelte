@@ -914,10 +914,10 @@
 
   {#if columns.length > 10 && columns.length <= 20}
     <div
-      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-[12px] font-body-md flex items-center gap-2"
+      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-type-sm font-body-md flex items-center gap-2"
       role="status"
     >
-      <span class="material-symbols-outlined text-[16px]">info</span>
+      <span class="material-symbols-outlined text-icon-md">info</span>
       <span>
         {columns.length}
         {groupBy} values — switch to List mode or filter to fewer to keep the board
@@ -942,7 +942,7 @@
         aria-label="Loading board"
       >
         {#each Array(5) as _, i (i)}
-          <div class="flex-1 min-w-[220px] space-y-2">
+          <div class="flex-1 min-w-55 space-y-2">
             <div class="skeleton-text" style="width: 40%; height: 14px"></div>
             {#each Array(3) as _, j (j)}
               <div
@@ -972,7 +972,7 @@
             : ''}
           {@const qa = quickAddFor(col)}
           <section
-            class="flex flex-col min-w-[280px] flex-1 max-w-[400px] rounded-lg border border-surface-panel-border bg-surface-panel/50 {colDragIndex ===
+            class="flex flex-col min-w-70 flex-1 max-w-100 rounded-lg border border-surface-panel-border bg-surface-panel/50 {colDragIndex ===
             colIdx
               ? 'opacity-50'
               : ''}"
@@ -1003,7 +1003,7 @@
               <div class="flex items-center gap-2 min-w-0">
                 {#if canManage}
                   <span
-                    class="material-symbols-outlined text-[14px] text-text-muted cursor-grab active:cursor-grabbing shrink-0"
+                    class="material-symbols-outlined text-icon-sm text-text-muted cursor-grab active:cursor-grabbing shrink-0"
                     title="Drag to reorder"
                     spellcheck="false">drag_indicator</span
                   >
@@ -1024,12 +1024,12 @@
                       else if (e.key === 'Escape') cancelRename()
                     }}
                     onblur={() => commitRename(statusName)}
-                    class="bg-surface-panel border border-accent-primary-start/40 rounded px-1.5 py-0.5 text-[11px] font-label-sm-bold uppercase tracking-widest text-text-primary outline-none w-28"
+                    class="bg-surface-panel border border-accent-primary-start/40 rounded px-1.5 py-0.5 text-type-xs font-label-sm-bold uppercase tracking-widest text-text-primary outline-none w-28"
                     aria-label="Rename column"
                   />
                 {:else}
                   <h2
-                    class="font-label-sm-bold uppercase tracking-widest text-[11px] text-text-muted truncate"
+                    class="font-label-sm-bold uppercase tracking-widest text-type-xs text-text-muted truncate"
                     title={canManage ? 'Double-click to rename' : col.label}
                     ondblclick={canManage
                       ? () => startRename(statusName, col.key)
@@ -1039,7 +1039,7 @@
                   </h2>
                 {/if}
                 <span
-                  class="bg-hover text-text-muted text-[10px] px-1.5 py-0.5 rounded-sm font-label-sm"
+                  class="bg-hover text-text-muted text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm"
                   >{cards.length}</span
                 >
               </div>
@@ -1053,13 +1053,13 @@
                     aria-haspopup="true"
                     class="text-text-muted hover:text-text-primary transition-colors p-0.5"
                   >
-                    <span class="material-symbols-outlined text-[16px]"
+                    <span class="material-symbols-outlined text-icon-md"
                       >more_horiz</span
                     >
                   </button>
                   {#if menuCol === col.key}
                     <div
-                      class="absolute right-0 top-full mt-1 z-50 min-w-[140px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+                      class="absolute right-0 top-full mt-1 z-50 min-w-35 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
                       role="menu"
                       tabindex="-1"
                       onkeydown={(e) => {
@@ -1069,10 +1069,10 @@
                       <button
                         type="button"
                         onclick={() => startRename(statusName, col.key)}
-                        class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-text-primary"
+                        class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary"
                         role="menuitem"
                       >
-                        <span class="material-symbols-outlined text-[14px]"
+                        <span class="material-symbols-outlined text-icon-sm"
                           >edit</span
                         >
                         Rename
@@ -1080,10 +1080,10 @@
                       <button
                         type="button"
                         onclick={() => removeColumn(statusName)}
-                        class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm text-error"
+                        class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-error"
                         role="menuitem"
                       >
-                        <span class="material-symbols-outlined text-[14px]"
+                        <span class="material-symbols-outlined text-icon-sm"
                           >delete</span
                         >
                         Remove
@@ -1094,7 +1094,7 @@
               </div>
             </div>
             <div
-              class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2 min-h-[100px]"
+              class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2 min-h-25"
             >
               {#each cards as card, i (card.id)}
                 <div
@@ -1127,14 +1127,14 @@
                 >
                   {#if card.pinned}
                     <span
-                      class="material-symbols-outlined absolute top-2 right-2 text-[14px] text-accent-primary-start"
+                      class="material-symbols-outlined absolute top-2 right-2 text-icon-sm text-accent-primary-start"
                       aria-label="pinned">push_pin</span
                     >
                   {/if}
                   <div class="flex justify-between items-start mb-2 gap-2">
                     {#if card.priority && card.priority <= 3}
                       <span
-                        class="px-1.5 py-0.5 border rounded-sm font-label-sm text-[9px] uppercase tracking-wide {priorityClass(
+                        class="px-1.5 py-0.5 border rounded-sm font-label-sm text-type-3xs uppercase tracking-wide {priorityClass(
                           card.priority
                         )}"
                       >
@@ -1143,14 +1143,14 @@
                     {/if}
                     {#if card.status === 'DONE'}
                       <span
-                        class="material-symbols-outlined text-accent-primary-start text-[16px] {card.pinned
+                        class="material-symbols-outlined text-accent-primary-start text-icon-md {card.pinned
                           ? ''
                           : 'ml-auto'}">check_circle</span
                       >
                     {/if}
                   </div>
                   <p
-                    class="text-[13px] font-body-md text-text-primary mb-2 {card.status ===
+                    class="text-type-md font-body-md text-text-primary mb-2 {card.status ===
                     'DONE'
                       ? 'line-through opacity-60'
                       : ''}"
@@ -1171,7 +1171,7 @@
                     <div class="flex items-center gap-1.5">
                       {#if card.owner}
                         <span
-                          class="text-[9px] text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded-sm px-1.5 py-0.5 font-label-sm"
+                          class="text-type-3xs text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded-sm px-1.5 py-0.5 font-label-sm"
                         >
                           [{card.owner}]
                         </span>
@@ -1180,10 +1180,10 @@
                     <div class="flex items-center gap-1.5">
                       {#if card.comments_count > 0}
                         <span
-                          class="text-[9px] text-text-muted font-label-sm flex items-center gap-0.5"
+                          class="text-type-3xs text-text-muted font-label-sm flex items-center gap-0.5"
                           title="{card.comments_count} comments"
                         >
-                          <span class="material-symbols-outlined text-[12px]"
+                          <span class="material-symbols-outlined text-icon-xs"
                             >chat_bubble</span
                           >
                           {card.comments_count}
@@ -1191,10 +1191,10 @@
                       {/if}
                       {#if card.links_count > 0}
                         <span
-                          class="text-[9px] text-text-muted font-label-sm flex items-center gap-0.5"
+                          class="text-type-3xs text-text-muted font-label-sm flex items-center gap-0.5"
                           title="{card.links_count} links"
                         >
-                          <span class="material-symbols-outlined text-[12px]"
+                          <span class="material-symbols-outlined text-icon-xs"
                             >link</span
                           >
                           {card.links_count}
@@ -1202,13 +1202,13 @@
                       {/if}
                       {#if card.due_date}
                         <span
-                          class="text-[9px] {card.status === 'DONE'
+                          class="text-type-3xs {card.status === 'DONE'
                             ? 'text-text-muted'
                             : dueDateTextClass(
                                 dueDateClass(card.due_date, today)
                               )} font-label-sm flex items-center gap-0.5"
                         >
-                          <span class="material-symbols-outlined text-[12px]"
+                          <span class="material-symbols-outlined text-icon-xs"
                             >schedule</span
                           >
                           {card.due_date}
@@ -1220,7 +1220,7 @@
                           title="Recurring: {card.recurrence}"
                         >
                           <span
-                            class="material-symbols-outlined text-[12px]"
+                            class="material-symbols-outlined text-icon-xs"
                             aria-hidden="true">event_repeat</span
                           >
                         </span>
@@ -1233,7 +1233,7 @@
                           aria-label="Blocked by unfinished prerequisite task(s)"
                         >
                           <span
-                            class="material-symbols-outlined text-[12px]"
+                            class="material-symbols-outlined text-icon-xs"
                             aria-hidden="true">lock</span
                           >
                         </span>
@@ -1244,7 +1244,7 @@
               {/each}
               {#if cards.length === 0}
                 <div
-                  class="text-center text-text-muted text-[11px] font-body-md py-6 border border-dashed border-surface-panel-border rounded-lg"
+                  class="text-center text-text-muted text-type-xs font-body-md py-6 border border-dashed border-surface-panel-border rounded-lg"
                 >
                   No {col.label.toLowerCase()} tasks
                 </div>
@@ -1272,9 +1272,9 @@
                     onclick={() => (quickAddCol = col.key)}
                     aria-label={`Add task to ${col.label}`}
                     data-testid={`board-add-${col.key}`}
-                    class="w-full flex items-center justify-end gap-1 py-1 text-[11px] font-label-sm text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer"
+                    class="w-full flex items-center justify-end gap-1 py-1 text-type-xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer"
                   >
-                    <span class="material-symbols-outlined text-[15px]"
+                    <span class="material-symbols-outlined text-icon-sm"
                       >add</span
                     >
                     Add
@@ -1287,15 +1287,15 @@
 
         <!-- Add-column affordance: enabled only for status (user-managed
              columns). Other dimensions are data-driven. -->
-        <div class="flex flex-col justify-center min-w-[80px]">
+        <div class="flex flex-col justify-center min-w-20">
           {#if groupBy === 'status'}
             <button
               type="button"
               onclick={addColumn}
-              class="flex items-center gap-1 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors self-start"
+              class="flex items-center gap-1 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors self-start"
               aria-label="Add column"
             >
-              <span class="material-symbols-outlined text-[16px]">add</span>
+              <span class="material-symbols-outlined text-icon-md">add</span>
               <span>Column</span>
             </button>
           {:else}
@@ -1304,9 +1304,9 @@
               disabled
               title="Columns are data-driven when grouping by {groupBy}"
               aria-label="Add column (disabled)"
-              class="flex items-center gap-1 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted/40 cursor-not-allowed self-start"
+              class="flex items-center gap-1 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted/40 cursor-not-allowed self-start"
             >
-              <span class="material-symbols-outlined text-[16px]">add</span>
+              <span class="material-symbols-outlined text-icon-md">add</span>
               <span>Column</span>
             </button>
           {/if}

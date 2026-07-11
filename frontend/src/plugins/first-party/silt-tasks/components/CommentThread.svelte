@@ -285,12 +285,12 @@
   <div class="flex items-center gap-2 mb-2">
     <h3
       id="comment-thread-heading"
-      class="text-[12px] font-label-sm-bold text-text-primary"
+      class="text-type-sm font-label-sm-bold text-text-primary"
     >
       Comments
     </h3>
     <span
-      class="text-[10px] font-label-sm text-text-muted bg-surface-card border border-surface-card-border rounded-full px-1.5 py-0.5"
+      class="text-type-2xs font-label-sm text-text-muted bg-surface-card border border-surface-card-border rounded-full px-1.5 py-0.5"
       aria-label="{comments.length} comments"
     >
       {comments.length}
@@ -309,11 +309,11 @@
   {/if}
 
   {#if loading}
-    <p class="text-[11px] text-text-muted" data-testid="comment-loading">
+    <p class="text-type-xs text-text-muted" data-testid="comment-loading">
       Loading comments…
     </p>
   {:else if comments.length === 0}
-    <p class="text-[11px] text-text-muted" data-testid="comment-empty-state">
+    <p class="text-type-xs text-text-muted" data-testid="comment-empty-state">
       No comments yet. Start the conversation.
     </p>
   {:else}
@@ -330,7 +330,7 @@
             transition:fly={{ duration: 120, y: -4 }}
           >
             <header class="flex items-center justify-between gap-2 mb-1">
-              <p class="text-[10px] font-label-sm text-text-muted">
+              <p class="text-type-2xs font-label-sm text-text-muted">
                 <span class="text-text-primary">{c.author || 'Unknown'}</span>
                 <span aria-hidden="true"> · </span>
                 <time datetime={c.timestamp || undefined}
@@ -340,7 +340,7 @@
               </p>
               <button
                 type="button"
-                class="material-symbols-outlined text-[14px] text-text-muted hover:text-error transition-colors"
+                class="material-symbols-outlined text-icon-sm text-text-muted hover:text-error transition-colors"
                 aria-label="Delete comment"
                 title="Delete comment"
                 onclick={() => void onDelete(c)}
@@ -348,7 +348,7 @@
                 delete
               </button>
             </header>
-            <div class="text-[12px] text-text-primary leading-snug">
+            <div class="text-type-sm text-text-primary leading-snug">
               {#each splitBold(c.body) as run}
                 {#if run.bold}
                   <strong>
@@ -386,7 +386,7 @@
       placeholder="Add a comment…"
       aria-label="Comment text"
       aria-describedby="comment-composer-help-{taskId}"
-      class="w-full resize-y min-h-[2.5rem] rounded border border-surface-card-border bg-surface-card px-2 py-1 text-[12px] text-text-primary focus:outline-none focus:border-accent-primary-start"
+      class="w-full resize-y min-h-[2.5rem] rounded border border-surface-card-border bg-surface-card px-2 py-1 text-type-sm text-text-primary focus:outline-none focus:border-accent-primary-start"
       rows="2"></textarea>
     <p id="comment-composer-help-{taskId}" class="sr-only">
       Press Enter to post, Shift+Enter for a new line.
@@ -394,7 +394,7 @@
     <div class="flex items-center gap-2">
       <label
         for="comment-author-{taskId}"
-        class="text-[10px] font-label-sm text-text-muted"
+        class="text-type-2xs font-label-sm text-text-muted"
       >
         Author
       </label>
@@ -403,13 +403,13 @@
         bind:value={composerAuthor}
         onblur={onAuthorBlur}
         aria-label="Default comment author"
-        class="flex-1 rounded border border-surface-card-border bg-surface-card px-2 py-0.5 text-[11px] text-text-primary focus:outline-none focus:border-accent-primary-start"
+        class="flex-1 rounded border border-surface-card-border bg-surface-card px-2 py-0.5 text-type-xs text-text-primary focus:outline-none focus:border-accent-primary-start"
       />
       <button
         type="button"
         onclick={() => void submit()}
         disabled={!canSubmit}
-        class="px-2.5 py-1 rounded bg-accent-primary-start text-text-on-accent text-[11px] font-label-sm-bold disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-110 transition-all"
+        class="px-2.5 py-1 rounded bg-accent-primary-start text-text-on-accent text-type-xs font-label-sm-bold disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-110 transition-all"
       >
         Post
       </button>

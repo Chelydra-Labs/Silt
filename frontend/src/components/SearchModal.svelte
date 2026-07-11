@@ -217,14 +217,14 @@
     aria-modal="true"
     aria-label="Search blocks"
     tabindex="-1"
-    class="relative w-full max-w-2xl glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[500px]"
+    class="relative w-full max-w-2xl glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[31.25rem]"
   >
     <!-- Search Input Area -->
     <div
       class="flex items-center gap-3 px-4 py-4 border-b border-surface-modal-border bg-surface-modal/30"
     >
       <span
-        class="material-symbols-outlined text-text-muted text-[22px] select-none"
+        class="material-symbols-outlined text-text-muted text-icon-xl select-none"
         >search</span
       >
       <input
@@ -232,7 +232,7 @@
         bind:value={query}
         type="text"
         placeholder="Search notebooks, sections, or task content..."
-        class="bg-transparent border-none outline-none text-text-primary text-[15px] font-body-md w-full focus:ring-0 placeholder:text-text-muted"
+        class="bg-transparent border-none outline-none text-text-primary text-type-lg font-body-md w-full focus:ring-0 placeholder:text-text-muted"
       />
       {#if query}
         <button
@@ -244,12 +244,12 @@
           }}
           class="p-1 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none flex-shrink-0"
         >
-          <span class="material-symbols-outlined text-[18px]">close</span>
+          <span class="material-symbols-outlined text-icon-lg">close</span>
         </button>
       {/if}
       {#if loading}
         <span
-          class="material-symbols-outlined text-accent-primary-start animate-spin text-[20px] select-none flex-shrink-0"
+          class="material-symbols-outlined text-accent-primary-start animate-spin text-type-2xl select-none flex-shrink-0"
         >
           sync
         </span>
@@ -270,7 +270,7 @@
       >
         <button
           type="button"
-          class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
+          class="px-2.5 py-1 text-type-xs font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={scopeVaultOnly}
           class:text-surface-app={scopeVaultOnly}
           class:text-text-muted={!scopeVaultOnly}
@@ -280,7 +280,7 @@
         >
         <button
           type="button"
-          class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
+          class="px-2.5 py-1 text-type-xs font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={!scopeVaultOnly}
           class:text-surface-app={!scopeVaultOnly}
           class:text-text-muted={scopeVaultOnly}
@@ -295,7 +295,7 @@
         {#each TYPE_CHIPS as chip (chip.id)}
           <button
             type="button"
-            class="px-2 py-1 rounded-md text-[11px] font-label-sm-bold transition-colors border cursor-pointer"
+            class="px-2 py-1 rounded-md text-type-xs font-label-sm-bold transition-colors border cursor-pointer"
             class:bg-accent-primary-start={typeFilter === chip.id}
             class:text-surface-app={typeFilter === chip.id}
             class:bg-transparent={typeFilter !== chip.id}
@@ -313,7 +313,7 @@
       >
         <button
           type="button"
-          class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
+          class="px-2.5 py-1 text-type-xs font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={sortMode === 'relevance'}
           class:text-surface-app={sortMode === 'relevance'}
           class:text-text-muted={sortMode !== 'relevance'}
@@ -322,7 +322,7 @@
         >
         <button
           type="button"
-          class="px-2.5 py-1 text-[11px] font-label-sm-bold transition-colors border-none cursor-pointer"
+          class="px-2.5 py-1 text-type-xs font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={sortMode === 'recency'}
           class:text-surface-app={sortMode === 'recency'}
           class:text-text-muted={sortMode !== 'recency'}
@@ -334,13 +334,13 @@
 
     {#if query.trim() && total > 0}
       <div
-        class="px-5 py-1 text-[11px] text-text-muted font-body-md flex items-center justify-between"
+        class="px-5 py-1 text-type-xs text-text-muted font-body-md flex items-center justify-between"
       >
         <span>{total} {total === 1 ? 'result' : 'results'}</span>
         {#if onReplaceInVault}
           <button
             type="button"
-            class="text-accent-primary-start hover:brightness-110 cursor-pointer text-[11px] font-label-sm-bold border-none bg-transparent"
+            class="text-accent-primary-start hover:brightness-110 cursor-pointer text-type-xs font-label-sm-bold border-none bg-transparent"
             onclick={() => onReplaceInVault(query.trim())}
             >Replace in vault…</button
           >
@@ -377,26 +377,26 @@
                  the click to the Tasks view); we render a friendlier
                  "Standalone task › tasks" instead. (#374) -->
             <div
-              class="flex items-center gap-1.5 text-[10px] text-text-muted uppercase tracking-widest font-label-sm-bold"
+              class="flex items-center gap-1.5 text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold"
             >
               {#if res.notebook === STANDALONE_TASKS_NOTEBOOK}
                 <span>Standalone task</span>
-                <span class="material-symbols-outlined text-[10px]"
+                <span class="material-symbols-outlined text-type-2xs"
                   >chevron_right</span
                 >
                 <span>{res.page}</span>
               {:else}
                 <span>{res.notebook}</span>
-                <span class="material-symbols-outlined text-[10px]"
+                <span class="material-symbols-outlined text-type-2xs"
                   >chevron_right</span
                 >
                 <span>{res.section}</span>
-                <span class="material-symbols-outlined text-[10px]"
+                <span class="material-symbols-outlined text-type-2xs"
                   >chevron_right</span
                 >
                 <span>{res.page}</span>
               {/if}
-              <span class="material-symbols-outlined text-[10px]"
+              <span class="material-symbols-outlined text-type-2xs"
                 >chevron_right</span
               >
               <span class="text-accent-primary-start">{res.file_date}</span>
@@ -408,7 +408,7 @@
             >
               {#if res.status}
                 <span
-                  class="material-symbols-outlined text-[16px] text-accent-primary-start select-none"
+                  class="material-symbols-outlined text-icon-md text-accent-primary-start select-none"
                 >
                   {res.status === 'DONE'
                     ? 'check_circle'
@@ -427,7 +427,7 @@
 
         {#if hasMore}
           <div
-            class="text-text-muted text-center py-3 text-[11px] font-body-md select-none"
+            class="text-text-muted text-center py-3 text-type-xs font-body-md select-none"
           >
             {loading ? 'Loading more…' : 'Scroll for more results'}
           </div>
@@ -438,7 +438,7 @@
     <!-- Result count footer -->
     {#if query.trim() !== '' && total > 0}
       <div
-        class="px-4 py-2 border-t border-surface-modal-border text-[10px] text-text-muted font-label-sm flex items-center justify-between bg-surface-modal/30"
+        class="px-4 py-2 border-t border-surface-modal-border text-type-2xs text-text-muted font-label-sm flex items-center justify-between bg-surface-modal/30"
       >
         <span>{total} match{total === 1 ? '' : 'es'}</span>
         <span class="opacity-60">↑↓ navigate · ⏎ open · esc close</span>

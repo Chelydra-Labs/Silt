@@ -380,7 +380,7 @@
     aria-modal="true"
     aria-label="Find and replace across vault"
     tabindex="-1"
-    class="relative w-full max-w-3xl glass-palette border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[600px]"
+    class="relative w-full max-w-3xl glass-palette border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[37.5rem]"
     style="background: color-mix(in srgb, var(--color-surface-modal) 95%, transparent);"
   >
     <div
@@ -394,13 +394,13 @@
           aria-label="Find"
           autocomplete="off"
           spellcheck="false"
-          class="flex-1 bg-transparent border border-surface-modal-border rounded-lg px-3 py-1.5 text-text-primary text-[14px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+          class="flex-1 bg-transparent border border-surface-modal-border rounded-lg px-3 py-1.5 text-text-primary text-icon-sm font-body-md focus:outline-none focus:border-accent-primary-start/60"
         />
         <button
           type="button"
           onclick={preview}
           disabled={!canPreview || loading}
-          class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-[13px] font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >{loading ? 'Searching…' : 'Preview'}</button
         >
       </div>
@@ -412,10 +412,10 @@
           aria-label="Replace with"
           autocomplete="off"
           spellcheck="false"
-          class="flex-1 bg-transparent border border-surface-modal-border rounded-lg px-3 py-1.5 text-text-primary text-[14px] font-body-md focus:outline-none focus:border-accent-primary-start/60"
+          class="flex-1 bg-transparent border border-surface-modal-border rounded-lg px-3 py-1.5 text-text-primary text-icon-sm font-body-md focus:outline-none focus:border-accent-primary-start/60"
         />
         <label
-          class="flex items-center gap-1 text-[12px] text-text-muted cursor-pointer"
+          class="flex items-center gap-1 text-type-sm text-text-muted cursor-pointer"
           ><input
             type="checkbox"
             bind:checked={caseSensitive}
@@ -423,7 +423,7 @@
           />Aa</label
         >
         <label
-          class="flex items-center gap-1 text-[12px] text-text-muted cursor-pointer"
+          class="flex items-center gap-1 text-type-sm text-text-muted cursor-pointer"
           ><input
             type="checkbox"
             bind:checked={wholeWord}
@@ -431,7 +431,7 @@
           />ab</label
         >
         <label
-          class="flex items-center gap-1 text-[12px] text-text-muted cursor-pointer"
+          class="flex items-center gap-1 text-type-sm text-text-muted cursor-pointer"
           ><input
             type="checkbox"
             bind:checked={regexp}
@@ -445,7 +445,7 @@
           aria-label="Close">✕</button
         >
       </div>
-      <p class="text-[11px] text-text-muted font-body-md px-1">
+      <p class="text-type-xs text-text-muted font-body-md px-1">
         Replaces every occurrence in accepted blocks, not just the previewed
         snippet.
       </p>
@@ -454,7 +454,7 @@
     <div class="flex-1 overflow-y-auto custom-scrollbar">
       {#if truncatedCount > 0}
         <div
-          class="px-4 py-2 text-[12px] text-text-muted bg-surface-modal/20 border-b border-surface-modal-border/60"
+          class="px-4 py-2 text-type-sm text-text-muted bg-surface-modal/20 border-b border-surface-modal-border/60"
           role="status"
           aria-live="polite"
         >
@@ -464,7 +464,7 @@
       {/if}
       {#if groups.length === 0}
         <div
-          class="text-text-muted text-center py-10 font-body-md select-none text-[13px]"
+          class="text-text-muted text-center py-10 font-body-md select-none text-type-md"
         >
           {loading
             ? 'Searching…'
@@ -484,16 +484,16 @@
                 aria-label="Accept all on this page"
               />
               <span
-                class="text-[11px] uppercase tracking-widest font-label-sm-bold text-text-muted truncate"
+                class="text-type-xs uppercase tracking-widest font-label-sm-bold text-text-muted truncate"
               >
                 {grp.notebook} › {grp.section || '—'} › {grp.page}
               </span>
-              <span class="ml-auto text-[11px] text-text-muted"
+              <span class="ml-auto text-type-xs text-text-muted"
                 >{grp.matches.length}</span
               >
             </div>
             {#each grp.matches as m (m.blockId)}
-              <div class="px-4 py-1.5 flex items-start gap-2 text-[13px]">
+              <div class="px-4 py-1.5 flex items-start gap-2 text-type-md">
                 <input
                   type="checkbox"
                   bind:checked={m.accepted}
@@ -517,7 +517,7 @@
 
     {#if statusMessage}
       <div
-        class="px-4 py-2 text-[12px] font-body-md text-text-muted border-t border-surface-modal-border bg-surface-modal/20"
+        class="px-4 py-2 text-type-sm font-body-md text-text-muted border-t border-surface-modal-border bg-surface-modal/20"
         role="status"
         aria-live="polite"
       >
@@ -528,7 +528,7 @@
     <div
       class="flex items-center justify-between gap-2 px-4 py-3 border-t border-surface-modal-border bg-surface-modal/10"
     >
-      <span class="text-[12px] text-text-muted"
+      <span class="text-type-sm text-text-muted"
         >{totalAccepted} match{totalAccepted === 1 ? '' : 'es'} selected</span
       >
       <div class="flex items-center gap-2">
@@ -538,7 +538,7 @@
             type="button"
             onclick={undo}
             disabled={applying}
-            class="px-3 py-1.5 rounded-lg text-text-muted hover:text-text-primary text-[13px] font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40"
+            class="px-3 py-1.5 rounded-lg text-text-muted hover:text-text-primary text-type-md font-label-sm-bold transition-colors cursor-pointer disabled:opacity-40"
           >
             Restore last apply ({lastBatch.length}
             {lastBatch.length === 1 ? 'page' : 'pages'})
@@ -546,7 +546,7 @@
         {/if}
         {#if previewStale}
           <span
-            class="text-[11px] text-text-muted italic"
+            class="text-type-xs text-text-muted italic"
             role="status"
             aria-live="polite"
           >
@@ -557,7 +557,7 @@
           type="button"
           onclick={apply}
           disabled={totalAccepted === 0 || applying || previewStale}
-          class="px-4 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-[13px] font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-4 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >{applying
             ? 'Applying…'
             : `Replace ${totalAccepted || ''}`.trim()}</button

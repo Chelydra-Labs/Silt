@@ -102,7 +102,7 @@
       <h2 class="font-headline-md text-headline-md text-text-primary">
         {title}
       </h2>
-      <p class="text-text-muted text-[12px] font-body-md mt-1">{message}</p>
+      <p class="text-text-muted text-type-sm font-body-md mt-1">{message}</p>
     </div>
     <div class="flex items-center justify-end gap-2 px-5 py-3">
       <button

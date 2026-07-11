@@ -187,7 +187,7 @@
 
 <section class="flex flex-col gap-2">
   <h3
-    class="font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+    class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
   >
     Dependencies
   </h3>
@@ -197,9 +197,9 @@
     <ul class="flex flex-wrap gap-1.5">
       {#each deps as dep (dep.id)}
         <li
-          class="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-surface-popover-border bg-surface-popover text-[11px] font-label-sm text-text-primary"
+          class="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-surface-popover-border bg-surface-popover text-type-xs font-label-sm text-text-primary"
         >
-          <span class="truncate max-w-[180px]">{dep.label}</span>
+          <span class="truncate max-w-45">{dep.label}</span>
           <button
             type="button"
             onclick={() => removeDep(dep.id)}
@@ -207,13 +207,13 @@
             class="text-text-muted hover:text-status-danger transition-colors disabled:opacity-50"
             aria-label="Remove dependency {dep.label}"
           >
-            <span class="material-symbols-outlined text-[12px]">close</span>
+            <span class="material-symbols-outlined text-icon-xs">close</span>
           </button>
         </li>
       {/each}
     </ul>
   {:else}
-    <p class="text-[11px] text-text-muted font-body-md">No prerequisites.</p>
+    <p class="text-type-xs text-text-muted font-body-md">No prerequisites.</p>
   {/if}
 
   <!-- Typeahead search input -->
@@ -233,7 +233,7 @@
       aria-activedescendant={results.length > 0
         ? `dep-result-${selectedIdx}`
         : undefined}
-      class="w-full px-2 py-1.5 rounded border border-surface-popover-border bg-surface-popover text-[12px] font-body-md text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-primary-start"
+      class="w-full px-2 py-1.5 rounded border border-surface-popover-border bg-surface-popover text-type-sm font-body-md text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-primary-start"
     />
   </div>
   <Popover
@@ -266,11 +266,11 @@
               class="w-full px-2 py-1.5 border-none flex flex-col gap-0.5 text-left cursor-pointer transition-colors hover:bg-hover disabled:opacity-50"
               class:bg-accent-primary-glow={idx === selectedIdx}
             >
-              <span class="text-[12px] text-text-primary truncate"
+              <span class="text-type-sm text-text-primary truncate"
                 >{res.clean_content || '(untitled)'}</span
               >
               <span
-                class="text-[9px] text-text-muted uppercase tracking-widest font-label-sm truncate"
+                class="text-type-3xs text-text-muted uppercase tracking-widest font-label-sm truncate"
               >
                 {res.notebook}{res.section ? ` › ${res.section}` : ''} › {res.page}
               </span>
@@ -284,7 +284,7 @@
   <!-- Cycle / error region, announced to assistive tech -->
   {#if errorMsg}
     <p
-      class="text-[11px] text-status-danger font-body-md"
+      class="text-type-xs text-status-danger font-body-md"
       role="status"
       aria-live="polite"
     >

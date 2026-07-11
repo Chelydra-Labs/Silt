@@ -239,12 +239,12 @@
       onclick={() => toggleChip('scope')}
       aria-expanded={openChip === 'scope'}
       aria-haspopup="listbox"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
       'scope'
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
     >
-      <span class="material-symbols-outlined text-[14px]">
+      <span class="material-symbols-outlined text-icon-sm">
         {scope === 'vault'
           ? 'database'
           : scope === 'notebook'
@@ -258,13 +258,13 @@
           ? 'Vault'
           : scope[0].toUpperCase() + scope.slice(1)}</span
       >
-      <span class="material-symbols-outlined text-[12px]">expand_more</span>
+      <span class="material-symbols-outlined text-icon-xs">expand_more</span>
     </button>
     {#if openChip === 'scope'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
         onkeydown={handlePopoverKeydown}
-        class="absolute z-50 mt-1 min-w-[160px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+        class="absolute z-50 mt-1 min-w-40 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
         role="listbox"
         tabindex="-1"
         aria-label="Filter by scope"
@@ -280,16 +280,17 @@
               close()
             }}
             title={disabled ? `Select a ${opt.value} first` : undefined}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent {scope ===
+            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent {scope ===
             opt.value
               ? 'text-accent-primary-start'
               : 'text-text-primary'}"
           >
-            <span class="material-symbols-outlined text-[14px]">{opt.icon}</span
+            <span class="material-symbols-outlined text-icon-sm"
+              >{opt.icon}</span
             >
             <span>{opt.label}</span>
             {#if scope === opt.value}
-              <span class="material-symbols-outlined text-[14px] ml-auto"
+              <span class="material-symbols-outlined text-icon-sm ml-auto"
                 >check</span
               >
             {/if}
@@ -299,7 +300,7 @@
     {/if}
   </div>
 
-  <div class="h-4 w-[1px] bg-surface-panel-border mx-2"></div>
+  <div class="h-4 w-px bg-surface-panel-border mx-2"></div>
 
   <!-- Group by Chip -->
   <div class="relative">
@@ -309,23 +310,23 @@
       onclick={() => toggleChip('group')}
       aria-expanded={openChip === 'group'}
       aria-haspopup="listbox"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
         'group' || groupBy !== 'none'
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
     >
-      <span class="material-symbols-outlined text-[14px]">view_module</span>
+      <span class="material-symbols-outlined text-icon-sm">view_module</span>
       <span
         >Group: {GROUP_OPTIONS.find((o) => o.value === groupBy)?.label ??
           'None'}</span
       >
-      <span class="material-symbols-outlined text-[12px]">expand_more</span>
+      <span class="material-symbols-outlined text-icon-xs">expand_more</span>
     </button>
     {#if openChip === 'group'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
         onkeydown={handlePopoverKeydown}
-        class="absolute z-50 mt-1 min-w-[160px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
+        class="absolute z-50 mt-1 min-w-40 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
         role="listbox"
         tabindex="-1"
         aria-label="Group tasks by"
@@ -338,16 +339,17 @@
               onGroupByChange(opt.value)
               close()
             }}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm transition-colors {groupBy ===
+            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm transition-colors {groupBy ===
             opt.value
               ? 'text-accent-primary-start'
               : 'text-text-primary'}"
           >
-            <span class="material-symbols-outlined text-[14px]">{opt.icon}</span
+            <span class="material-symbols-outlined text-icon-sm"
+              >{opt.icon}</span
             >
             <span>{opt.label}</span>
             {#if groupBy === opt.value}
-              <span class="material-symbols-outlined text-[14px] ml-auto"
+              <span class="material-symbols-outlined text-icon-sm ml-auto"
                 >check</span
               >
             {/if}
@@ -365,23 +367,23 @@
       onclick={() => toggleChip('sort')}
       aria-expanded={openChip === 'sort'}
       aria-haspopup="listbox"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
         'sort' || sort !== 'manual'
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
     >
-      <span class="material-symbols-outlined text-[14px]">sort</span>
+      <span class="material-symbols-outlined text-icon-sm">sort</span>
       <span
         >Sort: {SORT_OPTIONS.find((o) => o.value === sort)?.label ??
           'Manual'}</span
       >
-      <span class="material-symbols-outlined text-[12px]">expand_more</span>
+      <span class="material-symbols-outlined text-icon-xs">expand_more</span>
     </button>
     {#if openChip === 'sort'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
         onkeydown={handlePopoverKeydown}
-        class="absolute z-50 mt-1 min-w-[160px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+        class="absolute z-50 mt-1 min-w-40 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
         role="listbox"
         tabindex="-1"
         aria-label="Sort tasks by"
@@ -394,16 +396,17 @@
               onSortChange(opt.value)
               close()
             }}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm transition-colors {sort ===
+            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm transition-colors {sort ===
             opt.value
               ? 'text-accent-primary-start'
               : 'text-text-primary'}"
           >
-            <span class="material-symbols-outlined text-[14px]">{opt.icon}</span
+            <span class="material-symbols-outlined text-icon-sm"
+              >{opt.icon}</span
             >
             <span>{opt.label}</span>
             {#if sort === opt.value}
-              <span class="material-symbols-outlined text-[14px] ml-auto"
+              <span class="material-symbols-outlined text-icon-sm ml-auto"
                 >check</span
               >
             {/if}
@@ -413,7 +416,7 @@
     {/if}
   </div>
 
-  <div class="h-4 w-[1px] bg-surface-panel-border mx-2"></div>
+  <div class="h-4 w-px bg-surface-panel-border mx-2"></div>
   <!-- Owner chip -->
   <div class="relative">
     <button
@@ -421,21 +424,21 @@
       onclick={() => toggleChip('owner')}
       aria-expanded={openChip === 'owner'}
       aria-haspopup="true"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
         'owner' || filters.owners.length
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
     >
-      <span class="material-symbols-outlined text-[14px]">person</span>
+      <span class="material-symbols-outlined text-icon-sm">person</span>
       <span
         >Owner{filters.owners.length ? ` (${filters.owners.length})` : ''}</span
       >
-      <span class="material-symbols-outlined text-[12px]">expand_more</span>
+      <span class="material-symbols-outlined text-icon-xs">expand_more</span>
     </button>
     {#if openChip === 'owner'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
-        class="absolute z-50 mt-1 min-w-[180px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
+        class="absolute z-50 mt-1 min-w-45 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
         role="group"
         tabindex="-1"
         aria-label="Filter by owner"
@@ -452,7 +455,7 @@
               placeholder="Filter…"
               aria-label="Filter owners by name"
               data-testid="owner-facet-search"
-              class="w-full px-2 py-1 rounded border border-surface-popover-border bg-surface-panel text-text-primary placeholder:text-text-muted text-[11px] focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
+              class="w-full px-2 py-1 rounded border border-surface-popover-border bg-surface-panel text-text-primary placeholder:text-text-muted text-type-xs focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
             />
           </div>
         {/if}
@@ -463,17 +466,17 @@
           onkeydown={handlePopoverKeydown}
         >
           {#if owners.length === 0}
-            <div class="px-3 py-2 text-[11px] text-text-muted font-label-sm">
+            <div class="px-3 py-2 text-type-xs text-text-muted font-label-sm">
               No owners
             </div>
           {:else if filteredOwners.length === 0}
-            <div class="px-3 py-2 text-[11px] text-text-muted font-label-sm">
+            <div class="px-3 py-2 text-type-xs text-text-muted font-label-sm">
               No matches
             </div>
           {:else}
             {#each filteredOwners as o (o)}
               <label
-                class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
+                class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-type-sm font-label-sm text-text-primary"
               >
                 <input
                   type="checkbox"
@@ -497,31 +500,31 @@
       onclick={() => toggleChip('priority')}
       aria-expanded={openChip === 'priority'}
       aria-haspopup="true"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
         'priority' || filters.priorities.length
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
     >
-      <span class="material-symbols-outlined text-[14px]">flag</span>
+      <span class="material-symbols-outlined text-icon-sm">flag</span>
       <span
         >Priority{filters.priorities.length
           ? ` (${filters.priorities.length})`
           : ''}</span
       >
-      <span class="material-symbols-outlined text-[12px]">expand_more</span>
+      <span class="material-symbols-outlined text-icon-xs">expand_more</span>
     </button>
     {#if openChip === 'priority'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
         onkeydown={handlePopoverKeydown}
-        class="absolute z-50 mt-1 min-w-[160px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+        class="absolute z-50 mt-1 min-w-40 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
         role="listbox"
         tabindex="-1"
         aria-label="Filter by priority"
       >
         {#each PRIORITIES as p (p.value)}
           <label
-            class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
+            class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-type-sm font-label-sm text-text-primary"
           >
             <input
               type="checkbox"
@@ -543,20 +546,20 @@
       onclick={() => toggleChip('dueDate')}
       aria-expanded={openChip === 'dueDate'}
       aria-haspopup="listbox"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
         'dueDate' || filters.dueDate
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
     >
-      <span class="material-symbols-outlined text-[14px]">schedule</span>
+      <span class="material-symbols-outlined text-icon-sm">schedule</span>
       <span>{filters.dueDate ? dueLabel() : 'Due date'}</span>
-      <span class="material-symbols-outlined text-[12px]">expand_more</span>
+      <span class="material-symbols-outlined text-icon-xs">expand_more</span>
     </button>
     {#if openChip === 'dueDate'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
         onkeydown={handlePopoverKeydown}
-        class="absolute z-50 mt-1 min-w-[160px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+        class="absolute z-50 mt-1 min-w-40 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
         role="listbox"
         tabindex="-1"
         aria-label="Filter by due date"
@@ -565,14 +568,14 @@
           <button
             type="button"
             onclick={() => setDueDate(opt.value)}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-[12px] font-label-sm {filters.dueDate ===
+            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm {filters.dueDate ===
             opt.value
               ? 'text-accent-primary-start'
               : 'text-text-primary'}"
           >
             <span>{opt.label}</span>
             {#if filters.dueDate === opt.value}
-              <span class="material-symbols-outlined text-[14px] ml-auto"
+              <span class="material-symbols-outlined text-icon-sm ml-auto"
                 >check</span
               >
             {/if}
@@ -589,19 +592,19 @@
       onclick={() => toggleChip('tags')}
       aria-expanded={openChip === 'tags'}
       aria-haspopup="true"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-[12px] font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
+      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
         'tags' || filters.tags.length
         ? 'border-accent-primary-start/40 text-text-primary'
         : ''}"
     >
-      <span class="material-symbols-outlined text-[14px]">label</span>
+      <span class="material-symbols-outlined text-icon-sm">label</span>
       <span>Tags{filters.tags.length ? ` (${filters.tags.length})` : ''}</span>
-      <span class="material-symbols-outlined text-[12px]">expand_more</span>
+      <span class="material-symbols-outlined text-icon-xs">expand_more</span>
     </button>
     {#if openChip === 'tags'}
       <div
         transition:fly={{ y: -4, duration: 100 }}
-        class="absolute z-50 mt-1 min-w-[200px] bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
+        class="absolute z-50 mt-1 min-w-50 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
         role="group"
         tabindex="-1"
         aria-label="Filter by tag"
@@ -618,7 +621,7 @@
               placeholder="Filter…"
               aria-label="Filter tags by name"
               data-testid="tag-facet-search"
-              class="w-full px-2 py-1 rounded border border-surface-popover-border bg-surface-panel text-text-primary placeholder:text-text-muted text-[11px] focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
+              class="w-full px-2 py-1 rounded border border-surface-popover-border bg-surface-panel text-text-primary placeholder:text-text-muted text-type-xs focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
             />
           </div>
         {/if}
@@ -629,17 +632,17 @@
           onkeydown={handlePopoverKeydown}
         >
           {#if tags.length === 0}
-            <div class="px-3 py-2 text-[11px] text-text-muted font-label-sm">
+            <div class="px-3 py-2 text-type-xs text-text-muted font-label-sm">
               No tags
             </div>
           {:else if filteredTags.length === 0}
-            <div class="px-3 py-2 text-[11px] text-text-muted font-label-sm">
+            <div class="px-3 py-2 text-type-xs text-text-muted font-label-sm">
               No matches
             </div>
           {:else}
             {#each filteredTags as t (t)}
               <label
-                class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-[12px] font-label-sm text-text-primary"
+                class="flex items-center gap-2 px-3 py-1.5 hover:bg-hover cursor-pointer text-type-sm font-label-sm text-text-primary"
               >
                 <input
                   type="checkbox"
@@ -660,21 +663,21 @@
     <button
       type="button"
       onclick={clearAll}
-      class="flex items-center gap-1 px-2 py-1 text-[12px] font-label-sm text-text-muted hover:text-error transition-colors"
+      class="flex items-center gap-1 px-2 py-1 text-type-sm font-label-sm text-text-muted hover:text-error transition-colors"
     >
-      <span class="material-symbols-outlined text-[14px]">close</span>
+      <span class="material-symbols-outlined text-icon-sm">close</span>
       <span>Clear all</span>
     </button>
   {/if}
 
   {#if activeCount > 0}
-    <span class="text-[11px] text-text-muted font-label-sm">
+    <span class="text-type-xs text-text-muted font-label-sm">
       {activeCount} active filter{activeCount === 1 ? '' : 's'}
     </span>
   {/if}
 
   <div class="ml-auto flex items-center gap-2">
-    <span class="text-text-muted text-[12px] font-body-md">
+    <span class="text-text-muted text-type-sm font-body-md">
       {scopeCrumb} · {totalCount} task{totalCount === 1 ? '' : 's'}
     </span>
     {#if scopeUserOverride}
@@ -685,7 +688,7 @@
         title="Follow navigation"
         class="flex items-center gap-1 px-1.5 py-0.5 rounded border border-surface-panel-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors"
       >
-        <span class="material-symbols-outlined text-[14px]">my_location</span>
+        <span class="material-symbols-outlined text-icon-sm">my_location</span>
         <span class="font-label-sm">Follow</span>
       </button>
     {/if}

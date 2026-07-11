@@ -151,13 +151,13 @@
     {#each filteredCommands as cmd, idx}
       {#if cmd.pluginID && (idx === 0 || !filteredCommands[idx - 1].pluginID)}
         <div
-          class="px-3 py-1.5 text-[10px] text-text-muted font-label-sm-bold uppercase tracking-widest border-t border-surface-popover-border mt-1 pt-2 select-none"
+          class="px-3 py-1.5 text-type-2xs text-text-muted font-label-sm-bold uppercase tracking-widest border-t border-surface-popover-border mt-1 pt-2 select-none"
         >
           Plugins
         </div>
       {:else if !cmd.pluginID && idx === 0}
         <div
-          class="px-3 py-1.5 text-[10px] text-text-muted font-label-sm-bold uppercase tracking-widest border-b border-surface-popover-border mb-1 select-none"
+          class="px-3 py-1.5 text-type-2xs text-text-muted font-label-sm-bold uppercase tracking-widest border-b border-surface-popover-border mb-1 select-none"
         >
           Commands
         </div>
@@ -171,23 +171,23 @@
         data-active-cmd={idx === selectedIdx}
         onmouseenter={() => (selectedIdx = idx)}
       >
-        <span class="material-symbols-outlined text-[18px] select-none"
+        <span class="material-symbols-outlined text-icon-lg select-none"
           >{cmd.icon ?? 'extension'}</span
         >
         <div class="flex-1 flex flex-col min-w-0">
           <span class="font-label-sm-bold text-label-sm">{cmd.label}</span>
           {#if cmd.description}
-            <span class="text-[10px] text-text-muted truncate"
+            <span class="text-type-2xs text-text-muted truncate"
               >{cmd.description}</span
             >
           {/if}
         </div>
         {#if hintFor(cmd)}
-          <span class="text-[10px] text-text-muted select-none"
+          <span class="text-type-2xs text-text-muted select-none"
             >{hintFor(cmd)}</span
           >
         {:else if cmd.pluginID}
-          <span class="text-[9px] text-text-muted select-none uppercase"
+          <span class="text-type-3xs text-text-muted select-none uppercase"
             >{cmd.pluginID}</span
           >
         {/if}

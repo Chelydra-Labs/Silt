@@ -29,7 +29,7 @@
   data-id={node.attrs.id}
 >
   <span
-    class="silt-drag-handle-inline material-symbols-outlined text-text-muted hover:text-primary transition-colors duration-150 mt-0.5 select-none text-[18px] opacity-0 group-hover:opacity-100"
+    class="silt-drag-handle-inline material-symbols-outlined text-text-muted hover:text-primary transition-colors duration-150 mt-0.5 select-none text-icon-lg opacity-0 group-hover:opacity-100"
     spellcheck="false"
     draggable="true"
     aria-hidden="true"

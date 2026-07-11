@@ -30,17 +30,17 @@
           class="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-hover rounded transition-colors select-none list-none"
         >
           <span
-            class="material-symbols-outlined text-accent-primary-start/70 text-[16px]"
+            class="material-symbols-outlined text-accent-primary-start/70 text-icon-md"
           >
             {surface.icon || 'extension'}
           </span>
           <span
-            class="text-surface-sidebar-text text-[11px] font-label-sm-bold flex-1 truncate"
+            class="text-surface-sidebar-text text-type-xs font-label-sm-bold flex-1 truncate"
           >
             {surface.label}
           </span>
           <span
-            class="material-symbols-outlined text-surface-sidebar-text-muted text-[14px] group-open:rotate-180 transition-transform"
+            class="material-symbols-outlined text-surface-sidebar-text-muted text-icon-sm group-open:rotate-180 transition-transform"
           >
             expand_more
           </span>

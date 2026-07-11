@@ -87,7 +87,7 @@
   <div class="px-3 py-3 border-b border-surface-sidebar-border flex-shrink-0">
     <div class="flex items-center gap-2 mb-2">
       <span
-        class="material-symbols-outlined text-accent-primary-start text-[20px]"
+        class="material-symbols-outlined text-accent-primary-start text-type-2xl"
         >label</span
       >
       <h2 class="font-headline-md text-headline-md text-text-primary">Tags</h2>
@@ -97,7 +97,7 @@
         bind:value={query}
         type="text"
         placeholder="Filter tags…"
-        class="w-full bg-surface-sidebar border border-surface-sidebar-border rounded-lg pl-3 pr-8 py-1.5 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start transition-colors"
+        class="w-full bg-surface-sidebar border border-surface-sidebar-border rounded-lg pl-3 pr-8 py-1.5 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
       />
       {#if query}
         <button
@@ -108,14 +108,14 @@
           }}
           class="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
         >
-          <span class="material-symbols-outlined text-[16px]">close</span>
+          <span class="material-symbols-outlined text-icon-md">close</span>
         </button>
       {/if}
     </div>
   </div>
   <div class="flex-grow overflow-y-auto custom-scrollbar p-2">
     {#if filteredTree.length === 0}
-      <div class="text-text-muted text-center py-10 font-body-md text-[13px]">
+      <div class="text-text-muted text-center py-10 font-body-md text-type-md">
         {#if tree.length === 0}
           No tags yet. Add <span class="text-accent-secondary-start"
             >#tag/path</span

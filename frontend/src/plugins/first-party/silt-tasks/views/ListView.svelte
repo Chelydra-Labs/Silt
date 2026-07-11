@@ -605,7 +605,7 @@
   >
     {#if hubSort === 'manual'}
       <span
-        class="material-symbols-outlined text-[14px] text-text-muted/60 hover:text-text-muted cursor-grab active:cursor-grabbing flex-shrink-0 select-none"
+        class="material-symbols-outlined text-icon-sm text-text-muted/60 hover:text-text-muted cursor-grab active:cursor-grabbing flex-shrink-0 select-none"
         draggable="true"
         role="button"
         tabindex="0"
@@ -647,7 +647,7 @@
         {item.clean_content}
       </div>
       <div
-        class="text-[10px] text-text-muted uppercase tracking-widest font-label-sm"
+        class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm"
       >
         {#if item.notebook === STANDALONE_TASKS_NOTEBOOK}
           Standalone task
@@ -666,17 +666,17 @@
       }}
       class="opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-opacity p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0"
     >
-      <span class="material-symbols-outlined text-[16px]">edit_note</span>
+      <span class="material-symbols-outlined text-icon-md">edit_note</span>
     </button>
     {#if item.owner}
       <span
-        class="text-[10px] text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded px-1.5 py-0.5"
+        class="text-type-2xs text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded px-1.5 py-0.5"
         >[{item.owner}]</span
       >
     {/if}
     {#if item.due_date}
       <span
-        class="text-[10px] {item.status === 'DONE'
+        class="text-type-2xs {item.status === 'DONE'
           ? 'text-text-muted'
           : dueDateTextClass(
               dueDateClass(item.due_date, today)
@@ -760,11 +760,11 @@
           <h3 class="font-headline-md text-text-primary mb-1">
             All caught up!
           </h3>
-          <p class="text-text-muted text-[13px] font-body-md">
+          <p class="text-text-muted text-type-md font-body-md">
             You have no active tasks. Restore a completed task below to the
             active list, type in the box below, or use
             <kbd
-              class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-[11px]"
+              class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-type-xs"
               >Ctrl+Shift+N</kbd
             > to capture a new task.
           </p>
@@ -776,7 +776,7 @@
           {#if group.list.length > 0}
             <section aria-label={group.label} data-group={group.key}>
               <h2
-                class="font-label-sm-bold uppercase tracking-widest text-[11px] mb-2 flex items-center gap-2"
+                class="font-label-sm-bold uppercase tracking-widest text-type-xs mb-2 flex items-center gap-2"
                 class:text-error={group.tone === 'error'}
                 class:text-accent-primary-start={group.tone === 'primary'}
                 class:text-text-muted={group.tone === 'muted'}
@@ -814,22 +814,22 @@
         {#each groupedSections as group (group.key)}
           <section aria-label={group.label} data-group={group.key}>
             <h2
-              class="font-label-sm-bold uppercase tracking-widest text-[11px] mb-2 flex items-center gap-2 text-text-muted"
+              class="font-label-sm-bold uppercase tracking-widest text-type-xs mb-2 flex items-center gap-2 text-text-muted"
             >
               <button
                 type="button"
                 onclick={() => toggleSection(group.key)}
                 aria-expanded={!collapsedSections.has(group.key)}
                 aria-controls={`tasks-group-${group.key}`}
-                class="flex items-center gap-2 bg-transparent border-none p-0 cursor-pointer uppercase tracking-widest text-[11px] font-label-sm-bold text-text-muted hover:text-text-primary"
+                class="flex items-center gap-2 bg-transparent border-none p-0 cursor-pointer uppercase tracking-widest text-type-xs font-label-sm-bold text-text-muted hover:text-text-primary"
                 data-testid={`tasks-group-toggle-${group.key}`}
               >
                 {#if collapsedSections.has(group.key)}
-                  <span class="material-symbols-outlined text-[14px]"
+                  <span class="material-symbols-outlined text-icon-sm"
                     >chevron_right</span
                   >
                 {:else}
-                  <span class="material-symbols-outlined text-[14px]"
+                  <span class="material-symbols-outlined text-icon-sm"
                     >expand_more</span
                   >
                 {/if}
@@ -855,22 +855,22 @@
       {#if filteredDone.length > 0}
         <section aria-label="Completed" data-group="completed">
           <h2
-            class="font-label-sm-bold uppercase tracking-widest text-[11px] mb-2 flex items-center gap-2 text-text-muted"
+            class="font-label-sm-bold uppercase tracking-widest text-type-xs mb-2 flex items-center gap-2 text-text-muted"
           >
             <button
               type="button"
               onclick={() => (showCompleted = !showCompleted)}
               aria-expanded={showCompleted}
               aria-controls="tasks-completed-list"
-              class="flex items-center gap-2 bg-transparent border-none p-0 cursor-pointer uppercase tracking-widest text-[11px] font-label-sm-bold text-text-muted hover:text-text-primary"
+              class="flex items-center gap-2 bg-transparent border-none p-0 cursor-pointer uppercase tracking-widest text-type-xs font-label-sm-bold text-text-muted hover:text-text-primary"
               data-testid="tasks-completed-toggle"
             >
               {#if showCompleted}
-                <span class="material-symbols-outlined text-[14px]"
+                <span class="material-symbols-outlined text-icon-sm"
                   >expand_more</span
                 >
               {:else}
-                <span class="material-symbols-outlined text-[14px]"
+                <span class="material-symbols-outlined text-icon-sm"
                   >chevron_right</span
                 >
               {/if}
@@ -902,7 +902,7 @@
                       {item.clean_content}
                     </div>
                     <div
-                      class="text-[10px] text-text-muted uppercase tracking-widest font-label-sm"
+                      class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm"
                     >
                       {#if item.notebook === STANDALONE_TASKS_NOTEBOOK}
                         Standalone task
@@ -912,7 +912,7 @@
                     </div>
                   </div>
                   <span
-                    class="text-[10px] text-text-muted font-label-sm flex-shrink-0"
+                    class="text-type-2xs text-text-muted font-label-sm flex-shrink-0"
                     >{item.file_date}</span
                   >
                 </div>
@@ -923,7 +923,7 @@
       {/if}
       {#if openTruncated || doneTruncated}
         <p
-          class="text-text-muted text-[12px] font-body-md border-t border-surface-panel-border pt-3 mt-6"
+          class="text-text-muted text-type-sm font-body-md border-t border-surface-panel-border pt-3 mt-6"
           role="status"
           aria-live="polite"
           data-testid="tasks-truncated-notice"

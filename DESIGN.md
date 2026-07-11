@@ -146,16 +146,22 @@ In addition to themeable colors, chrome UI (settings, nav, badges) must use
 | `text-type-md` | 13px | Primary settings body |
 | `text-type-lg` | 16px | Emphasis labels |
 | `text-type-xl` | 18px | Summary figures / small titles |
+| `text-type-2xl` | 20px | Section titles / modal headers |
+| `text-display-sm` | 64px | Empty-state hero glyphs |
 | `text-icon-xs` … `text-icon-xl` | 12–24px | Material Symbols glyph sizes |
+| `text-icon-2xl` | 28px | Empty / notice glyphs |
 | `grid-cols-settings-theme` | `2fr 1fr` | Appearance theme card + details layout |
 | `shadow-sm` / `shadow-md` / `shadow-lg` | geometry ramp | Elevation |
 | `shadow-accent-glow` | accent halo | Active nav rail / focus chrome |
 
 Declared in `frontend/src/index.css` `@theme`. Prefer `.font-label-sm` /
-`.font-body-md` when the full font stack is needed. Adding a new size requires
-extending the scale first, then using the token — never a one-off arbitrary
-value. Enforced for `frontend/src/components/settings/**` by
-`frontend/src/theme/arbitrary-values.test.ts` (#520).
+`.font-body-md` when the full font stack is needed. Editor **document** body
+still uses `--editor-font-size` via `.font-body-md` (not chrome type tokens).
+Adding a new size requires extending the scale first, then using the token —
+never a one-off arbitrary value. Enforced for all `frontend/src/**/*.svelte`
+by `frontend/src/theme/arbitrary-values.test.ts` (settings #520; repo-wide
+#523). Relative units (`text-[0.85em]`) and non-px layout (`max-h-[31.25rem]`,
+`z-[…]`) are outside the forbidden set.
 
 
 2.2 First-Class Theme Palettes

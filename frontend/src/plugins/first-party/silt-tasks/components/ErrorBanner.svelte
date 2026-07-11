@@ -48,13 +48,13 @@
       'flex items-center gap-2',
       isError ? 'bg-error-bg text-error' : 'bg-status-warn/10 text-status-warn',
       compact
-        ? 'px-2 py-1 text-[11px] border-l-2 border-current rounded-sm'
-        : `px-6 py-2 text-[12px] font-body-md border-b ${
+        ? 'px-2 py-1 text-type-xs border-l-2 border-current rounded-sm'
+        : `px-6 py-2 text-type-sm font-body-md border-b ${
             isError ? 'border-error-border' : 'border-status-warn/30'
           }`
     ].join(' ')
   )
-  const iconClass = $derived(compact ? 'text-[13px]' : 'text-[14px]')
+  const iconClass = $derived(compact ? 'text-type-md' : 'text-icon-sm')
 </script>
 
 <div
@@ -74,8 +74,8 @@
       onclick={onRetry}
       data-testid={dataTestId ? `${dataTestId}-retry` : undefined}
       class="underline font-label-sm hover:no-underline bg-transparent border-none cursor-pointer {compact
-        ? 'text-[11px]'
-        : 'text-[12px]'} focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-current"
+        ? 'text-type-xs'
+        : 'text-type-sm'} focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-current"
     >
       Try again
     </button>

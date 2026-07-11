@@ -106,7 +106,7 @@
   >
     <div class="p-5 flex items-start gap-3">
       <span
-        class="material-symbols-outlined text-status-warn text-[24px] mt-0.5"
+        class="material-symbols-outlined text-status-warn text-icon-xl mt-0.5"
         aria-hidden="true">lock</span
       >
       <div class="min-w-0 flex-1">
@@ -130,7 +130,7 @@
           class="text-sm text-text-primary font-body-md flex items-center gap-1.5"
         >
           <span
-            class="material-symbols-outlined text-status-warn text-[14px]"
+            class="material-symbols-outlined text-status-warn text-icon-sm"
             aria-hidden="true">lock</span
           >
           <span class="truncate">{b.clean_content ?? '(untitled task)'}</span>

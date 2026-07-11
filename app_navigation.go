@@ -130,21 +130,19 @@ func (a *App) ListNavigation() (parser.NavigationTree, error) {
 
 	// 1. Block counts per (source, notebook, section, page) from the index.
 	// Source is part of the key so a linked notebook sharing a display name
-	// with a vault notebook gets its own counts (#100).
+	// with a vault notebook gets its own counts (#100). Lease-aware package
+	// API — no raw SQLDB() across vault teardown.
 	counts := map[nspKey]int{}
 	if a.db != nil {
 		a.coordinator.WithDBRead(func() {
-			rows, err := a.db.SQLDB().Query("SELECT COALESCE(source, 'vault'), notebook, section, page, COUNT(*) FROM blocks GROUP BY COALESCE(source, 'vault'), notebook, section, page")
+			rows, err := a.db.CountBlocksGroupedByPage()
 			if err != nil {
+				// Match prior soft behavior: empty counts on query failure
+				// (including ErrDBClosed during vault switch).
 				return
 			}
-			defer rows.Close()
-			for rows.Next() {
-				var src, n, s, p string
-				var c int
-				if err := rows.Scan(&src, &n, &s, &p, &c); err == nil {
-					counts[nspKey{src, n, s, p}] = c
-				}
+			for _, row := range rows {
+				counts[nspKey{row.Source, row.Notebook, row.Section, row.Page}] = row.Count
 			}
 		})
 	}

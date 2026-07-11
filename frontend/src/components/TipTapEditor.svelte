@@ -1495,7 +1495,8 @@
           onclick={handleCut}
           disabled={selectionEmpty}
         >
-          <span class="material-symbols-outlined text-[16px]">content_cut</span>
+          <span class="material-symbols-outlined text-icon-md">content_cut</span
+          >
           Cut
         </button>
         <button
@@ -1505,7 +1506,8 @@
           onclick={handleCopy}
           disabled={selectionEmpty}
         >
-          <span class="material-symbols-outlined text-[16px]">content_copy</span
+          <span class="material-symbols-outlined text-icon-md"
+            >content_copy</span
           >
           Copy
         </button>
@@ -1515,7 +1517,7 @@
           role="menuitem"
           onclick={handlePaste}
         >
-          <span class="material-symbols-outlined text-[16px]"
+          <span class="material-symbols-outlined text-icon-md"
             >content_paste</span
           >
           Paste
@@ -1529,7 +1531,7 @@
           role="menuitem"
           onclick={handleCopyAsMarkdown}
         >
-          <span class="material-symbols-outlined text-[16px]">markdown</span>
+          <span class="material-symbols-outlined text-icon-md">markdown</span>
           Copy as Markdown
         </button>
         <button
@@ -1538,7 +1540,7 @@
           role="menuitem"
           onclick={handleCopyAsPlainText}
         >
-          <span class="material-symbols-outlined text-[16px]">notes</span>
+          <span class="material-symbols-outlined text-icon-md">notes</span>
           Copy as Plain Text
         </button>
 
@@ -1550,7 +1552,7 @@
             role="menuitem"
             onclick={handleCopyBlockReference}
           >
-            <span class="material-symbols-outlined text-[16px]">link</span>
+            <span class="material-symbols-outlined text-icon-md">link</span>
             Copy Block Reference
           </button>
           <button
@@ -1559,7 +1561,7 @@
             role="menuitem"
             onclick={handleCopyBlockEmbed}
           >
-            <span class="material-symbols-outlined text-[16px]"
+            <span class="material-symbols-outlined text-icon-md"
               >integration_instructions</span
             >
             Copy Block Embed
@@ -1572,7 +1574,8 @@
             role="menuitem"
             onclick={handleDuplicateBlock}
           >
-            <span class="material-symbols-outlined text-[16px]">difference</span
+            <span class="material-symbols-outlined text-icon-md"
+              >difference</span
             >
             Duplicate Block
           </button>
@@ -1583,7 +1586,7 @@
             onclick={handleDeleteBlock}
             disabled={isLastBlock}
           >
-            <span class="material-symbols-outlined text-[16px]">delete</span>
+            <span class="material-symbols-outlined text-icon-md">delete</span>
             Delete Block
           </button>
         {/if}
@@ -1595,7 +1598,8 @@
           role="menuitem"
           onclick={handleClearFormatting}
         >
-          <span class="material-symbols-outlined text-[16px]">format_clear</span
+          <span class="material-symbols-outlined text-icon-md"
+            >format_clear</span
           >
           Clear Formatting
         </button>

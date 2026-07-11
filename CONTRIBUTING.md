@@ -110,13 +110,13 @@ Do **not** attempt to resolve conflict markers in the lockfile by hand.
 
 ## Styling tokens (no arbitrary Tailwind values)
 
-Chrome UI (especially Settings) must use **named design tokens** — never
-hardcoded colors or arbitrary Tailwind brackets like `text-[12px]`,
-`grid-cols-[2fr_1fr]`, or `shadow-[…]`. See **DESIGN.md §2.1.1** for the UI
-type/icon/grid/shadow scale (`text-type-*`, `text-icon-*`,
-`grid-cols-settings-theme`, `shadow-accent-glow`, …). Extending the scale is
-required before introducing a new size. Settings components are guarded by
-`frontend/src/theme/arbitrary-values.test.ts` (#520).
+Chrome UI must use **named design tokens** — never hardcoded colors or
+arbitrary Tailwind brackets like `text-[12px]`, `grid-cols-[2fr_1fr]`, or
+`shadow-[…]`. See **DESIGN.md §2.1.1** for the UI type/icon/grid/shadow scale
+(`text-type-*`, `text-icon-*`, `text-display-*`, `grid-cols-settings-theme`,
+`shadow-accent-glow`, …). Extending the scale is required before introducing a
+new size. All `frontend/src/**/*.svelte` files are guarded by
+`frontend/src/theme/arbitrary-values.test.ts`.
 
 ## Wails bindings — auto-regenerated on `npm install`
 

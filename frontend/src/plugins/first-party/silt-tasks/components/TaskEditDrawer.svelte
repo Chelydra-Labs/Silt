@@ -734,7 +734,7 @@
       <div class="flex flex-col gap-1.5 min-w-0 flex-1">
         {#if priorityState >= 1 && priorityState <= 3}
           <span
-            class="self-start px-1.5 py-0.5 border rounded-sm font-label-sm text-[9px] uppercase tracking-wide w-fit {priorityClass(
+            class="self-start px-1.5 py-0.5 border rounded-sm font-label-sm text-type-3xs uppercase tracking-wide w-fit {priorityClass(
               priorityState
             )}"
           >
@@ -747,7 +747,7 @@
         >
           {#if recurrenceState}
             <span
-              class="material-symbols-outlined text-[16px] text-accent-secondary-start shrink-0 mt-1"
+              class="material-symbols-outlined text-icon-md text-accent-secondary-start shrink-0 mt-1"
               aria-hidden="true"
               title="Recurring: {recurrenceState}">event_repeat</span
             >
@@ -797,7 +797,7 @@
       <!-- Status radiogroup -->
       <section>
         <h3
-          class="font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted mb-2"
+          class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted mb-2"
         >
           Status
         </h3>
@@ -834,7 +834,7 @@
       <!-- Due-date editor -->
       <section>
         <h3
-          class="font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted mb-2"
+          class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted mb-2"
         >
           Due date
         </h3>
@@ -848,11 +848,11 @@
           disabled={dueDatePending}
           aria-haspopup="dialog"
           aria-expanded={dueDateOpen}
-          class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 text-[12px] font-label-sm text-text-primary"
+          class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 text-type-sm font-label-sm text-text-primary"
         >
           <span class="flex items-center gap-2">
             <span
-              class="material-symbols-outlined text-[16px] {dueDateState
+              class="material-symbols-outlined text-icon-md {dueDateState
                 ? 'text-accent-secondary-start'
                 : 'text-text-muted'}"
               aria-hidden="true">event</span
@@ -860,7 +860,7 @@
             {dueDateState || 'Set due date…'}
           </span>
           <span
-            class="material-symbols-outlined text-[14px] text-text-muted"
+            class="material-symbols-outlined text-icon-sm text-text-muted"
             aria-hidden="true">expand_more</span
           >
         </button>
@@ -881,7 +881,7 @@
                 <input
                   type="date"
                   aria-label="Custom due date"
-                  class="w-full px-2 py-1 text-[12px] font-label-sm bg-surface-card border border-surface-card-border rounded text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
+                  class="w-full px-2 py-1 text-type-sm font-label-sm bg-surface-card border border-surface-card-border rounded text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
                   value={dueDateState}
                   oninput={(e) =>
                     (dueDateState = (e.currentTarget as HTMLInputElement)
@@ -902,14 +902,14 @@
               {#each [{ label: 'Today', value: ctx.today }, { label: 'Tomorrow', value: plusDaysISO(ctx.today, 1) }, { label: 'Next week', value: plusDaysISO(ctx.today, 7) }] as preset}
                 <button
                   type="button"
-                  class="w-full text-left px-3 py-1.5 text-[12px] font-label-sm hover:bg-hover transition-colors {dueDateState ===
+                  class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm hover:bg-hover transition-colors {dueDateState ===
                   preset.value
                     ? 'text-accent-primary-start font-label-sm-bold'
                     : 'text-text-primary'}"
                   onclick={() => void commitDueDate(preset.value)}
                 >
                   {preset.label}
-                  <span class="text-text-muted text-[10px] ml-1"
+                  <span class="text-text-muted text-type-2xs ml-1"
                     >{preset.value}</span
                   >
                 </button>
@@ -918,7 +918,7 @@
                 <div class="border-t border-surface-card-border">
                   <button
                     type="button"
-                    class="w-full text-left px-3 py-1.5 text-[12px] font-label-sm text-text-muted hover:bg-hover transition-colors"
+                    class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm text-text-muted hover:bg-hover transition-colors"
                     onclick={() => void commitDueDate('')}
                   >
                     Clear due date
@@ -940,14 +940,14 @@
           aria-pressed={pinState}
         >
           <span
-            class="flex items-center gap-2 text-[12px] font-label-sm text-text-primary"
+            class="flex items-center gap-2 text-type-sm font-label-sm text-text-primary"
           >
-            <span class="material-symbols-outlined text-[16px]">push_pin</span>
+            <span class="material-symbols-outlined text-icon-md">push_pin</span>
             {pinState ? 'Pinned' : 'Pin'}
           </span>
           {#if pinState}
             <span
-              class="material-symbols-outlined text-[16px] text-accent-primary-start"
+              class="material-symbols-outlined text-icon-md text-accent-primary-start"
               >check</span
             >
           {/if}
@@ -958,11 +958,11 @@
       <section>
         <div class="flex items-center justify-between mb-2">
           <h3
-            class="font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+            class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
           >
             Progress
           </h3>
-          <span class="text-[11px] font-label-sm text-text-primary"
+          <span class="text-type-xs font-label-sm text-text-primary"
             >{progressState}%</span
           >
         </div>
@@ -995,7 +995,7 @@
       <!-- Recurrence editor -->
       <section>
         <h3
-          class="font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted mb-2"
+          class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted mb-2"
         >
           Recurrence
         </h3>
@@ -1012,11 +1012,11 @@
             aria-haspopup="listbox"
             aria-expanded={recurrenceOpen}
             aria-controls="recurrence-listbox"
-            class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 text-[12px] font-label-sm text-text-primary"
+            class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 text-type-sm font-label-sm text-text-primary"
           >
             <span class="flex items-center gap-2">
               <span
-                class="material-symbols-outlined text-[16px] {recurrenceState
+                class="material-symbols-outlined text-icon-md {recurrenceState
                   ? 'text-accent-secondary-start'
                   : 'text-text-muted'}"
                 aria-hidden="true">event_repeat</span
@@ -1024,7 +1024,7 @@
               {recurrenceState || 'Set recurrence…'}
             </span>
             <span
-              class="material-symbols-outlined text-[14px] text-text-muted"
+              class="material-symbols-outlined text-icon-sm text-text-muted"
               aria-hidden="true">expand_more</span
             >
           </button>
@@ -1048,7 +1048,7 @@
                     type="text"
                     placeholder="Custom (e.g. every 5 days)"
                     aria-label="Custom recurrence rule"
-                    class="w-full px-2 py-1 text-[12px] font-label-sm bg-surface-card border border-surface-card-border rounded text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
+                    class="w-full px-2 py-1 text-type-sm font-label-sm bg-surface-card border border-surface-card-border rounded text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
                     bind:value={customRecurrence}
                     onkeydown={(e) => {
                       if (e.key === 'Enter') {
@@ -1070,7 +1070,7 @@
                     role="option"
                     aria-selected={recurrenceState === preset.value}
                     tabindex={recurrenceFocusIdx === i ? 0 : -1}
-                    class="w-full text-left px-3 py-1.5 text-[12px] font-label-sm hover:bg-hover transition-colors {recurrenceState ===
+                    class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm hover:bg-hover transition-colors {recurrenceState ===
                     preset.value
                       ? 'text-accent-primary-start font-label-sm-bold'
                       : 'text-text-primary'} {recurrenceFocusIdx === i
@@ -1080,7 +1080,7 @@
                   >
                     {preset.value}
                     {#if preset.hint}
-                      <span class="text-text-muted text-[10px] ml-1"
+                      <span class="text-text-muted text-type-2xs ml-1"
                         >({preset.hint})</span
                       >
                     {/if}
@@ -1095,7 +1095,7 @@
                       tabindex={recurrenceFocusIdx === RECURRENCE_PRESETS.length
                         ? 0
                         : -1}
-                      class="w-full text-left px-3 py-1.5 text-[12px] font-label-sm text-text-muted hover:bg-hover transition-colors {recurrenceFocusIdx ===
+                      class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm text-text-muted hover:bg-hover transition-colors {recurrenceFocusIdx ===
                       RECURRENCE_PRESETS.length
                         ? 'bg-hover'
                         : ''}"
@@ -1109,7 +1109,7 @@
             {/snippet}
           </Popover>
         {:else}
-          <p class="text-[11px] font-label-sm text-text-muted italic">
+          <p class="text-type-xs font-label-sm text-text-muted italic">
             Set a due date first to configure recurrence.
           </p>
         {/if}
@@ -1118,16 +1118,16 @@
       <!-- Read-only details -->
       <section>
         <h3
-          class="font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted mb-3"
+          class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted mb-3"
         >
           Details
         </h3>
-        <dl class="flex flex-col gap-2.5 text-[12px] font-label-sm">
+        <dl class="flex flex-col gap-2.5 text-type-sm font-label-sm">
           <div class="flex items-center justify-between gap-2">
             <dt class="text-text-muted shrink-0">
               <label for="task-owner-input">Owner</label>
             </dt>
-            <dd class="flex-1 max-w-[200px]">
+            <dd class="flex-1 max-w-50">
               <input
                 id="task-owner-input"
                 type="text"
@@ -1152,7 +1152,7 @@
             <dt id="task-priority-label" class="text-text-muted shrink-0">
               Priority
             </dt>
-            <dd class="flex-1 max-w-[220px]">
+            <dd class="flex-1 max-w-55">
               <!-- svelte-ignore a11y_no_static_element_interactions
                    role="radiogroup" is a composite widget that handles
                    arrow-key navigation for its radio children per WAI-ARIA
@@ -1215,7 +1215,7 @@
           {:else if recurrenceState && dueDateState}
             <div class="flex items-center justify-between">
               <dt class="text-text-muted">Next occurrence</dt>
-              <dd class="text-text-muted italic text-[11px]">
+              <dd class="text-text-muted italic text-type-xs">
                 Computed on completion
               </dd>
             </div>
@@ -1231,7 +1231,7 @@
               <ul class="flex flex-wrap gap-1 justify-end items-center">
                 {#each tagsState as tg (tg)}
                   <li
-                    class="flex items-center gap-0.5 px-1.5 py-0.5 border rounded-sm text-[12px] text-accent-secondary-start border-accent-secondary-start/30 bg-accent-secondary-glow"
+                    class="flex items-center gap-0.5 px-1.5 py-0.5 border rounded-sm text-type-sm text-accent-secondary-start border-accent-secondary-start/30 bg-accent-secondary-glow"
                   >
                     <span>{tg}</span>
                     <button
@@ -1250,7 +1250,7 @@
                   <input
                     id="task-tag-add"
                     type="text"
-                    class="flex-1 min-w-[100px] px-1.5 py-0.5 text-[12px] bg-transparent border border-surface-card-border rounded focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-text-primary placeholder:text-text-muted disabled:opacity-50"
+                    class="flex-1 min-w-25 px-1.5 py-0.5 text-type-sm bg-transparent border border-surface-card-border rounded focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-text-primary placeholder:text-text-muted disabled:opacity-50"
                     placeholder="Add…"
                     bind:value={tagDraft}
                     disabled={tagsPending}
@@ -1271,15 +1271,17 @@
       <!-- Counts -->
       <section class="flex items-center gap-4">
         <div class="flex items-center gap-1.5 text-text-muted">
-          <span class="material-symbols-outlined text-[16px]">chat_bubble</span>
-          <span class="text-[12px] font-label-sm">{task.comments_count}</span>
-          <span class="text-[10px] font-label-sm text-text-muted">comments</span
+          <span class="material-symbols-outlined text-icon-md">chat_bubble</span
+          >
+          <span class="text-type-sm font-label-sm">{task.comments_count}</span>
+          <span class="text-type-2xs font-label-sm text-text-muted"
+            >comments</span
           >
         </div>
         <div class="flex items-center gap-1.5 text-text-muted">
-          <span class="material-symbols-outlined text-[16px]">link</span>
-          <span class="text-[12px] font-label-sm">{task.links_count}</span>
-          <span class="text-[10px] font-label-sm text-text-muted">links</span>
+          <span class="material-symbols-outlined text-icon-md">link</span>
+          <span class="text-type-sm font-label-sm">{task.links_count}</span>
+          <span class="text-type-2xs font-label-sm text-text-muted">links</span>
         </div>
       </section>
 
@@ -1307,7 +1309,8 @@
             onclick={onOpenSubEditor}
             class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-surface-card-border bg-surface-card text-text-primary hover:bg-hover transition-all font-label-sm-bold"
           >
-            <span class="material-symbols-outlined text-[16px]">edit_note</span>
+            <span class="material-symbols-outlined text-icon-md">edit_note</span
+            >
             Open sub-editor
           </button>
         </section>
@@ -1320,7 +1323,7 @@
             onclick={openSourcePage}
             class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-accent-primary-start/30 bg-accent-primary-glow text-accent-primary-start hover:brightness-110 transition-all font-label-sm-bold"
           >
-            <span class="material-symbols-outlined text-[16px]"
+            <span class="material-symbols-outlined text-icon-md"
               >open_in_new</span
             >
             Open source page
@@ -1330,7 +1333,7 @@
 
       <!-- Source breadcrumb (source-aware) -->
       <section class="pt-2 border-t border-surface-card-border">
-        <p class="text-[10px] font-label-sm text-text-muted break-all">
+        <p class="text-type-2xs font-label-sm text-text-muted break-all">
           {#if isStandalone}
             Standalone task
           {:else}

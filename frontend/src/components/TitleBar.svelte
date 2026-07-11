@@ -123,7 +123,7 @@
       })()}`}
       class="flex items-center justify-center h-9 w-9 rounded-lg text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
     >
-      <span class="material-symbols-outlined text-[20px]">search</span>
+      <span class="material-symbols-outlined text-type-2xl">search</span>
     </button>
 
     <div class="w-px h-6 bg-surface-titlebar-border mx-1"></div>
@@ -141,7 +141,7 @@
           class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
           <span
-            class="material-symbols-outlined text-[14px] window-control-icon"
+            class="material-symbols-outlined text-icon-sm window-control-icon"
             >remove</span
           >
         </button>
@@ -153,7 +153,7 @@
           class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
           <span
-            class="material-symbols-outlined text-[14px] window-control-icon"
+            class="material-symbols-outlined text-icon-sm window-control-icon"
             >{maximised ? 'fullscreen_exit' : 'crop_square'}</span
           >
         </button>
@@ -167,7 +167,7 @@
           class="h-full w-11 flex items-center justify-center text-surface-titlebar-text-muted hover:bg-error hover:text-white transition-colors border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         >
           <span
-            class="material-symbols-outlined text-[14px] window-control-icon"
+            class="material-symbols-outlined text-icon-sm window-control-icon"
             >close</span
           >
         </button>

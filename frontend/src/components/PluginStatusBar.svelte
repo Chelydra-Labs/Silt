@@ -23,16 +23,16 @@
     {#each surfaces as surface (surface.id)}
       <button
         onclick={() => surface.onClick?.()}
-        class="flex items-center gap-1 px-1.5 py-0.5 rounded text-text-muted hover:text-accent-primary-start hover:bg-hover transition-colors text-[10px] font-label-sm border border-transparent hover:border-surface-panel-border cursor-default"
+        class="flex items-center gap-1 px-1.5 py-0.5 rounded text-text-muted hover:text-accent-primary-start hover:bg-hover transition-colors text-type-2xs font-label-sm border border-transparent hover:border-surface-panel-border cursor-default"
         title={surface.label}
         aria-label={surface.label}
       >
         {#if surface.icon}
-          <span class="material-symbols-outlined text-[14px]"
+          <span class="material-symbols-outlined text-icon-sm"
             >{surface.icon}</span
           >
         {/if}
-        <span class="truncate max-w-[80px]">{surface.label}</span>
+        <span class="truncate max-w-20">{surface.label}</span>
       </button>
     {/each}
   </div>

@@ -676,7 +676,8 @@
           data-testid="calendar-new-task-btn"
           class="flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
         >
-          <span class="material-symbols-outlined text-[16px]">add</span>New task
+          <span class="material-symbols-outlined text-icon-md">add</span>New
+          task
         </button>
       </div>
     </div>
@@ -693,7 +694,8 @@
           class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
           aria-label="Previous"
         >
-          <span class="material-symbols-outlined text-[18px]">chevron_left</span
+          <span class="material-symbols-outlined text-icon-lg"
+            >chevron_left</span
           >
         </button>
         <button
@@ -708,7 +710,7 @@
           class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
           aria-label="Next"
         >
-          <span class="material-symbols-outlined text-[18px]"
+          <span class="material-symbols-outlined text-icon-lg"
             >chevron_right</span
           >
         </button>
@@ -718,11 +720,11 @@
 
   {#if groupByNotice}
     <div
-      class="px-6 py-1.5 border-b border-status-warn/30 bg-status-warn/10 flex items-center gap-2 text-[12px] font-body-md"
+      class="px-6 py-1.5 border-b border-status-warn/30 bg-status-warn/10 flex items-center gap-2 text-type-sm font-body-md"
       role="status"
       data-testid="calendar-groupby-notice"
     >
-      <span class="material-symbols-outlined text-[14px] text-status-warn"
+      <span class="material-symbols-outlined text-icon-sm text-status-warn"
         >info</span
       >
       <span class="text-text-primary"
@@ -734,7 +736,7 @@
         aria-label="Dismiss notice"
         class="ml-auto p-1 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer"
       >
-        <span class="material-symbols-outlined text-[14px]">close</span>
+        <span class="material-symbols-outlined text-icon-sm">close</span>
       </button>
     </div>
   {/if}
@@ -782,14 +784,14 @@
            .skeleton-text shimmer (gated by prefers-reduced-motion in
            index.css). -->
       <div
-        class="grid grid-cols-7 gap-1 min-w-[700px]"
+        class="grid grid-cols-7 gap-1 min-w-[43.75rem]"
         data-testid="tasks-calendar-loading"
         aria-busy="true"
         aria-label="Loading calendar"
       >
         {#each Array(42) as _, i (i)}
           <div
-            class="min-h-[92px] rounded border border-dashed border-surface-panel-border p-1.5 space-y-1"
+            class="min-h-23 rounded border border-dashed border-surface-panel-border p-1.5 space-y-1"
           >
             <div class="skeleton-text" style="width: 30%"></div>
             <div class="skeleton-text subtitle"></div>
@@ -806,12 +808,12 @@
            DOW headers role="columnheader". The row wrappers use display:contents
            so the CSS grid layout is unaffected (children participate in the
            parent grid). -->
-      <div class="grid grid-cols-7 gap-1 min-w-[700px]" role="grid">
+      <div class="grid grid-cols-7 gap-1 min-w-[43.75rem]" role="grid">
         <div role="row" class="contents">
           {#each DOW as d}
             <div
               role="columnheader"
-              class="text-center text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted py-1"
+              class="text-center text-type-2xs uppercase tracking-widest font-label-sm-bold text-text-muted py-1"
             >
               {d}
             </div>
@@ -855,7 +857,7 @@
                   if (t.closest('button,input')) return
                   openQuickAddForDay(day)
                 }}
-                class="min-h-[88px] rounded-lg border p-1.5 flex flex-col gap-0.5 transition-all focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {overCellDate ===
+                class="min-h-22 rounded-lg border p-1.5 flex flex-col gap-0.5 transition-all focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {overCellDate ===
                 ymd(day)
                   ? 'border-accent-primary-glow ring-2 ring-accent-primary-glow/40'
                   : inMonth
@@ -864,7 +866,7 @@
               >
                 <div class="flex items-center justify-between">
                   <span
-                    class="text-[11px] font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
+                    class="text-type-xs font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
                     class:bg-accent-primary-start={isToday}
                     class:text-surface-app={isToday}
                     class:text-text-muted={!isToday && !inMonth}
@@ -881,7 +883,7 @@
                     data-testid="calendar-day-add"
                     class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0 leading-none"
                   >
-                    <span class="material-symbols-outlined text-[14px]"
+                    <span class="material-symbols-outlined text-icon-sm"
                       >add</span
                     >
                   </button>
@@ -895,7 +897,7 @@
                     ondragend={onCardDragEnd}
                     onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => (selectedTask = item)}
-                    class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
+                    class="text-left text-type-2xs truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
                     item.id
                       ? 'opacity-40'
                       : ''}"
@@ -903,7 +905,7 @@
                   >
                 {/each}
                 {#if items.length > 3}
-                  <span class="text-[9px] text-text-muted px-1"
+                  <span class="text-type-3xs text-text-muted px-1"
                     >+{items.length - 3} more</span
                   >
                 {/if}
@@ -920,7 +922,7 @@
                     ondragend={onCardDragEnd}
                     onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => (selectedTask = item)}
-                    class="text-left text-[10px] truncate px-1 py-0.5 rounded bg-error-bg border-l-2 border-l-error text-error hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
+                    class="text-left text-type-2xs truncate px-1 py-0.5 rounded bg-error-bg border-l-2 border-l-error text-error hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
                     item.id
                       ? 'opacity-40'
                       : ''}"
@@ -930,7 +932,7 @@
                   >
                 {/each}
                 {#if overdueHere.length > 2}
-                  <span class="text-[9px] text-error px-1"
+                  <span class="text-type-3xs text-error px-1"
                     >+{overdueHere.length - 2} overdue</span
                   >
                 {/if}
@@ -951,7 +953,7 @@
     {:else}
       <!-- Week view: 7 day columns (lifted from silt-calendar). ARIA grid
            structure mirrors month view: role="grid" + role="row" wrapper. -->
-      <div class="grid grid-cols-7 gap-2 min-w-[700px]" role="grid">
+      <div class="grid grid-cols-7 gap-2 min-w-[43.75rem]" role="grid">
         <div role="row" class="contents">
           {#each weekDays as day, i}
             {@const isToday = ymd(day) === todayKey}
@@ -960,7 +962,7 @@
               ? overdueSurfaced.filter((o) => !items.some((i) => i.id === o.id))
               : []}
             <div
-              class="flex flex-col gap-1.5 min-h-[120px]"
+              class="flex flex-col gap-1.5 min-h-30"
               role="gridcell"
               tabindex={cellFocusIdx === i ? 0 : -1}
               data-celldate={ymd(day)}
@@ -990,12 +992,12 @@
               >
                 <div>
                   <div
-                    class="text-[10px] uppercase tracking-widest font-label-sm-bold text-text-muted"
+                    class="text-type-2xs uppercase tracking-widest font-label-sm-bold text-text-muted"
                   >
                     {DOW[day.getDay()]}
                   </div>
                   <span
-                    class="inline-flex items-center justify-center w-7 h-7 rounded-full text-[13px] font-label-sm-bold mt-1"
+                    class="inline-flex items-center justify-center w-7 h-7 rounded-full text-type-md font-label-sm-bold mt-1"
                     class:bg-accent-primary-start={isToday}
                     class:text-surface-app={isToday}
                     class:text-text-primary={!isToday}>{day.getDate()}</span
@@ -1011,7 +1013,8 @@
                   data-testid="calendar-day-add"
                   class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0 leading-none"
                 >
-                  <span class="material-symbols-outlined text-[14px]">add</span>
+                  <span class="material-symbols-outlined text-icon-sm">add</span
+                  >
                 </button>
               </div>
               {#each items as item (item.id)}
@@ -1023,7 +1026,7 @@
                   ondragend={onCardDragEnd}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => (selectedTask = item)}
-                  class="text-left text-[12px] px-2 py-1.5 rounded bg-surface-panel border border-surface-panel-border hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer {dragTaskId ===
+                  class="text-left text-type-sm px-2 py-1.5 rounded bg-surface-panel border border-surface-panel-border hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer {dragTaskId ===
                   item.id
                     ? 'opacity-40'
                     : ''}"
@@ -1040,7 +1043,7 @@
                   ondragend={onCardDragEnd}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => (selectedTask = item)}
-                  class="text-left text-[12px] px-2 py-1.5 rounded bg-error-bg border-l-2 border-l-error text-error transition-all cursor-pointer {dragTaskId ===
+                  class="text-left text-type-sm px-2 py-1.5 rounded bg-error-bg border-l-2 border-l-error text-error transition-all cursor-pointer {dragTaskId ===
                   item.id
                     ? 'opacity-40'
                     : ''}"
@@ -1079,16 +1082,16 @@
         ondrop={onNoDateDrop}
       >
         <div class="flex items-center gap-2 mb-2">
-          <span class="material-symbols-outlined text-[14px] text-text-muted"
+          <span class="material-symbols-outlined text-icon-sm text-text-muted"
             >event_busy</span
           >
           <h3
-            class="font-label-sm-bold uppercase tracking-widest text-[10px] text-text-muted"
+            class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
           >
             No Date
           </h3>
           <span
-            class="bg-hover text-text-muted text-[10px] px-1.5 py-0.5 rounded-sm font-label-sm"
+            class="bg-hover text-text-muted text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm"
             >{undated.length}</span
           >
         </div>
@@ -1103,7 +1106,7 @@
                 ondragend={onCardDragEnd}
                 onkeydown={(e) => onCardKeydown(e, item)}
                 onclick={() => (selectedTask = item)}
-                class="text-left text-[11px] truncate max-w-[220px] px-2 py-1 rounded bg-surface-card border border-surface-card-border text-text-primary hover:border-accent-primary-start/40 transition-all cursor-pointer {dragTaskId ===
+                class="text-left text-type-xs truncate max-w-55 px-2 py-1 rounded bg-surface-card border border-surface-card-border text-text-primary hover:border-accent-primary-start/40 transition-all cursor-pointer {dragTaskId ===
                 item.id
                   ? 'opacity-40'
                   : ''}"

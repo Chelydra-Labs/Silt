@@ -15,11 +15,11 @@
 </script>
 
 <NodeViewWrapper
-  class="silt-callout group flex items-start gap-2 py-1.5 my-1 min-h-[32px]"
+  class="silt-callout group flex items-start gap-2 py-1.5 my-1 min-h-8"
   data-variant={variant}
 >
   <span
-    class="material-symbols-outlined silt-callout-icon select-none text-[20px] mt-0.5"
+    class="material-symbols-outlined silt-callout-icon select-none text-type-2xl mt-0.5"
     style="color: {cfg.accent}"
     aria-hidden="true"
   >
@@ -27,7 +27,7 @@
   </span>
   <div class="flex-1 min-w-0" role={cfg.role} aria-label={cfg.label}>
     <NodeViewContent
-      class="silt-callout-body break-words min-h-[22px] focus:outline-none"
+      class="silt-callout-body break-words min-h-5.5 focus:outline-none"
     />
   </div>
 </NodeViewWrapper>

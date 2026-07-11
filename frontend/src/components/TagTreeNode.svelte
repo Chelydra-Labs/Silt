@@ -37,7 +37,7 @@
         class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0 w-4 flex-shrink-0"
       >
         <span
-          class="material-symbols-outlined text-[14px] transition-transform inline-block"
+          class="material-symbols-outlined text-icon-sm transition-transform inline-block"
           class:rotate-90={isOpen}
         >
           chevron_right
@@ -58,14 +58,14 @@
       class:text-text-primary={!isActive}
     >
       <span
-        class="material-symbols-outlined text-[15px] text-accent-secondary-start/70"
+        class="material-symbols-outlined text-icon-sm text-accent-secondary-start/70"
         >label</span
       >
-      <span class="font-body-md text-[13px] truncate" title={node.name}
+      <span class="font-body-md text-type-md truncate" title={node.name}
         >{node.name}</span
       >
       <span
-        class="text-[9px] font-label-sm text-text-muted bg-surface-popover border border-surface-popover-border rounded-full px-1.5 py-0.5 ml-auto"
+        class="text-type-3xs font-label-sm text-text-muted bg-surface-popover border border-surface-popover-border rounded-full px-1.5 py-0.5 ml-auto"
       >
         {node.count}
       </span>

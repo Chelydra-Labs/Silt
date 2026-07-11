@@ -61,7 +61,7 @@
       Tags
       {#if activeTag}
         <span
-          class="text-text-muted text-[12px] font-body-md normal-case font-normal ml-2"
+          class="text-text-muted text-type-sm font-body-md normal-case font-normal ml-2"
           data-testid="tags-count"
         >
           #{activeTag} · {results.length} block{results.length === 1 ? '' : 's'}
@@ -97,14 +97,14 @@
               class="w-full text-left px-6 py-3 border-b border-surface-panel-border/50 hover:bg-hover transition-colors border-none bg-transparent cursor-pointer flex flex-col gap-1"
             >
               <div
-                class="flex items-center gap-1.5 text-[10px] text-text-muted uppercase tracking-widest font-label-sm-bold"
+                class="flex items-center gap-1.5 text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold"
               >
                 <span>{res.notebook}</span>
-                <span class="material-symbols-outlined text-[10px]"
+                <span class="material-symbols-outlined text-type-2xs"
                   >chevron_right</span
                 >
                 <span>{res.section}</span>
-                <span class="material-symbols-outlined text-[10px]"
+                <span class="material-symbols-outlined text-type-2xs"
                   >chevron_right</span
                 >
                 <span>{res.page}</span>

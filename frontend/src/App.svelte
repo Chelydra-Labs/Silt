@@ -1344,7 +1344,7 @@
         />
       {:else}
         <div
-          class="flex items-center px-4 py-1 text-surface-sidebar-text-muted text-[11px] uppercase tracking-widest font-label-sm-bold"
+          class="flex items-center px-4 py-1 text-surface-sidebar-text-muted text-type-xs uppercase tracking-widest font-label-sm-bold"
         >
           {activeView === 'settings'
             ? 'Settings'
@@ -1380,12 +1380,12 @@
             >
               {#if activeView === v.id}
                 <div
-                  class="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-primary-start rounded-full shadow-[0_0_8px_var(--color-accent-primary-start)]"
+                  class="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-primary-start rounded-full shadow-accent-glow"
                   style:opacity={sidebarCollapsed ? '0.5' : '1'}
                 ></div>
               {/if}
               <span
-                class="material-symbols-outlined text-[20px]"
+                class="material-symbols-outlined text-type-2xl"
                 style:color={activeView === v.id
                   ? undefined
                   : `var(--color-nav-icon-${v.id})`}>{v.icon}</span
@@ -1405,12 +1405,12 @@
         >
           {#if activeView === 'settings'}
             <div
-              class="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-primary-start rounded-full shadow-[0_0_8px_var(--color-accent-primary-start)]"
+              class="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-primary-start rounded-full shadow-accent-glow"
               style:opacity={sidebarCollapsed ? '0.5' : '1'}
             ></div>
           {/if}
           <span
-            class="material-symbols-outlined text-[20px]"
+            class="material-symbols-outlined text-type-2xl"
             style:color={`var(--color-nav-icon-settings)`}>settings</span
           >
         </button>
@@ -1427,7 +1427,7 @@
           title="Show sidebar (Ctrl+B)"
           class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface-sidebar/80 backdrop-blur-md border border-surface-sidebar-border text-surface-sidebar-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
         >
-          <span class="material-symbols-outlined text-[18px]"
+          <span class="material-symbols-outlined text-icon-lg"
             >left_panel_open</span
           >
         </button>
@@ -1503,7 +1503,7 @@
       >
         {#if settings.config?.ui?.open_devtools_on_startup === true}
           <div
-            class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-[10px] font-mono px-2 py-1 rounded opacity-80 pointer-events-none"
+            class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-type-2xs font-mono px-2 py-1 rounded opacity-80 pointer-events-none"
           >
             view={activeView} nb={activeNotebook || '-'} pg={activePage || '-'} tab={activeTabId ||
               '-'} dt={displayedTabs.length} nr={notesReady}
@@ -1570,7 +1570,7 @@
               class="flex-1 flex flex-col items-center justify-center text-center px-8 select-none"
             >
               <span
-                class="material-symbols-outlined text-text-muted text-[64px] mb-4 opacity-40"
+                class="material-symbols-outlined text-text-muted text-display-sm mb-4 opacity-40"
                 >edit_note</span
               >
               <h2
@@ -1609,7 +1609,7 @@
                     class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-surface-app font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
                   >
                     <span
-                      class="material-symbols-outlined text-[18px]"
+                      class="material-symbols-outlined text-icon-lg"
                       aria-hidden="true">note_add</span
                     >
                     Create Page
@@ -1622,7 +1622,7 @@
                     class="px-4 py-2 rounded-lg bg-transparent border border-surface-panel-border text-text-primary font-label-sm-bold hover:bg-hover transition-all cursor-pointer flex items-center gap-2"
                   >
                     <span
-                      class="material-symbols-outlined text-[18px]"
+                      class="material-symbols-outlined text-icon-lg"
                       aria-hidden="true">article</span
                     >
                     New from Template

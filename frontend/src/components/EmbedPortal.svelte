@@ -165,13 +165,13 @@
     class="my-1 border border-accent-primary-start/30 bg-accent-primary-glow/40 rounded-lg p-2 pl-3 relative"
   >
     <div
-      class="absolute left-0 top-0 bottom-0 w-[2px] bg-accent-primary-start/40 rounded-l"
+      class="absolute left-0 top-0 bottom-0 w-0.5 bg-accent-primary-start/40 rounded-l"
     ></div>
     <div
-      class="flex items-center gap-1 text-[9px] uppercase tracking-widest font-label-sm-bold text-text-muted mb-1"
+      class="flex items-center gap-1 text-type-3xs uppercase tracking-widest font-label-sm-bold text-text-muted mb-1"
     >
       <span
-        class="material-symbols-outlined text-[10px] text-accent-primary-start"
+        class="material-symbols-outlined text-type-2xs text-accent-primary-start"
         >clone</span
       >
       embed · {ref.notebook} › {ref.section} › {ref.page}
@@ -185,7 +185,7 @@
       oninput={handleInput}
       onfocus={focusIn}
       onblur={focusOut}
-      class="text-text-primary text-sm leading-relaxed focus:outline-none min-h-[20px] whitespace-pre-wrap break-words"
+      class="text-text-primary text-sm leading-relaxed focus:outline-none min-h-5 whitespace-pre-wrap break-words"
     >
       {#if editing}
         {ref.clean_text}
@@ -200,8 +200,8 @@
       {/if}
     </div>
     {#if persistError}
-      <div class="text-[10px] text-error mt-1 flex items-center gap-1">
-        <span class="material-symbols-outlined text-[11px]">error</span>
+      <div class="text-type-2xs text-error mt-1 flex items-center gap-1">
+        <span class="material-symbols-outlined text-type-xs">error</span>
         {persistError}
       </div>
     {/if}

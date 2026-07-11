@@ -151,7 +151,7 @@
     aria-invalid={!!errorMsg}
     aria-busy={busy}
     data-testid="quick-add-task-input"
-    class="w-full px-2 py-1 rounded border border-accent-primary-start/40 bg-surface-panel text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-[12px] disabled:opacity-60 {busy
+    class="w-full px-2 py-1 rounded border border-accent-primary-start/40 bg-surface-panel text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-type-sm disabled:opacity-60 {busy
       ? 'pr-7'
       : ''}"
   />
@@ -162,7 +162,7 @@
       class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted"
       aria-hidden="true"
     >
-      <span class="material-symbols-outlined text-[14px] animate-spin"
+      <span class="material-symbols-outlined text-icon-sm animate-spin"
         >progress_activity</span
       >
     </span>

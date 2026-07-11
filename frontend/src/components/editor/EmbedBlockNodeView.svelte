@@ -82,7 +82,7 @@
       onkeydown={handleKeydown}
     >
       <span
-        class="material-symbols-outlined text-accent-primary-start/70 text-[28px]"
+        class="material-symbols-outlined text-accent-primary-start/70 text-icon-2xl"
       >
         {attrs.embedType === 'image'
           ? 'image'
@@ -91,18 +91,18 @@
             : 'extension'}
       </span>
       <div class="flex-1 min-w-0">
-        <div class="text-text-primary text-[13px] font-body-md truncate">
+        <div class="text-text-primary text-type-md font-body-md truncate">
           {attrs.caption || attrs.src || attrs.embedType}
         </div>
         {#if attrs.src}
-          <div class="text-text-muted text-[10px] font-label-sm truncate">
+          <div class="text-text-muted text-type-2xs font-label-sm truncate">
             {attrs.src}
           </div>
         {/if}
       </div>
       {#if attrs.pluginID}
         <span
-          class="text-[9px] text-text-muted uppercase tracking-wider border border-surface-popover-border rounded px-1.5 py-0.5"
+          class="text-type-3xs text-text-muted uppercase tracking-wider border border-surface-popover-border rounded px-1.5 py-0.5"
         >
           {attrs.pluginID}
         </span>
@@ -117,10 +117,10 @@
         aria-label="Remove block"
         class="text-text-muted hover:text-status-danger border-none bg-transparent cursor-pointer p-1 rounded transition-colors"
       >
-        <span class="material-symbols-outlined text-[18px]">delete</span>
+        <span class="material-symbols-outlined text-icon-lg">delete</span>
       </button>
       <span
-        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none"
+        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-icon-md opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none"
         title="Drag to reorder (Alt+ArrowUp/Down to reorder by keyboard)"
         spellcheck="false"
         aria-hidden="true"
@@ -137,7 +137,7 @@
       data-openable="false"
     >
       <span
-        class="material-symbols-outlined text-accent-primary-start/70 text-[28px]"
+        class="material-symbols-outlined text-accent-primary-start/70 text-icon-2xl"
       >
         {attrs.embedType === 'image'
           ? 'image'
@@ -146,18 +146,18 @@
             : 'extension'}
       </span>
       <div class="flex-1 min-w-0">
-        <div class="text-text-primary text-[13px] font-body-md truncate">
+        <div class="text-text-primary text-type-md font-body-md truncate">
           {attrs.caption || attrs.src || attrs.embedType}
         </div>
         {#if attrs.src}
-          <div class="text-text-muted text-[10px] font-label-sm truncate">
+          <div class="text-text-muted text-type-2xs font-label-sm truncate">
             {attrs.src}
           </div>
         {/if}
       </div>
       {#if attrs.pluginID}
         <span
-          class="text-[9px] text-text-muted uppercase tracking-wider border border-surface-popover-border rounded px-1.5 py-0.5"
+          class="text-type-3xs text-text-muted uppercase tracking-wider border border-surface-popover-border rounded px-1.5 py-0.5"
         >
           {attrs.pluginID}
         </span>
@@ -172,10 +172,10 @@
         aria-label="Remove block"
         class="text-text-muted hover:text-status-danger border-none bg-transparent cursor-pointer p-1 rounded transition-colors"
       >
-        <span class="material-symbols-outlined text-[18px]">delete</span>
+        <span class="material-symbols-outlined text-icon-lg">delete</span>
       </button>
       <span
-        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none"
+        class="silt-drag-handle-inline material-symbols-outlined text-text-muted text-icon-md opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none"
         title="Drag to reorder (Alt+ArrowUp/Down to reorder by keyboard)"
         spellcheck="false"
         aria-hidden="true"

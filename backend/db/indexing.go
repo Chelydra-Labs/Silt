@@ -90,6 +90,45 @@ func (dm *DatabaseManager) MarkFileIndexed(tx *sql.Tx, path string, mtime, size 
 	return err
 }
 
+// FileIndexStat is one path's mtime/size for MarkFilesIndexed.
+type FileIndexStat struct {
+	Path  string
+	MTime int64 // Unix nanoseconds
+	Size  int64
+}
+
+// MarkFilesIndexed upserts many files-table rows in one transaction under a
+// single read lease so App IPC does not call SQLDB().Begin across vault
+// teardown. Empty input is a no-op. Nested MarkFileIndexed uses the tx path
+// (must not re-enter handle).
+func (dm *DatabaseManager) MarkFilesIndexed(files []FileIndexStat) error {
+	if len(files) == 0 {
+		return nil
+	}
+	db, release, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
+	defer release()
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin files-tx: %w", err)
+	}
+	defer tx.Rollback()
+	for _, f := range files {
+		if f.Path == "" {
+			continue
+		}
+		if err := dm.MarkFileIndexed(tx, f.Path, f.MTime, f.Size); err != nil {
+			return fmt.Errorf("MarkFileIndexed(%s): %w", f.Path, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit files-tx: %w", err)
+	}
+	return nil
+}
+
 // PruneStaleFiles deletes `files` rows for paths that are no longer present on
 // disk (the file was deleted, moved, or renamed). `seenPaths` is the complete
 // set of file paths the latest vault scan observed. Returns the pruned paths so

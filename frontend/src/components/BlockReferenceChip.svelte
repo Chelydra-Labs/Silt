@@ -91,14 +91,14 @@
         style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-popover) 94%, transparent);"
       >
         <div
-          class="flex items-center gap-1 text-[10px] text-text-muted uppercase tracking-widest font-label-sm-bold mb-2"
+          class="flex items-center gap-1 text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold mb-2"
         >
           <span>{ref.notebook}</span>
-          <span class="material-symbols-outlined text-[10px]"
+          <span class="material-symbols-outlined text-type-2xs"
             >chevron_right</span
           >
           <span>{ref.section}</span>
-          <span class="material-symbols-outlined text-[10px]"
+          <span class="material-symbols-outlined text-type-2xs"
             >chevron_right</span
           >
           <span class="text-accent-primary-start">{ref.page}</span>
