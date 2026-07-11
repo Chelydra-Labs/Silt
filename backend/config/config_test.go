@@ -313,8 +313,6 @@ func TestValidateHotkeys(t *testing.T) {
 		{"single modifier rejected", map[string]string{"open_search": "Ctrl"}, true},
 		{"whitespace-only rejected", map[string]string{"open_search": "   "}, false}, // trims to empty = disabled
 		{"nil map ok", nil, false},
-		{"duplicate chord rejected", map[string]string{"a": "Ctrl+P", "b": "Ctrl+P"}, true},
-		{"modifier-order variant collides", map[string]string{"a": "Ctrl+Shift+P", "b": "Shift+Ctrl+P"}, true},
 		{"distinct chords ok", map[string]string{"a": "Ctrl+P", "b": "Ctrl+Shift+P"}, false},
 	}
 	for _, c := range cases {

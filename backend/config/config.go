@@ -330,40 +330,16 @@ func ValidateHotkeys(hotkeys map[string]string) error {
 			return fmt.Errorf("invalid hotkey for %q: %q has no key (only modifiers)", action, binding)
 		}
 	}
-	// Detect two actions bound to the same chord. The YAML merge can't tell a
-	// persisted old default from an explicit choice, so a default reassignment
-	// (e.g. #511's Ctrl+, move) can leave two actions colliding; a user
-	// hand-edit can too. normalize() fixes the known case; this catches the
-	// rest. Modifier order and case variants collapse via canonicalChord.
-	chordToAction := make(map[string]string, len(hotkeys))
-	for action, binding := range hotkeys {
-		key := canonicalChord(binding)
-		if key == "" {
-			continue
-		}
-		if prev, ok := chordToAction[key]; ok && prev != action {
-			return fmt.Errorf("hotkey collision: %q and %q are both bound to %q", prev, action, binding)
-		}
-		chordToAction[key] = action
-	}
+	// NOTE: no cross-action duplicate-chord check. Several defaults share a
+	// chord by design and are disambiguated by focus context — e.g. Ctrl+B is
+	// toggle_sidebar (global, fires when the editor is not focused) AND
+	// format_bold (consumed by the editor's ProseMirror keymap when focused).
+	// A blanket duplicate detector would reject every config built from these
+	// defaults. The one known *unintended* collision — format_subscript ↔
+	// open_settings on Ctrl+, after the #511 move — is resolved deterministically
+	// in normalize() instead, since the YAML merge can't tell a persisted old
+	// default from an explicit choice.
 	return nil
-}
-
-// canonicalChord normalizes a hotkey binding so modifier-order and case
-// variants ("Ctrl+Shift+P" vs "shift+ctrl+p") collapse to one key for
-// duplicate detection. Empty/disabled bindings collapse to "".
-func canonicalChord(binding string) string {
-	parts := strings.Split(strings.ToLower(strings.TrimSpace(binding)), "+")
-	cleaned := make([]string, 0, len(parts))
-	for _, p := range parts {
-		t := strings.TrimSpace(p)
-		if t == "" {
-			continue
-		}
-		cleaned = append(cleaned, t)
-	}
-	sort.Strings(cleaned)
-	return strings.Join(cleaned, "+")
 }
 
 // ConfigPath returns the absolute path to a vault's config.yaml.
