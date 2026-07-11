@@ -1062,13 +1062,16 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
   render a compiled Svelte component (passed via the surface's `component`
   field, mounted directly with `{ ctx, onDismiss }` props — `silt-ai-summary`
   is the reference consumer), third-party via the iframe bridge. The
-  bridge is bidirectional: iframe→host requests (PluginContext proxy) AND
-  host→iframe events. The close affordance sends a `dismiss` event (iframe
-  path) or invokes the component's `onDismiss` prop (first-party path) so the
-  plugin can persist dismissal state (`updatePluginSetting('<id>',
-  'dismissed_notes', [...])`) — `updatePluginSetting` is in the bridge's
-  `allowedMethods` so the documented pattern is reachable from a sandboxed
-  banner. When more than two banners stack, the host collapses them into a
+  bridge is bidirectional: iframe→host **data-only** RPC requests
+  (serializable args/results; callback methods like `on` /
+  `registerSlashCommand` / `registerSurface` are not in `allowedMethods`
+  because functions do not survive structured clone — those run from
+  main-webview `init()` only) AND host→iframe events (`silt:surface:event`).
+  The close affordance sends a `dismiss` event (iframe path) or invokes the
+  component's `onDismiss` prop (first-party path) so the plugin can persist
+  dismissal state (`updatePluginSetting('<id>', 'dismissed_notes', [...])`) —
+  `updatePluginSetting` is in the bridge's `allowedMethods` so the
+  documented pattern is reachable from a sandboxed banner. When more than two banners stack, the host collapses them into a
   single expandable summary. Bespoke plugin settings pages
   mount inside a `<svelte:boundary>` so a component that throws on render
   cannot crash the focus-trapped Settings dialog.

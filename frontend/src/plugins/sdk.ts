@@ -335,6 +335,10 @@ export interface PluginContext {
    * recommended debounce pattern for high-frequency events (esp. block:changed)
    * is the plugin's responsibility.
    *
+   * Call from main-webview `init()` only — not from surface HTML. The iframe
+   * bridge does not proxy `on` (callbacks do not survive structured clone;
+   * host→surface events use `silt:surface:event` instead; #516).
+   *
    * Initial event set:
    *   - 'block:changed'            → BlockChangedEvent
    *   - 'config:changed'           → SystemConfig (full config snapshot)
@@ -528,6 +532,10 @@ export interface PluginContext {
    * `<this plugin's id>:<id>` to avoid collisions. Returns an unregister fn.
    * Registration is user-driven (a menu item) so it is not capability-gated;
    * the handler's own privileged calls route through the normal gates.
+   *
+   * Must run from the plugin main-webview `init()` — not from surface HTML.
+   * The iframe bridge cannot proxy this method (function args do not survive
+   * structured clone; #516).
    */
   registerSlashCommand: (cmd: {
     id: string
@@ -555,9 +563,12 @@ export interface PluginContext {
   /**
    * Register a rendered UI surface (#117). The surface HTML runs in a sandboxed
    * iframe (srcdoc, allow-scripts but not allow-same-origin); a postMessage
-   * bridge proxies this PluginContext into the iframe. Theme tokens are
-   * injected so the surface matches the active theme. Gated by ui-surface.
-   * Returns an unregister function.
+   * bridge proxies **data-only** PluginContext methods into the iframe. Theme
+   * tokens are injected so the surface matches the active theme. Gated by
+   * ui-surface. Returns an unregister function.
+   *
+   * Call from main-webview `init()` only — not from inside surface HTML
+   * (callback registration cannot cross the iframe bridge; #516).
    */
   registerSurface: (surface: {
     id: string
