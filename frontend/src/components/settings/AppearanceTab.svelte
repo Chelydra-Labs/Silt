@@ -146,9 +146,17 @@
 
   // Stage 1: a single click (or keyboard activation of the <button>) enters
   // the temporary preview. Re-clicking the same card is a no-op so the
-  // banner stays stable instead of flickering.
+  // banner stays stable instead of flickering. Clicking the already-active
+  // theme is also a no-op when clean, and cancels back to the saved theme
+  // when another theme is mid-preview — staging the active theme would
+  // redundantly inject its tokens and announce a misleading "Not saved yet"
+  // banner for the theme that is already saved.
   function activateCard(id: string) {
     if (previewTheme === id) return
+    if (id === themeState.id) {
+      previewTheme = null
+      return
+    }
     previewTheme = id
   }
 

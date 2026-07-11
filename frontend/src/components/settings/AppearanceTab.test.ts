@@ -258,6 +258,44 @@ describe('AppearanceTab picker a11y (#50, #512)', () => {
       expect(mocks.injectTokens).not.toHaveBeenCalled()
     })
 
+    it('clicking the already-active theme is a no-op (no preview banner)', async () => {
+      // The active theme is already saved, so staging it for "preview" would
+      // flash a misleading "Not saved yet" banner. Clicking it must no-op.
+      render(AppearanceTab)
+      await tick()
+      mocks.injectTokens.mockClear()
+
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const active = within(grid).getByRole('button', { name: /Cyber Forest/i })
+      await fireEvent.click(active)
+      await tick()
+
+      expect(mocks.injectTokens).not.toHaveBeenCalled()
+      expect(screen.queryByRole('status')).toBeNull()
+    })
+
+    it('clicking the active theme cancels an in-flight preview', async () => {
+      // While previewing another theme, clicking the active card reverts to
+      // the saved theme (same outcome as Revert/Esc), instead of no-op'ing
+      // and leaving the other theme staged.
+      render(AppearanceTab)
+      await tick()
+      mocks.restoreActiveTheme.mockClear()
+
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const terra = within(grid).getByRole('button', { name: /Terra Test/i })
+      await fireEvent.click(terra)
+      await tick()
+      expect(screen.getByRole('status')).toBeInTheDocument()
+
+      const active = within(grid).getByRole('button', { name: /Cyber Forest/i })
+      await fireEvent.click(active)
+      await tick()
+
+      expect(mocks.restoreActiveTheme).toHaveBeenCalled()
+      expect(screen.queryByRole('status')).toBeNull()
+    })
+
     it('single-click stages a preview: injects tokens and shows the banner', async () => {
       render(AppearanceTab)
       await tick()
