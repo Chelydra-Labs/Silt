@@ -506,4 +506,117 @@ describe('CommentThread', () => {
     expect(strong).toBeTruthy()
     expect(strong?.textContent).toContain('very important')
   })
+
+  it('filters non-NOTE blocks out of the thread', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'a real comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        }),
+        makeBlock({
+          id: 'child-task',
+          type: 'TASK',
+          clean_text: 'nested task should not render',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+    expect(screen.getByText('a real comment')).toBeInTheDocument()
+    expect(
+      screen.queryByText('nested task should not render')
+    ).not.toBeInTheDocument()
+    expect(document.querySelectorAll('[role="comment"]')).toHaveLength(1)
+  })
+
+  it('nests replies under their parent and flattens deeper nesting', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'top',
+          clean_text: 'top-level',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1',
+          depth: 1
+        }),
+        makeBlock({
+          id: 'r1',
+          clean_text: 'first reply',
+          author: 'bob',
+          timestamp: '2026-07-01T10:00:00',
+          parent_id: 'top',
+          depth: 2
+        }),
+        makeBlock({
+          id: 'r2',
+          clean_text: 'nested reply flattened',
+          author: 'carol',
+          timestamp: '2026-07-01T11:00:00',
+          parent_id: 'r1',
+          depth: 3
+        }),
+        makeBlock({
+          id: 'other',
+          clean_text: 'sibling top',
+          author: 'dana',
+          timestamp: '2026-07-01T12:00:00',
+          parent_id: 'task-1',
+          depth: 1
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+    const articles = document.querySelectorAll('[role="comment"]')
+    expect(articles).toHaveLength(4)
+    expect(screen.getByText('top-level')).toBeInTheDocument()
+    expect(screen.getByText('first reply')).toBeInTheDocument()
+    expect(screen.getByText('nested reply flattened')).toBeInTheDocument()
+    expect(screen.getByText('sibling top')).toBeInTheDocument()
+    // Nested replies get the indent class; top-level do not.
+    const nested = document.querySelectorAll('[role="comment"].ml-4')
+    expect(nested.length).toBe(2)
+  })
+
+  it('Reply button opens inline composer and posts with parentCommentId', async () => {
+    const addTaskComment = vi.fn().mockResolvedValue('reply-uuid')
+    const ctx = makeCtx({
+      addTaskComment,
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'parent comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+
+    const replyBtn = screen.getByLabelText('Reply to comment')
+    await fireEvent.click(replyBtn)
+    await flush()
+
+    const replyTa = screen.getByLabelText('Reply text') as HTMLTextAreaElement
+    expect(replyTa).toBeInTheDocument()
+    await fireEvent.input(replyTa, { target: { value: 'my reply' } })
+    await fireEvent.keyDown(replyTa, { key: 'Enter' })
+    await flush()
+
+    expect(addTaskComment).toHaveBeenCalledWith(
+      'task-1',
+      'my reply',
+      'osuser',
+      'c1'
+    )
+    expect(screen.getByText('my reply')).toBeInTheDocument()
+  })
 })
