@@ -600,6 +600,15 @@
       openSettings(section)
     }
 
+    // Tasks hub command palette (#436) delegates Find task / Add task to the
+    // app-level SearchModal and QuickAdd overlays via these host events.
+    function handleOpenSearch() {
+      showSearch = true
+    }
+    function handleOpenQuickAdd() {
+      showQuickAdd = true
+    }
+
     // Summary-strip chips in GeneralTab dispatch this to jump between
     // settings sections while already in the settings view (no view change).
     function handleSettingsJump(e: Event) {
@@ -826,6 +835,8 @@
     window.addEventListener('open-plugin-manager', handleOpenPluginManager)
     window.addEventListener('open-settings', handleOpenSettings)
     window.addEventListener('open-template-picker', handleOpenTemplatePicker)
+    window.addEventListener('open-search', handleOpenSearch)
+    window.addEventListener('open-quick-add', handleOpenQuickAdd)
     window.addEventListener('silt:change-vault', handleSwitchVault)
     window.addEventListener('silt:settings-jump', handleSettingsJump)
     window.addEventListener('page-renamed', handlePageRenamed)
@@ -1047,6 +1058,8 @@
         'open-template-picker',
         handleOpenTemplatePicker
       )
+      window.removeEventListener('open-search', handleOpenSearch)
+      window.removeEventListener('open-quick-add', handleOpenQuickAdd)
       window.removeEventListener('silt:change-vault', handleSwitchVault)
       window.removeEventListener('silt:settings-jump', handleSettingsJump)
       window.removeEventListener('page-renamed', handlePageRenamed)

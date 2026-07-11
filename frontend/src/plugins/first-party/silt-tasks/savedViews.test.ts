@@ -75,7 +75,7 @@ describe('viewMatchesState (#432 — lenient match for partial-template views)',
       focusDate: '',
       activeFilter: 'all',
       calendarSubMode: 'month',
-      columns: ['TODO', 'DOING', 'DONE'],
+      columns: [{ name: 'TODO' }, { name: 'DOING' }, { name: 'DONE' }],
       savedViews: [],
       activeSavedViewId: '',
       savedViewsDirty: false,
@@ -99,7 +99,14 @@ describe('viewMatchesState (#432 — lenient match for partial-template views)',
 
   it('changing an UNDEFINED dim (columns) does not disqualify a system view', () => {
     // sys-by-owner doesn't define columns; user changes columns → still matches.
-    const state = makeState({ columns: ['TODO', 'DOING', 'DONE', 'BLOCKED'] })
+    const state = makeState({
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING' },
+        { name: 'DONE' },
+        { name: 'BLOCKED' }
+      ]
+    })
     expect(viewMatchesState(SYSTEM_VIEWS[1], state)).toBe(true)
   })
 
@@ -121,11 +128,22 @@ describe('viewMatchesState (#432 — lenient match for partial-template views)',
       scope: state.scope,
       filters: { ...state.filters },
       calendarSubMode: state.calendarSubMode,
-      columns: [...state.columns]
+      columns: state.columns.map((c) => ({ ...c }))
     }
     expect(viewMatchesState(userView, state)).toBe(true)
     // Any single-dim change flips it false.
-    expect(viewMatchesState(userView, { ...state, columns: ['X'] })).toBe(false)
+    expect(
+      viewMatchesState(userView, { ...state, columns: [{ name: 'X' }] })
+    ).toBe(false)
+    // wipLimit is part of the fingerprint (#437).
+    expect(
+      viewMatchesState(userView, {
+        ...state,
+        columns: state.columns.map((c, i) =>
+          i === 0 ? { ...c, wipLimit: 2 } : { ...c }
+        )
+      })
+    ).toBe(false)
   })
 
   it('filters defined as empty arrays match state with empty arrays', () => {

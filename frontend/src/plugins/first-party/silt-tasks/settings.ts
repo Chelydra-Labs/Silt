@@ -16,6 +16,7 @@
 // is owned by the migration issue (#431); this module is the read/write surface.
 
 import type { PluginContext } from '../../sdk'
+import { normalizeColumns, type BoardColumn } from './columns'
 import { SYSTEM_VIEWS } from './savedViews'
 import type {
   CalendarSubMode,
@@ -158,25 +159,29 @@ export function persistLocalAuthor(author: string): Promise<boolean> {
 }
 
 /**
- * Persisted Board-mode status columns (#421). The Board is the only surface
- * with user-managed columns (every other grouping dimension is data-driven).
- * Defaults to the canonical TODO/DOING/DONE so the status Board matches the
- * retired silt-kanban experience on first paint.
+ * Persisted Board-mode status columns (#421/#437). The Board is the only
+ * surface with user-managed columns (every other grouping dimension is
+ * data-driven). Accepts legacy string[] and structured {name, wipLimit?}[]
+ * via normalizeColumns. Defaults to the canonical TODO/DOING/DONE so the
+ * status Board matches the retired silt-kanban experience on first paint.
  */
-export function loadColumns(): string[] {
-  const v = tasksSettings()['columns']
-  if (Array.isArray(v) && v.every((x) => typeof x === 'string') && v.length) {
-    // Cap at 50 to bound a runaway or hand-edited YAML (a board with 200
-    // status lanes is not a useful board and would dog the renderer).
-    const cols = v.length > 50 ? v.slice(0, 50) : v
-    return [...cols]
-  }
-  return ['TODO', 'DOING', 'DONE']
+export function loadColumns(): BoardColumn[] {
+  return normalizeColumns(tasksSettings()['columns'])
 }
 
-/** Atomically write the Board-mode status columns to the vault config. */
-export function persistColumns(columns: string[]): Promise<boolean> {
-  return saveFn ? saveFn('columns', [...columns]) : Promise.resolve(false)
+/**
+ * Atomically write the Board-mode status columns (incl. soft WIP limits)
+ * to the vault config. Persists structured objects so wipLimit survives;
+ * unlimited columns omit the field for cleaner YAML.
+ */
+export function persistColumns(columns: BoardColumn[]): Promise<boolean> {
+  const payload = columns.map((c) => {
+    if (c.wipLimit != null && c.wipLimit >= 1) {
+      return { name: c.name, wipLimit: c.wipLimit }
+    }
+    return { name: c.name }
+  })
+  return saveFn ? saveFn('columns', payload) : Promise.resolve(false)
 }
 
 /** Atomically write the default display mode to the vault config. */
@@ -244,11 +249,9 @@ function coerceSavedView(raw: unknown): SavedView | null {
   if (isCalendarSubMode(r.calendarSubMode)) {
     v.calendarSubMode = r.calendarSubMode
   }
-  if (
-    Array.isArray(r.columns) &&
-    r.columns.every((x) => typeof x === 'string')
-  ) {
-    v.columns = [...(r.columns as string[])]
+  if (Array.isArray(r.columns) && r.columns.length > 0) {
+    // Accept legacy string[] and structured BoardColumn[] (#437).
+    v.columns = normalizeColumns(r.columns)
   }
   if (r.filters && typeof r.filters === 'object') {
     const fr = r.filters as Record<string, unknown>

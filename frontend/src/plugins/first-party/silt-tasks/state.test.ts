@@ -58,7 +58,11 @@ describe('silt-tasks unified state (#419)', () => {
       // #427 active-view tracking defaults: no view active, no dirty flag.
       expect(s.activeSavedViewId).toBe('')
       expect(s.savedViewsDirty).toBe(false)
-      expect(s.columns).toEqual(['TODO', 'DOING', 'DONE'])
+      expect(s.columns).toEqual([
+        { name: 'TODO' },
+        { name: 'DOING' },
+        { name: 'DONE' }
+      ])
     })
   })
 
@@ -310,7 +314,12 @@ describe('silt-tasks unified state (#419)', () => {
         scope: 'page',
         filters,
         calendarSubMode: 'week',
-        columns: ['TODO', 'DOING', 'DONE', 'BLOCKED']
+        columns: [
+          { name: 'TODO' },
+          { name: 'DOING' },
+          { name: 'DONE' },
+          { name: 'BLOCKED' }
+        ]
       })
       const s = getTaskHubState()
       expect(s.displayMode).toBe('board')
@@ -320,7 +329,12 @@ describe('silt-tasks unified state (#419)', () => {
       expect(s.filters.owners).toEqual(['bob'])
       expect(s.filters.dueDate).toBe('today')
       expect(s.calendarSubMode).toBe('week')
-      expect(s.columns).toEqual(['TODO', 'DOING', 'DONE', 'BLOCKED'])
+      expect(s.columns).toEqual([
+        { name: 'TODO' },
+        { name: 'DOING' },
+        { name: 'DONE' },
+        { name: 'BLOCKED' }
+      ])
       // Clicking a saved view is user intent → override flipped.
       expect(s.scopeUserOverride).toBe(true)
     })
@@ -443,7 +457,7 @@ describe('silt-tasks unified state (#419)', () => {
       setSort('priority')
       setScope('notebook')
       setFilters({ owners: ['x'], priorities: [], dueDate: '', tags: [] })
-      setColumns(['TODO'])
+      setColumns([{ name: 'TODO' }])
       expect(getTaskHubState().savedViewsDirty).toBe(false)
     })
 
@@ -479,7 +493,7 @@ describe('silt-tasks unified state (#419)', () => {
         filters: { owners: ['a'], priorities: [], dueDate: '', tags: [] }
       })
 
-      setColumns(['TODO', 'DOING'])
+      setColumns([{ name: 'TODO' }, { name: 'DOING' }])
       expect(getTaskHubState().savedViewsDirty).toBe(true)
     })
 
@@ -510,7 +524,12 @@ describe('silt-tasks unified state (#419)', () => {
       })
       setFocusDate('2026-06-16')
       setActiveFilter('overdue')
-      setColumns(['TODO', 'DOING', 'DONE', 'BLOCKED'])
+      setColumns([
+        { name: 'TODO' },
+        { name: 'DOING' },
+        { name: 'DONE' },
+        { name: 'BLOCKED' }
+      ])
       saveView({ id: 'v1', name: 'V' })
       applySavedView({ id: 'v1', name: 'V' })
       // Now an active view + dirty flag should be set; verify the reset
@@ -535,7 +554,11 @@ describe('silt-tasks unified state (#419)', () => {
       })
       expect(s.focusDate).toBe('')
       expect(s.activeFilter).toBe('all')
-      expect(s.columns).toEqual(['TODO', 'DOING', 'DONE'])
+      expect(s.columns).toEqual([
+        { name: 'TODO' },
+        { name: 'DOING' },
+        { name: 'DONE' }
+      ])
       expect(s.savedViews).toEqual([])
       expect(s.activeSavedViewId).toBe('')
       expect(s.savedViewsDirty).toBe(false)

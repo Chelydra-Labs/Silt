@@ -737,7 +737,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(screen.getByRole('group', { name: 'Backlog' })).toBeInTheDocument()
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
       'columns',
-      expect.arrayContaining(['Backlog'])
+      expect.arrayContaining([{ name: 'Backlog' }])
     )
     promptSpy.mockRestore()
   })
@@ -1091,5 +1091,117 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     render(BoardView, { ctx, onCountChange: vi.fn() })
     await tick() // initial mount render (loading starts true)
     expect(screen.getByTestId('tasks-board-loading')).toBeTruthy()
+  })
+
+  // ── Soft WIP limits (#437) ───────────────────────────────────────────
+
+  it('shows count/limit badge and over-limit styling when a column exceeds WIP', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO', wipLimit: 1 },
+        { name: 'DOING' },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' }),
+      row({ id: 't2', status: 'TODO', clean_content: 'B' })
+    ])
+
+    const badge = screen.getByTestId('board-wip-badge-status-TODO')
+    expect(badge.textContent?.replace(/\s+/g, ' ').trim()).toBe('2 / 1')
+    expect(badge.className).toContain('text-status-warn')
+    expect(screen.getByTestId('board-wip-over-limit')).toBeInTheDocument()
+    expect(
+      screen.getByRole('group', { name: 'To Do' }).getAttribute('data-wip-over')
+    ).toBe('true')
+  })
+
+  it('does not show WIP badge when groupBy is not status', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO', wipLimit: 1 },
+        { name: 'DOING' },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('owner', [
+      row({ id: 't1', owner: 'Alice', clean_content: 'A' }),
+      row({ id: 't2', owner: 'Alice', clean_content: 'B' })
+    ])
+    expect(screen.queryByTestId('board-wip-badge-status-TODO')).toBeNull()
+    expect(screen.queryByTestId('board-wip-over-limit')).toBeNull()
+  })
+
+  it('prompts to confirm when a drop would exceed the WIP limit; cancel snaps back', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING', wipLimit: 1 },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' }),
+      row({ id: 't2', status: 'DOING', clean_content: 'B' })
+    ])
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doingCol = screen.getByRole('group', { name: 'In Progress' })
+
+    await fireEvent.dragStart(todoCard)
+    await fireEvent.drop(doingCol)
+    await flush()
+
+    // Soft limit: no persist yet; confirm dialog is open.
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(screen.getByTestId('board-wip-confirm')).toBeInTheDocument()
+    expect(screen.getByText(/over its WIP limit/i)).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByTestId('board-wip-confirm-cancel'))
+    await flush()
+
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('board-wip-confirm')).toBeNull()
+    // Card snapped back to TODO.
+    expect(
+      screen.getByRole('group', { name: 'To Do' }).querySelector('[data-card]')
+        ?.textContent
+    ).toContain('A')
+  })
+
+  it('proceeds with the status change when WIP over-limit is confirmed', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING', wipLimit: 1 },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' }),
+      row({ id: 't2', status: 'DOING', clean_content: 'B' })
+    ])
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doingCol = screen.getByRole('group', { name: 'In Progress' })
+
+    await fireEvent.dragStart(todoCard)
+    await fireEvent.drop(doingCol)
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('board-wip-confirm-confirm'))
+    await flush()
+
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('t1', 'DOING')
+    expect(screen.queryByTestId('board-wip-confirm')).toBeNull()
   })
 })

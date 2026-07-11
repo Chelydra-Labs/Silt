@@ -501,7 +501,7 @@
         stale: s.filters.stale
       },
       calendarSubMode: s.calendarSubMode,
-      columns: [...s.columns],
+      columns: s.columns.map((c) => ({ ...c })),
       system: false
     }
     saveView(updated)

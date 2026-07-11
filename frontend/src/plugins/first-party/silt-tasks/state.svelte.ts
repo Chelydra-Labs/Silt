@@ -27,6 +27,10 @@
 // deletes silt-kanban these types survive in place. The shapes are
 // kept identical so #38 can swap imports one-for-one.
 
+import { cloneColumns, normalizeColumns, type BoardColumn } from './columns'
+
+export type { BoardColumn } from './columns'
+
 /** Navigation scope the board/list is narrowed to. */
 export type Scope = 'vault' | 'notebook' | 'section' | 'page'
 
@@ -130,8 +134,12 @@ export interface SavedView {
   scope?: Scope
   filters?: TaskFilters
   calendarSubMode?: CalendarSubMode
-  /** Status-board columns; only meaningful when groupBy='status'. */
-  columns?: string[]
+  /**
+   * Status-board columns with optional soft WIP limits (#437).
+   * Only meaningful when groupBy='status'. May arrive as legacy string[]
+   * from YAML; loaders normalize via normalizeColumns.
+   */
+  columns?: BoardColumn[]
   /** True for the code-defined defaults (hideable, not deletable). */
   system?: boolean
 }
@@ -156,12 +164,13 @@ export interface TaskHubState {
   /** Calendar display mode's sub-layout (#425); ignored by list/board. */
   calendarSubMode: CalendarSubMode
   /**
-   * Status-board columns (#421). Only meaningful when groupBy='status';
-   * the SavedView snapshots them so a saved board remembers its lane
-   * configuration. BoardView keeps its own local mirror today; Phase 7
-   * (sidebar) + Phase 10 (retire) reconcile it to this canonical store.
+   * Status-board columns (#421/#437). Only meaningful when groupBy='status';
+   * the SavedView snapshots them (including wipLimit) so a saved board
+   * remembers its lane configuration. BoardView keeps its own local mirror
+   * today; Phase 7 (sidebar) + Phase 10 (retire) reconcile it to this
+   * canonical store.
    */
-  columns: string[]
+  columns: BoardColumn[]
   savedViews: SavedView[]
   /**
    * id of the currently-applied SavedView, or '' when none is active
@@ -196,7 +205,7 @@ function freshDefaults(): TaskHubState {
     focusDate: '',
     activeFilter: 'all',
     calendarSubMode: 'month',
-    columns: ['TODO', 'DOING', 'DONE'],
+    columns: normalizeColumns(null),
     savedViews: [],
     activeSavedViewId: '',
     savedViewsDirty: false
@@ -283,13 +292,14 @@ export function setFilters(f: TaskFilters): void {
 }
 
 /**
- * Replace the status-board columns. BoardView persists to YAML directly;
- * this setter is the in-memory mirror so saved views can snapshot + the
- * Phase 7 sidebar can read a single source of truth. Marks the active
- * view dirty so a column change surfaces in the bookmark affordance.
+ * Replace the status-board columns (including soft WIP limits). BoardView
+ * persists to YAML directly; this setter is the in-memory mirror so saved
+ * views can snapshot + the Phase 7 sidebar can read a single source of
+ * truth. Marks the active view dirty so a column change surfaces in the
+ * bookmark affordance.
  */
-export function setColumns(cols: string[]): void {
-  _state.columns = [...cols]
+export function setColumns(cols: BoardColumn[]): void {
+  _state.columns = cloneColumns(cols)
   markDirtyIfViewActive()
 }
 
@@ -409,7 +419,9 @@ export function applySavedView(view: SavedView): void {
     _state.calendarSubMode = view.calendarSubMode
   }
   if (view.columns !== undefined) {
-    _state.columns = [...view.columns]
+    // Normalize so a legacy string[] snapshot (or hand-edited YAML) still
+    // lands as structured BoardColumn[] with optional wipLimit.
+    _state.columns = normalizeColumns(view.columns)
   }
   _state.activeSavedViewId = view.id
   _state.savedViewsDirty = false
@@ -484,7 +496,7 @@ export function resetTaskHubState(): void {
   _state.focusDate = defaults.focusDate
   _state.activeFilter = defaults.activeFilter
   _state.calendarSubMode = defaults.calendarSubMode
-  _state.columns = [...defaults.columns]
+  _state.columns = cloneColumns(defaults.columns)
   _state.savedViews = []
   _state.activeSavedViewId = ''
   _state.savedViewsDirty = false

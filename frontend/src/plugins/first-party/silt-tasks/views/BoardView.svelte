@@ -23,6 +23,7 @@
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
+  import ConfirmModal from '../components/ConfirmModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import {
     formatEstimateSum,
@@ -34,7 +35,13 @@
   import { dueDateClass, dueDateTextClass } from '../dueDate'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import {
+    cloneColumns,
+    columnNames,
+    type BoardColumn as StatusColumn
+  } from '../columns'
+  import {
     getTaskHubState,
+    setColumns,
     setDisplayMode,
     type GroupBy
   } from '../state.svelte'
@@ -62,21 +69,23 @@
     'tag'
   ])
 
-  // A rendered Board column. `value` is the dimension value a drop/quick-add
+  // A rendered Board lane. `value` is the dimension value a drop/quick-add
   // dispatches with — '' routes to the dimension's "clear" path (Unassigned
-  // owner, No Date due date, No Tag no-op).
-  interface BoardColumn {
+  // owner, No Date due date, No Tag no-op). Named Lane (not BoardColumn) so
+  // it doesn't collide with the persisted StatusColumn model in columns.ts.
+  interface Lane {
     key: string
     label: string
     value: string
     items: TaskDetail[]
   }
 
-  // Status columns are the ONLY user-managed columns (configured + persisted).
-  // Every other dimension derives its columns from the loaded data.
-  let statusColumns = $state<string[]>(loadColumns())
+  // Status columns are the ONLY user-managed columns (configured + persisted,
+  // including soft WIP limits #437). Every other dimension derives its
+  // columns from the loaded data.
+  let statusColumns = $state<StatusColumn[]>(loadColumns())
   let rows = $state<TaskDetail[]>([])
-  let columns = $state<BoardColumn[]>([])
+  let columns = $state<Lane[]>([])
   let loading = $state(true)
   let errorMsg = $state('')
   let moveError = $state('')
@@ -87,8 +96,16 @@
   let pendingBlockedDone = $state<{
     card: TaskDetail
     fromColKey: string
-    toCol: BoardColumn
+    toCol: Lane
     blockers: { id: string; clean_content?: string }[]
+  } | null>(null)
+  // Soft WIP-limit confirm (#437): shown when a drop/keyboard move would
+  // push a status column over its configured cap. Cancel snaps back;
+  // Confirm proceeds with the status change.
+  let pendingWipConfirm = $state<{
+    card: TaskDetail
+    fromColKey: string
+    toCol: Lane
   } | null>(null)
 
   // --- Hub state (reactive reads) -----------------------------------------
@@ -151,10 +168,7 @@
 
   // The dimension-aware drop dispatcher. Each groupBy routes to the SDK
   // setter that actually owns the binned field on disk.
-  function dispatchDrop(
-    card: TaskDetail,
-    toCol: BoardColumn
-  ): Promise<unknown> {
+  function dispatchDrop(card: TaskDetail, toCol: Lane): Promise<unknown> {
     switch (groupBy) {
       case 'status':
         return ctx.updateBlockState(card.id, toCol.value as TaskStatus)
@@ -174,7 +188,7 @@
     }
   }
 
-  function announceMove(toCol: BoardColumn): string {
+  function announceMove(toCol: Lane): string {
     switch (groupBy) {
       case 'status':
         return `Task moved to ${toCol.label}`
@@ -191,18 +205,14 @@
     }
   }
 
-  function snapshotColumns(): BoardColumn[] {
+  function snapshotColumns(): Lane[] {
     return columns.map((c) => ({ ...c, items: [...c.items] }))
   }
 
   // Apply the optimistic dimension move to the rendered columns. Tag is
   // multi-membership (card joins the target without leaving the source); the
   // single-membership dimensions remove the card from the source column.
-  function applyOptimistic(
-    card: TaskDetail,
-    fromColKey: string,
-    toCol: BoardColumn
-  ) {
+  function applyOptimistic(card: TaskDetail, fromColKey: string, toCol: Lane) {
     const multiMembership = groupBy === 'tag'
     // For tag drops, the card's tags field must be updated optimistically
     // so a rapid successive drop reads the fresh tag set (not the stale one
@@ -240,17 +250,13 @@
     })
   }
 
-  function revertTo(prev: BoardColumn[]) {
+  function revertTo(prev: Lane[]) {
     columns = prev
   }
 
   // Restore the card to its source column (used by the DONE-guard cancel
   // path and the confirm-failure path).
-  function revertOptimistic(
-    card: TaskDetail,
-    fromColKey: string,
-    toCol: BoardColumn
-  ) {
+  function revertOptimistic(card: TaskDetail, fromColKey: string, toCol: Lane) {
     columns = columns.map((c) => {
       if (c.key === toCol.key) {
         return { ...c, items: c.items.filter((i) => i.id !== card.id) }
@@ -272,11 +278,32 @@
   // writer-wins — without serialization a stale older orderByID resolving
   // later would clobber the user's newest intent. See commitManualReorder.
   let reorderInFlight: Promise<void> | null = null
-  async function commitDrop(
+  /** Soft WIP limit for a status lane, or null when unlimited. */
+  function wipLimitFor(statusName: string): number | null {
+    const col = statusColumns.find((c) => c.name === statusName)
+    const lim = col?.wipLimit
+    return lim != null && lim >= 1 ? lim : null
+  }
+
+  /**
+   * True when moving `card` into `toCol` would push that status column over
+   * its soft WIP limit (#437). Same-column / non-status moves never trip it.
+   */
+  function wouldExceedWip(
     card: TaskDetail,
     fromColKey: string,
-    toCol: BoardColumn
-  ) {
+    toCol: Lane
+  ): boolean {
+    if (groupBy !== 'status') return false
+    if (toCol.key === fromColKey) return false
+    const limit = wipLimitFor(toCol.value)
+    if (limit == null) return false
+    // Already counted in the target (shouldn't happen for status) → no bump.
+    if (toCol.items.some((i) => i.id === card.id)) return false
+    return toCol.items.length + 1 > limit
+  }
+
+  async function commitDrop(card: TaskDetail, fromColKey: string, toCol: Lane) {
     if (!dndEnabled) return
     if (groupBy !== 'tag' && toCol.key === fromColKey) return
     if (groupBy === 'tag' && !toCol.value) {
@@ -288,6 +315,19 @@
     const my = ++moveSeq
     moveError = ''
     const prev = snapshotColumns()
+
+    // Soft WIP-limit guard (#437, status dimension only): pause before the
+    // persist so the user can confirm or cancel. Optimistic placement runs
+    // first so Cancel can snap the card back (mirrors the DONE-blocked flow).
+    if (
+      wouldExceedWip(card, fromColKey, toCol) &&
+      !pendingWipConfirm &&
+      !pendingBlockedDone
+    ) {
+      applyOptimistic(card, fromColKey, toCol)
+      pendingWipConfirm = { card, fromColKey, toCol }
+      return
+    }
 
     // DONE-on-blocked guard (#302, status dimension only): pause before the
     // persist so the user can confirm or cancel. applyOptimistic runs AFTER
@@ -405,6 +445,70 @@
     liveMessage = 'Move cancelled.'
   }
 
+  async function confirmWipOverLimit() {
+    const pending = pendingWipConfirm
+    if (!pending) return
+    pendingWipConfirm = null
+    const { card, fromColKey, toCol } = pending
+    // Card is already optimistically in the target. Hand off to the
+    // blocked-DONE guard when applicable; otherwise persist the drop.
+    if (groupBy === 'status' && toCol.value === 'DONE' && card.is_blocked) {
+      try {
+        const blockers = await ctx.getTaskBlockers(card.id)
+        if (blockers.length > 0) {
+          pendingBlockedDone = {
+            card,
+            fromColKey,
+            toCol,
+            blockers: blockers.map((b) => ({
+              id: b.id,
+              clean_content: b.clean_content
+            }))
+          }
+          return
+        }
+      } catch {
+        // Proceed with persist below.
+      }
+    }
+    liveMessage = announceMove(toCol)
+    try {
+      await dispatchDrop(card, toCol)
+      if (sort === 'manual') {
+        // Destination already includes the optimistic card; exclude it when
+        // computing the prior max order so we don't count the card itself.
+        const destItems =
+          columns
+            .find((c) => c.key === toCol.key)
+            ?.items.filter((i) => i.id !== card.id) ?? []
+        const maxOrder =
+          destItems.length > 0
+            ? Math.max(...destItems.map((c) => c.manual_order ?? 0))
+            : 0
+        try {
+          await ctx.setTaskOrder(card.id, maxOrder + 1)
+        } catch (e) {
+          moveError = e instanceof Error ? e.message : String(e)
+          await reload()
+          liveMessage = 'Move partially failed — reloaded.'
+          return
+        }
+      }
+    } catch (e) {
+      moveError = e instanceof Error ? e.message : String(e)
+      revertOptimistic(card, fromColKey, toCol)
+      liveMessage = 'Move failed — reverted.'
+    }
+  }
+
+  function cancelWipOverLimit() {
+    const pending = pendingWipConfirm
+    if (!pending) return
+    pendingWipConfirm = null
+    revertOptimistic(pending.card, pending.fromColKey, pending.toCol)
+    liveMessage = 'Move cancelled — column is over its WIP limit.'
+  }
+
   // --- Column derivation --------------------------------------------------
   // Status: configured columns (user-managed). Priority: P1/P2/P3 only
   // (legacy priority-0 rows join P3 but keep their value). Every other
@@ -415,7 +519,7 @@
     g: GroupBy,
     configuredStatuses: string[],
     iso: string
-  ): BoardColumn[] {
+  ): Lane[] {
     if (g === 'status') {
       const byStatus = new Map<string, TaskDetail[]>()
       for (const r of loaded) {
@@ -484,7 +588,22 @@
   }
 
   function rebin() {
-    columns = deriveColumns(rows, groupBy, statusColumns, today)
+    columns = deriveColumns(rows, groupBy, columnNames(statusColumns), today)
+  }
+
+  /** Persist status columns + mirror into hub state (saved-view dirty flag). */
+  function saveStatusColumns(next: StatusColumn[], prev: StatusColumn[]) {
+    statusColumns = next
+    setColumns(next)
+    void persistColumns(next).then((ok) => {
+      if (!ok) {
+        configError = 'Failed to save columns'
+        statusColumns = prev
+        setColumns(prev)
+        rebin()
+      }
+    })
+    rebin()
   }
 
   // Monotonic token so concurrent reload() calls can identify their own
@@ -618,33 +737,24 @@
   function commitRename(oldStatus: string) {
     const v = renameValue.trim()
     renamingColKey = null
-    if (!v || v === oldStatus || statusColumns.includes(v)) return
-    const prev = statusColumns
-    statusColumns = statusColumns.map((c) => (c === oldStatus ? v : c))
-    void persistColumns(statusColumns).then((ok) => {
-      if (!ok) {
-        configError = 'Failed to save columns'
-        statusColumns = prev
-        rebin()
-      }
-    })
-    rebin()
+    const names = columnNames(statusColumns)
+    if (!v || v === oldStatus || names.includes(v)) return
+    const prev = cloneColumns(statusColumns)
+    const next = statusColumns.map((c) =>
+      c.name === oldStatus ? { ...c, name: v } : c
+    )
+    configError = ''
+    saveStatusColumns(next, prev)
   }
   function cancelRename() {
     renamingColKey = null
   }
   async function addColumn() {
     const name = window.prompt('New column name')?.trim()
-    if (!name || statusColumns.includes(name)) return
-    const prev = statusColumns
-    statusColumns = [...statusColumns, name]
+    if (!name || columnNames(statusColumns).includes(name)) return
+    const prev = cloneColumns(statusColumns)
     configError = ''
-    const ok = await persistColumns(statusColumns)
-    if (!ok) {
-      configError = 'Failed to save columns'
-      statusColumns = prev
-    }
-    rebin()
+    saveStatusColumns([...statusColumns, { name }], prev)
   }
   async function removeColumn(statusName: string) {
     menuCol = null
@@ -654,15 +764,44 @@
       )
     )
       return
-    const prev = statusColumns
-    statusColumns = statusColumns.filter((c) => c !== statusName)
+    const prev = cloneColumns(statusColumns)
     configError = ''
-    const ok = await persistColumns(statusColumns)
-    if (!ok) {
-      configError = 'Failed to save columns'
-      statusColumns = prev
+    saveStatusColumns(
+      statusColumns.filter((c) => c.name !== statusName),
+      prev
+    )
+  }
+  function setWipLimit(statusName: string) {
+    menuCol = null
+    const current = statusColumns.find((c) => c.name === statusName)
+    const raw = window.prompt(
+      'WIP limit (leave empty to clear)',
+      current?.wipLimit != null && current.wipLimit >= 1
+        ? String(current.wipLimit)
+        : ''
+    )
+    if (raw === null) return
+    const trimmed = raw.trim()
+    let wipLimit: number | null | undefined
+    if (trimmed === '') {
+      wipLimit = null
+    } else {
+      const n = Number(trimmed)
+      if (!Number.isFinite(n) || n < 1) return
+      wipLimit = Math.floor(n)
     }
-    rebin()
+    const prev = cloneColumns(statusColumns)
+    const next = statusColumns.map((c) => {
+      if (c.name !== statusName) return c
+      if (wipLimit == null) {
+        const { wipLimit: _drop, ...rest } = c
+        void _drop
+        return rest
+      }
+      return { ...c, wipLimit }
+    })
+    configError = ''
+    saveStatusColumns(next, prev)
   }
   function onColDragStart(e: DragEvent, i: number) {
     colDragIndex = i
@@ -682,19 +821,12 @@
     const from = colDragIndex
     colDragIndex = null
     if (from === i) return
-    const prev = statusColumns
+    const prev = cloneColumns(statusColumns)
     const next = [...statusColumns]
     const [moved] = next.splice(from, 1)
     next.splice(i, 0, moved)
-    statusColumns = next
-    void persistColumns(statusColumns).then((ok) => {
-      if (!ok) {
-        configError = 'Failed to save column order'
-        statusColumns = prev
-        rebin()
-      }
-    })
-    rebin()
+    configError = ''
+    saveStatusColumns(next, prev)
   }
 
   // --- Card DnD -----------------------------------------------------------
@@ -709,12 +841,12 @@
       e.dataTransfer.setData('text/plain', card.id)
     }
   }
-  function onLaneDragOver(e: DragEvent, col: BoardColumn) {
+  function onLaneDragOver(e: DragEvent, col: Lane) {
     if (!dndEnabled || !dragCard) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
   }
-  function onLaneDrop(e: DragEvent, col: BoardColumn) {
+  function onLaneDrop(e: DragEvent, col: Lane) {
     if (!dndEnabled || !dragCard) return
     e.preventDefault()
     const card = dragCard
@@ -728,14 +860,14 @@
   // specific sibling. The card-level handler runs first (event bubbles
   // upward); for same-column manual drops it owns the persist + optimistic
   // update and stops propagation so the lane handler doesn't double-fire.
-  function onCardDragOver(e: DragEvent, card: TaskDetail, col: BoardColumn) {
+  function onCardDragOver(e: DragEvent, card: TaskDetail, col: Lane) {
     if (sort !== 'manual' || !dndEnabled || !dragCard) return
     if (col.key !== dragFromColKey) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
     dragOverCardId = card.id
   }
-  function onCardDrop(e: DragEvent, target: TaskDetail, col: BoardColumn) {
+  function onCardDrop(e: DragEvent, target: TaskDetail, col: Lane) {
     if (sort !== 'manual' || !dndEnabled || !dragCard) return
     if (col.key !== dragFromColKey) return
     e.preventDefault()
@@ -756,7 +888,7 @@
   async function commitManualReorder(
     src: TaskDetail,
     target: TaskDetail,
-    col: BoardColumn,
+    col: Lane,
     fromKey: string
   ) {
     moveError = ''
@@ -845,7 +977,7 @@
   // enabled dimensions; Enter/Space open the inspector drawer; Shift+Enter
   // opens the sub-editor. Location dimensions (DnD disabled) get no arrow
   // move — the card stays put.
-  function onCardKeydown(e: KeyboardEvent, card: TaskDetail, col: BoardColumn) {
+  function onCardKeydown(e: KeyboardEvent, card: TaskDetail, col: Lane) {
     if (dndEnabled && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
       e.preventDefault()
       const idx = columns.findIndex((c) => c.key === col.key)
@@ -870,7 +1002,7 @@
   // --- Per-column quick-add ----------------------------------------------
   // Returns the createTask prefill for a column, or null when quick-add
   // isn't supported (custom status columns; location dimensions).
-  function quickAddFor(col: BoardColumn): {
+  function quickAddFor(col: Lane): {
     status?: TaskStatus
     dueDate?: string
     onCreated?: (id: string) => void
@@ -910,6 +1042,15 @@
   })
 
   let totalCards = $derived(columns.reduce((sum, c) => sum + c.items.length, 0))
+
+  /** True when any status column is over its soft WIP limit (#437). */
+  let anyOverWip = $derived(
+    groupBy === 'status' &&
+      columns.some((col) => {
+        const limit = wipLimitFor(col.value)
+        return limit != null && col.items.length > limit
+      })
+  )
 </script>
 
 <div
@@ -925,6 +1066,19 @@
       kind="warning"
       message={`Couldn't save board layout: ${configError}`}
     />
+  {/if}
+
+  {#if anyOverWip}
+    <div
+      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-type-sm font-body-md flex items-center gap-2"
+      role="status"
+      data-testid="board-wip-over-limit"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >warning</span
+      >
+      <span>WIP over limit</span>
+    </div>
   {/if}
 
   {#if columns.length > 10 && columns.length <= 20}
@@ -985,14 +1139,17 @@
           {@const statusName = canManage
             ? col.value.replace(/^status-/, '')
             : ''}
+          {@const wipLimit = canManage ? wipLimitFor(col.value) : null}
+          {@const overWip = wipLimit != null && cards.length > wipLimit}
           {@const qa = quickAddFor(col)}
           <section
             class="flex flex-col min-w-70 flex-1 max-w-100 rounded-lg border border-surface-panel-border bg-surface-panel/50 {colDragIndex ===
             colIdx
               ? 'opacity-50'
-              : ''}"
+              : ''} {overWip ? 'ring-1 ring-status-warn/40' : ''}"
             role="group"
             aria-label={col.label}
+            data-wip-over={overWip ? 'true' : undefined}
             ondragover={(e) => onLaneDragOver(e, col)}
             ondrop={(e) => onLaneDrop(e, col)}
           >
@@ -1053,10 +1210,24 @@
                     {col.label}
                   </h2>
                 {/if}
-                <span
-                  class="bg-hover text-text-muted text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm"
-                  >{cards.length}</span
-                >
+                {#if wipLimit != null}
+                  <span
+                    class="bg-hover text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm {overWip
+                      ? 'text-status-warn'
+                      : 'text-text-muted'}"
+                    data-testid={`board-wip-badge-${col.key}`}
+                    title={overWip
+                      ? `Over WIP limit (${cards.length} / ${wipLimit})`
+                      : `WIP limit ${cards.length} / ${wipLimit}`}
+                  >
+                    {cards.length} / {wipLimit}
+                  </span>
+                {:else}
+                  <span
+                    class="bg-hover text-text-muted text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm"
+                    >{cards.length}</span
+                  >
+                {/if}
                 {#if columnEstimateSum(cards) > 0}
                   <span
                     class="text-text-muted/60 text-type-2xs font-label-sm truncate"
@@ -1100,6 +1271,18 @@
                           >edit</span
                         >
                         Rename
+                      </button>
+                      <button
+                        type="button"
+                        onclick={() => setWipLimit(statusName)}
+                        class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary"
+                        role="menuitem"
+                        data-testid={`board-wip-menu-${col.key}`}
+                      >
+                        <span class="material-symbols-outlined text-icon-sm"
+                          >speed</span
+                        >
+                        WIP limit…
                       </button>
                       <button
                         type="button"
@@ -1373,6 +1556,18 @@
     blockers={pendingBlockedDone.blockers}
     onConfirm={confirmBlockedDone}
     onCancel={cancelBlockedDone}
+  />
+{/if}
+
+{#if pendingWipConfirm}
+  <ConfirmModal
+    title="WIP limit"
+    message="This column is over its WIP limit. Add anyway?"
+    confirmLabel="Add anyway"
+    cancelLabel="Cancel"
+    dataTestId="board-wip-confirm"
+    onConfirm={confirmWipOverLimit}
+    onCancel={cancelWipOverLimit}
   />
 {/if}
 

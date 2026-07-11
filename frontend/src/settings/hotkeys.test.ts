@@ -310,3 +310,34 @@ describe('new_task hotkey dispatch (#368)', () => {
     ).toBe(false)
   })
 })
+
+// Hub-scoped Tasks command palette (#436). Default is Ctrl+K — same chord as
+// format_link; focus scope (hub vs editor) resolves the conflict. These tests
+// pin the binding string so a regression to a different default is caught.
+describe('tasks_command_palette hotkey (#436)', () => {
+  const palette = 'Ctrl+K'
+  const formatLink = 'Ctrl+K'
+
+  function keyEvent(key: string, opts: KeyboardEventInit): KeyboardEvent {
+    return new KeyboardEvent('keydown', { key, ...opts })
+  }
+
+  it('matches the default Ctrl+K binding', () => {
+    expect(matchHotkey(keyEvent('k', { ctrlKey: true }), palette)).toBe(true)
+  })
+
+  it('shares the chord with format_link (focus scope resolves conflict)', () => {
+    expect(matchHotkey(keyEvent('k', { ctrlKey: true }), formatLink)).toBe(true)
+    expect(palette).toBe(formatLink)
+  })
+
+  it('does not match Ctrl+Shift+K', () => {
+    expect(
+      matchHotkey(keyEvent('k', { ctrlKey: true, shiftKey: true }), palette)
+    ).toBe(false)
+  })
+
+  it('rejects when the action is disabled (empty binding)', () => {
+    expect(matchHotkey(keyEvent('k', { ctrlKey: true }), '')).toBe(false)
+  })
+})
