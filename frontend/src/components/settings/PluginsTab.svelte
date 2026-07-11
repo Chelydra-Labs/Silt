@@ -363,7 +363,7 @@
   })
 </script>
 
-<div class="p-6 max-w-3xl">
+<div class="p-6 max-w-6xl mx-auto w-full">
   <!-- Install flow -->
   <section class="mb-6">
     <button

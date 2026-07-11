@@ -595,6 +595,15 @@
       const section = typeof detail === 'string' && detail ? detail : 'general'
       openSettings(section)
     }
+
+    // Summary-strip chips in GeneralTab dispatch this to jump between
+    // settings sections while already in the settings view (no view change).
+    function handleSettingsJump(e: Event) {
+      const detail = (e as CustomEvent).detail
+      if (detail && typeof detail.section === 'string') {
+        settingsSection = detail.section
+      }
+    }
     // Move keyboard focus into the active sidebar (#326 item 8). Expands the
     // sidebar if collapsed, then focuses the first focusable element inside it
     // (a tree node, a smart-list radio, a scope radio, or a search input —
@@ -816,6 +825,7 @@
     window.addEventListener('open-settings', handleOpenSettings)
     window.addEventListener('open-template-picker', handleOpenTemplatePicker)
     window.addEventListener('silt:change-vault', handleSwitchVault)
+    window.addEventListener('silt:settings-jump', handleSettingsJump)
     window.addEventListener('page-renamed', handlePageRenamed)
     // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
     // be received via Events.On — a DOM addEventListener would never fire.
@@ -1036,6 +1046,7 @@
         handleOpenTemplatePicker
       )
       window.removeEventListener('silt:change-vault', handleSwitchVault)
+      window.removeEventListener('silt:settings-jump', handleSettingsJump)
       window.removeEventListener('page-renamed', handlePageRenamed)
       offPluginsChanged()
       offVaultMoved()

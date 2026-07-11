@@ -4,7 +4,12 @@
   // its matching `role="tablist"` (SettingsNav) lives in the sidebar. The two
   // are linked by stable ids, so aria-labelledby on this panel resolves to the
   // active tab in the sidebar even though they are separate components.
-  import { onMount } from 'svelte'
+  //
+  // The panel owns the shared section header (title + one-line description)
+  // and the settings search box, so every section reads as one designed
+  // surface. Width is driven per-section via the `width` field
+  // ('form' → centered max-w-4xl, 'wide' → full panel width).
+  import { onMount, tick } from 'svelte'
   import GeneralTab from './GeneralTab.svelte'
   import EditorTab from './EditorTab.svelte'
   import HotkeysTab from './HotkeysTab.svelte'
@@ -14,6 +19,7 @@
   import PluginsTab from './PluginsTab.svelte'
   import DevTab from './DevTab.svelte'
   import PluginSettingsPanel from './PluginSettingsPanel.svelte'
+  import SettingsSearch from './SettingsSearch.svelte'
   import { loadConfig, settings } from '../../settings/store.svelte'
   import { loadPlugins } from '../../plugins/loader'
   import { getSettingsSections } from './settingsSections.svelte'
@@ -33,6 +39,15 @@
   }: Props = $props()
 
   let sections = $derived(getSettingsSections())
+  let activeSectionMeta = $derived(
+    sections.find((s) => s.id === section) ?? null
+  )
+
+  // Anchor-ring transient state: when search jumps to an anchorId, we briefly
+  // add an accent ring to that element to confirm the landing. Cleared on a
+  // timer so the affordance fades.
+  let ringAnchor = $state<string | null>(null)
+  let ringTimer: ReturnType<typeof setTimeout> | null = null
 
   onMount(() => {
     loadConfig().catch((e) => console.error('loadConfig failed:', e))
@@ -61,34 +76,59 @@
       section = 'plugins'
     }
   })
+
+  // Search jump: switch section, then scroll to + ring the anchor (if any).
+  // Waits a tick so the target tab is mounted before we look up its element.
+  async function handleJump(sectionId: string, anchorId?: string) {
+    section = sectionId
+    if (!anchorId) return
+    await tick()
+    const el = document.getElementById(anchorId)
+    if (!el) return
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    if (ringTimer) clearTimeout(ringTimer)
+    ringAnchor = anchorId
+    ringTimer = setTimeout(() => {
+      ringAnchor = null
+    }, 1600)
+  }
 </script>
 
 <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
+  <!-- Shared section header: title + one-line description + search. This
+       replaces the bare <h2> so every section has a consistent home base. -->
   <div
-    class="flex items-center justify-between px-6 py-4 border-b border-surface-sidebar-border flex-shrink-0"
+    class="flex items-center justify-between gap-4 px-6 py-4 border-b border-surface-sidebar-border flex-shrink-0"
   >
-    <h2 class="font-headline-md text-headline-md text-text-primary capitalize">
-      {sections.find((s) => s.id === section)?.label}
-    </h2>
+    <div class="min-w-0">
+      <h2
+        class="font-headline-md text-headline-md text-text-primary capitalize truncate"
+      >
+        {activeSectionMeta?.label ?? section}
+      </h2>
+      {#if activeSectionMeta?.description}
+        <p class="text-text-muted text-[12px] font-body-md mt-0.5 truncate">
+          {activeSectionMeta.description}
+        </p>
+      {/if}
+    </div>
+    <SettingsSearch onJump={handleJump} />
   </div>
 
   <!-- aria-labelledby resolves to the active tab in SettingsNav (sidebar)
-       via the shared silt-settings-tab-<id> id. -->
+       via the shared silt-settings-tab-<id> id. Form-style tabs (editor,
+       hotkeys) own their scroll + fixed footer, so the panel is a non-scroll
+       flex column for them; everything else scrolls here. -->
   <div
     id="silt-settings-panel"
     role="tabpanel"
     aria-labelledby="silt-settings-tab-{section}"
     tabindex="0"
-    class="flex-1 min-h-0 focus:outline-none"
-    class:overflow-y-auto={['appearance', 'ai', 'plugins', 'about'].includes(
-      section
-    ) || section.startsWith('plugin:')}
-    class:custom-scrollbar={['appearance', 'ai', 'plugins', 'about'].includes(
-      section
-    ) || section.startsWith('plugin:')}
-    class:flex={['general', 'editor', 'hotkeys'].includes(section)}
-    class:flex-col={['general', 'editor', 'hotkeys'].includes(section)}
-    class:overflow-hidden={['general', 'editor', 'hotkeys'].includes(section)}
+    class="flex-1 min-h-0 focus:outline-none custom-scrollbar"
+    class:flex={['editor', 'hotkeys'].includes(section)}
+    class:flex-col={['editor', 'hotkeys'].includes(section)}
+    class:overflow-hidden={['editor', 'hotkeys'].includes(section)}
+    class:overflow-y-auto={!['editor', 'hotkeys'].includes(section)}
   >
     {#if settings.loading && !settings.config && section !== 'general'}
       <div class="p-8 text-text-muted animate-pulse font-body-md">
@@ -106,13 +146,13 @@
     {:else if section === 'general'}
       <GeneralTab />
     {:else if section === 'editor'}
-      <EditorTab />
+      <EditorTab {ringAnchor} />
     {:else if section === 'appearance'}
       <AppearanceTab />
     {:else if section === 'ai'}
       <AIProviderTab />
     {:else if section === 'hotkeys'}
-      <HotkeysTab />
+      <HotkeysTab {ringAnchor} />
     {:else if section === 'plugins'}
       <PluginsTab
         {activeNotebook}

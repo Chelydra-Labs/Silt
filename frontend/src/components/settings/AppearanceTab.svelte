@@ -325,7 +325,7 @@
 
 <svelte:window onkeydown={onWindowKey} />
 
-<div class="p-6 max-w-6xl space-y-8">
+<div class="p-6 max-w-6xl mx-auto w-full space-y-8">
   <!-- Mode toggle -->
   <section aria-labelledby="mode-heading">
     <h3

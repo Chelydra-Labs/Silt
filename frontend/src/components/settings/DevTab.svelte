@@ -1,7 +1,7 @@
 <script lang="ts">
 </script>
 
-<div class="p-6 max-w-2xl space-y-6">
+<div class="p-6 max-w-4xl mx-auto w-full space-y-6">
   <div
     class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
   >

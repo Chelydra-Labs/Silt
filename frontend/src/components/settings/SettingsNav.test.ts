@@ -117,6 +117,59 @@ describe('SettingsNav — section list (sidebar tablist)', () => {
   })
 })
 
+describe('SettingsNav — group dividers (visual clustering)', () => {
+  beforeEach(() => {
+    mocks.loadedPlugins.plugins.clear()
+    mocks.loadedPlugins.errors = []
+    mocks.settings.config = { ui: {} }
+    mocks.surfaces = []
+  })
+  afterEach(() => cleanup())
+
+  it('renders group divider labels between clusters', () => {
+    render(SettingsNav, { props: { section: 'general' } })
+    // Each group label is a presentational divider element. Some labels
+    // ("About") also appear as a section tab, so scope the assertion to the
+    // role=presentation elements only.
+    const presentational = screen
+      .getAllByText(/^(Workspace|Look & feel|Intelligence|Customize|About)$/)
+      .filter((el) => el.getAttribute('role') === 'presentation')
+    expect(presentational.length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('group dividers are role=presentation and excluded from the tab sequence', () => {
+    render(SettingsNav, { props: { section: 'general' } })
+    const divider = screen.getByText('Look & feel')
+    expect(divider.getAttribute('role')).toBe('presentation')
+    // The tablist contains exactly the section tabs — no divider leaks in as
+    // a tab. Divider labels are not focusable elements.
+    const tabs = screen.getAllByRole('tab')
+    const tabTexts = tabs.map((t) => t.textContent?.trim())
+    for (const label of [
+      'Workspace',
+      'Look & feel',
+      'Intelligence',
+      'Customize'
+    ]) {
+      expect(tabTexts).not.toContain(label)
+    }
+    // No divider is a button or link (none are interactive).
+    expect(divider.tagName).not.toBe('BUTTON')
+    expect(divider.tagName).not.toBe('A')
+  })
+
+  it('ArrowDown traverses across group boundaries (flat tablist)', async () => {
+    // General (Workspace) → Editor (Look & feel): crosses a group divider.
+    render(SettingsNav, { props: { section: 'general' } })
+    const tablist = screen.getByRole('tablist')
+    screen.getByRole('tab', { name: 'General' }).focus()
+    await fireEvent.keyDown(tablist, { key: 'ArrowDown' })
+    expect(
+      screen.getByRole('tab', { name: 'Editor' }).getAttribute('aria-selected')
+    ).toBe('true')
+  })
+})
+
 describe('SettingsNav — dynamic plugin tabs (#214)', () => {
   beforeEach(() => {
     mocks.loadedPlugins.plugins.clear()

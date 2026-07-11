@@ -2,6 +2,9 @@
   import { onMount } from 'svelte'
   import { GetCloseToTray, SetCloseToTray } from '../../../bindings/silt/app.js'
   import { settings, reloadFromBackend } from '../../settings/store.svelte'
+  import { themeState } from '../../theme/store.svelte'
+  import { loadedPlugins } from '../../plugins/store.svelte'
+  import { aiProviderNeedsSetup } from '../../settings/ai-setup'
   import VaultActionModal from './VaultActionModal.svelte'
   import VaultArchiveModal from './VaultArchiveModal.svelte'
 
@@ -99,13 +102,130 @@
       triggerBtn?.focus()
     }
   }
+
+  // Landing summary strip ("home base"): active vault, theme/mode, AI status,
+  // and plugin count. Each chip jumps to its section via the shared
+  // silt:settings-jump event (handled by App.svelte → settingsSection).
+  function jumpTo(sectionId: string) {
+    window.dispatchEvent(
+      new CustomEvent('silt:settings-jump', { detail: { section: sectionId } })
+    )
+  }
+
+  // Theme name for the summary chip. Falls back to the id when the human
+  // name hasn't loaded yet.
+  let themeName = $derived(themeState.name || themeState.id || '—')
+  let pluginCount = $derived(loadedPlugins.plugins.size)
+  // AI needs-setup mirrors the AI Provider + Plugins tabs' predicate so the
+  // chip reflects the same "configure me" state those pages surface.
+  let aiNeedsSetup = $derived(
+    settings.config ? aiProviderNeedsSetup(settings.config.ai?.chat) : true
+  )
 </script>
 
 <svelte:window onclick={handleWindowClick} />
 
-<div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar h-full">
+<div
+  class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar h-full max-w-4xl mx-auto w-full"
+>
+  <!-- Landing summary strip: one-line "home base" with clickable chips that
+       jump to each respective section. Gives the page an at-a-glance status
+       without duplicating the controls those sections own. -->
+  <div
+    class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5"
+    aria-label="Workspace summary"
+  >
+    <button
+      type="button"
+      onclick={() => jumpTo('general')}
+      class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
+    >
+      <span class="material-symbols-outlined text-text-muted text-[18px]"
+        >folder</span
+      >
+      <span class="min-w-0 flex-1">
+        <span
+          class="block text-[9px] uppercase tracking-widest text-text-muted font-label-sm-bold"
+          >Vault</span
+        >
+        <span
+          class="block text-[12px] text-text-primary font-body-md truncate"
+          title={settings.config?.notebooks.path || 'No workspace'}
+        >
+          {settings.config?.notebooks.path
+            ? settings.config.notebooks.path.replace(/.*[/\\]/, '')
+            : 'No workspace'}
+        </span>
+      </span>
+    </button>
+
+    <button
+      type="button"
+      onclick={() => jumpTo('appearance')}
+      class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
+    >
+      <span class="material-symbols-outlined text-text-muted text-[18px]"
+        >{themeState.mode === 'dark'
+          ? 'dark_mode'
+          : themeState.mode === 'light'
+            ? 'light_mode'
+            : 'desktop_windows'}</span
+      >
+      <span class="min-w-0 flex-1">
+        <span
+          class="block text-[9px] uppercase tracking-widest text-text-muted font-label-sm-bold"
+          >Theme</span
+        >
+        <span class="block text-[12px] text-text-primary font-body-md truncate">
+          {themeName}
+        </span>
+      </span>
+    </button>
+
+    <button
+      type="button"
+      onclick={() => jumpTo('ai')}
+      class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
+    >
+      <span
+        class="material-symbols-outlined text-[18px] {aiNeedsSetup
+          ? 'text-status-warn'
+          : 'text-accent-primary-start'}">smart_toy</span
+      >
+      <span class="min-w-0 flex-1">
+        <span
+          class="block text-[9px] uppercase tracking-widest text-text-muted font-label-sm-bold"
+          >AI</span
+        >
+        <span class="block text-[12px] text-text-primary font-body-md truncate">
+          {aiNeedsSetup ? 'Setup needed' : 'Configured'}
+        </span>
+      </span>
+    </button>
+
+    <button
+      type="button"
+      onclick={() => jumpTo('plugins')}
+      class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
+    >
+      <span class="material-symbols-outlined text-text-muted text-[18px]"
+        >extension</span
+      >
+      <span class="min-w-0 flex-1">
+        <span
+          class="block text-[9px] uppercase tracking-widest text-text-muted font-label-sm-bold"
+          >Plugins</span
+        >
+        <span class="block text-[12px] text-text-primary font-body-md truncate">
+          {pluginCount}
+          {pluginCount === 1 ? 'plugin' : 'plugins'}
+        </span>
+      </span>
+    </button>
+  </div>
+
   <!-- Window: user-global, renders regardless of vault config. -->
-  <section class="max-w-xl">
+  <section>
     <h3
       class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
     >
@@ -180,7 +300,7 @@
     {/if}
 
     <!-- Vault path + relocate menu -->
-    <section class="max-w-xl">
+    <section>
       <h3
         class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
       >
@@ -305,7 +425,7 @@
       </p>
     </section>
   {:else if settings.loading}
-    <section class="max-w-xl">
+    <section>
       <h3
         class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
       >
@@ -319,7 +439,7 @@
     <!-- Config failed to load: surface the backend's actual error so the
          user can act on it (e.g. malformed YAML) rather than the generic
          no-workspace copy. -->
-    <section class="max-w-xl">
+    <section>
       <h3
         class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
       >
@@ -336,7 +456,7 @@
       </div>
     </section>
   {:else}
-    <section class="max-w-xl">
+    <section>
       <h3
         class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
       >

@@ -74,7 +74,7 @@
   }
 </script>
 
-<div class="p-6 max-w-2xl">
+<div class="p-6 max-w-4xl mx-auto w-full">
   <div class="flex items-center gap-4 mb-6">
     <img src={logo} alt="Silt" class="w-14 h-14" />
     <div>

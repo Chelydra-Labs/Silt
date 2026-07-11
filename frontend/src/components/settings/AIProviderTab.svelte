@@ -625,7 +625,7 @@
   })
 </script>
 
-<div class="p-6 max-w-3xl space-y-6">
+<div class="p-6 max-w-6xl mx-auto w-full space-y-6">
   {#if loading}
     <div
       class="text-text-muted text-[12px] font-body-md animate-pulse py-8 text-center"

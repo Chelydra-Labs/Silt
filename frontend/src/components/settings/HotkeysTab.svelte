@@ -8,6 +8,11 @@
   import type { SystemConfig } from '../../settings/store.svelte'
   import { parseHotkey } from '../../settings/hotkeys'
 
+  interface Props {
+    ringAnchor?: string | null
+  }
+  let { ringAnchor = null }: Props = $props()
+
   let draft = $state<SystemConfig | null>(null)
   let lastSaved = $state<SystemConfig | null>(null)
 
@@ -98,7 +103,11 @@
 
       <!-- Hotkeys Group Card -->
       <div
-        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
+        id="hotkeys-shortcuts"
+        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4 {ringAnchor ===
+        'hotkeys-shortcuts'
+          ? 'ring-2 ring-accent-primary-start transition-shadow'
+          : ''}"
       >
         <div class="flex items-center justify-between">
           <h4
