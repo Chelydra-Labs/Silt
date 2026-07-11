@@ -27,6 +27,58 @@ func nullIfEmpty(s string) interface{} {
 	return s
 }
 
+// taskDerivedCounts precomputes per-task derived cache columns for one file's
+// block slice (#434 / #439 / comments descendants):
+//   - comments: ALL NOTE descendants under a task (walk ParentID until TASK)
+//   - subtaskTotal / subtaskDone: direct TASK children only
+func taskDerivedCounts(blocks []parser.ParsedBlock) (comments, subtaskTotal, subtaskDone map[string]int) {
+	parentOf := make(map[string]string, len(blocks))
+	typeOf := make(map[string]parser.BlockType, len(blocks))
+	for _, b := range blocks {
+		parentOf[b.ID] = b.ParentID
+		typeOf[b.ID] = b.Type
+	}
+	comments = make(map[string]int)
+	subtaskTotal = make(map[string]int)
+	subtaskDone = make(map[string]int)
+	for _, b := range blocks {
+		switch b.Type {
+		case parser.BlockNote:
+			// Nested replies: walk up until a TASK ancestor (or root).
+			pid := b.ParentID
+			for pid != "" {
+				if typeOf[pid] == parser.BlockTask {
+					comments[pid]++
+					break
+				}
+				next := parentOf[pid]
+				if next == pid {
+					break
+				}
+				pid = next
+			}
+		case parser.BlockTask:
+			if b.ParentID != "" && typeOf[b.ParentID] == parser.BlockTask {
+				subtaskTotal[b.ParentID]++
+				if b.Status == "DONE" {
+					subtaskDone[b.ParentID]++
+				}
+			}
+		}
+	}
+	return comments, subtaskTotal, subtaskDone
+}
+
+// taskEstimateMinutes returns the nullable estimate_minutes projection for a
+// task block: ParseEstimateMinutes ok → minutes, else NULL (invalid/empty raw
+// still lives only in markdown).
+func taskEstimateMinutes(raw string) interface{} {
+	if mins, ok := parser.ParseEstimateMinutes(raw); ok {
+		return mins
+	}
+	return nil
+}
+
 // warnOnDependencyCycle builds the [blocked_by::] edge map for a set of blocks
 // and logs a warning when it contains a cycle (#301). The IPC setter prevents
 // cycles at write time, but a hand-edited or externally-synced file (Obsidian,
@@ -409,7 +461,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer stmtBlock.Close()
 
-	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order, modified_at, estimate_minutes, subtask_total, subtask_done) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -449,16 +501,9 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer stmtBlockMetaClear.Close()
 
-	// Pre-compute comments_count per task: the number of child NOTE blocks
-	// (indented reply bullets in the Stitch "comments on a task" sense).
-	// A child is any block whose ParentID points at a TASK block AND whose
-	// Type is NOTE. We walk the blocks slice once and count.
-	childNotesByParent := make(map[string]int)
-	for _, b := range blocks {
-		if b.ParentID != "" && b.Type == parser.BlockNote {
-			childNotesByParent[b.ParentID]++
-		}
-	}
+	// Derived task caches: descendant NOTE comments, direct subtask rollups
+	// (#434), plus modified_at / estimate_minutes projections (#439/#440).
+	commentsByTask, subtaskTotalByTask, subtaskDoneByTask := taskDerivedCounts(blocks)
 
 	for blockIdx, block := range blocks {
 		// 1. Insert into blocks — each block carries its own file_date.
@@ -509,6 +554,13 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 			if block.ManualOrder > 0 {
 				manualOrderVal = block.ManualOrder
 			}
+			// [modified::] / [estimate::] projections (#439/#440): empty or
+			// unparseable → NULL. Raw estimate stays in markdown only.
+			var modifiedAtVal interface{}
+			if block.ModifiedAt != "" {
+				modifiedAtVal = block.ModifiedAt
+			}
+			estimateMinsVal := taskEstimateMinutes(block.Estimate)
 			// Pin projection (#135): the column accepts NULL/0/1 so the
 			// cache can represent the parser's tri-state — NULL when no
 			// [pin::] token is present (nil), 0 for an explicit [pin::
@@ -522,7 +574,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 				}
 			}
 			linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
-			_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, childNotesByParent[block.ID], linksCount, createdAtVal, completedAtVal, manualOrderVal)
+			_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, commentsByTask[block.ID], linksCount, createdAtVal, completedAtVal, manualOrderVal, modifiedAtVal, estimateMinsVal, subtaskTotalByTask[block.ID], subtaskDoneByTask[block.ID])
 			if err != nil {
 				return fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 			}
@@ -657,7 +709,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	}
 	defer stmtBlock.Close()
 
-	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	stmtTask, err := tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order, modified_at, estimate_minutes, subtask_total, subtask_done) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -739,6 +791,10 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 			return 0, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
+		// Per-file derived caches — same as IndexFileBlocks (descendant
+		// comments + direct subtask rollups + modified/estimate).
+		commentsByTask, subtaskTotalByTask, subtaskDoneByTask := taskDerivedCounts(res.Blocks)
+
 		for blockIdx, block := range res.Blocks {
 			var parentID interface{}
 			if block.ParentID != "" {
@@ -784,6 +840,11 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if block.ManualOrder > 0 {
 					manualOrderVal = block.ManualOrder
 				}
+				var modifiedAtVal interface{}
+				if block.ModifiedAt != "" {
+					modifiedAtVal = block.ModifiedAt
+				}
+				estimateMinsVal := taskEstimateMinutes(block.Estimate)
 				// Pin projection (#135): tri-state NULL/0/1 mirroring
 				// IndexFileBlocks — NULL=absent, 0=[pin:: false], 1=[pin::
 				// true]. Reproducible cache; markdown is source of truth.
@@ -794,17 +855,8 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 						pinnedVal = sql.NullInt64{Int64: 1, Valid: true}
 					}
 				}
-				// Compute comments_count (child NOTE blocks) and links_count
-				// ((uuid) refs) for this task — same derived-cache approach
-				// as IndexFileBlocks (see childNotesByParent + BlockRefRegex).
-				commentsCount := 0
-				for _, b2 := range res.Blocks {
-					if b2.ParentID == block.ID && b2.Type == parser.BlockNote {
-						commentsCount++
-					}
-				}
 				linksCount := len(parser.BlockRefRegex.FindAllString(block.RawText, -1))
-				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, commentsCount, linksCount, createdAtVal, completedAtVal, manualOrderVal)
+				_, err = stmtTask.Exec(block.ID, block.Status, owner, startDate, dueDate, block.Priority, pinnedVal, block.Progress, recurVal, commentsByTask[block.ID], linksCount, createdAtVal, completedAtVal, manualOrderVal, modifiedAtVal, estimateMinsVal, subtaskTotalByTask[block.ID], subtaskDoneByTask[block.ID])
 				if err != nil {
 					return 0, skipped, fmt.Errorf("failed to insert task for block %s: %w", block.ID, err)
 				}

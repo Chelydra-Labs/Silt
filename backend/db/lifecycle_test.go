@@ -153,3 +153,116 @@ func TestIndex_LifecycleRecoveryFromMarkdown(t *testing.T) {
 		t.Errorf("TaskResult.ManualOrder drift: got %d", r.ManualOrder)
 	}
 }
+
+// TestIndexFileBlocks_ModifiedEstimateSubtasks verifies [modified::],
+// [estimate::] minutes projection, descendant comments_count, and direct
+// subtask_total/subtask_done rollups (#434/#439/#440).
+func TestIndexFileBlocks_ModifiedEstimateSubtasks(t *testing.T) {
+	dm := newTestDB(t)
+
+	parentID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	childDone := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	childTodo := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	noteDirect := "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	noteNested := "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+	noteOnNote := "ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+	parent := sampleTaskBlock(parentID, 1)
+	parent.ModifiedAt = "2026-07-06T10:00:00"
+	parent.Estimate = "2h"
+
+	subDone := sampleTaskBlock(childDone, 2)
+	subDone.ParentID = parentID
+	subDone.Status = "DONE"
+	subDone.Depth = 1
+
+	subTodo := sampleTaskBlock(childTodo, 3)
+	subTodo.ParentID = parentID
+	subTodo.Status = "TODO"
+	subTodo.Depth = 1
+
+	// Direct NOTE under parent.
+	n1 := sampleNoteBlock(noteDirect, 4)
+	n1.ParentID = parentID
+	n1.Depth = 1
+
+	// Nested reply: NOTE under NOTE under parent — still counts as comment.
+	n2 := sampleNoteBlock(noteNested, 5)
+	n2.ParentID = noteDirect
+	n2.Depth = 2
+
+	// Another nested level under n2.
+	n3 := sampleNoteBlock(noteOnNote, 6)
+	n3.ParentID = noteNested
+	n3.Depth = 3
+
+	// Sibling task with invalid estimate → NULL minutes.
+	lonely := sampleTaskBlock("11111111-1111-1111-1111-111111111111", 7)
+	lonely.Estimate = "not-a-duration"
+	lonely.ModifiedAt = ""
+
+	blocks := []parser.ParsedBlock{parent, subDone, subTodo, n1, n2, n3, lonely}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	var modified sql.NullString
+	var estMins sql.NullInt64
+	var comments, subTotal, subDoneCount int
+	if err := dm.SQLDB().QueryRow(
+		`SELECT modified_at, estimate_minutes, comments_count, subtask_total, subtask_done
+		 FROM tasks WHERE block_id = ?`, parentID,
+	).Scan(&modified, &estMins, &comments, &subTotal, &subDoneCount); err != nil {
+		t.Fatalf("select parent: %v", err)
+	}
+	if !modified.Valid || modified.String != "2026-07-06T10:00:00" {
+		t.Errorf("modified_at=%v want 2026-07-06T10:00:00", modified)
+	}
+	if !estMins.Valid || estMins.Int64 != 120 {
+		t.Errorf("estimate_minutes=%v want 120", estMins)
+	}
+	if comments != 3 {
+		t.Errorf("comments_count=%d want 3 (descendant NOTES)", comments)
+	}
+	if subTotal != 2 {
+		t.Errorf("subtask_total=%d want 2", subTotal)
+	}
+	if subDoneCount != 1 {
+		t.Errorf("subtask_done=%d want 1", subDoneCount)
+	}
+
+	// Invalid estimate → NULL minutes; empty modified → NULL.
+	var lonelyMod sql.NullString
+	var lonelyEst sql.NullInt64
+	if err := dm.SQLDB().QueryRow(
+		`SELECT modified_at, estimate_minutes FROM tasks WHERE block_id = ?`,
+		"11111111-1111-1111-1111-111111111111",
+	).Scan(&lonelyMod, &lonelyEst); err != nil {
+		t.Fatalf("select lonely: %v", err)
+	}
+	if lonelyMod.Valid {
+		t.Errorf("expected NULL modified_at, got %q", lonelyMod.String)
+	}
+	if lonelyEst.Valid {
+		t.Errorf("expected NULL estimate_minutes for invalid raw, got %d", lonelyEst.Int64)
+	}
+
+	// Query path hydrates TaskResult fields.
+	results, err := dm.QueryTasksWithFilters(parser.TaskQueryFilter{BlockIDs: []string{parentID}})
+	if err != nil {
+		t.Fatalf("QueryTasksWithFilters: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	r := results[0]
+	if r.ModifiedAt != "2026-07-06T10:00:00" {
+		t.Errorf("TaskResult.ModifiedAt=%q", r.ModifiedAt)
+	}
+	if r.EstimateMinutes != 120 {
+		t.Errorf("TaskResult.EstimateMinutes=%d want 120", r.EstimateMinutes)
+	}
+	if r.SubtaskTotal != 2 || r.SubtaskDone != 1 {
+		t.Errorf("TaskResult subtasks total=%d done=%d", r.SubtaskTotal, r.SubtaskDone)
+	}
+}

@@ -327,6 +327,31 @@ func (a *App) PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate stri
 	return true, nil
 }
 
+// PluginSetTaskEstimate rewrites a task's [estimate::] duration token on disk
+// (#439). Pass the empty string to clear the estimate. Non-empty values must
+// parse via parser.ParseEstimateMinutes (m/h/d units) so invalid durations
+// never reach the file. Gated by content-mutate; session-token verified.
+func (a *App) PluginSetTaskEstimate(pluginID, sessionToken, blockID, estimate string) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
+	estimate = strings.TrimSpace(estimate)
+	if estimate != "" {
+		if _, ok := parser.ParseEstimateMinutes(estimate); !ok {
+			return false, fmt.Errorf("invalid estimate %q (want e.g. 30m, 2h, 1d, or empty to clear)", estimate)
+		}
+	}
+	if err := a.mutateTaskBlock(blockID, "PluginSetTaskEstimate", func(b *parser.ParsedBlock) {
+		b.Estimate = estimate
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // GetPluginRegistry returns the `plugins:` block of .system/config.yaml from
 // the in-memory config (the single source of truth maintained by the config
 // package + hot-reload watcher), so callers never re-read the file.

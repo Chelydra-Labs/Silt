@@ -131,7 +131,7 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		SELECT b.id, b.parent_id, b.depth, b.type, b.raw_content, b.clean_content, b.line_number,
 		       b.file_date,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
-		       t.created_at, t.completed_at, t.manual_order
+		       t.created_at, t.completed_at, t.manual_order, t.modified_at, t.estimate_minutes
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
 		WHERE b.source = ? AND b.notebook = ? AND b.section = ? AND b.page = ?
@@ -149,10 +149,10 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		var parentID sql.NullString
 		var status, owner, start, due string
 		var priority int
-		var createdAt, completedAt sql.NullString
-		var manualOrder sql.NullInt64
+		var createdAt, completedAt, modifiedAt sql.NullString
+		var manualOrder, estimateMinutes sql.NullInt64
 
-		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder); err != nil {
+		if err := rows.Scan(&b.ID, &parentID, &b.Depth, &bType, &b.RawText, &b.CleanText, &b.LineNumber, &fileDate, &status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder, &modifiedAt, &estimateMinutes); err != nil {
 			return nil, err
 		}
 		if parentID.Valid {
@@ -178,6 +178,14 @@ func (dm *DatabaseManager) FetchPageBlocks(source, notebook, section, page strin
 		if manualOrder.Valid {
 			b.ManualOrder = int(manualOrder.Int64)
 		}
+		// [modified::] / [estimate::] (#439/#440): minutes are the cache;
+		// FormatEstimateMinutes is best-effort for re-render from DB.
+		if modifiedAt.Valid {
+			b.ModifiedAt = modifiedAt.String
+		}
+		if estimateMinutes.Valid {
+			b.Estimate = parser.FormatEstimateMinutes(int(estimateMinutes.Int64))
+		}
 		blocks = append(blocks, b)
 	}
 	if err := rows.Err(); err != nil {
@@ -195,7 +203,8 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	defer release()
 	baseQuery := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
-		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned, t.recur, t.created_at, t.completed_at, t.manual_order
+		       t.status, t.owner, t.start_date, t.due_date, t.priority, t.pinned, t.recur, t.created_at, t.completed_at, t.manual_order,
+		       t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done
 		FROM blocks b
 		INNER JOIN tasks t ON b.id = t.block_id
 		WHERE 1=1
@@ -263,12 +272,13 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		var status, owner, start, due, recur interface{}
 		var priority int
 		var pinned sql.NullInt64
-		var createdAt, completedAt interface{}
-		var manualOrder sql.NullInt64
+		var createdAt, completedAt, modifiedAt interface{}
+		var manualOrder, estimateMinutes, subtaskTotal, subtaskDone sql.NullInt64
 
 		err := rows.Scan(
 			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
 			&status, &owner, &start, &due, &priority, &pinned, &recur, &createdAt, &completedAt, &manualOrder,
+			&modifiedAt, &estimateMinutes, &subtaskTotal, &subtaskDone,
 		)
 		if err != nil {
 			return nil, err
@@ -310,6 +320,20 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		}
 		if manualOrder.Valid {
 			r.ManualOrder = int(manualOrder.Int64)
+		}
+		// [modified::] / estimate_minutes / subtask rollups (#439/#440/#434).
+		if s, ok := modifiedAt.(string); ok {
+			r.ModifiedAt = s
+		}
+		if estimateMinutes.Valid {
+			r.EstimateMinutes = int(estimateMinutes.Int64)
+			r.Estimate = parser.FormatEstimateMinutes(r.EstimateMinutes)
+		}
+		if subtaskTotal.Valid {
+			r.SubtaskTotal = int(subtaskTotal.Int64)
+		}
+		if subtaskDone.Valid {
+			r.SubtaskDone = int(subtaskDone.Int64)
 		}
 
 		results = append(results, r)
@@ -519,7 +543,7 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 	query := `
 		SELECT b.id, b.parent_id, b.source, b.notebook, b.section, b.page, b.file_date, b.depth, b.raw_content, b.clean_content, b.line_number,
 		       COALESCE(t.status, ''), COALESCE(t.owner, ''), COALESCE(t.start_date, ''), COALESCE(t.due_date, ''), COALESCE(t.priority, 0),
-		       t.created_at, t.completed_at, t.manual_order
+		       t.created_at, t.completed_at, t.manual_order, t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done
 		FROM blocks b
 		LEFT JOIN tasks t ON b.id = t.block_id
 		WHERE b.id IN (SELECT block_id FROM tags WHERE raw_path = ? OR raw_path LIKE ?)
@@ -538,11 +562,11 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 		var parentID sql.NullString
 		var status, owner, start, due string
 		var priority int
-		var createdAt, completedAt sql.NullString
-		var manualOrder sql.NullInt64
+		var createdAt, completedAt, modifiedAt sql.NullString
+		var manualOrder, estimateMinutes, subtaskTotal, subtaskDone sql.NullInt64
 		if err := rows.Scan(
 			&r.ID, &parentID, &r.Source, &r.Notebook, &r.Section, &r.Page, &r.FileDate, &r.Depth, &r.RawContent, &r.CleanContent, &r.LineNumber,
-			&status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder,
+			&status, &owner, &start, &due, &priority, &createdAt, &completedAt, &manualOrder, &modifiedAt, &estimateMinutes, &subtaskTotal, &subtaskDone,
 		); err != nil {
 			return nil, err
 		}
@@ -562,6 +586,19 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 		}
 		if manualOrder.Valid {
 			r.ManualOrder = int(manualOrder.Int64)
+		}
+		if modifiedAt.Valid {
+			r.ModifiedAt = modifiedAt.String
+		}
+		if estimateMinutes.Valid {
+			r.EstimateMinutes = int(estimateMinutes.Int64)
+			r.Estimate = parser.FormatEstimateMinutes(r.EstimateMinutes)
+		}
+		if subtaskTotal.Valid {
+			r.SubtaskTotal = int(subtaskTotal.Int64)
+		}
+		if subtaskDone.Valid {
+			r.SubtaskDone = int(subtaskDone.Int64)
 		}
 		results = append(results, r)
 	}

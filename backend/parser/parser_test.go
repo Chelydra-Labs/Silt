@@ -535,25 +535,23 @@ func TestParseLine_UnknownTokens(t *testing.T) {
 		}
 	})
 	t.Run("multiple unknown tokens round-trip through render", func(t *testing.T) {
+		// [estimate::] is first-class (#439); only [project::] is ExtraTokens.
 		line := "- [ ] Task [project:: alpha] [estimate:: 3h] [priority:: 1] <!-- id: 88888888-8888-8888-8888-888888888888 -->"
 		parsed, _, _ := ParseLine(line, 1, 4)
+		if parsed.Estimate != "3h" {
+			t.Errorf("expected Estimate=3h (first-class), got %q", parsed.Estimate)
+		}
 		rendered := renderBlock(parsed, 4)
 		// Re-parse the rendered output.
 		parsed2, _, _ := ParseLine(rendered, 1, 4)
-		if len(parsed2.ExtraTokens) != 2 {
-			t.Fatalf("expected 2 extra tokens after round-trip, got %d: %v", len(parsed2.ExtraTokens), parsed2.ExtraTokens)
+		if len(parsed2.ExtraTokens) != 1 {
+			t.Fatalf("expected 1 extra token after round-trip, got %d: %v", len(parsed2.ExtraTokens), parsed2.ExtraTokens)
 		}
-		// Both unknown tokens preserved verbatim.
-		expectExtra := map[string]bool{"[project:: alpha]": false, "[estimate:: 3h]": false}
-		for _, tok := range parsed2.ExtraTokens {
-			if _, ok := expectExtra[tok]; ok {
-				expectExtra[tok] = true
-			}
+		if parsed2.ExtraTokens[0] != "[project:: alpha]" {
+			t.Errorf("expected '[project:: alpha]', got %q", parsed2.ExtraTokens[0])
 		}
-		for tok, found := range expectExtra {
-			if !found {
-				t.Errorf("extra token %q missing after round-trip; got %v", tok, parsed2.ExtraTokens)
-			}
+		if parsed2.Estimate != "3h" {
+			t.Errorf("expected Estimate=3h after round-trip, got %q", parsed2.Estimate)
 		}
 		// Known token still parsed correctly.
 		if parsed2.Priority != 1 {

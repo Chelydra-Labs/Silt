@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"silt/backend/db"
 	"silt/backend/parser"
@@ -127,6 +128,9 @@ func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedB
 			for i := range parsedBlocks {
 				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
 					mutate(&parsedBlocks[i])
+					// [modified::] stamp (#440): every single-field task write
+					// touches the task line; stamp local ISO time after mutate.
+					parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
 					found = true
 					break
 				}

@@ -183,6 +183,8 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 					}
 					wasDone := parsedBlocks[i].Status == "DONE"
 					parsedBlocks[i].Status = newState
+					// [modified::] stamp (#440): status change is a task-line touch.
+					parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
 					// [completed::] lifecycle stamp (#417): set when entering
 					// DONE from a non-DONE state, clear when leaving DONE
 					// (reopen), overwrite on re-complete. The token carries
@@ -504,6 +506,10 @@ func (a *App) MutateBlock(blockID, newText string) error {
 			for i := range parsedBlocks {
 				if parsedBlocks[i].ID == blockID {
 					parsedBlocks[i].CleanText = cleanText
+					// [modified::] stamp (#440): body edit on a TASK line.
+					if parsedBlocks[i].Type == parser.BlockTask {
+						parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
+					}
 					found = true
 					break
 				}
