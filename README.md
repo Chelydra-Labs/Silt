@@ -84,7 +84,7 @@ Each concern in Silt has a single source of truth. Refer to these documents for 
      ./Silt-*.AppImage
      ```
    - **Debian / Ubuntu Package:**
-     Install via `apt` (which resolves required webview dependencies like WebKit2GTK):
+      Install via `apt` (which resolves required webview dependencies like WebKitGTK):
      ```bash
      sudo apt install ./silt_*_debian_amd64.deb
      ```

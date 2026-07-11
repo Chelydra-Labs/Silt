@@ -54,8 +54,8 @@ tasks:
       - task: common:generate:icons
       - task: generate:dotdesktop
     preconditions:
-      - sh: 'pkg-config --exists webkit2gtk-4.1 gtk+-3.0'
-        msg: "WebKit2GTK 4.1 + GTK 3 dev packages are required for the gtk3 build tag. Debian/Ubuntu: sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev. (build-linux.sh checks the same stack.)"
+      - sh: 'pkg-config --exists webkitgtk-6.0 gtk4'
+        msg: "WebKitGTK 6.0 + GTK 4 dev packages are required (the wails3 v3 default Linux stack). Debian/Ubuntu: sudo apt install libwebkitgtk-6.0-dev libgtk-4-dev."
       - sh: '{{if eq .OBFUSCATED "true"}}command -v garble >/dev/null 2>&1{{else}}true{{end}}'
         msg: "garble is required for obfuscated builds. Install it with: go install mvdan.cc/garble@v0.16.0 (requires Go 1.24+). See https://github.com/burrowers/garble/releases for version/toolchain compatibility."
     cmds:
@@ -107,7 +107,7 @@ tasks:
       The single Linux packaging source of truth. Produces the .deb and the
       .AppImage that releases ship; .rpm/.archlinux are available as standalone
       create:rpm / create:aur tasks for anyone who wants them. Threads EXTRA_TAGS
-      (e.g. EXTRA_TAGS=gtk3) through to the native Go build.
+      through to the native Go build.
     deps:
       - task: build
     cmds:

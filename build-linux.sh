@@ -6,10 +6,10 @@
 # build + .deb + .AppImage. Produces two artifacts:
 #   1) AppImage — single self-contained executable (no install required).
 #   2) .deb     — Debian/Ubuntu package (apt install, desktop menu, icon, and a
-#                 libwebkit2gtk-4.1 dependency declared via nfpm).
+#                 libwebkitgtk-6.0 dependency declared via nfpm).
 #
-# Both artifacts rely on the host providing libwebkit2gtk-4.1 (the GTK3 + WebKit2GTK
-# 4.1 stack that wails3 v3's `gtk3` build tag links against). Bundling webkit
+# Both artifacts rely on the host providing libwebkitgtk-6.0 (the GTK4 +
+# WebKitGTK 6.0 stack that wails3 v3 builds against by default). Bundling webkit
 # would bloat the packages and is intentionally avoided.
 #
 # Usage:  ./build-linux.sh            # prompt: bump patch version? (y/N)
@@ -75,11 +75,11 @@ check_tool npm
 check_tool wails3
 check_tool gcc
 
-# webkit2gtk-4.1 is required: wails3 v3's GTK3 stack (the `gtk3` build tag)
-# pkg-configs gtk+-3.0 + webkit2gtk-4.1, and webkit2gtk-4.0 is not supported.
-if ! pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
-    log_error "webkit2gtk-4.1 not found. Install the dev package, e.g.:"
-    log_error "  Ubuntu 24.04: sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev"
+# webkitgtk-6.0 (GTK4) is required: wails3 v3's default Linux stack pkg-configs
+# gtk4 + webkitgtk-6.0. Ubuntu 24.04+ / Debian 13 / Fedora 39+ ship it natively.
+if ! pkg-config --exists webkitgtk-6.0 2>/dev/null; then
+    log_error "webkitgtk-6.0 not found. Install the dev package, e.g.:"
+    log_error "  Ubuntu 24.04: sudo apt install libwebkitgtk-6.0-dev libgtk-4-dev"
     exit 1
 fi
 
@@ -134,12 +134,12 @@ NODE_PATH="$ROOT/frontend/node_modules" node "$ROOT/scripts/generate-icon.mjs" \
 rm -rf "$ROOT/build/bin"
 
 # The v3 linux Taskfile is the single packaging source of truth: it builds
-# (linux:build:native), then creates the .AppImage + .deb. EXTRA_TAGS=gtk3
-# selects the GTK3 + WebKit2GTK 4.1 stack (the only GTK3 variant in wails3 v3).
-# VERSION + GOARCH are exported so nfpm can interpolate them in the .deb.
-# GOARCH defaults to the host arch so the .deb's arch metadata matches the
-# binary the native build actually produced (the Taskfile's build:native
-# targets the host ARCH). Override with GOARCH=... for cross-arch packaging.
+# (linux:build:native against the default GTK4 + WebKitGTK 6.0 stack), then
+# creates the .AppImage + .deb. VERSION + GOARCH are exported so nfpm can
+# interpolate them in the .deb. GOARCH defaults to the host arch so the .deb's
+# arch metadata matches the binary the native build actually produced (the
+# Taskfile's build:native targets the host ARCH). Override with GOARCH=... for
+# cross-arch packaging.
 log_info "Building + packaging (.AppImage + .deb) with Wails v3 linux Taskfile..."
 case "$(uname -m)" in
   aarch64|arm64) DEFAULT_GOARCH=arm64 ;;
@@ -147,7 +147,7 @@ case "$(uname -m)" in
 esac
 export VERSION
 export GOARCH="${GOARCH:-$DEFAULT_GOARCH}"
-wails3 task linux:package EXTRA_TAGS=gtk3
+wails3 task linux:package
 
 # --- collect artifacts into the distribution directory ---
 BUILD_DIR="$DIST_DIR/v${VERSION}"

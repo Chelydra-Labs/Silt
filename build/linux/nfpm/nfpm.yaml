@@ -4,10 +4,9 @@
 # `wails3 task linux:package` rather than rolling its own dpkg-deb/appimagetool.
 # See https://nfpm.goreleaser.com for the schema.
 #
-# Stack: GTK3 + WebKit2GTK 4.1 (the v3 `gtk3` build tag, passed as
-# EXTRA_TAGS=gtk3 by build-linux.sh). wails3 v3's gtk3 path pkg-configs
-# webkit2gtk-4.1 specifically — webkit2gtk-4.0 is not supported — and Ubuntu
-# 24.04+ ships 4.1 only. The runtime deps below mirror that.
+# Stack: GTK4 + WebKitGTK 6.0 (the wails3 v3 default Linux stack; build:native
+# compiles without the `gtk3` tag, which links webkitgtk-6.0). Ubuntu 24.04+ /
+# Debian 13 / Fedora 39+ ship it natively. The runtime deps below mirror that.
 
 name: "silt"
 arch: ${GOARCH}
@@ -30,21 +29,21 @@ contents:
   - src: "./build/linux/silt.desktop"
     dst: "/usr/share/applications/silt.desktop"
 
-# GTK3 + WebKit2GTK 4.1 runtime deps — match the `gtk3` build tag.
+# GTK4 + WebKitGTK 6.0 runtime deps — match the default wails3 v3 Linux build.
 depends:
-  - libgtk-3-0
-  - libwebkit2gtk-4.1-0
+  - libgtk-4-1
+  - libwebkitgtk-6.0-4
 
-# Distribution-specific package names for the same GTK3 + WebKit2GTK 4.1 stack.
+# Distribution-specific package names for the same GTK4 + WebKitGTK 6.0 stack.
 overrides:
   rpm:
     depends:
-      - gtk3
-      - webkit2gtk4.1
+      - gtk4
+      - webkitgtk6.0
   archlinux:
     depends:
-      - gtk3
-      - webkit2gtk-4.1
+      - gtk4
+      - webkitgtk-6.0
 
 # Refresh the desktop database after install so the menu entry appears.
 scripts:
