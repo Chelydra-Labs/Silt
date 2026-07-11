@@ -497,7 +497,8 @@
         owners: [...s.filters.owners],
         priorities: [...s.filters.priorities],
         dueDate: s.filters.dueDate,
-        tags: [...s.filters.tags]
+        tags: [...s.filters.tags],
+        stale: s.filters.stale
       },
       calendarSubMode: s.calendarSubMode,
       columns: [...s.columns],

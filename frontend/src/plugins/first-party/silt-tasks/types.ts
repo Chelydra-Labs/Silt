@@ -46,6 +46,21 @@ export interface TaskDetail {
   created_at: string
   completed_at: string
   manual_order: number
+  // Last-touched stamp from [modified::] (#440). Empty when unknown/absent.
+  modified_at: string
+  // Duration from [estimate::] in whole minutes (#439). null when absent or
+  // unparseable — never coerce missing to 0 (0 would look like "0m").
+  estimate_minutes: number | null
+  // Cached child-task rollups (#434). 0 when the task has no subtasks.
+  subtask_total: number
+  subtask_done: number
+}
+
+/** Format a sum of estimate minutes for section/column headers (e.g. "6.5h"). */
+export function formatEstimateSum(mins: number): string {
+  if (mins <= 0) return ''
+  if (mins % 60 === 0) return `${mins / 60}h`
+  return `${(mins / 60).toFixed(1)}h`
 }
 
 export const PRIORITY_LABELS: Record<number, string> = {

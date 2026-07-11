@@ -178,6 +178,10 @@ function row(p: Partial<Record<string, unknown>>): Record<string, unknown> {
     created_at: '',
     completed_at: '',
     manual_order: 0,
+    modified_at: '',
+    estimate_minutes: null,
+    subtask_total: 0,
+    subtask_done: 0,
     tags: '',
     is_blocked: 0,
     ...p

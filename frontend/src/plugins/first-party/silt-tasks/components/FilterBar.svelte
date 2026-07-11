@@ -124,7 +124,9 @@
     { value: 'priority', label: 'Priority', icon: 'flag' },
     { value: 'title', label: 'Title', icon: 'title' },
     { value: 'created', label: 'Created', icon: 'calendar_today' },
-    { value: 'owner', label: 'Owner', icon: 'person' }
+    { value: 'owner', label: 'Owner', icon: 'person' },
+    { value: 'modified', label: 'Recently Modified', icon: 'update' },
+    { value: 'estimate', label: 'Estimate', icon: 'timer' }
   ]
 
   function toggleOwner(o: string) {
@@ -155,8 +157,17 @@
       tags: has ? filters.tags.filter((x) => x !== t) : [...filters.tags, t]
     })
   }
+  function toggleStale() {
+    onFiltersChange({ ...filters, stale: !filters.stale })
+  }
   function clearAll() {
-    onFiltersChange({ owners: [], priorities: [], dueDate: '', tags: [] })
+    onFiltersChange({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      stale: false
+    })
   }
 
   function handlePopoverKeydown(e: KeyboardEvent) {
@@ -209,7 +220,8 @@
     (filters.owners.length ? 1 : 0) +
       (filters.priorities.length ? 1 : 0) +
       (filters.dueDate ? 1 : 0) +
-      (filters.tags.length ? 1 : 0)
+      (filters.tags.length ? 1 : 0) +
+      (filters.stale ? 1 : 0)
   )
 
   function dueLabel(): string {
@@ -584,6 +596,20 @@
       </div>
     {/if}
   </div>
+
+  <!-- Stale chip (#440): open tasks untouched for 30+ days -->
+  <button
+    type="button"
+    data-testid="filter-stale-toggle"
+    onclick={toggleStale}
+    aria-pressed={!!filters.stale}
+    class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {filters.stale
+      ? 'border-accent-primary-start/40 text-text-primary'
+      : ''}"
+  >
+    <span class="material-symbols-outlined text-icon-sm">history</span>
+    <span>Stale (30d)</span>
+  </button>
 
   <!-- Tags chip -->
   <div class="relative">

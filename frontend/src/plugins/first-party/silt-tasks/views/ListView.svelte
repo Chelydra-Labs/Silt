@@ -20,7 +20,7 @@
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
-  import type { TaskDetail } from '../types'
+  import { formatEstimateSum, type TaskDetail } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import { getTaskHubState, type GroupBy, type SortMode } from '../state.svelte'
@@ -79,6 +79,7 @@
                   t.priority, t.pinned, t.progress,
                   t.recur AS recurrence, t.comments_count, t.links_count,
                   t.created_at, t.completed_at, t.manual_order,
+                  t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done,
                   (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags,
                   (SELECT GROUP_CONCAT(blocked_by_id, '|') FROM task_dependencies WHERE block_id = b.id) AS blocked_by,
                   EXISTS (
@@ -106,7 +107,12 @@
           pinned: !!r.pinned,
           created_at: r.created_at ?? '',
           completed_at: r.completed_at ?? '',
-          manual_order: r.manual_order ?? 0
+          manual_order: r.manual_order ?? 0,
+          modified_at: r.modified_at ?? '',
+          estimate_minutes:
+            r.estimate_minutes == null ? null : Number(r.estimate_minutes),
+          subtask_total: r.subtask_total ?? 0,
+          subtask_done: r.subtask_done ?? 0
         })
       )
       doneItems = (doneRes.rows as unknown as CompletedTaskItem[]) ?? []
@@ -206,6 +212,14 @@
       const itemTags = (item.tags ?? '').split('|').filter(Boolean)
       if (!s.filters.tags.some((t) => itemTags.includes(t))) return false
     }
+    // Stale filter (#440): open tasks with no modified_at or last touch
+    // older than 30 local days. ListView only loads open rows, so status
+    // is already non-DONE.
+    if (s.filters.stale) {
+      const cutoff = plusDaysISO(today, -30)
+      const mod = (item.modified_at ?? '').slice(0, 10)
+      if (mod && mod >= cutoff) return false
+    }
     return true
   }
 
@@ -290,6 +304,23 @@
         if (ao !== bo) return ao.localeCompare(bo)
         break
       }
+      case 'modified': {
+        // Recently modified first; empty/null as oldest.
+        const am = a.modified_at || '0000'
+        const bm = b.modified_at || '0000'
+        if (am !== bm) return bm.localeCompare(am)
+        break
+      }
+      case 'estimate': {
+        // Null estimates last; then ascending minutes.
+        const ae = a.estimate_minutes
+        const be = b.estimate_minutes
+        const aNull = ae == null
+        const bNull = be == null
+        if (aNull !== bNull) return aNull ? 1 : -1
+        if (!aNull && !bNull && ae !== be) return ae - be
+        break
+      }
       case 'dueDate':
       default:
         // Fall through to the due-date tiebreaker below.
@@ -302,6 +333,12 @@
 
   function sortRows(rows: TaskDetail[]): TaskDetail[] {
     return [...rows].sort(rowCompare)
+  }
+
+  function sectionEstimateLabel(items: TaskDetail[]): string {
+    const sum = items.reduce((acc, t) => acc + (t.estimate_minutes ?? 0), 0)
+    if (sum <= 0) return ''
+    return `${formatEstimateSum(sum)} estimated`
   }
 
   // Generalized grouping for status/owner/priority/tag/notebook/section/page.
@@ -668,6 +705,14 @@
     >
       <span class="material-symbols-outlined text-icon-md">edit_note</span>
     </button>
+    {#if item.subtask_total > 0}
+      <span
+        class="text-type-2xs text-text-muted font-label-sm flex-shrink-0"
+        data-testid={`tasks-subtask-badge-${item.id}`}
+        title={`${item.subtask_done} of ${item.subtask_total} subtasks done`}
+        >[{item.subtask_done}/{item.subtask_total}]</span
+      >
+    {/if}
     {#if item.owner}
       <span
         class="text-type-2xs text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded px-1.5 py-0.5"
@@ -789,6 +834,14 @@
                 >
                   {group.list.length}
                 </span>
+                {#if sectionEstimateLabel(group.list)}
+                  <span
+                    class="text-text-muted/60 normal-case tracking-normal font-label-sm"
+                    data-testid="tasks-group-estimate"
+                  >
+                    · {sectionEstimateLabel(group.list)}
+                  </span>
+                {/if}
               </h2>
               <div class="space-y-1">
                 {#each group.list as item (item.id)}
@@ -837,6 +890,15 @@
                 <span class="text-text-muted/60" aria-hidden="true"
                   >{group.items.length}</span
                 >
+                {#if sectionEstimateLabel(group.items)}
+                  <span
+                    class="text-text-muted/60 normal-case tracking-normal font-label-sm"
+                    data-testid="tasks-group-estimate"
+                    aria-hidden="true"
+                  >
+                    · {sectionEstimateLabel(group.items)}
+                  </span>
+                {/if}
               </button>
             </h2>
             {#if !collapsedSections.has(group.key)}

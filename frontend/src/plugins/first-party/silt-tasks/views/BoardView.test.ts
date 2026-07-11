@@ -178,6 +178,10 @@ function row(p: Partial<Record<string, unknown>>): Record<string, unknown> {
     created_at: '',
     completed_at: '',
     manual_order: 0,
+    modified_at: '',
+    estimate_minutes: null,
+    subtask_total: 0,
+    subtask_done: 0,
     tags: '',
     is_blocked: 0,
     ...p
@@ -1047,6 +1051,32 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(sql).toContain("t.status != 'DONE'")
     expect(sql).toContain('t.due_date = ?')
     expect(params).toContain(TODAY)
+  })
+
+  it('shows subtask badge and column estimate sum when present (#434/#439)', async () => {
+    await renderBoard('status', [
+      row({
+        id: 't1',
+        status: 'TODO',
+        clean_content: 'Parent',
+        subtask_total: 4,
+        subtask_done: 2,
+        estimate_minutes: 120
+      }),
+      row({
+        id: 't2',
+        status: 'TODO',
+        clean_content: 'Sibling',
+        estimate_minutes: 60
+      })
+    ])
+    expect(screen.getByTestId('board-subtask-badge-t1').textContent).toContain(
+      '[2/4]'
+    )
+    // 120 + 60 = 180m → 3h estimated on the TODO column.
+    expect(
+      screen.getByTestId('board-col-estimate-status-TODO').textContent
+    ).toMatch(/3h estimated/)
   })
 
   // #458: a column-shell skeleton renders while the board is loading (replaces

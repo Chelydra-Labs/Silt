@@ -24,8 +24,13 @@
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
-  import type { TaskDetail } from '../types'
-  import { PRIORITY_LABELS, laneLabel, priorityClass } from '../types'
+  import {
+    formatEstimateSum,
+    PRIORITY_LABELS,
+    laneLabel,
+    priorityClass,
+    type TaskDetail
+  } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import {
@@ -474,6 +479,10 @@
     }))
   }
 
+  function columnEstimateSum(items: TaskDetail[]): number {
+    return items.reduce((acc, c) => acc + (c.estimate_minutes ?? 0), 0)
+  }
+
   function rebin() {
     columns = deriveColumns(rows, groupBy, statusColumns, today)
   }
@@ -504,7 +513,12 @@
         pinned: !!r.pinned,
         created_at: r.created_at ?? '',
         completed_at: r.completed_at ?? '',
-        manual_order: r.manual_order ?? 0
+        manual_order: r.manual_order ?? 0,
+        modified_at: r.modified_at ?? '',
+        estimate_minutes:
+          r.estimate_minutes == null ? null : Number(r.estimate_minutes),
+        subtask_total: r.subtask_total ?? 0,
+        subtask_done: r.subtask_done ?? 0
       }))
       rebin()
       // Keep the open drawer in sync with fresh data; if the task left the
@@ -537,6 +551,7 @@
     void filters.priorities
     void filters.dueDate
     void filters.tags
+    void filters.stale
     void reload()
   })
 
@@ -1042,6 +1057,15 @@
                   class="bg-hover text-text-muted text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm"
                   >{cards.length}</span
                 >
+                {#if columnEstimateSum(cards) > 0}
+                  <span
+                    class="text-text-muted/60 text-type-2xs font-label-sm truncate"
+                    data-testid={`board-col-estimate-${col.key}`}
+                    title={`${formatEstimateSum(columnEstimateSum(cards))} estimated`}
+                  >
+                    {formatEstimateSum(columnEstimateSum(cards))} estimated
+                  </span>
+                {/if}
               </div>
               <div class="relative shrink-0 flex items-center">
                 {#if canManage}
@@ -1169,6 +1193,15 @@
                   {/if}
                   <div class="flex justify-between items-center gap-2">
                     <div class="flex items-center gap-1.5">
+                      {#if card.subtask_total > 0}
+                        <span
+                          class="text-type-3xs text-text-muted font-label-sm"
+                          data-testid={`board-subtask-badge-${card.id}`}
+                          title={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
+                        >
+                          [{card.subtask_done}/{card.subtask_total}]
+                        </span>
+                      {/if}
                       {#if card.owner}
                         <span
                           class="text-type-3xs text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded-sm px-1.5 py-0.5 font-label-sm"

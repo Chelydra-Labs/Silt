@@ -112,6 +112,7 @@ export function viewMatchesState(view: SavedView, s: TaskHubState): boolean {
       !arrayEqual(view.filters.tags, s.filters.tags)
     )
       return false
+    if (!!view.filters.stale !== !!s.filters.stale) return false
   }
   return true
 }

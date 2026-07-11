@@ -154,6 +154,18 @@
   let titleState = $state('')
   let titleDraft = $state('')
   let titlePending = $state(false)
+  // Estimate draft is the raw [estimate::] string (e.g. "2h"); empty clears.
+  let estimateDraft = $state('')
+  let estimatePending = $state(false)
+
+  /** Format minutes for the estimate input; hide missing/zero. */
+  function formatEstimateDraft(mins: number | null | undefined): string {
+    if (mins == null || mins <= 0) return ''
+    if (mins % 480 === 0) return `${mins / 480}d`
+    if (mins % 60 === 0) return `${mins / 60}h`
+    if (mins % 30 === 0 && mins > 60) return `${mins / 60}h`
+    return `${mins}m`
+  }
 
   // Pending DONE-on-blocked confirmation (#302). Picking DONE on a task with
   // open prerequisites pauses here and renders the shared BlockedDoneDialog
@@ -192,6 +204,7 @@
     void task?.priority
     void task?.tags
     void task?.clean_content
+    void task?.estimate_minutes
     // Guard each mirror with its pending flag (via untrack so the flag
     // doesn't become a dependency) — a reload during an in-flight edit
     // mustn't clobber the optimistic value. Without untrack, the pending
@@ -220,6 +233,9 @@
     if (untrack(() => !titlePending)) {
       titleState = task?.clean_content ?? ''
       titleDraft = task?.clean_content ?? ''
+    }
+    if (untrack(() => !estimatePending)) {
+      estimateDraft = formatEstimateDraft(task?.estimate_minutes)
     }
     metaError = ''
   })
@@ -500,6 +516,29 @@
     panelRef
       ?.querySelector<HTMLElement>(`[data-status="${statusState}"]`)
       ?.focus()
+  }
+
+  // --- Estimate editor (#439) ---
+  // Commit on blur/Enter. Empty string clears the estimate. The backend
+  // validates m/h/d grammar; invalid input reverts the draft.
+  async function commitEstimate() {
+    if (!task || estimatePending) return
+    const trimmed = estimateDraft.trim()
+    const prev = formatEstimateDraft(task.estimate_minutes)
+    if (trimmed === prev) return
+    const prevDraft = estimateDraft
+    estimateDraft = trimmed
+    estimatePending = true
+    metaError = ''
+    try {
+      await ctx.setTaskEstimate(task.id, trimmed)
+      onMetaChanged?.()
+    } catch (e) {
+      estimateDraft = prevDraft
+      metaError = errMsg(e)
+    } finally {
+      estimatePending = false
+    }
   }
 
   // --- Owner editor (#412) ---
@@ -962,9 +1001,15 @@
           >
             Progress
           </h3>
-          <span class="text-type-xs font-label-sm text-text-primary"
-            >{progressState}%</span
-          >
+          <span class="text-type-xs font-label-sm text-text-primary">
+            {progressState}%{#if task.subtask_total > 0}
+              <span
+                class="text-text-muted ml-1"
+                data-testid="task-subtask-count"
+                >[{task.subtask_done}/{task.subtask_total}]</span
+              >
+            {/if}
+          </span>
         </div>
         <input
           type="range"
@@ -990,6 +1035,43 @@
             style="width: {progressState}%"
           ></div>
         </div>
+      </section>
+
+      <!-- Estimate (#439) -->
+      <section>
+        <div class="flex items-center justify-between gap-2 mb-1">
+          <h3
+            class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
+          >
+            <label for="task-estimate-input">Estimate</label>
+          </h3>
+          <input
+            id="task-estimate-input"
+            type="text"
+            data-testid="task-estimate-input"
+            class="w-28 px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card text-right focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimatePending
+              ? 'opacity-50'
+              : ''}"
+            placeholder="—"
+            bind:value={estimateDraft}
+            readonly={estimatePending}
+            aria-busy={estimatePending}
+            aria-describedby="task-estimate-hint"
+            onblur={() => void commitEstimate()}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void commitEstimate()
+              }
+            }}
+          />
+        </div>
+        <p
+          id="task-estimate-hint"
+          class="text-type-2xs text-text-muted font-label-sm"
+        >
+          30m, 2h, 1d, 2.5d
+        </p>
       </section>
 
       <!-- Recurrence editor -->

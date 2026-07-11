@@ -30,6 +30,7 @@ export const v2CtxStubs: Pick<
   | 'setTaskPriority'
   | 'setTaskTags'
   | 'setTaskTitle'
+  | 'setTaskEstimate'
   | 'getTaskBlockers'
   | 'fetchSubtree'
   | 'getLocalAuthor'
@@ -91,6 +92,7 @@ export const v2CtxStubs: Pick<
   setTaskPriority: () => Promise.resolve(true),
   setTaskTags: () => Promise.resolve(true),
   setTaskTitle: () => Promise.resolve(true),
+  setTaskEstimate: () => Promise.resolve(true),
   getTaskBlockers: () => Promise.resolve([]),
   fetchSubtree: () => Promise.resolve([]),
   getLocalAuthor: () => Promise.resolve(''),

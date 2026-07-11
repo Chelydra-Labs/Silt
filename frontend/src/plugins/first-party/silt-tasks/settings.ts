@@ -101,7 +101,9 @@ const SORT_MODE_VALUES: readonly SortMode[] = [
   'priority',
   'title',
   'created',
-  'owner'
+  'owner',
+  'modified',
+  'estimate'
 ]
 
 export function isGroupBy(v: unknown): v is GroupBy {
@@ -264,7 +266,8 @@ function coerceSavedView(raw: unknown): SavedView | null {
           : '',
       tags: Array.isArray(fr.tags)
         ? (fr.tags.filter((x) => typeof x === 'string') as string[])
-        : []
+        : [],
+      ...(typeof fr.stale === 'boolean' ? { stale: fr.stale } : {})
     }
   }
   return v

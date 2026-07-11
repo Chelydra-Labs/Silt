@@ -150,6 +150,14 @@ describe('buildQuery — combined scope + filters (ported from silt-kanban)', ()
     expect(sql).toContain('t.completed_at')
     expect(sql).toContain('t.manual_order')
   })
+
+  it('includes modified/estimate/subtask columns in the SELECT (#439/#440/#434)', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx)
+    expect(sql).toContain('t.modified_at')
+    expect(sql).toContain('t.estimate_minutes')
+    expect(sql).toContain('t.subtask_total')
+    expect(sql).toContain('t.subtask_done')
+  })
 })
 
 // ── New: groupBy lever (ORDER BY changes) ─────────────────────────────
@@ -353,6 +361,44 @@ describe('buildQuery — sort lever (new in #423)', () => {
     const orderBy = withSort.slice(withSort.indexOf('ORDER BY'))
     expect(orderBy).not.toContain('b.clean_content ASC')
     expect(orderBy).not.toContain('CASE WHEN t.manual_order')
+  })
+
+  it("sort='modified' puts recent first and null/empty as oldest", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'modified'
+    })
+    expect(sql).toContain(
+      "CASE WHEN t.modified_at IS NULL OR t.modified_at = '' THEN '0000' ELSE t.modified_at END DESC"
+    )
+  })
+
+  it("sort='estimate' nulls last then ascending minutes", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      sort: 'estimate'
+    })
+    expect(sql).toContain(
+      'CASE WHEN t.estimate_minutes IS NULL THEN 1 ELSE 0 END'
+    )
+    expect(sql).toContain('t.estimate_minutes ASC')
+  })
+})
+
+// ── New: stale filter (#440) ──────────────────────────────────────────
+
+describe('buildQuery — stale filter (new in #440)', () => {
+  it('adds open + modified_at older-than-30d clause with cutoff param', () => {
+    const filters: TaskFilters = { ...emptyFilters, stale: true }
+    const { sql, params } = buildQuery('vault', filters, ctx)
+    expect(sql).toContain("t.status != 'DONE'")
+    expect(sql).toContain('substr(t.modified_at, 1, 10) < ?')
+    // today is 2026-06-22 → cutoff is 2026-05-23
+    expect(params).toEqual(['2026-05-23'])
+  })
+
+  it('stale=false/undefined is a no-op', () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx)
+    expect(sql).not.toContain('substr(t.modified_at')
+    expect(params).toEqual([])
   })
 })
 

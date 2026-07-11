@@ -42,6 +42,8 @@ export interface TaskFilters {
   priorities: number[]
   dueDate: DueDateFilter
   tags: string[]
+  /** When true, only open tasks with modified_at NULL or older than 30 days. */
+  stale?: boolean
 }
 
 /** Smart-list filter the user picked from a sidebar (Calendar lineage). */
@@ -94,7 +96,14 @@ export type GroupBy =
  * legacy default so the unmodified list experience survives.
  */
 export type SortMode =
-  'manual' | 'dueDate' | 'priority' | 'title' | 'created' | 'owner'
+  | 'manual'
+  | 'dueDate'
+  | 'priority'
+  | 'title'
+  | 'created'
+  | 'owner'
+  | 'modified'
+  | 'estimate'
 
 /**
  * A named saved view for the hub (#427, generalized from the #323 saved
@@ -392,7 +401,8 @@ export function applySavedView(view: SavedView): void {
       owners: [...view.filters.owners],
       priorities: [...view.filters.priorities],
       dueDate: view.filters.dueDate,
-      tags: [...view.filters.tags]
+      tags: [...view.filters.tags],
+      stale: view.filters.stale
     }
   }
   if (view.calendarSubMode !== undefined) {

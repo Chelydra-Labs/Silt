@@ -21,6 +21,7 @@ import {
   PluginSetTaskPriority,
   PluginSetTaskTags,
   PluginSetTaskTitle,
+  PluginSetTaskEstimate,
   GetTaskBlockers,
   FetchSubtree,
   GetLocalAuthor,
@@ -252,6 +253,10 @@ export function makePluginContext(
     // ((uuid)) refs + inline tokens during the title rewrite.
     setTaskTitle: (id, title) =>
       PluginSetTaskTitle(pluginID, sessionToken ?? '', id, title),
+    // Rewrite a task's [estimate::] duration token (#439). Empty string clears
+    // it; non-empty must parse as m/h/d (validated server-side).
+    setTaskEstimate: (id, estimate) =>
+      PluginSetTaskEstimate(pluginID, sessionToken ?? '', id, estimate),
     // Open (non-DONE) prerequisites for the DONE-confirm dialog (#302).
     getTaskBlockers: (id) => GetTaskBlockers(id),
     // Child sub-tree fetch/splice for the Task Sub-Editor Modal (#305). The
@@ -280,7 +285,7 @@ export function makePluginContext(
     // Author/timestamp ride as [author::]/[ts::] tokens. The previous two-step
     // (FetchSubtree → PluginSaveSubtreeBlocks) was last-write-wins on concurrent
     // posts; the atomic binding closes that race.
-    addTaskComment: async (taskId, text, author) => {
+    addTaskComment: async (taskId, text, author, parentCommentId) => {
       // Single atomic IPC: PluginAppendTaskComment does the read-modify-write
       // under one LockBlockWrite+LockFileWrite hold server-side (#456). The
       // previous two-step (FetchSubtree → PluginSaveSubtreeBlocks) was unlocked
@@ -288,6 +293,7 @@ export function makePluginContext(
       // the same task concurrently were last-write-wins and one was dropped.
       // The server binding mints the UUID + splices the NOTE child + rewrites
       // via the canonical chain; we just pass the attribution tokens through.
+      // parentCommentId nests under an existing NOTE (#438); empty = top-level.
       const ts = new Date().toISOString().slice(0, 19) // YYYY-MM-DDTHH:MM:SS
       return PluginAppendTaskComment(
         pluginID,
@@ -295,7 +301,8 @@ export function makePluginContext(
         taskId,
         text,
         author ?? '',
-        ts
+        ts,
+        parentCommentId ?? ''
       )
     },
     // Create a standalone task in <vault>/.silt/tasks.md (#368). title required;

@@ -146,6 +146,12 @@ function sortClauseFor(sort: SortMode): string {
       return ` ORDER BY CASE WHEN t.created_at IS NULL OR t.created_at = '' THEN '9999' ELSE t.created_at END ASC, ${tiebreaker}`
     case 'owner':
       return ` ORDER BY COALESCE(NULLIF(t.owner, ''), '~') ASC, ${tiebreaker}`
+    case 'modified':
+      // Recently modified first; null/empty modified_at sorts as oldest.
+      return ` ORDER BY CASE WHEN t.modified_at IS NULL OR t.modified_at = '' THEN '0000' ELSE t.modified_at END DESC, ${tiebreaker}`
+    case 'estimate':
+      // Null estimates last; then ascending minutes.
+      return ` ORDER BY CASE WHEN t.estimate_minutes IS NULL THEN 1 ELSE 0 END, t.estimate_minutes ASC, ${tiebreaker}`
     case 'dueDate':
     default:
       return ` ORDER BY ${tiebreaker}`
@@ -181,6 +187,7 @@ export function buildQuery(
            b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
            t.pinned, t.progress, t.recur AS recurrence, t.comments_count, t.links_count,
            t.created_at, t.completed_at, t.manual_order,
+           t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done,
            (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags,
            (SELECT GROUP_CONCAT(blocked_by_id, '|') FROM task_dependencies WHERE block_id = b.id) AS blocked_by,
            EXISTS (
@@ -244,6 +251,15 @@ export function buildQuery(
         .join(', ')}))`
     )
     params.push(...f.tags)
+  }
+  // Stale filter (#440): open tasks with no modified_at or last touch older
+  // than 30 local days. Compare date-only prefix so ISO timestamps work.
+  if (f.stale) {
+    const cutoff = plusDaysISO(ctx.today, -30)
+    where.push(
+      "t.status != 'DONE' AND (t.modified_at IS NULL OR t.modified_at = '' OR substr(t.modified_at, 1, 10) < ?)"
+    )
+    params.push(cutoff)
   }
   if (options?.window) {
     where.push('t.due_date >= ?', 't.due_date <= ?')

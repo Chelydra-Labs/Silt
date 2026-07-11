@@ -110,6 +110,10 @@ function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
     created_at: '',
     completed_at: '',
     manual_order: 0,
+    modified_at: '',
+    estimate_minutes: null,
+    subtask_total: 0,
+    subtask_done: 0,
     ...overrides
   }
 }
@@ -806,6 +810,86 @@ describe('TaskEditDrawer — title editor (#412)', () => {
     expect(screen.getByText(/Couldn't save/)).toBeTruthy()
     // Reverted to the original committed title.
     expect(input.value).toBe('Water plants')
+  })
+})
+
+describe('TaskEditDrawer — estimate editor (#439)', () => {
+  beforeEach(() => cleanup())
+
+  it('shows empty estimate when estimate_minutes is null (not 0)', () => {
+    const ctx = makeCtx()
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({ estimate_minutes: null }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+    const input = screen.getByTestId('task-estimate-input') as HTMLInputElement
+    expect(input.value).toBe('')
+  })
+
+  it('formats minutes into the estimate draft (120 → 2h)', () => {
+    const ctx = makeCtx()
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({ estimate_minutes: 120 }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+    const input = screen.getByTestId('task-estimate-input') as HTMLInputElement
+    expect(input.value).toBe('2h')
+  })
+
+  it('typing + Enter commits via ctx.setTaskEstimate', async () => {
+    const setTaskEstimate = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskEstimate })
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose: () => {} }
+    })
+    const input = screen.getByTestId('task-estimate-input')
+    await fireEvent.input(input, { target: { value: '30m' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+    expect(setTaskEstimate).toHaveBeenCalledWith('task-1', '30m')
+  })
+
+  it('clearing the field commits empty string', async () => {
+    const setTaskEstimate = vi.fn().mockResolvedValue(true)
+    const ctx = makeCtx({ setTaskEstimate })
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({ estimate_minutes: 60 }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+    const input = screen.getByTestId('task-estimate-input')
+    await fireEvent.input(input, { target: { value: '' } })
+    await fireEvent.blur(input)
+    await flush()
+    expect(setTaskEstimate).toHaveBeenCalledWith('task-1', '')
+  })
+
+  it('shows subtask counts next to progress when subtask_total > 0', () => {
+    const ctx = makeCtx()
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({ subtask_total: 3, subtask_done: 1 }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+    expect(screen.getByTestId('task-subtask-count').textContent).toBe('[1/3]')
+  })
+
+  it('hides subtask counts when subtask_total is 0', () => {
+    const ctx = makeCtx()
+    render(TaskEditDrawer, {
+      props: { task: makeTask({ subtask_total: 0 }), ctx, onClose: () => {} }
+    })
+    expect(screen.queryByTestId('task-subtask-count')).toBeNull()
   })
 })
 

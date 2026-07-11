@@ -244,33 +244,27 @@
         ctx.sqliteQuery(overdueSql, overdueQ.params)
       ])
       if (my !== loadSeq) return
-      const winRows = (winRes.rows as unknown as TaskDetail[]).map((r) => ({
+      const coerce = (r: TaskDetail): TaskDetail => ({
         ...r,
         pinned: !!r.pinned,
         created_at: r.created_at ?? '',
         completed_at: r.completed_at ?? '',
-        manual_order: r.manual_order ?? 0
-      }))
+        manual_order: r.manual_order ?? 0,
+        modified_at: r.modified_at ?? '',
+        estimate_minutes:
+          r.estimate_minutes == null ? null : Number(r.estimate_minutes),
+        subtask_total: r.subtask_total ?? 0,
+        subtask_done: r.subtask_done ?? 0
+      })
+      const winRows = (winRes.rows as unknown as TaskDetail[]).map(coerce)
       const bucket: Record<string, TaskDetail[]> = {}
       for (const r of winRows) {
         if (!r.due_date) continue
         ;(bucket[r.due_date] ||= []).push(r)
       }
       byDate = bucket
-      undated = (undatedRes.rows as unknown as TaskDetail[]).map((r) => ({
-        ...r,
-        pinned: !!r.pinned,
-        created_at: r.created_at ?? '',
-        completed_at: r.completed_at ?? '',
-        manual_order: r.manual_order ?? 0
-      }))
-      overdueAll = (overdueRes.rows as unknown as TaskDetail[]).map((r) => ({
-        ...r,
-        pinned: !!r.pinned,
-        created_at: r.created_at ?? '',
-        completed_at: r.completed_at ?? '',
-        manual_order: r.manual_order ?? 0
-      }))
+      undated = (undatedRes.rows as unknown as TaskDetail[]).map(coerce)
+      overdueAll = (overdueRes.rows as unknown as TaskDetail[]).map(coerce)
       // Keep the open drawer in sync with fresh data.
       if (selectedTask) {
         const fresh =
@@ -310,6 +304,7 @@
     void filters.priorities
     void filters.dueDate
     void filters.tags
+    void filters.stale
     void ctx.activeNotebook
     void ctx.activeSection
     void ctx.activePage

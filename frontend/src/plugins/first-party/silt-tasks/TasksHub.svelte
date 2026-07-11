@@ -390,7 +390,8 @@
         owners: [...hubState.filters.owners],
         priorities: [...hubState.filters.priorities],
         dueDate: hubState.filters.dueDate,
-        tags: [...hubState.filters.tags]
+        tags: [...hubState.filters.tags],
+        stale: hubState.filters.stale
       },
       calendarSubMode: hubState.calendarSubMode,
       columns: [...hubState.columns],
