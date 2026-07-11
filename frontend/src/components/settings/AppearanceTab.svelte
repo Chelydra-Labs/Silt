@@ -60,10 +60,15 @@
       handleDroppedFiles(ev?.data)
     })
     return () => {
-      // Drop any in-flight preview so a navigated-away tab never leaves the
+      // Restore deterministically rather than round-tripping through the
+      // preview $effect: effects tear down during unmount, so a state write
+      // here isn't guaranteed to flush the restore. Call it directly when a
+      // preview was actually staged so a navigated-away tab never leaves the
       // workspace locked to a non-active theme.
+      const hadPreview = previewTheme !== null
       previewTheme = null
       offDrop()
+      if (hadPreview) restoreActiveTheme()
     }
   })
 

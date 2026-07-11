@@ -100,6 +100,13 @@ export function matchHotkey(
 ): boolean {
   const h = parseHotkey(binding)
   if (!h) return false
+  // Compares against e.key (the logical glyph). For Shift + a punctuation key
+  // whose shifted glyph differs from the base (e.g. "," -> "<" on US layouts),
+  // e.key is the shifted glyph, so a binding like "Ctrl+Shift+," would never
+  // match here. No global default uses such a chord today — the only Shift+
+  // punctuation default (format_subscript) is consumed by the editor keymap,
+  // not this path. If a global Shift+punctuation binding is ever added, fall
+  // back to e.code (layout-stable) when e.key doesn't match.
   return (
     e.ctrlKey === h.ctrl &&
     e.shiftKey === h.shift &&

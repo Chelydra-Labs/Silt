@@ -30,6 +30,7 @@
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
   import SettingsPanel from './components/settings/SettingsPanel.svelte'
+  import { getSettingsSections } from './components/settings/settingsSections.svelte'
   import QuickAddTask from './plugins/first-party/silt-tasks/components/QuickAddTask.svelte'
   import { loadPlugins } from './plugins/loader'
   import {
@@ -600,9 +601,12 @@
     // settings sections while already in the settings view (no view change).
     function handleSettingsJump(e: Event) {
       const detail = (e as CustomEvent).detail
-      if (detail && typeof detail.section === 'string') {
-        settingsSection = detail.section
-      }
+      if (!detail || typeof detail.section !== 'string') return
+      // Validate against the live section registry so a typo'd id from a
+      // future dispatcher can't render an empty/broken panel. Falls back to
+      // 'general' on a miss rather than silently navigating nowhere.
+      const known = getSettingsSections().some((s) => s.id === detail.section)
+      settingsSection = known ? detail.section : 'general'
     }
     // Move keyboard focus into the active sidebar (#326 item 8). Expands the
     // sidebar if collapsed, then focuses the first focusable element inside it

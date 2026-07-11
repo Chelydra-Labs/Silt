@@ -330,7 +330,40 @@ func ValidateHotkeys(hotkeys map[string]string) error {
 			return fmt.Errorf("invalid hotkey for %q: %q has no key (only modifiers)", action, binding)
 		}
 	}
+	// Detect two actions bound to the same chord. The YAML merge can't tell a
+	// persisted old default from an explicit choice, so a default reassignment
+	// (e.g. #511's Ctrl+, move) can leave two actions colliding; a user
+	// hand-edit can too. normalize() fixes the known case; this catches the
+	// rest. Modifier order and case variants collapse via canonicalChord.
+	chordToAction := make(map[string]string, len(hotkeys))
+	for action, binding := range hotkeys {
+		key := canonicalChord(binding)
+		if key == "" {
+			continue
+		}
+		if prev, ok := chordToAction[key]; ok && prev != action {
+			return fmt.Errorf("hotkey collision: %q and %q are both bound to %q", prev, action, binding)
+		}
+		chordToAction[key] = action
+	}
 	return nil
+}
+
+// canonicalChord normalizes a hotkey binding so modifier-order and case
+// variants ("Ctrl+Shift+P" vs "shift+ctrl+p") collapse to one key for
+// duplicate detection. Empty/disabled bindings collapse to "".
+func canonicalChord(binding string) string {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(binding)), "+")
+	cleaned := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t == "" {
+			continue
+		}
+		cleaned = append(cleaned, t)
+	}
+	sort.Strings(cleaned)
+	return strings.Join(cleaned, "+")
 }
 
 // ConfigPath returns the absolute path to a vault's config.yaml.
@@ -718,6 +751,16 @@ func normalize(cfg SystemConfig) SystemConfig {
 	// synced vault's legacy `grants:` block is silently ignored by yaml.v3.
 	if cfg.Hotkeys == nil {
 		cfg.Hotkeys = map[string]string{}
+	}
+	// format_subscript ↔ open_settings upgrade migration (#511). The Ctrl+,
+	// chord moved from format_subscript to the new open_settings default, but
+	// the YAML merge decodes-over-Defaults and can't tell a persisted old
+	// default from an explicit choice — so a config saved before this change
+	// ends up with format_subscript AND open_settings both at "Ctrl+,". Move
+	// subscript to its new home (Ctrl+Shift,) only when the exact collision is
+	// present, so a user who customized either binding is never touched.
+	if cfg.Hotkeys["format_subscript"] == "Ctrl+," && cfg.Hotkeys["open_settings"] == "Ctrl+," {
+		cfg.Hotkeys["format_subscript"] = "Ctrl+Shift,"
 	}
 	if cfg.UI.NavOrder.Sections == nil {
 		cfg.UI.NavOrder.Sections = map[string][]string{}

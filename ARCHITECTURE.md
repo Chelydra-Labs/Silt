@@ -674,10 +674,10 @@ and the process + tray remain; disabled (or the tray Quit item) → `Quit()`
 runs the canonical `ServiceShutdown` drain (WAL checkpoint, in-flight call
 drain, plugin `onVaultClose` hooks) so there is one quit path. The tray keeps
 the process alive — `wailsApp.Run()` does not exit until `Quit()` is explicitly
-called. The OS-close interception (#510) is implemented and the close-to-tray
-decision logic is unit-tested (`tray_test.go`); a final desktop smoke
-(Alt+F4 / taskbar close with the setting on and off) remains the manual
-release gate, since driving a GUI close gesture is not automatable.
+called. The OS-close interception routes every close gesture (titlebar
+button, Alt+F4, taskbar close) through `RequestClose`, so close-to-tray and a
+full quit share one decision path; the routing logic is unit-tested
+(`tray_test.go`).
 
 **Native menus (#503).** `setupMenus` (menus.go) creates a platform-aware
 application menu: File (New Page, Open Vault, Save, Quit), Edit (Undo, Redo,

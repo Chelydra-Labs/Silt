@@ -68,6 +68,7 @@
   let grouped = $derived.by(() => {
     const rows: NavRow[] = []
     let lastGroup: SettingsGroup | null = null
+    let sectionIdx = 0
     for (const sec of sections) {
       if (sec.group !== lastGroup) {
         rows.push({ kind: 'divider', group: sec.group })
@@ -80,7 +81,7 @@
         kind: 'section',
         section: sec,
         indent,
-        idx: rows.filter((r) => r.kind === 'section').length
+        idx: sectionIdx++
       })
     }
     return rows

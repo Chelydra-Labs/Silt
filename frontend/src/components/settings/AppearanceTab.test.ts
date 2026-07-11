@@ -352,6 +352,39 @@ describe('AppearanceTab picker a11y (#50, #512)', () => {
       expect(mocks.restoreActiveTheme).toHaveBeenCalled()
       expect(screen.queryByRole('status')).toBeNull()
     })
+
+    it('unmount restores the active theme when a preview is staged', async () => {
+      // Regression guard: onMount cleanup must call restoreActiveTheme
+      // directly (not via the preview $effect, which tears down on unmount),
+      // so navigating away mid-preview never leaves the workspace locked to
+      // the previewed theme.
+      const { unmount } = render(AppearanceTab)
+      await tick()
+
+      const grid = screen.getByRole('group', { name: 'Available themes' })
+      const terra = within(grid).getByRole('button', { name: /Terra Test/i })
+      await fireEvent.click(terra)
+      await tick()
+      // Clear the mount-time restore so the call isolates unmount behavior.
+      mocks.restoreActiveTheme.mockClear()
+
+      unmount()
+      await tick()
+
+      expect(mocks.restoreActiveTheme).toHaveBeenCalled()
+    })
+
+    it('unmount does not restore when no preview is staged', async () => {
+      // A clean unmount (no in-flight preview) must not fire a redundant restore.
+      const { unmount } = render(AppearanceTab)
+      await tick()
+      mocks.restoreActiveTheme.mockClear()
+
+      unmount()
+      await tick()
+
+      expect(mocks.restoreActiveTheme).not.toHaveBeenCalled()
+    })
   })
 
   it('shows a theme-typography indicator when the active theme overrides fonts (#82)', () => {

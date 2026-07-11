@@ -286,6 +286,21 @@
     }
   }
 
+  // Blur-save wrappers: the onblur handlers used to `void`-drop the
+  // PersistResult, so a failed save left the field showing the typed value
+  // with zero feedback. These surface failures through the existing
+  // per-provider error regions (modelError for the model field, testResult
+  // banner for the base URL). The success path is intentionally untouched so
+  // an incidental blur never wipes a valid test result or stale poll error.
+  async function persistModelOnBlur(w: Which): Promise<void> {
+    const r = await persistProvider(w)
+    if (!r.ok) modelError[w] = r.message ?? null
+  }
+  async function persistUrlOnBlur(which: Which): Promise<void> {
+    const r = await persistProviderWithSync(which)
+    if (!r.ok) testResult[which] = { ok: false, message: r.message }
+  }
+
   type ProviderType = 'local' | 'openai-compatible' | 'google' | 'anthropic'
 
   // Switching provider type snaps base_url to that type's canonical default
@@ -854,7 +869,7 @@
               id="{idPrefix}-base-url"
               type="url"
               bind:value={b.base_url}
-              onblur={() => void persistProviderWithSync(which)}
+              onblur={() => void persistUrlOnBlur(which)}
               autocomplete="off"
               spellcheck="false"
               class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-[13px] font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
@@ -1199,7 +1214,7 @@
                 id="{idPrefix}-model"
                 type="text"
                 bind:value={b.model}
-                onblur={() => void persistProvider(w)}
+                onblur={() => void persistModelOnBlur(w)}
                 autocomplete="off"
                 spellcheck="false"
                 placeholder={w === 'chat'

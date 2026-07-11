@@ -98,7 +98,7 @@
   <!-- Shared section header: title + one-line description + search. This
        replaces the bare <h2> so every section has a consistent home base. -->
   <div
-    class="flex items-center justify-between gap-4 px-6 py-4 border-b border-surface-sidebar-border flex-shrink-0"
+    class="flex items-center justify-between gap-4 px-6 py-4 border-b border-surface-panel-border flex-shrink-0"
   >
     <div class="min-w-0">
       <h2

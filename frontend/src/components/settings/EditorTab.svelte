@@ -160,6 +160,7 @@
             The active theme sets its own fonts. Change the theme in
             <button
               type="button"
+              aria-label="Go to Appearance settings"
               onclick={() =>
                 window.dispatchEvent(
                   new CustomEvent('silt:settings-jump', {

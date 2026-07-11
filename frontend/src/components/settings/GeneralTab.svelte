@@ -137,7 +137,10 @@
   >
     <button
       type="button"
-      onclick={() => jumpTo('general')}
+      onclick={() =>
+        document
+          .getElementById('general-workspace')
+          ?.scrollIntoView({ block: 'start', behavior: 'smooth' })}
       class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border text-left transition-colors hover:border-border-active hover:bg-hover cursor-pointer"
     >
       <span class="material-symbols-outlined text-text-muted text-[18px]"
@@ -300,7 +303,7 @@
     {/if}
 
     <!-- Vault path + relocate menu -->
-    <section>
+    <section id="general-workspace">
       <h3
         class="font-label-sm-bold text-text-muted uppercase tracking-widest text-[10px] mb-3"
       >

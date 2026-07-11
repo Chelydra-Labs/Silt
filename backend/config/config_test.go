@@ -313,6 +313,9 @@ func TestValidateHotkeys(t *testing.T) {
 		{"single modifier rejected", map[string]string{"open_search": "Ctrl"}, true},
 		{"whitespace-only rejected", map[string]string{"open_search": "   "}, false}, // trims to empty = disabled
 		{"nil map ok", nil, false},
+		{"duplicate chord rejected", map[string]string{"a": "Ctrl+P", "b": "Ctrl+P"}, true},
+		{"modifier-order variant collides", map[string]string{"a": "Ctrl+Shift+P", "b": "Shift+Ctrl+P"}, true},
+		{"distinct chords ok", map[string]string{"a": "Ctrl+P", "b": "Ctrl+Shift+P"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -325,6 +328,40 @@ func TestValidateHotkeys(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNormalizeHotkeyCollisionMigration confirms the #511 upgrade path: a
+// config persisted before the Ctrl+, move carries format_subscript: "Ctrl+,",
+// which collides with the new open_settings default after the YAML merge.
+// normalize() moves subscript to its new home and leaves customized bindings.
+func TestNormalizeHotkeyCollisionMigration(t *testing.T) {
+	t.Run("colliding legacy values are migrated", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Hotkeys["format_subscript"] = "Ctrl+," // legacy persisted default
+		cfg.Hotkeys["open_settings"] = "Ctrl+,"    // new default (collision)
+		out := normalize(cfg)
+		if out.Hotkeys["format_subscript"] != "Ctrl+Shift," {
+			t.Errorf("format_subscript should migrate to Ctrl+Shift,, got %q", out.Hotkeys["format_subscript"])
+		}
+		if out.Hotkeys["open_settings"] != "Ctrl+," {
+			t.Errorf("open_settings should stay Ctrl+,, got %q", out.Hotkeys["open_settings"])
+		}
+	})
+	t.Run("customized subscript is untouched", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Hotkeys["format_subscript"] = "Ctrl+Alt+S" // user customized — no collision
+		cfg.Hotkeys["open_settings"] = "Ctrl+,"
+		out := normalize(cfg)
+		if out.Hotkeys["format_subscript"] != "Ctrl+Alt+S" {
+			t.Errorf("customized subscript must not be touched, got %q", out.Hotkeys["format_subscript"])
+		}
+	})
+	t.Run("clean defaults are untouched", func(t *testing.T) {
+		out := normalize(Defaults())
+		if out.Hotkeys["format_subscript"] != "Ctrl+Shift," {
+			t.Errorf("clean default subscript changed: %q", out.Hotkeys["format_subscript"])
+		}
+	})
 }
 
 // --- #133: co-located per-notebook config ---

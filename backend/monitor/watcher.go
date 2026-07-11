@@ -39,6 +39,12 @@ type DirectoryWatcher struct {
 	// the DB handle on shutdown and vault-switch.
 	wg sync.WaitGroup
 
+	// closeOnce makes Close idempotent: closeChan panics on a second close,
+	// and Close now does real drain work (wg.Wait), so a future "stop on
+	// error then close on shutdown" caller must not trip that.
+	closeOnce sync.Once
+	closeErr  error
+
 	failedMu    sync.Mutex
 	failedPaths []string
 
@@ -230,14 +236,16 @@ func (dw *DirectoryWatcher) sweepExpiredLeases() {
 }
 
 func (dw *DirectoryWatcher) Close() error {
-	close(dw.closeChan)
-	err := dw.watcher.Close()
-	// Join the listenLoop + lease sweeper so an in-flight reindex (which
-	// reads/writes the DB) finishes before we return. Without this the
-	// caller's subsequent db.Close() races and nil-derefs the handle — the
-	// shutdown/vault-switch bug the -race detector caught.
-	dw.wg.Wait()
-	return err
+	dw.closeOnce.Do(func() {
+		close(dw.closeChan)
+		dw.closeErr = dw.watcher.Close()
+		// Join the listenLoop + lease sweeper so an in-flight reindex (which
+		// reads/writes the DB) finishes before we return. Without this the
+		// caller's subsequent db.Close() races and nil-derefs the handle — the
+		// shutdown/vault-switch bug the -race detector caught.
+		dw.wg.Wait()
+	})
+	return dw.closeErr
 }
 
 func (dw *DirectoryWatcher) AddRecursive(path string) error {

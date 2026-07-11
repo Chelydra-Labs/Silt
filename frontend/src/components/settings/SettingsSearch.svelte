@@ -35,7 +35,9 @@
     const next = searchSettings(query)
     results = next
     activeIndex = 0
-    open = next.length > 0
+    // Keep the popover open while there's a query so an explicit "no
+    // results" row shows; close it when the field is effectively empty.
+    open = query.trim().length > 0
   })
 
   // Live-region announcement text (visually hidden, aria-live=polite). SR
@@ -52,8 +54,12 @@
     if (!entry) return
     query = ''
     open = false
-    inputEl?.blur()
     onJump(entry.sectionId, entry.anchorId)
+    // Move focus to the panel content the user just jumped to, instead of
+    // stranding it on document.body after the field blurs.
+    requestAnimationFrame(() => {
+      document.getElementById('silt-settings-panel')?.focus()
+    })
   }
 
   // Scoped keyboard handler: only the combobox navigation keys are
@@ -130,31 +136,43 @@
       aria-label="Matching settings"
       class="absolute z-20 left-0 right-0 top-full mt-1 max-h-72 overflow-y-auto custom-scrollbar rounded-lg border border-surface-popover-border bg-surface-popover shadow-xl py-1"
     >
-      {#each results as entry, i (entry.label + entry.sectionId)}
+      {#if results.length === 0}
         <li
-          id="silt-settings-search-result-{i}"
-          role="option"
-          aria-selected={i === activeIndex}
-          tabindex="-1"
+          role="presentation"
+          aria-hidden="true"
+          class="px-3 py-2 text-[12px] text-text-muted italic"
         >
-          <button
-            type="button"
-            onclick={() => commit(entry)}
-            onpointerenter={() => (activeIndex = i)}
-            class="w-full text-left px-3 py-1.5 border-none cursor-pointer flex items-center justify-between gap-2 transition-colors {i ===
-            activeIndex
-              ? 'bg-hover text-text-primary'
-              : 'bg-transparent text-text-primary hover:bg-hover'}"
-          >
-            <span class="text-[12px] font-body-md truncate">{entry.label}</span>
-            <span
-              class="text-[10px] font-label-sm text-text-muted flex-shrink-0 truncate"
-            >
-              {sectionLabel(entry.sectionId)}
-            </span>
-          </button>
+          No matching settings
         </li>
-      {/each}
+      {:else}
+        {#each results as entry, i (entry.label + entry.sectionId)}
+          <li
+            id="silt-settings-search-result-{i}"
+            role="option"
+            aria-selected={i === activeIndex}
+            tabindex="-1"
+          >
+            <button
+              type="button"
+              onclick={() => commit(entry)}
+              onpointerenter={() => (activeIndex = i)}
+              class="w-full text-left px-3 py-1.5 border-none cursor-pointer flex items-center justify-between gap-2 transition-colors {i ===
+              activeIndex
+                ? 'bg-hover text-text-primary'
+                : 'bg-transparent text-text-primary hover:bg-hover'}"
+            >
+              <span class="text-[12px] font-body-md truncate"
+                >{entry.label}</span
+              >
+              <span
+                class="text-[10px] font-label-sm text-text-muted flex-shrink-0 truncate"
+              >
+                {sectionLabel(entry.sectionId)}
+              </span>
+            </button>
+          </li>
+        {/each}
+      {/if}
     </ul>
   {/if}
 </div>
