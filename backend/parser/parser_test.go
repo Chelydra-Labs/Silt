@@ -1233,13 +1233,14 @@ func TestScanWorkspace_BudgetRegression(t *testing.T) {
 
 	// Budget: <450ms for 1,000 files (baseline ~280ms on Ryzen AI MAX+ /
 	// Go 1.25 / Windows per TESTING.md; 450ms allows headroom for slower
-	// CI runners and the race detector). Under -race the detector adds
-	// ~2x overhead to the I/O+parse workload, so scanBudgetRegressionLimit
-	// returns a scaled threshold (900ms) via a build tag — the test still
-	// runs in the normal `go test -race ./...` CI gate and stays sensitive
-	// to a real regression in both modes. The best-of-N sampling lets this
-	// threshold stay tight (a real 2x regression lands ~1.1s under race,
-	// well above it) without flaking on a momentarily-contended runner.
+	// CI runners). Under -race the detector adds ~2x overhead to the
+	// I/O+parse workload, so scanBudgetRegressionLimit returns a scaled
+	// threshold (1600ms) via a build tag — the test still runs in the
+	// normal `go test -race ./...` CI gate and stays sensitive to a real
+	// regression: a 2x slowdown lands ~2.0s on CI, well above 1600ms. The
+	// best-of-3 sampling + the 1600ms threshold absorb transient contention
+	// on a shared runner (observed best-of-3 ~1.25s under load) without
+	// flaking, while a real regression is consistent across runs.
 	limit := scanBudgetRegressionLimit()
 	if best > limit {
 		t.Fatalf("ScanWorkspace regressed: best-of-%d %v > %v/1k files", runs, best, limit)
