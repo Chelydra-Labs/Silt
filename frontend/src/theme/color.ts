@@ -68,15 +68,16 @@ export function toOklch(s: string): Oklch | null {
   if (!c) return null
   return {
     L: c.l,
-    C: c.c,
-    H: c.h,
+    // Greyscale / achromatic colors omit hue (and sometimes chroma) in culori.
+    C: c.c ?? 0,
+    H: c.h ?? 0,
     ...(c.alpha !== undefined ? { alpha: c.alpha } : {})
   }
 }
 
 /** Format OKLCH components as CSS oklch(), matching the Go precision (L,C 4dp; H 2dp) so previews match Flatten output. */
 export function formatOklch({ L, C, H, alpha }: Oklch): string {
-  const core = `${L.toFixed(4)} ${C.toFixed(4)} ${H.toFixed(2)}`
+  const core = `${L.toFixed(4)} ${(C ?? 0).toFixed(4)} ${(H ?? 0).toFixed(2)}`
   return alpha === undefined ? `oklch(${core})` : `oklch(${core} / ${alpha})`
 }
 

@@ -680,6 +680,8 @@
     void scope
     void groupBy
     void sort
+    void getTaskHubState().activeFilter
+    void today
     void ctx.activeNotebook
     void ctx.activeSection
     void ctx.activePage

@@ -25,7 +25,14 @@ vi.mock('../../bindings/silt/app.js', () => ({
   ExportActiveTheme: vi.fn(),
   ImportTheme: vi.fn(),
   PickExportPath: vi.fn(),
-  PickThemeFile: vi.fn()
+  PickThemeFile: vi.fn(),
+  GetThemeJSON: vi.fn(),
+  SaveCustomTheme: vi.fn(),
+  RenameCustomTheme: vi.fn(),
+  DeleteCustomTheme: vi.fn(),
+  PickImageFile: vi.fn(),
+  PrepareBackgroundAsset: vi.fn(),
+  ClearEditorStaging: vi.fn()
 }))
 vi.mock('@wailsio/runtime', () => ({
   Events: {

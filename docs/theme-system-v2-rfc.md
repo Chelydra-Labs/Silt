@@ -309,10 +309,11 @@ pairs and asserts ratios for every embedded theme, both modes:
 Fails the build on any violation. Runs in CI on every PR touching
 `backend/themes/`.
 
-**Runtime helper (`frontend/src/theme/contrast.ts`).** Pure WCAG ratio over
-OKLCH. The (Phase 2) editor consults it for an inline pass/warn/fail indicator
-and an on-click auto-fix that clamps the foreground's OKLCH lightness to the
-nearest passing value. Warn never blocks a save (D12).
+**Runtime helper (`frontend/src/theme/contrast.ts`, wrapping
+`contrastRatioWCAG` in `color.ts`).** Pure WCAG ratio over OKLCH. The custom
+editor consults it for an inline pass/warn/fail indicator and an on-click
+auto-fix that clamps the foreground's OKLCH lightness to the nearest passing
+value. Warn never blocks a save (D12).
 
 ## 7. Editor UX contract (Phase 2 target — documented, not implemented here)
 

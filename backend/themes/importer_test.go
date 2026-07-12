@@ -518,6 +518,17 @@ func TestNamespaceThemeID_BuiltIn(t *testing.T) {
 	}
 }
 
+func TestNamespaceThemeID_ReservedEditor(t *testing.T) {
+	got, err := namespaceThemeID(t.TempDir(), EditorStagingThemeID, EditorStagingThemeID)
+	if err != nil {
+		t.Fatalf("namespace: %v", err)
+	}
+	want := userPrefix + EditorStagingThemeID
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // TestNamespaceThemeID_FirstClassIDs pins the B1 fix: ANY embedded first-class
 // id is namespaced, not just DefaultThemeID. The embed-authoritative loader
 // skips on-disk themes whose id matches a first-class id, so namespacing only

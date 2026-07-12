@@ -103,7 +103,7 @@
   onkeydown={handleKeydown}
   data-test-settings-nav
 >
-  {#each grouped as row, i (row.kind + (row.kind === 'divider' ? row.group : row.section.id))}
+  {#each grouped as row, i (row.kind === 'divider' ? `divider:${row.group}:${i}` : `section:${row.section.id}`)}
     {#if row.kind === 'divider'}
       <!-- Group label: presentational only. aria-hidden so SR users don't
            hear a static label between tabs; the tabs themselves are

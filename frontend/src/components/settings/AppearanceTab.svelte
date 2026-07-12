@@ -14,11 +14,14 @@
   import { displayFamilyName } from '../../theme/fonts'
   import {
     applyTheme,
+    clearEditorStaging,
     clearStatus,
+    deleteCustomTheme,
     exportActiveTheme,
     importThemeFromPath,
     loadThemes,
     pickAndImportTheme,
+    renameCustomTheme,
     restoreActiveTheme,
     setStatus,
     systemScheme,
@@ -28,6 +31,8 @@
     type ThemeMode,
     type ThemeStatus
   } from '../../theme/store.svelte'
+  import ThemeEditor from '../../theme/editor/ThemeEditor.svelte'
+  import { setThemeEditorOpen } from '../../theme/editor/session.svelte'
 
   type Props = Record<string, never>
 
@@ -38,6 +43,13 @@
   // so moving the pointer across the grid no longer rewrites :root tokens
   // on every row crossing (the source of the strobe).
   let previewTheme: string | null = $state(null)
+
+  // Custom theme editor (#392): when set, the Appearance tab is replaced
+  // by the full-width ThemeEditor for that theme id.
+  let editingThemeId: string | null = $state(null)
+  // Tracked as state (not listing-derived) so save-as-new keeps overwrite
+  // enabled before loadThemes() repopulates the new disk id.
+  let editingSourceIsDisk = $state(false)
 
   // Roving-tabindex focus for the card grid (one tab stop, arrows move).
   let focusIndex: number | null = $state(null)
@@ -244,7 +256,9 @@
   // is load-bearing: without it the workspace would stay locked to the last
   // previewed theme after Revert. The guard on `previewTheme === null`
   // skips a premature restore when tokens aren't loaded yet for a staged id.
+  // While the theme editor is open it owns injectTokens — do not fight it.
   $effect(() => {
+    if (editingThemeId !== null) return
     if (previewTokens !== null) {
       injectTokens(previewTokens)
     } else if (previewTheme === null) {
@@ -326,6 +340,69 @@
     void exportActiveTheme()
   }
 
+  function openEditor(id: string) {
+    // Drop any staged picker preview so the editor owns injectTokens.
+    previewTheme = null
+    // Best-effort: clear leftover _editor.assets/ from prior discarded picks.
+    void clearEditorStaging().catch(() => {})
+    editingThemeId = id
+    editingSourceIsDisk =
+      themesState.items.find((t) => t.id === id)?.source === 'disk'
+    setThemeEditorOpen(true)
+  }
+
+  function closeEditor() {
+    editingThemeId = null
+    editingSourceIsDisk = false
+    setThemeEditorOpen(false)
+    restoreActiveTheme()
+  }
+
+  function onEditorSaved(id: string) {
+    editingThemeId = id
+    // Save (including save-as-new) always lands a disk theme.
+    editingSourceIsDisk = true
+    void loadThemes()
+  }
+
+  // Keep immersive session flag in sync if the tab unmounts mid-edit
+  // (e.g. leave Settings entirely).
+  $effect(() => {
+    setThemeEditorOpen(editingThemeId !== null)
+    return () => {
+      if (editingThemeId !== null) setThemeEditorOpen(false)
+    }
+  })
+
+  async function handleRename(id: string, currentName: string) {
+    const next = window.prompt('Rename theme', currentName)
+    if (next === null) return
+    const name = next.trim()
+    if (!name || name === currentName) return
+    try {
+      await renameCustomTheme(id, name)
+      void loadThemes()
+    } catch (err) {
+      setStatus({
+        kind: 'error',
+        message: `Rename failed: ${err instanceof Error ? err.message : String(err)}`,
+        fields: []
+      })
+    }
+  }
+
+  async function handleDelete(id: string, name: string) {
+    const ok = window.confirm(
+      `Delete custom theme "${name}"? This cannot be undone.`
+    )
+    if (!ok) return
+    const deleted = await deleteCustomTheme(id)
+    if (deleted) {
+      if (previewTheme === id) previewTheme = null
+      void loadThemes()
+    }
+  }
+
   function statusAriaRole(s: ThemeStatus | null): 'status' | 'alert' | null {
     if (!s || !s.message) return null
     return s.kind === 'error' ? 'alert' : 'status'
@@ -360,482 +437,542 @@
 
 <svelte:window onkeydown={onWindowKey} />
 
-<div class="p-6 max-w-6xl mx-auto w-full space-y-8">
-  <!-- Mode toggle -->
-  <section aria-labelledby="mode-heading">
-    <h3
-      id="mode-heading"
-      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
-    >
-      Mode
-    </h3>
-    <div
-      role="radiogroup"
-      aria-label="Color mode"
-      class="inline-flex bg-surface-panel border border-surface-panel-border rounded-lg p-1 gap-1"
-    >
-      {#each modes as m, i (m.id)}
-        {@const active = themeState.mode === m.id}
-        <button
-          bind:this={modeRefs[i]}
-          type="button"
-          role="radio"
-          aria-checked={active}
-          tabindex={active ? 0 : -1}
-          onclick={() => setMode(m.id)}
-          onkeydown={(e) => onModeKeydown(e, i)}
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-label-sm text-label-sm motion-reduce:transition-none transition-colors border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-          class:bg-hover={active}
-          class:text-accent-primary-start={active}
-          class:text-text-muted={!active}
-          class:hover:text-text-primary={!active}
-          class:ring-1={active}
-          class:ring-accent-primary-start={active}
-        >
-          <span
-            class="material-symbols-outlined text-icon-md"
-            aria-hidden="true">{m.icon}</span
+{#if editingThemeId}
+  <div class="flex-1 min-h-0 h-full flex flex-col">
+    <ThemeEditor
+      themeId={editingThemeId}
+      sourceIsDisk={editingSourceIsDisk}
+      onClose={closeEditor}
+      onSaved={onEditorSaved}
+    />
+  </div>
+{:else}
+  <div class="p-6 max-w-6xl mx-auto w-full space-y-8">
+    <!-- Mode toggle -->
+    <section aria-labelledby="mode-heading">
+      <h3
+        id="mode-heading"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
+      >
+        Mode
+      </h3>
+      <div
+        role="radiogroup"
+        aria-label="Color mode"
+        class="inline-flex bg-surface-panel border border-surface-panel-border rounded-lg p-1 gap-1"
+      >
+        {#each modes as m, i (m.id)}
+          {@const active = themeState.mode === m.id}
+          <button
+            bind:this={modeRefs[i]}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            tabindex={active ? 0 : -1}
+            onclick={() => setMode(m.id)}
+            onkeydown={(e) => onModeKeydown(e, i)}
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-label-sm text-label-sm motion-reduce:transition-none transition-colors border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+            class:bg-hover={active}
+            class:text-accent-primary-start={active}
+            class:text-text-muted={!active}
+            class:hover:text-text-primary={!active}
+            class:ring-1={active}
+            class:ring-accent-primary-start={active}
           >
-          {m.label}
-          {#if m.id === 'system'}
-            <span class="text-text-muted font-label-sm" aria-hidden="true"
-              >· {systemScheme.mode === 'dark' ? 'Dark' : 'Light'}</span
+            <span
+              class="material-symbols-outlined text-icon-md"
+              aria-hidden="true">{m.icon}</span
             >
-          {/if}
-        </button>
-      {/each}
-    </div>
-    <p class="text-text-muted text-type-xs font-label-sm mt-2">
-      "System" follows your OS appearance preference. Switching mode does not
-      change the active theme.
-    </p>
-    <!-- SR-only live region: announces the resolved scheme only while
+            {m.label}
+            {#if m.id === 'system'}
+              <span class="text-text-muted font-label-sm" aria-hidden="true"
+                >· {systemScheme.mode === 'dark' ? 'Dark' : 'Light'}</span
+              >
+            {/if}
+          </button>
+        {/each}
+      </div>
+      <p class="text-text-muted text-type-xs font-label-sm mt-2">
+        "System" follows your OS appearance preference. Switching mode does not
+        change the active theme.
+      </p>
+      <!-- SR-only live region: announces the resolved scheme only while
          System mode is active. The visible `· Dark`/`· Light` suffix
          is aria-hidden (avoids radio-name collisions), so without this
          region a System-mode user would never hear which scheme is
          currently resolved or when the OS flips it. -->
-    <div class="sr-only" aria-live="polite">
-      {systemSchemeAnnouncement}
-    </div>
-  </section>
-
-  <!-- Active-theme typography overrides (#82) -->
-  {#if themeTypographyOverrides.length > 0}
-    <section aria-labelledby="typo-heading">
-      <h3
-        id="typo-heading"
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
-      >
-        Theme typography
-      </h3>
-      <div
-        class="flex flex-wrap items-start gap-x-4 gap-y-1.5 bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2.5"
-      >
-        <span class="text-text-muted text-type-xs font-label-sm">
-          This theme sets its own fonts:
-        </span>
-        {#each themeTypographyOverrides as o (o.label)}
-          <span class="text-text-primary text-type-sm font-body-md">
-            <span class="text-text-muted">{o.label}:</span>
-            {displayFamilyName(o.value)}
-          </span>
-        {/each}
+      <div class="sr-only" aria-live="polite">
+        {systemSchemeAnnouncement}
       </div>
-      <p class="text-text-muted text-type-xs font-label-sm mt-2">
-        Body and Mono can be overridden in Editor (or reset there to inherit
-        these). Headline is set by the theme only.
-      </p>
     </section>
-  {/if}
 
-  <!-- Theme grid + details -->
-  <section aria-labelledby="theme-heading">
-    <div class="flex items-center justify-between mb-3">
-      <h3
-        id="theme-heading"
-        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs"
-      >
-        Theme
-      </h3>
-      <span class="text-text-muted text-type-xs font-label-sm">
-        {themesState.items.length}
-        {themesState.items.length === 1 ? 'theme' : 'themes'}
-      </span>
-    </div>
-
-    <!-- Preview banner: workspace-wide state shown while a theme is staged.
-         role=status + aria-live so an SR user hears "Previewing X" the
-         moment the preview starts, and again when it is applied/reverted. -->
-    {#if previewTheme !== null}
-      <div
-        role="status"
-        aria-live="polite"
-        class="flex items-center gap-3 mb-4 rounded-lg border border-accent-secondary-start/50 bg-accent-secondary-start/10 px-3 py-2.5"
-      >
-        <span
-          class="material-symbols-outlined text-accent-secondary-start text-icon-lg flex-shrink-0"
-          aria-hidden="true">visibility</span
+    <!-- Active-theme typography overrides (#82) -->
+    {#if themeTypographyOverrides.length > 0}
+      <section aria-labelledby="typo-heading">
+        <h3
+          id="typo-heading"
+          class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
         >
-        <div class="flex-1 min-w-0">
-          <div
-            class="text-text-primary text-type-sm font-label-sm-bold truncate"
-          >
-            Previewing {previewName}
-          </div>
-          <div class="text-text-muted text-type-xs font-label-sm">
-            Not saved yet. Apply to keep, or Revert.
-          </div>
+          Theme typography
+        </h3>
+        <div
+          class="flex flex-wrap items-start gap-x-4 gap-y-1.5 bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2.5"
+        >
+          <span class="text-text-muted text-type-xs font-label-sm">
+            This theme sets its own fonts:
+          </span>
+          {#each themeTypographyOverrides as o (o.label)}
+            <span class="text-text-primary text-type-sm font-body-md">
+              <span class="text-text-muted">{o.label}:</span>
+              {displayFamilyName(o.value)}
+            </span>
+          {/each}
         </div>
-        <button
-          type="button"
-          onclick={commitPreview}
-          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-primary-start/20 border border-accent-primary-start/50 text-accent-primary-start font-label-sm-bold hover:brightness-110 motion-reduce:transition-none transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-        >
-          <span
-            class="material-symbols-outlined text-icon-md"
-            aria-hidden="true">check</span
-          >
-          Apply
-        </button>
-        <button
-          type="button"
-          onclick={revertPreview}
-          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-border-active motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-        >
-          <span
-            class="material-symbols-outlined text-icon-md"
-            aria-hidden="true">undo</span
-          >
-          Revert
-        </button>
-      </div>
+        <p class="text-text-muted text-type-xs font-label-sm mt-2">
+          Body and Mono can be overridden in Editor (or reset there to inherit
+          these). Headline is set by the theme only.
+        </p>
+      </section>
     {/if}
 
-    <!-- Drop target: Wails adds .file-drop-target-active to this element
+    <!-- Theme grid + details -->
+    <section aria-labelledby="theme-heading">
+      <div class="flex items-center justify-between mb-3">
+        <h3
+          id="theme-heading"
+          class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs"
+        >
+          Theme
+        </h3>
+        <span class="text-text-muted text-type-xs font-label-sm">
+          {themesState.items.length}
+          {themesState.items.length === 1 ? 'theme' : 'themes'}
+        </span>
+      </div>
+
+      <!-- Preview banner: workspace-wide state shown while a theme is staged.
+         role=status + aria-live so an SR user hears "Previewing X" the
+         moment the preview starts, and again when it is applied/reverted. -->
+      {#if previewTheme !== null}
+        <div
+          role="status"
+          aria-live="polite"
+          class="flex items-center gap-3 mb-4 rounded-lg border border-accent-secondary-start/50 bg-accent-secondary-start/10 px-3 py-2.5"
+        >
+          <span
+            class="material-symbols-outlined text-accent-secondary-start text-icon-lg flex-shrink-0"
+            aria-hidden="true">visibility</span
+          >
+          <div class="flex-1 min-w-0">
+            <div
+              class="text-text-primary text-type-sm font-label-sm-bold truncate"
+            >
+              Previewing {previewName}
+            </div>
+            <div class="text-text-muted text-type-xs font-label-sm">
+              Not saved yet. Apply to keep, or Revert.
+            </div>
+          </div>
+          <button
+            type="button"
+            onclick={commitPreview}
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-primary-start/20 border border-accent-primary-start/50 text-accent-primary-start font-label-sm-bold hover:brightness-110 motion-reduce:transition-none transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+          >
+            <span
+              class="material-symbols-outlined text-icon-md"
+              aria-hidden="true">check</span
+            >
+            Apply
+          </button>
+          <button
+            type="button"
+            onclick={revertPreview}
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-border-active motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+          >
+            <span
+              class="material-symbols-outlined text-icon-md"
+              aria-hidden="true">undo</span
+            >
+            Revert
+          </button>
+        </div>
+      {/if}
+
+      <!-- Drop target: Wails adds .file-drop-target-active to this element
          while OS files are dragged over it (main.go only forwards drops that
          land here). Wraps all list states so a drop registers whether the
          list is populated, loading, or empty. -->
-    <div
-      id="theme-file-drop-target"
-      data-file-drop-target
-      class="rounded-xl transition motion-reduce:transition-none"
-    >
-      {#if themesState.loading && themesState.items.length === 0}
-        <div
-          class="text-text-muted text-type-sm font-body-md animate-pulse py-8 text-center"
-        >
-          Loading themes…
-        </div>
-      {:else if themesState.loadError}
-        <div
-          class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
-          role="alert"
-        >
-          <span
-            class="material-symbols-outlined text-icon-lg"
-            aria-hidden="true">error</span
-          >
-          <span class="flex-1"
-            >Failed to load themes: {themesState.loadError}</span
-          >
-        </div>
-      {:else if themesState.items.length === 0}
-        <div class="text-text-muted text-type-sm font-body-md py-8 text-center">
-          No themes available. Import or drop a theme .json to get started.
-        </div>
-      {:else}
-        <div class="grid grid-cols-1 lg:grid-cols-settings-theme gap-4">
-          <!-- Card grid -->
+      <div
+        id="theme-file-drop-target"
+        data-file-drop-target
+        class="rounded-xl transition motion-reduce:transition-none"
+      >
+        {#if themesState.loading && themesState.items.length === 0}
           <div
-            role="group"
-            aria-label="Available themes"
-            class="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3 gap-3"
+            class="text-text-muted text-type-sm font-body-md animate-pulse py-8 text-center"
           >
-            {#each themesState.items as theme, i (theme.id)}
-              {@const active = isActive(theme)}
-              {@const previewing = isPreviewing(theme.id)}
-              {@const modeTokens =
-                themesState.flatTokens[theme.id]?.[effectiveMode]}
-              <button
-                type="button"
-                id={`theme-card-${theme.id}`}
-                tabindex={focusIndex === i || (focusIndex === null && i === 0)
-                  ? 0
-                  : -1}
-                bind:this={cardRefs[i]}
-                onclick={() => activateCard(theme.id)}
-                ondblclick={() => onCardDblClick(theme.id)}
-                onkeydown={(e) => onCardKey(e, i)}
-                class="relative text-left flex flex-col gap-2.5 p-3 rounded-xl border motion-reduce:transition-none transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 cursor-pointer"
-                class:bg-surface-panel={!active && !previewing}
-                class:border-surface-panel-border={!active && !previewing}
-                class:hover:border-border-active={!active && !previewing}
-                class:hover:bg-hover={!active && !previewing}
-                class:border-accent-primary-start={active}
-                class:bg-accent-primary-glow={active}
-                class:border-accent-secondary-start={previewing && !active}
-                class:ring-2={previewing && !active}
-                class:ring-accent-secondary-start={previewing && !active}
-              >
-                <div class="flex items-center justify-between gap-2">
-                  <!-- Mini theme-card swatch (#405): a base chip filled with
+            Loading themes…
+          </div>
+        {:else if themesState.loadError}
+          <div
+            class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
+            role="alert"
+          >
+            <span
+              class="material-symbols-outlined text-icon-lg"
+              aria-hidden="true">error</span
+            >
+            <span class="flex-1"
+              >Failed to load themes: {themesState.loadError}</span
+            >
+          </div>
+        {:else if themesState.items.length === 0}
+          <div
+            class="text-text-muted text-type-sm font-body-md py-8 text-center"
+          >
+            No themes available. Import or drop a theme .json to get started.
+          </div>
+        {:else}
+          <div class="grid grid-cols-1 lg:grid-cols-settings-theme gap-4">
+            <!-- Card grid -->
+            <div
+              role="group"
+              aria-label="Available themes"
+              class="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-3 gap-3"
+            >
+              {#each themesState.items as theme, i (theme.id)}
+                {@const active = isActive(theme)}
+                {@const previewing = isPreviewing(theme.id)}
+                {@const modeTokens =
+                  themesState.flatTokens[theme.id]?.[effectiveMode]}
+                <button
+                  type="button"
+                  id={`theme-card-${theme.id}`}
+                  tabindex={focusIndex === i || (focusIndex === null && i === 0)
+                    ? 0
+                    : -1}
+                  bind:this={cardRefs[i]}
+                  onclick={() => activateCard(theme.id)}
+                  ondblclick={() => onCardDblClick(theme.id)}
+                  onkeydown={(e) => onCardKey(e, i)}
+                  class="relative text-left flex flex-col gap-2.5 p-3 rounded-xl border motion-reduce:transition-none transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 cursor-pointer"
+                  class:bg-surface-panel={!active && !previewing}
+                  class:border-surface-panel-border={!active && !previewing}
+                  class:hover:border-border-active={!active && !previewing}
+                  class:hover:bg-hover={!active && !previewing}
+                  class:border-accent-primary-start={active}
+                  class:bg-accent-primary-glow={active}
+                  class:border-accent-secondary-start={previewing && !active}
+                  class:ring-2={previewing && !active}
+                  class:ring-accent-secondary-start={previewing && !active}
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <!-- Mini theme-card swatch (#405): a base chip filled with
                        the theme's app surface bg (the dominant temperature
                        signal) with the two accent starts as dots inside. -->
-                  <span
-                    aria-hidden="true"
-                    class="theme-swatch-chip"
-                    style="background-color: {modeTokens?.[
-                      '--color-surface-app'
-                    ] ?? 'var(--color-surface-app)'}"
-                  >
                     <span
-                      class="theme-swatch-dot"
+                      aria-hidden="true"
+                      class="theme-swatch-chip"
                       style="background-color: {modeTokens?.[
-                        '--color-accent-primary-start'
-                      ] ??
-                        theme.swatches?.[0] ??
-                        'var(--color-accent-primary-start)'}"
-                    ></span>
-                    <span
-                      class="theme-swatch-dot"
-                      style="background-color: {modeTokens?.[
-                        '--color-accent-secondary-start'
-                      ] ??
-                        theme.swatches?.[1] ??
-                        'var(--color-accent-secondary-start)'}"
-                    ></span>
-                  </span>
-                  {#if active}
-                    <span
-                      class="inline-flex items-center gap-1 text-type-2xs text-accent-primary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0"
+                        '--color-surface-app'
+                      ] ?? 'var(--color-surface-app)'}"
                     >
                       <span
-                        class="material-symbols-outlined text-icon-sm"
+                        class="theme-swatch-dot"
+                        style="background-color: {modeTokens?.[
+                          '--color-accent-primary-start'
+                        ] ??
+                          theme.swatches?.[0] ??
+                          'var(--color-accent-primary-start)'}"
+                      ></span>
+                      <span
+                        class="theme-swatch-dot"
+                        style="background-color: {modeTokens?.[
+                          '--color-accent-secondary-start'
+                        ] ??
+                          theme.swatches?.[1] ??
+                          'var(--color-accent-secondary-start)'}"
+                      ></span>
+                    </span>
+                    {#if active}
+                      <span
+                        class="inline-flex items-center gap-1 text-type-2xs text-accent-primary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0"
+                      >
+                        <span
+                          class="material-symbols-outlined text-icon-sm"
+                          aria-hidden="true">check_circle</span
+                        >
+                        Active
+                      </span>
+                    {:else if previewing}
+                      <span
+                        class="inline-flex items-center gap-1 text-type-2xs text-accent-secondary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0"
+                      >
+                        <span
+                          class="material-symbols-outlined text-icon-sm"
+                          aria-hidden="true">visibility</span
+                        >
+                        Preview
+                      </span>
+                    {/if}
+                  </div>
+                  <div class="min-w-0">
+                    <div
+                      class="text-text-primary text-type-md font-body-md truncate"
+                    >
+                      {theme.name}
+                    </div>
+                    <div
+                      class="text-text-muted text-type-xs font-label-sm truncate"
+                    >
+                      {theme.author
+                        ? `by ${theme.author}`
+                        : sourceLabel(theme.source)}
+                    </div>
+                  </div>
+                </button>
+              {/each}
+            </div>
+
+            <!-- Details pane -->
+            <aside
+              aria-labelledby="theme-details-heading"
+              class="rounded-xl border border-surface-panel-border bg-surface-card p-4 self-start"
+            >
+              <h4
+                id="theme-details-heading"
+                class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
+              >
+                Theme details
+              </h4>
+              {#if detailTheme}
+                {@const detailActive = isActive(detailTheme)}
+                {@const detailPreviewing = isPreviewing(detailTheme.id)}
+                <div class="flex items-start justify-between gap-2 mb-3">
+                  <h5
+                    class="text-text-primary text-type-lg font-headline-md leading-tight"
+                  >
+                    {detailTheme.name}
+                  </h5>
+                  {#if detailActive}
+                    <span
+                      class="inline-flex items-center gap-1 text-type-2xs text-accent-primary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0 mt-1"
+                    >
+                      <span
+                        class="material-symbols-outlined text-type-md"
                         aria-hidden="true">check_circle</span
                       >
                       Active
                     </span>
-                  {:else if previewing}
+                  {:else if detailPreviewing}
                     <span
-                      class="inline-flex items-center gap-1 text-type-2xs text-accent-secondary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0"
+                      class="inline-flex items-center gap-1 text-type-2xs text-accent-secondary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0 mt-1"
                     >
                       <span
-                        class="material-symbols-outlined text-icon-sm"
+                        class="material-symbols-outlined text-type-md"
                         aria-hidden="true">visibility</span
                       >
                       Preview
                     </span>
                   {/if}
                 </div>
-                <div class="min-w-0">
-                  <div
-                    class="text-text-primary text-type-md font-body-md truncate"
-                  >
-                    {theme.name}
+
+                {#if detailSwatches.length > 0}
+                  <div class="flex gap-1.5 mb-3">
+                    {#each detailSwatches as c (c)}
+                      <span
+                        aria-hidden="true"
+                        class="h-9 flex-1 rounded-md border border-surface-panel-border"
+                        style="background-color: {c}"
+                      ></span>
+                    {/each}
                   </div>
-                  <div
-                    class="text-text-muted text-type-xs font-label-sm truncate"
+                {/if}
+
+                {#if detailTheme.description}
+                  <p
+                    class="text-text-muted text-type-sm font-body-md mb-3 leading-relaxed"
                   >
-                    {theme.author
-                      ? `by ${theme.author}`
-                      : sourceLabel(theme.source)}
+                    {detailTheme.description}
+                  </p>
+                {/if}
+
+                <dl class="space-y-1.5 text-type-sm font-body-md">
+                  {#if detailTheme.author}
+                    <div class="flex gap-2">
+                      <dt class="text-text-muted w-20 flex-shrink-0">Author</dt>
+                      <dd class="text-text-primary min-w-0 break-words">
+                        {detailTheme.author}
+                      </dd>
+                    </div>
+                  {/if}
+                  <div class="flex gap-2">
+                    <dt class="text-text-muted w-20 flex-shrink-0">Source</dt>
+                    <dd class="text-text-primary">
+                      {sourceLabel(detailTheme.source)}
+                    </dd>
                   </div>
+                  {#if detailTypography.length > 0}
+                    <div class="flex gap-2">
+                      <dt class="text-text-muted w-20 flex-shrink-0">Fonts</dt>
+                      <dd class="text-text-primary min-w-0">
+                        {#each detailTypography as o, idx (o.label)}
+                          {#if idx > 0}<span class="text-text-muted">
+                              ·
+                            </span>{/if}
+                          <span class="text-text-muted">{o.label}:</span>
+                          {displayFamilyName(o.value)}
+                        {/each}
+                      </dd>
+                    </div>
+                  {/if}
+                </dl>
+
+                <div
+                  class="mt-4 pt-3 border-t border-surface-panel-border flex flex-wrap gap-2"
+                >
+                  <button
+                    type="button"
+                    onclick={() => openEditor(detailTheme.id)}
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-primary-start/15 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+                  >
+                    <span
+                      class="material-symbols-outlined text-icon-md"
+                      aria-hidden="true">palette</span
+                    >
+                    Customize
+                  </button>
+                  {#if detailTheme.source === 'disk'}
+                    <button
+                      type="button"
+                      onclick={() =>
+                        void handleRename(detailTheme.id, detailTheme.name)}
+                      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-border-active cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+                    >
+                      <span
+                        class="material-symbols-outlined text-icon-md"
+                        aria-hidden="true">edit</span
+                      >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      onclick={() =>
+                        void handleDelete(detailTheme.id, detailTheme.name)}
+                      disabled={isActive(detailTheme)}
+                      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-panel border border-surface-panel-border text-error font-label-sm-bold hover:border-error-border cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={isActive(detailTheme)
+                        ? 'Switch themes before deleting the active one'
+                        : 'Delete this custom theme'}
+                    >
+                      <span
+                        class="material-symbols-outlined text-icon-md"
+                        aria-hidden="true">delete</span
+                      >
+                      Delete
+                    </button>
+                  {/if}
                 </div>
-              </button>
-            {/each}
+
+                {#if previewTheme === null}
+                  <p class="text-text-muted text-type-xs font-label-sm mt-3">
+                    Click a theme to preview it. Double-click or Apply to keep
+                    it.
+                  </p>
+                {/if}
+              {:else}
+                <p class="text-text-muted text-type-sm font-body-md">
+                  Select a theme to see its details.
+                </p>
+              {/if}
+            </aside>
           </div>
+        {/if}
+      </div>
+    </section>
 
-          <!-- Details pane -->
-          <aside
-            aria-labelledby="theme-details-heading"
-            class="rounded-xl border border-surface-panel-border bg-surface-card p-4 self-start"
+    <!-- Custom theme import/export -->
+    <section aria-labelledby="custom-heading">
+      <h3
+        id="custom-heading"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
+      >
+        Custom themes
+      </h3>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onclick={handleImport}
+          class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 motion-reduce:transition-none transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+        >
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true">upload</span
           >
-            <h4
-              id="theme-details-heading"
-              class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
-            >
-              Theme details
-            </h4>
-            {#if detailTheme}
-              {@const detailActive = isActive(detailTheme)}
-              {@const detailPreviewing = isPreviewing(detailTheme.id)}
-              <div class="flex items-start justify-between gap-2 mb-3">
-                <h5
-                  class="text-text-primary text-type-lg font-headline-md leading-tight"
-                >
-                  {detailTheme.name}
-                </h5>
-                {#if detailActive}
-                  <span
-                    class="inline-flex items-center gap-1 text-type-2xs text-accent-primary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0 mt-1"
-                  >
-                    <span
-                      class="material-symbols-outlined text-type-md"
-                      aria-hidden="true">check_circle</span
-                    >
-                    Active
-                  </span>
-                {:else if detailPreviewing}
-                  <span
-                    class="inline-flex items-center gap-1 text-type-2xs text-accent-secondary-start font-label-sm-bold uppercase tracking-wider flex-shrink-0 mt-1"
-                  >
-                    <span
-                      class="material-symbols-outlined text-type-md"
-                      aria-hidden="true">visibility</span
-                    >
-                    Preview
-                  </span>
-                {/if}
-              </div>
+          Import .json
+        </button>
+        <button
+          type="button"
+          onclick={handleExport}
+          disabled={!themeState.id}
+          class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-accent-primary-start motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true">download</span
+          >
+          Export active
+        </button>
+      </div>
+      <p class="text-text-muted text-type-xs font-label-sm mt-2">
+        You can also drag and drop a .json theme file onto the grid above.
+      </p>
+    </section>
 
-              {#if detailSwatches.length > 0}
-                <div class="flex gap-1.5 mb-3">
-                  {#each detailSwatches as c (c)}
-                    <span
-                      aria-hidden="true"
-                      class="h-9 flex-1 rounded-md border border-surface-panel-border"
-                      style="background-color: {c}"
-                    ></span>
-                  {/each}
-                </div>
-              {/if}
-
-              {#if detailTheme.description}
-                <p
-                  class="text-text-muted text-type-sm font-body-md mb-3 leading-relaxed"
-                >
-                  {detailTheme.description}
-                </p>
-              {/if}
-
-              <dl class="space-y-1.5 text-type-sm font-body-md">
-                {#if detailTheme.author}
-                  <div class="flex gap-2">
-                    <dt class="text-text-muted w-20 flex-shrink-0">Author</dt>
-                    <dd class="text-text-primary min-w-0 break-words">
-                      {detailTheme.author}
-                    </dd>
-                  </div>
-                {/if}
-                <div class="flex gap-2">
-                  <dt class="text-text-muted w-20 flex-shrink-0">Source</dt>
-                  <dd class="text-text-primary">
-                    {sourceLabel(detailTheme.source)}
-                  </dd>
-                </div>
-                {#if detailTypography.length > 0}
-                  <div class="flex gap-2">
-                    <dt class="text-text-muted w-20 flex-shrink-0">Fonts</dt>
-                    <dd class="text-text-primary min-w-0">
-                      {#each detailTypography as o, idx (o.label)}
-                        {#if idx > 0}<span class="text-text-muted">
-                            ·
-                          </span>{/if}
-                        <span class="text-text-muted">{o.label}:</span>
-                        {displayFamilyName(o.value)}
-                      {/each}
-                    </dd>
-                  </div>
-                {/if}
-              </dl>
-
-              {#if previewTheme === null}
-                <p
-                  class="text-text-muted text-type-xs font-label-sm mt-4 pt-3 border-t border-surface-panel-border"
-                >
-                  Click a theme to preview it. Double-click or Apply to keep it.
-                </p>
-              {/if}
-            {:else}
-              <p class="text-text-muted text-type-sm font-body-md">
-                Select a theme to see its details.
-              </p>
+    <!-- Live status region (a11y: aria-live="polite" for success/info, role="alert" for errors) -->
+    {#if themeStatus.message}
+      <div
+        role={statusAriaRole(themeStatus) ?? undefined}
+        aria-live={themeStatus.kind === 'error' ? 'assertive' : 'polite'}
+        class="rounded-lg px-3 py-2 text-type-sm font-body-md {statusClasses(
+          themeStatus
+        )}"
+      >
+        <div class="flex items-start gap-2">
+          <span
+            class="material-symbols-outlined text-icon-md flex-shrink-0"
+            aria-hidden="true"
+          >
+            {themeStatus.kind === 'error'
+              ? 'error'
+              : themeStatus.kind === 'success'
+                ? 'check_circle'
+                : 'info'}
+          </span>
+          <div class="flex-1 min-w-0">
+            <div>{themeStatus.message}</div>
+            {#if themeStatus.fields.length > 0}
+              <ul class="mt-1.5 ml-4 list-disc space-y-0.5">
+                {#each themeStatus.fields as f (f.field)}
+                  <li>
+                    <code class="font-mono text-type-xs">{f.field}</code>: {f.message}
+                  </li>
+                {/each}
+              </ul>
             {/if}
-          </aside>
-        </div>
-      {/if}
-    </div>
-  </section>
-
-  <!-- Custom theme import/export -->
-  <section aria-labelledby="custom-heading">
-    <h3
-      id="custom-heading"
-      class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
-    >
-      Custom themes
-    </h3>
-    <div class="flex flex-wrap items-center gap-2">
-      <button
-        type="button"
-        onclick={handleImport}
-        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 motion-reduce:transition-none transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-      >
-        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
-          >upload</span
-        >
-        Import .json
-      </button>
-      <button
-        type="button"
-        onclick={handleExport}
-        disabled={!themeState.id}
-        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-accent-primary-start motion-reduce:transition-none transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
-          >download</span
-        >
-        Export active
-      </button>
-    </div>
-    <p class="text-text-muted text-type-xs font-label-sm mt-2">
-      You can also drag and drop a .json theme file onto the grid above.
-    </p>
-  </section>
-
-  <!-- Live status region (a11y: aria-live="polite" for success/info, role="alert" for errors) -->
-  {#if themeStatus.message}
-    <div
-      role={statusAriaRole(themeStatus) ?? undefined}
-      aria-live={themeStatus.kind === 'error' ? 'assertive' : 'polite'}
-      class="rounded-lg px-3 py-2 text-type-sm font-body-md {statusClasses(
-        themeStatus
-      )}"
-    >
-      <div class="flex items-start gap-2">
-        <span
-          class="material-symbols-outlined text-icon-md flex-shrink-0"
-          aria-hidden="true"
-        >
-          {themeStatus.kind === 'error'
-            ? 'error'
-            : themeStatus.kind === 'success'
-              ? 'check_circle'
-              : 'info'}
-        </span>
-        <div class="flex-1 min-w-0">
-          <div>{themeStatus.message}</div>
-          {#if themeStatus.fields.length > 0}
-            <ul class="mt-1.5 ml-4 list-disc space-y-0.5">
-              {#each themeStatus.fields as f (f.field)}
-                <li>
-                  <code class="font-mono text-type-xs">{f.field}</code>: {f.message}
-                </li>
-              {/each}
-            </ul>
-          {/if}
-          <button
-            type="button"
-            onclick={() => clearStatus()}
-            class="mt-1.5 text-type-xs font-label-sm-bold underline opacity-70 hover:opacity-100 bg-transparent border-none cursor-pointer"
-          >
-            Dismiss
-          </button>
+            <button
+              type="button"
+              onclick={() => clearStatus()}
+              class="mt-1.5 text-type-xs font-label-sm-bold underline opacity-70 hover:opacity-100 bg-transparent border-none cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  {/if}
-</div>
+    {/if}
+  </div>
+{/if}
 
 <style>
   /* Visually hidden but available to assistive tech. Used by the

@@ -551,19 +551,20 @@ friendly mapping.
 
 4.4 Theme Engine IPC & Pipeline
 
-The theme engine is a four-stage pipeline (DESIGN.md §7 / SPECS.md §6.4): canonical schema -> settings persistence -> loader -> runtime injection. It lives in backend/themes and frontend/src/theme and reuses the existing App-binding -> JSON RPC -> Svelte store IPC topology; it does NOT touch SQLite or the file write lock (the only disk write is AppSettings, via the atomic settings.json writer).
+The theme engine is a pipeline (DESIGN.md §7 / SPECS.md §6.4): canonical schema → validate/flatten → settings + vault theme files → runtime injection. It lives in `backend/themes` and `frontend/src/theme` and reuses the App-binding → JSON RPC → Svelte store IPC topology; it does **not** touch SQLite. Disk writes are: user-global `settings.json` (active id + mode), vault theme JSON under `.system/themes/`, and optional per-theme asset directories / editor staging.
 
 Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
 
 ```
-  <vault>/.system/themes/*.json          (on-disk user themes)
-          │  +  embed.FS cyber_forest.json (guaranteed fallback)
+  <vault>/.system/themes/*.json          (on-disk custom + imported themes)
+          │  +  embed.FS themes/*.json   (first-class roster)
           ▼
   +----------------------------------------------------------+
   |   Go: backend/themes - Theme System v2                   |
   |   validate.go    ParseAndValidate (schema sandbox)       |
   |   loader.go      ListThemes / ResolveActive / FlatTokens |
   |   importer.go    ImportThemeFromPath / ExportThemeToPath |
+  |   save.go        GetThemeJSON / Save / Rename / Delete   |
   |   cache.go       CachedThemeByID (mtime-aware cache)     |
   |   default.go     //go:embed themes/*.json (11 themes)    |
   |   derivation.go  OKLCH hover/active/disabled derivation  |
@@ -573,7 +574,9 @@ Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
           │  Wails v3 JSON RPC (single App service)
           │   ListThemes / GetActiveTheme / ApplyTheme
           │   ImportTheme / ExportActiveTheme / PickThemeFile
-          │   PickBackgroundImage   (per-zone background asset pick)
+          │   PickBackgroundImage   (persist bg into active theme)
+          │   GetThemeJSON / SaveCustomTheme / RenameCustomTheme
+          │   DeleteCustomTheme / PickImageFile / PrepareBackgroundAsset
           │   events: theme:changed | themes:changed
           ▼
   +----------------------------------------------------------+
@@ -581,6 +584,7 @@ Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
   |   themeState   active id/name/mode + dark/light maps     |
   |   themesState  listing + flat tokens (picker previews)   |
   |   resolves "system" locally via prefers-color-scheme     |
+  |   editor working copy → FE flatten → injectTokens        |
   +----------------------------------------------------------+
           │  injectTokens(tokens)
           ▼
@@ -591,11 +595,11 @@ Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
                                                        startup fallback only)
 
   AppSettings (user-global settings.json): { active_theme, theme_mode }
-          ▲  atomic write via vault.SaveSettings
-          │  ApplyTheme persists here (the only disk write in the engine)
+          ▲  atomic write via vault.UpdateSettings / SaveSettings
+          │  ApplyTheme / SaveCustomTheme(apply) persist selection here
 ```
 
-**Storage layout.** Theme files live in `<vault>/.system/themes/*.json` (SPECS §3.2). The **first-class set** (`cyber_forest` plus Terra Noir, Linen, Stark, Graphite, Bubblegum, Frost, Synthwave, Daybreak, Aggie, Altgeld) is embedded via `//go:embed themes/*.json` and is what `ScaffoldVault` writes, so each first-class theme has one source of truth. `ListThemes` appends every embedded first-class theme (deduped — on-disk wins), so the full roster is always selectable even on an empty or wiped vault; `ResolveActive` / `CachedThemeByID` resolve a first-class id from the embed when it is not on disk, so a non-default active theme always resolves its palette from the embed, so the default palette never appears. The active id + mode persist to user-global `settings.json` — the only disk write in the engine.
+**Storage layout.** Theme files live in `<vault>/.system/themes/*.json` (SPECS §3.2); large background assets in `<id>.assets/`; editor staging under `.editor-staging/`. The **first-class set** is embedded via `//go:embed themes/*.json` (embed-authoritative for first-class ids). `ListThemes` always surfaces the full roster; `ResolveActive` / `CachedThemeByID` resolve first-class ids from the embed when not on disk. The active id + mode persist to user-global `settings.json`.
 
 **Schema & validation.** `backend/themes` validates the canonical v2 schema (RFC `docs/theme-system-v2-rfc.md`). `schema_version` is hard-enforced at `"2.0.0"` — any other value (including v1) is rejected with a descriptive error, and `DisallowUnknownFields` makes a typo fail loudly instead of being silently dropped. There is no v1→v2 migration path (single-user project; first-party themes were re-authored natively — see ADR `docs/decisions/0002-theme-schema-v2-no-migration.md`). Color slots accept `#hex` (`#rgb`/`#rrggbb`/`#rrggbbaa`), `rgb()`/`rgba()`, and `oklch(L C H[/ A])`; everything else (named colors, `hsl()`, `url()` at color slots, `expression()`, `<script>`) is rejected before the file is written — the import sandbox. The loader dedupes on-disk + embedded themes by id, imports/exports atomically, and serves a process-local mtime-aware cache.
 
@@ -605,13 +609,13 @@ Pipeline (single source of truth shared with DESIGN.md §7 / SPECS.md §6.4):
 
 **Chrome surfaces consume their respective zones directly.** The app skeleton (sidebar, titlebar, activity bar) renders their respective zones (`bg-surface-sidebar`, `bg-surface-titlebar`, `bg-surface-activitybar`). There is no scoping/remap class: each chrome element says its zone explicitly. For themes that omit these zones, the engine's inheritance resolves them to the app zone, so chrome matches the page; Daybreak, Synthwave, and Bubblegum author dark titlebar/activitybar/sidebar zones against a light `editor`/`app` to produce the unified dark chrome shell framing a bright page. (The v1 `.silt-chrome` CSS-variable remap was a shim and is gone; the class survives only as a non-theming layout/drag hook if at all.)
 
-**IPC.** `ListThemes`, `GetActiveTheme`, `ApplyTheme`, `ImportTheme`, `ExportActiveTheme`, `PickThemeFile`, and `PickBackgroundImage` (picks a per-zone background image and runs it through the asset pipeline in `background.go` — small files inline as base64 data URIs, larger files into a per-theme assets directory, then cache-invalidate and emit `themes:changed`). `ApplyTheme` persists to `settings.json` and emits `theme:changed`; `ImportTheme` emits `themes:changed` (the listing event — distinct from the active-theme event). `GetActiveTheme` returns both dark + light maps so the frontend resolves "system" locally without a second round-trip.
+**IPC.** Listing/apply: `ListThemes`, `GetActiveTheme`, `ApplyTheme`. Import/export: `ImportTheme`, `ExportActiveTheme`, `PickThemeFile`. Background (persist into active theme, may fork embeds): `PickBackgroundImage`. Custom editor: `GetThemeJSON` (seed working copy), `SaveCustomTheme` (validate + write disk custom; optional apply), `RenameCustomTheme`, `DeleteCustomTheme` (refuse active), `PickImageFile` + `PrepareBackgroundAsset` (stage image for working copy without mutating a theme). Theme-file mutations take `themeWriteMu`; when Save also updates the active id, lock order is `themeWriteMu` → settings write. `ApplyTheme` / successful apply-on-save emit `theme:changed`; listing mutations emit `themes:changed`. `GetActiveTheme` returns both dark + light maps so the frontend resolves "system" locally without a second round-trip.
 
-**Frontend** (`frontend/src/theme`): `store.svelte.ts` holds `themeState` (active id/name/mode + token maps) and `themesState` (listing + flat tokens for previews); `inject.ts` rewrites a single `<style id="silt-theme">:root{…}</style>` (one DOM write → one recalc → same-tick repaint); `AppearanceTab.svelte` is the accessible picker — a card grid + details pane with a **two-stage preview** (hover highlights the card only; single-click stages a workspace-wide preview with an Apply/Revert banner; double-click/Apply commits; Revert/Esc restores). No category filters: every theme is dual-mode (dark + light maps), so the Dark/Light/System mode toggle is the per-theme mode selector.
+**Frontend** (`frontend/src/theme`): `store.svelte.ts` holds `themeState` / `themesState` and editor IPC wrappers; `inject.ts` rewrites a single `<style id="silt-theme">:root{…}</style>`; `flatten.ts` mirrors Go Flatten for live editor preview; `contrast.ts` classifies pairs and offers OKLCH-lightness auto-fix; `editor/ThemeEditor.svelte` is the progressive-disclosure editor (working copy → inject → Save). `AppearanceTab.svelte` is the accessible picker — card grid + details, two-stage preview, Customize entry, rename/delete for disk themes. UX contract: `docs/theme-v2-ux.md`.
 
 **Launch background.** `main.go` resolves the webview `BackgroundColour` from the in-process theme cache so a non-default active theme's app-zone background (`surfaces.app.bg`) is used for the pre-CSS paint; it falls back to the embedded default when no settings exist or the active id is invalid.
 
-**Contrast guarantee.** A CI gate (`backend/themes/contrast_test.go`) enumerates the critical semantic pairs for every embedded theme in both modes and fails the build below WCAG AA (4.5:1 text, 3:1 UI); Stark is asserted at AAA (7:1) for primary text as a regression guard.
+**Contrast guarantee.** A CI gate (`backend/themes/contrast_test.go`) enumerates the critical semantic pairs for every embedded theme in both modes and fails the build below WCAG AA (4.5:1 text, 3:1 UI); Stark is asserted at AAA (7:1) for primary text as a regression guard. The editor surfaces the same ratios at runtime as non-blocking pass/warn/fail indicators (never blocks Save).
 
 
 4.5 Template Engine IPC & Pipeline
