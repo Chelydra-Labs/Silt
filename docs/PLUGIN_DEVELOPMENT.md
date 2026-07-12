@@ -649,7 +649,8 @@ await ctx.pluginDb.migrate(1, `
 
 **sqlite-vec (vector search).** Every plugin connection has `sqlite-vec`
 registered, exposing `vec0` virtual tables and `vec_distance_cosine` /
-`vec_distance_L2`. Useful for semantic search, dedup, and RAG:
+`vec_distance_L2`. Useful for semantic search, dedup, and RAG. **Reference
+consumer: first-party `silt-ai-qa`** (see `docs/plugins/silt-ai-qa.md`).
 
 ```sql
 -- Cosine distance index (384-dim embeddings, e.g. a MiniLM model).

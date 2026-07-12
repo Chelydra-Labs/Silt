@@ -30,6 +30,9 @@ var FirstPartyPluginIDs = map[string]bool{
 	// (plugin-db). Without this entry seedFirstPartyGrants never seeds those
 	// grants and every summarize() call is denied at the Go requireGrant gate.
 	"silt-ai-summary": true,
+	// silt-ai-qa (#224–#228): semantic search + RAG Q&A. Uses ctx.ai.embed /
+	// complete and a per-plugin sqlite-vec index (plugin-db).
+	"silt-ai-qa": true,
 }
 
 // IsFirstPartyID reports whether pluginID is a reserved (bundled) plugin id.

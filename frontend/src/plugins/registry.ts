@@ -3,6 +3,7 @@ import TasksHub from './first-party/silt-tasks/TasksHub.svelte'
 import TasksSidebar from './first-party/silt-tasks/Sidebar.svelte'
 import AttachmentsPlugin from './first-party/silt-attachments'
 import AISummaryPlugin from './first-party/silt-ai-summary'
+import AIQAPlugin from './first-party/silt-ai-qa'
 
 // First-party plugin registry: bundled Svelte components that ship with the
 // app. Third-party plugins live in .system/plugins/ and are loaded by the
@@ -52,6 +53,17 @@ registerPlugin({
   onVaultOpen: AISummaryPlugin.onVaultOpen,
   onVaultClose: AISummaryPlugin.onVaultClose,
   onShutdown: AISummaryPlugin.onShutdown,
+  source: 'first-party'
+})
+// silt-ai-qa (#224–#228): semantic search + RAG Q&A. Off by default; needs
+// ai + plugin-db. Sidebar panel + bespoke settings page.
+registerPlugin({
+  manifest: AIQAPlugin.manifest,
+  component: AIQAPlugin.component,
+  settingsPageComponent: AIQAPlugin.settingsPageComponent,
+  onVaultOpen: AIQAPlugin.onVaultOpen,
+  onVaultClose: AIQAPlugin.onVaultClose,
+  onShutdown: AIQAPlugin.onShutdown,
   source: 'first-party'
 })
 

@@ -13,7 +13,8 @@ describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () =>
   const GO_FIRST_PARTY_IDS = [
     'silt-attachments',
     'silt-tasks',
-    'silt-ai-summary'
+    'silt-ai-summary',
+    'silt-ai-qa'
   ]
 
   it('frontend registry ids match the Go FirstPartyPluginIDs roster', () => {
