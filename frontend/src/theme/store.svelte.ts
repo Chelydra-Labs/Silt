@@ -6,16 +6,27 @@
 // plugins/store.svelte.ts and settings/store.svelte.ts).
 import {
   ApplyTheme,
+  DeleteCustomTheme,
   ExportActiveTheme,
   GetActiveTheme,
+  GetThemeJSON,
   ImportTheme,
   ListThemes,
   PickExportPath,
-  PickThemeFile
+  PickImageFile,
+  PickThemeFile,
+  PrepareBackgroundAsset,
+  RenameCustomTheme,
+  SaveCustomTheme
 } from '../../bindings/silt/app.js'
 import { Events } from '@wailsio/runtime'
 import type * as themes from '../../bindings/silt/backend/themes/models.js'
-import type { ActiveThemeResult } from '../../bindings/silt/models.js'
+import type {
+  ActiveThemeResult,
+  PrepareBackgroundAssetResult,
+  SaveCustomThemeRequest,
+  SaveCustomThemeResult
+} from '../../bindings/silt/models.js'
 import { injectTokens } from './inject'
 
 export type ThemeMode = 'dark' | 'light' | 'system'
@@ -435,6 +446,84 @@ export async function exportActiveTheme(): Promise<boolean> {
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
+}
+
+// --- Custom theme editor IPC wrappers (#392, #393, #401) -------------------
+
+/** Seed the editor working copy from embed or disk JSON. */
+export async function getThemeJSON(id: string): Promise<string> {
+  return GetThemeJSON(id)
+}
+
+/**
+ * Persist a custom theme. overwrite=false always forks a new id;
+ * overwrite=true replaces an on-disk custom theme only. apply=true makes
+ * the saved theme active.
+ */
+export async function saveCustomTheme(req: {
+  json: string
+  overwrite: boolean
+  apply: boolean
+  name?: string
+}): Promise<SaveCustomThemeResult | null> {
+  const payload = {
+    json: req.json,
+    overwrite: req.overwrite,
+    apply: req.apply,
+    ...(req.name !== undefined ? { name: req.name } : {})
+  } as SaveCustomThemeRequest
+  return SaveCustomTheme(payload)
+}
+
+/** Rename display name of an on-disk custom theme (built-ins refused). */
+export async function renameCustomTheme(
+  id: string,
+  name: string
+): Promise<void> {
+  await RenameCustomTheme(id, name)
+  setStatus({
+    kind: 'success',
+    message: `Renamed theme to "${name}".`,
+    fields: []
+  })
+}
+
+/**
+ * Delete an on-disk custom theme. Refuses active theme and built-ins.
+ * Surfaces errors via themeStatus.
+ */
+export async function deleteCustomTheme(id: string): Promise<boolean> {
+  try {
+    await DeleteCustomTheme(id)
+    setStatus({
+      kind: 'success',
+      message: `Deleted theme "${id}".`,
+      fields: []
+    })
+    return true
+  } catch (err) {
+    setStatus({
+      kind: 'error',
+      message: `Failed to delete theme: ${errMsg(err)}`,
+      fields: []
+    })
+    return false
+  }
+}
+
+/** Native image picker for the background editor. Empty string = cancelled. */
+export async function pickImageFile(): Promise<string> {
+  return PickImageFile()
+}
+
+/**
+ * Stage a background image for the editor working copy without writing a
+ * theme file. Returns a CSS url() reference (data URI or staging path).
+ */
+export async function prepareBackgroundAsset(
+  path: string
+): Promise<PrepareBackgroundAssetResult | null> {
+  return PrepareBackgroundAsset(path)
 }
 
 /**

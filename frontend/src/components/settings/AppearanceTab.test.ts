@@ -124,7 +124,13 @@ vi.mock('../../theme/store.svelte', () => ({
   exportActiveTheme: mocks.exportActiveTheme,
   importThemeFromPath: mocks.importThemeFromPath,
   setStatus: mocks.setStatus,
-  pickAndImportTheme: mocks.pickAndImportTheme
+  pickAndImportTheme: mocks.pickAndImportTheme,
+  renameCustomTheme: vi.fn(),
+  deleteCustomTheme: vi.fn(),
+  getThemeJSON: vi.fn(),
+  saveCustomTheme: vi.fn(),
+  pickImageFile: vi.fn(),
+  prepareBackgroundAsset: vi.fn()
 }))
 
 import AppearanceTab from './AppearanceTab.svelte'
