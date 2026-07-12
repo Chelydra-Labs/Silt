@@ -221,6 +221,9 @@ func TestSave_RoundTrip(t *testing.T) {
 	original.Editor.TabIndentSpaces = 8
 	original.Hotkeys["custom_action"] = "Ctrl+Shift+X"
 	original.Plugins.PluginSettings["my-plugin"] = map[string]any{"key": "value"}
+	// Save/Load both run normalize (opt-in disabled seed, nil maps, …). Compare
+	// against the normalized form so seed markers are not a false mismatch.
+	original = normalize(original)
 
 	if err := Save(tmp, original); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -283,6 +286,36 @@ func TestDefaults_AIPluginsOffByDefault(t *testing.T) {
 	for _, id := range []string{"silt-ai-summary", "silt-ai-qa"} {
 		if !disabled[id] {
 			t.Errorf("Defaults().Plugins.Disabled missing %q (AI plugins must ship off by default)", id)
+		}
+	}
+}
+
+// TestNormalize_SeedsSiltAIQADisabledOnUpgrade: a pre-Sprint-22 config that
+// only lists silt-ai-summary in disabled must gain silt-ai-qa on normalize so
+// upgraded vaults do not auto-enable Q&A (PR #540 review).
+func TestNormalize_SeedsSiltAIQADisabledOnUpgrade(t *testing.T) {
+	cfg := normalize(SystemConfig{
+		Plugins: PluginsConfig{
+			Disabled:       []string{"silt-ai-summary"},
+			PluginSettings: map[string]any{},
+		},
+	})
+	found := false
+	for _, id := range cfg.Plugins.Disabled {
+		if id == "silt-ai-qa" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("normalize must append silt-ai-qa to disabled on upgrade; got %v", cfg.Plugins.Disabled)
+	}
+	// Second normalize must not re-append after user enables (remove from disabled).
+	cfg.Plugins.Disabled = []string{"silt-ai-summary"} // user enabled Q&A
+	cfg = normalize(cfg)
+	for _, id := range cfg.Plugins.Disabled {
+		if id == "silt-ai-qa" {
+			t.Fatal("normalize must not re-disable silt-ai-qa after seed marker is set")
 		}
 	}
 }

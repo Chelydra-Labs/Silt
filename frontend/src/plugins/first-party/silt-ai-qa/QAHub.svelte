@@ -9,10 +9,10 @@
 </script>
 
 <div class="p-6 text-text-muted text-type-md">
-  <h2 class="text-text-primary text-type-xl font-bold mb-2">AI Q&amp;A</h2>
+  <h2 class="text-text-primary text-type-xl font-bold mb-2">AI Search</h2>
   <p>
-    Open the <strong>Ask your notes</strong> panel in the sidebar to question your
-    vault. Configure models under Settings → AI Provider, then enable this plugin
-    and rebuild the index under Settings → AI Q&amp;A.
+    Open the <strong>AI Search</strong> panel in the sidebar to search your vault
+    and get cited answers. Configure models under Settings → AI Provider, then enable
+    this plugin and rebuild the index under Settings → AI Search.
   </p>
 </div>

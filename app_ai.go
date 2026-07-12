@@ -39,6 +39,7 @@ import (
 	"silt/backend/keyring"
 	"silt/backend/plugins"
 	"strings"
+	"time"
 )
 
 // AI stream event names pushed to the frontend (#226). Payload is always a
@@ -53,6 +54,12 @@ const (
 // stream before the producer aborts (backpressure). Generous for UI consumers
 // that coalesce on rAF; tight enough to bound memory if a plugin stalls.
 const aiStreamBufferCap = 256
+
+// aiStreamReadyWait is how long the producer waits for PluginAIStreamReady
+// before starting anyway. Covers the IPC round-trip for listener attach; if the
+// client never acks (crashed plugin), the stream still proceeds rather than
+// hanging until the provider timeout.
+const aiStreamReadyWait = 2 * time.Second
 
 // keyringService is the OS-keyring service name under which Silt stores AI
 // provider keys (#218). The "user" half is vault-scoped (see aiKeyringUser) so
@@ -783,11 +790,16 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 	// Child of vault/app AI context so close/shutdown cancels the HTTP body.
 	streamCtx, streamCancel := context.WithCancel(a.aiContext())
 
+	ready := make(chan struct{})
 	a.aiStreamsMu.Lock()
 	if a.aiStreams == nil {
 		a.aiStreams = make(map[string]*aiStreamSession)
 	}
-	a.aiStreams[streamID] = &aiStreamSession{pluginID: pluginID, cancel: streamCancel}
+	a.aiStreams[streamID] = &aiStreamSession{
+		pluginID: pluginID,
+		cancel:   streamCancel,
+		ready:    ready,
+	}
 	a.aiStreamsMu.Unlock()
 
 	// Buffered channel for backpressure between SSE reader and event emit.
@@ -807,6 +819,24 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			delete(a.aiStreams, streamID)
 			a.aiStreamsMu.Unlock()
 		}()
+
+		// Wait for the frontend to attach Events.On listeners (PluginAIStreamReady)
+		// before starting the upstream request. Immediate failures (native
+		// provider reject, empty model) would otherwise emit done/error before
+		// createAIStream installs handlers, leaving the client hung (PR #540).
+		select {
+		case <-ready:
+		case <-time.After(aiStreamReadyWait):
+		case <-streamCtx.Done():
+			a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, "cancelled", nil)
+			a.emit(aiEventCompleteError, map[string]any{
+				"stream_id": streamID,
+				"plugin_id": pluginID,
+				"kind":      string(ai.ErrTimeout),
+				"message":   "stream cancelled before start",
+			})
+			return
+		}
 
 		// Fan-out deltas to Wails events on a separate goroutine so the SSE
 		// parser only blocks on the bounded channel (backpressure), not on IPC.
@@ -894,9 +924,37 @@ func (a *App) PluginAICancelStream(pluginID, sessionToken, streamID string) erro
 	if ok && sess.pluginID == pluginID {
 		// Leave the map entry; the stream goroutine removes it on exit.
 		cancel := sess.cancel
+		// Unblock a producer still waiting on ready so it observes cancel.
+		if sess.ready != nil {
+			sess.readyOnce.Do(func() { close(sess.ready) })
+		}
 		a.aiStreamsMu.Unlock()
 		cancel()
 		return nil
+	}
+	a.aiStreamsMu.Unlock()
+	return nil
+}
+
+// PluginAIStreamReady signals that the frontend has attached Events.On
+// listeners for streamID and is ready to receive deltas/terminal events.
+// Must be called after PluginAIComplete(stream=true) returns stream_id.
+// Idempotent; unknown streams are a no-op success.
+func (a *App) PluginAIStreamReady(pluginID, sessionToken, streamID string) error {
+	if err := a.requirePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapAI); err != nil {
+		return err
+	}
+	streamID = strings.TrimSpace(streamID)
+	if streamID == "" {
+		return &ai.AIError{Kind: ai.ErrBadRequest, Message: "stream_id is required"}
+	}
+	a.aiStreamsMu.Lock()
+	sess, ok := a.aiStreams[streamID]
+	if ok && sess.pluginID == pluginID && sess.ready != nil {
+		sess.readyOnce.Do(func() { close(sess.ready) })
 	}
 	a.aiStreamsMu.Unlock()
 	return nil

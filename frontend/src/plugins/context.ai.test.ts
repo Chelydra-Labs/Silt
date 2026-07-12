@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
       })
     ),
     pluginAICancelStream: vi.fn(() => Promise.resolve()),
+    pluginAIStreamReady: vi.fn(() => Promise.resolve()),
     getActiveLocation: vi.fn(() => ({
       notebook: 'Work',
       section: '',
@@ -49,7 +50,8 @@ const mocks = vi.hoisted(() => {
 vi.mock('../../bindings/silt/app.js', () => ({
   PluginAIComplete: mocks.pluginAIComplete,
   PluginAIEmbed: mocks.pluginAIEmbed,
-  PluginAICancelStream: mocks.pluginAICancelStream
+  PluginAICancelStream: mocks.pluginAICancelStream,
+  PluginAIStreamReady: mocks.pluginAIStreamReady
 }))
 
 vi.mock('@wailsio/runtime', () => ({
@@ -249,6 +251,8 @@ describe('ctx.ai.complete stream (#226)', () => {
       stream: true
     })
     expect(stream.streamId).toBe('sid-1')
+    // Ready ack must fire after listeners attach so Go can start the producer.
+    expect(mocks.pluginAIStreamReady).toHaveBeenCalledWith('p', 'tok', 'sid-1')
 
     const collected: string[] = []
     const iter = (async () => {

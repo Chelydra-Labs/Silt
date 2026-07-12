@@ -20,12 +20,12 @@ import { resolveSettings } from './settings'
 
 export const manifest: PluginManifest = {
   id: 'silt-ai-qa',
-  name: 'AI Q&A',
+  name: 'AI Search',
   version: '0.1.0',
   author: 'Silt',
   description:
-    'Ask questions of your vault and get answers grounded in your notes with citations. Requires chat + embedding models.',
-  icon: 'forum',
+    'Search your vault with hybrid keyword + semantic retrieval, and get cited answers from your notes. Requires chat + embedding models.',
+  icon: 'manage_search',
   capabilities: { ai: true, 'plugin-db': true }
 }
 
@@ -42,8 +42,8 @@ function mountPanel() {
     id: PANEL_SURFACE_ID,
     pluginID: PLUGIN_ID,
     kind: 'sidebar-panel',
-    label: 'Ask your notes',
-    icon: 'forum',
+    label: 'AI Search',
+    icon: 'manage_search',
     component: QAPanel
   })
 }

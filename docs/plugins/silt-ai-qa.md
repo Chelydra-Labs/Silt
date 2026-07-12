@@ -1,9 +1,9 @@
-# AI Q&A (`silt-ai-qa`)
+# AI Search (`silt-ai-qa`)
 
-Ask natural-language questions of your vault and get answers grounded in your
-own notes, with clickable citations.
+Search your vault with hybrid keyword + semantic retrieval, and get answers
+grounded in your own notes with clickable citations.
 
-**Off by default.** Enable under **Settings → AI Q&A** (or Plugins).
+**Off by default.** Enable under **Settings → AI Search** (or Plugins).
 
 ## What it does
 
@@ -21,11 +21,11 @@ own notes, with clickable citations.
    - Configure a **chat** model (local Ollama or OpenAI-compatible).
    - Configure an **embedding** model independently (e.g. `nomic-embed-text`).
    - See [BRING_YOUR_OWN_MODEL.md](../BRING_YOUR_OWN_MODEL.md).
-2. **Settings → AI Q&A**
+2. **Settings → AI Search**
    - Enable the plugin.
    - Optionally limit **notebook scope**.
    - Click **Rebuild index** (first run). Progress shows in the panel.
-3. Open the **Ask your notes** sidebar panel and ask a question.
+3. Open the **AI Search** sidebar panel and ask a question.
 
 ## Privacy
 
@@ -43,7 +43,7 @@ own notes, with clickable citations.
 |---|---|
 | “Embedding model not configured” | Set embedding model on AI Provider page |
 | Empty / weak answers | Rebuild index; raise hybrid weight toward semantic; check notebook scope |
-| Dimension / model change | Rebuild index (vec0 dimensions are fixed per model) |
+| Dimension / model change | Rebuild index (vec0 dimensions are fixed per model); model changes auto-trigger rebuild on open |
 | Streaming fails (native Google/Anthropic) | Use OpenAI-compatible or local chat for streaming; non-stream fallback still works |
 | Index slow on large vaults | Narrow notebook scope; leave auto re-embed on for incremental updates |
 

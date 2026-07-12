@@ -101,7 +101,7 @@
 </script>
 
 <div class="qa-settings">
-  <h2 class="title">{manifest?.name ?? 'AI Q&A'}</h2>
+  <h2 class="title">{manifest?.name ?? 'AI Search'}</h2>
   <p class="lede">
     {manifest?.description ??
       'Ask natural-language questions of your vault with cited answers. Off by default.'}
@@ -115,7 +115,7 @@
         checked={enabled}
         onchange={() => void toggleEnabled()}
       />
-      <span>Enable AI Q&amp;A plugin</span>
+      <span>Enable AI Search plugin</span>
     </label>
   </section>
 

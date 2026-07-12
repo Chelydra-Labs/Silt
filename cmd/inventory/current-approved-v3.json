@@ -429,6 +429,10 @@
         "signature": "PluginAIEmbed(pluginID, sessionToken string, input PluginAIEmbedInput) (ai.EmbedResult, error)"
       },
       {
+        "name": "PluginAIStreamReady",
+        "signature": "PluginAIStreamReady(pluginID, sessionToken, streamID string) error"
+      },
+      {
         "name": "PluginAppendTaskComment",
         "signature": "PluginAppendTaskComment(pluginID, sessionToken, taskID, text, author, ts, parentCommentID string) (string, error)"
       },
@@ -1057,6 +1061,6 @@
       "vault:moved",
       "vault:watch-coverage"
     ],
-    "plugin_method_count": 51
+    "plugin_method_count": 52
   }
 }

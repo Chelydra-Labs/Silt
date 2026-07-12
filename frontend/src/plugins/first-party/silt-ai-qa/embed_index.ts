@@ -138,33 +138,34 @@ async function metaSet(
 
 async function ensureVecTable(ctx: PluginContext, dims: number): Promise<void> {
   if (embedTableReady && currentDims === dims) return
-  // Prefer durable meta when process memory was reset (vault reopen).
-  if (!embedTableReady) {
-    const metaDims = Number((await metaGet(ctx, 'dimensions')) ?? 0)
-    if (metaDims > 0 && metaDims !== dims) {
-      await ctx.pluginDb.exec(`DROP TABLE IF EXISTS embeddings`)
-    } else if (metaDims === dims) {
-      // Same dims as meta — try create-if-not-exists without drop.
-      try {
-        await ctx.pluginDb.exec(
-          `CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(
-            chunk_id TEXT PRIMARY KEY,
-            embedding float[${dims}] distance_metric=cosine
-          )`
-        )
-        embedTableReady = true
-        currentDims = dims
-        await metaSet(ctx, 'dimensions', String(dims))
-        return
-      } catch {
-        await ctx.pluginDb.exec(`DROP TABLE IF EXISTS embeddings`)
-      }
-    }
-  }
-  // Drop and recreate when dimensions change (vec0 dims are fixed at CREATE).
-  if (currentDims !== 0 && currentDims !== dims) {
+  // Always reconcile against durable meta — after restart currentDims is 0
+  // even when a fixed-dim vec0 table already exists (PR #540 review).
+  const metaDims = Number((await metaGet(ctx, 'dimensions')) ?? 0)
+  const mustDrop =
+    (metaDims > 0 && metaDims !== dims) ||
+    (currentDims > 0 && currentDims !== dims)
+  if (mustDrop) {
     await ctx.pluginDb.exec(`DROP TABLE IF EXISTS embeddings`)
     embedTableReady = false
+    currentDims = 0
+  } else if (metaDims === dims && dims > 0) {
+    // Same dims as meta — try create-if-not-exists without drop.
+    try {
+      await ctx.pluginDb.exec(
+        `CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(
+          chunk_id TEXT PRIMARY KEY,
+          embedding float[${dims}] distance_metric=cosine
+        )`
+      )
+      embedTableReady = true
+      currentDims = dims
+      await metaSet(ctx, 'dimensions', String(dims))
+      return
+    } catch {
+      await ctx.pluginDb.exec(`DROP TABLE IF EXISTS embeddings`)
+      embedTableReady = false
+      currentDims = 0
+    }
   }
   try {
     await ctx.pluginDb.exec(
@@ -174,7 +175,7 @@ async function ensureVecTable(ctx: PluginContext, dims: number): Promise<void> {
       )`
     )
   } catch {
-    // Existing table at wrong dim — force drop.
+    // Existing table at wrong dim (meta missing/stale) — force drop.
     await ctx.pluginDb.exec(`DROP TABLE IF EXISTS embeddings`)
     await ctx.pluginDb.exec(
       `CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(
@@ -219,15 +220,16 @@ export async function rebuildIndex(
   const blocks = rows as unknown as BlockInput[]
   const chunks = await chunksFromBlocks(blocks)
 
-  // Clear prior index rows.
+  // Clear prior index rows. Always DROP the vec0 table so a dim/model change
+  // cannot leave CREATE IF NOT EXISTS no-op'ing against a stale schema.
   await ctx.pluginDb.exec(`DELETE FROM chunks`)
-  if (embedTableReady) {
-    try {
-      await ctx.pluginDb.exec(`DELETE FROM embeddings`)
-    } catch {
-      /* vec0 may not exist yet */
-    }
+  try {
+    await ctx.pluginDb.exec(`DROP TABLE IF EXISTS embeddings`)
+  } catch {
+    /* ignore */
   }
+  embedTableReady = false
+  currentDims = 0
 
   await indexChunks(ctx, chunks, onProgress)
 }

@@ -246,9 +246,13 @@ type App struct {
 }
 
 // aiStreamSession is one in-flight PluginAIComplete(stream=true) call.
+// ready is closed when the frontend has attached Events.On listeners
+// (PluginAIStreamReady) so terminal events are not lost to a race.
 type aiStreamSession struct {
-	pluginID string
-	cancel   context.CancelFunc
+	pluginID  string
+	cancel    context.CancelFunc
+	ready     chan struct{}
+	readyOnce sync.Once
 }
 
 // linkedConfigEntry is one slot in App.linkedConfigs. mtime is the on-disk

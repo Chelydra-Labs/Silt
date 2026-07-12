@@ -62,6 +62,7 @@ import {
   ClosePluginDB,
   PluginAIComplete,
   PluginAICancelStream,
+  PluginAIStreamReady,
   PluginAIEmbed,
   RegisterPluginSession,
   UnregisterPluginSession,
@@ -878,6 +879,12 @@ function createAIStream(
       w()
     }
   }
+
+  // Signal the Go producer that listeners are attached so it can start the
+  // upstream request without racing terminal events past us (PR #540).
+  void PluginAIStreamReady(pluginID, sessionToken, streamId).catch(() => {
+    /* best-effort — producer has a ready-wait timeout fallback */
+  })
 
   // Fail-safe: if cancel is requested and no terminal event arrives within
   // a short window, settle the stream as cancelled so iterators/`result()`

@@ -61,10 +61,12 @@
   )
 </script>
 
-<div class="qa-panel" role="region" aria-label="AI Q&A">
+<div class="qa-panel" role="region" aria-label="AI Search">
   <header class="qa-header">
-    <span class="material-symbols-outlined" aria-hidden="true">forum</span>
-    <h2>Ask your notes</h2>
+    <span class="material-symbols-outlined" aria-hidden="true"
+      >manage_search</span
+    >
+    <h2>AI Search</h2>
     <button
       type="button"
       class="qa-clear"
@@ -102,7 +104,7 @@
         <ol>
           <li>Configure chat + embedding models (Settings → AI Provider).</li>
           <li>
-            Rebuild the index (Settings → AI Q&amp;A) if this is the first run.
+            Rebuild the index (Settings → AI Search) if this is the first run.
           </li>
           <li>Type a question below and press Enter.</li>
         </ol>
