@@ -35,11 +35,13 @@
 
   let open = $state(false)
   let textDraft = $state('')
+  let invalid = $state(false)
   let rootEl: HTMLDivElement | undefined = $state()
   let swatchBtn: HTMLButtonElement | undefined = $state()
 
   $effect(() => {
     textDraft = value
+    invalid = false
   })
 
   const lch = $derived(toOklch(value))
@@ -80,13 +82,16 @@
     const trimmed = textDraft.trim()
     if (!trimmed) {
       textDraft = value
+      invalid = false
       return
     }
     // Accept hex / oklch / rgb if culori can parse it.
     if (!toOklch(trimmed) && !toHex(trimmed)) {
-      textDraft = value
+      // Keep typed value so the user can fix it; surface invalid state.
+      invalid = true
       return
     }
+    invalid = false
     onchange(trimmed)
   }
 
@@ -96,8 +101,13 @@
       commitText()
     } else if (e.key === 'Escape') {
       textDraft = value
+      invalid = false
       ;(e.currentTarget as HTMLInputElement).blur()
     }
+  }
+
+  function onTextInput() {
+    if (invalid) invalid = false
   }
 
   function applyLch(next: Oklch) {
@@ -213,16 +223,31 @@
     <input
       id={fieldId}
       type="text"
-      class="flex-1 min-w-0 h-9 px-2.5 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary font-mono text-type-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 focus-visible:border-border-focus disabled:opacity-40"
+      class={invalid
+        ? 'flex-1 min-w-0 h-9 px-2.5 rounded-md bg-surface-panel border border-status-danger text-text-primary font-mono text-type-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-status-danger/60 ring-1 ring-status-danger disabled:opacity-40'
+        : 'flex-1 min-w-0 h-9 px-2.5 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary font-mono text-type-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 focus-visible:border-border-focus disabled:opacity-40'}
       bind:value={textDraft}
       {disabled}
       spellcheck="false"
       autocomplete="off"
       aria-label={`${label} color value`}
+      aria-invalid={invalid}
+      aria-describedby={invalid ? `${fieldId}-invalid` : undefined}
+      oninput={onTextInput}
       onblur={commitText}
       onkeydown={onTextKey}
     />
   </div>
+  {#if invalid}
+    <p
+      id={`${fieldId}-invalid`}
+      class="text-type-2xs font-label-sm text-status-danger"
+      role="status"
+      aria-live="polite"
+    >
+      Unrecognized color
+    </p>
+  {/if}
 
   {#if open && lch}
     <div

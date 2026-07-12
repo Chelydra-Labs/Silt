@@ -128,9 +128,26 @@ func SaveCustomTheme(themesDir string, t *Theme, overwrite bool) (*ThemeInfo, er
 		return nil, fmt.Errorf("failed to write theme file: %w", err)
 	}
 
+	// Staging files were copied into <id>.assets/; drop the shared editor
+	// staging tree so discarded picks do not accumulate across saves.
+	_ = ClearEditorStaging(themesDir)
+
 	InvalidateThemeCache(t.ID)
 	info := t.AsInfo("disk")
 	return &info, nil
+}
+
+// ClearEditorStaging removes themesDir/_editor.assets/ so discarded picks
+// do not accumulate. Safe to call when no editor session holds staging refs.
+func ClearEditorStaging(themesDir string) error {
+	if themesDir == "" {
+		return errors.New("themes directory is empty (vault not loaded)")
+	}
+	dir := filepath.Join(themesDir, EditorStagingThemeID+".assets")
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("failed to clear editor staging: %w", err)
+	}
+	return nil
 }
 
 // materializeStagingBackgrounds walks both modes' surfaces; for each

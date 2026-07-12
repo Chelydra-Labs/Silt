@@ -357,6 +357,31 @@ func TestPrepareBackgroundAsset_LargeStaging(t *testing.T) {
 	}
 }
 
+func TestClearEditorStaging_RemovesDir(t *testing.T) {
+	themesDir := t.TempDir()
+	src := writeAsset(t, "big.png", 60*1024)
+	if _, _, err := PrepareBackgroundAsset(themesDir, src); err != nil {
+		t.Fatalf("PrepareBackgroundAsset: %v", err)
+	}
+	staging := filepath.Join(themesDir, EditorStagingThemeID+".assets")
+	if _, err := os.Stat(staging); err != nil {
+		t.Fatalf("expected staging dir before clear: %v", err)
+	}
+	if err := ClearEditorStaging(themesDir); err != nil {
+		t.Fatalf("ClearEditorStaging: %v", err)
+	}
+	if _, err := os.Stat(staging); !os.IsNotExist(err) {
+		t.Fatalf("expected staging dir removed, err=%v", err)
+	}
+	// Idempotent when already absent.
+	if err := ClearEditorStaging(themesDir); err != nil {
+		t.Fatalf("ClearEditorStaging (empty): %v", err)
+	}
+	if err := ClearEditorStaging(""); err == nil {
+		t.Fatal("expected error for empty themesDir")
+	}
+}
+
 func TestSaveCustomTheme_MaterializesStagingBackground(t *testing.T) {
 	themesDir := t.TempDir()
 	src := writeAsset(t, "big.png", 60*1024)

@@ -85,12 +85,16 @@
         today: ctx.today
       }
 
-      // Open path: buildQuery + force open-only + LIMIT 500. Skip entirely
+      // Open path: buildQuery with status:'open' + LIMIT 500. Skip entirely
       // when the smart-list is Completed (open set is empty by definition).
       const openPromise =
         hub.activeFilter === 'completed'
           ? Promise.resolve({ rows: [] as unknown[], truncated: false })
           : (() => {
+              // status:'open' forces open-only even when activeFilter is 'all'
+              // (date smart-lists / stale already add the same clause — fine).
+              // Filter-then-limit: under sort:manual, groups past the 500th
+              // matching row never load, so within-group DnD can look incomplete.
               const { sql, params } = buildQuery(
                 hub.scope,
                 hub.filters,
@@ -98,25 +102,12 @@
                 {
                   groupBy: hub.groupBy,
                   sort: hub.sort,
-                  activeFilter: hub.activeFilter
+                  activeFilter: hub.activeFilter,
+                  status: 'open',
+                  limit: 500
                 }
               )
-              // buildQuery only forces open for date smart-lists / stale;
-              // 'all' does not. Always append so the open list never mixes DONE.
-              let openSql = sql
-              const orderIdx = openSql.search(/ ORDER BY /i)
-              if (orderIdx >= 0) {
-                openSql =
-                  openSql.slice(0, orderIdx) +
-                  " AND t.status != 'DONE'" +
-                  openSql.slice(orderIdx)
-              } else {
-                openSql += " AND t.status != 'DONE'"
-              }
-              // Filter-then-limit: under sort:manual, groups past the 500th
-              // matching row never load, so within-group DnD can look incomplete.
-              openSql += ' LIMIT 500'
-              return ctx.sqliteQuery(openSql, params)
+              return ctx.sqliteQuery(sql, params)
             })()
 
       // Done path: completed rows with scope + owners/priorities/tags only.
@@ -124,23 +115,25 @@
       const donePromise =
         hub.activeFilter === 'all' || hub.activeFilter === 'completed'
           ? (() => {
-              const { sql: dSql, params: dParams } = buildQuery(
+              const { owners, priorities, tags } = hub.filters
+              const { sql, params } = buildQuery(
                 hub.scope,
                 {
-                  owners: hub.filters.owners,
-                  priorities: hub.filters.priorities,
-                  tags: hub.filters.tags,
+                  owners,
+                  priorities,
+                  tags,
                   dueDate: '',
                   stale: false
                 },
                 ctxLike,
-                { activeFilter: 'completed' }
+                {
+                  activeFilter: 'completed',
+                  status: 'done',
+                  orderBy: 'b.file_date DESC',
+                  limit: 200
+                }
               )
-              const doneSql = dSql.replace(
-                /\s+ORDER BY[\s\S]*$/i,
-                ' ORDER BY b.file_date DESC LIMIT 200'
-              )
-              return ctx.sqliteQuery(doneSql, dParams)
+              return ctx.sqliteQuery(sql, params)
             })()
           : Promise.resolve({ rows: [] as unknown[], truncated: false })
 

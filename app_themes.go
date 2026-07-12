@@ -663,3 +663,26 @@ func (a *App) PrepareBackgroundAsset(srcPath string) (*PrepareBackgroundAssetRes
 	}
 	return &PrepareBackgroundAssetResult{Reference: ref, Base64: isBase64}, nil
 }
+
+// ClearEditorStaging removes themesDir/_editor.assets/ so discarded image
+// picks do not accumulate between editor sessions.
+func (a *App) ClearEditorStaging() error {
+	a.vaultMu.RLock()
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
+	if vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	themesDir := filepath.Join(vaultPath, ".system", "themes")
+	a.themeWriteMu.Lock()
+	defer a.themeWriteMu.Unlock()
+
+	a.vaultMu.RLock()
+	closed := a.vaultPath != vaultPath
+	a.vaultMu.RUnlock()
+	if closed {
+		return fmt.Errorf("vault closed during editor staging clear")
+	}
+
+	return themes.ClearEditorStaging(themesDir)
+}

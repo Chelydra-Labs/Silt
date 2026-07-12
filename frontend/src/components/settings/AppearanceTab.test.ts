@@ -130,7 +130,8 @@ vi.mock('../../theme/store.svelte', () => ({
   getThemeJSON: vi.fn(),
   saveCustomTheme: vi.fn(),
   pickImageFile: vi.fn(),
-  prepareBackgroundAsset: vi.fn()
+  prepareBackgroundAsset: vi.fn(),
+  clearEditorStaging: vi.fn(() => Promise.resolve())
 }))
 
 import AppearanceTab from './AppearanceTab.svelte'

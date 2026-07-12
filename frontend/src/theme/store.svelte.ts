@@ -6,6 +6,7 @@
 // plugins/store.svelte.ts and settings/store.svelte.ts).
 import {
   ApplyTheme,
+  ClearEditorStaging,
   DeleteCustomTheme,
   ExportActiveTheme,
   GetActiveTheme,
@@ -535,6 +536,14 @@ export async function prepareBackgroundAsset(
   path: string
 ): Promise<PrepareBackgroundAssetResult | null> {
   return PrepareBackgroundAsset(path)
+}
+
+/**
+ * Remove themesDir/_editor.assets/ so discarded image picks do not
+ * accumulate between editor sessions. Best-effort from the UI.
+ */
+export async function clearEditorStaging(): Promise<void> {
+  await ClearEditorStaging()
 }
 
 /**

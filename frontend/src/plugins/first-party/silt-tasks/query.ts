@@ -75,6 +75,21 @@ export interface BuildQueryOptions {
    * existing filters; 'all' is a no-op.
    */
   activeFilter?: CalendarFilter
+  /**
+   * Force a status predicate. 'open' → t.status != 'DONE'; 'done' → t.status = 'DONE'.
+   * Idempotent with activeFilter/stale that already add the same clause (duplicate AND is fine).
+   * Prefer this over post-hoc SQL splicing in consumers.
+   */
+  status?: 'open' | 'done' | 'all'
+  /**
+   * Append LIMIT N. Must be a positive integer; ignored if missing/invalid.
+   */
+  limit?: number
+  /**
+   * When set, replaces the composed ORDER BY body (without the "ORDER BY" keyword).
+   * Example: 'b.file_date DESC' for completed lists.
+   */
+  orderBy?: string
 }
 
 /**
@@ -282,11 +297,29 @@ export function buildQuery(
       where.push("t.status = 'DONE'")
     }
   }
-  const orderBy = composeOrderBy(options?.groupBy, options?.sort)
+  // Explicit status lever (ListView open/done paths). May duplicate clauses
+  // already added by activeFilter/stale — SQLite AND is fine; avoids missing
+  // open-only when activeFilter is 'all'.
+  if (options?.status === 'open') {
+    where.push("t.status != 'DONE'")
+  } else if (options?.status === 'done') {
+    where.push("t.status = 'DONE'")
+  }
+  const orderBy = options?.orderBy
+    ? ` ORDER BY ${options.orderBy}`
+    : composeOrderBy(options?.groupBy, options?.sort)
+  let limitClause = ''
+  if (
+    typeof options?.limit === 'number' &&
+    Number.isInteger(options.limit) &&
+    options.limit > 0
+  ) {
+    limitClause = ` LIMIT ${options.limit}`
+  }
   const whereClause = where.length
     ? ' WHERE ' + where.join(' AND ')
     : ' WHERE 1=1'
-  return { sql: baseSelect + whereClause + orderBy, params }
+  return { sql: baseSelect + whereClause + orderBy + limitClause, params }
 }
 
 /**

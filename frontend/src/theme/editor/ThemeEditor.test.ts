@@ -12,7 +12,8 @@ const mocks = vi.hoisted(() => ({
   getThemeJSON: vi.fn(),
   saveCustomTheme: vi.fn(),
   pickImageFile: vi.fn(),
-  prepareBackgroundAsset: vi.fn()
+  prepareBackgroundAsset: vi.fn(),
+  clearEditorStaging: vi.fn(() => Promise.resolve())
 }))
 
 vi.mock('../inject', () => ({ injectTokens: mocks.injectTokens }))
@@ -21,6 +22,7 @@ vi.mock('../store.svelte', () => ({
   saveCustomTheme: mocks.saveCustomTheme,
   pickImageFile: mocks.pickImageFile,
   prepareBackgroundAsset: mocks.prepareBackgroundAsset,
+  clearEditorStaging: mocks.clearEditorStaging,
   restoreActiveTheme: mocks.restoreActiveTheme,
   refreshActiveTheme: mocks.refreshActiveTheme,
   setStatus: mocks.setStatus

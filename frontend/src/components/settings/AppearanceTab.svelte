@@ -14,6 +14,7 @@
   import { displayFamilyName } from '../../theme/fonts'
   import {
     applyTheme,
+    clearEditorStaging,
     clearStatus,
     deleteCustomTheme,
     exportActiveTheme,
@@ -342,6 +343,8 @@
   function openEditor(id: string) {
     // Drop any staged picker preview so the editor owns injectTokens.
     previewTheme = null
+    // Best-effort: clear leftover _editor.assets/ from prior discarded picks.
+    void clearEditorStaging().catch(() => {})
     editingThemeId = id
     editingSourceIsDisk =
       themesState.items.find((t) => t.id === id)?.source === 'disk'

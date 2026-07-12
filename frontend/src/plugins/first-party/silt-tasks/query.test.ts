@@ -464,3 +464,99 @@ describe('buildQuery — activeFilter lever (new in #432)', () => {
     expect(params).toEqual([])
   })
 })
+
+// ── status / limit / orderBy levers (ListView open/done paths) ────────
+
+describe('buildQuery — status lever', () => {
+  it("status='open' adds t.status != 'DONE'", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      status: 'open'
+    })
+    expect(sql).toContain("t.status != 'DONE'")
+    // WHERE body is only the status clause (not WHERE 1=1).
+    expect(sql).toMatch(/WHERE t\.status != 'DONE' ORDER BY/)
+    expect(params).toEqual([])
+  })
+
+  it("status='done' adds t.status = 'DONE'", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      status: 'done'
+    })
+    expect(sql).toContain("t.status = 'DONE'")
+    expect(sql).toMatch(/WHERE t\.status = 'DONE' ORDER BY/)
+    expect(params).toEqual([])
+  })
+
+  it("status='all' / omitted is a no-op", () => {
+    const omitted = buildQuery('vault', emptyFilters, ctx).sql
+    const all = buildQuery('vault', emptyFilters, ctx, { status: 'all' }).sql
+    expect(omitted).toContain('WHERE 1=1 ORDER BY')
+    expect(all).toBe(omitted)
+  })
+
+  it("status='open' with activeFilter='today' may duplicate open clause (AND is fine)", () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'today',
+      status: 'open'
+    })
+    // Both levers contribute; count occurrences of the open predicate.
+    const matches = sql.match(/t\.status != 'DONE'/g) ?? []
+    expect(matches.length).toBeGreaterThanOrEqual(2)
+    expect(sql).toContain('t.due_date = ?')
+    expect(params).toEqual(['2026-06-22'])
+  })
+
+  it("status='done' with activeFilter='completed' may duplicate DONE clause", () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      activeFilter: 'completed',
+      status: 'done'
+    })
+    const matches = sql.match(/t\.status = 'DONE'/g) ?? []
+    expect(matches.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('buildQuery — limit lever', () => {
+  it('appends LIMIT N for a positive integer', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, { limit: 500 })
+    expect(sql).toMatch(/LIMIT 500$/)
+  })
+
+  it('ignores missing, non-integer, zero, and negative limits', () => {
+    expect(buildQuery('vault', emptyFilters, ctx).sql).not.toContain('LIMIT')
+    expect(
+      buildQuery('vault', emptyFilters, ctx, { limit: 0 }).sql
+    ).not.toContain('LIMIT')
+    expect(
+      buildQuery('vault', emptyFilters, ctx, { limit: -1 }).sql
+    ).not.toContain('LIMIT')
+    expect(
+      buildQuery('vault', emptyFilters, ctx, { limit: 1.5 }).sql
+    ).not.toContain('LIMIT')
+  })
+})
+
+describe('buildQuery — orderBy override', () => {
+  it('replaces the composed ORDER BY body when orderBy is set', () => {
+    const { sql } = buildQuery('vault', emptyFilters, ctx, {
+      orderBy: 'b.file_date DESC',
+      groupBy: 'status',
+      sort: 'title'
+    })
+    expect(sql).toContain('ORDER BY b.file_date DESC')
+    expect(sql).not.toContain('ORDER BY t.status ASC')
+    expect(sql).not.toContain('b.clean_content ASC')
+  })
+
+  it('composes with status + limit for the completed-list shape', () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
+      status: 'done',
+      orderBy: 'b.file_date DESC',
+      limit: 200
+    })
+    expect(sql).toContain("t.status = 'DONE'")
+    expect(sql).toContain('ORDER BY b.file_date DESC')
+    expect(sql).toMatch(/LIMIT 200$/)
+    expect(params).toEqual([])
+  })
+})

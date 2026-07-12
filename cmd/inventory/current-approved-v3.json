@@ -53,6 +53,10 @@
         "signature": "ClearAuditLog() error"
       },
       {
+        "name": "ClearEditorStaging",
+        "signature": "ClearEditorStaging() error"
+      },
+      {
         "name": "ClearNetworkAudit",
         "signature": "ClearNetworkAudit() error"
       },

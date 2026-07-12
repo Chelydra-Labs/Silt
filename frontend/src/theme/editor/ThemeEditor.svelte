@@ -4,6 +4,7 @@
   // Working copy + FE flatten → injectTokens; contrast warns never block save.
   import { onMount } from 'svelte'
   import {
+    clearEditorStaging,
     getThemeJSON,
     pickImageFile,
     prepareBackgroundAsset,
@@ -69,6 +70,12 @@
   let liveContrastMsg = $state('')
   let contrastTimer: ReturnType<typeof setTimeout> | null = null
 
+  const activeTabId = $derived(
+    !wc.showAdvanced
+      ? 'theme-editor-tab-simple'
+      : `theme-editor-tab-${wc.advancedGroup}`
+  )
+
   const ADVANCED: { id: AdvancedGroup; label: string; icon: string }[] = [
     { id: 'surfaces', label: 'Surfaces', icon: 'layers' },
     { id: 'color', label: 'Color & accent', icon: 'palette' },
@@ -126,6 +133,8 @@
   async function bootstrap(my: number) {
     wc.loading = true
     saveError = null
+    // Best-effort once per mount; openEditor also clears before mount.
+    void clearEditorStaging().catch(() => {})
     try {
       if (injectJson != null) {
         wc.loadFromJson(injectJson)
@@ -668,8 +677,10 @@
         >
           <button
             type="button"
+            id="theme-editor-tab-simple"
             role="tab"
             aria-selected={!wc.showAdvanced}
+            aria-controls="theme-editor-panel"
             onclick={selectSimple}
             class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-type-sm font-label-sm border-none cursor-pointer whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
             class:bg-hover={!wc.showAdvanced}
@@ -686,8 +697,10 @@
           {#each ADVANCED as g (g.id)}
             <button
               type="button"
+              id={`theme-editor-tab-${g.id}`}
               role="tab"
               aria-selected={wc.showAdvanced && wc.advancedGroup === g.id}
+              aria-controls="theme-editor-panel"
               onclick={() => selectAdvanced(g.id)}
               class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-type-sm font-label-sm border-none cursor-pointer whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
               class:bg-hover={wc.showAdvanced && wc.advancedGroup === g.id}
@@ -710,8 +723,13 @@
         </div>
       </div>
 
-      <!-- Main controls -->
-      <main class="flex-1 min-w-0 overflow-y-auto p-6 pb-28">
+      <!-- Main controls (div+tabpanel: main cannot host interactive roles). -->
+      <div
+        id="theme-editor-panel"
+        role="tabpanel"
+        aria-labelledby={activeTabId}
+        class="flex-1 min-w-0 overflow-y-auto p-6 pb-28"
+      >
         {#if !wc.showAdvanced}
           <!-- Simple: calm, sparse -->
           <div class="max-w-xl space-y-8">
@@ -1454,7 +1472,7 @@
             {saveError}
           </div>
         {/if}
-      </main>
+      </div>
     </div>
 
     <!-- Sticky footer: dirty + contrast -->
