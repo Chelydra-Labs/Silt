@@ -1,5 +1,5 @@
 // Open/close state for the AI Assistant right drawer.
-// Module-level $state so status-bar toggle, host, and lifecycle share it.
+// Module-level $state so title-bar toggle, host, and lifecycle share it.
 
 export const aiSearchDrawer = $state({
   open: false

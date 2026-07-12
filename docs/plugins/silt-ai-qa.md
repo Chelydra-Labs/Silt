@@ -25,7 +25,8 @@ grounded in your own notes with clickable citations.
    - Enable the plugin.
    - Optionally limit **notebook scope**.
    - Click **Rebuild index** (first run). Progress shows in the panel.
-3. Open the **AI Assistant** drawer from the status bar and ask a question.
+3. Open the **AI Assistant** drawer from the title-bar icon (next to Search)
+   and ask a question.
 
 ## Privacy
 

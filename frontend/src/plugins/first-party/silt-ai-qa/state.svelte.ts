@@ -400,10 +400,16 @@ export type QAController = ReturnType<typeof createQAController>
 
 let controller: QAController | null = null
 
+/** Reactive flag for chrome (title-bar toggle) — true while the plugin is loaded. */
+export const aiAssistantChrome = $state({
+  available: false
+})
+
 export function getQAController(): QAController | null {
   return controller
 }
 
 export function setQAController(c: QAController | null) {
   controller = c
+  aiAssistantChrome.available = c != null
 }

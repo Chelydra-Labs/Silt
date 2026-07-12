@@ -71,7 +71,7 @@
 >
   <header class="qa-header">
     <span class="material-symbols-outlined" aria-hidden="true"
-      >manage_search</span
+      >auto_awesome</span
     >
     <h2>AI Assistant</h2>
     <button

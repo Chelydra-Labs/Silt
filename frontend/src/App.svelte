@@ -60,6 +60,11 @@
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import PluginModalHost from './components/PluginModalHost.svelte'
   import AISearchDrawer from './plugins/first-party/silt-ai-qa/AISearchDrawer.svelte'
+  import { aiAssistantChrome } from './plugins/first-party/silt-ai-qa/state.svelte'
+  import {
+    aiSearchDrawer,
+    toggleAISearchDrawer
+  } from './plugins/first-party/silt-ai-qa/drawer.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import ToastContainer from './components/ToastContainer.svelte'
@@ -1345,6 +1350,10 @@
       bind:sidebarCollapsed
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
+      onAIAssistantClick={aiAssistantChrome.available
+        ? () => toggleAISearchDrawer()
+        : undefined}
+      aiAssistantOpen={aiSearchDrawer.open}
     >
       {#if activeView === 'notes'}
         <TabStrip
