@@ -29,12 +29,11 @@
 
   let dialogRef = $state<HTMLDivElement | null>(null)
   let inputRef = $state<HTMLInputElement | null>(null)
-  // Capture once at open — dialog is remounted when shown.
+  // Seed once at mount — parent remounts the dialog when opening with a new name.
+  // svelte-ignore state_referenced_locally
   let value = $state(initialValue)
   let error = $state<string | null>(null)
   let previouslyFocused: HTMLElement | null = null
-  // Silence state_referenced_locally: initialValue is intentionally seed-only.
-  void initialValue
 
   const FOCUSABLE =
     'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'

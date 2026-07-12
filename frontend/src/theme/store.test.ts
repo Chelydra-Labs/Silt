@@ -148,13 +148,15 @@ describe('theme store', () => {
 
   it('theme:changed with matching id+mode still updates name (#533)', async () => {
     await initTheme()
-    const call = eventsOnMock.mock.calls.find(
-      (c: unknown[]) => c[0] === 'theme:changed'
-    )
-    expect(call).toBeTruthy()
-    const handler = call![1] as (ev: { data: unknown }) => void | Promise<void>
+    type ThemeChangedHandler = (ev: { data: unknown }) => void | Promise<void>
+    // vi.fn mock.calls is typed as never[][] in some vitest versions — narrow.
+    const calls = eventsOnMock.mock.calls as unknown as Array<
+      [string, ThemeChangedHandler]
+    >
+    const handler = calls.find((c) => c[0] === 'theme:changed')?.[1]
+    expect(handler).toBeTypeOf('function')
     const beforeInject = injectTokensMock.mock.calls.length
-    await handler({
+    await handler!({
       data: { id: 'cyber_forest', mode: 'dark', name: 'Renamed Forest' }
     })
     expect(themeState.name).toBe('Renamed Forest')
