@@ -124,7 +124,11 @@ export function getSettingsSections(): SettingsSection[] {
     }
   }
 
-  return [
+  // Built-ins first (stable order), then plugin tabs. AI plugin settings
+  // share the intelligence group with AI Provider — if they were appended
+  // after Customize plugins, SettingsNav would emit a second "Intelligence"
+  // divider and Svelte's keyed each would throw each_key_duplicate.
+  const core: SettingsSection[] = [
     {
       id: 'general',
       label: 'General',
@@ -187,6 +191,19 @@ export function getSettingsSections(): SettingsSection[] {
       group: 'about'
     }
   ]
+
+  // Stable group order so each divider appears once; preserve relative order
+  // within a group (core tabs before plugin tabs that share the group).
+  const groupRank = new Map(SETTINGS_GROUP_ORDER.map((g, i) => [g, i] as const))
+  return core
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => {
+      const ga = groupRank.get(a.s.group) ?? 99
+      const gb = groupRank.get(b.s.group) ?? 99
+      if (ga !== gb) return ga - gb
+      return a.i - b.i
+    })
+    .map(({ s }) => s)
 }
 
 /** Section shown when an unknown section id is requested — a typo'd
