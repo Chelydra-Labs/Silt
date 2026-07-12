@@ -5,6 +5,7 @@ import {
   EnsureDomainPack,
   GetDomainPackWords
 } from '../../../../bindings/silt/app.js'
+import { dictionaryStatus, friendlyPackError } from './dictionaryStatus.svelte'
 
 /**
  * typo-js wrapper + custom/domain dictionary layers (#196, #336, #337).
@@ -34,11 +35,9 @@ const sessionIgnores = new Set<string>()
 /** Word → correctly-spelled cache so unchanged tokens skip Hunspell. */
 const cache = new Map<string, boolean>()
 
-/** Last dictionary load error (for Settings UI); null when healthy. */
-let lastLoadError: string | null = null
-
+/** @deprecated Prefer dictionaryStatus.loadError (reactive). */
 export function getDictionaryLoadError(): string | null {
-  return lastLoadError
+  return dictionaryStatus.loadError
 }
 
 /** Load (once per language) and return the Typo instance for `lang`. */
@@ -46,7 +45,7 @@ export function loadDictionary(lang: string): Promise<Typo> {
   if (dict && currentLang === lang) return Promise.resolve(dict)
   if (loadPromise && currentLang === lang) return loadPromise
   currentLang = lang
-  lastLoadError = null
+  dictionaryStatus.setLoadError(null)
   loadPromise = (async () => {
     try {
       let aff: string
@@ -59,7 +58,7 @@ export function loadDictionary(lang: string): Promise<Typo> {
         ])
         if (!affRes.ok || !dicRes.ok) {
           throw new Error(
-            `bundled dictionary "${lang}" missing (${affRes.status}/${dicRes.status})`
+            `Could not load the built-in English dictionary (${affRes.status}/${dicRes.status}).`
           )
         }
         aff = await affRes.text()
@@ -70,24 +69,27 @@ export function loadDictionary(lang: string): Promise<Typo> {
         aff = content.aff
         dic = content.dic
         if (!aff?.trim() || !dic?.trim()) {
-          throw new Error(`language pack "${lang}" returned empty aff/dic`)
+          throw new Error(
+            `Language pack "${lang}" is empty. Download it again from Settings.`
+          )
         }
       }
       dict = new Typo(lang, aff, dic)
       cache.clear()
-      lastLoadError = null
+      dictionaryStatus.setLoadError(null)
       return dict
     } catch (err) {
       loadPromise = null
       currentLang = ''
       dict = null
-      lastLoadError = err instanceof Error ? err.message : String(err)
+      const msg = friendlyPackError(err)
+      dictionaryStatus.setLoadError(msg)
       // eslint-disable-next-line no-console
       console.warn(
         `[silt] spellcheck dictionary "${lang}" failed to load:`,
         err
       )
-      throw err
+      throw err instanceof Error ? err : new Error(msg)
     }
   })()
   return loadPromise
@@ -107,7 +109,7 @@ export function resetDictionary(): void {
   loadPromise = null
   currentLang = ''
   cache.clear()
-  lastLoadError = null
+  dictionaryStatus.clear()
 }
 
 /**
@@ -148,7 +150,6 @@ export async function loadDomainPacks(domainIds: string[]): Promise<void> {
   for (const id of ids) {
     try {
       if (id === 'software-terms') {
-        // Bundled: fetch from public assets (same as en-US path).
         const res = await fetch('/dictionaries/supplements/software-terms.txt')
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`)
@@ -166,8 +167,13 @@ export async function loadDomainPacks(domainIds: string[]): Promise<void> {
   }
   setDomainWords(all)
   if (errors.length > 0) {
-    throw new Error(`domain pack load failed: ${errors.join('; ')}`)
+    const msg = friendlyPackError(
+      new Error(`Could not load some word lists (${errors.join('; ')})`)
+    )
+    dictionaryStatus.setDomainError(msg)
+    throw new Error(msg)
   }
+  dictionaryStatus.setDomainError(null)
 }
 
 /** Parse a personal-dict / cspell-style word list (mirrors Go ParseWordList). */

@@ -19,6 +19,7 @@ func TestDefaultDomainIDs(t *testing.T) {
 }
 
 func TestLanguageURLsPinned(t *testing.T) {
+	LanguageDownloadBase = ""
 	spec := *LanguageByID("en-GB")
 	aff, dic, lic := LanguageURLs(spec)
 	if aff != "https://cdn.jsdelivr.net/npm/dictionary-en-gb@3.0.0/index.aff" {
@@ -29,5 +30,14 @@ func TestLanguageURLsPinned(t *testing.T) {
 	}
 	if lic != "https://cdn.jsdelivr.net/npm/dictionary-en-gb@3.0.0/license" {
 		t.Errorf("lic = %s", lic)
+	}
+}
+
+func TestIsKnownDomainID(t *testing.T) {
+	if !IsKnownDomainID("software-terms") {
+		t.Error("software-terms should be known")
+	}
+	if IsKnownDomainID("nope") {
+		t.Error("nope should be unknown")
 	}
 }

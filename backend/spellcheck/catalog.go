@@ -11,6 +11,8 @@
 // are excluded from the v1 catalog.
 package spellcheck
 
+import "strings"
+
 // LanguageSpec describes one Hunspell language pack in the catalog.
 type LanguageSpec struct {
 	ID           string // Silt tag, e.g. "en-GB" (matches editor.spellcheck_language)
@@ -129,8 +131,22 @@ func DefaultDomainIDs() []string {
 	return out
 }
 
+// IsKnownDomainID reports whether id is in the frozen domain catalog.
+// Used by config normalize so known IDs stay single-sourced in this package.
+func IsKnownDomainID(id string) bool {
+	return DomainByID(id) != nil
+}
+
+// LanguageDownloadBase overrides the CDN base for language pack downloads.
+// Empty in production (jsDelivr). Tests set this to an httptest URL.
+var LanguageDownloadBase string
+
 // LanguageURLs returns version-pinned jsDelivr URLs for a downloadable language.
 func LanguageURLs(spec LanguageSpec) (aff, dic, license string) {
-	base := "https://cdn.jsdelivr.net/npm/" + spec.NPMPackage + "@" + spec.Version
+	base := LanguageDownloadBase
+	if base == "" {
+		base = "https://cdn.jsdelivr.net/npm/" + spec.NPMPackage + "@" + spec.Version
+	}
+	base = strings.TrimRight(base, "/")
 	return base + "/index.aff", base + "/index.dic", base + "/license"
 }

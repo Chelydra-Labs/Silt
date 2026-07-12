@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestSanitizeAndEnsureLanguage_MockCDN(t *testing.T) {
+func TestEnsureLanguage_MockCDN(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SILT_DICTIONARY_CACHE", root)
 
@@ -28,15 +28,33 @@ func TestSanitizeAndEnsureLanguage_MockCDN(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	// Point en-GB URLs at the mock by temporarily rewriting LanguageURLs via
-	// a local Ensure that uses the test server — we patch HTTPClient and
-	// override catalog URLs by calling fetch through EnsureLanguage after
-	// rewriting the package's LanguageURLs is not possible, so we write a
-	// minimal install path test using EnsureDomain instead for URL control,
-	// and test languageInstalled + ReadLanguageFiles with hand-written cache.
-	_ = srv
+	LanguageDownloadBase = srv.URL
+	HTTPClient = srv.Client()
+	t.Cleanup(func() {
+		LanguageDownloadBase = ""
+		HTTPClient = &http.Client{Timeout: downloadTimeout}
+	})
 
-	// Hand-install a language pack as Ensure would.
+	if err := EnsureLanguage(context.Background(), "en-GB", nil); err != nil {
+		t.Fatalf("EnsureLanguage: %v", err)
+	}
+	// Cache hit is a no-op.
+	if err := EnsureLanguage(context.Background(), "en-GB", nil); err != nil {
+		t.Fatalf("cache hit: %v", err)
+	}
+	aff, dic, err := ReadLanguageFiles("en-GB")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(aff, "UTF-8") || !strings.Contains(dic, "colour") {
+		t.Errorf("aff/dic unexpected: %q %q", aff, dic)
+	}
+}
+
+func TestLanguageInstalled_HandWrittenCache(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SILT_DICTIONARY_CACHE", root)
+
 	dir := LanguageDir(root, "en-GB")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -53,13 +71,6 @@ func TestSanitizeAndEnsureLanguage_MockCDN(t *testing.T) {
 	}
 	if !languageInstalled(root, *spec) {
 		t.Fatal("expected en-GB installed")
-	}
-	aff, dic, err := ReadLanguageFiles("en-GB")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(aff, "UTF-8") || !strings.Contains(dic, "colour") {
-		t.Errorf("aff/dic unexpected: %q %q", aff, dic)
 	}
 }
 

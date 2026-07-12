@@ -65,7 +65,17 @@ const appMocks = vi.hoisted(() => ({
   PickVaultArchive: vi.fn(),
   ImportVault: vi.fn(),
   GetCloseToTray: vi.fn().mockResolvedValue(false),
-  SetCloseToTray: vi.fn().mockResolvedValue(undefined)
+  SetCloseToTray: vi.fn().mockResolvedValue(undefined),
+  // Custom dictionary IPC (#196 / #338) — GeneralTab loads the list on mount.
+  GetCustomDictionary: vi.fn().mockResolvedValue([]),
+  AddCustomDictionaryWord: vi.fn().mockResolvedValue([]),
+  RemoveCustomDictionaryWord: vi.fn().mockResolvedValue([]),
+  PickCustomDictionaryExportPath: vi.fn().mockResolvedValue(''),
+  PickCustomDictionaryImportFile: vi.fn().mockResolvedValue(''),
+  ExportCustomDictionary: vi.fn().mockResolvedValue(undefined),
+  ImportCustomDictionary: vi
+    .fn()
+    .mockResolvedValue({ added: 0, skipped: 0, total_read: 0 })
 }))
 vi.mock('../../../bindings/silt/app.js', () => appMocks)
 vi.mock('@wailsio/runtime', () => ({

@@ -7,6 +7,7 @@ import {
   ExportCustomDictionary,
   ImportCustomDictionary
 } from '../../../../bindings/silt/app.js'
+import { friendlyPackError } from './dictionaryStatus.svelte'
 
 /**
  * Reactive custom-spellcheck-dictionary store (#196, #338). Backs the
@@ -18,6 +19,7 @@ let words = $state<string[]>([])
 let filter = $state('')
 let newWord = $state('')
 let loading = $state(false)
+let busy = $state(false)
 let error = $state<string | null>(null)
 let status = $state<string | null>(null)
 
@@ -40,6 +42,9 @@ export const customDictionary = {
   get loading() {
     return loading
   },
+  get busy() {
+    return busy
+  },
   get error() {
     return error
   },
@@ -60,7 +65,7 @@ export const customDictionary = {
     try {
       words = await GetCustomDictionary()
     } catch (e) {
-      error = String(e)
+      error = friendlyPackError(e)
     } finally {
       loading = false
     }
@@ -69,54 +74,75 @@ export const customDictionary = {
   /** Add the current newWord (or a passed-in word) via the IPC. */
   async add(word?: string): Promise<void> {
     const w = (word ?? newWord).trim()
-    if (!w) return
+    if (!w || busy) return
     error = null
     status = null
+    busy = true
     try {
       words = await AddCustomDictionaryWord(w)
       if (!word) newWord = ''
     } catch (e) {
-      error = String(e)
+      error = friendlyPackError(e)
+    } finally {
+      busy = false
     }
   },
 
   /** Remove a word via the IPC. */
   async remove(word: string): Promise<void> {
+    if (busy) return
     error = null
     status = null
+    busy = true
     try {
       words = await RemoveCustomDictionaryWord(word)
     } catch (e) {
-      error = String(e)
+      error = friendlyPackError(e)
+    } finally {
+      busy = false
     }
   },
 
   /** Export via native save dialog. */
   async exportFile(): Promise<void> {
+    if (busy) return
     error = null
     status = null
+    busy = true
     try {
       const path = await PickCustomDictionaryExportPath()
       if (!path) return
       await ExportCustomDictionary(path)
       status = 'Dictionary exported.'
     } catch (e) {
-      error = String(e)
+      error = friendlyPackError(e)
+    } finally {
+      busy = false
     }
   },
 
   /** Import via native open dialog; merges into vault dictionary. */
   async importFile(): Promise<void> {
+    if (busy) return
     error = null
     status = null
+    busy = true
     try {
       const path = await PickCustomDictionaryImportFile()
       if (!path) return
       const summary = await ImportCustomDictionary(path)
       words = await GetCustomDictionary()
-      status = `Imported ${summary.added} words; ${summary.skipped} already present.`
+      if (summary.added === 0 && summary.skipped > 0) {
+        status = `No new words — ${summary.skipped} were already in your dictionary.`
+      } else if (summary.skipped > 0) {
+        status = `Added ${summary.added} words (${summary.skipped} already present).`
+      } else {
+        status = `Added ${summary.added} words.`
+      }
     } catch (e) {
-      error = String(e)
+      error = friendlyPackError(e)
+    } finally {
+      busy = false
     }
   }
 }

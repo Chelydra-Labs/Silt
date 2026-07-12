@@ -14,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 	"silt/backend/safeio"
+	"silt/backend/spellcheck"
 )
 
 // maxConfigYAMLBytes bounds a vault/linked config.yaml before it is parsed.
@@ -377,7 +378,7 @@ func Defaults() SystemConfig {
 			TypewriterMode:          boolPtr(false),
 			TypewriterModeRatio:     float64Ptr(0.5),
 			CustomDictionary:        []string{},
-			SpellcheckDomains:       []string{"software-terms"},
+			SpellcheckDomains:       spellcheck.DefaultDomainIDs(),
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
@@ -901,19 +902,13 @@ func normalize(cfg SystemConfig) SystemConfig {
 	// turned everything off). Unknown IDs are dropped; known IDs are
 	// de-duplicated and sorted.
 	if cfg.Editor.SpellcheckDomains == nil {
-		cfg.Editor.SpellcheckDomains = []string{"software-terms"}
+		cfg.Editor.SpellcheckDomains = spellcheck.DefaultDomainIDs()
 	} else {
-		known := map[string]bool{
-			"software-terms": true,
-			"typescript":     true,
-			"python":         true,
-			"data-science":   true,
-		}
 		seen := make(map[string]bool, len(cfg.Editor.SpellcheckDomains))
 		out := make([]string, 0, len(cfg.Editor.SpellcheckDomains))
 		for _, id := range cfg.Editor.SpellcheckDomains {
 			id = strings.TrimSpace(id)
-			if id == "" || !known[id] || seen[id] {
+			if id == "" || !spellcheck.IsKnownDomainID(id) || seen[id] {
 				continue
 			}
 			seen[id] = true

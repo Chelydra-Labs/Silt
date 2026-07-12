@@ -25,6 +25,10 @@
     loadDomainPacks,
     resetDictionary
   } from '../lib/editor/spellcheck/dictionary'
+  import {
+    dictionaryStatus,
+    friendlyPackError
+  } from '../lib/editor/spellcheck/dictionaryStatus.svelte'
   import SpellcheckMenu from './editor/SpellcheckMenu.svelte'
   import { TypewriterMode } from '../lib/editor/typewriter/TypewriterModeExtension'
   import {
@@ -814,9 +818,9 @@
     const enabled = settings.config?.editor?.spellcheck_enabled !== false
     const lang = settings.config?.editor?.spellcheck_language || 'en-US'
     const custom = settings.config?.editor?.custom_dictionary ?? []
-    const domains = settings.config?.editor?.spellcheck_domains ?? [
-      'software-terms'
-    ]
+    const domains = (
+      settings.config?.editor as { spellcheck_domains?: string[] } | undefined
+    )?.spellcheck_domains ?? ['software-terms']
     const editor = editorInstance
     if (!editor) return
     void enabled
@@ -830,21 +834,34 @@
     }
     setCustomWords(custom)
     void loadDomainPacks(domains)
-      .catch((err) => {
-        // Domain pack failures are loud in console; still attempt language load.
+      .catch((err: unknown) => {
         // eslint-disable-next-line no-console
         console.warn('[silt] domain packs:', err)
+        pushNotification({
+          kind: 'error',
+          message:
+            dictionaryStatus.domainError ||
+            friendlyPackError(err) ||
+            'Could not load technical word lists.'
+        })
       })
       .finally(() => {
         requestSpellcheckRecheck(editor)
       })
-    // Language load failures: log only for background reloads (test/jsdom).
-    // User-initiated language changes surface errors in Settings.
     void loadDictionary(lang)
       .then(() => {
         requestSpellcheckRecheck(editor)
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        // Fail loudly: silent degrade leaves no squiggles and looks "fine".
+        pushNotification({
+          kind: 'error',
+          message:
+            dictionaryStatus.loadError ||
+            friendlyPackError(err) ||
+            'Could not load the spellcheck dictionary. Check Settings → Editor.'
+        })
+      })
   })
 
   // Spellcheck corrections menu (#196). Right-click on a misspelled word opens

@@ -9,6 +9,17 @@
   import VaultActionModal from './VaultActionModal.svelte'
   import VaultArchiveModal from './VaultArchiveModal.svelte'
 
+  interface Props {
+    ringAnchor?: string | null
+  }
+  let { ringAnchor = null }: Props = $props()
+
+  function ringClass(id: string): string {
+    return ringAnchor === id
+      ? 'ring-2 ring-accent-primary-start/50 ring-offset-2 ring-offset-surface-app'
+      : ''
+  }
+
   // Close-to-tray is a user-global window behaviour (#501). Its state lives on
   // the tab rather than in the vault-scoped config store — the window exists
   // before any vault opens, so this section renders regardless of config load.
@@ -448,11 +459,12 @@
       </p>
     </section>
 
-    <!-- Custom spellcheck dictionary (#196). Vault-scoped; edited via the
-         atomic config-RMW IPC in app_spellcheck.go. -->
+    <!-- Custom spellcheck dictionary (#196 / #338). Vault-scoped. -->
     <section
       id="general-dictionary"
       aria-labelledby="general-dictionary-heading"
+      class={ringClass('general-dictionary')}
+      aria-busy={customDictionary.busy || customDictionary.loading}
     >
       <h3
         id="general-dictionary-heading"
@@ -464,69 +476,87 @@
         class="rounded-xl border border-surface-panel-border bg-surface-panel/5 p-4 space-y-3"
       >
         <p class="text-text-muted text-type-sm font-body-md">
-          Words you've added so they aren't flagged as misspelled. Right-click a
-          misspelled word in the editor → "Add to dictionary", or add one here.
+          Words you've added so they aren't flagged as misspelled. Saved with
+          this vault. Right-click a misspelled word in the editor → "Add to
+          dictionary", or add one here. Language and technical word lists are
+          under Editor.
         </p>
         <div class="flex items-center gap-2">
-          <input
-            bind:value={customDictionary.newWord}
-            placeholder="Add a word"
-            onkeydown={(e: KeyboardEvent) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                void customDictionary.add()
-              }
-            }}
-            class="flex-1 px-2.5 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60"
-          />
+          <label class="flex-1 flex flex-col gap-1">
+            <span class="sr-only">New word</span>
+            <input
+              bind:value={customDictionary.newWord}
+              placeholder="Add a word"
+              disabled={customDictionary.busy}
+              onkeydown={(e: KeyboardEvent) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void customDictionary.add()
+                }
+              }}
+              class="w-full px-2.5 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60 disabled:opacity-50"
+            />
+          </label>
           <button
             type="button"
             onclick={() => void customDictionary.add()}
-            disabled={!customDictionary.newWord.trim()}
+            disabled={!customDictionary.newWord.trim() || customDictionary.busy}
             class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Add
           </button>
         </div>
-        <div class="relative w-full">
-          <input
-            bind:value={customDictionary.filter}
-            placeholder="Filter words…"
-            class="w-full pl-2.5 pr-8 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60"
-          />
-          {#if customDictionary.filter}
-            <button
-              type="button"
-              aria-label="Clear filter"
-              onclick={() => {
-                customDictionary.filter = ''
-              }}
-              class="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
-            >
-              <span class="material-symbols-outlined text-icon-md">close</span>
-            </button>
-          {/if}
-        </div>
+        {#if customDictionary.words.length > 0}
+          <div class="relative w-full">
+            <label class="sr-only" for="custom-dict-filter">Filter words</label>
+            <input
+              id="custom-dict-filter"
+              bind:value={customDictionary.filter}
+              placeholder="Filter words…"
+              disabled={customDictionary.busy}
+              class="w-full pl-2.5 pr-8 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60 disabled:opacity-50"
+            />
+            {#if customDictionary.filter}
+              <button
+                type="button"
+                aria-label="Clear filter"
+                onclick={() => {
+                  customDictionary.filter = ''
+                }}
+                class="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
+              >
+                <span class="material-symbols-outlined text-icon-md">close</span
+                >
+              </button>
+            {/if}
+          </div>
+        {/if}
         <div class="flex items-center gap-2">
           <button
             type="button"
             onclick={() => void customDictionary.exportFile()}
-            class="px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+            disabled={customDictionary.busy}
+            class="px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Export…
+            {customDictionary.busy ? 'Working…' : 'Export…'}
           </button>
           <button
             type="button"
             onclick={() => void customDictionary.importFile()}
-            class="px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+            disabled={customDictionary.busy}
+            class="px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Import…
           </button>
         </div>
         {#if customDictionary.error}
-          <p class="text-error text-type-sm font-body-md" role="alert">
-            {customDictionary.error}
-          </p>
+          <div
+            class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
+            role="alert"
+          >
+            <span class="material-symbols-outlined text-icon-lg">error</span>
+            <span class="flex-1">{customDictionary.error}</span>
+          </div>
         {/if}
         {#if customDictionary.status}
           <p
@@ -550,23 +580,29 @@
                   : 'No words match the filter.'}
             </p>
           {:else}
-            {#each customDictionary.filtered as word (word)}
-              <div
-                class="flex items-center justify-between px-2.5 py-1.5 hover:bg-surface-panel/20"
-              >
-                <span class="text-text-primary text-type-md font-body-md"
-                  >{word}</span
+            <ul class="list-none m-0 p-0">
+              {#each customDictionary.filtered as word (word)}
+                <li
+                  class="flex items-center justify-between px-2.5 py-1.5 hover:bg-surface-panel/20"
                 >
-                <button
-                  type="button"
-                  aria-label="Remove {word}"
-                  title="Remove"
-                  onclick={() => void customDictionary.remove(word)}
-                  class="text-text-muted hover:text-error transition-colors cursor-pointer"
-                  >✕</button
-                >
-              </div>
-            {/each}
+                  <span class="text-text-primary text-type-md font-body-md"
+                    >{word}</span
+                  >
+                  <button
+                    type="button"
+                    aria-label="Remove {word}"
+                    title="Remove"
+                    disabled={customDictionary.busy}
+                    onclick={() => void customDictionary.remove(word)}
+                    class="p-0.5 rounded text-text-muted hover:text-error transition-colors cursor-pointer border-none bg-transparent disabled:opacity-40 flex items-center justify-center"
+                  >
+                    <span class="material-symbols-outlined text-icon-md"
+                      >close</span
+                    >
+                  </button>
+                </li>
+              {/each}
+            </ul>
           {/if}
         </div>
       </div>
