@@ -221,6 +221,9 @@ func TestSave_RoundTrip(t *testing.T) {
 	original.Editor.TabIndentSpaces = 8
 	original.Hotkeys["custom_action"] = "Ctrl+Shift+X"
 	original.Plugins.PluginSettings["my-plugin"] = map[string]any{"key": "value"}
+	// Save/Load both run normalize (opt-in disabled seed, nil maps, …). Compare
+	// against the normalized form so seed markers are not a false mismatch.
+	original = normalize(original)
 
 	if err := Save(tmp, original); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -271,6 +274,52 @@ func TestNormalize_NeverNil(t *testing.T) {
 // writes a silt-tasks entry covering every key the frontend loaders
 // (settings.ts) read, and Active contains silt-tasks (Phase 10 / #429
 // retired the standalone silt-calendar and silt-kanban ids).
+// TestDefaults_AIPluginsOffByDefault pins Sprint 20/22 product choice: AI
+// plugins ship disabled so a fresh vault never phones a model until the user
+// opts in (silt-ai-summary #220, silt-ai-qa #224).
+func TestDefaults_AIPluginsOffByDefault(t *testing.T) {
+	d := Defaults()
+	disabled := map[string]bool{}
+	for _, id := range d.Plugins.Disabled {
+		disabled[id] = true
+	}
+	for _, id := range []string{"silt-ai-summary", "silt-ai-qa"} {
+		if !disabled[id] {
+			t.Errorf("Defaults().Plugins.Disabled missing %q (AI plugins must ship off by default)", id)
+		}
+	}
+}
+
+// TestNormalize_SeedsSiltAIQADisabledOnUpgrade: a pre-Sprint-22 config that
+// only lists silt-ai-summary in disabled must gain silt-ai-qa on normalize so
+// upgraded vaults do not auto-enable Q&A (PR #540 review).
+func TestNormalize_SeedsSiltAIQADisabledOnUpgrade(t *testing.T) {
+	cfg := normalize(SystemConfig{
+		Plugins: PluginsConfig{
+			Disabled:       []string{"silt-ai-summary"},
+			PluginSettings: map[string]any{},
+		},
+	})
+	found := false
+	for _, id := range cfg.Plugins.Disabled {
+		if id == "silt-ai-qa" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("normalize must append silt-ai-qa to disabled on upgrade; got %v", cfg.Plugins.Disabled)
+	}
+	// Second normalize must not re-append after user enables (remove from disabled).
+	cfg.Plugins.Disabled = []string{"silt-ai-summary"} // user enabled Q&A
+	cfg = normalize(cfg)
+	for _, id := range cfg.Plugins.Disabled {
+		if id == "silt-ai-qa" {
+			t.Fatal("normalize must not re-disable silt-ai-qa after seed marker is set")
+		}
+	}
+}
+
 func TestDefaults_ContainsSiltTasks(t *testing.T) {
 	d := Defaults()
 	ps, ok := d.Plugins.PluginSettings["silt-tasks"].(map[string]any)

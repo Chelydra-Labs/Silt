@@ -42,3 +42,14 @@ export function aiProviderNeedsSetup(
   if (chat.provider_type !== 'local' && chat.has_key === false) return true
   return false
 }
+
+/**
+ * True when the embedding provider is not ready (#224). Same readiness rules
+ * as chat; kept as a named export so Q&A index build and chat complete can
+ * gate independently.
+ */
+export function embeddingProviderNeedsSetup(
+  embedding: AIProviderReadiness | null | undefined
+): boolean {
+  return aiProviderNeedsSetup(embedding)
+}

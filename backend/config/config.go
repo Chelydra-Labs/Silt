@@ -487,7 +487,8 @@ func Defaults() SystemConfig {
 			// silt-ai-summary (#220) ships OFF by default: it is the first plugin
 			// that sends note content to an external LLM endpoint, so the user
 			// opts in explicitly (Plugins tab) after configuring a provider.
-			Disabled: []string{"silt-ai-summary"},
+			// AI plugins ship OFF by default (summary + Q&A).
+			Disabled: []string{"silt-ai-summary", "silt-ai-qa"},
 			PluginSettings: map[string]any{
 				// silt-tasks is the unified hub (Phase 9 / #431). Every key
 				// the frontend loaders read (settings.ts) is seeded so a
@@ -736,6 +737,12 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.Plugins.PluginSettings == nil {
 		cfg.Plugins.PluginSettings = map[string]any{}
 	}
+	// Off-by-default AI plugins must stay disabled on upgraded vaults.
+	// yaml.Unmarshal replaces the Defaults() Disabled slice entirely when the
+	// file has any `plugins.disabled:` entry (e.g. only silt-ai-summary), so a
+	// pre-feature config would otherwise load new AI plugins as enabled and
+	// start embedding note content without opt-in (PR #540 review).
+	cfg = seedOptInDisabledPlugins(cfg)
 	// NOTE: grants normalization removed — grants now live in per-host storage
 	// (backend/vault/grants.go, F4). The field is gone from PluginsConfig so a
 	// synced vault's legacy `grants:` block is silently ignored by yaml.v3.
@@ -1030,6 +1037,77 @@ func intPtr(i int) *int { return &i }
 // writeFileAtomic writes data to a sibling temp file, fsyncs it, then renames
 // it over path. Kept local (rather than reusing parser.WriteFileAtomic) so the
 // config package stays decoupled from the markdown parser.
+// optInDisabledPluginIDs are first-party plugins introduced as OFF-by-default
+// that must be re-seeded into plugins.disabled for upgraded vaults. Only list
+// plugins that are NEW in a release — never re-seed long-shipped ids (e.g.
+// silt-ai-summary) or users who already enabled them would be re-disabled.
+// YAML decode replaces the Defaults() Disabled slice when the file has any
+// plugins.disabled entry, so pre-feature configs omit new ids entirely.
+var optInDisabledPluginIDs = []string{
+	"silt-ai-qa", // Sprint 22 / #224 — PR #540 review
+}
+
+// seededOptInDisabledKey is a one-shot marker list under plugin_settings so we
+// never re-disable a plugin the user explicitly enabled after the seed ran.
+const seededOptInDisabledKey = "_seeded_opt_in_disabled"
+
+// seedOptInDisabledPlugins appends missing off-by-default AI plugin ids to
+// plugins.disabled exactly once per id. Marker lives in plugin_settings so a
+// later user enable (remove from disabled) is not undone on the next Load.
+func seedOptInDisabledPlugins(cfg SystemConfig) SystemConfig {
+	if cfg.Plugins.PluginSettings == nil {
+		cfg.Plugins.PluginSettings = map[string]any{}
+	}
+	seeded := stringSliceFromAny(cfg.Plugins.PluginSettings[seededOptInDisabledKey])
+	seededSet := make(map[string]bool, len(seeded))
+	for _, id := range seeded {
+		seededSet[id] = true
+	}
+	disabledSet := make(map[string]bool, len(cfg.Plugins.Disabled))
+	for _, id := range cfg.Plugins.Disabled {
+		disabledSet[id] = true
+	}
+	changed := false
+	for _, id := range optInDisabledPluginIDs {
+		if seededSet[id] {
+			continue
+		}
+		// First encounter of this opt-in plugin id: force disabled for
+		// upgraded vaults that never listed it. Fresh Defaults already include
+		// it; append is a no-op-ish (duplicate avoided via disabledSet).
+		if !disabledSet[id] {
+			cfg.Plugins.Disabled = append(cfg.Plugins.Disabled, id)
+			disabledSet[id] = true
+		}
+		seeded = append(seeded, id)
+		seededSet[id] = true
+		changed = true
+	}
+	if changed || len(seeded) > 0 {
+		// Always store as []string so YAML round-trip + DeepEqual stay stable
+		// (yaml.v3 reloads sequences as []any).
+		cfg.Plugins.PluginSettings[seededOptInDisabledKey] = seeded
+	}
+	return cfg
+}
+
+func stringSliceFromAny(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		return append([]string(nil), t...)
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, e := range t {
+			if s, ok := e.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

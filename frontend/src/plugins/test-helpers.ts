@@ -141,8 +141,18 @@ export const v2CtxStubs: Pick<
     migrate: () => Promise.resolve()
   },
   ai: {
-    complete: () =>
-      Promise.resolve({ content: '', model: '', usage: undefined }),
+    complete: ((req: { stream?: boolean }) => {
+      if (req?.stream) {
+        const empty = {
+          streamId: 'test',
+          cancel: async () => {},
+          result: async () => ({ content: '', model: '' }),
+          async *[Symbol.asyncIterator]() {}
+        }
+        return Promise.resolve(empty)
+      }
+      return Promise.resolve({ content: '', model: '', usage: undefined })
+    }) as any,
     embed: () =>
       Promise.resolve({
         embeddings: [],

@@ -360,8 +360,16 @@ func TestGrants_Migration(t *testing.T) {
 // implicitly granted every capability after applyConfigLocked, with no
 // user prompt. This is the F4 guarantee that the provenance move doesn't
 // break the bundled-plugin experience.
+//
+// Off-by-default AI plugins (silt-ai-summary, silt-ai-qa) sit in
+// plugins.disabled; requireGrant correctly rejects disabled plugins
+// (#359). Clear Disabled for this test so we exercise grant seeding, not
+// the disabled gate (covered by TestRequireGrant_DisabledFirstPartyRejected).
 func TestGrants_FirstPartyAlwaysSeeded(t *testing.T) {
 	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.configMu.Unlock()
 	for id := range plugins.FirstPartyPluginIDs {
 		for cap := range plugins.KnownCapabilities {
 			if err := app.requireGrant(id, cap); err != nil {

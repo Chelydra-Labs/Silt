@@ -10,6 +10,9 @@
     sidebarCollapsed: boolean
     sidebarWidth?: number
     onSearchClick: () => void
+    /** When set, show the AI Assistant toggle (plugin enabled). */
+    onAIAssistantClick?: () => void
+    aiAssistantOpen?: boolean
     children?: import('svelte').Snippet
   }
 
@@ -17,6 +20,8 @@
     sidebarCollapsed = $bindable(),
     sidebarWidth = 256,
     onSearchClick,
+    onAIAssistantClick,
+    aiAssistantOpen = false,
     children
   }: Props = $props()
 
@@ -108,7 +113,7 @@
     {/if}
   </div>
 
-  <!-- Right: search + window controls -->
+  <!-- Right: search + AI Assistant (near the right drawer) + window controls -->
   <div class="flex items-center gap-2 flex-shrink-0 h-full pr-2">
     <button
       type="button"
@@ -125,6 +130,24 @@
     >
       <span class="material-symbols-outlined text-type-2xl">search</span>
     </button>
+
+    {#if onAIAssistantClick}
+      <button
+        type="button"
+        onclick={onAIAssistantClick}
+        aria-label="AI Assistant"
+        aria-pressed={aiAssistantOpen}
+        title="AI Assistant"
+        class="flex items-center justify-center h-9 w-9 rounded-lg transition-colors cursor-pointer border-none bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+        class:text-accent-primary-start={aiAssistantOpen}
+        class:text-surface-titlebar-text-muted={!aiAssistantOpen}
+        class:hover:text-surface-titlebar-text={!aiAssistantOpen}
+        class:hover:bg-hover={true}
+      >
+        <span class="material-symbols-outlined text-type-2xl">auto_awesome</span
+        >
+      </button>
+    {/if}
 
     <div class="w-px h-6 bg-surface-titlebar-border mx-1"></div>
 

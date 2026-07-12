@@ -649,7 +649,8 @@ await ctx.pluginDb.migrate(1, `
 
 **sqlite-vec (vector search).** Every plugin connection has `sqlite-vec`
 registered, exposing `vec0` virtual tables and `vec_distance_cosine` /
-`vec_distance_L2`. Useful for semantic search, dedup, and RAG:
+`vec_distance_L2`. Useful for semantic search, dedup, and RAG. **Reference
+consumer: first-party `silt-ai-qa`** (see `docs/plugins/silt-ai-qa.md`).
 
 ```sql
 -- Cosine distance index (384-dim embeddings, e.g. a MiniLM model).
@@ -850,16 +851,39 @@ console.log(res.usage)   // { prompt_tokens, completion_tokens, total_tokens }
 model — use sparingly), `temperature`, `maxTokens`, `reasoningEffort`
 (`'none'`/`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'` — controls
 thinking on reasoning-capable models; not all providers support every value),
-`stream` (reserved; streaming is not yet wired through the bridge). Per-call
-overrides are merged over the user's provider config.
+`stream` (when `true`, returns a {@link PluginAIStream} handle — see below).
+Per-call overrides are merged over the user's provider config.
 
-`res.content` is always **reasoning-free**. Reasoning models (DeepSeek-R1,
-Qwen3 thinking, …) wrap scratchpad in `<think>`/`<thought>`/`<reasoning>`
-tags; OpenAI-compatible servers without a reasoning parser (Ollama, LM
-Studio, llama.cpp) leave them inline in `content`, while native Google /
-Anthropic already separate reasoning. Silt normalizes the leak at the
-`ctx.ai.complete` boundary, so a plugin never needs to strip these tags
-itself and never sees raw reasoning in `content`.
+**Streaming (`stream: true`, #226).** Supported for OpenAI-compatible and local
+(Ollama `/v1`) chat endpoints. Native Google/Anthropic reject streaming with a
+`bad-request` error — fall back to non-stream `complete` or use an
+OpenAI-compatible endpoint. When streaming:
+
+```ts
+const stream = await ctx.ai.complete({
+  messages: [{ role: 'user', content: '…' }],
+  stream: true
+})
+for await (const delta of stream) {
+  // raw content deltas (may include partial reasoning tags mid-stream)
+  process.stdout.write(delta)
+}
+const final = await stream.result() // reasoning-stripped full content
+// stream.cancel() aborts the upstream request
+```
+
+Deltas arrive via Wails events (`ai:complete:delta` / `done` / `error`) keyed
+by `stream_id`. Audit logs record stream-start and a single terminal status
+(not per-token).
+
+`res.content` / `stream.result().content` is always **reasoning-free**.
+Reasoning models (DeepSeek-R1, Qwen3 thinking, …) wrap scratchpad in
+`<think>`/`<thought>`/`<reasoning>` tags; OpenAI-compatible servers without a
+reasoning parser (Ollama, LM Studio, llama.cpp) leave them inline in
+`content`, while native Google / Anthropic already separate reasoning. Silt
+normalizes the leak at the `ctx.ai.complete` boundary (final aggregation for
+streams), so a plugin never needs to strip these tags itself and never sees
+raw reasoning in the final content.
 
 #### Embeddings
 
