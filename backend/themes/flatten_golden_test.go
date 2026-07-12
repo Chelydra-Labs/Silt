@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -81,8 +82,12 @@ func TestFlatten_GoldenParity(t *testing.T) {
 				if err != nil {
 					t.Fatalf("read golden %s: %v (run UPDATE_GOLDENS=1 go test ./backend/themes/ -run TestFlatten_GoldenParity)", path, err)
 				}
-				if string(got) != string(want) {
-					t.Errorf("Flatten drift for %s %s\n--- got ---\n%s\n--- want ---\n%s\n(re-run with UPDATE_GOLDENS=1 after intentional Flatten changes)", th.ID, mode, got, want)
+				// Normalize CRLF so Windows checkouts (core.autocrlf) compare
+				// equal to the LF JSON Flatten emits.
+				wantNorm := strings.ReplaceAll(string(want), "\r\n", "\n")
+				gotNorm := strings.ReplaceAll(string(got), "\r\n", "\n")
+				if gotNorm != wantNorm {
+					t.Errorf("Flatten drift for %s %s\n--- got ---\n%s\n--- want ---\n%s\n(re-run with UPDATE_GOLDENS=1 after intentional Flatten changes)", th.ID, mode, gotNorm, wantNorm)
 				}
 			})
 		}
