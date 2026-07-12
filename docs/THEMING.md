@@ -530,7 +530,7 @@ Copy-paste this and fill in the `…` placeholders. Both modes are required; eve
 You do not need to hand-edit JSON to craft a look. From **Settings → Appearance**:
 
 1. Select a preset (or a custom theme you already saved).
-2. Click **Customize** to open the theme editor.
+2. Click **Customize** to open the theme editor. Color fields use an OKLCH plane (lightness × chroma) plus a hue strip; channel sliders are under advanced disclosure. Save / leave / rename / delete use in-app dialogs.
 3. Use the **Simple** strip for the high-impact controls: app background, app text, primary accent, body font, and corner radius. The whole app updates live as you edit.
 4. Open **Advanced** for per-zone surfaces, status/error colors, typography scale, geometry ramps, editor tokens, and background images (picker, size, opacity, blend, position, scrim).
 5. Watch the **contrast** summary — pairs below WCAG AA are flagged with a path to one-click lightness fix. Warnings never block saving.

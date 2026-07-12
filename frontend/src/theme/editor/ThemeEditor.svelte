@@ -34,6 +34,8 @@
   import { createWorkingCopy } from './workingCopy.svelte'
   import OklchColorField from './OklchColorField.svelte'
   import ContrastBadge from './ContrastBadge.svelte'
+  import ConfirmDialog from '../../components/ConfirmDialog.svelte'
+  import NamePromptDialog from '../../components/NamePromptDialog.svelte'
 
   type Props = {
     themeId: string
@@ -65,6 +67,11 @@
   let pickingBg = $state(false)
   // Generation counter: ignore stale bootstrap/save results after unmount/remount.
   let gen = 0
+
+  // Dialog state (#531) — replace window.confirm/prompt.
+  let leaveDialogOpen = $state(false)
+  let discardDialogOpen = $state(false)
+  let saveNameDialogOpen = $state(false)
 
   // Debounced contrast summary for aria-live (not per slider tick).
   let liveContrastMsg = $state('')
@@ -163,42 +170,55 @@
   function requestClose() {
     if (saving) return
     if (wc.dirty) {
-      const ok = window.confirm(
-        'Leave without saving? Unsaved changes will be lost.'
-      )
-      if (!ok) return
+      leaveDialogOpen = true
+      return
     }
+    wc.discard()
+    onClose()
+  }
+
+  function confirmLeave() {
+    leaveDialogOpen = false
     wc.discard()
     onClose()
   }
 
   function onRevert() {
     if (!wc.dirty) return
-    const ok = window.confirm('Discard all unsaved changes?')
-    if (!ok) return
+    discardDialogOpen = true
+  }
+
+  function confirmDiscard() {
+    discardDialogOpen = false
     wc.resetAll()
     wc.previewNow()
   }
 
-  async function onSave(asNew: boolean) {
+  function onSave(asNew: boolean) {
+    if (!wc.draft) return
+    const mustFork = !sourceIsDisk || asNew
+    if (mustFork) {
+      // Fork path always opens the name dialog; overwrite is always false.
+      saveNameDialogOpen = true
+      return
+    }
+    void performSave(wc.draft.name, /* overwrite */ true)
+  }
+
+  function confirmSaveName(name: string) {
+    saveNameDialogOpen = false
+    void performSave(name, /* overwrite */ false)
+  }
+
+  async function performSave(name: string, overwrite: boolean) {
     if (!wc.draft) return
     const my = gen
-    const mustFork = !sourceIsDisk || asNew
-    let name = wc.draft.name
-    if (mustFork) {
-      const entered = window.prompt(
-        'Name for the new theme',
-        `${wc.draft.name} (custom)`
-      )
-      if (entered === null) return
-      name = entered.trim() || `${wc.draft.name} (custom)`
-    }
     saving = true
     saveError = null
     try {
       const res = await saveCustomThemeFn({
         json: JSON.stringify(wc.draft),
-        overwrite: !mustFork,
+        overwrite,
         apply: true,
         name
       })
@@ -936,18 +956,63 @@
                 wc.setColor(wc.modePath('accent.secondary.glow'), v)}
               onReset={() => wc.resetPath(wc.modePath('accent.secondary.glow'))}
             />
-            <OklchColorField
-              label="Hover"
-              value={wc.draft.modes[mode()].hover}
-              onchange={(v) => wc.setColor(wc.modePath('hover'), v)}
-              onReset={() => wc.resetPath(wc.modePath('hover'))}
-            />
-            <OklchColorField
-              label="Active"
-              value={wc.draft.modes[mode()].active}
-              onchange={(v) => wc.setColor(wc.modePath('active'), v)}
-              onReset={() => wc.resetPath(wc.modePath('active'))}
-            />
+            <!-- Derived interaction tokens (#529): collapsible; lock/reset. -->
+            <details
+              class="rounded-lg border border-surface-panel-border bg-surface-panel/40"
+            >
+              <summary
+                class="cursor-pointer select-none list-none px-3 py-2.5 text-type-sm font-label-sm-bold text-text-primary hover:bg-hover rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+              >
+                Derived interaction (hover, active, disabled)
+              </summary>
+              <div
+                class="px-3 pb-3 space-y-4 border-t border-surface-panel-border pt-3"
+              >
+                {#each [{ key: 'hover' as const, label: 'Hover (from app background)' }, { key: 'active' as const, label: 'Active (from app background)' }, { key: 'text_disabled' as const, label: 'Text disabled (from app text)' }] as d (d.key)}
+                  {@const dPath = wc.modePath(d.key)}
+                  <div class="space-y-2">
+                    <OklchColorField
+                      label={d.label}
+                      value={wc.draft.modes[mode()][d.key]}
+                      bgForContrast={d.key === 'text_disabled'
+                        ? appBg()
+                        : undefined}
+                      onchange={(v) => wc.setColor(dPath, v)}
+                      onReset={() => wc.resetPath(dPath)}
+                    />
+                    <div class="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        aria-pressed={wc.isDerivedLocked(dPath)}
+                        class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-type-xs font-label-sm border cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+                        class:bg-hover={wc.isDerivedLocked(dPath)}
+                        class:border-border-active={wc.isDerivedLocked(dPath)}
+                        class:text-text-primary={wc.isDerivedLocked(dPath)}
+                        class:border-surface-panel-border={!wc.isDerivedLocked(
+                          dPath
+                        )}
+                        class:text-text-muted={!wc.isDerivedLocked(dPath)}
+                        class:bg-surface-app={!wc.isDerivedLocked(dPath)}
+                        onclick={() =>
+                          wc.setDerivedLocked(
+                            dPath,
+                            !wc.isDerivedLocked(dPath)
+                          )}
+                      >
+                        {wc.isDerivedLocked(dPath) ? 'Locked' : 'Unlocked'}
+                      </button>
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-type-xs font-label-sm text-text-muted hover:text-text-primary border border-surface-panel-border bg-surface-app cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+                        onclick={() => wc.resetDerivedToFormula(dPath)}
+                      >
+                        Reset to derived
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            </details>
             <OklchColorField
               label="Border active"
               value={wc.draft.modes[mode()].border_active}
@@ -966,13 +1031,6 @@
               bgForContrast={appBg()}
               onchange={(v) => wc.setColor(wc.modePath('text_muted'), v)}
               onReset={() => wc.resetPath(wc.modePath('text_muted'))}
-            />
-            <OklchColorField
-              label="Text disabled"
-              value={wc.draft.modes[mode()].text_disabled}
-              bgForContrast={appBg()}
-              onchange={(v) => wc.setColor(wc.modePath('text_disabled'), v)}
-              onReset={() => wc.resetPath(wc.modePath('text_disabled'))}
             />
             <OklchColorField
               label="Status warn"
@@ -1523,3 +1581,48 @@
     </footer>
   {/if}
 </div>
+
+{#if leaveDialogOpen}
+  <ConfirmDialog
+    title="Leave without saving?"
+    message="Unsaved changes will be lost."
+    confirmLabel="Leave"
+    cancelLabel="Stay"
+    destructive
+    dataTestId="theme-leave-dialog"
+    onConfirm={confirmLeave}
+    onCancel={() => {
+      leaveDialogOpen = false
+    }}
+  />
+{/if}
+
+{#if discardDialogOpen}
+  <ConfirmDialog
+    title="Discard changes?"
+    message="Discard all unsaved changes?"
+    confirmLabel="Discard"
+    cancelLabel="Cancel"
+    destructive
+    dataTestId="theme-discard-dialog"
+    onConfirm={confirmDiscard}
+    onCancel={() => {
+      discardDialogOpen = false
+    }}
+  />
+{/if}
+
+{#if saveNameDialogOpen && wc.draft}
+  <NamePromptDialog
+    title="Name for the new theme"
+    label="Theme name"
+    initialValue={`${wc.draft.name} (custom)`}
+    confirmLabel="Save"
+    cancelLabel="Cancel"
+    dataTestId="theme-save-name-dialog"
+    onConfirm={confirmSaveName}
+    onCancel={() => {
+      saveNameDialogOpen = false
+    }}
+  />
+{/if}

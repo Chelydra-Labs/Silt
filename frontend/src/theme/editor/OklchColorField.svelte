@@ -1,10 +1,12 @@
 <script lang="ts">
-  // OKLCH-first color field: swatch + text input + popover with L/C/H sliders.
+  // OKLCH-first color field: swatch + text input + popover with 2D LC plane,
+  // hue strip, and advanced L/C/H channel sliders (#528).
   // Popover opens on activate (click/Enter/Space), not mere focus. Keyboard
-  // sliders use aria-valuetext for screen-reader feedback.
+  // sliders / plane use aria-valuetext for screen-reader feedback.
   import { onMount } from 'svelte'
   import { clampL, formatOklch, toHex, toOklch, type Oklch } from '../color'
   import { classifyContrast, contrastRatioWCAG } from '../contrast'
+  import { describeOklch } from '../oklchDescribe'
   import ContrastBadge from './ContrastBadge.svelte'
 
   type Props = {
@@ -38,6 +40,8 @@
   let invalid = $state(false)
   let rootEl: HTMLDivElement | undefined = $state()
   let swatchBtn: HTMLButtonElement | undefined = $state()
+  let planeDragging = $state(false)
+  let hueDragging = $state(false)
 
   $effect(() => {
     textDraft = value
@@ -52,6 +56,10 @@
   const contrastLevel = $derived(
     bgForContrast ? classifyContrast(contrastRatio, true) : null
   )
+  const valueText = $derived(lch ? describeOklch(lch) : '')
+
+  // Chroma range for the plane (matches advanced C slider max of 0.4).
+  const C_MAX = 0.4
 
   function openPopover() {
     if (disabled) return
@@ -60,6 +68,8 @@
 
   function closePopover() {
     open = false
+    planeDragging = false
+    hueDragging = false
     swatchBtn?.focus()
   }
 
@@ -136,6 +146,128 @@
     applyLch({ ...lch, H: v })
   }
 
+  function clamp01(n: number): number {
+    return n < 0 ? 0 : n > 1 ? 1 : n
+  }
+
+  function applyPlanePoint(e: PointerEvent, el: HTMLElement) {
+    if (!lch) return
+    const rect = el.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return
+    const x = clamp01((e.clientX - rect.left) / rect.width)
+    const y = clamp01((e.clientY - rect.top) / rect.height)
+    // X = chroma 0–0.4, Y = lightness 1→0 (top light, bottom dark).
+    applyLch({ ...lch, C: x * C_MAX, L: 1 - y })
+  }
+
+  function onPlanePointerDown(e: PointerEvent) {
+    if (!lch || disabled) return
+    e.preventDefault()
+    const el = e.currentTarget as HTMLElement
+    el.setPointerCapture?.(e.pointerId)
+    planeDragging = true
+    applyPlanePoint(e, el)
+  }
+
+  function onPlanePointerMove(e: PointerEvent) {
+    if (!planeDragging || !lch) return
+    applyPlanePoint(e, e.currentTarget as HTMLElement)
+  }
+
+  function onPlanePointerUp(e: PointerEvent) {
+    if (!planeDragging) return
+    planeDragging = false
+    try {
+      ;(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId)
+    } catch {
+      // already released
+    }
+  }
+
+  function onPlaneKey(e: KeyboardEvent) {
+    if (!lch || disabled) return
+    const fine = e.shiftKey
+    const lStep = fine ? 0.005 : 0.02
+    const cStep = fine ? 0.002 : 0.01
+    let next: Oklch | null = null
+    switch (e.key) {
+      case 'ArrowUp':
+        next = { ...lch, L: clampL(lch.L + lStep) }
+        break
+      case 'ArrowDown':
+        next = { ...lch, L: clampL(lch.L - lStep) }
+        break
+      case 'ArrowRight':
+        next = { ...lch, C: Math.min(C_MAX, Math.max(0, lch.C + cStep)) }
+        break
+      case 'ArrowLeft':
+        next = { ...lch, C: Math.min(C_MAX, Math.max(0, lch.C - cStep)) }
+        break
+      default:
+        return
+    }
+    e.preventDefault()
+    applyLch(next)
+  }
+
+  function applyHuePoint(e: PointerEvent, el: HTMLElement) {
+    if (!lch) return
+    const rect = el.getBoundingClientRect()
+    if (rect.width <= 0) return
+    const x = clamp01((e.clientX - rect.left) / rect.width)
+    applyLch({ ...lch, H: x * 360 })
+  }
+
+  function onHuePointerDown(e: PointerEvent) {
+    if (!lch || disabled) return
+    e.preventDefault()
+    const el = e.currentTarget as HTMLElement
+    el.setPointerCapture?.(e.pointerId)
+    hueDragging = true
+    applyHuePoint(e, el)
+  }
+
+  function onHuePointerMove(e: PointerEvent) {
+    if (!hueDragging || !lch) return
+    applyHuePoint(e, e.currentTarget as HTMLElement)
+  }
+
+  function onHuePointerUp(e: PointerEvent) {
+    if (!hueDragging) return
+    hueDragging = false
+    try {
+      ;(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId)
+    } catch {
+      // already released
+    }
+  }
+
+  function onHueKey(e: KeyboardEvent) {
+    if (!lch || disabled) return
+    const step = e.shiftKey ? 1 : 5
+    let nextH: number | null = null
+    switch (e.key) {
+      case 'ArrowLeft':
+      case 'ArrowDown':
+        nextH = lch.H - step
+        break
+      case 'ArrowRight':
+      case 'ArrowUp':
+        nextH = lch.H + step
+        break
+      case 'Home':
+        nextH = 0
+        break
+      case 'End':
+        nextH = 360
+        break
+      default:
+        return
+    }
+    e.preventDefault()
+    applyLch({ ...lch, H: ((nextH % 360) + 360) % 360 })
+  }
+
   // L track: dark→light at current C/H. C: grey→vivid. H: full hue wheel.
   const lTrack = $derived.by(() => {
     if (!lch) return undefined
@@ -152,6 +284,29 @@
   const hTrack = $derived(
     'linear-gradient(to right, oklch(0.7 0.15 0), oklch(0.7 0.15 60), oklch(0.7 0.15 120), oklch(0.7 0.15 180), oklch(0.7 0.15 240), oklch(0.7 0.15 300), oklch(0.7 0.15 360))'
   )
+
+  // 2D LC plane: X = chroma, Y = lightness (top light). Fixed current hue.
+  const lcPlaneBg = $derived.by(() => {
+    if (!lch) return undefined
+    const h = lch.H.toFixed(2)
+    return [
+      `linear-gradient(to bottom, oklch(1 0 ${h} / 0), oklch(0 0 0))`,
+      `linear-gradient(to right, oklch(0.85 0 ${h}), oklch(0.75 0.4 ${h}))`
+    ].join(', ')
+  })
+
+  const planeThumbStyle = $derived.by(() => {
+    if (!lch) return ''
+    const x = Math.min(100, Math.max(0, (lch.C / C_MAX) * 100))
+    const y = Math.min(100, Math.max(0, (1 - lch.L) * 100))
+    return `left: ${x}%; top: ${y}%;`
+  })
+
+  const hueThumbStyle = $derived.by(() => {
+    if (!lch) return ''
+    const x = Math.min(100, Math.max(0, (lch.H / 360) * 100))
+    return `left: ${x}%;`
+  })
 
   function onDocPointer(e: PointerEvent) {
     if (!open || !rootEl) return
@@ -262,67 +417,147 @@
         aria-hidden="true"
       ></div>
 
+      <!-- 2D LC plane: primary chroma × lightness control -->
       <div class="space-y-1">
         <div class="flex justify-between text-type-2xs font-label-sm">
-          <label for={`${fieldId}-l`}>Lightness</label>
+          <span>Lightness · Chroma</span>
           <span class="font-mono text-text-muted"
-            >{(lch.L * 100).toFixed(1)}%</span
+            >{(lch.L * 100).toFixed(1)}% · {lch.C.toFixed(3)}</span
           >
         </div>
-        <input
-          id={`${fieldId}-l`}
-          type="range"
-          min="0"
-          max="100"
-          step="0.1"
-          value={lch.L * 100}
-          aria-valuetext={`${(lch.L * 100).toFixed(1)} percent lightness`}
-          class="oklch-slider w-full"
-          style="--track: {lTrack}"
-          oninput={(e) =>
-            setL(Number((e.currentTarget as HTMLInputElement).value))}
-        />
-      </div>
-
-      <div class="space-y-1">
-        <div class="flex justify-between text-type-2xs font-label-sm">
-          <label for={`${fieldId}-c`}>Chroma</label>
-          <span class="font-mono text-text-muted">{lch.C.toFixed(3)}</span>
+        <div
+          data-testid="oklch-lc-plane"
+          class="oklch-lc-plane relative w-full h-32 rounded-md border border-surface-panel-border cursor-crosshair touch-none focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+          style="background: {lcPlaneBg}"
+          role="slider"
+          tabindex="0"
+          aria-label={`${label} lightness and chroma`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(lch.L * 100)}
+          aria-valuetext={valueText}
+          aria-orientation="vertical"
+          onpointerdown={onPlanePointerDown}
+          onpointermove={onPlanePointerMove}
+          onpointerup={onPlanePointerUp}
+          onpointercancel={onPlanePointerUp}
+          onkeydown={onPlaneKey}
+        >
+          <span
+            class="oklch-plane-thumb absolute w-3.5 h-3.5 rounded-full border-2 border-white shadow-md pointer-events-none -translate-x-1/2 -translate-y-1/2"
+            style="{planeThumbStyle} background-color: {swatchHex};"
+            aria-hidden="true"
+          ></span>
         </div>
-        <input
-          id={`${fieldId}-c`}
-          type="range"
-          min="0"
-          max="40"
-          step="0.1"
-          value={lch.C * 100}
-          aria-valuetext={`${lch.C.toFixed(3)} chroma`}
-          class="oklch-slider w-full"
-          style="--track: {cTrack}"
-          oninput={(e) =>
-            setC(Number((e.currentTarget as HTMLInputElement).value))}
-        />
       </div>
 
+      <!-- Hue strip: primary hue control -->
       <div class="space-y-1">
         <div class="flex justify-between text-type-2xs font-label-sm">
-          <label for={`${fieldId}-h`}>Hue</label>
+          <span>Hue</span>
           <span class="font-mono text-text-muted">{lch.H.toFixed(0)}°</span>
         </div>
-        <input
-          id={`${fieldId}-h`}
-          type="range"
-          min="0"
-          max="360"
-          step="1"
-          value={lch.H}
-          aria-valuetext={`${lch.H.toFixed(0)} degrees hue`}
-          class="oklch-slider w-full"
-          style="--track: {hTrack}"
-          oninput={(e) =>
-            setH(Number((e.currentTarget as HTMLInputElement).value))}
-        />
+        <div
+          data-testid="oklch-hue-strip"
+          class="oklch-hue-strip relative w-full h-4 rounded-full border border-surface-panel-border cursor-pointer touch-none focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+          style="background: {hTrack}"
+          role="slider"
+          tabindex="0"
+          aria-label={`${label} hue`}
+          aria-valuemin={0}
+          aria-valuemax={360}
+          aria-valuenow={Math.round(lch.H)}
+          aria-valuetext={valueText}
+          aria-orientation="horizontal"
+          onpointerdown={onHuePointerDown}
+          onpointermove={onHuePointerMove}
+          onpointerup={onHuePointerUp}
+          onpointercancel={onHuePointerUp}
+          onkeydown={onHueKey}
+        >
+          <span
+            class="oklch-hue-thumb absolute top-1/2 w-3.5 h-3.5 rounded-full border-2 border-white shadow-md pointer-events-none -translate-x-1/2 -translate-y-1/2"
+            style="{hueThumbStyle} background-color: {swatchHex};"
+            aria-hidden="true"
+          ></span>
+        </div>
       </div>
+
+      <!-- Advanced: numeric channel sliders for precise keyboard / AT paths -->
+      <details class="oklch-advanced group">
+        <summary
+          class="text-type-2xs font-label-sm text-text-muted hover:text-text-primary cursor-pointer select-none list-none flex items-center gap-1.5 py-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 rounded-sm"
+        >
+          <span
+            class="oklch-details-chevron inline-block text-[0.65rem] leading-none transition-transform"
+            aria-hidden="true">▸</span
+          >
+          Channel sliders
+        </summary>
+        <div class="mt-2 space-y-3">
+          <div class="space-y-1">
+            <div class="flex justify-between text-type-2xs font-label-sm">
+              <label for={`${fieldId}-l`}>Lightness</label>
+              <span class="font-mono text-text-muted"
+                >{(lch.L * 100).toFixed(1)}%</span
+              >
+            </div>
+            <input
+              id={`${fieldId}-l`}
+              type="range"
+              min="0"
+              max="100"
+              step="0.1"
+              value={lch.L * 100}
+              aria-valuetext={valueText}
+              class="oklch-slider w-full"
+              style="--track: {lTrack}"
+              oninput={(e) =>
+                setL(Number((e.currentTarget as HTMLInputElement).value))}
+            />
+          </div>
+
+          <div class="space-y-1">
+            <div class="flex justify-between text-type-2xs font-label-sm">
+              <label for={`${fieldId}-c`}>Chroma</label>
+              <span class="font-mono text-text-muted">{lch.C.toFixed(3)}</span>
+            </div>
+            <input
+              id={`${fieldId}-c`}
+              type="range"
+              min="0"
+              max="40"
+              step="0.1"
+              value={lch.C * 100}
+              aria-valuetext={valueText}
+              class="oklch-slider w-full"
+              style="--track: {cTrack}"
+              oninput={(e) =>
+                setC(Number((e.currentTarget as HTMLInputElement).value))}
+            />
+          </div>
+
+          <div class="space-y-1">
+            <div class="flex justify-between text-type-2xs font-label-sm">
+              <label for={`${fieldId}-h`}>Hue</label>
+              <span class="font-mono text-text-muted">{lch.H.toFixed(0)}°</span>
+            </div>
+            <input
+              id={`${fieldId}-h`}
+              type="range"
+              min="0"
+              max="360"
+              step="1"
+              value={lch.H}
+              aria-valuetext={valueText}
+              class="oklch-slider w-full"
+              style="--track: {hTrack}"
+              oninput={(e) =>
+                setH(Number((e.currentTarget as HTMLInputElement).value))}
+            />
+          </div>
+        </div>
+      </details>
     </div>
   {:else if open && !lch}
     <div
@@ -371,5 +606,27 @@
     border: 2px solid var(--color-surface-panel);
     box-shadow: 0 1px 2px
       color-mix(in oklch, var(--color-surface-app) 40%, transparent);
+  }
+
+  .oklch-plane-thumb,
+  .oklch-hue-thumb {
+    transition:
+      left 80ms ease,
+      top 80ms ease;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .oklch-plane-thumb,
+    .oklch-hue-thumb,
+    .oklch-details-chevron {
+      transition: none;
+    }
+  }
+
+  .oklch-advanced > summary::-webkit-details-marker {
+    display: none;
+  }
+  .oklch-advanced[open] .oklch-details-chevron {
+    transform: rotate(90deg);
   }
 </style>

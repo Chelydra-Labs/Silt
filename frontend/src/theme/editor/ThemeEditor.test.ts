@@ -284,7 +284,6 @@ describe('ThemeEditor', () => {
       info: { id: 'user-saved', name: 'Saved Custom', source: 'disk' },
       applied: true
     })
-    vi.stubGlobal('prompt', () => 'Saved Custom')
 
     render(ThemeEditor, {
       props: {
@@ -301,6 +300,16 @@ describe('ThemeEditor', () => {
     await fireEvent.click(
       screen.getByRole('button', { name: /save as new theme/i })
     )
+    await tick()
+
+    // Name prompt dialog (#531) — confirm with the suggested name.
+    const nameDialog = screen.getByTestId('theme-save-name-dialog')
+    expect(nameDialog).toBeTruthy()
+    const nameInput = screen.getByTestId(
+      'theme-save-name-dialog-input'
+    ) as HTMLInputElement
+    await fireEvent.input(nameInput, { target: { value: 'Saved Custom' } })
+    await fireEvent.click(screen.getByTestId('theme-save-name-dialog-confirm'))
     await tick()
     await tick()
 
@@ -343,5 +352,152 @@ describe('ThemeEditor', () => {
     expect(
       screen.getByRole('button', { name: /reset background/i })
     ).toBeTruthy()
+  })
+
+  it('dirty leave opens confirm dialog; Stay keeps editor open', async () => {
+    const onClose = vi.fn()
+    render(ThemeEditor, {
+      props: {
+        themeId: 'cyber_forest',
+        sourceIsDisk: false,
+        onClose,
+        injectJson: sampleJson
+      }
+    })
+    await tick()
+    const input = screen.getByLabelText(
+      'App text color value'
+    ) as HTMLInputElement
+    await fireEvent.input(input, { target: { value: '#ffffff' } })
+    await fireEvent.blur(input)
+    await tick()
+
+    // Header back control is labeled "Appearance" (arrow_back + text).
+    await fireEvent.click(screen.getByRole('button', { name: /^appearance$/i }))
+    await tick()
+    expect(screen.getByTestId('theme-leave-dialog')).toBeTruthy()
+    await fireEvent.click(screen.getByTestId('theme-leave-dialog-cancel'))
+    await tick()
+    expect(screen.queryByTestId('theme-leave-dialog')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('region', { name: /theme editor/i })).toBeTruthy()
+  })
+
+  it('leave confirm discards and closes', async () => {
+    const onClose = vi.fn()
+    render(ThemeEditor, {
+      props: {
+        themeId: 'cyber_forest',
+        sourceIsDisk: false,
+        onClose,
+        injectJson: sampleJson
+      }
+    })
+    await tick()
+    const input = screen.getByLabelText(
+      'App text color value'
+    ) as HTMLInputElement
+    await fireEvent.input(input, { target: { value: '#ffffff' } })
+    await fireEvent.blur(input)
+    await tick()
+
+    await fireEvent.click(screen.getByRole('button', { name: /^appearance$/i }))
+    await tick()
+    await fireEvent.click(screen.getByTestId('theme-leave-dialog-confirm'))
+    await tick()
+    expect(onClose).toHaveBeenCalled()
+    expect(mocks.restoreActiveTheme).toHaveBeenCalled()
+  })
+
+  it('Revert opens discard dialog and confirm resets edits', async () => {
+    render(ThemeEditor, {
+      props: {
+        themeId: 'cyber_forest',
+        sourceIsDisk: false,
+        onClose: vi.fn(),
+        injectJson: sampleJson
+      }
+    })
+    await tick()
+    const input = screen.getByLabelText(
+      'App text color value'
+    ) as HTMLInputElement
+    await fireEvent.input(input, { target: { value: '#ffffff' } })
+    await fireEvent.blur(input)
+    await tick()
+    expect(input.value).toBe('#ffffff')
+
+    await fireEvent.click(screen.getByRole('button', { name: /revert/i }))
+    await tick()
+    expect(screen.getByTestId('theme-discard-dialog')).toBeTruthy()
+    await fireEvent.click(screen.getByTestId('theme-discard-dialog-confirm'))
+    await tick()
+    expect(screen.queryByTestId('theme-discard-dialog')).toBeNull()
+    const restored = screen.getByLabelText(
+      'App text color value'
+    ) as HTMLInputElement
+    expect(restored.value).toBe('#dee3e6')
+  })
+
+  it('Color tab shows derived interaction disclosure with correct seed labels', async () => {
+    render(ThemeEditor, {
+      props: {
+        themeId: 'cyber_forest',
+        sourceIsDisk: false,
+        onClose: vi.fn(),
+        injectJson: sampleJson
+      }
+    })
+    await tick()
+    await fireEvent.click(screen.getByRole('tab', { name: /color/i }))
+    await tick()
+    expect(screen.getByText(/derived interaction/i)).toBeTruthy()
+    // Expand details so fields are visible.
+    const summary = screen.getByText(/derived interaction/i)
+    await fireEvent.click(summary)
+    await tick()
+    expect(screen.getByText(/hover \(from app background\)/i)).toBeTruthy()
+    expect(screen.getByText(/active \(from app background\)/i)).toBeTruthy()
+    expect(screen.getByText(/text disabled \(from app text\)/i)).toBeTruthy()
+    expect(
+      screen.getAllByRole('button', { name: /unlocked|locked/i }).length
+    ).toBeGreaterThanOrEqual(3)
+    expect(
+      screen.getAllByRole('button', { name: /reset to derived/i }).length
+    ).toBeGreaterThanOrEqual(3)
+  })
+
+  it('derived lock toggle and reset-to-derived are operable', async () => {
+    render(ThemeEditor, {
+      props: {
+        themeId: 'cyber_forest',
+        sourceIsDisk: false,
+        onClose: vi.fn(),
+        injectJson: sampleJson
+      }
+    })
+    await tick()
+    await fireEvent.click(screen.getByRole('tab', { name: /color/i }))
+    await tick()
+    await fireEvent.click(screen.getByText(/derived interaction/i))
+    await tick()
+
+    const lockBtns = screen.getAllByRole('button', { name: /^unlocked$/i })
+    expect(lockBtns.length).toBeGreaterThanOrEqual(1)
+    await fireEvent.click(lockBtns[0])
+    await tick()
+    expect(
+      screen.getAllByRole('button', { name: /^locked$/i }).length
+    ).toBeGreaterThanOrEqual(1)
+
+    const resetBtns = screen.getAllByRole('button', {
+      name: /reset to derived/i
+    })
+    await fireEvent.click(resetBtns[0])
+    await tick()
+    // Reset unlocks that path again.
+    expect(
+      screen.getAllByRole('button', { name: /^unlocked$/i }).length
+    ).toBeGreaterThanOrEqual(1)
   })
 })

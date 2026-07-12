@@ -1,6 +1,8 @@
-// Working-copy path reset: inherited zones must delete keys, not set undefined.
+// Working-copy path reset, dirty tracking, spine clone, derived locks.
 
 import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const mocks = vi.hoisted(() => ({
   injectTokens: vi.fn(),
@@ -12,8 +14,14 @@ vi.mock('../store.svelte', () => ({
   restoreActiveTheme: mocks.restoreActiveTheme
 }))
 
-import { createWorkingCopy } from './workingCopy.svelte'
+import {
+  createWorkingCopy,
+  setAtPath,
+  getAtPath,
+  colorsMatch
+} from './workingCopy.svelte'
 import { concreteEditorDefaults } from './concreteEditorDefaults'
+import { deriveActive, deriveDisabled, deriveHover } from '../color'
 import type { ThemeDoc } from '../types'
 
 const appOnly: ThemeDoc = {
@@ -81,7 +89,6 @@ describe('workingCopy resetPath', () => {
     wc.loadFromJson(JSON.stringify(appOnly))
     expect(wc.draft).not.toBeNull()
 
-    // Materialize sidebar (as ensureSurface would) then reset a leaf.
     wc.setAt('modes.dark.surfaces.sidebar', {
       bg: '#111',
       border: '#222',
@@ -89,8 +96,6 @@ describe('workingCopy resetPath', () => {
     })
     expect(wc.draft!.modes.dark.surfaces.sidebar).toBeTruthy()
 
-    // Seed has no sidebar — resetting bg leaves an incomplete surface;
-    // the whole zone must be deleted so it inherits cleanly.
     wc.resetPath('modes.dark.surfaces.sidebar.bg')
     expect(wc.draft!.modes.dark.surfaces.sidebar).toBeUndefined()
     expect(wc.draft!.modes.dark.surfaces).not.toHaveProperty('sidebar')
@@ -108,6 +113,140 @@ describe('workingCopy resetPath', () => {
     wc.resetPath('modes.dark.surfaces.sidebar')
     expect(wc.draft!.modes.dark.surfaces.sidebar).toBeUndefined()
     expect(wc.draft!.modes.dark.surfaces).not.toHaveProperty('sidebar')
+  })
+})
+
+describe('workingCopy dirty + spine clone (#532)', () => {
+  beforeEach(() => {
+    mocks.injectTokens.mockReset()
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0)
+      return 1
+    })
+  })
+
+  it('marks dirty on set and clears on resetAll', () => {
+    const wc = createWorkingCopy()
+    wc.loadFromJson(JSON.stringify(appOnly))
+    expect(wc.dirty).toBe(false)
+    wc.setColor('modes.dark.surfaces.app.bg', '#112233')
+    expect(wc.dirty).toBe(true)
+    wc.resetAll()
+    expect(wc.dirty).toBe(false)
+  })
+
+  it('clears dirty when edits return draft to seed values', () => {
+    const wc = createWorkingCopy()
+    wc.loadFromJson(JSON.stringify(appOnly))
+    const original = appOnly.modes.dark.surfaces.app.bg
+    wc.setAt('modes.dark.surfaces.app.bg', '#112233')
+    expect(wc.dirty).toBe(true)
+    // Restore seed bg; re-derived hover/active may still differ from seed
+    // authored values — reset those too to prove full equality clears dirty.
+    wc.setAt('modes.dark.surfaces.app.bg', original)
+    wc.resetPath('modes.dark.hover')
+    wc.resetPath('modes.dark.active')
+    expect(wc.dirty).toBe(false)
+  })
+
+  it('setAtPath does not mutate the previous root object', () => {
+    const prev = structuredClone(appOnly)
+    const next = setAtPath(prev, 'modes.dark.surfaces.app.bg', '#abcdef')
+    expect(prev.modes.dark.surfaces.app.bg).toBe('#0e0f12')
+    expect(getAtPath(next, 'modes.dark.surfaces.app.bg')).toBe('#abcdef')
+    // Unrelated sibling shared by reference (spine clone).
+    expect(next.modes.dark.accent).toBe(prev.modes.dark.accent)
+  })
+
+  it('slider-drag microbench stays under budget on a full embed theme', () => {
+    const themePath = resolve(
+      __dirname,
+      '../../../../backend/themes/themes/cyber_forest.json'
+    )
+    const raw = readFileSync(themePath, 'utf8')
+    const wc = createWorkingCopy()
+    wc.loadFromJson(raw)
+    const path = 'modes.dark.surfaces.app.bg'
+    const N = 400
+    const t0 = performance.now()
+    for (let i = 0; i < N; i++) {
+      // Vary L slightly via hex-ish strings that stay valid enough for setAt
+      wc.setAt(
+        path,
+        `oklch(0.${(i % 50).toString().padStart(2, '0')} 0.05 180)`
+      )
+    }
+    const ms = performance.now() - t0
+    // Guardrail only — generous for CI; local machines are typically << 200ms.
+    expect(ms).toBeLessThan(2000)
+    expect(wc.mutationGen).toBeGreaterThan(N)
+  })
+})
+
+describe('workingCopy derived locks (#529)', () => {
+  beforeEach(() => {
+    mocks.injectTokens.mockReset()
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0)
+      return 1
+    })
+  })
+
+  it('re-derives unlocked hover when app bg changes', () => {
+    const wc = createWorkingCopy()
+    wc.loadFromJson(JSON.stringify(appOnly))
+    const seed = '#224466'
+    wc.setAt('modes.dark.surfaces.app.bg', seed)
+    const expected = deriveHover(seed)
+    expect(wc.draft!.modes.dark.hover).toBe(expected)
+  })
+
+  it('locked derived survives seed edit', () => {
+    const wc = createWorkingCopy()
+    wc.loadFromJson(JSON.stringify(appOnly))
+    const lockedHover = '#ff00aa'
+    wc.setColor('modes.dark.hover', lockedHover)
+    expect(wc.isDerivedLocked('modes.dark.hover')).toBe(true)
+    wc.setAt('modes.dark.surfaces.app.bg', '#112233')
+    expect(wc.draft!.modes.dark.hover).toBe(lockedHover)
+  })
+
+  it('re-derives when whole surfaces.app object is written (Surfaces tab)', () => {
+    const wc = createWorkingCopy()
+    wc.loadFromJson(JSON.stringify(appOnly))
+    const app = {
+      ...appOnly.modes.dark.surfaces.app,
+      bg: '#224466',
+      text: '#eeeeee'
+    }
+    wc.setAt('modes.dark.surfaces.app', app)
+    expect(wc.draft!.modes.dark.hover).toBe(deriveHover('#224466'))
+    expect(wc.draft!.modes.dark.active).toBe(deriveActive('#224466'))
+    expect(wc.draft!.modes.dark.text_disabled).toBe(deriveDisabled('#eeeeee'))
+  })
+
+  it('resetPath on app bg re-derives unlocked hover/active', () => {
+    const wc = createWorkingCopy()
+    wc.loadFromJson(JSON.stringify(appOnly))
+    wc.setAt('modes.dark.surfaces.app.bg', '#224466')
+    expect(wc.draft!.modes.dark.hover).toBe(deriveHover('#224466'))
+    // Reset seed leaf back to authored seed value → re-derive from seed.
+    wc.resetPath('modes.dark.surfaces.app.bg')
+    const seedBg = appOnly.modes.dark.surfaces.app.bg
+    expect(wc.draft!.modes.dark.surfaces.app.bg).toBe(seedBg)
+    expect(wc.draft!.modes.dark.hover).toBe(deriveHover(seedBg))
+    expect(wc.draft!.modes.dark.active).toBe(deriveActive(seedBg))
+  })
+
+  it('resetDerivedToFormula unlocks and restores derivation', () => {
+    const wc = createWorkingCopy()
+    wc.loadFromJson(JSON.stringify(appOnly))
+    wc.setColor('modes.dark.hover', '#ff00aa')
+    wc.resetDerivedToFormula('modes.dark.hover')
+    expect(wc.isDerivedLocked('modes.dark.hover')).toBe(false)
+    const bg = wc.draft!.modes.dark.surfaces.app.bg
+    expect(colorsMatch(wc.draft!.modes.dark.hover, deriveHover(bg)!)).toBe(true)
+    expect(wc.isDerivedMatch('modes.dark.hover')).toBe(true)
   })
 })
 

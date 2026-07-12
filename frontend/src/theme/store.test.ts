@@ -145,4 +145,33 @@ describe('theme store', () => {
       expect.any(Function)
     )
   })
+
+  it('theme:changed with matching id+mode still updates name (#533)', async () => {
+    await initTheme()
+    type ThemeChangedHandler = (ev: { data: unknown }) => void | Promise<void>
+    // vi.fn mock.calls is typed as never[][] in some vitest versions — narrow.
+    const calls = eventsOnMock.mock.calls as unknown as Array<
+      [string, ThemeChangedHandler]
+    >
+    const handler = calls.find((c) => c[0] === 'theme:changed')?.[1]
+    expect(handler).toBeTypeOf('function')
+    const beforeInject = injectTokensMock.mock.calls.length
+    await handler!({
+      data: { id: 'cyber_forest', mode: 'dark', name: 'Renamed Forest' }
+    })
+    expect(themeState.name).toBe('Renamed Forest')
+    // No re-inject when only the display name changed.
+    expect(injectTokensMock.mock.calls.length).toBe(beforeInject)
+  })
+
+  it('initTheme dispose allows re-subscribe (#534)', async () => {
+    const off = vi.fn()
+    eventsOnMock.mockReturnValue(off)
+    const dispose = await initTheme()
+    expect(eventsOnMock).toHaveBeenCalledTimes(1)
+    dispose()
+    expect(off).toHaveBeenCalled()
+    await initTheme()
+    expect(eventsOnMock).toHaveBeenCalledTimes(2)
+  })
 })

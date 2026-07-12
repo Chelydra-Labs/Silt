@@ -568,6 +568,19 @@ func (a *App) RenameCustomTheme(id, name string) error {
 	if err := themes.RenameCustomTheme(themesDir, id, name); err != nil {
 		return err
 	}
+	// Listing always refreshes. When the renamed theme is active, also emit
+	// theme:changed so listeners that only watch the active theme pick up
+	// the new display name (#533).
+	settings, err := vault.LoadSettings()
+	if err == nil && settings.ActiveTheme == id {
+		mode := settings.ThemeMode
+		if mode == "" {
+			mode = "dark"
+		}
+		a.emit("theme:changed", map[string]string{
+			"id": id, "mode": mode, "name": name,
+		})
+	}
 	a.emit("themes:changed", struct{}{})
 	return nil
 }

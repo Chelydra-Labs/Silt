@@ -1016,6 +1016,18 @@ func TestRenameAndDeleteCustomTheme_IPC(t *testing.T) {
 	if _, err := app.ApplyTheme(id, "dark"); err != nil {
 		t.Fatalf("ApplyTheme: %v", err)
 	}
+	// Rename while active must succeed (and emit theme:changed when a Wails
+	// runtime is present — no-op emit in unit tests with nil wailsApp).
+	if err := app.RenameCustomTheme(id, "Active Renamed"); err != nil {
+		t.Fatalf("RenameCustomTheme active: %v", err)
+	}
+	active, err := app.GetActiveTheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Name != "Active Renamed" {
+		t.Errorf("active name = %q, want Active Renamed", active.Name)
+	}
 	if err := app.DeleteCustomTheme(id); err == nil {
 		t.Fatal("expected refuse delete of active theme")
 	}
