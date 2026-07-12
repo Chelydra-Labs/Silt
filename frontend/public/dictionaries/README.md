@@ -1,8 +1,7 @@
 # Silt dictionaries
 
-Hunspell-format language packs and domain word-list supplements for inline
-spellcheck (#196, #336, #337). Loaded by
-`frontend/src/lib/editor/spellcheck/dictionary.ts`.
+Hunspell-format language packs for inline spellcheck (#196, #336, #337).
+Loaded by `frontend/src/lib/editor/spellcheck/dictionary.ts`.
 
 ## Layout
 
@@ -11,9 +10,11 @@ dictionaries/
   <lang>/                    # BCP-47-ish tag = editor.spellcheck_language
     index.aff                # Hunspell affix rules
     index.dic                # Hunspell word list
-  supplements/
-    software-terms.txt       # Curated MIT software terms (default ON)
 ```
+
+Domain word lists (including the default software-terms pack) live in the
+backend as `//go:embed` under `backend/spellcheck/data/` and are served via
+`GetDomainPackWords` IPC — one source of truth, not duplicated under public/.
 
 ## Strategy: package defaults, download the rest
 
@@ -21,7 +22,7 @@ dictionaries/
 |-------|----------|
 | **en-US** | Bundled here (~605 KB). Offline day-one. |
 | **Other languages** (en-GB, de, fr, es, …) | Download on demand into user-global cache (`UserConfigDir/silt/dictionaries/languages/`). |
-| **software-terms** | Bundled curated subset; enabled by default via `editor.spellcheck_domains`. |
+| **software-terms** | Embedded in the Go binary; enabled by default via `editor.spellcheck_domains`. |
 | **Other domain packs** | Download on demand into `…/dictionaries/domains/`. |
 
 ### Download source (not GitHub raw)

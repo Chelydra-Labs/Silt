@@ -14,6 +14,7 @@ import {
   setCustomWords,
   setDomainWords,
   checkWord,
+  hasDomainWord,
   resetDictionary,
   loadDomainPacks
 } from './dictionary'
@@ -43,10 +44,11 @@ describe('checkWord layers', () => {
     expect(checkWord('anything')).toBe(true)
   })
 
-  it('accepts custom and domain words without Hunspell', () => {
-    setCustomWords(['MyAcronym'])
+  it('tracks domain words via hasDomainWord', () => {
     setDomainWords(['TypeScript', 'OAuth'])
-    expect(checkWord('typescript')).toBe(true)
+    expect(hasDomainWord('typescript')).toBe(true)
+    expect(hasDomainWord('oauth')).toBe(true)
+    expect(hasDomainWord('notindomain')).toBe(false)
   })
 })
 
@@ -55,18 +57,21 @@ describe('loadDomainPacks', () => {
     resetDictionary()
     mocks.EnsureDomainPack.mockReset()
     mocks.GetDomainPackWords.mockReset()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        text: async () => 'docker\noauth\n'
-      }))
-    )
+    mocks.EnsureDomainPack.mockResolvedValue(undefined)
   })
 
-  it('loads bundled software-terms via fetch', async () => {
+  it('loads software-terms via IPC (single source of truth)', async () => {
+    mocks.GetDomainPackWords.mockResolvedValue([
+      'docker',
+      'oauth',
+      'typescript'
+    ])
     await loadDomainPacks(['software-terms'])
-    expect(checkWord('docker')).toBe(true) // no dict → true always
+    expect(mocks.EnsureDomainPack).toHaveBeenCalledWith('software-terms')
+    expect(mocks.GetDomainPackWords).toHaveBeenCalledWith('software-terms')
+    expect(hasDomainWord('docker')).toBe(true)
+    expect(hasDomainWord('typescript')).toBe(true)
+    expect(hasDomainWord('notloaded')).toBe(false)
     expect(dictionaryStatus.domainError).toBeNull()
   })
 

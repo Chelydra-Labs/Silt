@@ -173,12 +173,13 @@ func (a *App) EnsureLanguagePack(lang string) error {
 		cancel()
 		clearSpellPackCancel()
 	}()
-	emit := func(received, total int64) {
+	emit := func(received, total int64, stage string) {
 		a.emit(spellcheckDownloadProgressEvent, map[string]any{
 			"kind":     "language",
 			"id":       lang,
 			"received": received,
 			"total":    total,
+			"file":     stage,
 		})
 	}
 	return spellcheck.EnsureLanguage(ctx, lang, emit)
@@ -209,12 +210,13 @@ func (a *App) EnsureDomainPack(id string) error {
 		cancel()
 		clearSpellPackCancel()
 	}()
-	emit := func(received, total int64) {
+	emit := func(received, total int64, stage string) {
 		a.emit(spellcheckDownloadProgressEvent, map[string]any{
 			"kind":     "domain",
 			"id":       id,
 			"received": received,
 			"total":    total,
+			"file":     stage,
 		})
 	}
 	return spellcheck.EnsureDomain(ctx, id, emit)
@@ -289,6 +291,10 @@ func (a *App) ImportCustomDictionary(path string) (spellcheck.ImportSummary, err
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return spellcheck.ImportSummary{}, fmt.Errorf("read dictionary: %w", err)
+	}
+	// Re-check after read (TOCTOU: file may grow between Stat and ReadFile).
+	if int64(len(data)) > spellcheck.MaxImportBytes {
+		return spellcheck.ImportSummary{}, fmt.Errorf("import file exceeds %d byte limit", spellcheck.MaxImportBytes)
 	}
 	incoming := spellcheck.ParseWordList(string(data))
 	if len(incoming) > spellcheck.MaxImportWords {

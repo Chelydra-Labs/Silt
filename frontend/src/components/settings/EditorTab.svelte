@@ -60,6 +60,7 @@
   let packError = $state<string | null>(null)
   let packStatus = $state<string | null>(null)
   let packProgress = $state<number | null>(null)
+  let packStage = $state<string | null>(null)
   let failedLangId = $state<string | null>(null)
   let failedDomainId = $state<string | null>(null)
   let progressUnsub: (() => void) | null = null
@@ -91,12 +92,29 @@
     unsubscribeProgress()
     progressUnsub = Events.On('spellcheck:download:progress', (ev: any) => {
       const p = ev?.data as
-        { received?: number; total?: number; id?: string } | undefined
+        | {
+            received?: number
+            total?: number
+            id?: string
+            file?: string
+          }
+        | undefined
       if (!p) return
+      if (p.file) {
+        packStage = stageLabel(p.file)
+      }
       if (p.total && p.total > 0 && typeof p.received === 'number') {
         packProgress = Math.min(100, Math.round((p.received / p.total) * 100))
       }
     })
+  }
+
+  function stageLabel(file: string): string {
+    if (file === 'index.aff' || file === 'aff') return 'rules'
+    if (file === 'index.dic' || file === 'dic') return 'word list'
+    if (file === 'license') return 'license'
+    if (file === 'words') return 'word list'
+    return file
   }
 
   function unsubscribeProgress() {
@@ -127,15 +145,13 @@
     return `Download · ${formatBytes(pack.approx_bytes)}`
   }
 
-  async function downloadLanguage(
-    id: string,
-    prevId: string
-  ): Promise<boolean> {
+  async function downloadLanguage(id: string): Promise<boolean> {
     const pack = languagePacks.find((p) => p.id === id)
     if (!pack) return false
     if (pack.bundled || pack.installed) return true
     packBusy = id
     packProgress = null
+    packStage = null
     packStatus = `Downloading ${pack.label}…`
     packError = null
     failedLangId = null
@@ -156,11 +172,11 @@
         packStatus = null
         failedLangId = id
       }
-      draftEditor().spellcheck_language = prevId
       return false
     } finally {
       packBusy = null
       packProgress = null
+      packStage = null
       unsubscribeProgress()
     }
   }
@@ -172,13 +188,18 @@
     packError = null
     packStatus = null
     failedLangId = null
-    const pack = languagePacks.find((p) => p.id === id)
-    if (pack && !pack.bundled && !pack.installed) {
-      const ok = await downloadLanguage(id, prev)
-      if (!ok) return
-    }
+    // Optimistic select so the control stays in sync with the user gesture;
+    // revert draft (and thus the select) if download fails.
     draftEditor().spellcheck_language = id
     touch()
+    const pack = languagePacks.find((p) => p.id === id)
+    if (pack && !pack.bundled && !pack.installed) {
+      const ok = await downloadLanguage(id)
+      if (!ok) {
+        draftEditor().spellcheck_language = prev
+        return
+      }
+    }
     if (pack && (pack.bundled || pack.installed)) {
       packStatus = `${pack.label} selected. Save settings to apply.`
     }
@@ -186,12 +207,15 @@
 
   async function retryFailedLanguage() {
     if (!failedLangId) return
+    const id = failedLangId
     const prev = draft?.editor?.spellcheck_language || 'en-US'
-    const ok = await downloadLanguage(failedLangId, prev)
+    draftEditor().spellcheck_language = id
+    touch()
+    const ok = await downloadLanguage(id)
     if (ok) {
-      draftEditor().spellcheck_language = failedLangId
-      touch()
       failedLangId = null
+    } else {
+      draftEditor().spellcheck_language = prev
     }
   }
 
@@ -205,6 +229,7 @@
     if (pack.bundled || pack.installed) return true
     packBusy = id
     packProgress = null
+    packStage = null
     packStatus = `Downloading ${pack.label}…`
     packError = null
     failedDomainId = null
@@ -229,6 +254,7 @@
     } finally {
       packBusy = null
       packProgress = null
+      packStage = null
       unsubscribeProgress()
     }
   }
@@ -273,6 +299,7 @@
     packStatus = 'Download cancelled.'
     packBusy = null
     packProgress = null
+    packStage = null
     unsubscribeProgress()
   }
 
@@ -814,6 +841,9 @@
           {#if packBusy}
             <p class="text-text-muted text-type-sm font-body-md">
               {packStatus ?? `Downloading…`}
+              {#if packStage}
+                — {packStage}
+              {/if}
               {#if packProgress != null}
                 ({packProgress}%)
               {/if}

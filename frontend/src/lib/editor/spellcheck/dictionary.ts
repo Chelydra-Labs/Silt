@@ -137,6 +137,11 @@ export function setDomainWords(words: string[]): void {
   cache.clear()
 }
 
+/** True if word is in the active domain Set (for tests / diagnostics). */
+export function hasDomainWord(word: string): boolean {
+  return domainWords.has(word.trim().toLowerCase())
+}
+
 /**
  * Load all enabled domain packs and apply their word lists. Bundled packs
  * resolve without network; downloadable packs call EnsureDomainPack first.
@@ -149,18 +154,11 @@ export async function loadDomainPacks(domainIds: string[]): Promise<void> {
   const errors: string[] = []
   for (const id of ids) {
     try {
-      if (id === 'software-terms') {
-        const res = await fetch('/dictionaries/supplements/software-terms.txt')
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
-        }
-        const text = await res.text()
-        all.push(...parseWordListText(text))
-      } else {
-        await EnsureDomainPack(id)
-        const words = await GetDomainPackWords(id)
-        all.push(...(words ?? []))
-      }
+      // Bundled packs (software-terms) are a no-op Ensure; all packs load via
+      // the same IPC so there is one source of truth (//go:embed on the backend).
+      await EnsureDomainPack(id)
+      const words = await GetDomainPackWords(id)
+      all.push(...(words ?? []))
     } catch (e) {
       errors.push(`${id}: ${e instanceof Error ? e.message : String(e)}`)
     }

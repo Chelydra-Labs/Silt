@@ -108,6 +108,10 @@ export const customDictionary = {
     if (busy) return
     error = null
     status = null
+    if (words.length === 0) {
+      status = 'Nothing to export — your dictionary is empty.'
+      return
+    }
     busy = true
     try {
       const path = await PickCustomDictionaryExportPath()

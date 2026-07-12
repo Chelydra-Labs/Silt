@@ -24,14 +24,15 @@ const (
 // HTTPClient is overridable in tests.
 var HTTPClient = &http.Client{Timeout: downloadTimeout}
 
-// ProgressFunc is called with (bytesReceived, totalBytes) during downloads.
-// total may be -1 when Content-Length is unknown.
-type ProgressFunc func(received, total int64)
+// ProgressFunc is called during downloads. total may be -1 when Content-Length
+// is unknown. stage names the current file (e.g. "index.aff", "words.txt").
+type ProgressFunc func(received, total int64, stage string)
 
 // EnsureLanguage downloads a language pack into the cache if missing or stale.
 // Bundled languages are a no-op. Unknown IDs and path-unsafe IDs fail loudly.
 // Concurrent calls for the same langID are serialized. ctx cancellation aborts
-// the HTTP transfer and leaves no partial install (temp files cleaned).
+// the HTTP transfer. Partial aff/dic files may remain without a valid
+// manifest (languageInstalled requires version + SHA256 match).
 func EnsureLanguage(ctx context.Context, langID string, onProgress ProgressFunc) error {
 	return withEnsureLock("lang:"+langID, func() error {
 		return ensureLanguageLocked(ctx, langID, onProgress)
@@ -80,7 +81,7 @@ func ensureLanguageLocked(ctx context.Context, langID string, onProgress Progres
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("download cancelled: %w", err)
 		}
-		data, err := fetchBytes(ctx, item.url, maxLanguageFile, onProgress)
+		data, err := fetchBytes(ctx, item.url, maxLanguageFile, item.name, onProgress)
 		if err != nil {
 			if item.name == "license" {
 				continue
@@ -148,7 +149,7 @@ func ensureDomainLocked(ctx context.Context, domainID string, onProgress Progres
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("download cancelled: %w", err)
 	}
-	data, err := fetchBytes(ctx, spec.WordURL, maxDomainFile, onProgress)
+	data, err := fetchBytes(ctx, spec.WordURL, maxDomainFile, "words", onProgress)
 	if err != nil {
 		return fmt.Errorf("download domain %s: %w", domainID, err)
 	}
@@ -234,7 +235,7 @@ func ReadDomainWords(domainID string) ([]string, error) {
 // Set from //go:embed in the main package (or tests).
 var BundledSoftwareTerms string
 
-func fetchBytes(ctx context.Context, url string, maxBytes int64, onProgress ProgressFunc) ([]byte, error) {
+func fetchBytes(ctx context.Context, url string, maxBytes int64, stage string, onProgress ProgressFunc) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -268,7 +269,7 @@ func fetchBytes(ctx context.Context, url string, maxBytes int64, onProgress Prog
 			}
 			buf = append(buf, chunk[:n]...)
 			if onProgress != nil {
-				onProgress(received, total)
+				onProgress(received, total, stage)
 			}
 		}
 		if readErr == io.EOF {
@@ -290,5 +291,12 @@ func gunzip(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer r.Close()
-	return io.ReadAll(io.LimitReader(r, maxDomainFile+1))
+	out, err := io.ReadAll(io.LimitReader(r, maxDomainFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(out)) > maxDomainFile {
+		return nil, fmt.Errorf("decompressed domain pack exceeds %d byte limit", maxDomainFile)
+	}
+	return out, nil
 }
