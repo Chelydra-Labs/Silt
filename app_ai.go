@@ -855,15 +855,15 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			}
 		}()
 
+		// Natural backpressure: block until the emit goroutine drains a slot
+		// or the stream is cancelled. A default arm would turn a momentary
+		// full buffer into a hard abort mid-answer (PR #540 review).
 		result, callErr := ai.CompleteStream(streamCtx, req, func(delta string) error {
 			select {
 			case deltaCh <- delta:
 				return nil
 			case <-streamCtx.Done():
 				return streamCtx.Err()
-			default:
-				// Buffer full — abort rather than grow unbounded.
-				return fmt.Errorf("stream backpressure: delta buffer full (%d)", aiStreamBufferCap)
 			}
 		})
 		close(deltaCh)

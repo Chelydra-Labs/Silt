@@ -40,7 +40,10 @@
 {#if surfaces.length > 0}
   <div class="px-1 pt-2 border-t border-surface-panel-border mt-auto space-y-1">
     {#each surfaces as surface (surface.id)}
-      <details class="group" open>
+      <!-- Collapsed by default + compact height: shared chrome for all
+           sidebar-panel surfaces (third-party iframes and any first-party
+           panels). AI Assistant uses a dedicated right drawer, not this host. -->
+      <details class="group">
         <summary
           class="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-hover rounded transition-colors select-none list-none"
         >
@@ -61,7 +64,7 @@
           </span>
         </summary>
         <div
-          class="h-[28rem] min-h-72 mt-1 rounded-lg overflow-hidden border border-surface-panel-border"
+          class="h-48 mt-1 rounded-lg overflow-hidden border border-surface-panel-border"
         >
           {#if surface.component}
             {@const Panel = surface.component}
