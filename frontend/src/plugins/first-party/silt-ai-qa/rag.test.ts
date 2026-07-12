@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildRAGMessages, NO_RESULTS_MESSAGE, parseCitations } from './rag'
+import {
+  buildRAGMessages,
+  NO_RESULTS_MESSAGE,
+  parseCitations,
+  stripCitationMarkers
+} from './rag'
 import type { RetrievedPassage } from './types'
 
 const passages: RetrievedPassage[] = [
@@ -34,6 +39,34 @@ describe('buildRAGMessages', () => {
     expect(user.content).toContain('[1]')
     expect(user.content).toContain('We chose Postgres.')
     expect(user.content).toContain('What about billing?')
+  })
+
+  it('strips prior assistant [n] markers so they cannot collide with this turn', () => {
+    const msgs = buildRAGMessages('Follow up?', passages, [
+      { role: 'user', content: 'What about billing?' },
+      {
+        role: 'assistant',
+        content: 'Billing migrates in Q3 [2] and we chose Postgres [1].'
+      }
+    ])
+    const historyAssistant = msgs.find(
+      (m) => m.role === 'assistant' && m.content.includes('Billing migrates')
+    )
+    expect(historyAssistant).toBeDefined()
+    expect(historyAssistant!.content).not.toMatch(/\[\d+\]/)
+    expect(historyAssistant!.content).toContain('Billing migrates in Q3')
+    // Current-turn passage markers still present on the final user message.
+    const user = msgs[msgs.length - 1]
+    expect(user.content).toContain('[1]')
+    expect(user.content).toContain('[2]')
+  })
+})
+
+describe('stripCitationMarkers', () => {
+  it('removes bracketed indices and cleans leftover spacing', () => {
+    expect(stripCitationMarkers('We chose Postgres [1]. See also [2].')).toBe(
+      'We chose Postgres. See also.'
+    )
   })
 })
 

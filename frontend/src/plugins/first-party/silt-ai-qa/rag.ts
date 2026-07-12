@@ -7,6 +7,16 @@ Use ONLY the provided passages. Cite sources with [n] markers that match the pas
 If the passages do not contain enough information, say so clearly — do not invent facts or citations.
 When synthesizing across multiple notes, cite each source you use.`
 
+/** Remove [n] citation markers from prior assistant text used as history. */
+export function stripCitationMarkers(text: string): string {
+  return text
+    .replace(/\[\d+\]/g, '')
+    .replace(/\s+([.,;:!?])/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export function buildRAGMessages(
   question: string,
   passages: RetrievedPassage[],
@@ -23,9 +33,13 @@ export function buildRAGMessages(
     [{ role: 'system', content: SYSTEM_PROMPT }]
 
   // Prior turns (trim to last 4 exchanges to bound tokens).
+  // Strip [n] citation markers from history so they cannot collide with this
+  // turn's renumbered passage indices (local models especially conflate them).
   const recent = history.slice(-8)
   for (const m of recent) {
-    messages.push({ role: m.role, content: m.content })
+    const content =
+      m.role === 'assistant' ? stripCitationMarkers(m.content) : m.content
+    messages.push({ role: m.role, content })
   }
 
   messages.push({

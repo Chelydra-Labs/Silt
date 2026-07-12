@@ -35,7 +35,6 @@
   <aside
     transition:fly={{ x: 28, duration: 180 }}
     class="ai-search-drawer"
-    role="complementary"
     aria-label="AI Assistant"
   >
     <QAPanel {ctx} onClose={closeAISearchDrawer} variant="drawer" />
