@@ -218,6 +218,21 @@
     activeFilter === 'all' || activeFilter === 'completed' ? doneItems : []
   )
 
+  // True when the list is narrowed by scope, smart-list, or FilterBar facets.
+  // Used so a zero-result filtered query does not claim "All caught up" /
+  // "No tasks yet" when tasks may still exist outside the current filters.
+  let hasActiveListFilters = $derived.by(() => {
+    const hub = getTaskHubState()
+    if (hub.scope !== 'vault') return true
+    if (hub.activeFilter !== 'all') return true
+    if (hub.filters.owners.length > 0) return true
+    if (hub.filters.priorities.length > 0) return true
+    if (hub.filters.dueDate) return true
+    if (hub.filters.tags.length > 0) return true
+    if (hub.filters.stale) return true
+    return false
+  })
+
   // Report counts upward so the hub header stays in sync. Runs after every
   // reload / filter / nav change. Both counts reflect what's displayed:
   // open uses filteredOpen (filtered), done uses filteredDone (filtered to
@@ -772,34 +787,63 @@
         Failed to load: {errorMsg}
       </div>
     {:else if filteredOpen.length === 0 && doneItems.length === 0}
-      <div
-        class="text-text-muted py-10 text-center font-body-md"
-        data-testid="tasks-empty"
-      >
-        No tasks yet. Type below or use
-        <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
-      </div>
+      {#if hasActiveListFilters}
+        <div
+          class="text-text-muted py-10 text-center font-body-md"
+          data-testid="tasks-empty-filtered"
+        >
+          No tasks match the current filters or scope. Clear filters or widen
+          the scope to see more.
+        </div>
+      {:else}
+        <div
+          class="text-text-muted py-10 text-center font-body-md"
+          data-testid="tasks-empty"
+        >
+          No tasks yet. Type below or use
+          <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
+        </div>
+      {/if}
     {:else}
       {#if filteredOpen.length === 0}
-        <div
-          class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
-        >
-          <span
-            class="material-symbols-outlined text-accent-primary-start text-5xl mb-2"
-            aria-hidden="true">celebrate</span
+        {#if hasActiveListFilters}
+          <div
+            class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
+            data-testid="tasks-open-empty-filtered"
           >
-          <h3 class="font-headline-md text-text-primary mb-1">
-            All caught up!
-          </h3>
-          <p class="text-text-muted text-type-md font-body-md">
-            You have no active tasks. Restore a completed task below to the
-            active list, type in the box below, or use
-            <kbd
-              class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-type-xs"
-              >Ctrl+Shift+N</kbd
-            > to capture a new task.
-          </p>
-        </div>
+            <span
+              class="material-symbols-outlined text-text-muted text-5xl mb-2"
+              aria-hidden="true">filter_list_off</span
+            >
+            <h3 class="font-headline-md text-text-primary mb-1">
+              No open tasks match
+            </h3>
+            <p class="text-text-muted text-type-md font-body-md">
+              Nothing open matches the current filters or scope. Clear filters
+              or widen the scope — completed tasks below may still be relevant.
+            </p>
+          </div>
+        {:else}
+          <div
+            class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
+          >
+            <span
+              class="material-symbols-outlined text-accent-primary-start text-5xl mb-2"
+              aria-hidden="true">celebrate</span
+            >
+            <h3 class="font-headline-md text-text-primary mb-1">
+              All caught up!
+            </h3>
+            <p class="text-text-muted text-type-md font-body-md">
+              You have no active tasks. Restore a completed task below to the
+              active list, type in the box below, or use
+              <kbd
+                class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-type-xs"
+                >Ctrl+Shift+N</kbd
+              > to capture a new task.
+            </p>
+          </div>
+        {/if}
       {/if}
 
       {#if hubGroupBy === 'dueDate'}

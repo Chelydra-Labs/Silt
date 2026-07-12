@@ -1521,4 +1521,41 @@ describe('ListView — server-side filtering via buildQuery (#526)', () => {
       expect.arrayContaining(['Work', 'Alice'])
     )
   })
+
+  // Server-side filters: zero open matches must not claim "All caught up"
+  // when completed rows still exist under the same filters.
+  it('shows filter-aware empty open state when filters match no open tasks', async () => {
+    setFilters({
+      owners: ['Nobody'],
+      priorities: [],
+      dueDate: '',
+      tags: []
+    })
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (String(sql).includes("t.status = 'DONE'")) {
+        return {
+          rows: [
+            {
+              id: 'd1',
+              notebook: '.silt',
+              section: '',
+              page: 'tasks',
+              file_date: todayStr(),
+              clean_content: 'done under filter',
+              status: 'DONE'
+            }
+          ],
+          truncated: false
+        }
+      }
+      // Open query: no matches
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(screen.getByTestId('tasks-open-empty-filtered')).toBeInTheDocument()
+    expect(screen.getByText(/No open tasks match/i)).toBeInTheDocument()
+    expect(screen.queryByText(/All caught up/i)).toBeNull()
+  })
 })
