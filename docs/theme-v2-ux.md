@@ -145,10 +145,10 @@ Primitive tokens stay hidden.
 ### Color picker (OKLCH-first)
 
 - Swatch button opens popover on **activate** (not focus).
-- Primary: hue + lightness (+ chroma “vibrance”).
-- Advanced disclosure: numeric L / C / H + paste hex/`oklch()`.
-- Keyboard: separate sliders with `aria-valuetext`.
-- Library: existing `culori` helpers in `color.ts`.
+- Primary: **2D LC plane** (lightness × chroma at current hue) + **hue strip** (pointer/touch).
+- Advanced disclosure: numeric L / C / H channel sliders + paste hex/`oklch()` (text field always available).
+- Keyboard: channel sliders with human-readable `aria-valuetext` (plane is pointer-primary).
+- Library: existing `culori` helpers in `color.ts`; descriptions via `oklchDescribe.ts`.
 
 ### Background images
 
@@ -170,8 +170,10 @@ UI chrome pairs use 3:1. Indicators: icon + text (not color alone). Aggregate po
 ### Unsaved guard
 
 - Sticky dirty bar while dirty.
-- Navigate away / Close → confirm “Leave without saving?”
-- Esc in clean state closes; Esc with dirty may confirm (or Revert then close — prefer confirm).
+- Navigate away / Close → in-app confirm “Leave without saving?” (not `window.confirm`).
+- Save as / rename → in-app name dialog with validation (not `window.prompt`).
+- Delete custom theme → in-app destructive confirm.
+- Esc in clean state closes; Esc with dirty opens leave confirm.
 
 ---
 
@@ -190,7 +192,7 @@ UI chrome pairs use 3:1. Indicators: icon + text (not color alone). Aggregate po
 
 - Default Simple edits affect **app** zone and global accent — child zones inherit via Flatten `var()` chains.
 - Per-zone override is Advanced and labeled “Overrides inherited {parent}”.
-- Derived interaction tokens (hover/active/disabled) stay collapsed under seeds unless Advanced unlocks them.
+- Derived interaction tokens (hover/active/disabled) stay collapsed under seeds unless expanded. Seed edits re-derive unlocked children; manual edit auto-locks; Reset restores derivation.
 
 ---
 

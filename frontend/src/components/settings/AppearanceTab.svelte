@@ -33,6 +33,8 @@
   } from '../../theme/store.svelte'
   import ThemeEditor from '../../theme/editor/ThemeEditor.svelte'
   import { setThemeEditorOpen } from '../../theme/editor/session.svelte'
+  import ConfirmDialog from '../ConfirmDialog.svelte'
+  import NamePromptDialog from '../NamePromptDialog.svelte'
 
   type Props = Record<string, never>
 
@@ -50,6 +52,10 @@
   // Tracked as state (not listing-derived) so save-as-new keeps overwrite
   // enabled before loadThemes() repopulates the new disk id.
   let editingSourceIsDisk = $state(false)
+
+  // Dialog state (#531) — replace window.prompt/confirm for rename/delete.
+  let renameDialog: { id: string; currentName: string } | null = $state(null)
+  let deleteDialog: { id: string; name: string } | null = $state(null)
 
   // Roving-tabindex focus for the card grid (one tab stop, arrows move).
   let focusIndex: number | null = $state(null)
@@ -374,13 +380,18 @@
     }
   })
 
-  async function handleRename(id: string, currentName: string) {
-    const next = window.prompt('Rename theme', currentName)
-    if (next === null) return
-    const name = next.trim()
-    if (!name || name === currentName) return
+  function handleRename(id: string, currentName: string) {
+    renameDialog = { id, currentName }
+  }
+
+  async function confirmRename(name: string) {
+    const dlg = renameDialog
+    renameDialog = null
+    if (!dlg) return
+    const trimmed = name.trim()
+    if (!trimmed || trimmed === dlg.currentName) return
     try {
-      await renameCustomTheme(id, name)
+      await renameCustomTheme(dlg.id, trimmed)
       void loadThemes()
     } catch (err) {
       setStatus({
@@ -391,14 +402,17 @@
     }
   }
 
-  async function handleDelete(id: string, name: string) {
-    const ok = window.confirm(
-      `Delete custom theme "${name}"? This cannot be undone.`
-    )
-    if (!ok) return
-    const deleted = await deleteCustomTheme(id)
+  function handleDelete(id: string, name: string) {
+    deleteDialog = { id, name }
+  }
+
+  async function confirmDelete() {
+    const dlg = deleteDialog
+    deleteDialog = null
+    if (!dlg) return
+    const deleted = await deleteCustomTheme(dlg.id)
     if (deleted) {
-      if (previewTheme === id) previewTheme = null
+      if (previewTheme === dlg.id) previewTheme = null
       void loadThemes()
     }
   }
@@ -846,7 +860,7 @@
                     <button
                       type="button"
                       onclick={() =>
-                        void handleRename(detailTheme.id, detailTheme.name)}
+                        handleRename(detailTheme.id, detailTheme.name)}
                       class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-border-active cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
                     >
                       <span
@@ -858,7 +872,7 @@
                     <button
                       type="button"
                       onclick={() =>
-                        void handleDelete(detailTheme.id, detailTheme.name)}
+                        handleDelete(detailTheme.id, detailTheme.name)}
                       disabled={isActive(detailTheme)}
                       class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-panel border border-surface-panel-border text-error font-label-sm-bold hover:border-error-border cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:opacity-40 disabled:cursor-not-allowed"
                       title={isActive(detailTheme)
@@ -972,6 +986,36 @@
       </div>
     {/if}
   </div>
+{/if}
+
+{#if renameDialog}
+  <NamePromptDialog
+    title="Rename theme"
+    label="Theme name"
+    initialValue={renameDialog.currentName}
+    confirmLabel="Rename"
+    cancelLabel="Cancel"
+    dataTestId="theme-rename-dialog"
+    onConfirm={(name) => void confirmRename(name)}
+    onCancel={() => {
+      renameDialog = null
+    }}
+  />
+{/if}
+
+{#if deleteDialog}
+  <ConfirmDialog
+    title="Delete theme?"
+    message={`Delete custom theme "${deleteDialog.name}"? This cannot be undone.`}
+    confirmLabel="Delete"
+    cancelLabel="Cancel"
+    destructive
+    dataTestId="theme-delete-dialog"
+    onConfirm={() => void confirmDelete()}
+    onCancel={() => {
+      deleteDialog = null
+    }}
+  />
 {/if}
 
 <style>

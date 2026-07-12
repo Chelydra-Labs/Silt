@@ -284,7 +284,6 @@ describe('ThemeEditor', () => {
       info: { id: 'user-saved', name: 'Saved Custom', source: 'disk' },
       applied: true
     })
-    vi.stubGlobal('prompt', () => 'Saved Custom')
 
     render(ThemeEditor, {
       props: {
@@ -301,6 +300,16 @@ describe('ThemeEditor', () => {
     await fireEvent.click(
       screen.getByRole('button', { name: /save as new theme/i })
     )
+    await tick()
+
+    // Name prompt dialog (#531) — confirm with the suggested name.
+    const nameDialog = screen.getByTestId('theme-save-name-dialog')
+    expect(nameDialog).toBeTruthy()
+    const nameInput = screen.getByTestId(
+      'theme-save-name-dialog-input'
+    ) as HTMLInputElement
+    await fireEvent.input(nameInput, { target: { value: 'Saved Custom' } })
+    await fireEvent.click(screen.getByTestId('theme-save-name-dialog-confirm'))
     await tick()
     await tick()
 
