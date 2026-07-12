@@ -1,25 +1,25 @@
 import {
   GetCustomDictionary,
   AddCustomDictionaryWord,
-  RemoveCustomDictionaryWord
+  RemoveCustomDictionaryWord,
+  PickCustomDictionaryExportPath,
+  PickCustomDictionaryImportFile,
+  ExportCustomDictionary,
+  ImportCustomDictionary
 } from '../../../../bindings/silt/app.js'
 
 /**
- * Reactive custom-spellcheck-dictionary store (#196). Backs both the editor
- * (the spellcheck layer reads editor.custom_dictionary from settings.config)
- * and the Settings → Editor "Custom dictionary" management card (view/add/
- * remove). Reads + mutates via the atomic-config IPC in app_spellcheck.go;
- * the config:changed event then refreshes settings.config.editor.custom_dictionary,
- * which the editor's $effect (TipTapEditor) picks up to re-apply.
- *
- * v1 manages the VAULT dictionary (the common case). Linked-notebook co-located
- * overrides (Sprint 34) are a follow-up.
+ * Reactive custom-spellcheck-dictionary store (#196, #338). Backs the
+ * Settings → General "Custom dictionary" card (view/add/remove/import/export)
+ * and the editor Add-to-dictionary action.
  */
+
 let words = $state<string[]>([])
 let filter = $state('')
 let newWord = $state('')
 let loading = $state(false)
 let error = $state<string | null>(null)
+let status = $state<string | null>(null)
 
 export const customDictionary = {
   get words() {
@@ -42,6 +42,9 @@ export const customDictionary = {
   },
   get error() {
     return error
+  },
+  get status() {
+    return status
   },
   /** Filtered view for the management-card list. */
   get filtered() {
@@ -68,6 +71,7 @@ export const customDictionary = {
     const w = (word ?? newWord).trim()
     if (!w) return
     error = null
+    status = null
     try {
       words = await AddCustomDictionaryWord(w)
       if (!word) newWord = ''
@@ -79,8 +83,38 @@ export const customDictionary = {
   /** Remove a word via the IPC. */
   async remove(word: string): Promise<void> {
     error = null
+    status = null
     try {
       words = await RemoveCustomDictionaryWord(word)
+    } catch (e) {
+      error = String(e)
+    }
+  },
+
+  /** Export via native save dialog. */
+  async exportFile(): Promise<void> {
+    error = null
+    status = null
+    try {
+      const path = await PickCustomDictionaryExportPath()
+      if (!path) return
+      await ExportCustomDictionary(path)
+      status = 'Dictionary exported.'
+    } catch (e) {
+      error = String(e)
+    }
+  },
+
+  /** Import via native open dialog; merges into vault dictionary. */
+  async importFile(): Promise<void> {
+    error = null
+    status = null
+    try {
+      const path = await PickCustomDictionaryImportFile()
+      if (!path) return
+      const summary = await ImportCustomDictionary(path)
+      words = await GetCustomDictionary()
+      status = `Imported ${summary.added} words; ${summary.skipped} already present.`
     } catch (e) {
       error = String(e)
     }

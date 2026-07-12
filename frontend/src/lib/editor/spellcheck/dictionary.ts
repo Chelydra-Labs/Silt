@@ -1,24 +1,32 @@
 import Typo from 'typo-js'
+import {
+  EnsureLanguagePack,
+  GetLanguagePackContent,
+  EnsureDomainPack,
+  GetDomainPackWords
+} from '../../../../bindings/silt/app.js'
 
 /**
- * typo-js wrapper + the custom-dictionary layer (#196). Loads the bundled
- * en-US Hunspell dictionary on first enable (fetch of index.aff/index.dic from
- * frontend/public/dictionaries/<lang>/), then checks words against it. The
- * per-vault custom dictionary (`editor.custom_dictionary` in config.yaml) is
- * layered as a Set on TOP of typo-js — words present there pass without
- * consulting Hunspell. (typo-js exposes no public addWord, so the custom
- * layer is a separate Set, not a mutation of the Hunspell dictionary table.)
+ * typo-js wrapper + custom/domain dictionary layers (#196, #336, #337).
  *
- * A word-result cache avoids re-checking the same token on every debounce.
- * Fully local — no word ever leaves the machine.
+ * Language packs: bundled en-US loads from /dictionaries/en-US/ via fetch;
+ * other languages EnsureLanguagePack then GetLanguagePackContent (user-global
+ * cache). Domain packs and custom words are Set layers — typo-js has no
+ * public addWord.
+ *
+ * Note text never leaves the machine; only optional dictionary *assets* are
+ * downloaded when the user selects a non-bundled pack.
  */
 
 let dict: Typo | null = null
 let loadPromise: Promise<Typo> | null = null
 let currentLang = ''
 
-/** Custom words (lowercased) resolved for the active notebook. */
+/** Custom words (lowercased) from editor.custom_dictionary. */
 const customWords = new Set<string>()
+
+/** Domain pack words (lowercased) from enabled spellcheck_domains. */
+const domainWords = new Set<string>()
 
 /** Session-only ignores (the "Ignore" menu action). Cleared on reload. */
 const sessionIgnores = new Set<string>()
@@ -26,28 +34,54 @@ const sessionIgnores = new Set<string>()
 /** Word → correctly-spelled cache so unchanged tokens skip Hunspell. */
 const cache = new Map<string, boolean>()
 
+/** Last dictionary load error (for Settings UI); null when healthy. */
+let lastLoadError: string | null = null
+
+export function getDictionaryLoadError(): string | null {
+  return lastLoadError
+}
+
 /** Load (once per language) and return the Typo instance for `lang`. */
 export function loadDictionary(lang: string): Promise<Typo> {
   if (dict && currentLang === lang) return Promise.resolve(dict)
   if (loadPromise && currentLang === lang) return loadPromise
   currentLang = lang
+  lastLoadError = null
   loadPromise = (async () => {
     try {
-      const base = `/dictionaries/${lang}`
-      const [aff, dic] = await Promise.all([
-        (await fetch(`${base}/index.aff`)).text(),
-        (await fetch(`${base}/index.dic`)).text()
-      ])
+      let aff: string
+      let dic: string
+      if (lang === 'en-US') {
+        const base = `/dictionaries/${lang}`
+        const [affRes, dicRes] = await Promise.all([
+          fetch(`${base}/index.aff`),
+          fetch(`${base}/index.dic`)
+        ])
+        if (!affRes.ok || !dicRes.ok) {
+          throw new Error(
+            `bundled dictionary "${lang}" missing (${affRes.status}/${dicRes.status})`
+          )
+        }
+        aff = await affRes.text()
+        dic = await dicRes.text()
+      } else {
+        await EnsureLanguagePack(lang)
+        const content = await GetLanguagePackContent(lang)
+        aff = content.aff
+        dic = content.dic
+        if (!aff?.trim() || !dic?.trim()) {
+          throw new Error(`language pack "${lang}" returned empty aff/dic`)
+        }
+      }
       dict = new Typo(lang, aff, dic)
       cache.clear()
+      lastLoadError = null
       return dict
     } catch (err) {
-      // Fetch can fail in environments without the bundled assets (e.g. jsdom
-      // in tests, or a stripped build). Degrade gracefully: leave dict null so
-      // checkWord returns true for everything (no false squiggles) rather than
-      // surfacing a broken-promise to callers. Logged for diagnosability.
       loadPromise = null
       currentLang = ''
+      dict = null
+      lastLoadError = err instanceof Error ? err.message : String(err)
       // eslint-disable-next-line no-console
       console.warn(
         `[silt] spellcheck dictionary "${lang}" failed to load:`,
@@ -66,20 +100,19 @@ export function isDictionaryLoaded(): boolean {
 
 /**
  * Reset the dictionary to the unloaded state (dict = null). Called when
- * spellcheck is toggled OFF so checkWord returns true for everything (no
- * false squiggles) and the next enable re-fetches the dictionary cleanly.
+ * spellcheck is toggled OFF so checkWord returns true for everything.
  */
 export function resetDictionary(): void {
   dict = null
   loadPromise = null
   currentLang = ''
   cache.clear()
+  lastLoadError = null
 }
 
 /**
  * Replace the active custom-word set. Called when the config loads / changes
- * and when a word is added/removed via IPC. Clears the word cache so tokens
- * previously flagged as misspelled are re-evaluated.
+ * and when a word is added/removed via IPC.
  */
 export function setCustomWords(words: string[]): void {
   customWords.clear()
@@ -90,11 +123,82 @@ export function setCustomWords(words: string[]): void {
   cache.clear()
 }
 
-/** Whether `word` is known-correct (custom dict OR session-ignore OR Hunspell). */
+/**
+ * Replace the active domain-word set (union of all enabled domain packs).
+ */
+export function setDomainWords(words: string[]): void {
+  domainWords.clear()
+  for (const w of words) {
+    const lower = w.trim().toLowerCase()
+    if (lower) domainWords.add(lower)
+  }
+  cache.clear()
+}
+
+/**
+ * Load all enabled domain packs and apply their word lists. Bundled packs
+ * resolve without network; downloadable packs call EnsureDomainPack first.
+ * Failures for individual packs are collected and rethrown after partial apply
+ * so the UI can surface them (fail loudly).
+ */
+export async function loadDomainPacks(domainIds: string[]): Promise<void> {
+  const ids = domainIds ?? []
+  const all: string[] = []
+  const errors: string[] = []
+  for (const id of ids) {
+    try {
+      if (id === 'software-terms') {
+        // Bundled: fetch from public assets (same as en-US path).
+        const res = await fetch('/dictionaries/supplements/software-terms.txt')
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`)
+        }
+        const text = await res.text()
+        all.push(...parseWordListText(text))
+      } else {
+        await EnsureDomainPack(id)
+        const words = await GetDomainPackWords(id)
+        all.push(...(words ?? []))
+      }
+    } catch (e) {
+      errors.push(`${id}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  setDomainWords(all)
+  if (errors.length > 0) {
+    throw new Error(`domain pack load failed: ${errors.join('; ')}`)
+  }
+}
+
+/** Parse a personal-dict / cspell-style word list (mirrors Go ParseWordList). */
+export function parseWordListText(text: string): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of text.split('\n')) {
+    let line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    if (line.startsWith('cspell-tools:')) continue
+    const hash = line.indexOf('#')
+    if (hash >= 0) line = line.slice(0, hash).trim()
+    const word = line.split(/\s+/)[0]?.toLowerCase()
+    if (!word || seen.has(word)) continue
+    seen.add(word)
+    out.push(word)
+  }
+  return out
+}
+
+/** Whether `word` is known-correct (custom OR domain OR session OR Hunspell). */
 export function checkWord(word: string): boolean {
   if (!dict) return true // not loaded yet — don't flag (avoids a false wave)
   const lower = word.toLowerCase()
-  if (customWords.has(lower) || sessionIgnores.has(lower)) return true
+  if (
+    customWords.has(lower) ||
+    domainWords.has(lower) ||
+    sessionIgnores.has(lower)
+  ) {
+    return true
+  }
   const cached = cache.get(lower)
   if (cached !== undefined) return cached
   const result = dict.check(lower)

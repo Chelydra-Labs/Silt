@@ -1,9 +1,12 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"silt/backend/config"
+	"silt/backend/spellcheck"
 )
 
 // TestCustomDictionary_RoundTrip covers the #196 custom-dictionary IPC: get is
@@ -116,4 +119,86 @@ func TestCustomDictionary_Persists(t *testing.T) {
 	if len(loaded.Editor.CustomDictionary) != 1 || loaded.Editor.CustomDictionary[0] != "docker" {
 		t.Errorf("custom_dictionary did not persist: %v", loaded.Editor.CustomDictionary)
 	}
+}
+
+// TestCustomDictionary_ImportExport covers #338: export writes one word per
+// line; import merges with summary; comments and duplicates handled.
+func TestCustomDictionary_ImportExport(t *testing.T) {
+	app := newTestApp(t)
+	if _, err := app.AddCustomDictionaryWord("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.AddCustomDictionaryWord("beta"); err != nil {
+		t.Fatal(err)
+	}
+
+	exportPath := filepath.Join(t.TempDir(), "dictionary.txt")
+	if err := app.ExportCustomDictionary(exportPath); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	data, err := os.ReadFile(exportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "alpha\nbeta\n" {
+		t.Errorf("export content = %q", data)
+	}
+
+	importPath := filepath.Join(t.TempDir(), "import.txt")
+	if err := os.WriteFile(importPath, []byte("# comment\nalpha\ngamma\nBETA\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := app.ImportCustomDictionary(importPath)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if sum.Added != 1 || sum.Skipped != 2 || sum.TotalRead != 3 {
+		t.Errorf("summary = %+v, want added=1 skipped=2 total=3", sum)
+	}
+	got, err := app.GetCustomDictionary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Errorf("after import: %v", got)
+	}
+}
+
+func TestListLanguagePacks_IPC(t *testing.T) {
+	app := newTestApp(t)
+	list, err := app.ListLanguagePacks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) < 2 {
+		t.Fatalf("expected catalog, got %d", len(list))
+	}
+	found := false
+	for _, p := range list {
+		if p.ID == "en-US" && p.Bundled && p.Installed {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("en-US bundled row missing")
+	}
+}
+
+func TestGetDomainPackWords_SoftwareTerms(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.EnsureDomainPack("software-terms"); err != nil {
+		t.Fatal(err)
+	}
+	words, err := app.GetDomainPackWords("software-terms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(words) < 50 {
+		t.Errorf("expected curated list, got %d", len(words))
+	}
+	// Ensure unknown fails loudly.
+	if _, err := app.GetDomainPackWords("nope"); err == nil {
+		t.Error("expected error for unknown domain")
+	}
+	_ = spellcheck.DefaultDomainIDs()
 }

@@ -507,9 +507,33 @@
             </button>
           {/if}
         </div>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            onclick={() => void customDictionary.exportFile()}
+            class="px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+          >
+            Export…
+          </button>
+          <button
+            type="button"
+            onclick={() => void customDictionary.importFile()}
+            class="px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+          >
+            Import…
+          </button>
+        </div>
         {#if customDictionary.error}
-          <p class="text-error text-type-sm font-body-md">
+          <p class="text-error text-type-sm font-body-md" role="alert">
             {customDictionary.error}
+          </p>
+        {/if}
+        {#if customDictionary.status}
+          <p
+            class="text-text-muted text-type-sm font-body-md"
+            aria-live="polite"
+          >
+            {customDictionary.status}
           </p>
         {/if}
         <div

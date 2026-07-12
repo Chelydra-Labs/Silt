@@ -172,6 +172,12 @@ type EditorConfig struct {
 	// sorted. A linked notebook may carry its own co-located override
 	// (arrays replace, §3.1) so an external notebook travels with its words.
 	CustomDictionary []string `yaml:"custom_dictionary,omitempty" json:"custom_dictionary,omitempty"`
+	// SpellcheckDomains is the set of enabled technical word-list pack IDs
+	// (#337). Each ID names a catalog entry (e.g. "software-terms",
+	// "typescript"). Packs merge into the spellcheck Set layer on top of
+	// Hunspell. Default ["software-terms"]. normalize() guarantees non-nil,
+	// de-duplicated, sorted, unknown IDs dropped.
+	SpellcheckDomains []string `yaml:"spellcheck_domains,omitempty" json:"spellcheck_domains,omitempty"`
 }
 
 // ParsingConfig holds the task-parse rules. The task regexes themselves
@@ -371,6 +377,7 @@ func Defaults() SystemConfig {
 			TypewriterMode:          boolPtr(false),
 			TypewriterModeRatio:     float64Ptr(0.5),
 			CustomDictionary:        []string{},
+			SpellcheckDomains:       []string{"software-terms"},
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
@@ -887,6 +894,33 @@ func normalize(cfg SystemConfig) SystemConfig {
 		}
 		sort.Strings(out)
 		cfg.Editor.CustomDictionary = out
+	}
+	// SpellcheckDomains: enabled technical word-list packs (#337). nil →
+	// default ["software-terms"] so fresh installs get common false-positive
+	// coverage without a download. Empty explicit slice is preserved (user
+	// turned everything off). Unknown IDs are dropped; known IDs are
+	// de-duplicated and sorted.
+	if cfg.Editor.SpellcheckDomains == nil {
+		cfg.Editor.SpellcheckDomains = []string{"software-terms"}
+	} else {
+		known := map[string]bool{
+			"software-terms": true,
+			"typescript":     true,
+			"python":         true,
+			"data-science":   true,
+		}
+		seen := make(map[string]bool, len(cfg.Editor.SpellcheckDomains))
+		out := make([]string, 0, len(cfg.Editor.SpellcheckDomains))
+		for _, id := range cfg.Editor.SpellcheckDomains {
+			id = strings.TrimSpace(id)
+			if id == "" || !known[id] || seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
+		}
+		sort.Strings(out)
+		cfg.Editor.SpellcheckDomains = out
 	}
 	// OpenDevtoolsOnStartup: nil → false. Dev Mode is opt-in from About.
 	if cfg.UI.OpenDevtoolsOnStartup == nil {

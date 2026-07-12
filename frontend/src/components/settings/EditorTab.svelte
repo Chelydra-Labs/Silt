@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte'
+  import { untrack, onMount } from 'svelte'
   import {
     settings,
     saveConfig,
@@ -10,6 +10,13 @@
   import { displayFamilyName } from '../../theme/fonts'
   import { themeState } from '../../theme/store.svelte'
   import FontSelect from './FontSelect.svelte'
+  import {
+    ListLanguagePacks,
+    ListDomainPacks,
+    EnsureLanguagePack,
+    EnsureDomainPack
+  } from '../../../bindings/silt/app.js'
+  import { getDictionaryLoadError } from '../../lib/editor/spellcheck/dictionary'
 
   interface Props {
     ringAnchor?: string | null
@@ -18,6 +25,114 @@
 
   let draft = $state<SystemConfig | null>(null)
   let lastSaved = $state<SystemConfig | null>(null)
+
+  type LangPack = {
+    id: string
+    label: string
+    license: string
+    approx_bytes: number
+    bundled: boolean
+    downloadable: boolean
+    installed: boolean
+    version: string
+  }
+  type DomainPack = {
+    id: string
+    label: string
+    license: string
+    approx_bytes: number
+    bundled: boolean
+    downloadable: boolean
+    installed: boolean
+    default_on: boolean
+    version: string
+  }
+
+  let languagePacks = $state<LangPack[]>([])
+  let domainPacks = $state<DomainPack[]>([])
+  let packBusy = $state<string | null>(null)
+  let packError = $state<string | null>(null)
+  let packStatus = $state<string | null>(null)
+
+  async function refreshPacks() {
+    try {
+      languagePacks = (await ListLanguagePacks()) as LangPack[]
+      domainPacks = (await ListDomainPacks()) as DomainPack[]
+    } catch (e) {
+      packError = String(e)
+    }
+  }
+
+  onMount(() => {
+    void refreshPacks()
+  })
+
+  function formatBytes(n: number): string {
+    if (n >= 1_000_000) return `~${(n / 1_000_000).toFixed(1)} MB`
+    if (n >= 1000) return `~${Math.round(n / 1000)} KB`
+    return `~${n} B`
+  }
+
+  async function onLanguageChange(e: Event) {
+    const id = (e.currentTarget as HTMLSelectElement).value
+    draftEditor().spellcheck_language = id
+    touch()
+    packError = null
+    packStatus = null
+    const pack = languagePacks.find((p) => p.id === id)
+    if (pack && !pack.bundled && !pack.installed) {
+      packBusy = id
+      packStatus = `Downloading ${pack.label}…`
+      try {
+        await EnsureLanguagePack(id)
+        packStatus = `${pack.label} ready. Save settings to apply.`
+        await refreshPacks()
+      } catch (err) {
+        packError = String(err)
+        packStatus = null
+      } finally {
+        packBusy = null
+      }
+    }
+  }
+
+  function domainEnabled(id: string): boolean {
+    const domains =
+      draft?.editor?.spellcheck_domains ?? (['software-terms'] as string[])
+    return domains.includes(id)
+  }
+
+  async function toggleDomain(id: string, on: boolean) {
+    const ed = draftEditor() as config.EditorConfig & {
+      spellcheck_domains?: string[]
+    }
+    const current = [...(ed.spellcheck_domains ?? ['software-terms'])]
+    const next = on
+      ? current.includes(id)
+        ? current
+        : [...current, id]
+      : current.filter((d) => d !== id)
+    ed.spellcheck_domains = next
+    touch()
+    packError = null
+    if (on) {
+      const pack = domainPacks.find((p) => p.id === id)
+      if (pack && !pack.bundled && !pack.installed) {
+        packBusy = id
+        packStatus = `Downloading ${pack.label}…`
+        try {
+          await EnsureDomainPack(id)
+          packStatus = `${pack.label} ready.`
+          await refreshPacks()
+        } catch (err) {
+          packError = String(err)
+          packStatus = null
+        } finally {
+          packBusy = null
+        }
+      }
+    }
+  }
 
   function deepClone<T>(value: T): T {
     return JSON.parse(JSON.stringify(value))
@@ -436,6 +551,115 @@
                 Typewriter mode (keep active line centered)
               </span>
             </label>
+          </div>
+
+          <!-- Spellcheck language + domain packs (#336 / #337) -->
+          <div
+            id="editor-spellcheck-packs"
+            class="space-y-4 pt-2 border-t border-surface-panel-border/60"
+            aria-labelledby="spellcheck-packs-heading"
+          >
+            <h5
+              id="spellcheck-packs-heading"
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+            >
+              Spellcheck dictionaries
+            </h5>
+            <p class="text-text-muted text-type-sm font-body-md">
+              Additional languages download once and work offline. Domain packs
+              reduce false positives on technical terms. Note text never leaves
+              your machine.
+            </p>
+
+            <label class="flex flex-col gap-1.5 max-w-sm">
+              <span
+                class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+                >Language</span
+              >
+              <select
+                value={draft.editor?.spellcheck_language || 'en-US'}
+                onchange={onLanguageChange}
+                disabled={packBusy !== null}
+                class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {#each languagePacks as pack (pack.id)}
+                  <option value={pack.id}>
+                    {pack.label}
+                    {pack.bundled
+                      ? '(bundled)'
+                      : pack.installed
+                        ? '(installed)'
+                        : `(download ${formatBytes(pack.approx_bytes)})`}
+                  </option>
+                {:else}
+                  <option value="en-US">English (US)</option>
+                {/each}
+              </select>
+            </label>
+
+            <fieldset class="space-y-2">
+              <legend
+                class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider mb-1"
+              >
+                Domain word lists
+              </legend>
+              {#each domainPacks as pack (pack.id)}
+                <label
+                  class="flex items-start gap-2.5 cursor-pointer select-none"
+                >
+                  <input
+                    type="checkbox"
+                    checked={domainEnabled(pack.id)}
+                    disabled={packBusy !== null}
+                    onchange={(e: Event) => {
+                      void toggleDomain(
+                        pack.id,
+                        (e.currentTarget as HTMLInputElement).checked
+                      )
+                    }}
+                    class="w-4 h-4 mt-0.5 accent-[var(--color-accent-primary-end)] cursor-pointer"
+                  />
+                  <span class="flex flex-col gap-0.5">
+                    <span class="text-text-primary text-type-md font-body-md">
+                      {pack.label}
+                      {#if pack.bundled}
+                        <span class="text-text-muted text-type-sm"
+                          >(bundled)</span
+                        >
+                      {:else if !pack.installed}
+                        <span class="text-text-muted text-type-sm"
+                          >({formatBytes(pack.approx_bytes)})</span
+                        >
+                      {/if}
+                    </span>
+                    <span class="text-text-muted text-type-2xs"
+                      >{pack.license}</span
+                    >
+                  </span>
+                </label>
+              {/each}
+            </fieldset>
+
+            {#if packBusy}
+              <p
+                class="text-text-muted text-type-sm font-body-md"
+                aria-live="polite"
+              >
+                {packStatus ?? 'Working…'}
+              </p>
+            {:else if packStatus}
+              <p
+                class="text-text-muted text-type-sm font-body-md"
+                aria-live="polite"
+              >
+                {packStatus}
+              </p>
+            {/if}
+            {#if packError || getDictionaryLoadError()}
+              <p class="text-error text-type-sm font-body-md" role="alert">
+                {packError || getDictionaryLoadError()}
+              </p>
+            {/if}
           </div>
         </div>
       </div>
