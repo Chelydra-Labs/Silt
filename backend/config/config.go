@@ -487,8 +487,8 @@ func Defaults() SystemConfig {
 			// silt-ai-summary (#220) ships OFF by default: it is the first plugin
 			// that sends note content to an external LLM endpoint, so the user
 			// opts in explicitly (Plugins tab) after configuring a provider.
-			// AI plugins ship OFF by default (summary + Q&A).
-			Disabled: []string{"silt-ai-summary", "silt-ai-qa"},
+			// AI plugins ship OFF by default (summary + Q&A + Writing Assistant).
+			Disabled: []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant"},
 			PluginSettings: map[string]any{
 				// silt-tasks is the unified hub (Phase 9 / #431). Every key
 				// the frontend loaders read (settings.ts) is seeded so a
@@ -1044,7 +1044,8 @@ func intPtr(i int) *int { return &i }
 // YAML decode replaces the Defaults() Disabled slice when the file has any
 // plugins.disabled entry, so pre-feature configs omit new ids entirely.
 var optInDisabledPluginIDs = []string{
-	"silt-ai-qa", // Sprint 22 / #224 — PR #540 review
+	"silt-ai-qa",        // Sprint 22 / #224 — PR #540 review
+	"silt-ai-assistant", // Sprint 23 / #230 — Writing Assistant
 }
 
 // seededOptInDisabledKey is a one-shot marker list under plugin_settings so we

@@ -822,6 +822,11 @@ Plugins that need AI call the **user-configured** model server through
 **Settings → AI Provider** (see `docs/BRING_YOUR_OWN_MODEL.md`); the plugin
 never sees the endpoint URL, model name, or API key.
 
+**Reference consumers:** `silt-ai-summary` (note banner), `silt-ai-qa` (RAG
+Q&A), and `silt-ai-assistant` (Writing Assistant — curated actions with a
+plugin-local accept/reject proposal flow; see
+`docs/plugins/silt-ai-assistant.md`).
+
 Gated by the `ai` capability. Declare it in the manifest:
 
 ```json

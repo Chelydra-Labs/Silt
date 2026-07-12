@@ -33,6 +33,9 @@ var FirstPartyPluginIDs = map[string]bool{
 	// silt-ai-qa (#224–#228): semantic search + RAG Q&A. Uses ctx.ai.embed /
 	// complete and a per-plugin sqlite-vec index (plugin-db).
 	"silt-ai-qa": true,
+	// silt-ai-assistant (#229–#233): Writing Assistant — curated writing
+	// actions with accept/reject. Uses ctx.ai.complete/embed and content-mutate.
+	"silt-ai-assistant": true,
 }
 
 // IsFirstPartyID reports whether pluginID is a reserved (bundled) plugin id.

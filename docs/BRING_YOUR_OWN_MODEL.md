@@ -17,8 +17,8 @@ Two independent providers, each configurable separately:
 
 | Provider | Powers | Default |
 | :--- | :--- | :--- |
-| **Chat** | `ctx.ai.complete()` — plugin features that generate text (summaries, rewrites, Q&A) | Local (`http://localhost:11434`) |
-| **Embedding** | `ctx.ai.embed()` — plugin features that compute vector representations (semantic search, dedup, RAG). Used by **AI Assistant** (`silt-ai-qa`; see `docs/plugins/silt-ai-qa.md`) | Local (`http://localhost:11434`) |
+| **Chat** | `ctx.ai.complete()` — plugin features that generate text (summaries, rewrites, Q&A, Writing Assistant) | Local (`http://localhost:11434`) |
+| **Embedding** | `ctx.ai.embed()` — plugin features that compute vector representations (semantic search, dedup, RAG, related-note suggestions). Used by **AI Assistant** (`silt-ai-qa`; see `docs/plugins/silt-ai-qa.md`) and **Writing Assistant** (`silt-ai-assistant`; see `docs/plugins/silt-ai-assistant.md`) | Local (`http://localhost:11434`) |
 
 You can mix freely: a local chat model with a cloud embedding API, or both
 cloud, or both local. Plugins specify *which* of the two they're calling; they

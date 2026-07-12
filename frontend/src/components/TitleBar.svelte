@@ -13,6 +13,9 @@
     /** When set, show the AI Assistant toggle (plugin enabled). */
     onAIAssistantClick?: () => void
     aiAssistantOpen?: boolean
+    /** When set, show the Writing Assistant toggle (silt-ai-assistant). */
+    onWritingAssistantClick?: () => void
+    writingAssistantOpen?: boolean
     children?: import('svelte').Snippet
   }
 
@@ -22,6 +25,8 @@
     onSearchClick,
     onAIAssistantClick,
     aiAssistantOpen = false,
+    onWritingAssistantClick,
+    writingAssistantOpen = false,
     children
   }: Props = $props()
 
@@ -146,6 +151,23 @@
       >
         <span class="material-symbols-outlined text-type-2xl">auto_awesome</span
         >
+      </button>
+    {/if}
+
+    {#if onWritingAssistantClick}
+      <button
+        type="button"
+        onclick={onWritingAssistantClick}
+        aria-label="Writing Assistant"
+        aria-pressed={writingAssistantOpen}
+        title="Writing Assistant"
+        class="flex items-center justify-center h-9 w-9 rounded-lg transition-colors cursor-pointer border-none bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+        class:text-accent-primary-start={writingAssistantOpen}
+        class:text-surface-titlebar-text-muted={!writingAssistantOpen}
+        class:hover:text-surface-titlebar-text={!writingAssistantOpen}
+        class:hover:bg-hover={true}
+      >
+        <span class="material-symbols-outlined text-type-2xl">ink_pen</span>
       </button>
     {/if}
 

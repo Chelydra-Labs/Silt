@@ -4,6 +4,7 @@ import TasksSidebar from './first-party/silt-tasks/Sidebar.svelte'
 import AttachmentsPlugin from './first-party/silt-attachments'
 import AISummaryPlugin from './first-party/silt-ai-summary'
 import AIQAPlugin from './first-party/silt-ai-qa'
+import AIAssistantPlugin from './first-party/silt-ai-assistant'
 
 // First-party plugin registry: bundled Svelte components that ship with the
 // app. Third-party plugins live in .system/plugins/ and are loaded by the
@@ -64,6 +65,17 @@ registerPlugin({
   onVaultOpen: AIQAPlugin.onVaultOpen,
   onVaultClose: AIQAPlugin.onVaultClose,
   onShutdown: AIQAPlugin.onShutdown,
+  source: 'first-party'
+})
+// silt-ai-assistant (#229–#233): Writing Assistant — curated writing actions
+// with accept/reject. Off by default; ai + content-mutate.
+registerPlugin({
+  manifest: AIAssistantPlugin.manifest,
+  component: AIAssistantPlugin.component,
+  settingsPageComponent: AIAssistantPlugin.settingsPageComponent,
+  onVaultOpen: AIAssistantPlugin.onVaultOpen,
+  onVaultClose: AIAssistantPlugin.onVaultClose,
+  onShutdown: AIAssistantPlugin.onShutdown,
   source: 'first-party'
 })
 
