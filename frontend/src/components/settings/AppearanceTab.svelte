@@ -46,6 +46,9 @@
   // Custom theme editor (#392): when set, the Appearance tab is replaced
   // by the full-width ThemeEditor for that theme id.
   let editingThemeId: string | null = $state(null)
+  // Tracked as state (not listing-derived) so save-as-new keeps overwrite
+  // enabled before loadThemes() repopulates the new disk id.
+  let editingSourceIsDisk = $state(false)
 
   // Roving-tabindex focus for the card grid (one tab stop, arrows move).
   let focusIndex: number | null = $state(null)
@@ -252,7 +255,9 @@
   // is load-bearing: without it the workspace would stay locked to the last
   // previewed theme after Revert. The guard on `previewTheme === null`
   // skips a premature restore when tokens aren't loaded yet for a staged id.
+  // While the theme editor is open it owns injectTokens — do not fight it.
   $effect(() => {
+    if (editingThemeId !== null) return
     if (previewTokens !== null) {
       injectTokens(previewTokens)
     } else if (previewTheme === null) {
@@ -338,17 +343,22 @@
     // Drop any staged picker preview so the editor owns injectTokens.
     previewTheme = null
     editingThemeId = id
+    editingSourceIsDisk =
+      themesState.items.find((t) => t.id === id)?.source === 'disk'
     setThemeEditorOpen(true)
   }
 
   function closeEditor() {
     editingThemeId = null
+    editingSourceIsDisk = false
     setThemeEditorOpen(false)
     restoreActiveTheme()
   }
 
   function onEditorSaved(id: string) {
     editingThemeId = id
+    // Save (including save-as-new) always lands a disk theme.
+    editingSourceIsDisk = true
     void loadThemes()
   }
 
@@ -389,13 +399,6 @@
       void loadThemes()
     }
   }
-
-  let editingSourceIsDisk = $derived(
-    editingThemeId
-      ? themesState.items.find((t) => t.id === editingThemeId)?.source ===
-          'disk'
-      : false
-  )
 
   function statusAriaRole(s: ThemeStatus | null): 'status' | 'alert' | null {
     if (!s || !s.message) return null

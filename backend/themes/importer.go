@@ -326,6 +326,11 @@ func namespaceThemeID(themesDir, id, originalID string) (string, error) {
 	if _, ok := ParseEmbeddedByID(id); ok {
 		id = userPrefix + id
 	}
+	// Reserved editor staging id must never land as a real theme file —
+	// that would share a path with _editor.assets/ used for preview staging.
+	if id == EditorStagingThemeID {
+		id = userPrefix + id
+	}
 
 	// 2. On-disk collision: refuse to overwrite. The user can rename the
 	//    source JSON's id and try again. A "renamed" id that collides with

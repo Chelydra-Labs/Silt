@@ -99,21 +99,33 @@ func (a *App) GetActiveTheme() (ActiveThemeResult, error) {
 // previous implementation called ListThemes (reads + parses every file)
 // followed by ResolveActive (reads the directory a second time to find the
 // same theme), so every switch did two directory scans + 2N parses.
+//
+// themeWriteMu serializes ActiveTheme writes with DeleteCustomTheme's
+// active-theme guard (TOCTOU): Delete checks ActiveTheme under the same
+// mutex before removing a theme file. Do NOT hold vaultMu across the
+// themeWriteMu acquisition — lock order is snapshot vaultPath under
+// vaultMu.RLock, release, then themeWriteMu (optionally re-check vault
+// under a brief RLock while holding themeWriteMu).
 func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
-	// vaultMu.RLock guards the lifecycle read of themesDir/vaultPath so the
-	// path stays valid for the call's duration. It does NOT guard the
-	// settings.json write — UpdateSettings serializes that via
-	// settingsWriteMu (#404). No theme FILE is written here, so
-	// themeWriteMu is not needed. Two concurrent ApplyTheme calls both
-	// pass the RLock, but settingsWriteMu makes each settings write atomic.
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
 	if !vault.ValidThemeMode(mode) {
 		return ActiveThemeResult{}, fmt.Errorf("invalid mode %q (valid: dark, light, system)", mode)
 	}
-	// Resolve the requested theme in one pass. The embedded default is
-	// always available; any other id must live on disk. A typo or stale id
-	// errors here rather than silently snapping to the default.
+
+	// Snapshot vault path / themesDir under vaultMu, then release before any
+	// themeWriteMu work so we never hold vaultMu while waiting on themeWriteMu
+	// (deadlock risk with handlers that take themeWriteMu then vaultMu.RLock).
+	a.vaultMu.RLock()
+	vaultPath := a.vaultPath
+	themesDir := a.themesDir()
+	a.vaultMu.RUnlock()
+	if vaultPath == "" {
+		return ActiveThemeResult{}, fmt.Errorf("vault not loaded")
+	}
+
+	// Resolve the requested theme in one pass (read-only; no themeWriteMu).
+	// The embedded default is always available; any other id must live on
+	// disk or in the first-class embed roster. A typo or stale id errors
+	// here rather than silently snapping to the default.
 	var (
 		t   *themes.Theme
 		err error
@@ -125,7 +137,7 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 		}
 	} else {
 		var found bool
-		t, found, err = themes.LoadByID(a.themesDir(), id)
+		t, found, err = themes.LoadByID(themesDir, id)
 		if err != nil {
 			return ActiveThemeResult{}, fmt.Errorf("failed to look up theme %q: %w", id, err)
 		}
@@ -145,10 +157,24 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 		}
 	}
 
+	// Serialize ActiveTheme persistence with DeleteCustomTheme's active check.
+	a.themeWriteMu.Lock()
+	defer a.themeWriteMu.Unlock()
+
+	// Re-check vault still open at the snapshotted path before writing
+	// settings (mirrors DeleteCustomTheme / SaveCustomTheme #404 hardening).
+	a.vaultMu.RLock()
+	closed := a.vaultPath != vaultPath
+	a.vaultMu.RUnlock()
+	if closed {
+		return ActiveThemeResult{}, fmt.Errorf("vault closed during theme apply")
+	}
+
 	// Persist the selection atomically. Use the actually-resolved theme id
 	// (t.ID) rather than the requested id: if the caller requested the
 	// embedded default and the file vanished mid-request, settings stays
 	// consistent with what is rendered.
+	// Lock order: themeWriteMu (held) → settingsWriteMu (inside UpdateSettings).
 	if _, err := vault.UpdateSettings(func(s *vault.AppSettings) {
 		s.ActiveTheme = t.ID
 		s.ThemeMode = mode
@@ -621,6 +647,16 @@ func (a *App) PrepareBackgroundAsset(srcPath string) (*PrepareBackgroundAssetRes
 	// concurrent delete/import cannot race MkdirAll/WriteFile on the same tree.
 	a.themeWriteMu.Lock()
 	defer a.themeWriteMu.Unlock()
+
+	// Re-check vault still open at the snapshotted path before writing
+	// into themesDir (mirrors DeleteCustomTheme / SaveCustomTheme).
+	a.vaultMu.RLock()
+	closed := a.vaultPath != vaultPath
+	a.vaultMu.RUnlock()
+	if closed {
+		return nil, fmt.Errorf("vault closed during background asset prepare")
+	}
+
 	ref, isBase64, err := themes.PrepareBackgroundAsset(themesDir, srcPath)
 	if err != nil {
 		return nil, err

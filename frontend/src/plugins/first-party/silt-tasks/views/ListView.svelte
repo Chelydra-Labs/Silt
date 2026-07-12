@@ -186,6 +186,15 @@
     }, 60_000)
   })
 
+  // Must be declared before the reload $effect so day-boundary ticks
+  // re-subscribe and re-query date filters (overdue/today/upcoming).
+  let today = $derived.by(() => {
+    void nowTick
+    return ctx.today
+  })
+  let tomorrow = $derived(plusDaysISO(today, 1))
+  let weekAhead = $derived(plusDaysISO(today, 7))
+
   // Reload whenever any reactive input the query depends on changes.
   $effect(() => {
     const hub = getTaskHubState()
@@ -193,6 +202,7 @@
     void hub.groupBy
     void hub.sort
     void hub.activeFilter
+    void today
     void ctx.activeNotebook
     void ctx.activeSection
     void ctx.activePage
@@ -203,13 +213,6 @@
     void hub.filters.stale
     void reload()
   })
-
-  let today = $derived.by(() => {
-    void nowTick
-    return ctx.today
-  })
-  let tomorrow = $derived(plusDaysISO(today, 1))
-  let weekAhead = $derived(plusDaysISO(today, 7))
 
   // Server-side filtering (#526): openItems already match hub scope/filters.
   let filteredOpen = $derived(openItems)

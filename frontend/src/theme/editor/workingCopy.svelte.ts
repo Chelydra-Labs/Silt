@@ -9,6 +9,33 @@ import type { AdvancedGroup, ThemeDoc, ThemeModeKey } from '../types'
 
 export type WorkingCopy = ReturnType<typeof createWorkingCopy>
 
+/**
+ * Optional surface zones must be complete (bg + border + text) or absent.
+ * After a partial reset, drop incomplete zones so they inherit cleanly.
+ */
+export function pruneIncompleteSurfaces(doc: ThemeDoc): ThemeDoc {
+  const next = structuredClone(doc)
+  for (const modeKey of ['dark', 'light'] as const) {
+    const surfaces = next.modes[modeKey]?.surfaces
+    if (!surfaces || typeof surfaces !== 'object') continue
+    for (const zone of Object.keys(surfaces) as (keyof typeof surfaces)[]) {
+      if (zone === 'app') continue
+      const surface = surfaces[zone]
+      if (!surface || typeof surface !== 'object') {
+        delete surfaces[zone]
+        continue
+      }
+      const bg = surface.bg
+      const border = surface.border
+      const text = surface.text
+      if (!bg || !border || !text) {
+        delete surfaces[zone]
+      }
+    }
+  }
+  return next
+}
+
 export function createWorkingCopy() {
   let seed = $state.raw<ThemeDoc | null>(null)
   let draft = $state.raw<ThemeDoc | null>(null)
@@ -66,10 +93,12 @@ export function createWorkingCopy() {
   function resetPath(path: string): void {
     if (!seed || !draft) return
     const value = getAtPath(seed, path)
-    draft =
+    let next =
       value === undefined
         ? deleteAtPath(draft, path)
         : setAtPath(draft, path, structuredClone(value))
+    // Partial optional surfaces fail backend validate — drop incomplete zones.
+    draft = pruneIncompleteSurfaces(next)
     schedulePreview()
   }
 
@@ -84,7 +113,7 @@ export function createWorkingCopy() {
           ? deleteAtPath(next, path)
           : setAtPath(next, path, structuredClone(value))
     }
-    draft = next
+    draft = pruneIncompleteSurfaces(next)
     schedulePreview()
   }
 

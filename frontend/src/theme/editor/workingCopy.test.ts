@@ -13,6 +13,7 @@ vi.mock('../store.svelte', () => ({
 }))
 
 import { createWorkingCopy } from './workingCopy.svelte'
+import { concreteEditorDefaults } from './concreteEditorDefaults'
 import type { ThemeDoc } from '../types'
 
 const appOnly: ThemeDoc = {
@@ -75,7 +76,7 @@ describe('workingCopy resetPath', () => {
     })
   })
 
-  it('deletes inherited surface keys instead of setting undefined', () => {
+  it('deletes incomplete optional surfaces after partial leaf reset', () => {
     const wc = createWorkingCopy()
     wc.loadFromJson(JSON.stringify(appOnly))
     expect(wc.draft).not.toBeNull()
@@ -88,17 +89,39 @@ describe('workingCopy resetPath', () => {
     })
     expect(wc.draft!.modes.dark.surfaces.sidebar).toBeTruthy()
 
+    // Seed has no sidebar — resetting bg leaves an incomplete surface;
+    // the whole zone must be deleted so it inherits cleanly.
     wc.resetPath('modes.dark.surfaces.sidebar.bg')
-    const sidebar = wc.draft!.modes.dark.surfaces.sidebar as
-      Record<string, unknown> | undefined
-    // Seed has no sidebar.bg — key must be absent, not { bg: undefined }.
-    expect(sidebar).toBeTruthy()
-    expect(sidebar).not.toHaveProperty('bg')
-    expect('bg' in (sidebar ?? {})).toBe(false)
+    expect(wc.draft!.modes.dark.surfaces.sidebar).toBeUndefined()
+    expect(wc.draft!.modes.dark.surfaces).not.toHaveProperty('sidebar')
+  })
 
-    // Resetting the whole zone removes the sidebar key entirely.
+  it('deletes the whole zone when resetPath targets the zone key', () => {
+    const wc = createWorkingCopy()
+    wc.loadFromJson(JSON.stringify(appOnly))
+
+    wc.setAt('modes.dark.surfaces.sidebar', {
+      bg: '#111',
+      border: '#222',
+      text: '#eee'
+    })
     wc.resetPath('modes.dark.surfaces.sidebar')
     expect(wc.draft!.modes.dark.surfaces.sidebar).toBeUndefined()
     expect(wc.draft!.modes.dark.surfaces).not.toHaveProperty('sidebar')
+  })
+})
+
+describe('concreteEditorDefaults', () => {
+  it('builds concrete colors with no var() or color-mix()', () => {
+    const defaults = concreteEditorDefaults(appOnly.modes.dark)
+    const serialized = JSON.stringify(defaults)
+    expect(serialized).not.toMatch(/var\(/)
+    expect(serialized).not.toMatch(/color-mix\(/)
+    expect(defaults.caret).toBe(appOnly.modes.dark.accent.primary.start)
+    expect(defaults.selection).toBe(appOnly.modes.dark.accent.primary.glow)
+    expect(defaults.selection_text).toBe(appOnly.modes.dark.surfaces.app.text)
+    expect(defaults.link).toBe(appOnly.modes.dark.accent.secondary.start)
+    expect(defaults.link_hover).toBe(appOnly.modes.dark.accent.secondary.end)
+    expect(defaults.highlight).toBe(appOnly.modes.dark.status.warn)
   })
 })

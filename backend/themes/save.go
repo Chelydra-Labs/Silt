@@ -14,11 +14,22 @@ import (
 	"silt/backend/safeio"
 )
 
-// editorStagingThemeID is a reserved theme id used only for custom-theme
+// EditorStagingThemeID is a reserved theme id used only for custom-theme
 // editor preview staging. Large images are written to
 // themesDir/_editor.assets/<hash>.ext so themeAssetHandler can serve them
 // (it only accepts <id>.assets/ paths with a valid IsValidThemeID).
-const editorStagingThemeID = "_editor"
+// Never allocate, overwrite, rename, or delete this id as a user theme —
+// that would clobber the shared staging assets directory.
+const EditorStagingThemeID = "_editor"
+
+// editorStagingThemeID is the unexported alias used throughout this package.
+const editorStagingThemeID = EditorStagingThemeID
+
+// isReservedThemeID reports whether id is reserved for internal use and must
+// never be allocated or mutated as a user-facing custom theme.
+func isReservedThemeID(id string) bool {
+	return id == editorStagingThemeID
+}
 
 // editorStagingDir is the legacy relative directory under themesDir where the
 // custom theme editor staged large background images. Kept so
@@ -256,11 +267,15 @@ func cssURLInner(ref string) (string, bool) {
 	return inner, true
 }
 
-// assertOverwritableCustomID refuses first-class embed ids and missing files.
-// Custom saves never clobber a built-in id as if it were the packaged theme.
+// assertOverwritableCustomID refuses first-class embed ids, the reserved
+// editor staging id, and missing files. Custom saves never clobber a
+// built-in id as if it were the packaged theme.
 func assertOverwritableCustomID(themesDir, id string) error {
 	if !IsValidThemeID(id) {
 		return fmt.Errorf("invalid theme id %q", id)
+	}
+	if isReservedThemeID(id) {
+		return fmt.Errorf("cannot overwrite reserved theme id %q", id)
 	}
 	if _, ok := ParseEmbeddedByID(id); ok {
 		return fmt.Errorf("cannot overwrite built-in theme %q; save as a new custom theme instead", id)
@@ -285,9 +300,10 @@ func assertOverwritableCustomID(themesDir, id string) error {
 }
 
 // allocateNewThemeID builds a free custom id from a display name: sanitize to
-// [a-z0-9_-], namespace away from first-class embeds with the user- prefix, and
-// append -2/-3… on on-disk collisions (mirrors importer namespacing, but always
-// finds a free slot rather than refusing duplicates).
+// [a-z0-9_-], namespace away from first-class embeds and the reserved editor
+// staging id with the user- prefix, and append -2/-3… on on-disk collisions
+// (mirrors importer namespacing, but always finds a free slot rather than
+// refusing duplicates).
 func allocateNewThemeID(themesDir, name string) (string, error) {
 	base := sanitizeThemeID(name)
 	if base == "" {
@@ -297,12 +313,17 @@ func allocateNewThemeID(themesDir, name string) (string, error) {
 	if _, ok := ParseEmbeddedByID(id); ok {
 		id = userPrefix + id
 	}
-	// Also refuse to land on a first-class id after prefixing (defensive —
-	// user-<embed> is never itself first-class today).
+	// Reserved staging id (_editor) must never become a real theme file —
+	// that would share a path with _editor.assets/ used for preview staging.
+	if isReservedThemeID(id) {
+		id = userPrefix + id
+	}
+	// Also refuse to land on a first-class/reserved id after prefixing
+	// (defensive — user-<embed> is never itself first-class today).
 	if _, err := os.Stat(filepath.Join(themesDir, id+".json")); err == nil {
 		// collision
 	} else if os.IsNotExist(err) {
-		if _, ok := ParseEmbeddedByID(id); !ok {
+		if _, ok := ParseEmbeddedByID(id); !ok && !isReservedThemeID(id) {
 			return id, nil
 		}
 	} else if err != nil {
@@ -312,6 +333,9 @@ func allocateNewThemeID(themesDir, name string) (string, error) {
 	for i := 2; i <= 99; i++ {
 		proposed := fmt.Sprintf("%s-%d", id, i)
 		if _, ok := ParseEmbeddedByID(proposed); ok {
+			continue
+		}
+		if isReservedThemeID(proposed) {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(themesDir, proposed+".json")); os.IsNotExist(err) {
@@ -324,7 +348,8 @@ func allocateNewThemeID(themesDir, name string) (string, error) {
 }
 
 // RenameCustomTheme updates only the name field of an on-disk custom theme.
-// First-class embedded ids and missing files are refused.
+// First-class embedded ids, the reserved editor staging id, and missing
+// files are refused.
 func RenameCustomTheme(themesDir, id, name string) error {
 	if themesDir == "" {
 		return errors.New("themes directory is empty (vault not loaded)")
@@ -335,6 +360,9 @@ func RenameCustomTheme(themesDir, id, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("theme name is required")
+	}
+	if isReservedThemeID(id) {
+		return fmt.Errorf("cannot rename reserved theme id %q", id)
 	}
 	if _, ok := ParseEmbeddedByID(id); ok {
 		return fmt.Errorf("cannot rename built-in theme %q", id)
@@ -381,14 +409,20 @@ func RenameCustomTheme(themesDir, id, name string) error {
 }
 
 // DeleteCustomTheme removes <id>.json and <id>.assets/ for an on-disk custom
-// theme. First-class embedded ids and missing files are refused. The caller
-// (App.DeleteCustomTheme) must refuse deleting the active theme.
+// theme. First-class embedded ids, the reserved editor staging id, and
+// missing files are refused. The caller (App.DeleteCustomTheme) must refuse
+// deleting the active theme.
 func DeleteCustomTheme(themesDir, id string) error {
 	if themesDir == "" {
 		return errors.New("themes directory is empty (vault not loaded)")
 	}
 	if !IsValidThemeID(id) {
 		return fmt.Errorf("invalid theme id %q", id)
+	}
+	if isReservedThemeID(id) {
+		// Deleting _editor would RemoveAll(_editor.assets) and wipe live
+		// editor preview staging for every open custom-theme editor.
+		return fmt.Errorf("cannot delete reserved theme id %q", id)
 	}
 	if _, ok := ParseEmbeddedByID(id); ok {
 		return fmt.Errorf("cannot delete built-in theme %q", id)

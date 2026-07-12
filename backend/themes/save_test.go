@@ -201,6 +201,40 @@ func TestSaveCustomTheme_RefuseOverwriteEmbed(t *testing.T) {
 	}
 }
 
+// TestSaveCustomTheme_ReservedEditorID ensures the editor staging id
+// (_editor) is never allocated as a real theme file — that would share a
+// path with _editor.assets/ used for live preview staging.
+func TestSaveCustomTheme_ReservedEditorID(t *testing.T) {
+	themesDir := t.TempDir()
+	th := validV2Theme()
+	th.Name = "_editor"
+	info, err := SaveCustomTheme(themesDir, th, false)
+	if err != nil {
+		t.Fatalf("SaveCustomTheme: %v", err)
+	}
+	if info.ID == editorStagingThemeID {
+		t.Fatalf("allocated reserved id %q", info.ID)
+	}
+	if !strings.HasPrefix(info.ID, userPrefix) {
+		t.Errorf("expected user- prefix for reserved name, got %q", info.ID)
+	}
+	if _, err := os.Stat(filepath.Join(themesDir, editorStagingThemeID+".json")); !os.IsNotExist(err) {
+		t.Errorf("must not write %s.json: %v", editorStagingThemeID, err)
+	}
+
+	// Overwrite / rename / delete of the reserved id must all refuse.
+	th.ID = editorStagingThemeID
+	if _, err := SaveCustomTheme(themesDir, th, true); err == nil {
+		t.Fatal("expected refuse overwrite of reserved _editor")
+	}
+	if err := RenameCustomTheme(themesDir, editorStagingThemeID, "Nope"); err == nil {
+		t.Fatal("expected refuse rename of reserved _editor")
+	}
+	if err := DeleteCustomTheme(themesDir, editorStagingThemeID); err == nil {
+		t.Fatal("expected refuse delete of reserved _editor")
+	}
+}
+
 func TestSaveCustomTheme_RefuseOverwriteMissing(t *testing.T) {
 	themesDir := t.TempDir()
 	th := validV2Theme()

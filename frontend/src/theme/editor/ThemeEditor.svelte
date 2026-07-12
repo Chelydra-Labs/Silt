@@ -29,6 +29,7 @@
     type Surface,
     type SurfaceZone
   } from '../types'
+  import { concreteEditorDefaults } from './concreteEditorDefaults'
   import { createWorkingCopy } from './workingCopy.svelte'
   import OklchColorField from './OklchColorField.svelte'
   import ContrastBadge from './ContrastBadge.svelte'
@@ -61,6 +62,8 @@
   let surfaceZone = $state<SurfaceZone>('app')
   let bgZone = $state<SurfaceZone>('app')
   let pickingBg = $state(false)
+  // Generation counter: ignore stale bootstrap/save results after unmount/remount.
+  let gen = 0
 
   // Debounced contrast summary for aria-live (not per slider tick).
   let liveContrastMsg = $state('')
@@ -111,14 +114,16 @@
   })
 
   onMount(() => {
-    void bootstrap()
+    const my = ++gen
+    void bootstrap(my)
     return () => {
+      gen++
       if (contrastTimer !== null) clearTimeout(contrastTimer)
       wc.discard()
     }
   })
 
-  async function bootstrap() {
+  async function bootstrap(my: number) {
     wc.loading = true
     saveError = null
     try {
@@ -126,10 +131,13 @@
         wc.loadFromJson(injectJson)
       } else {
         const json = await getThemeJSONFn(themeId)
+        if (my !== gen) return
         wc.loadFromJson(json)
       }
+      if (my !== gen) return
       if (wc.draft) wc.previewNow()
     } catch (err) {
+      if (my !== gen) return
       // IPC/network failures must not be rewritten as a parse error.
       const msg = err instanceof Error ? err.message : String(err)
       wc.setLoadError(msg)
@@ -139,11 +147,12 @@
         fields: []
       })
     } finally {
-      wc.loading = false
+      if (my === gen) wc.loading = false
     }
   }
 
   function requestClose() {
+    if (saving) return
     if (wc.dirty) {
       const ok = window.confirm(
         'Leave without saving? Unsaved changes will be lost.'
@@ -164,6 +173,7 @@
 
   async function onSave(asNew: boolean) {
     if (!wc.draft) return
+    const my = gen
     const mustFork = !sourceIsDisk || asNew
     let name = wc.draft.name
     if (mustFork) {
@@ -183,29 +193,35 @@
         apply: true,
         name
       })
+      if (my !== gen) return
       if (!res) throw new Error('Save returned no result')
       const id = res.info?.id ?? themeId
       // Save succeeded — reseed + refresh store tokens so unmount restore
       // does not inject pre-save maps. Reseed failures are non-fatal.
       try {
         const fresh = await getThemeJSONFn(id)
+        if (my !== gen) return
         wc.loadFromJson(fresh)
         wc.previewNow()
         await refreshActiveTheme()
+        if (my !== gen) return
         setStatus({
           kind: 'success',
           message: `Saved theme "${res.info?.name ?? name}".`,
           fields: []
         })
       } catch {
+        if (my !== gen) return
         setStatus({
           kind: 'info',
           message: 'Saved, but could not refresh editor — re-open to continue.',
           fields: []
         })
       }
+      if (my !== gen) return
       onSaved?.(id)
     } catch (err) {
+      if (my !== gen) return
       const msg = err instanceof Error ? err.message : String(err)
       saveError = msg
       setStatus({
@@ -214,7 +230,7 @@
         fields: []
       })
     } finally {
-      saving = false
+      if (my === gen) saving = false
     }
   }
 
@@ -523,7 +539,8 @@
     <button
       type="button"
       onclick={requestClose}
-      class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-hover border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 font-label-sm"
+      disabled={saving}
+      class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-hover border-none bg-transparent cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 font-label-sm disabled:opacity-40 disabled:cursor-not-allowed"
     >
       <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
         >arrow_back</span
@@ -633,7 +650,8 @@
       </div>
       <button
         type="button"
-        class="mt-4 text-accent-primary-start font-label-sm-bold underline bg-transparent border-none cursor-pointer"
+        class="mt-4 text-accent-primary-start font-label-sm-bold underline bg-transparent border-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        disabled={saving}
         onclick={requestClose}>Back to Appearance</button
       >
     </div>
@@ -1253,33 +1271,8 @@
                   ''}
                 onchange={(v) => {
                   const m = wc.draft!.modes[mode()]
-                  const editor = {
-                    caret:
-                      m.editor?.caret ??
-                      previewTokens['--color-editor-caret'] ??
-                      '',
-                    selection:
-                      m.editor?.selection ??
-                      previewTokens['--color-editor-selection'] ??
-                      '',
-                    selection_text:
-                      m.editor?.selection_text ??
-                      previewTokens['--color-editor-selection-text'] ??
-                      '',
-                    link:
-                      m.editor?.link ??
-                      previewTokens['--color-editor-link'] ??
-                      '',
-                    link_hover:
-                      m.editor?.link_hover ??
-                      previewTokens['--color-editor-link-hover'] ??
-                      '',
-                    highlight:
-                      m.editor?.highlight ??
-                      previewTokens['--color-editor-highlight'] ??
-                      '',
-                    [field.key]: v
-                  }
+                  const base = concreteEditorDefaults(m)
+                  const editor = { ...base, [field.key]: v }
                   wc.setAt(wc.modePath('editor'), editor)
                 }}
                 onReset={() => {
