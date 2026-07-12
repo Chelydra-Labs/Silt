@@ -169,8 +169,11 @@ export function createWorkingCopy() {
         ? deleteAtPath(draft, path)
         : setAtPath(draft, path, cloneLeaf(value))
     // Partial optional surfaces fail backend validate — drop incomplete zones.
-    draft = pruneIncompleteSurfaces(next)
+    next = pruneIncompleteSurfaces(next)
     unlockDerived(path)
+    // Restoring a seed leaf/object must re-derive unlocked interaction tokens.
+    next = applyDerivedFromSeedEdit(next, path)
+    draft = next
     recomputeDirty()
     bumpMutation()
     schedulePreview()
@@ -188,7 +191,11 @@ export function createWorkingCopy() {
           : setAtPath(next, path, cloneLeaf(value))
       unlockDerived(path)
     }
-    draft = pruneIncompleteSurfaces(next)
+    next = pruneIncompleteSurfaces(next)
+    for (const path of paths) {
+      next = applyDerivedFromSeedEdit(next, path)
+    }
+    draft = next
     recomputeDirty()
     bumpMutation()
     schedulePreview()
@@ -223,19 +230,43 @@ export function createWorkingCopy() {
     setAt(path, value)
   }
 
+  /**
+   * Re-derive unlocked interaction tokens when app seed colors change.
+   * Accepts leaf paths (`…surfaces.app.bg|text`) and whole-object writes
+   * (`…surfaces.app`) used by Advanced → Surfaces `updateSurface`.
+   */
   function applyDerivedFromSeedEdit(doc: ThemeDoc, path: string): ThemeDoc {
-    // modes.{dark|light}.surfaces.app.bg|text
-    const m = /^modes\.(dark|light)\.(surfaces\.app\.(?:bg|text))$/.exec(path)
-    if (!m) return doc
-    const mode = m[1] as ThemeModeKey
-    const seedSuffix = m[2]
+    const leaf = /^modes\.(dark|light)\.(surfaces\.app\.(?:bg|text))$/.exec(
+      path
+    )
+    if (leaf) {
+      return rederiveFromSeedSuffix(doc, leaf[1] as ThemeModeKey, leaf[2])
+    }
+    // Whole app surface object (bg + border + text + optional background).
+    const obj = /^modes\.(dark|light)\.surfaces\.app$/.exec(path)
+    if (obj) {
+      const mode = obj[1] as ThemeModeKey
+      let next = doc
+      next = rederiveFromSeedSuffix(next, mode, 'surfaces.app.bg')
+      next = rederiveFromSeedSuffix(next, mode, 'surfaces.app.text')
+      return next
+    }
+    return doc
+  }
+
+  function rederiveFromSeedSuffix(
+    doc: ThemeDoc,
+    mode: ThemeModeKey,
+    seedSuffix: string
+  ): ThemeDoc {
+    const seedPath = `modes.${mode}.${seedSuffix}`
+    const seedVal = getAtPath(doc, seedPath)
+    if (typeof seedVal !== 'string') return doc
     let next = doc
     for (const rule of DERIVED_FROM_SEED) {
       if (rule.seedSuffix !== seedSuffix) continue
       const derivedPath = `modes.${mode}.${rule.derivedSuffix}`
       if (lockedDerived.has(derivedPath)) continue
-      const seedVal = getAtPath(next, path)
-      if (typeof seedVal !== 'string') continue
       const derived = rule.derive(seedVal)
       if (derived == null) continue
       next = setAtPath(next, derivedPath, derived)

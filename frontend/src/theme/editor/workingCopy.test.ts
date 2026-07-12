@@ -21,7 +21,7 @@ import {
   colorsMatch
 } from './workingCopy.svelte'
 import { concreteEditorDefaults } from './concreteEditorDefaults'
-import { deriveHover } from '../color'
+import { deriveActive, deriveDisabled, deriveHover } from '../color'
 import type { ThemeDoc } from '../types'
 
 const appOnly: ThemeDoc = {
@@ -209,6 +209,33 @@ describe('workingCopy derived locks (#529)', () => {
     expect(wc.isDerivedLocked('modes.dark.hover')).toBe(true)
     wc.setAt('modes.dark.surfaces.app.bg', '#112233')
     expect(wc.draft!.modes.dark.hover).toBe(lockedHover)
+  })
+
+  it('re-derives when whole surfaces.app object is written (Surfaces tab)', () => {
+    const wc = createWorkingCopy()
+    wc.loadFromJson(JSON.stringify(appOnly))
+    const app = {
+      ...appOnly.modes.dark.surfaces.app,
+      bg: '#224466',
+      text: '#eeeeee'
+    }
+    wc.setAt('modes.dark.surfaces.app', app)
+    expect(wc.draft!.modes.dark.hover).toBe(deriveHover('#224466'))
+    expect(wc.draft!.modes.dark.active).toBe(deriveActive('#224466'))
+    expect(wc.draft!.modes.dark.text_disabled).toBe(deriveDisabled('#eeeeee'))
+  })
+
+  it('resetPath on app bg re-derives unlocked hover/active', () => {
+    const wc = createWorkingCopy()
+    wc.loadFromJson(JSON.stringify(appOnly))
+    wc.setAt('modes.dark.surfaces.app.bg', '#224466')
+    expect(wc.draft!.modes.dark.hover).toBe(deriveHover('#224466'))
+    // Reset seed leaf back to authored seed value → re-derive from seed.
+    wc.resetPath('modes.dark.surfaces.app.bg')
+    const seedBg = appOnly.modes.dark.surfaces.app.bg
+    expect(wc.draft!.modes.dark.surfaces.app.bg).toBe(seedBg)
+    expect(wc.draft!.modes.dark.hover).toBe(deriveHover(seedBg))
+    expect(wc.draft!.modes.dark.active).toBe(deriveActive(seedBg))
   })
 
   it('resetDerivedToFormula unlocks and restores derivation', () => {
