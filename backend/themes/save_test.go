@@ -295,7 +295,7 @@ func TestPrepareBackgroundAsset_SmallBase64(t *testing.T) {
 		t.Errorf("unexpected ref: %q", ref)
 	}
 	// No staging dir for small files.
-	if _, err := os.Stat(filepath.Join(themesDir, editorStagingDir)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(themesDir, editorStagingThemeID+".assets")); !os.IsNotExist(err) {
 		t.Errorf("expected no staging dir for small file, err=%v", err)
 	}
 }
@@ -310,7 +310,8 @@ func TestPrepareBackgroundAsset_LargeStaging(t *testing.T) {
 	if isBase64 {
 		t.Errorf("expected staged file, got base64 ref=%q", ref)
 	}
-	if !strings.HasPrefix(ref, "url(\".editor-staging/") || !strings.HasSuffix(ref, ".jpg\")") {
+	wantPrefix := `url("` + editorStagingThemeID + `.assets/`
+	if !strings.HasPrefix(ref, wantPrefix) || !strings.HasSuffix(ref, ".jpg\")") {
 		t.Errorf("unexpected staging ref: %q", ref)
 	}
 	// Extract filename and confirm it exists.
@@ -347,8 +348,8 @@ func TestSaveCustomTheme_MaterializesStagingBackground(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	if strings.Contains(body, editorStagingDir) {
-		t.Errorf("theme JSON still references %s", editorStagingDir)
+	if strings.Contains(body, editorStagingDir) || strings.Contains(body, editorStagingThemeID+".assets") {
+		t.Errorf("theme JSON still references staging path")
 	}
 	// json.Marshal escapes " as \u0022 inside strings by default.
 	wantAssetPath := info.ID + `.assets/`
@@ -360,7 +361,7 @@ func TestSaveCustomTheme_MaterializesStagingBackground(t *testing.T) {
 	if !ok {
 		t.Fatalf("could not parse staging ref %q", ref)
 	}
-	filename := strings.TrimPrefix(filepath.ToSlash(inner), editorStagingDir+"/")
+	filename := strings.TrimPrefix(filepath.ToSlash(inner), editorStagingThemeID+".assets/")
 	assetPath := filepath.Join(themesDir, info.ID+".assets", filename)
 	if _, err := os.Stat(assetPath); err != nil {
 		t.Errorf("materialized asset missing at %s: %v", assetPath, err)
@@ -412,12 +413,51 @@ func TestSaveCustomTheme_DataURIBackgroundUnchanged(t *testing.T) {
 
 func TestSaveCustomTheme_MissingStagingBackgroundErrors(t *testing.T) {
 	themesDir := t.TempDir()
-	th := validV2Theme()
-	th.Name = "Missing Staging"
-	th.Modes.Dark.Surfaces.App.Background = &Background{
-		Image: `url(".editor-staging/deadbeef.png")`,
+	for _, image := range []string{
+		`url(".editor-staging/deadbeef.png")`,
+		`url("_editor.assets/deadbeef.png")`,
+	} {
+		th := validV2Theme()
+		th.Name = "Missing Staging"
+		th.Modes.Dark.Surfaces.App.Background = &Background{Image: image}
+		if _, err := SaveCustomTheme(themesDir, th, false); err == nil {
+			t.Fatalf("expected error for missing staged asset %q", image)
+		}
 	}
-	if _, err := SaveCustomTheme(themesDir, th, false); err == nil {
-		t.Fatal("expected error for missing staged asset")
+}
+
+func TestSaveCustomTheme_MaterializesLegacyStagingBackground(t *testing.T) {
+	// In-flight editor sessions may still hold url(".editor-staging/...") refs.
+	themesDir := t.TempDir()
+	filename := "legacydead.png"
+	stagingDir := filepath.Join(themesDir, editorStagingDir)
+	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := make([]byte, 60*1024)
+	for i := range raw {
+		raw[i] = byte(i)
+	}
+	if err := os.WriteFile(filepath.Join(stagingDir, filename), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ref := `url(".editor-staging/` + filename + `")`
+
+	th := validV2Theme()
+	th.Name = "Legacy Staging BG"
+	th.Modes.Dark.Surfaces.App.Background = &Background{Image: ref, Size: "cover"}
+
+	info, err := SaveCustomTheme(themesDir, th, false)
+	if err != nil {
+		t.Fatalf("SaveCustomTheme: %v", err)
+	}
+	assetPath := filepath.Join(themesDir, info.ID+".assets", filename)
+	if _, err := os.Stat(assetPath); err != nil {
+		t.Errorf("materialized legacy asset missing at %s: %v", assetPath, err)
+	}
+	wantRefPrefix := `url("` + info.ID + `.assets/`
+	if th.Modes.Dark.Surfaces.App.Background == nil ||
+		!strings.HasPrefix(th.Modes.Dark.Surfaces.App.Background.Image, wantRefPrefix) {
+		t.Errorf("in-memory theme image not rewritten: %+v", th.Modes.Dark.Surfaces.App.Background)
 	}
 }

@@ -56,10 +56,9 @@ function emitBackground(
   if (image) out[`--silt-bg-${zone}-image`] = image
   const size = b.size?.trim()
   if (size) out[`--silt-bg-${zone}-size`] = size
-  if (b.opacity !== undefined && b.opacity !== null) {
-    // Match Go trimFloat: no trailing zeros beyond necessity.
-    out[`--silt-bg-${zone}-opacity`] = String(b.opacity)
-  }
+  // Always emit opacity when a background block is present so CSS does not
+  // inherit a stale value from a previous theme (default 0 when unset).
+  out[`--silt-bg-${zone}-opacity`] = String(b.opacity ?? 0)
   const blend = b.blend?.trim()
   if (blend) out[`--silt-bg-${zone}-blend`] = blend
   const position = b.position?.trim()
@@ -73,10 +72,15 @@ function emitSurface(
   z: ZoneCss,
   s: Surface | undefined
 ): void {
-  if (s) {
-    out[z.cssBg] = s.bg.trim()
-    out[z.cssBorder] = s.border.trim()
-    out[z.cssText] = s.text.trim()
+  // Incomplete shells (e.g. after resetPath deleted a leaf on an inherited
+  // zone) fall through to parent var() chains instead of crashing on .trim().
+  const bg = s?.bg?.trim()
+  const border = s?.border?.trim()
+  const text = s?.text?.trim()
+  if (s && bg && border && text) {
+    out[z.cssBg] = bg
+    out[z.cssBorder] = border
+    out[z.cssText] = text
     const muted = s.text_muted?.trim()
     out[z.cssTextMuted] = muted || 'var(--color-text-muted)'
     const disabled = s.text_disabled?.trim()

@@ -479,6 +479,15 @@ func (a *App) SaveCustomTheme(req SaveCustomThemeRequest) (*SaveCustomThemeResul
 	a.themeWriteMu.Lock()
 	defer a.themeWriteMu.Unlock()
 
+	// Re-check vault still open at the snapshotted path before file IO
+	// (mirrors PickBackgroundImage #404 hardening).
+	a.vaultMu.RLock()
+	closed := a.vaultPath != vaultPath
+	a.vaultMu.RUnlock()
+	if closed {
+		return nil, fmt.Errorf("vault closed during theme save")
+	}
+
 	info, err := themes.SaveCustomTheme(themesDir, t, req.Overwrite)
 	if err != nil {
 		log.Printf("themes: SaveCustomTheme failed: %v", err)
@@ -520,6 +529,16 @@ func (a *App) RenameCustomTheme(id, name string) error {
 	themesDir := filepath.Join(vaultPath, ".system", "themes")
 	a.themeWriteMu.Lock()
 	defer a.themeWriteMu.Unlock()
+
+	// Re-check vault still open at the snapshotted path before file IO
+	// (mirrors PickBackgroundImage #404 hardening).
+	a.vaultMu.RLock()
+	closed := a.vaultPath != vaultPath
+	a.vaultMu.RUnlock()
+	if closed {
+		return fmt.Errorf("vault closed during theme rename")
+	}
+
 	if err := themes.RenameCustomTheme(themesDir, id, name); err != nil {
 		return err
 	}
@@ -528,13 +547,30 @@ func (a *App) RenameCustomTheme(id, name string) error {
 }
 
 // DeleteCustomTheme removes an on-disk custom theme and its assets directory.
-// Refuses the active theme, built-in ids, and missing files.
+// Refuses the active theme, built-in ids, and missing files. Active-theme
+// check runs under themeWriteMu so a concurrent ApplyTheme cannot race the
+// delete past the guard (TOCTOU).
 func (a *App) DeleteCustomTheme(id string) error {
 	a.vaultMu.RLock()
 	vaultPath := a.vaultPath
 	a.vaultMu.RUnlock()
 	if vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
+	}
+
+	themesDir := filepath.Join(vaultPath, ".system", "themes")
+	// Acquire themeWriteMu BEFORE LoadSettings/active check so ApplyTheme
+	// (which also holds themeWriteMu when writing ActiveTheme) cannot slip
+	// the active id past this guard between check and delete.
+	a.themeWriteMu.Lock()
+	defer a.themeWriteMu.Unlock()
+
+	// Re-check vault still open at the snapshotted path before any IO.
+	a.vaultMu.RLock()
+	closed := a.vaultPath != vaultPath
+	a.vaultMu.RUnlock()
+	if closed {
+		return fmt.Errorf("vault closed during theme delete")
 	}
 
 	settings, err := vault.LoadSettings()
@@ -545,9 +581,6 @@ func (a *App) DeleteCustomTheme(id string) error {
 		return fmt.Errorf("cannot delete the active theme %q; switch themes first", id)
 	}
 
-	themesDir := filepath.Join(vaultPath, ".system", "themes")
-	a.themeWriteMu.Lock()
-	defer a.themeWriteMu.Unlock()
 	if err := themes.DeleteCustomTheme(themesDir, id); err != nil {
 		return err
 	}
@@ -574,7 +607,8 @@ func (a *App) PickImageFile() (string, error) {
 
 // PrepareBackgroundAsset stages an image for the custom theme editor without
 // mutating any theme file. Small images become data URIs; large ones land in
-// <themesDir>/.editor-staging/ and return a relative url() reference.
+// <themesDir>/_editor.assets/ and return a relative url() reference that
+// themeAssetHandler can serve for live preview.
 func (a *App) PrepareBackgroundAsset(srcPath string) (*PrepareBackgroundAssetResult, error) {
 	a.vaultMu.RLock()
 	vaultPath := a.vaultPath

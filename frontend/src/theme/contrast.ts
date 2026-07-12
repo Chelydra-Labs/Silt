@@ -202,13 +202,15 @@ export function coreContrastPairs(
       fg && bg && !fg.startsWith('var(') && !bg.startsWith('var(')
         ? contrastRatioWCAG(fg, bg)
         : null
+    // Accent is UI chrome (3:1 AA); body/muted/error/editor text use 4.5:1.
+    const textPair = id !== 'accent'
     return {
       id,
       label,
       fg: fg ?? '',
       bg: bg ?? '',
       ratio,
-      level: classifyContrast(ratio, true)
+      level: classifyContrast(ratio, textPair)
     }
   })
 }

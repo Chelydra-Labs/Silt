@@ -7,7 +7,7 @@
   //
   // The header (title + count) lives in TasksHub.svelte; this component
   // reports its open/done counts upward via onCountChange.
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, untrack } from 'svelte'
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
   import type { PluginContext, PluginManifest } from '../../../sdk'
@@ -70,7 +70,11 @@
   let loadSeq = 0
   async function reload() {
     const my = ++loadSeq
-    loading = true
+    // Keep existing rows visible during refresh; only skeleton on first load.
+    // untrack: reading open/done here must not re-subscribe the $effect that
+    // calls reload (would loop on every openItems assignment).
+    const hadRows = untrack(() => openItems.length > 0 || doneItems.length > 0)
+    if (!hadRows) loading = true
     errorMsg = ''
     try {
       const hub = getTaskHubState()
@@ -1021,7 +1025,7 @@
           data-testid="tasks-truncated-notice"
         >
           Showing the first
-          {filteredOpen.length + doneItems.length}
+          {filteredOpen.length + filteredDone.length}
           tasks — there are more below the display limit. Complete or reschedule some
           to surface them.
         </p>

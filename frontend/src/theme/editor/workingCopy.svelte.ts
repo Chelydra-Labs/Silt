@@ -60,11 +60,16 @@ export function createWorkingCopy() {
    * Reset a dotted path under the draft to the seed value.
    * Path is relative to the document root, e.g.
    * `modes.dark.surfaces.app.bg` or `typography.font_family`.
+   * When the seed has no value at the path, the draft key is deleted
+   * (not set to undefined) so inherited zones stay clean.
    */
   function resetPath(path: string): void {
     if (!seed || !draft) return
     const value = getAtPath(seed, path)
-    draft = setAtPath(draft, path, structuredClone(value))
+    draft =
+      value === undefined
+        ? deleteAtPath(draft, path)
+        : setAtPath(draft, path, structuredClone(value))
     schedulePreview()
   }
 
@@ -74,7 +79,10 @@ export function createWorkingCopy() {
     let next = draft
     for (const path of paths) {
       const value = getAtPath(seed, path)
-      next = setAtPath(next, path, structuredClone(value))
+      next =
+        value === undefined
+          ? deleteAtPath(next, path)
+          : setAtPath(next, path, structuredClone(value))
     }
     draft = next
     schedulePreview()
@@ -82,7 +90,11 @@ export function createWorkingCopy() {
 
   function setAt(path: string, value: unknown): void {
     if (!draft) return
-    draft = setAtPath(draft, path, value)
+    // undefined means "remove this key" (fonts, optional surfaces, etc.).
+    draft =
+      value === undefined
+        ? deleteAtPath(draft, path)
+        : setAtPath(draft, path, value)
     schedulePreview()
   }
 
@@ -227,5 +239,40 @@ function setAtPath<T>(obj: T, path: string, value: unknown): T {
     cur = cur[key] as Record<string, unknown>
   }
   cur[parts[parts.length - 1]] = value
+  return root as T
+}
+
+/**
+ * Remove a leaf key at a dotted path. Prunes empty parent objects so
+ * resetting an inherited zone (e.g. surfaces.sidebar) does not leave
+ * `{ sidebar: { bg: undefined } }` or empty `{}` shells behind.
+ */
+function deleteAtPath<T>(obj: T, path: string): T {
+  const parts = path.split('.').filter(Boolean)
+  if (parts.length === 0) return obj
+  const root = structuredClone(obj) as Record<string, unknown>
+
+  function walk(cur: Record<string, unknown>, depth: number): boolean {
+    const key = parts[depth]
+    if (depth === parts.length - 1) {
+      if (!(key in cur)) return Object.keys(cur).length === 0
+      delete cur[key]
+      return Object.keys(cur).length === 0
+    }
+    const next = cur[key]
+    if (next === null || next === undefined || typeof next !== 'object') {
+      return Object.keys(cur).length === 0
+    }
+    const child = structuredClone(next) as Record<string, unknown>
+    const empty = walk(child, depth + 1)
+    if (empty) {
+      delete cur[key]
+    } else {
+      cur[key] = child
+    }
+    return Object.keys(cur).length === 0
+  }
+
+  walk(root, 0)
   return root as T
 }

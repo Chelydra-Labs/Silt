@@ -7,6 +7,7 @@
     getThemeJSON,
     pickImageFile,
     prepareBackgroundAsset,
+    refreshActiveTheme,
     saveCustomTheme,
     setStatus
   } from '../store.svelte'
@@ -184,15 +185,25 @@
       })
       if (!res) throw new Error('Save returned no result')
       const id = res.info?.id ?? themeId
-      // Re-seed from disk so staging refs match materialized <id>.assets/ paths.
-      const fresh = await getThemeJSONFn(id)
-      wc.loadFromJson(fresh)
-      wc.previewNow()
-      setStatus({
-        kind: 'success',
-        message: `Saved theme "${res.info?.name ?? name}".`,
-        fields: []
-      })
+      // Save succeeded — reseed + refresh store tokens so unmount restore
+      // does not inject pre-save maps. Reseed failures are non-fatal.
+      try {
+        const fresh = await getThemeJSONFn(id)
+        wc.loadFromJson(fresh)
+        wc.previewNow()
+        await refreshActiveTheme()
+        setStatus({
+          kind: 'success',
+          message: `Saved theme "${res.info?.name ?? name}".`,
+          fields: []
+        })
+      } catch {
+        setStatus({
+          kind: 'info',
+          message: 'Saved, but could not refresh editor — re-open to continue.',
+          fields: []
+        })
+      }
       onSaved?.(id)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -222,25 +233,22 @@
     wc.setColor(wc.modePath('surfaces.app.text'), v)
   }
   function setAccentStart(v: string) {
-    wc.setColor(wc.modePath('accent.primary.start'), v)
-    // Keep end/glow coherent for Simple path: end slightly deeper, glow soft.
-    // Advanced still exposes full triple.
+    // Capture before start write — after setColor, draft is replaced and
+    // end === start would always be true if we compared post-write values.
     const m = wc.draft?.modes[mode()]
-    if (m && m.accent.primary.end === m.accent.primary.start) {
+    const prevStart = m?.accent.primary.start
+    const prevEnd = m?.accent.primary.end
+    wc.setColor(wc.modePath('accent.primary.start'), v)
+    if (m && prevEnd === prevStart) {
       wc.setColor(wc.modePath('accent.primary.end'), v)
     }
   }
 
   function setBodyFont(v: string) {
     if (!wc.draft) return
-    const next = {
-      ...wc.draft,
-      typography: {
-        ...(wc.draft.typography ?? {}),
-        font_family: v
-      }
-    }
-    wc.setAt('typography', next.typography)
+    const trimmed = v.trim()
+    // Empty → delete key so unset matches advanced font selects.
+    wc.setAt('typography.font_family', trimmed || undefined)
   }
 
   function setRadiusMd(v: string) {
@@ -330,13 +338,10 @@
   }
 
   function clearBackground() {
-    const base = ensureSurface(bgZone)
-    const { background: _drop, ...rest } = base
-    updateSurface(bgZone, { ...rest, background: undefined })
-    // Explicit clear of background key
     if (!wc.draft) return
     const zone = bgZone
     const surf = ensureSurface(zone)
+    // Single write that omits the background key entirely.
     const next: Surface = {
       bg: surf.bg,
       border: surf.border,
@@ -612,7 +617,11 @@
   </header>
 
   {#if wc.loading}
-    <div class="flex-1 flex items-center justify-center text-text-muted p-8">
+    <div
+      class="flex-1 flex items-center justify-center text-text-muted p-8"
+      role="status"
+      aria-live="polite"
+    >
       Loading theme…
     </div>
   {:else if wc.loadError && !wc.draft}
@@ -1478,13 +1487,11 @@
 
       <div class="flex-1"></div>
 
-      <div
-        class="flex flex-wrap items-center gap-2"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        <span class="text-type-xs font-label-sm text-text-muted"
-          >{liveContrastMsg}</span
+      <div class="flex flex-wrap items-center gap-2">
+        <span
+          class="text-type-xs font-label-sm text-text-muted"
+          aria-live="polite"
+          aria-atomic="true">{liveContrastMsg}</span
         >
         {#each belowAA.slice(0, 3) as pair (pair.id)}
           <button

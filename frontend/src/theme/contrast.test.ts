@@ -84,6 +84,27 @@ describe('coreContrastPairs', () => {
     }
   })
 
+  it('classifies accent with UI (3:1) bands, not text (4.5:1)', () => {
+    // ~3.2:1 teal on dark — pass for UI chrome, would be fail for body text.
+    const pairs = coreContrastPairs({
+      '--color-surface-app': '#1a1a1a',
+      '--color-surface-app-text': '#ffffff',
+      '--color-text-muted': '#cccccc',
+      '--color-accent-primary-start': '#5a8a7a',
+      '--color-error': '#e8728a',
+      '--color-error-bg': '#171015',
+      '--color-surface-editor': '#111216',
+      '--color-surface-editor-text': '#dee3e6'
+    })
+    const accent = pairs.find((p) => p.id === 'accent')!
+    expect(accent.ratio).not.toBeNull()
+    expect(accent.ratio!).toBeGreaterThanOrEqual(2.5)
+    expect(accent.ratio!).toBeLessThan(4.5)
+    // UI band: ≥3 pass, 2.5–3 warn — not text fail.
+    expect(accent.level).not.toBe('fail')
+    expect(classifyContrast(accent.ratio, false)).toBe(accent.level)
+  })
+
   it('resolves var() inheritance for editor text', () => {
     const pairs = coreContrastPairs({
       '--color-surface-app': '#0e0f12',

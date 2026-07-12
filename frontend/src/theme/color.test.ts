@@ -44,6 +44,17 @@ describe('color helper (#385)', () => {
     expect(toOklch(formatted)!.L).toBeCloseTo(0.7, 4)
   })
 
+  it('greyscale hex toOklch/formatOklch does not throw; H is 0', () => {
+    // Achromatic colors have undefined hue in culori — must not crash the editor.
+    expect(() => toOklch('#808080')).not.toThrow()
+    const lch = toOklch('#808080')
+    expect(lch).not.toBeNull()
+    expect(lch!.H).toBe(0)
+    expect(lch!.C).toBeCloseTo(0, 4)
+    expect(() => formatOklch(lch!)).not.toThrow()
+    expect(formatOklch(lch!)).toMatch(/^oklch\(/)
+  })
+
   it('deriveHover preserves the input format (hex in → hex out; oklch in → oklch out)', () => {
     const hexOut = deriveHover('#4a4a4a')
     expect(hexOut).not.toBeNull()

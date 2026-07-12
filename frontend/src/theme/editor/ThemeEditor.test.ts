@@ -7,6 +7,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 const mocks = vi.hoisted(() => ({
   injectTokens: vi.fn(),
   restoreActiveTheme: vi.fn(),
+  refreshActiveTheme: vi.fn(),
   setStatus: vi.fn(),
   getThemeJSON: vi.fn(),
   saveCustomTheme: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('../store.svelte', () => ({
   pickImageFile: mocks.pickImageFile,
   prepareBackgroundAsset: mocks.prepareBackgroundAsset,
   restoreActiveTheme: mocks.restoreActiveTheme,
+  refreshActiveTheme: mocks.refreshActiveTheme,
   setStatus: mocks.setStatus
 }))
 
@@ -98,6 +100,8 @@ describe('ThemeEditor', () => {
   beforeEach(() => {
     mocks.injectTokens.mockReset()
     mocks.restoreActiveTheme.mockReset()
+    mocks.refreshActiveTheme.mockReset()
+    mocks.refreshActiveTheme.mockResolvedValue(undefined)
     mocks.setStatus.mockReset()
     mocks.getThemeJSON.mockReset()
     mocks.saveCustomTheme.mockReset()
@@ -299,6 +303,7 @@ describe('ThemeEditor', () => {
     await tick()
 
     expect(getThemeJSONFn).toHaveBeenCalledWith('user-saved')
+    expect(mocks.refreshActiveTheme).toHaveBeenCalled()
     expect(screen.getByText(/Theme Editor · Saved Custom/)).toBeTruthy()
   })
 

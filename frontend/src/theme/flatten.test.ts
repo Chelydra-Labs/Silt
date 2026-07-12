@@ -142,6 +142,15 @@ describe('flattenTheme', () => {
     expect(tokens['--silt-bg-app-scrim']).toBe('#0e0f12')
   })
 
+  it('always emits opacity (default 0) when background is present', () => {
+    const withBg: ThemeDoc = structuredClone(sample)
+    withBg.modes.dark.surfaces.app.background = {
+      image: 'url("data:image/png;base64,xx")'
+    }
+    const tokens = flattenTheme(withBg, 'dark')
+    expect(tokens['--silt-bg-app-opacity']).toBe('0')
+  })
+
   it('switches light mode tokens', () => {
     const tokens = flattenTheme(sample, 'light')
     expect(tokens['--color-surface-app']).toBe('#f8fafc')

@@ -205,6 +205,17 @@ export function restoreActiveTheme(): void {
 }
 
 /**
+ * Re-fetch the active theme from the backend and update store token maps.
+ * Call after a successful save with apply:true so restoreActiveTheme on
+ * editor unmount does not re-inject stale pre-save tokens (theme:changed
+ * skips when id+mode match the local state).
+ */
+export async function refreshActiveTheme(): Promise<void> {
+  const res = await GetActiveTheme()
+  applyResult(res)
+}
+
+/**
  * Initialize the theme engine on startup. Loads the active theme over IPC,
  * injects it before/with the first meaningful paint, and wires up the
  * "system" mode listener + theme:changed event. Safe to call once.

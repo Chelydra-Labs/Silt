@@ -14,10 +14,16 @@ import (
 	"silt/backend/safeio"
 )
 
-// editorStagingDir is the relative directory under themesDir where the custom
-// theme editor stages large background images before Save materializes them
-// into a theme's <id>.assets/ tree. Hidden (dot-prefixed) so it is not
-// mistaken for a theme file by ListThemes.
+// editorStagingThemeID is a reserved theme id used only for custom-theme
+// editor preview staging. Large images are written to
+// themesDir/_editor.assets/<hash>.ext so themeAssetHandler can serve them
+// (it only accepts <id>.assets/ paths with a valid IsValidThemeID).
+const editorStagingThemeID = "_editor"
+
+// editorStagingDir is the legacy relative directory under themesDir where the
+// custom theme editor staged large background images. Kept so
+// materializeStagingImageRef can still resolve in-flight refs from older
+// editor sessions that used url(".editor-staging/...").
 const editorStagingDir = ".editor-staging"
 
 // GetThemeJSON returns the canonical JSON for the theme with the given id.
@@ -117,9 +123,10 @@ func SaveCustomTheme(themesDir string, t *Theme, overwrite bool) (*ThemeInfo, er
 }
 
 // materializeStagingBackgrounds walks both modes' surfaces; for each
-// background.image that references editorStagingDir (e.g. url(".editor-staging/foo.png")),
-// copy the staged file into themesDir/<themeID>.assets/<filename> and rewrite
-// the image ref to url("<themeID>.assets/<filename>").
+// background.image that references editor staging (url("_editor.assets/foo.png")
+// or legacy url(".editor-staging/foo.png")), copy the staged file into
+// themesDir/<themeID>.assets/<filename> and rewrite the image ref to
+// url("<themeID>.assets/<filename>").
 // Data-URI refs and already-materialized <id>.assets/ refs are left alone.
 // Missing staging file → return error (fail loud).
 func materializeStagingBackgrounds(themesDir string, t *Theme) error {
@@ -166,8 +173,10 @@ func materializeSurfaceStaging(themesDir, themeID string, s *Surface) error {
 }
 
 // materializeStagingImageRef rewrites a staging url(...) ref into a permanent
-// <themeID>.assets/ ref after copying the file. Returns "" when the ref is not
-// a staging path (data URI, already-materialized assets, bare colors, etc.).
+// <themeID>.assets/ ref after copying the file. Accepts both the current
+// _editor.assets/ prefix and the legacy .editor-staging/ prefix. Returns ""
+// when the ref is not a staging path (data URI, already-materialized assets,
+// bare colors, etc.).
 func materializeStagingImageRef(themesDir, themeID, image string) (string, error) {
 	inner, ok := cssURLInner(image)
 	if !ok {
@@ -177,17 +186,29 @@ func materializeStagingImageRef(themesDir, themeID, image string) (string, error
 		return "", nil
 	}
 	rel := filepath.ToSlash(inner)
-	stagingPrefix := editorStagingDir + "/"
-	if !strings.HasPrefix(rel, stagingPrefix) {
+
+	var stagingRoot, filename string
+	switch {
+	case strings.HasPrefix(rel, editorStagingThemeID+".assets/"):
+		filename = rel[len(editorStagingThemeID+".assets/"):]
+		stagingRoot = filepath.Join(themesDir, editorStagingThemeID+".assets")
+	case strings.HasPrefix(rel, editorStagingDir+"/"):
+		filename = rel[len(editorStagingDir+"/"):]
+		stagingRoot = filepath.Join(themesDir, editorStagingDir)
+	default:
 		return "", nil
 	}
-	filename := rel[len(stagingPrefix):]
+
 	// Content-addressed staging names are single path segments; reject traversal.
-	if filename == "" || strings.Contains(filename, "..") || strings.Contains(filename, "/") {
+	if filename == "" || strings.Contains(filename, "..") || strings.ContainsAny(filename, `/\`) {
 		return "", fmt.Errorf("invalid staging background ref %q", image)
 	}
 
-	src := filepath.Join(themesDir, editorStagingDir, filename)
+	src := filepath.Join(stagingRoot, filepath.Clean(filename))
+	// Defense in depth: cleaned path must stay within the staging directory.
+	if !isPathWithinDir(src, stagingRoot) {
+		return "", fmt.Errorf("invalid staging background ref %q", image)
+	}
 	raw, err := os.ReadFile(src)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -205,6 +226,17 @@ func materializeStagingImageRef(themesDir, themeID, image string) (string, error
 		return "", fmt.Errorf("failed to materialize background asset: %w", err)
 	}
 	return fmt.Sprintf("url(\"%s.assets/%s\")", themeID, filename), nil
+}
+
+// isPathWithinDir reports whether path is dir itself or lives under it after
+// filepath.Clean (CWE-22 backstop for staging materialization).
+func isPathWithinDir(path, dir string) bool {
+	cleanPath := filepath.Clean(path)
+	cleanDir := filepath.Clean(dir)
+	if cleanPath == cleanDir {
+		return true
+	}
+	return strings.HasPrefix(cleanPath, cleanDir+string(filepath.Separator))
 }
 
 // cssURLInner extracts the path/data from a CSS url("...") / url('...') / url(...)
@@ -383,9 +415,10 @@ func DeleteCustomTheme(themesDir, id string) error {
 
 // PrepareBackgroundAsset reads an image like StoreBackgroundAsset but does not
 // write into a theme. Small files (≤ base64InlineThreshold) become a data-URI
-// reference; larger files are copied to themesDir/.editor-staging/<hash>.<ext>
-// and returned as url(".editor-staging/..."). Used by the custom theme editor
-// for live preview before Save.
+// reference; larger files are copied to themesDir/_editor.assets/<hash>.<ext>
+// and returned as url("_editor.assets/..."). The reserved theme id lets
+// themeAssetHandler serve the preview (it only accepts <id>.assets/ paths).
+// Used by the custom theme editor for live preview before Save.
 func PrepareBackgroundAsset(themesDir, srcPath string) (ref string, isBase64 bool, err error) {
 	if themesDir == "" {
 		return "", false, errors.New("themes directory is empty (vault not loaded)")
@@ -416,12 +449,12 @@ func PrepareBackgroundAsset(themesDir, srcPath string) (ref string, isBase64 boo
 		return fmt.Sprintf("url(\"data:%s;base64,%s\")", mime, encoded), true, nil
 	}
 
-	// Large file: stage under .editor-staging/ with a content-addressed name so
-	// re-picking the same bytes is idempotent and concurrent picks never
-	// clobber each other.
+	// Large file: stage under _editor.assets/ with a content-addressed name so
+	// re-picking the same bytes is idempotent, concurrent picks never clobber
+	// each other, and themeAssetHandler can serve the preview URL.
 	sum := sha256.Sum256(raw)
 	filename := fmt.Sprintf("%x%s", sum[:8], ext)
-	stagingDir := filepath.Join(themesDir, editorStagingDir)
+	stagingDir := filepath.Join(themesDir, editorStagingThemeID+".assets")
 	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
 		return "", false, fmt.Errorf("failed to create editor staging directory: %w", err)
 	}
@@ -429,5 +462,5 @@ func PrepareBackgroundAsset(themesDir, srcPath string) (ref string, isBase64 boo
 	if err := os.WriteFile(dst, raw, 0o600); err != nil {
 		return "", false, fmt.Errorf("failed to write staged asset: %w", err)
 	}
-	return fmt.Sprintf("url(\"%s/%s\")", editorStagingDir, filename), false, nil
+	return fmt.Sprintf("url(\"%s.assets/%s\")", editorStagingThemeID, filename), false, nil
 }

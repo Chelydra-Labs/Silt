@@ -104,7 +104,11 @@
     const formatted = formatOklch({
       L: clampL(next.L),
       C: Math.max(0, next.C),
-      H: ((next.H % 360) + 360) % 360
+      H: ((next.H % 360) + 360) % 360,
+      // Preserve authored alpha on slider edits (formatOklch omits alpha === 1).
+      ...(next.alpha !== undefined && next.alpha !== 1
+        ? { alpha: next.alpha }
+        : {})
     })
     onchange(formatted)
   }
