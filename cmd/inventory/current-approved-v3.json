@@ -109,6 +109,10 @@
         "signature": "DeleteAttachment(notebook, relPath string) error"
       },
       {
+        "name": "DeleteCustomTheme",
+        "signature": "DeleteCustomTheme(id string) error"
+      },
+      {
         "name": "DeleteNotebook",
         "signature": "DeleteNotebook(notebook string) error"
       },
@@ -241,6 +245,10 @@
         "signature": "GetTemplate(id string) (templates.Template, error)"
       },
       {
+        "name": "GetThemeJSON",
+        "signature": "GetThemeJSON(id string) (string, error)"
+      },
+      {
         "name": "GetTrustedPublishers",
         "signature": "GetTrustedPublishers() ([]string, error)"
       },
@@ -327,6 +335,10 @@
       {
         "name": "PickExportPath",
         "signature": "PickExportPath(defaultFilename string) (string, error)"
+      },
+      {
+        "name": "PickImageFile",
+        "signature": "PickImageFile() (string, error)"
       },
       {
         "name": "PickLinkedNotebook",
@@ -557,6 +569,10 @@
         "signature": "PluginWriteFile(pluginID, sessionToken, notebook, relPath string, data []byte) error"
       },
       {
+        "name": "PrepareBackgroundAsset",
+        "signature": "PrepareBackgroundAsset(srcPath string) (*PrepareBackgroundAssetResult, error)"
+      },
+      {
         "name": "QueryBlocksByTag",
         "signature": "QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error)"
       },
@@ -605,6 +621,10 @@
         "signature": "RemoveTrustedPublisher(publisher string) error"
       },
       {
+        "name": "RenameCustomTheme",
+        "signature": "RenameCustomTheme(id, name string) error"
+      },
+      {
         "name": "RenameNotebook",
         "signature": "RenameNotebook(oldName, newName string) error"
       },
@@ -643,6 +663,10 @@
       {
         "name": "RevokeCapability",
         "signature": "RevokeCapability(pluginID, capability string) error"
+      },
+      {
+        "name": "SaveCustomTheme",
+        "signature": "SaveCustomTheme(req SaveCustomThemeRequest) (*SaveCustomThemeResult, error)"
       },
       {
         "name": "SaveFileBlocks",
