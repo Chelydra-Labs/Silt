@@ -61,6 +61,7 @@ import {
   PluginDBMigrate,
   ClosePluginDB,
   PluginAIComplete,
+  PluginAICancelStream,
   PluginAIEmbed,
   RegisterPluginSession,
   UnregisterPluginSession,
@@ -74,8 +75,10 @@ import {
   GetNetworkAudit,
   ClearNetworkAudit
 } from '../../bindings/silt/app.js'
+import { Events } from '@wailsio/runtime'
 import { getActiveLocation } from './location.svelte'
 import { subscribe } from './events'
+import type { PluginAICompleteResult, PluginAIStream } from './sdk'
 import {
   registerSlashCommand,
   unregisterSlashCommand
@@ -662,9 +665,18 @@ export function makePluginContext(
     // the plugin never sees API keys or endpoint URLs. Gated by the `ai`
     // capability + rate-limited + audit-logged exactly like fetch above. The
     // Go-side AIError surfaces over IPC as a rejection the caller can branch on.
+    // Streaming (#226): stream:true returns PluginAIStream (async-iterable).
     ai: {
-      complete: (req) =>
-        PluginAIComplete(pluginID, sessionToken ?? '', {
+      complete: (async (req: {
+        messages: { role: string; content: string }[]
+        model?: string
+        temperature?: number
+        maxTokens?: number
+        reasoningEffort?: string
+        stream?: boolean
+        responseSchema?: Record<string, unknown>
+      }) => {
+        const input = {
           messages: req.messages,
           model: req.model ?? '',
           temperature: req.temperature,
@@ -678,24 +690,53 @@ export function makePluginContext(
           // string), causing both native encoders to receive a JSON string
           // instead of a JSON object and silently reject the schema.
           response_schema: req.responseSchema as any
-          // Wails generates PluginAICompleteInput as a class (it has a nested
-          // struct array), so the strict TS type wants an instance with
-          // convertValues. The runtime binding JSON-serializes a plain object
-          // identically, so a structural cast is correct here.
-        } as any)
-          .then((res: any) => ({
-            // Strip reasoning/thinking tags (<thought>/<think>/…) that leak
-            // into `content` from OpenAI-compatible servers without a reasoning
-            // parser (Ollama, LM Studio, llama.cpp). Native providers already
-            // separate reasoning; this normalizes the leak for every consumer
-            // (#483). See stripReasoning.ts.
+        } as any
+
+        if (req.stream) {
+          try {
+            const start = (await PluginAIComplete(
+              pluginID,
+              sessionToken ?? '',
+              input
+            )) as any
+            const streamId = start?.stream_id ?? start?.streamId ?? ''
+            if (!streamId) {
+              throw {
+                code: 'bad-request',
+                message: 'stream start returned no stream_id'
+              }
+            }
+            return createAIStream(
+              streamId,
+              pluginID,
+              sessionToken ?? '',
+              start?.model ?? ''
+            )
+          } catch (err) {
+            throw normalizeAIError(err)
+          }
+        }
+
+        try {
+          const res: any = await PluginAIComplete(
+            pluginID,
+            sessionToken ?? '',
+            input
+          )
+          // Strip reasoning/thinking tags (<thought>/<think>/…) that leak
+          // into `content` from OpenAI-compatible servers without a reasoning
+          // parser (Ollama, LM Studio, llama.cpp). Native providers already
+          // separate reasoning; this normalizes the leak for every consumer
+          // (#483). See stripReasoning.ts.
+          return {
             content: stripReasoningContent(res?.content ?? ''),
             model: res?.model ?? '',
             usage: res?.usage
-          }))
-          .catch((err) => {
-            throw normalizeAIError(err)
-          }),
+          }
+        } catch (err) {
+          throw normalizeAIError(err)
+        }
+      }) as any,
       embed: (req) =>
         PluginAIEmbed(pluginID, sessionToken ?? '', {
           texts: req.texts,
@@ -729,4 +770,143 @@ function base64ToUint8(b64: string): Uint8Array {
   const out = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
   return out
+}
+
+/**
+ * Build a PluginAIStream handle for one stream_id (#226). Listens for Wails
+ * events filtered by stream_id; yields raw deltas via async iteration and
+ * exposes a reasoning-stripped final result().
+ *
+ * Reasoning strip policy: deltas are yielded raw for low-latency display;
+ * result() strips the full aggregated content once (tags may span chunks).
+ */
+function createAIStream(
+  streamId: string,
+  pluginID: string,
+  sessionToken: string,
+  startModel: string
+): PluginAIStream {
+  type QueueItem =
+    | { kind: 'delta'; text: string }
+    | { kind: 'done'; content: string; model: string; usage?: any }
+    | { kind: 'error'; err: unknown }
+
+  const queue: QueueItem[] = []
+  let wake: (() => void) | null = null
+  let closed = false
+  let finalResult: PluginAICompleteResult | null = null
+  let finalError: unknown = null
+  let resultResolve: ((r: PluginAICompleteResult) => void) | null = null
+  let resultReject: ((e: unknown) => void) | null = null
+  const resultPromise = new Promise<PluginAICompleteResult>(
+    (resolve, reject) => {
+      resultResolve = resolve
+      resultReject = reject
+    }
+  )
+
+  const push = (item: QueueItem) => {
+    queue.push(item)
+    if (wake) {
+      const w = wake
+      wake = null
+      w()
+    }
+  }
+
+  const payloadOf = (ev: any) => (ev?.data !== undefined ? ev.data : ev)
+
+  const offDelta = Events.On('ai:complete:delta', (ev: any) => {
+    const p = payloadOf(ev)
+    if (!p || p.stream_id !== streamId) return
+    push({ kind: 'delta', text: String(p.delta ?? '') })
+  })
+  const offDone = Events.On('ai:complete:done', (ev: any) => {
+    const p = payloadOf(ev)
+    if (!p || p.stream_id !== streamId) return
+    const content = stripReasoningContent(String(p.content ?? ''))
+    finalResult = {
+      content,
+      model: String(p.model ?? startModel ?? ''),
+      usage: p.usage
+    }
+    push({
+      kind: 'done',
+      content: finalResult.content,
+      model: finalResult.model,
+      usage: finalResult.usage
+    })
+    resultResolve?.(finalResult)
+    cleanup()
+  })
+  const offError = Events.On('ai:complete:error', (ev: any) => {
+    const p = payloadOf(ev)
+    if (!p || p.stream_id !== streamId) return
+    const err = normalizeAIError({
+      code: p.kind ?? 'unknown',
+      message: p.message ?? 'stream error'
+    })
+    finalError = err
+    push({ kind: 'error', err })
+    resultReject?.(err)
+    cleanup()
+  })
+
+  let cleaned = false
+  function cleanup() {
+    if (cleaned) return
+    cleaned = true
+    closed = true
+    try {
+      offDelta?.()
+    } catch {
+      /* ignore */
+    }
+    try {
+      offDone?.()
+    } catch {
+      /* ignore */
+    }
+    try {
+      offError?.()
+    } catch {
+      /* ignore */
+    }
+    if (wake) {
+      const w = wake
+      wake = null
+      w()
+    }
+  }
+
+  const stream: PluginAIStream = {
+    streamId,
+    cancel: async () => {
+      try {
+        await PluginAICancelStream(pluginID, sessionToken, streamId)
+      } catch (err) {
+        throw normalizeAIError(err)
+      }
+    },
+    result: () => resultPromise,
+    async *[Symbol.asyncIterator]() {
+      while (true) {
+        while (queue.length === 0) {
+          if (closed && queue.length === 0) return
+          await new Promise<void>((r) => {
+            wake = r
+          })
+        }
+        const item = queue.shift()!
+        if (item.kind === 'delta') {
+          if (item.text) yield item.text
+        } else if (item.kind === 'done') {
+          return
+        } else {
+          throw item.err
+        }
+      }
+    }
+  }
+  return stream
 }

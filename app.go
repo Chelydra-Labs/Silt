@@ -237,6 +237,18 @@ type App struct {
 	// lock held.
 	closing        bool
 	vaultClosingWG sync.WaitGroup
+
+	// aiStreams tracks in-flight streamed chat completions (#226). Keyed by
+	// stream_id; cancel aborts the upstream HTTP request. Guarded by
+	// aiStreamsMu. Entries are removed when the stream finishes or is cancelled.
+	aiStreamsMu sync.Mutex
+	aiStreams   map[string]*aiStreamSession
+}
+
+// aiStreamSession is one in-flight PluginAIComplete(stream=true) call.
+type aiStreamSession struct {
+	pluginID string
+	cancel   context.CancelFunc
 }
 
 // linkedConfigEntry is one slot in App.linkedConfigs. mtime is the on-disk
@@ -254,6 +266,7 @@ func NewApp() *App {
 		securityStats:  newPluginSecurityStats(),
 		pluginSessions: make(map[string]string),
 		aiModelCache:   make(map[string][]ai.AIModel),
+		aiStreams:      make(map[string]*aiStreamSession),
 		// keyringStore is the OS credential store for AI provider keys (#218).
 		// Tests leave this nil (so the AI bindings fall back to config.yaml);
 		// production wires the real OS-backed store. Reachability is probed at

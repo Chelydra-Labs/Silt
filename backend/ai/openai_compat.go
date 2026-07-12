@@ -70,7 +70,7 @@ func completeOpenAI(ctx context.Context, req CompleteRequest, model, baseURL str
 		Temperature:     req.Temperature,
 		MaxTokens:       req.MaxTokens,
 		ReasoningEffort: reasoning,
-		Stream:          false, // streaming lands in Sprint 22
+		Stream:          false, // buffered path; streaming uses streamOpenAI
 	})
 	if err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}

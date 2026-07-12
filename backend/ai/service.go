@@ -126,12 +126,15 @@ type CompleteRequest struct {
 	ResponseSchema json.RawMessage `json:"response_schema,omitempty"`
 }
 
-// CompleteResult is the output of a successful (non-streaming) completion. Usage
-// is optional because not every provider returns token counts.
+// CompleteResult is the output of a successful completion. Usage is optional
+// because not every provider returns token counts. StreamID is set only when
+// PluginAIComplete starts an async stream (#226): Content is empty on that
+// start response; deltas arrive via Wails events until done/error.
 type CompleteResult struct {
-	Content string   `json:"content"`
-	Model   string   `json:"model"`
-	Usage   *AIUsage `json:"usage,omitempty"`
+	Content  string   `json:"content"`
+	Model    string   `json:"model"`
+	Usage    *AIUsage `json:"usage,omitempty"`
+	StreamID string   `json:"stream_id,omitempty"`
 }
 
 // EmbedRequest is the input to Embed. Texts is required and non-empty; the
@@ -388,12 +391,11 @@ func sendWithRetry(ctx context.Context, pr providerRequest, timeoutMs *int) ([]b
 	return nil, lastStatus, last
 }
 
-// Complete performs a chat completion against the configured provider. It
-// validates the shared inputs then dispatches on ProviderType to the matching
-// native encoder. Streaming is NOT implemented (Sprint 22); the Stream field is
-// accepted so the signature is additive when streaming lands, but the provider
-// is asked not to stream (stream is only set true by the caller explicitly, and
-// even then this path returns the buffered non-streamed body).
+// Complete performs a buffered (non-streaming) chat completion against the
+// configured provider. It validates the shared inputs then dispatches on
+// ProviderType to the matching native encoder. For token-by-token delivery use
+// CompleteStream (#226); the Stream field on CompleteRequest is ignored here
+// and the provider is always asked for a full buffered body.
 func Complete(ctx context.Context, req CompleteRequest) (CompleteResult, error) {
 	if len(req.Messages) == 0 {
 		return CompleteResult{}, &AIError{Kind: ErrBadRequest, Message: "messages must not be empty"}

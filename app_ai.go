@@ -27,7 +27,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +40,19 @@ import (
 	"silt/backend/plugins"
 	"strings"
 )
+
+// AI stream event names pushed to the frontend (#226). Payload is always a
+// single object (ev.data on the JS side).
+const (
+	aiEventCompleteDelta = "ai:complete:delta"
+	aiEventCompleteDone  = "ai:complete:done"
+	aiEventCompleteError = "ai:complete:error"
+)
+
+// aiStreamBufferCap is the max number of unconsumed delta events buffered per
+// stream before the producer aborts (backpressure). Generous for UI consumers
+// that coalesce on rAF; tight enough to bound memory if a plugin stalls.
+const aiStreamBufferCap = 256
 
 // keyringService is the OS-keyring service name under which Silt stores AI
 // provider keys (#218). The "user" half is vault-scoped (see aiKeyringUser) so
@@ -144,8 +159,9 @@ type PluginAIChatMessage struct {
 }
 
 // PluginAICompleteInput is the plugin-side request envelope for a chat
-// completion. Stream is accepted (and forwarded as false) so the signature is
-// additive when Sprint 22 delivers streaming.
+// completion. When Stream is true, PluginAIComplete starts an async SSE stream
+// and returns immediately with stream_id set; deltas arrive as Wails events
+// (#226). When false (default), the buffered Sprint 20 path is used.
 type PluginAICompleteInput struct {
 	Messages        []PluginAIChatMessage `json:"messages"`
 	Model           string                `json:"model,omitempty"`
@@ -689,6 +705,11 @@ func (a *App) withAIPreflight(pluginID, sessionToken, which string) (ai.AIProvid
 // PluginAIComplete performs a chat completion on behalf of a plugin. Gated by
 // the ai capability; rate-limited and audit-logged exactly like PluginFetch.
 // Credentials are read server-side and never returned to the caller. (#216.)
+//
+// When input.Stream is true (#226), the call returns immediately with
+// stream_id set and pushes deltas via ai:complete:delta / done / error events.
+// Cancel with PluginAICancelStream. Audit records one start+final status row
+// (not per-token).
 func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAICompleteInput) (ai.CompleteResult, error) {
 	// Tracked by a.wg so shutdown's a.wg.Wait() drains in-flight AI calls
 	// before teardownVaultServices clears the audit state. Unlike PluginFetch
@@ -696,22 +717,19 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 	// vaultMu after withAIPreflight so a long LLM call doesn't hold the vault
 	// lock — which means vaultMu alone can't serialize the call against a close.
 	a.wg.Add(1)
-	defer a.wg.Done()
 	// Validate reasoning_effort BEFORE withAIPreflight so an invalid call
 	// doesn't consume a rate-limit slot or snapshot the provider config.
 	if input.ReasoningEffort != nil {
 		if re := strings.TrimSpace(*input.ReasoningEffort); re != "" && !config.IsValidAIReasoningEffort(re) {
+			a.wg.Done()
 			return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrBadRequest, Message: fmt.Sprintf("invalid reasoning_effort %q: must be one of none, minimal, low, medium, high, xhigh, max", *input.ReasoningEffort)}
 		}
 	}
 	provider, configuredModel, drainDone, err := a.withAIPreflight(pluginID, sessionToken, "chat")
 	if err != nil {
+		a.wg.Done()
 		return ai.CompleteResult{}, err
 	}
-	// Preflight registered this call with the vault-close drain (the Add ran
-	// inside withAIPreflight on this success path). Balance it now that HTTP +
-	// audit will run, so CloseVault/SwitchVault's drain can't under-count.
-	defer drainDone()
 	// Effective model for auditing: the per-call override, else the configured one.
 	effectiveModel := input.Model
 	if effectiveModel == "" {
@@ -721,16 +739,26 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 	for i, m := range input.Messages {
 		messages[i] = ai.ChatMessage{Role: m.Role, Content: m.Content}
 	}
-	result, callErr := ai.Complete(a.aiContext(), ai.CompleteRequest{
+	req := ai.CompleteRequest{
 		Provider:        provider,
 		Messages:        messages,
 		Model:           input.Model,
 		Temperature:     input.Temperature,
 		MaxTokens:       input.MaxTokens,
 		ReasoningEffort: input.ReasoningEffort,
-		Stream:          false, // Sprint 22 delivers streaming; signature is additive
 		ResponseSchema:  input.ResponseSchema,
-	})
+	}
+
+	if input.Stream {
+		return a.startAIStream(pluginID, provider, effectiveModel, req, drainDone)
+	}
+
+	defer a.wg.Done()
+	// Preflight registered this call with the vault-close drain (the Add ran
+	// inside withAIPreflight on this success path). Balance it now that HTTP +
+	// audit will run, so CloseVault/SwitchVault's drain can't under-count.
+	defer drainDone()
+	result, callErr := ai.Complete(a.aiContext(), req)
 	status := "ok"
 	if callErr != nil {
 		status = aiErrKind(callErr)
@@ -740,6 +768,154 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 		return ai.CompleteResult{}, callErr
 	}
 	return result, nil
+}
+
+// startAIStream launches an async CompleteStream and returns stream_id immediately.
+// The caller's a.wg.Add(1) is balanced when the stream goroutine finishes.
+// drainDone is deferred inside the goroutine so vault-close waits for the stream.
+func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveModel string, req ai.CompleteRequest, drainDone func()) (ai.CompleteResult, error) {
+	streamID, err := newAIStreamID()
+	if err != nil {
+		a.wg.Done()
+		drainDone()
+		return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrUnknown, Message: fmt.Sprintf("allocate stream id: %v", err)}
+	}
+	// Child of vault/app AI context so close/shutdown cancels the HTTP body.
+	streamCtx, streamCancel := context.WithCancel(a.aiContext())
+
+	a.aiStreamsMu.Lock()
+	if a.aiStreams == nil {
+		a.aiStreams = make(map[string]*aiStreamSession)
+	}
+	a.aiStreams[streamID] = &aiStreamSession{pluginID: pluginID, cancel: streamCancel}
+	a.aiStreamsMu.Unlock()
+
+	// Buffered channel for backpressure between SSE reader and event emit.
+	// Producer aborts if the buffer fills (consumer not keeping up).
+	deltaCh := make(chan string, aiStreamBufferCap)
+
+	go func() {
+		defer a.wg.Done()
+		defer drainDone()
+		defer streamCancel()
+		defer func() {
+			a.aiStreamsMu.Lock()
+			delete(a.aiStreams, streamID)
+			a.aiStreamsMu.Unlock()
+		}()
+
+		// Fan-out deltas to Wails events on a separate goroutine so the SSE
+		// parser only blocks on the bounded channel (backpressure), not on IPC.
+		emitDone := make(chan struct{})
+		go func() {
+			defer close(emitDone)
+			idx := 0
+			for delta := range deltaCh {
+				a.emit(aiEventCompleteDelta, map[string]any{
+					"stream_id": streamID,
+					"plugin_id": pluginID,
+					"delta":     delta,
+					"index":     idx,
+				})
+				idx++
+			}
+		}()
+
+		result, callErr := ai.CompleteStream(streamCtx, req, func(delta string) error {
+			select {
+			case deltaCh <- delta:
+				return nil
+			case <-streamCtx.Done():
+				return streamCtx.Err()
+			default:
+				// Buffer full — abort rather than grow unbounded.
+				return fmt.Errorf("stream backpressure: delta buffer full (%d)", aiStreamBufferCap)
+			}
+		})
+		close(deltaCh)
+		<-emitDone
+
+		status := "ok"
+		if callErr != nil {
+			status = aiErrKind(callErr)
+			// Cancellation is a first-class terminal status for audit.
+			if streamCtx.Err() != nil && (errors.Is(callErr, context.Canceled) || strings.Contains(callErr.Error(), "cancel")) {
+				status = "cancelled"
+			}
+			a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, status, nil)
+			kind, msg := "unknown", callErr.Error()
+			if e, ok := callErr.(*ai.AIError); ok {
+				kind, msg = string(e.Kind), e.Message
+			}
+			a.emit(aiEventCompleteError, map[string]any{
+				"stream_id": streamID,
+				"plugin_id": pluginID,
+				"kind":      kind,
+				"message":   msg,
+			})
+			return
+		}
+		a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, status, result.Usage)
+		payload := map[string]any{
+			"stream_id": streamID,
+			"plugin_id": pluginID,
+			"content":   result.Content,
+			"model":     result.Model,
+		}
+		if result.Usage != nil {
+			payload["usage"] = result.Usage
+		}
+		a.emit(aiEventCompleteDone, payload)
+	}()
+
+	return ai.CompleteResult{StreamID: streamID, Model: effectiveModel}, nil
+}
+
+// PluginAICancelStream aborts an in-flight streamed completion started by
+// PluginAIComplete(stream=true). The plugin must own the stream (pluginID match).
+// Idempotent: cancelling an unknown/finished stream is a no-op success.
+func (a *App) PluginAICancelStream(pluginID, sessionToken, streamID string) error {
+	if err := a.requirePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapAI); err != nil {
+		return err
+	}
+	streamID = strings.TrimSpace(streamID)
+	if streamID == "" {
+		return &ai.AIError{Kind: ai.ErrBadRequest, Message: "stream_id is required"}
+	}
+	a.aiStreamsMu.Lock()
+	sess, ok := a.aiStreams[streamID]
+	if ok && sess.pluginID == pluginID {
+		// Leave the map entry; the stream goroutine removes it on exit.
+		cancel := sess.cancel
+		a.aiStreamsMu.Unlock()
+		cancel()
+		return nil
+	}
+	a.aiStreamsMu.Unlock()
+	return nil
+}
+
+func newAIStreamID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// requirePluginSession validates the session token maps to pluginID. Shared by
+// stream cancel and other AI bindings that need identity without full preflight.
+func (a *App) requirePluginSession(pluginID, sessionToken string) error {
+	a.pluginSessionsMu.RLock()
+	owner, ok := a.pluginSessions[sessionToken]
+	a.pluginSessionsMu.RUnlock()
+	if !ok || owner != pluginID {
+		return fmt.Errorf("invalid plugin session")
+	}
+	return nil
 }
 
 // PluginAIEmbed computes embeddings for a batch of texts on behalf of a plugin.

@@ -7,33 +7,55 @@
 
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({
-  pluginAIComplete: vi.fn(
-    (_pluginID: string, _token: string, _input: unknown) =>
+const mocks = vi.hoisted(() => {
+  const eventHandlers = new Map<string, Set<(ev: any) => void>>()
+  return {
+    pluginAIComplete: vi.fn(
+      (_pluginID: string, _token: string, _input: unknown) =>
+        Promise.resolve({
+          content: 'pong',
+          model: 'qwen3:30b-a3b',
+          usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 }
+        })
+    ),
+    pluginAIEmbed: vi.fn((_pluginID: string, _token: string, _input: unknown) =>
       Promise.resolve({
-        content: 'pong',
-        model: 'qwen3:30b-a3b',
-        usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 }
+        embeddings: [[0.1, 0.2, 0.3]],
+        model: 'nomic-embed-text',
+        dimensions: 3,
+        usage: { promptTokens: 1, totalTokens: 1 }
       })
-  ),
-  pluginAIEmbed: vi.fn((_pluginID: string, _token: string, _input: unknown) =>
-    Promise.resolve({
-      embeddings: [[0.1, 0.2, 0.3]],
-      model: 'nomic-embed-text',
-      dimensions: 3,
-      usage: { promptTokens: 1, totalTokens: 1 }
-    })
-  ),
-  getActiveLocation: vi.fn(() => ({
-    notebook: 'Work',
-    section: '',
-    page: ''
-  }))
-}))
+    ),
+    pluginAICancelStream: vi.fn(() => Promise.resolve()),
+    getActiveLocation: vi.fn(() => ({
+      notebook: 'Work',
+      section: '',
+      page: ''
+    })),
+    eventHandlers,
+    eventsOn: vi.fn((name: string, cb: (ev: any) => void) => {
+      if (!eventHandlers.has(name)) eventHandlers.set(name, new Set())
+      eventHandlers.get(name)!.add(cb)
+      return () => eventHandlers.get(name)?.delete(cb)
+    }),
+    emitEvent(name: string, data: unknown) {
+      for (const cb of eventHandlers.get(name) ?? []) {
+        cb({ data })
+      }
+    }
+  }
+})
 
 vi.mock('../../bindings/silt/app.js', () => ({
   PluginAIComplete: mocks.pluginAIComplete,
-  PluginAIEmbed: mocks.pluginAIEmbed
+  PluginAIEmbed: mocks.pluginAIEmbed,
+  PluginAICancelStream: mocks.pluginAICancelStream
+}))
+
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mocks.eventsOn
+  }
 }))
 
 vi.mock('./location.svelte', () => ({
@@ -205,6 +227,77 @@ describe('ctx.ai.complete', () => {
     expect(input.reasoning_effort).toBe('low')
     expect(input.stream).toBe(false)
     expect(input.response_schema).toEqual({ type: 'object' })
+  })
+})
+
+describe('ctx.ai.complete stream (#226)', () => {
+  beforeEach(() => {
+    mocks.pluginAIComplete.mockClear()
+    mocks.pluginAICancelStream.mockClear()
+    mocks.eventHandlers.clear()
+    mocks.eventsOn.mockClear()
+  })
+
+  it('returns an async-iterable of deltas and aggregates result()', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      stream_id: 'sid-1',
+      model: 'm'
+    } as any)
+    const ctx = makePluginContext('p', 'tok')
+    const stream = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true
+    })
+    expect(stream.streamId).toBe('sid-1')
+
+    const collected: string[] = []
+    const iter = (async () => {
+      for await (const d of stream) collected.push(d)
+    })()
+
+    // Let listeners attach.
+    await Promise.resolve()
+    mocks.emitEvent('ai:complete:delta', {
+      stream_id: 'sid-1',
+      delta: 'Hel'
+    })
+    mocks.emitEvent('ai:complete:delta', {
+      stream_id: 'sid-1',
+      delta: 'lo'
+    })
+    mocks.emitEvent('ai:complete:done', {
+      stream_id: 'sid-1',
+      content: 'Hello',
+      model: 'm'
+    })
+    await iter
+    expect(collected.join('')).toBe('Hello')
+    const res = await stream.result()
+    expect(res.content).toBe('Hello')
+    expect(res.model).toBe('m')
+  })
+
+  it('cancel() calls PluginAICancelStream', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      stream_id: 'sid-2',
+      model: 'm'
+    } as any)
+    const ctx = makePluginContext('p', 'tok')
+    const stream = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true
+    })
+    await stream.cancel()
+    expect(mocks.pluginAICancelStream).toHaveBeenCalledWith('p', 'tok', 'sid-2')
+  })
+
+  it('non-stream path remains buffered', async () => {
+    const ctx = makePluginContext('p')
+    const res = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'x' }]
+    })
+    expect(res).toMatchObject({ content: 'pong', model: 'qwen3:30b-a3b' })
+    expect((res as any).streamId).toBeUndefined()
   })
 })
 

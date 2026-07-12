@@ -670,34 +670,27 @@ export interface PluginAIError {
  */
 export interface PluginAIApi {
   /**
-   * Run a chat completion against the configured chat provider. Returns the
-   * generated content, the model that served it, and (when the provider
-   * reports it) a token-usage summary. `stream` is accepted now so the
-   * signature is additive when streaming lands (Sprint 22); the non-streaming
-   * buffer is returned regardless.
+   * Run a chat completion against the configured chat provider.
+   *
+   * - Default (`stream` omitted/false): returns a buffered
+   *   {@link PluginAICompleteResult} (Sprint 20 path).
+   * - `stream: true` (#226): returns a {@link PluginAIStream} async-iterable of
+   *   content deltas plus `cancel()`. Native Google/Anthropic providers reject
+   *   streaming; use OpenAI-compatible or local endpoints.
    *
    * Rejections are normalized to a {@link PluginAIError} carrying `code`
    * set to a normalized kind: 'unauthorized', 'rate-limited', 'model-missing',
    * 'timeout', 'unreachable', 'bad-request', 'forbidden', 'server', or 'unknown'.
    */
-  complete: (req: {
-    messages: PluginAIChatMessage[]
-    model?: string
-    temperature?: number
-    maxTokens?: number
-    /** Override the provider's reasoning effort for this call only.
-     *  Values: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'.
-     *  Not all providers support every value. */
-    reasoningEffort?: string
-    stream?: boolean
-    /** Ask native providers (Google, Anthropic) to return a JSON object
-     *  conforming to this JSON Schema. Ignored by OpenAI-compatible providers
-     *  (prompt-only JSON is the universal fallback). The schema is a raw JSON
-     *  Schema object (lowercase type strings); each native encoder converts to
-     *  its own format. When set, the response content is the JSON-stringified
-     *  result. */
-    responseSchema?: Record<string, unknown>
-  }) => Promise<PluginAICompleteResult>
+  complete: {
+    (req: PluginAICompleteRequest & { stream: true }): Promise<PluginAIStream>
+    (
+      req: PluginAICompleteRequest & { stream?: false }
+    ): Promise<PluginAICompleteResult>
+    (
+      req: PluginAICompleteRequest
+    ): Promise<PluginAICompleteResult | PluginAIStream>
+  }
   /**
    * Compute embeddings for a batch of texts against the configured embedding
    * provider. The whole batch is sent in one request; `embeddings[i]`
@@ -709,6 +702,38 @@ export interface PluginAIApi {
     model?: string
     dimensions?: number
   }) => Promise<PluginAIEmbedResult>
+}
+
+/** Shared fields for `ctx.ai.complete`. */
+export interface PluginAICompleteRequest {
+  messages: PluginAIChatMessage[]
+  model?: string
+  temperature?: number
+  maxTokens?: number
+  /** Override the provider's reasoning effort for this call only.
+   *  Values: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'.
+   *  Not all providers support every value. */
+  reasoningEffort?: string
+  stream?: boolean
+  /** Ask native providers (Google, Anthropic) to return a JSON object
+   *  conforming to this JSON Schema. Ignored by OpenAI-compatible providers
+   *  (prompt-only JSON is the universal fallback). The schema is a raw JSON
+   *  Schema object (lowercase type strings); each native encoder converts to
+   *  its own format. When set, the response content is the JSON-stringified
+   *  result. */
+  responseSchema?: Record<string, unknown>
+}
+
+/**
+ * Handle returned by `ctx.ai.complete({ stream: true })` (#226). Iterate for
+ * content deltas; call `cancel()` to abort the upstream request. `result()`
+ * resolves with the final aggregated (reasoning-stripped) completion.
+ */
+export interface PluginAIStream extends AsyncIterable<string> {
+  readonly streamId: string
+  cancel: () => Promise<void>
+  /** Final aggregated result after the stream completes (or rejects on error). */
+  result: () => Promise<PluginAICompleteResult>
 }
 
 /** One message in a chat-completion conversation. */
