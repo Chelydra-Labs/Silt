@@ -72,7 +72,6 @@
   let leaveDialogOpen = $state(false)
   let discardDialogOpen = $state(false)
   let saveNameDialogOpen = $state(false)
-  let pendingSaveAsNew = $state(false)
 
   // Debounced contrast summary for aria-live (not per slider tick).
   let liveContrastMsg = $state('')
@@ -199,7 +198,7 @@
     if (!wc.draft) return
     const mustFork = !sourceIsDisk || asNew
     if (mustFork) {
-      pendingSaveAsNew = asNew
+      // Fork path always opens the name dialog; overwrite is always false.
       saveNameDialogOpen = true
       return
     }
@@ -208,7 +207,6 @@
 
   function confirmSaveName(name: string) {
     saveNameDialogOpen = false
-    pendingSaveAsNew = false
     void performSave(name, /* overwrite */ false)
   }
 
@@ -1625,7 +1623,6 @@
     onConfirm={confirmSaveName}
     onCancel={() => {
       saveNameDialogOpen = false
-      pendingSaveAsNew = false
     }}
   />
 {/if}

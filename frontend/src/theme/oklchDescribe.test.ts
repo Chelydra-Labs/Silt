@@ -3,9 +3,10 @@ import { describeOklch, describeOklchPhrase } from './oklchDescribe'
 
 describe('describeOklch', () => {
   it('describes a vivid blue', () => {
-    const phrase = describeOklchPhrase({ L: 0.55, C: 0.18, H: 250 })
+    // C >= 0.2 is the "vibrant" chroma band.
+    const phrase = describeOklchPhrase({ L: 0.55, C: 0.25, H: 250 })
     expect(phrase).toMatch(/blue/)
-    expect(phrase).toMatch(/vibrant|/)
+    expect(phrase).toMatch(/vibrant/)
   })
 
   it('describes near-gray as gray', () => {
@@ -17,5 +18,12 @@ describe('describeOklch', () => {
     expect(text).toMatch(/65\.0 percent lightness/)
     expect(text).toMatch(/chroma 0\.120/)
     expect(text).toMatch(/140 degrees/)
+  })
+
+  it('maps hue boundaries at red/pink wrap', () => {
+    expect(describeOklchPhrase({ L: 0.5, C: 0.15, H: 1 })).toMatch(/red/)
+    expect(describeOklchPhrase({ L: 0.5, C: 0.15, H: 2 })).toMatch(/red/)
+    expect(describeOklchPhrase({ L: 0.5, C: 0.15, H: 334 })).toMatch(/pink/)
+    expect(describeOklchPhrase({ L: 0.5, C: 0.15, H: 350 })).toMatch(/pink/)
   })
 })

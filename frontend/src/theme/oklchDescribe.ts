@@ -18,10 +18,9 @@ const HUE_SEGMENTS: { max: number; name: string }[] = [
 
 function hueName(H: number): string {
   const h = ((H % 360) + 360) % 360
-  if (h < 2 || h >= 334) {
-    // pink / red boundary
-    if (h >= 334 || h < 2) return h < 2 ? 'red' : 'pink'
-  }
+  // Pink wraps past 334°; red occupies the small band just after 0°.
+  if (h < 2) return 'red'
+  if (h >= 334) return 'pink'
   for (const seg of HUE_SEGMENTS) {
     if (h < seg.max) return seg.name
   }

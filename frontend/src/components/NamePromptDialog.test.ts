@@ -70,4 +70,21 @@ describe('NamePromptDialog', () => {
     await fireEvent.keyDown(window, { key: 'Escape' })
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
+
+  it('confirms on Enter in the name field', async () => {
+    const onConfirm = vi.fn()
+    render(NamePromptDialog, {
+      props: {
+        title: 'Save as',
+        initialValue: 'Draft',
+        dataTestId: 'save-name',
+        onConfirm,
+        onCancel: vi.fn()
+      }
+    })
+    const input = screen.getByTestId('save-name-input') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Enter Theme' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onConfirm).toHaveBeenCalledWith('Enter Theme')
+  })
 })
