@@ -76,24 +76,29 @@ This document is the interaction design for the custom theme editor. Implementat
 
 ## 3. Information architecture
 
-### Layout (full-width Appearance sub-view — not a modal)
+### Layout (immersive full-width — not a modal, not nested under Settings nav)
+
+While the editor is open, **Settings section nav is hidden** so the chrome is only:
+
+```
+[Activity bar] | full-width Theme Editor
+```
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │ ← Appearance   Theme Editor · {name}   [Dark|Light]  Revert Save │
-├────────────┬─────────────────────────────────────────────────────┤
-│ Simple     │  Controls for selected group                        │
-│ Advanced ▾ │  (swatches, sliders, fields)                        │
-│  Surfaces  │                                                     │
-│  Color     │  Sticky: Unsaved changes · Esc reverts              │
-│  Type      │  Contrast: “2 pairs below AA — review”              │
-│  Geometry  │                                                     │
-│  Editor    │                                                     │
-│  Background│                                                     │
-└────────────┴─────────────────────────────────────────────────────┘
+├──────────────────────────────────────────────────────────────────┤
+│ [ Simple | Surfaces | Color | Type | Geometry | Editor | Bg ]    │  ← top tabs
+├──────────────────────────────────────────────────────────────────┤
+│  Controls for selected group (full width)                        │
+│  Sticky: Unsaved changes · Esc reverts                           │
+│  Contrast: “2 pairs below AA — review”                           │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-Live preview is **workspace-wide** via `injectTokens` (same contract as Appearance two-stage preview). Optional mini chrome mock is not required for v1.
+- **Do not** stack Settings sections + editor groups as two left rails.
+- Editor groups are **top tabs**, not a third vertical nav.
+- Live preview is **workspace-wide** via `injectTokens` (same contract as Appearance two-stage preview).
 
 ### Simple controls (default)
 

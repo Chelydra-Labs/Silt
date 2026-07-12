@@ -23,6 +23,7 @@
   import { loadConfig, settings } from '../../settings/store.svelte'
   import { loadPlugins } from '../../plugins/loader'
   import { getSettingsSections } from './settingsSections.svelte'
+  import { themeEditorSession } from '../../theme/editor/session.svelte'
 
   interface Props {
     section?: string
@@ -101,40 +102,48 @@
 </script>
 
 <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
-  <!-- Shared section header: title + one-line description + search. This
-       replaces the bare <h2> so every section has a consistent home base. -->
-  <div
-    class="flex items-center justify-between gap-4 px-6 py-4 border-b border-surface-panel-border flex-shrink-0"
-  >
-    <div class="min-w-0">
-      <h2
-        class="font-headline-md text-headline-md text-text-primary capitalize truncate"
-      >
-        {activeSectionMeta?.label ?? section}
-      </h2>
-      {#if activeSectionMeta?.description}
-        <p class="text-text-muted text-type-sm font-body-md mt-0.5 truncate">
-          {activeSectionMeta.description}
-        </p>
-      {/if}
+  <!-- Shared section header — hidden during immersive theme editor so the
+       editor owns the full content chrome (no Settings title + search bar). -->
+  {#if !themeEditorSession.open}
+    <div
+      class="flex items-center justify-between gap-4 px-6 py-4 border-b border-surface-panel-border flex-shrink-0"
+    >
+      <div class="min-w-0">
+        <h2
+          class="font-headline-md text-headline-md text-text-primary capitalize truncate"
+        >
+          {activeSectionMeta?.label ?? section}
+        </h2>
+        {#if activeSectionMeta?.description}
+          <p class="text-text-muted text-type-sm font-body-md mt-0.5 truncate">
+            {activeSectionMeta.description}
+          </p>
+        {/if}
+      </div>
+      <SettingsSearch onJump={handleJump} />
     </div>
-    <SettingsSearch onJump={handleJump} />
-  </div>
+  {/if}
 
   <!-- aria-labelledby resolves to the active tab in SettingsNav (sidebar)
        via the shared silt-settings-tab-<id> id. Form-style tabs (editor,
        hotkeys) own their scroll + fixed footer, so the panel is a non-scroll
-       flex column for them; everything else scrolls here. -->
+       flex column for them; everything else scrolls here. Theme editor is
+       also a full-height flex child. -->
   <div
     id="silt-settings-panel"
     role="tabpanel"
     aria-labelledby="silt-settings-tab-{section}"
     tabindex="0"
     class="flex-1 min-h-0 focus:outline-none custom-scrollbar"
-    class:flex={['editor', 'hotkeys'].includes(section)}
-    class:flex-col={['editor', 'hotkeys'].includes(section)}
-    class:overflow-hidden={['editor', 'hotkeys'].includes(section)}
-    class:overflow-y-auto={!['editor', 'hotkeys'].includes(section)}
+    class:flex={['editor', 'hotkeys'].includes(section) ||
+      themeEditorSession.open}
+    class:flex-col={['editor', 'hotkeys'].includes(section) ||
+      themeEditorSession.open}
+    class:overflow-hidden={['editor', 'hotkeys'].includes(section) ||
+      themeEditorSession.open}
+    class:overflow-y-auto={!(
+      ['editor', 'hotkeys'].includes(section) || themeEditorSession.open
+    )}
   >
     {#if settings.loading && !settings.config && section !== 'general'}
       <div class="p-8 text-text-muted animate-pulse font-body-md">

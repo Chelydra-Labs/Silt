@@ -23,6 +23,7 @@
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
+  import { themeEditorSession } from './theme/editor/session.svelte'
   import VirtualScrollContainer from './components/VirtualScrollContainer.svelte'
   import TabStrip from './components/TabStrip.svelte'
   import SearchModal from './components/SearchModal.svelte'
@@ -1360,7 +1361,9 @@
           class="flex items-center px-4 py-1 text-surface-sidebar-text-muted text-type-xs uppercase tracking-widest font-label-sm-bold"
         >
           {activeView === 'settings'
-            ? 'Settings'
+            ? themeEditorSession.open
+              ? 'Theme editor'
+              : 'Settings'
             : (views.find((v) => v.id === activeView)?.label ?? activeView)}
         </div>
       {/if}
@@ -1429,85 +1432,89 @@
         </button>
       </div>
 
-      {#if sidebarCollapsed}
-        <button
-          onclick={() => {
-            sidebarCollapsed = false
-            manuallyCollapsed = false
-          }}
-          transition:fade={{ duration: 150 }}
-          aria-label="Show sidebar"
-          title="Show sidebar (Ctrl+B)"
-          class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface-sidebar/80 backdrop-blur-md border border-surface-sidebar-border text-surface-sidebar-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
-        >
-          <span class="material-symbols-outlined text-icon-lg"
-            >left_panel_open</span
+      <!-- Immersive theme editor: hide Settings sidebar so we don't stack
+           activity bar → settings sections → editor groups. -->
+      {#if !(activeView === 'settings' && themeEditorSession.open)}
+        {#if sidebarCollapsed}
+          <button
+            onclick={() => {
+              sidebarCollapsed = false
+              manuallyCollapsed = false
+            }}
+            transition:fade={{ duration: 150 }}
+            aria-label="Show sidebar"
+            title="Show sidebar (Ctrl+B)"
+            class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface-sidebar/80 backdrop-blur-md border border-surface-sidebar-border text-surface-sidebar-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
           >
-        </button>
-      {/if}
+            <span class="material-symbols-outlined text-icon-lg"
+              >left_panel_open</span
+            >
+          </button>
+        {/if}
 
-      <Sidebar
-        bind:activeNotebook
-        bind:activeSection
-        bind:activePage
-        bind:activeView
-        bind:selectedTag
-        bind:settingsSection
-        bind:collapsed={sidebarCollapsed}
-        {sidebarWidth}
-        {sidebarDragging}
-        onSelectNotebook={(nb) => {
-          activeNotebook = nb
-          // Per-notebook tab scoping: activate the MRU tab for the new
-          // notebook (or clear if none exist for it).
-          const notebookTabs = openTabs
-            .filter((t) => t.notebook === nb)
-            .sort((a, b) => b.lastActivatedAt - a.lastActivatedAt)
-          if (notebookTabs.length > 0) {
-            activeTabId = notebookTabs[0].id
-          } else {
-            activeTabId = ''
-          }
-          syncActiveFromTab()
-        }}
-        onSelectSection={(sec) => (activeSection = sec)}
-        onSelectPage={(nb, sec, pg) => {
-          // Single-click opens in preview mode (industry-standard parity, #142).
-          openPage({ notebook: nb, section: sec, page: pg }, 'preview')
-        }}
-        onPinPage={(nb, sec, pg) => {
-          // Double-click / middle-click opens a pinned tab (#142).
-          openPage({ notebook: nb, section: sec, page: pg }, 'pin')
-        }}
-        onSelectView={(v) => (activeView = v)}
-        onPageMoved={(nb, fromSection, toSection, page) => {
-          // A page was dragged across sections in the sidebar (#177). Update
-          // the open tab for this specific page+section so its section field
-          // points to the new location. Matching on fromSection is critical —
-          // without it, a same-named sibling in another section would also be
-          // repointed, causing its next save to write to the wrong path.
-          openTabs = openTabs.map((t) =>
-            t.notebook === nb && t.section === fromSection && t.page === page
-              ? { ...t, section: toSection }
-              : t
-          )
-          if (
-            activeNotebook === nb &&
-            activePage === page &&
-            activeSection === fromSection
-          ) {
-            activeSection = toSection
-          }
-          schedulePersistTabs()
-        }}
-      />
-
-      {#if !sidebarCollapsed}
-        <SidebarResizeHandle
-          width={sidebarWidth}
-          onWidthChange={handleSidebarWidthChange}
-          onWidthCommit={handleSidebarWidthCommit}
+        <Sidebar
+          bind:activeNotebook
+          bind:activeSection
+          bind:activePage
+          bind:activeView
+          bind:selectedTag
+          bind:settingsSection
+          bind:collapsed={sidebarCollapsed}
+          {sidebarWidth}
+          {sidebarDragging}
+          onSelectNotebook={(nb) => {
+            activeNotebook = nb
+            // Per-notebook tab scoping: activate the MRU tab for the new
+            // notebook (or clear if none exist for it).
+            const notebookTabs = openTabs
+              .filter((t) => t.notebook === nb)
+              .sort((a, b) => b.lastActivatedAt - a.lastActivatedAt)
+            if (notebookTabs.length > 0) {
+              activeTabId = notebookTabs[0].id
+            } else {
+              activeTabId = ''
+            }
+            syncActiveFromTab()
+          }}
+          onSelectSection={(sec) => (activeSection = sec)}
+          onSelectPage={(nb, sec, pg) => {
+            // Single-click opens in preview mode (industry-standard parity, #142).
+            openPage({ notebook: nb, section: sec, page: pg }, 'preview')
+          }}
+          onPinPage={(nb, sec, pg) => {
+            // Double-click / middle-click opens a pinned tab (#142).
+            openPage({ notebook: nb, section: sec, page: pg }, 'pin')
+          }}
+          onSelectView={(v) => (activeView = v)}
+          onPageMoved={(nb, fromSection, toSection, page) => {
+            // A page was dragged across sections in the sidebar (#177). Update
+            // the open tab for this specific page+section so its section field
+            // points to the new location. Matching on fromSection is critical —
+            // without it, a same-named sibling in another section would also be
+            // repointed, causing its next save to write to the wrong path.
+            openTabs = openTabs.map((t) =>
+              t.notebook === nb && t.section === fromSection && t.page === page
+                ? { ...t, section: toSection }
+                : t
+            )
+            if (
+              activeNotebook === nb &&
+              activePage === page &&
+              activeSection === fromSection
+            ) {
+              activeSection = toSection
+            }
+            schedulePersistTabs()
+          }}
         />
+
+        {#if !sidebarCollapsed}
+          <SidebarResizeHandle
+            width={sidebarWidth}
+            onWidthChange={handleSidebarWidthChange}
+            onWidthCommit={handleSidebarWidthCommit}
+          />
+        {/if}
       {/if}
 
       <!-- Content viewport -->

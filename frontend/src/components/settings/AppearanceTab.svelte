@@ -31,6 +31,7 @@
     type ThemeStatus
   } from '../../theme/store.svelte'
   import ThemeEditor from '../../theme/editor/ThemeEditor.svelte'
+  import { setThemeEditorOpen } from '../../theme/editor/session.svelte'
 
   type Props = Record<string, never>
 
@@ -337,10 +338,12 @@
     // Drop any staged picker preview so the editor owns injectTokens.
     previewTheme = null
     editingThemeId = id
+    setThemeEditorOpen(true)
   }
 
   function closeEditor() {
     editingThemeId = null
+    setThemeEditorOpen(false)
     restoreActiveTheme()
   }
 
@@ -348,6 +351,15 @@
     editingThemeId = id
     void loadThemes()
   }
+
+  // Keep immersive session flag in sync if the tab unmounts mid-edit
+  // (e.g. leave Settings entirely).
+  $effect(() => {
+    setThemeEditorOpen(editingThemeId !== null)
+    return () => {
+      if (editingThemeId !== null) setThemeEditorOpen(false)
+    }
+  })
 
   async function handleRename(id: string, currentName: string) {
     const next = window.prompt('Rename theme', currentName)
@@ -420,7 +432,7 @@
 <svelte:window onkeydown={onWindowKey} />
 
 {#if editingThemeId}
-  <div class="h-full min-h-[32rem] -m-0">
+  <div class="flex-1 min-h-0 h-full flex flex-col">
     <ThemeEditor
       themeId={editingThemeId}
       sourceIsDisk={editingSourceIsDisk}

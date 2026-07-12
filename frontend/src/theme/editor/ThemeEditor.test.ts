@@ -132,6 +132,12 @@ describe('ThemeEditor', () => {
     expect(screen.getByLabelText('Accent')).toBeTruthy()
     expect(screen.getByLabelText('Body font')).toBeTruthy()
     expect(screen.getByLabelText('Corner radius')).toBeTruthy()
+    // Immersive layout: section nav is a top tablist, not a left rail.
+    expect(
+      screen.getByRole('tablist', { name: /theme editor sections/i })
+    ).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /simple/i })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /surfaces/i })).toBeTruthy()
   })
 
   it('injects flattened tokens on open', async () => {

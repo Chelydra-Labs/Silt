@@ -133,7 +133,7 @@ export function getSettingsSections(): SettingsSection[] {
       id: 'general',
       label: 'General',
       icon: 'settings',
-      description: 'Workspace, window, and update preferences.',
+      description: 'Workspace, window, dictionary, and update preferences.',
       group: 'workspace'
     },
     {

@@ -47,6 +47,12 @@ const CORE_INDEX: SettingsIndexEntry[] = [
     keywords: ['change', 'workspace', 'open', 'folder'],
     sectionId: 'general'
   },
+  {
+    label: 'Custom dictionary',
+    keywords: ['spellcheck', 'words', 'add word', 'spelling'],
+    sectionId: 'general',
+    anchorId: 'general-dictionary'
+  },
 
   // Editor
   {
@@ -93,14 +99,9 @@ const CORE_INDEX: SettingsIndexEntry[] = [
   },
   {
     label: 'Spellcheck',
-    keywords: ['spelling', 'dictionary', 'underline', 'misspelled'],
+    keywords: ['spelling', 'underline', 'misspelled'],
     sectionId: 'editor',
     anchorId: 'editor-preferences'
-  },
-  {
-    label: 'Custom dictionary',
-    keywords: ['spellcheck', 'words', 'add word'],
-    sectionId: 'editor'
   },
   {
     label: 'Typewriter mode',

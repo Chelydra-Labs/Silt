@@ -5,6 +5,7 @@
   import { themeState } from '../../theme/store.svelte'
   import { loadedPlugins } from '../../plugins/store.svelte'
   import { aiProviderNeedsSetup } from '../../settings/ai-setup'
+  import { customDictionary } from '../../lib/editor/spellcheck/customDictionary.svelte'
   import VaultActionModal from './VaultActionModal.svelte'
   import VaultArchiveModal from './VaultArchiveModal.svelte'
 
@@ -26,6 +27,13 @@
     } catch {
       closeToTray = false
     }
+  })
+
+  // Vault-scoped custom dictionary (#196). Lives under General (workspace
+  // prefs), not Editor — Editor is typography/writing chrome; the word list
+  // is vault language data.
+  $effect(() => {
+    if (settings.config) void customDictionary.load()
   })
 
   // Optimistic flip + revert-on-failure. The inflight guard stops a second
@@ -438,6 +446,106 @@
       <p class="text-text-muted text-type-xs font-label-sm mt-1.5">
         Move, copy, back up, or migrate this workspace from the actions menu.
       </p>
+    </section>
+
+    <!-- Custom spellcheck dictionary (#196). Vault-scoped; edited via the
+         atomic config-RMW IPC in app_spellcheck.go. -->
+    <section
+      id="general-dictionary"
+      aria-labelledby="general-dictionary-heading"
+    >
+      <h3
+        id="general-dictionary-heading"
+        class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
+      >
+        Custom dictionary
+      </h3>
+      <div
+        class="rounded-xl border border-surface-panel-border bg-surface-panel/5 p-4 space-y-3"
+      >
+        <p class="text-text-muted text-type-sm font-body-md">
+          Words you've added so they aren't flagged as misspelled. Right-click a
+          misspelled word in the editor → "Add to dictionary", or add one here.
+        </p>
+        <div class="flex items-center gap-2">
+          <input
+            bind:value={customDictionary.newWord}
+            placeholder="Add a word"
+            onkeydown={(e: KeyboardEvent) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void customDictionary.add()
+              }
+            }}
+            class="flex-1 px-2.5 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60"
+          />
+          <button
+            type="button"
+            onclick={() => void customDictionary.add()}
+            disabled={!customDictionary.newWord.trim()}
+            class="px-3 py-1.5 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start text-type-md font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Add
+          </button>
+        </div>
+        <div class="relative w-full">
+          <input
+            bind:value={customDictionary.filter}
+            placeholder="Filter words…"
+            class="w-full pl-2.5 pr-8 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-md font-body-md focus:outline-none focus:border-accent-primary-start/60"
+          />
+          {#if customDictionary.filter}
+            <button
+              type="button"
+              aria-label="Clear filter"
+              onclick={() => {
+                customDictionary.filter = ''
+              }}
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-hover text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer flex items-center justify-center focus:outline-none"
+            >
+              <span class="material-symbols-outlined text-icon-md">close</span>
+            </button>
+          {/if}
+        </div>
+        {#if customDictionary.error}
+          <p class="text-error text-type-sm font-body-md">
+            {customDictionary.error}
+          </p>
+        {/if}
+        <div
+          class="max-h-48 overflow-y-auto rounded-lg border border-surface-panel-border/60"
+        >
+          {#if customDictionary.filtered.length === 0}
+            <p
+              class="text-text-muted text-type-sm font-body-md p-3 text-center"
+            >
+              {customDictionary.loading
+                ? 'Loading…'
+                : customDictionary.words.length === 0
+                  ? 'No custom words yet.'
+                  : 'No words match the filter.'}
+            </p>
+          {:else}
+            {#each customDictionary.filtered as word (word)}
+              <div
+                class="flex items-center justify-between px-2.5 py-1.5 hover:bg-surface-panel/20"
+              >
+                <span class="text-text-primary text-type-md font-body-md"
+                  >{word}</span
+                >
+                <button
+                  type="button"
+                  aria-label="Remove {word}"
+                  title="Remove"
+                  onclick={() => void customDictionary.remove(word)}
+                  class="text-text-muted hover:text-error transition-colors cursor-pointer"
+                  >✕</button
+                >
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </div>
     </section>
   {:else if settings.loading}
     <section>

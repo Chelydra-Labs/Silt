@@ -541,60 +541,59 @@
       >
     </div>
   {:else if wc.draft}
-    <div class="flex flex-1 min-h-0">
-      <!-- Left nav -->
-      <nav
-        class="w-48 flex-shrink-0 border-r border-surface-panel-border bg-surface-panel/40 py-4 px-2 overflow-y-auto"
-        aria-label="Theme editor sections"
+    <div class="flex flex-col flex-1 min-h-0">
+      <!-- Top section tabs (not a third left rail — immersive full-width). -->
+      <div
+        class="flex-shrink-0 border-b border-surface-panel-border bg-surface-panel/30 px-4 overflow-x-auto"
       >
-        <button
-          type="button"
-          onclick={selectSimple}
-          class="w-full text-left flex items-center gap-2 px-3 py-2 rounded-md text-type-sm font-label-sm border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 mb-1"
-          class:bg-hover={!wc.showAdvanced}
-          class:text-accent-primary-start={!wc.showAdvanced}
-          class:text-text-muted={wc.showAdvanced}
-          class:bg-transparent={wc.showAdvanced}
-          aria-current={!wc.showAdvanced ? 'page' : undefined}
-        >
-          <span
-            class="material-symbols-outlined text-icon-md"
-            aria-hidden="true">tune</span
-          >
-          Simple
-        </button>
-
         <div
-          class="px-3 pt-3 pb-1 text-type-2xs font-label-sm-bold uppercase tracking-widest text-text-muted"
+          role="tablist"
+          aria-label="Theme editor sections"
+          class="flex items-center gap-1 min-w-min py-2"
         >
-          Advanced
-        </div>
-        {#each ADVANCED as g (g.id)}
           <button
             type="button"
-            onclick={() => selectAdvanced(g.id)}
-            class="w-full text-left flex items-center gap-2 px-3 py-2 rounded-md text-type-sm font-label-sm border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 mb-0.5"
-            class:bg-hover={wc.showAdvanced && wc.advancedGroup === g.id}
-            class:text-accent-primary-start={wc.showAdvanced &&
-              wc.advancedGroup === g.id}
-            class:text-text-muted={!(
-              wc.showAdvanced && wc.advancedGroup === g.id
-            )}
-            class:bg-transparent={!(
-              wc.showAdvanced && wc.advancedGroup === g.id
-            )}
-            aria-current={wc.showAdvanced && wc.advancedGroup === g.id
-              ? 'page'
-              : undefined}
+            role="tab"
+            aria-selected={!wc.showAdvanced}
+            onclick={selectSimple}
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-type-sm font-label-sm border-none cursor-pointer whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+            class:bg-hover={!wc.showAdvanced}
+            class:text-accent-primary-start={!wc.showAdvanced}
+            class:text-text-muted={wc.showAdvanced}
+            class:bg-transparent={wc.showAdvanced}
           >
             <span
               class="material-symbols-outlined text-icon-md"
-              aria-hidden="true">{g.icon}</span
+              aria-hidden="true">tune</span
             >
-            {g.label}
+            Simple
           </button>
-        {/each}
-      </nav>
+          {#each ADVANCED as g (g.id)}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={wc.showAdvanced && wc.advancedGroup === g.id}
+              onclick={() => selectAdvanced(g.id)}
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-type-sm font-label-sm border-none cursor-pointer whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+              class:bg-hover={wc.showAdvanced && wc.advancedGroup === g.id}
+              class:text-accent-primary-start={wc.showAdvanced &&
+                wc.advancedGroup === g.id}
+              class:text-text-muted={!(
+                wc.showAdvanced && wc.advancedGroup === g.id
+              )}
+              class:bg-transparent={!(
+                wc.showAdvanced && wc.advancedGroup === g.id
+              )}
+            >
+              <span
+                class="material-symbols-outlined text-icon-md"
+                aria-hidden="true">{g.icon}</span
+              >
+              {g.label}
+            </button>
+          {/each}
+        </div>
+      </div>
 
       <!-- Main controls -->
       <main class="flex-1 min-w-0 overflow-y-auto p-6 pb-28">
