@@ -186,20 +186,28 @@ describe('persistSavedViews (#427)', () => {
   })
 })
 
-describe('loadColumns (#421)', () => {
+describe('loadColumns (#421/#437)', () => {
   beforeEach(async () => {
     await setTasksSettings({})
   })
 
   it('returns the default TODO/DOING/DONE when columns is unset', () => {
-    expect(loadColumns()).toEqual(['TODO', 'DOING', 'DONE'])
+    expect(loadColumns()).toEqual([
+      { name: 'TODO' },
+      { name: 'DOING' },
+      { name: 'DONE' }
+    ])
   })
 
   it('returns defaults when columns is not an array', async () => {
     await setTasksSettings({
       columns: 'TODO,DOING'
     })
-    expect(loadColumns()).toEqual(['TODO', 'DOING', 'DONE'])
+    expect(loadColumns()).toEqual([
+      { name: 'TODO' },
+      { name: 'DOING' },
+      { name: 'DONE' }
+    ])
   })
 
   it('trims to 50 entries when the persisted array exceeds the cap', async () => {
@@ -209,8 +217,19 @@ describe('loadColumns (#421)', () => {
     })
     const cols = loadColumns()
     expect(cols).toHaveLength(50)
-    expect(cols[0]).toBe('COL0')
-    expect(cols[49]).toBe('COL49')
+    expect(cols[0]).toEqual({ name: 'COL0' })
+    expect(cols[49]).toEqual({ name: 'COL49' })
+  })
+
+  it('accepts legacy string[] and structured columns with wipLimit', async () => {
+    await setTasksSettings({
+      columns: ['Backlog', { name: 'TODO', wipLimit: 3 }, 'DONE']
+    })
+    expect(loadColumns()).toEqual([
+      { name: 'Backlog' },
+      { name: 'TODO', wipLimit: 3 },
+      { name: 'DONE' }
+    ])
   })
 
   it('returns a copy of a valid array (caller can mutate without touching the snapshot)', async () => {
@@ -218,9 +237,19 @@ describe('loadColumns (#421)', () => {
       columns: ['Backlog', 'TODO', 'DOING', 'DONE']
     })
     const cols = loadColumns()
-    expect(cols).toEqual(['Backlog', 'TODO', 'DOING', 'DONE'])
-    cols.push('Extra')
+    expect(cols).toEqual([
+      { name: 'Backlog' },
+      { name: 'TODO' },
+      { name: 'DOING' },
+      { name: 'DONE' }
+    ])
+    cols.push({ name: 'Extra' })
     // A second read returns the original persisted set, not the mutated copy.
-    expect(loadColumns()).toEqual(['Backlog', 'TODO', 'DOING', 'DONE'])
+    expect(loadColumns()).toEqual([
+      { name: 'Backlog' },
+      { name: 'TODO' },
+      { name: 'DOING' },
+      { name: 'DONE' }
+    ])
   })
 })

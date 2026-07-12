@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 
 // jsdom polyfills — BoardView pulls in TaskEditDrawer/TaskSubEditorModal
 // (transition:fly + TipTap), which need the Web Animations API + caret rects.
@@ -178,6 +184,10 @@ function row(p: Partial<Record<string, unknown>>): Record<string, unknown> {
     created_at: '',
     completed_at: '',
     manual_order: 0,
+    modified_at: '',
+    estimate_minutes: null,
+    subtask_total: 0,
+    subtask_done: 0,
     tags: '',
     is_blocked: 0,
     ...p
@@ -733,7 +743,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(screen.getByRole('group', { name: 'Backlog' })).toBeInTheDocument()
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
       'columns',
-      expect.arrayContaining(['Backlog'])
+      expect.arrayContaining([{ name: 'Backlog' }])
     )
     promptSpy.mockRestore()
   })
@@ -1049,6 +1059,32 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(params).toContain(TODAY)
   })
 
+  it('shows subtask badge and column estimate sum when present (#434/#439)', async () => {
+    await renderBoard('status', [
+      row({
+        id: 't1',
+        status: 'TODO',
+        clean_content: 'Parent',
+        subtask_total: 4,
+        subtask_done: 2,
+        estimate_minutes: 120
+      }),
+      row({
+        id: 't2',
+        status: 'TODO',
+        clean_content: 'Sibling',
+        estimate_minutes: 60
+      })
+    ])
+    expect(screen.getByTestId('board-subtask-badge-t1').textContent).toContain(
+      '[2/4]'
+    )
+    // 120 + 60 = 180m → 3h estimated on the TODO column.
+    expect(
+      screen.getByTestId('board-col-estimate-status-TODO').textContent
+    ).toMatch(/3h estimated/)
+  })
+
   // #458: a column-shell skeleton renders while the board is loading (replaces
   // the old bare "Loading board…" text). Keep loading=true by never resolving
   // the query, then assert the skeleton testid is present.
@@ -1061,5 +1097,229 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     render(BoardView, { ctx, onCountChange: vi.fn() })
     await tick() // initial mount render (loading starts true)
     expect(screen.getByTestId('tasks-board-loading')).toBeTruthy()
+  })
+
+  // ── Soft WIP limits (#437) ───────────────────────────────────────────
+
+  it('shows count/limit badge and over-limit styling when a column exceeds WIP', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO', wipLimit: 1 },
+        { name: 'DOING' },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' }),
+      row({ id: 't2', status: 'TODO', clean_content: 'B' })
+    ])
+
+    const badge = screen.getByTestId('board-wip-badge-status-TODO')
+    expect(badge.textContent?.replace(/\s+/g, ' ').trim()).toBe('2 / 1')
+    expect(badge.className).toContain('text-status-warn')
+    expect(screen.getByTestId('board-wip-over-limit')).toBeInTheDocument()
+    expect(
+      screen.getByRole('group', { name: 'To Do' }).getAttribute('data-wip-over')
+    ).toBe('true')
+  })
+
+  it('does not show WIP badge when groupBy is not status', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO', wipLimit: 1 },
+        { name: 'DOING' },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('owner', [
+      row({ id: 't1', owner: 'Alice', clean_content: 'A' }),
+      row({ id: 't2', owner: 'Alice', clean_content: 'B' })
+    ])
+    expect(screen.queryByTestId('board-wip-badge-status-TODO')).toBeNull()
+    expect(screen.queryByTestId('board-wip-over-limit')).toBeNull()
+  })
+
+  it('prompts to confirm when a drop would exceed the WIP limit; cancel snaps back', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING', wipLimit: 1 },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' }),
+      row({ id: 't2', status: 'DOING', clean_content: 'B' })
+    ])
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doingCol = screen.getByRole('group', { name: 'In Progress' })
+
+    await fireEvent.dragStart(todoCard)
+    await fireEvent.drop(doingCol)
+    await flush()
+
+    // Soft limit: no persist yet; confirm dialog is open.
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(screen.getByTestId('board-wip-confirm')).toBeInTheDocument()
+    expect(screen.getByText(/over its WIP limit/i)).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByTestId('board-wip-confirm-cancel'))
+    await flush()
+
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('board-wip-confirm')).toBeNull()
+    // Card snapped back to TODO.
+    expect(
+      screen.getByRole('group', { name: 'To Do' }).querySelector('[data-card]')
+        ?.textContent
+    ).toContain('A')
+  })
+
+  it('proceeds with the status change when WIP over-limit is confirmed', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING', wipLimit: 1 },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'A' }),
+      row({ id: 't2', status: 'DOING', clean_content: 'B' })
+    ])
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doingCol = screen.getByRole('group', { name: 'In Progress' })
+
+    await fireEvent.dragStart(todoCard)
+    await fireEvent.drop(doingCol)
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('board-wip-confirm-confirm'))
+    await flush()
+
+    expect(mocks.updateBlockState).toHaveBeenCalledWith('t1', 'DOING')
+    expect(screen.queryByTestId('board-wip-confirm')).toBeNull()
+  })
+
+  it('WIP over-limit + blocked DONE skips WIP dialog and opens blocked-DONE only', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING' },
+        { name: 'DONE', wipLimit: 1 }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    mocks.getTaskBlockers.mockResolvedValue([
+      { id: 'blocker-1', clean_content: 'Prerequisite' }
+    ])
+    await renderBoard('status', [
+      row({
+        id: 'tb',
+        status: 'TODO',
+        clean_content: 'blocked',
+        is_blocked: 1
+      }),
+      row({ id: 'td', status: 'DONE', clean_content: 'already done' })
+    ])
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doneCol = screen.getByRole('group', { name: 'Done' })
+
+    await fireEvent.dragStart(todoCard)
+    await fireEvent.drop(doneCol)
+    await flush()
+
+    // Single dialog: blocked-DONE, not WIP confirm first.
+    expect(screen.queryByTestId('board-wip-confirm')).toBeNull()
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Complete blocked task?'
+    })
+    expect(dialog).toBeInTheDocument()
+
+    // Cancel reverts to TODO (use dialog-scoped Cancel — not the scrim).
+    await fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Cancel' })
+    )
+    await flush()
+    expect(
+      screen.getByRole('group', { name: 'To Do' }).querySelector('[data-card]')
+        ?.textContent
+    ).toContain('blocked')
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
+  })
+
+  it('prompts on quick-add into an over-WIP column; cancel does not create', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO', wipLimit: 1 },
+        { name: 'DOING' },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'Already there' })
+    ])
+
+    await fireEvent.click(screen.getByTestId('board-add-status-TODO'))
+    await flush()
+    const input = screen.getByPlaceholderText(/Add to To Do/i)
+    await fireEvent.input(input, { target: { value: 'New over limit' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+
+    expect(mocks.createTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('board-wip-quickadd-confirm')).toBeInTheDocument()
+
+    await fireEvent.click(
+      screen.getByTestId('board-wip-quickadd-confirm-cancel')
+    )
+    await flush()
+
+    expect(mocks.createTask).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('board-wip-quickadd-confirm')).toBeNull()
+  })
+
+  it('creates via quick-add when over-WIP is confirmed', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO', wipLimit: 1 },
+        { name: 'DOING' },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'Already there' })
+    ])
+
+    await fireEvent.click(screen.getByTestId('board-add-status-TODO'))
+    await flush()
+    const input = screen.getByPlaceholderText(/Add to To Do/i)
+    await fireEvent.input(input, { target: { value: 'New over limit' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByTestId('board-wip-quickadd-confirm-confirm')
+    )
+    await flush()
+
+    expect(mocks.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'New over limit', status: 'TODO' })
+    )
   })
 })

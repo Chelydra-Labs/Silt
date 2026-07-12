@@ -14,7 +14,12 @@
     return friendlyCaughtError(e)
   }
   import type { TaskDetail } from '../types'
-  import { PRIORITY_LABELS, laneLabel, priorityClass } from '../types'
+  import {
+    PRIORITY_LABELS,
+    formatEstimateMinutes,
+    laneLabel,
+    priorityClass
+  } from '../types'
   import DependencyPicker from './DependencyPicker.svelte'
   import BlockedDoneDialog from './BlockedDoneDialog.svelte'
   import CommentThread from './CommentThread.svelte'
@@ -154,6 +159,14 @@
   let titleState = $state('')
   let titleDraft = $state('')
   let titlePending = $state(false)
+  // Estimate draft is the raw [estimate::] string (e.g. "2h"); empty clears.
+  let estimateDraft = $state('')
+  let estimatePending = $state(false)
+  // True after a failed estimate save until the next successful edit/clear.
+  let estimateInvalid = $state(false)
+
+  // Shared with list/board rollups via types.formatEstimateMinutes (Go twin:
+  // parser.FormatEstimateMinutes) so drawer draft and query reconstruction match.
 
   // Pending DONE-on-blocked confirmation (#302). Picking DONE on a task with
   // open prerequisites pauses here and renders the shared BlockedDoneDialog
@@ -192,6 +205,7 @@
     void task?.priority
     void task?.tags
     void task?.clean_content
+    void task?.estimate_minutes
     // Guard each mirror with its pending flag (via untrack so the flag
     // doesn't become a dependency) — a reload during an in-flight edit
     // mustn't clobber the optimistic value. Without untrack, the pending
@@ -220,6 +234,10 @@
     if (untrack(() => !titlePending)) {
       titleState = task?.clean_content ?? ''
       titleDraft = task?.clean_content ?? ''
+    }
+    if (untrack(() => !estimatePending)) {
+      estimateDraft = formatEstimateMinutes(task?.estimate_minutes)
+      estimateInvalid = false
     }
     metaError = ''
   })
@@ -502,6 +520,34 @@
       ?.focus()
   }
 
+  // --- Estimate editor (#439) ---
+  // Commit on blur/Enter. Empty string clears the estimate. The backend
+  // validates m/h/d grammar; invalid input reverts the draft.
+  async function commitEstimate() {
+    if (!task || estimatePending) return
+    const trimmed = estimateDraft.trim()
+    const prev = formatEstimateMinutes(task.estimate_minutes)
+    if (trimmed === prev) {
+      estimateInvalid = false
+      return
+    }
+    const prevDraft = estimateDraft
+    estimateDraft = trimmed
+    estimatePending = true
+    metaError = ''
+    try {
+      await ctx.setTaskEstimate(task.id, trimmed)
+      estimateInvalid = false
+      onMetaChanged?.()
+    } catch (e) {
+      estimateDraft = prevDraft
+      estimateInvalid = true
+      metaError = errMsg(e)
+    } finally {
+      estimatePending = false
+    }
+  }
+
   // --- Owner editor (#412) ---
   // Commit on blur/Enter. Empty string clears the owner. Optimistic +
   // revert-on-error (mirrors pin/progress).
@@ -695,8 +741,9 @@
   })
 
   function onWindowKeydown(e: KeyboardEvent) {
-    // Don't close on Escape while a Popover (recurrence/due-date) or the
-    // BlockedDoneDialog is open — those consume Escape first.
+    // Don't close on Escape while a Popover (recurrence/due-date), the
+    // BlockedDoneDialog, or the comment reply composer is open — those
+    // consume Escape first (reply also stopPropagation on its keydown).
     if (
       e.key === 'Escape' &&
       task &&
@@ -704,6 +751,8 @@
       !dueDateOpen &&
       !pendingBlockedDone
     ) {
+      const active = document.activeElement as HTMLElement | null
+      if (active?.closest?.('[data-testid="reply-composer"]')) return
       e.preventDefault()
       onClose()
     }
@@ -962,9 +1011,16 @@
           >
             Progress
           </h3>
-          <span class="text-type-xs font-label-sm text-text-primary"
-            >{progressState}%</span
-          >
+          <span class="text-type-xs font-label-sm text-text-primary">
+            {progressState}%{#if task.subtask_total > 0}
+              <span
+                class="text-text-muted ml-1"
+                data-testid="task-subtask-count"
+                aria-label="{task.subtask_done} of {task.subtask_total} subtasks done"
+                >[{task.subtask_done}/{task.subtask_total}]</span
+              >
+            {/if}
+          </span>
         </div>
         <input
           type="range"
@@ -990,6 +1046,44 @@
             style="width: {progressState}%"
           ></div>
         </div>
+      </section>
+
+      <!-- Estimate (#439) -->
+      <section>
+        <div class="flex items-center justify-between gap-2 mb-1">
+          <h3
+            class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
+          >
+            <label for="task-estimate-input">Estimate</label>
+          </h3>
+          <input
+            id="task-estimate-input"
+            type="text"
+            data-testid="task-estimate-input"
+            class="w-28 px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card text-right focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimatePending
+              ? 'opacity-50'
+              : ''}"
+            placeholder="—"
+            bind:value={estimateDraft}
+            readonly={estimatePending}
+            aria-busy={estimatePending}
+            aria-invalid={estimateInvalid}
+            aria-describedby="task-estimate-hint"
+            onblur={() => void commitEstimate()}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void commitEstimate()
+              }
+            }}
+          />
+        </div>
+        <p
+          id="task-estimate-hint"
+          class="text-type-2xs text-text-muted font-label-sm"
+        >
+          30m, 2h, 1d, 2.5d
+        </p>
       </section>
 
       <!-- Recurrence editor -->

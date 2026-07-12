@@ -26,7 +26,7 @@ func TestAppendTaskComment_AppendsNoteChild(t *testing.T) {
 	content := "- [ ] ship the feature <!-- id: " + taskID + " -->\n"
 	indexTestFile(t, app, "W", "S", "CommentBasic", "2026-07-01", content)
 
-	newID, err := app.AppendTaskComment(taskID, "looks good to me", "Dana", "2026-07-07T14:22:00")
+	newID, err := app.AppendTaskComment(taskID, "looks good to me", "Dana", "2026-07-07T14:22:00", "")
 	if err != nil {
 		t.Fatalf("AppendTaskComment: %v", err)
 	}
@@ -102,12 +102,12 @@ func TestAppendTaskComment_ConcurrentPostsBothLand(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		<-barrier
-		idA, errA = app.AppendTaskComment(taskID, "comment A", "Alice", "2026-07-07T10:00:00")
+		idA, errA = app.AppendTaskComment(taskID, "comment A", "Alice", "2026-07-07T10:00:00", "")
 	}()
 	go func() {
 		defer wg.Done()
 		<-barrier
-		idB, errB = app.AppendTaskComment(taskID, "comment B", "Bob", "2026-07-07T10:00:01")
+		idB, errB = app.AppendTaskComment(taskID, "comment B", "Bob", "2026-07-07T10:00:01", "")
 	}()
 	close(barrier)
 	wg.Wait()
@@ -155,13 +155,13 @@ func TestAppendTaskComment_RefusedWhileFocusLocked(t *testing.T) {
 		t.Fatalf("AcquireFocusLock: %v", err)
 	}
 	// The append path mirrors every other task setter's focus-lock guard (#444).
-	if _, err := app.AppendTaskComment(taskID, "x", "Dana", "2026-07-07T14:22:00"); !errors.Is(err, errBlockBeingEdited) {
+	if _, err := app.AppendTaskComment(taskID, "x", "Dana", "2026-07-07T14:22:00", ""); !errors.Is(err, errBlockBeingEdited) {
 		t.Fatalf("expected errBlockBeingEdited while focus-locked, got %v", err)
 	}
 	if err := app.ReleaseFocusLock("W", "S", "CommentFocus"); err != nil {
 		t.Fatalf("ReleaseFocusLock: %v", err)
 	}
-	if _, err := app.AppendTaskComment(taskID, "x", "Dana", "2026-07-07T14:22:00"); err != nil {
+	if _, err := app.AppendTaskComment(taskID, "x", "Dana", "2026-07-07T14:22:00", ""); err != nil {
 		t.Fatalf("AppendTaskComment after release: %v", err)
 	}
 }
@@ -172,7 +172,7 @@ func TestAppendTaskComment_RejectsNonTask(t *testing.T) {
 	content := "- a plain note <!-- id: " + noteID + " -->\n"
 	indexTestFile(t, app, "W", "S", "CommentNonTask", "2026-07-01", content)
 
-	if _, err := app.AppendTaskComment(noteID, "x", "Dana", "2026-07-07T14:22:00"); err == nil {
+	if _, err := app.AppendTaskComment(noteID, "x", "Dana", "2026-07-07T14:22:00", ""); err == nil {
 		t.Fatal("expected error appending comment to a non-task block, got nil")
 	}
 }
@@ -216,7 +216,7 @@ func TestAppendTaskComment_RejectsEmptyText(t *testing.T) {
 	indexTestFile(t, app, "W", "S", "CommentEmpty", "2026-07-01", content)
 
 	for _, text := range []string{"", "   ", "\t\n  "} {
-		if _, err := app.AppendTaskComment(taskID, text, "Dana", "2026-07-07T14:22:00"); err == nil {
+		if _, err := app.AppendTaskComment(taskID, text, "Dana", "2026-07-07T14:22:00", ""); err == nil {
 			t.Fatalf("expected error for empty/whitespace comment text %q, got nil", text)
 		}
 	}
@@ -234,7 +234,7 @@ func TestPluginAppendTaskComment_GatedByCapability(t *testing.T) {
 
 	tok := registerTestSession(t, app, "third-party")
 	// Without the content-mutate grant: rejected, no comment lands.
-	if _, err := app.PluginAppendTaskComment("third-party", tok, taskID, "x", "Dana", "2026-07-07T14:22:00"); err == nil {
+	if _, err := app.PluginAppendTaskComment("third-party", tok, taskID, "x", "Dana", "2026-07-07T14:22:00", ""); err == nil {
 		t.Fatal("expected capability denial without content-mutate grant")
 	}
 	sub, _ := app.FetchSubtree(taskID)
@@ -246,7 +246,7 @@ func TestPluginAppendTaskComment_GatedByCapability(t *testing.T) {
 	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	id, err := app.PluginAppendTaskComment("third-party", tok, taskID, "looks good", "Dana", "2026-07-07T14:22:00")
+	id, err := app.PluginAppendTaskComment("third-party", tok, taskID, "looks good", "Dana", "2026-07-07T14:22:00", "")
 	if err != nil {
 		t.Fatalf("PluginAppendTaskComment with grant: %v", err)
 	}
@@ -256,6 +256,95 @@ func TestPluginAppendTaskComment_GatedByCapability(t *testing.T) {
 	sub, _ = app.FetchSubtree(taskID)
 	if len(sub) != 1 || sub[0].ID != id {
 		t.Errorf("granted call should have landed exactly one NOTE child id=%q: %+v", id, sub)
+	}
+}
+
+
+// TestAppendTaskComment_NestedReply nests a reply under an existing NOTE with
+// deeper indent (#438). ParentID points at the parent comment (not the task),
+// and Depth is parentDepth+1 so the on-disk indent reflects the thread.
+func TestAppendTaskComment_NestedReply(t *testing.T) {
+	app := newTestApp(t)
+	const taskID = "ac1aeee0-4444-1111-1111-111111111111"
+	content := "- [ ] discuss design <!-- id: " + taskID + " -->\n"
+	indexTestFile(t, app, "W", "S", "CommentNest", "2026-07-01", content)
+
+	parentID, err := app.AppendTaskComment(taskID, "top-level thought", "Alice", "2026-07-07T10:00:00", "")
+	if err != nil {
+		t.Fatalf("parent comment: %v", err)
+	}
+
+	// A sibling top-level comment after the parent ensures the reply is
+	// spliced after the parent's descendants, not merely appended at the end.
+	siblingID, err := app.AppendTaskComment(taskID, "another top-level", "Carol", "2026-07-07T10:01:00", "")
+	if err != nil {
+		t.Fatalf("sibling comment: %v", err)
+	}
+
+	replyID, err := app.AppendTaskComment(taskID, "reply to Alice", "Bob", "2026-07-07T10:02:00", parentID)
+	if err != nil {
+		t.Fatalf("nested reply: %v", err)
+	}
+	if replyID == "" {
+		t.Fatal("expected a non-empty reply id")
+	}
+
+	sub, err := app.FetchSubtree(taskID)
+	if err != nil {
+		t.Fatalf("FetchSubtree: %v", err)
+	}
+	if len(sub) != 3 {
+		t.Fatalf("expected 3 notes in sub-tree, got %d: %+v", len(sub), sub)
+	}
+
+	var parent, reply, sibling *parser.ParsedBlock
+	for i := range sub {
+		switch sub[i].ID {
+		case parentID:
+			parent = &sub[i]
+		case replyID:
+			reply = &sub[i]
+		case siblingID:
+			sibling = &sub[i]
+		}
+	}
+	if parent == nil || reply == nil || sibling == nil {
+		t.Fatalf("missing blocks in sub-tree: parent=%v reply=%v sibling=%v ids=%v",
+			parent != nil, reply != nil, sibling != nil,
+			[]string{sub[0].ID, sub[1].ID, sub[2].ID})
+	}
+	if reply.ParentID != parentID {
+		t.Errorf("reply ParentID: want %s, got %q", parentID, reply.ParentID)
+	}
+	if reply.Depth != parent.Depth+1 {
+		t.Errorf("reply Depth: want %d (parent+1), got %d (parent=%d)", parent.Depth+1, reply.Depth, parent.Depth)
+	}
+	if reply.Type != parser.BlockNote {
+		t.Errorf("reply type: want NOTE, got %s", reply.Type)
+	}
+	if reply.CleanText != "reply to Alice" {
+		t.Errorf("reply text: got %q", reply.CleanText)
+	}
+	if sibling.ParentID != taskID {
+		t.Errorf("sibling should stay top-level under task, ParentID=%q", sibling.ParentID)
+	}
+
+	// File order: parent, reply (nested under parent), sibling — reply must
+	// sit between parent and sibling, not after sibling.
+	var order []string
+	for _, b := range sub {
+		order = append(order, b.ID)
+	}
+	if !(order[0] == parentID && order[1] == replyID && order[2] == siblingID) {
+		t.Errorf("expected order [parent, reply, sibling], got %v", order)
+	}
+
+	// Reject nesting under a missing / non-NOTE / out-of-subtree parent.
+	if _, err := app.AppendTaskComment(taskID, "x", "Dana", "2026-07-07T11:00:00", "no-such-comment"); err == nil {
+		t.Fatal("expected error for missing parent comment")
+	}
+	if _, err := app.AppendTaskComment(taskID, "x", "Dana", "2026-07-07T11:00:00", taskID); err == nil {
+		t.Fatal("expected error nesting under the task id (not a NOTE)")
 	}
 }
 

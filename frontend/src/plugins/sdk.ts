@@ -242,6 +242,14 @@ export interface PluginContext {
    */
   setTaskTitle: (id: string, title: string) => Promise<boolean>
   /**
+   * Rewrite a task's `[estimate::]` duration token on disk atomically (#439).
+   * Pass an empty string to clear the estimate. Non-empty values must parse as
+   * durations with m/h/d units (e.g. `30m`, `2h`, `1d`, `2.5d`); invalid input
+   * is rejected server-side. Round-trips through the markdown file, re-indexes,
+   * and emits block:changed. Gated by content-mutate.
+   */
+  setTaskEstimate: (id: string, estimate: string) => Promise<boolean>
+  /**
    * Return the open (non-DONE) prerequisites of a task (#302), each with full
    * metadata (owner, due date, breadcrumb) for the DONE-transition confirm
    * dialog. Empty array = the task is actionable.
@@ -394,11 +402,15 @@ export interface PluginContext {
    * re-hydrates author/timestamp on subsequent loads via the block_meta
    * projection from #418/#37). Returns the new block's UUID. Gated by
    * content-mutate (#156).
+   *
+   * parentCommentId nests the NOTE under an existing comment (#438). Omit or
+   * pass undefined/empty for a top-level comment (direct child of the task).
    */
   addTaskComment: (
     taskId: string,
     text: string,
-    author?: string
+    author?: string,
+    parentCommentId?: string
   ) => Promise<string>
   deleteBlock: (uuid: string) => Promise<boolean>
   moveBlock: (

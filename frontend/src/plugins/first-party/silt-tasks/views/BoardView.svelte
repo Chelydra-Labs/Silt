@@ -23,13 +23,25 @@
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
+  import ConfirmModal from '../components/ConfirmModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
-  import type { TaskDetail } from '../types'
-  import { PRIORITY_LABELS, laneLabel, priorityClass } from '../types'
+  import {
+    formatEstimateSum,
+    PRIORITY_LABELS,
+    laneLabel,
+    priorityClass,
+    type TaskDetail
+  } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import {
+    cloneColumns,
+    columnNames,
+    type BoardColumn as StatusColumn
+  } from '../columns'
+  import {
     getTaskHubState,
+    setColumns,
     setDisplayMode,
     type GroupBy
   } from '../state.svelte'
@@ -57,21 +69,23 @@
     'tag'
   ])
 
-  // A rendered Board column. `value` is the dimension value a drop/quick-add
+  // A rendered Board lane. `value` is the dimension value a drop/quick-add
   // dispatches with — '' routes to the dimension's "clear" path (Unassigned
-  // owner, No Date due date, No Tag no-op).
-  interface BoardColumn {
+  // owner, No Date due date, No Tag no-op). Named Lane (not BoardColumn) so
+  // it doesn't collide with the persisted StatusColumn model in columns.ts.
+  interface Lane {
     key: string
     label: string
     value: string
     items: TaskDetail[]
   }
 
-  // Status columns are the ONLY user-managed columns (configured + persisted).
-  // Every other dimension derives its columns from the loaded data.
-  let statusColumns = $state<string[]>(loadColumns())
+  // Status columns are the ONLY user-managed columns (configured + persisted,
+  // including soft WIP limits #437). Every other dimension derives its
+  // columns from the loaded data.
+  let statusColumns = $state<StatusColumn[]>(loadColumns())
   let rows = $state<TaskDetail[]>([])
-  let columns = $state<BoardColumn[]>([])
+  let columns = $state<Lane[]>([])
   let loading = $state(true)
   let errorMsg = $state('')
   let moveError = $state('')
@@ -82,8 +96,20 @@
   let pendingBlockedDone = $state<{
     card: TaskDetail
     fromColKey: string
-    toCol: BoardColumn
+    toCol: Lane
     blockers: { id: string; clean_content?: string }[]
+  } | null>(null)
+  // Soft WIP-limit confirm (#437): shown when a drop/keyboard move would
+  // push a status column over its configured cap. Cancel snaps back;
+  // Confirm proceeds with the status change.
+  let pendingWipConfirm = $state<{
+    card: TaskDetail
+    fromColKey: string
+    toCol: Lane
+  } | null>(null)
+  // Soft WIP confirm for per-column quick-add (create path, not drag).
+  let pendingQuickAddWip = $state<{
+    resolve: (ok: boolean) => void
   } | null>(null)
 
   // --- Hub state (reactive reads) -----------------------------------------
@@ -146,10 +172,7 @@
 
   // The dimension-aware drop dispatcher. Each groupBy routes to the SDK
   // setter that actually owns the binned field on disk.
-  function dispatchDrop(
-    card: TaskDetail,
-    toCol: BoardColumn
-  ): Promise<unknown> {
+  function dispatchDrop(card: TaskDetail, toCol: Lane): Promise<unknown> {
     switch (groupBy) {
       case 'status':
         return ctx.updateBlockState(card.id, toCol.value as TaskStatus)
@@ -169,7 +192,7 @@
     }
   }
 
-  function announceMove(toCol: BoardColumn): string {
+  function announceMove(toCol: Lane): string {
     switch (groupBy) {
       case 'status':
         return `Task moved to ${toCol.label}`
@@ -186,18 +209,14 @@
     }
   }
 
-  function snapshotColumns(): BoardColumn[] {
+  function snapshotColumns(): Lane[] {
     return columns.map((c) => ({ ...c, items: [...c.items] }))
   }
 
   // Apply the optimistic dimension move to the rendered columns. Tag is
   // multi-membership (card joins the target without leaving the source); the
   // single-membership dimensions remove the card from the source column.
-  function applyOptimistic(
-    card: TaskDetail,
-    fromColKey: string,
-    toCol: BoardColumn
-  ) {
+  function applyOptimistic(card: TaskDetail, fromColKey: string, toCol: Lane) {
     const multiMembership = groupBy === 'tag'
     // For tag drops, the card's tags field must be updated optimistically
     // so a rapid successive drop reads the fresh tag set (not the stale one
@@ -235,17 +254,13 @@
     })
   }
 
-  function revertTo(prev: BoardColumn[]) {
+  function revertTo(prev: Lane[]) {
     columns = prev
   }
 
   // Restore the card to its source column (used by the DONE-guard cancel
   // path and the confirm-failure path).
-  function revertOptimistic(
-    card: TaskDetail,
-    fromColKey: string,
-    toCol: BoardColumn
-  ) {
+  function revertOptimistic(card: TaskDetail, fromColKey: string, toCol: Lane) {
     columns = columns.map((c) => {
       if (c.key === toCol.key) {
         return { ...c, items: c.items.filter((i) => i.id !== card.id) }
@@ -267,11 +282,32 @@
   // writer-wins — without serialization a stale older orderByID resolving
   // later would clobber the user's newest intent. See commitManualReorder.
   let reorderInFlight: Promise<void> | null = null
-  async function commitDrop(
+  /** Soft WIP limit for a status lane, or null when unlimited. */
+  function wipLimitFor(statusName: string): number | null {
+    const col = statusColumns.find((c) => c.name === statusName)
+    const lim = col?.wipLimit
+    return lim != null && lim >= 1 ? lim : null
+  }
+
+  /**
+   * True when moving `card` into `toCol` would push that status column over
+   * its soft WIP limit (#437). Same-column / non-status moves never trip it.
+   */
+  function wouldExceedWip(
     card: TaskDetail,
     fromColKey: string,
-    toCol: BoardColumn
-  ) {
+    toCol: Lane
+  ): boolean {
+    if (groupBy !== 'status') return false
+    if (toCol.key === fromColKey) return false
+    const limit = wipLimitFor(toCol.value)
+    if (limit == null) return false
+    // Already counted in the target (shouldn't happen for status) → no bump.
+    if (toCol.items.some((i) => i.id === card.id)) return false
+    return toCol.items.length + 1 > limit
+  }
+
+  async function commitDrop(card: TaskDetail, fromColKey: string, toCol: Lane) {
     if (!dndEnabled) return
     if (groupBy !== 'tag' && toCol.key === fromColKey) return
     if (groupBy === 'tag' && !toCol.value) {
@@ -283,6 +319,24 @@
     const my = ++moveSeq
     moveError = ''
     const prev = snapshotColumns()
+
+    // Soft WIP-limit guard (#437, status dimension only): pause before the
+    // persist so the user can confirm or cancel. Optimistic placement runs
+    // first so Cancel can snap the card back (mirrors the DONE-blocked flow).
+    // Skip WIP when blocked-DONE will also fire — one modal is enough; the
+    // blocked-DONE dialog already implies the move proceeds if confirmed.
+    const skipWipForBlockedDone =
+      groupBy === 'status' && toCol.value === 'DONE' && !!card.is_blocked
+    if (
+      wouldExceedWip(card, fromColKey, toCol) &&
+      !pendingWipConfirm &&
+      !pendingBlockedDone &&
+      !skipWipForBlockedDone
+    ) {
+      applyOptimistic(card, fromColKey, toCol)
+      pendingWipConfirm = { card, fromColKey, toCol }
+      return
+    }
 
     // DONE-on-blocked guard (#302, status dimension only): pause before the
     // persist so the user can confirm or cancel. applyOptimistic runs AFTER
@@ -400,6 +454,78 @@
     liveMessage = 'Move cancelled.'
   }
 
+  function focusCard(cardId: string) {
+    document.querySelector<HTMLElement>(`[data-card="${cardId}"]`)?.focus?.()
+  }
+
+  async function confirmWipOverLimit() {
+    const pending = pendingWipConfirm
+    if (!pending) return
+    pendingWipConfirm = null
+    const { card, fromColKey, toCol } = pending
+    // Card is already optimistically in the target. Hand off to the
+    // blocked-DONE guard when applicable; otherwise persist the drop.
+    if (groupBy === 'status' && toCol.value === 'DONE' && card.is_blocked) {
+      try {
+        const blockers = await ctx.getTaskBlockers(card.id)
+        if (blockers.length > 0) {
+          pendingBlockedDone = {
+            card,
+            fromColKey,
+            toCol,
+            blockers: blockers.map((b) => ({
+              id: b.id,
+              clean_content: b.clean_content
+            }))
+          }
+          focusCard(card.id)
+          return
+        }
+      } catch {
+        // Proceed with persist below.
+      }
+    }
+    liveMessage = announceMove(toCol)
+    try {
+      await dispatchDrop(card, toCol)
+      if (sort === 'manual') {
+        // Destination already includes the optimistic card; exclude it when
+        // computing the prior max order so we don't count the card itself.
+        const destItems =
+          columns
+            .find((c) => c.key === toCol.key)
+            ?.items.filter((i) => i.id !== card.id) ?? []
+        const maxOrder =
+          destItems.length > 0
+            ? Math.max(...destItems.map((c) => c.manual_order ?? 0))
+            : 0
+        try {
+          await ctx.setTaskOrder(card.id, maxOrder + 1)
+        } catch (e) {
+          moveError = e instanceof Error ? e.message : String(e)
+          await reload()
+          liveMessage = 'Move partially failed — reloaded.'
+          focusCard(card.id)
+          return
+        }
+      }
+    } catch (e) {
+      moveError = e instanceof Error ? e.message : String(e)
+      revertOptimistic(card, fromColKey, toCol)
+      liveMessage = 'Move failed — reverted.'
+    }
+    focusCard(card.id)
+  }
+
+  function cancelWipOverLimit() {
+    const pending = pendingWipConfirm
+    if (!pending) return
+    pendingWipConfirm = null
+    revertOptimistic(pending.card, pending.fromColKey, pending.toCol)
+    liveMessage = 'Move cancelled — column is over its WIP limit.'
+    focusCard(pending.card.id)
+  }
+
   // --- Column derivation --------------------------------------------------
   // Status: configured columns (user-managed). Priority: P1/P2/P3 only
   // (legacy priority-0 rows join P3 but keep their value). Every other
@@ -410,7 +536,7 @@
     g: GroupBy,
     configuredStatuses: string[],
     iso: string
-  ): BoardColumn[] {
+  ): Lane[] {
     if (g === 'status') {
       const byStatus = new Map<string, TaskDetail[]>()
       for (const r of loaded) {
@@ -474,8 +600,27 @@
     }))
   }
 
+  function columnEstimateSum(items: TaskDetail[]): number {
+    return items.reduce((acc, c) => acc + (c.estimate_minutes ?? 0), 0)
+  }
+
   function rebin() {
-    columns = deriveColumns(rows, groupBy, statusColumns, today)
+    columns = deriveColumns(rows, groupBy, columnNames(statusColumns), today)
+  }
+
+  /** Persist status columns + mirror into hub state (saved-view dirty flag). */
+  function saveStatusColumns(next: StatusColumn[], prev: StatusColumn[]) {
+    statusColumns = next
+    setColumns(next)
+    void persistColumns(next).then((ok) => {
+      if (!ok) {
+        configError = 'Failed to save columns'
+        statusColumns = prev
+        setColumns(prev)
+        rebin()
+      }
+    })
+    rebin()
   }
 
   // Monotonic token so concurrent reload() calls can identify their own
@@ -504,7 +649,12 @@
         pinned: !!r.pinned,
         created_at: r.created_at ?? '',
         completed_at: r.completed_at ?? '',
-        manual_order: r.manual_order ?? 0
+        manual_order: r.manual_order ?? 0,
+        modified_at: r.modified_at ?? '',
+        estimate_minutes:
+          r.estimate_minutes == null ? null : Number(r.estimate_minutes),
+        subtask_total: r.subtask_total ?? 0,
+        subtask_done: r.subtask_done ?? 0
       }))
       rebin()
       // Keep the open drawer in sync with fresh data; if the task left the
@@ -537,6 +687,7 @@
     void filters.priorities
     void filters.dueDate
     void filters.tags
+    void filters.stale
     void reload()
   })
 
@@ -593,7 +744,12 @@
 
   // --- Column management (status dimension only) --------------------------
   function toggleColMenu(colKey: string) {
-    menuCol = menuCol === colKey ? null : colKey
+    const next = menuCol === colKey ? null : colKey
+    menuCol = next
+    if (!next || next !== colKey) {
+      wipEditCol = null
+      wipEditError = ''
+    }
   }
   function startRename(statusName: string, colKey: string) {
     renamingColKey = colKey
@@ -603,33 +759,24 @@
   function commitRename(oldStatus: string) {
     const v = renameValue.trim()
     renamingColKey = null
-    if (!v || v === oldStatus || statusColumns.includes(v)) return
-    const prev = statusColumns
-    statusColumns = statusColumns.map((c) => (c === oldStatus ? v : c))
-    void persistColumns(statusColumns).then((ok) => {
-      if (!ok) {
-        configError = 'Failed to save columns'
-        statusColumns = prev
-        rebin()
-      }
-    })
-    rebin()
+    const names = columnNames(statusColumns)
+    if (!v || v === oldStatus || names.includes(v)) return
+    const prev = cloneColumns(statusColumns)
+    const next = statusColumns.map((c) =>
+      c.name === oldStatus ? { ...c, name: v } : c
+    )
+    configError = ''
+    saveStatusColumns(next, prev)
   }
   function cancelRename() {
     renamingColKey = null
   }
   async function addColumn() {
     const name = window.prompt('New column name')?.trim()
-    if (!name || statusColumns.includes(name)) return
-    const prev = statusColumns
-    statusColumns = [...statusColumns, name]
+    if (!name || columnNames(statusColumns).includes(name)) return
+    const prev = cloneColumns(statusColumns)
     configError = ''
-    const ok = await persistColumns(statusColumns)
-    if (!ok) {
-      configError = 'Failed to save columns'
-      statusColumns = prev
-    }
-    rebin()
+    saveStatusColumns([...statusColumns, { name }], prev)
   }
   async function removeColumn(statusName: string) {
     menuCol = null
@@ -639,15 +786,71 @@
       )
     )
       return
-    const prev = statusColumns
-    statusColumns = statusColumns.filter((c) => c !== statusName)
+    const prev = cloneColumns(statusColumns)
     configError = ''
-    const ok = await persistColumns(statusColumns)
-    if (!ok) {
-      configError = 'Failed to save columns'
-      statusColumns = prev
+    saveStatusColumns(
+      statusColumns.filter((c) => c.name !== statusName),
+      prev
+    )
+  }
+  // Inline WIP editor in the column menu (replaces window.prompt for a11y).
+  let wipEditCol = $state<string | null>(null)
+  let wipDraft = $state('')
+  let wipEditError = $state('')
+
+  function startWipEdit(statusName: string) {
+    const current = statusColumns.find((c) => c.name === statusName)
+    wipEditCol = statusName
+    wipEditError = ''
+    wipDraft =
+      current?.wipLimit != null && current.wipLimit >= 1
+        ? String(current.wipLimit)
+        : ''
+  }
+
+  function applyWipLimit(statusName: string) {
+    const trimmed = wipDraft.trim()
+    let wipLimit: number | null
+    if (trimmed === '') {
+      wipLimit = null
+    } else {
+      const n = Number(trimmed)
+      if (!Number.isFinite(n) || n < 1) {
+        wipEditError = 'Enter a whole number ≥ 1, or leave empty for unlimited'
+        return
+      }
+      wipLimit = Math.floor(n)
     }
-    rebin()
+    const prev = cloneColumns(statusColumns)
+    const next = statusColumns.map((c) => {
+      if (c.name !== statusName) return c
+      if (wipLimit == null) {
+        const { wipLimit: _drop, ...rest } = c
+        void _drop
+        return rest
+      }
+      return { ...c, wipLimit }
+    })
+    configError = ''
+    wipEditCol = null
+    wipEditError = ''
+    menuCol = null
+    saveStatusColumns(next, prev)
+  }
+
+  function clearWipLimit(statusName: string) {
+    const prev = cloneColumns(statusColumns)
+    const next = statusColumns.map((c) => {
+      if (c.name !== statusName) return c
+      const { wipLimit: _drop, ...rest } = c
+      void _drop
+      return rest
+    })
+    configError = ''
+    wipEditCol = null
+    wipEditError = ''
+    menuCol = null
+    saveStatusColumns(next, prev)
   }
   function onColDragStart(e: DragEvent, i: number) {
     colDragIndex = i
@@ -667,19 +870,12 @@
     const from = colDragIndex
     colDragIndex = null
     if (from === i) return
-    const prev = statusColumns
+    const prev = cloneColumns(statusColumns)
     const next = [...statusColumns]
     const [moved] = next.splice(from, 1)
     next.splice(i, 0, moved)
-    statusColumns = next
-    void persistColumns(statusColumns).then((ok) => {
-      if (!ok) {
-        configError = 'Failed to save column order'
-        statusColumns = prev
-        rebin()
-      }
-    })
-    rebin()
+    configError = ''
+    saveStatusColumns(next, prev)
   }
 
   // --- Card DnD -----------------------------------------------------------
@@ -694,12 +890,12 @@
       e.dataTransfer.setData('text/plain', card.id)
     }
   }
-  function onLaneDragOver(e: DragEvent, col: BoardColumn) {
+  function onLaneDragOver(e: DragEvent, col: Lane) {
     if (!dndEnabled || !dragCard) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
   }
-  function onLaneDrop(e: DragEvent, col: BoardColumn) {
+  function onLaneDrop(e: DragEvent, col: Lane) {
     if (!dndEnabled || !dragCard) return
     e.preventDefault()
     const card = dragCard
@@ -713,14 +909,14 @@
   // specific sibling. The card-level handler runs first (event bubbles
   // upward); for same-column manual drops it owns the persist + optimistic
   // update and stops propagation so the lane handler doesn't double-fire.
-  function onCardDragOver(e: DragEvent, card: TaskDetail, col: BoardColumn) {
+  function onCardDragOver(e: DragEvent, card: TaskDetail, col: Lane) {
     if (sort !== 'manual' || !dndEnabled || !dragCard) return
     if (col.key !== dragFromColKey) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
     dragOverCardId = card.id
   }
-  function onCardDrop(e: DragEvent, target: TaskDetail, col: BoardColumn) {
+  function onCardDrop(e: DragEvent, target: TaskDetail, col: Lane) {
     if (sort !== 'manual' || !dndEnabled || !dragCard) return
     if (col.key !== dragFromColKey) return
     e.preventDefault()
@@ -741,7 +937,7 @@
   async function commitManualReorder(
     src: TaskDetail,
     target: TaskDetail,
-    col: BoardColumn,
+    col: Lane,
     fromKey: string
   ) {
     moveError = ''
@@ -830,7 +1026,7 @@
   // enabled dimensions; Enter/Space open the inspector drawer; Shift+Enter
   // opens the sub-editor. Location dimensions (DnD disabled) get no arrow
   // move — the card stays put.
-  function onCardKeydown(e: KeyboardEvent, card: TaskDetail, col: BoardColumn) {
+  function onCardKeydown(e: KeyboardEvent, card: TaskDetail, col: Lane) {
     if (dndEnabled && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
       e.preventDefault()
       const idx = columns.findIndex((c) => c.key === col.key)
@@ -855,14 +1051,29 @@
   // --- Per-column quick-add ----------------------------------------------
   // Returns the createTask prefill for a column, or null when quick-add
   // isn't supported (custom status columns; location dimensions).
-  function quickAddFor(col: BoardColumn): {
+  function quickAddFor(col: Lane): {
     status?: TaskStatus
     dueDate?: string
     onCreated?: (id: string) => void
+    beforeCreate?: () => boolean | Promise<boolean>
   } | null {
     if (groupBy === 'status') {
       if (!ALL_STATUSES.includes(col.value as TaskStatus)) return null
-      return { status: col.value as TaskStatus }
+      return {
+        status: col.value as TaskStatus,
+        // Soft WIP confirm when the next create would exceed the column cap
+        // (drag/keyboard already go through commitDrop → wouldExceedWip).
+        beforeCreate: () => {
+          const limit = wipLimitFor(col.value)
+          if (limit == null) return true
+          const live = columns.find((c) => c.key === col.key)
+          const count = live?.items.length ?? 0
+          if (count + 1 <= limit) return true
+          return new Promise<boolean>((resolve) => {
+            pendingQuickAddWip = { resolve }
+          })
+        }
+      }
     }
     if (groupBy === 'owner') {
       // Unassigned (value='') → new task already has no owner; nothing to set.
@@ -895,6 +1106,15 @@
   })
 
   let totalCards = $derived(columns.reduce((sum, c) => sum + c.items.length, 0))
+
+  /** True when any status column is over its soft WIP limit (#437). */
+  let anyOverWip = $derived(
+    groupBy === 'status' &&
+      columns.some((col) => {
+        const limit = wipLimitFor(col.value)
+        return limit != null && col.items.length > limit
+      })
+  )
 </script>
 
 <div
@@ -910,6 +1130,19 @@
       kind="warning"
       message={`Couldn't save board layout: ${configError}`}
     />
+  {/if}
+
+  {#if anyOverWip}
+    <div
+      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-type-sm font-body-md flex items-center gap-2"
+      role="status"
+      data-testid="board-wip-over-limit"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >warning</span
+      >
+      <span>WIP over limit</span>
+    </div>
   {/if}
 
   {#if columns.length > 10 && columns.length <= 20}
@@ -970,14 +1203,17 @@
           {@const statusName = canManage
             ? col.value.replace(/^status-/, '')
             : ''}
+          {@const wipLimit = canManage ? wipLimitFor(col.value) : null}
+          {@const overWip = wipLimit != null && cards.length > wipLimit}
           {@const qa = quickAddFor(col)}
           <section
             class="flex flex-col min-w-70 flex-1 max-w-100 rounded-lg border border-surface-panel-border bg-surface-panel/50 {colDragIndex ===
             colIdx
               ? 'opacity-50'
-              : ''}"
+              : ''} {overWip ? 'ring-1 ring-status-warn/40' : ''}"
             role="group"
             aria-label={col.label}
+            data-wip-over={overWip ? 'true' : undefined}
             ondragover={(e) => onLaneDragOver(e, col)}
             ondrop={(e) => onLaneDrop(e, col)}
           >
@@ -1038,10 +1274,34 @@
                     {col.label}
                   </h2>
                 {/if}
-                <span
-                  class="bg-hover text-text-muted text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm"
-                  >{cards.length}</span
-                >
+                {#if wipLimit != null}
+                  <span
+                    class="bg-hover text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm {overWip
+                      ? 'text-status-warn'
+                      : 'text-text-muted'}"
+                    data-testid={`board-wip-badge-${col.key}`}
+                    title={overWip
+                      ? `Over WIP limit (${cards.length} / ${wipLimit})`
+                      : `WIP limit ${cards.length} / ${wipLimit}`}
+                    aria-label={`${cards.length} of ${wipLimit} WIP${overWip ? ', over limit' : ''}`}
+                  >
+                    {cards.length} / {wipLimit}
+                  </span>
+                {:else}
+                  <span
+                    class="bg-hover text-text-muted text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm"
+                    >{cards.length}</span
+                  >
+                {/if}
+                {#if columnEstimateSum(cards) > 0}
+                  <span
+                    class="text-text-muted/60 text-type-2xs font-label-sm truncate"
+                    data-testid={`board-col-estimate-${col.key}`}
+                    title={`${formatEstimateSum(columnEstimateSum(cards))} estimated`}
+                  >
+                    {formatEstimateSum(columnEstimateSum(cards))} estimated
+                  </span>
+                {/if}
               </div>
               <div class="relative shrink-0 flex items-center">
                 {#if canManage}
@@ -1077,6 +1337,76 @@
                         >
                         Rename
                       </button>
+                      {#if wipEditCol === statusName}
+                        <div
+                          class="px-3 py-2 space-y-1.5 border-t border-b border-surface-popover-border"
+                          data-testid={`board-wip-edit-${col.key}`}
+                        >
+                          <label
+                            class="block text-type-2xs font-label-sm text-text-muted"
+                            for={`wip-input-${col.key}`}
+                          >
+                            WIP limit (empty = unlimited)
+                          </label>
+                          <input
+                            id={`wip-input-${col.key}`}
+                            type="number"
+                            min="1"
+                            step="1"
+                            class="w-full rounded border border-surface-card-border bg-surface-card px-2 py-1 text-type-sm text-text-primary"
+                            bind:value={wipDraft}
+                            aria-invalid={wipEditError ? 'true' : undefined}
+                            data-testid={`board-wip-input-${col.key}`}
+                            onkeydown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                applyWipLimit(statusName)
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                wipEditCol = null
+                                wipEditError = ''
+                              }
+                            }}
+                          />
+                          {#if wipEditError}
+                            <p class="text-type-2xs text-error" role="alert">
+                              {wipEditError}
+                            </p>
+                          {/if}
+                          <div class="flex gap-1 pt-0.5">
+                            <button
+                              type="button"
+                              class="flex-1 px-2 py-1 rounded bg-accent-primary-start/15 text-accent-primary-start text-type-2xs font-label-sm"
+                              data-testid={`board-wip-apply-${col.key}`}
+                              onclick={() => applyWipLimit(statusName)}
+                            >
+                              Apply
+                            </button>
+                            <button
+                              type="button"
+                              class="flex-1 px-2 py-1 rounded hover:bg-hover text-type-2xs font-label-sm text-text-muted"
+                              data-testid={`board-wip-clear-${col.key}`}
+                              onclick={() => clearWipLimit(statusName)}
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+                      {:else}
+                        <button
+                          type="button"
+                          onclick={() => startWipEdit(statusName)}
+                          class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary"
+                          role="menuitem"
+                          data-testid={`board-wip-menu-${col.key}`}
+                        >
+                          <span class="material-symbols-outlined text-icon-sm"
+                            >speed</span
+                          >
+                          WIP limit…
+                        </button>
+                      {/if}
                       <button
                         type="button"
                         onclick={() => removeColumn(statusName)}
@@ -1098,12 +1428,12 @@
             >
               {#each cards as card, i (card.id)}
                 <div
-                  data-card
+                  data-card={card.id}
                   data-index={i}
                   role="button"
                   tabindex="0"
                   aria-grabbed={draggingId === card.id ? 'true' : 'false'}
-                  aria-label={`${card.clean_content}, ${col.label}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
+                  aria-label={`${card.clean_content}, ${col.label}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}${card.subtask_total > 0 ? `, ${card.subtask_done} of ${card.subtask_total} subtasks done` : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
                   draggable={dndEnabled ? 'true' : 'false'}
                   animate:flip={{ duration: 200, easing: cubicOut }}
                   class="group relative bg-surface-card border border-surface-card-border rounded-lg p-3 transition-all duration-200 hover:bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {card.status ===
@@ -1169,6 +1499,16 @@
                   {/if}
                   <div class="flex justify-between items-center gap-2">
                     <div class="flex items-center gap-1.5">
+                      {#if card.subtask_total > 0}
+                        <span
+                          class="text-type-3xs text-text-muted font-label-sm"
+                          data-testid={`board-subtask-badge-${card.id}`}
+                          title={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
+                          aria-label={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
+                        >
+                          [{card.subtask_done}/{card.subtask_total}]
+                        </span>
+                      {/if}
                       {#if card.owner}
                         <span
                           class="text-type-3xs text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded-sm px-1.5 py-0.5 font-label-sm"
@@ -1260,6 +1600,7 @@
                     status={qa.status}
                     dueDate={qa.dueDate}
                     onCreated={qa.onCreated}
+                    beforeCreate={qa.beforeCreate}
                     placeholder={`Add to ${col.label} — Enter to add`}
                     keepOpenAfterCreate={true}
                     onCancel={() => {
@@ -1340,6 +1681,38 @@
     blockers={pendingBlockedDone.blockers}
     onConfirm={confirmBlockedDone}
     onCancel={cancelBlockedDone}
+  />
+{/if}
+
+{#if pendingWipConfirm}
+  <ConfirmModal
+    title="WIP limit"
+    message="This column is over its WIP limit. Add anyway?"
+    confirmLabel="Add anyway"
+    cancelLabel="Cancel"
+    dataTestId="board-wip-confirm"
+    onConfirm={confirmWipOverLimit}
+    onCancel={cancelWipOverLimit}
+  />
+{/if}
+
+{#if pendingQuickAddWip}
+  <ConfirmModal
+    title="WIP limit"
+    message="This column is over its WIP limit. Add anyway?"
+    confirmLabel="Add anyway"
+    cancelLabel="Cancel"
+    dataTestId="board-wip-quickadd-confirm"
+    onConfirm={() => {
+      const p = pendingQuickAddWip
+      pendingQuickAddWip = null
+      p?.resolve(true)
+    }}
+    onCancel={() => {
+      const p = pendingQuickAddWip
+      pendingQuickAddWip = null
+      p?.resolve(false)
+    }}
   />
 {/if}
 

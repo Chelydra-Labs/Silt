@@ -327,7 +327,7 @@ describe('silt-tasks Sidebar (#432)', () => {
       scope: 'vault',
       filters: { owners: [], priorities: [], dueDate: '', tags: [] },
       calendarSubMode: 'month',
-      columns: ['TODO', 'DOING', 'DONE']
+      columns: [{ name: 'TODO' }, { name: 'DOING' }, { name: 'DONE' }]
     }
     seedSavedViews([fullView])
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
@@ -635,7 +635,7 @@ describe('silt-tasks Sidebar (#432)', () => {
       scope: 'vault',
       filters: { owners: [], priorities: [], dueDate: '', tags: [] },
       calendarSubMode: 'month',
-      columns: ['TODO', 'DOING', 'DONE']
+      columns: [{ name: 'TODO' }, { name: 'DOING' }, { name: 'DONE' }]
     }
     seedSavedViews([userView])
     // Make the view active + dirty, with the live state diverged to board.

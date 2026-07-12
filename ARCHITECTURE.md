@@ -247,11 +247,15 @@ CREATE TABLE tasks (
     pinned INTEGER DEFAULT 0,         -- NULL/0/1 tri-state cache: NULL=no [pin::] token, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown
     progress INTEGER DEFAULT 0,       -- 0-100; cached from [progress:: N] markdown token
     recur TEXT,                       -- recurrence rule (e.g. 'every week'); NULL for one-off tasks; cached from [recur:: RULE] token
-    comments_count INTEGER DEFAULT 0, -- derived: child NOTE blocks
+    comments_count INTEGER DEFAULT 0, -- derived: NOTE descendants under the task
     links_count INTEGER DEFAULT 0,    -- derived: ((uuid)) references in body
     created_at TEXT,                  -- ISO 8601 local [created::] timestamp; NULL when absent (no backfill); reproducible from markdown
     completed_at TEXT,                -- ISO 8601 local [completed::] timestamp; NULL when not DONE (no backfill); reproducible from markdown
     manual_order INTEGER,             -- 1-based [order:: N] sort position; NULL when absent (no backfill); reproducible from markdown
+    modified_at TEXT,                 -- ISO 8601 local [modified::]; NULL when absent; reproducible from markdown
+    estimate_minutes INTEGER,         -- minutes from [estimate::]; NULL when absent; reproducible from markdown
+    subtask_total INTEGER DEFAULT 0,  -- derived: direct TASK children
+    subtask_done INTEGER DEFAULT 0,   -- derived: direct TASK children with status DONE
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 );
 

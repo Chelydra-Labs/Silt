@@ -124,6 +124,16 @@ type ParsedBlock struct {
 	// among all TASK blocks in the file). 0 = not set (renderer omits the
 	// token). Only genuinely-new tasks get a minted value (#417).
 	ManualOrder int `json:"manual_order,omitempty"`
+	// ModifiedAt is the last task-line metadata/content touch
+	// (`[modified:: YYYY-MM-DDTHH:MM:SS]`, ISO 8601 local). Empty when the
+	// task has never been rewritten through a Silt mutation path (no
+	// backfill). File-resident; SQLite caches for sort/filter (#440).
+	ModifiedAt string `json:"modified_at,omitempty"`
+	// Estimate is the raw duration token value (`[estimate:: 2h]`, #439).
+	// Grammar: optional decimal + unit m/h/d (1d = 8h work-day). Empty =
+	// no estimate (renderer omits). Minutes are projected at index time
+	// into tasks.estimate_minutes; the raw string is the source of truth.
+	Estimate string `json:"estimate,omitempty"`
 	// Author is the comment attribution name on a NOTE block
 	// (`[author:: NAME]`, #418). NOTE-only: child NOTE blocks under a TASK
 	// model "comments" and this field records who wrote each one. Distinct
@@ -138,10 +148,11 @@ type ParsedBlock struct {
 	// File-resident; SQLite caches in block_meta.
 	Timestamp string `json:"timestamp,omitempty"`
 	// ExtraTokens preserves unknown [key:: value] Dataview tokens that the
-	// parser doesn't recognise (e.g. `[project:: alpha]`, `[estimate:: 3h]`).
-	// These round-trip through parse → render so files stay interoperable
-	// with Dataview-compatible (SPECS.md §4.1). Each entry is the full
-	// `[key:: value]` string as it appeared in the source.
+	// parser doesn't recognise (e.g. `[project:: alpha]`). These round-trip
+	// through parse → render so files stay interoperable with
+	// Dataview-compatible tools (SPECS.md §4.1). Each entry is the full
+	// `[key:: value]` string as it appeared in the source. First-class keys
+	// (including estimate/modified) never land here.
 	ExtraTokens []string `json:"extra_tokens,omitempty"`
 	LineNumber  int      `json:"line_number"`
 	FileDate    string   `json:"file_date,omitempty"`
@@ -369,6 +380,15 @@ type TaskResult struct {
 	CreatedAt   string `json:"created_at,omitempty"`
 	CompletedAt string `json:"completed_at,omitempty"`
 	ManualOrder int    `json:"manual_order,omitempty"`
+	// ModifiedAt / Estimate mirror ParsedBlock (#440 / #439).
+	// Estimate is a display form (FormatEstimateMinutes from the cache);
+	// EstimateMinutes is the integer projection stored in SQLite.
+	ModifiedAt      string `json:"modified_at,omitempty"`
+	Estimate        string `json:"estimate,omitempty"`
+	EstimateMinutes int    `json:"estimate_minutes,omitempty"`
+	// SubtaskTotal / SubtaskDone are direct TASK-child rollups (#434).
+	SubtaskTotal int `json:"subtask_total,omitempty"`
+	SubtaskDone  int `json:"subtask_done,omitempty"`
 	// Author / Timestamp mirror the ParsedBlock fields (#418): NOTE-block
 	// comment attribution (`[author::]` / `[ts::]`), surfaced on a result
 	// row because FetchSubtree returns ParsedBlock-shaped children and a

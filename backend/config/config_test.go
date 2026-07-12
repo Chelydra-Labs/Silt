@@ -766,6 +766,11 @@ func TestDefaults_FormattingConfig(t *testing.T) {
 	if d.Hotkeys["open_settings"] != "Ctrl+," {
 		t.Errorf("open_settings default: got %q", d.Hotkeys["open_settings"])
 	}
+	// tasks_command_palette (#436): hub-scoped Ctrl+K (format_link keeps the
+	// same default; focus scope resolves the conflict).
+	if d.Hotkeys["tasks_command_palette"] != "Ctrl+K" {
+		t.Errorf("tasks_command_palette default: got %q", d.Hotkeys["tasks_command_palette"])
+	}
 	// Alignment (#173) + blockquote (#188) hotkeys.
 	for _, key := range []string{
 		"align_left", "align_center", "align_right", "align_justify", "toggle_quote",

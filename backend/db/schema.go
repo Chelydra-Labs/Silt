@@ -114,11 +114,15 @@ func (dm *DatabaseManager) initSchema() error {
 		pinned INTEGER DEFAULT 0,           -- NULL/0/1 tri-state cache: NULL=absent, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown on re-index (#135)
 		progress INTEGER DEFAULT 0,         -- 0-100; file-resident user intent (cached for query speed)
 		recur TEXT,                         -- recurrence rule (e.g. 'every week'); NULL for one-off tasks (#296)
-		comments_count INTEGER DEFAULT 0,   -- count of child NOTE blocks (derived cache)
+		comments_count INTEGER DEFAULT 0,   -- count of NOTE descendants under the task (derived cache)
 		links_count INTEGER DEFAULT 0,      -- count of ((uuid)) refs in raw_content (derived cache)
 		created_at TEXT,                    -- ISO 8601 local [created::] timestamp; NULL when absent (no backfill) (#417)
 		completed_at TEXT,                  -- ISO 8601 local [completed::] timestamp; NULL when not DONE (no backfill) (#417)
 		manual_order INTEGER,               -- 1-based [order:: N] sort position; NULL when absent (no backfill) (#417)
+		modified_at TEXT,                   -- ISO 8601 local [modified::] last task-line touch; NULL when absent (#440)
+		estimate_minutes INTEGER,           -- minutes from [estimate::]; NULL when absent (#439)
+		subtask_total INTEGER DEFAULT 0,    -- direct TASK children count (derived cache, #434)
+		subtask_done INTEGER DEFAULT 0,     -- direct TASK children in DONE (derived cache, #434)
 		FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
 	if _, err := db.Exec(createTasksTable); err != nil {
@@ -145,6 +149,12 @@ func (dm *DatabaseManager) initSchema() error {
 		{"created_at", "TEXT"},
 		{"completed_at", "TEXT"},
 		{"manual_order", "INTEGER"},
+		// #440 / #439 / #434: re-derivable caches from markdown tokens /
+		// block hierarchy. NULL/0 means absent; no backfill of old tasks.
+		{"modified_at", "TEXT"},
+		{"estimate_minutes", "INTEGER"},
+		{"subtask_total", "INTEGER DEFAULT 0"},
+		{"subtask_done", "INTEGER DEFAULT 0"},
 	} {
 		alter := fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s", col.name, col.defn)
 		if _, err := db.Exec(alter); err != nil {

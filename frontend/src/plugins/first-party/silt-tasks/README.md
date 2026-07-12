@@ -25,7 +25,9 @@ state/query module per mode.
 | `Sidebar.svelte` | The unified sidebar — smart lists, saved views, mini-calendar, and filter controls. Reads + writes the same hub state as the shell. |
 | `components/FilterBar.svelte` | Owner / priority / due-date / tag filter chips (writes `TaskFilters`). |
 | `components/TaskEditDrawer.svelte` | Shared non-blocking inspector drawer (pin, progress, recurrence, due date, status, owner, priority, tags). |
-| `components/CommentThread.svelte` | Comment thread over a task's NOTE-block children (`FetchSubtree` + `block_meta` attribution). |
+| `components/CommentThread.svelte` | Comment thread over a task's NOTE-block children (`FetchSubtree` + `block_meta` attribution); one-level replies. |
+| `components/TasksCommandPalette.svelte` | Hub-scoped Ctrl+K command palette (mode / group / sort / views / find / add). |
+| `columns.ts` | `BoardColumn` model + `normalizeColumns` (legacy `string[]` + WIP limits). |
 | `components/QuickAddTask.svelte` | Shared quick-add input (used by every mode's quick-add surface). |
 | `components/BlockedDoneDialog.svelte` | The DONE-on-blocked confirm guard (matches the lock badge). |
 | `components/DependencyPicker.svelte` | The `[blocked_by::]` typeahead picker. |
@@ -61,15 +63,16 @@ All prefs live under `plugins.plugin_settings.silt-tasks` in the vault
 |---|---|
 | `default_display_mode` | `list` / `board` / `calendar` (hydrated once on mount; every later switch persists). |
 | `default_group_by` | One of the 9 `GroupBy` values (survives a List → Board hop). |
-| `default_sort` | One of the 6 `SortMode` values. |
+| `default_sort` | One of the 8 `SortMode` values (incl. `modified`, `estimate`). |
 | `calendar_sub_mode` | `month` / `week`. |
-| `columns` | Status-board lane order (defaults to `["TODO","DOING","DONE"]`). |
+| `columns` | Status-board lanes: legacy `string[]` or `{ name, wipLimit? }[]` (defaults to TODO/DOING/DONE, unlimited WIP). |
 | `saved_views[]` | User-defined saved views (system views are re-derived from code, never persisted). |
 | `local_author` | Seeded from the OS username (`ctx.getLocalAuthor`) on first comment; the user's override always wins. |
 
-The `filters` shape (`{ owners, priorities, dueDate, tags }`) is held in hub
-state and snapshotted into saved views; it is not separately persisted as a
-default.
+The `filters` shape (`{ owners, priorities, dueDate, tags, stale? }`) is held
+in hub state and snapshotted into saved views; it is not separately persisted
+as a default. Hub hotkey `tasks_command_palette` (default Ctrl+K when the hub
+is focused and the editor is not) opens `TasksCommandPalette`.
 
 ## Extending
 

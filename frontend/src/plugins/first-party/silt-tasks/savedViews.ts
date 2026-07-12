@@ -11,6 +11,7 @@
 // sidebar list highlight. Two views with identical dimensions share a
 // fingerprint, so the comparison reduces to a string ===.
 
+import { columnsEqual } from './columns'
 import type { SavedView, TaskHubState } from './state.svelte'
 
 /**
@@ -89,7 +90,7 @@ export function viewMatchesState(view: SavedView, s: TaskHubState): boolean {
     view.calendarSubMode !== s.calendarSubMode
   )
     return false
-  if (view.columns !== undefined && !arrayEqual(view.columns, s.columns))
+  if (view.columns !== undefined && !columnsEqual(view.columns, s.columns))
     return false
   if (view.filters !== undefined) {
     if (
@@ -112,6 +113,7 @@ export function viewMatchesState(view: SavedView, s: TaskHubState): boolean {
       !arrayEqual(view.filters.tags, s.filters.tags)
     )
       return false
+    if (!!view.filters.stale !== !!s.filters.stale) return false
   }
   return true
 }

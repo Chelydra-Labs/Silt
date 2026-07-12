@@ -11,7 +11,7 @@ info:
   description: "Local-first hybrid journal and task manager"
   copyright: "(c) 2026, Chelydra Labs"
   comments: "Plain-text Markdown on your drive, real-time index in memory."
-  version: "0.2.44"
+  version: "0.3.0"
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"

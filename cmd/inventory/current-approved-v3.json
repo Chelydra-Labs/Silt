@@ -26,7 +26,7 @@
       },
       {
         "name": "AppendTaskComment",
-        "signature": "AppendTaskComment(taskID, text, author, ts string) (string, error)"
+        "signature": "AppendTaskComment(taskID, text, author, ts, parentCommentID string) (string, error)"
       },
       {
         "name": "ApplyTheme",
@@ -366,7 +366,7 @@
       },
       {
         "name": "PluginAppendTaskComment",
-        "signature": "PluginAppendTaskComment(pluginID, sessionToken, taskID, text, author, ts string) (string, error)"
+        "signature": "PluginAppendTaskComment(pluginID, sessionToken, taskID, text, author, ts, parentCommentID string) (string, error)"
       },
       {
         "name": "PluginApplyBlocks",
@@ -507,6 +507,10 @@
       {
         "name": "PluginSetTaskDueDate",
         "signature": "PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate string) (bool, error)"
+      },
+      {
+        "name": "PluginSetTaskEstimate",
+        "signature": "PluginSetTaskEstimate(pluginID, sessionToken, blockID, estimate string) (bool, error)"
       },
       {
         "name": "PluginSetTaskOrder",
@@ -965,6 +969,6 @@
       "vault:moved",
       "vault:watch-coverage"
     ],
-    "plugin_method_count": 49
+    "plugin_method_count": 50
   }
 }

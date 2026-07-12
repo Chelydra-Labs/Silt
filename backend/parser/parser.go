@@ -199,7 +199,7 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 // Adding a new metadata type is a one-line addition to the switch below.
 // Unknown keys are preserved in extraTokens so the file round-trips
 // without data loss.
-func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, blockedBy []string, extraTokens []string, createdAt, completedAt string, manualOrder int) {
+func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, blockedBy []string, extraTokens []string, createdAt, completedAt string, manualOrder int, modifiedAt, estimate string) {
 	priority = 3 // default; 0 from the regex means "not set"
 	progress = 0
 	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
@@ -284,6 +284,15 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 					manualOrder = n
 				}
 			}
+		case "modified":
+			// Last task-line touch (#440). ISO local, no timezone. No
+			// backfill — only mutation paths stamp this.
+			modifiedAt = val
+		case "estimate":
+			// Time budget (#439). Store raw value; minutes projected at
+			// index. Empty clears. Invalid values still round-trip so
+			// hand-edits aren't silently dropped (UI validates on write).
+			estimate = val
 		default:
 			// Unrecognised key — preserve the full [key:: value] token
 			// verbatim so it survives the parse → render round-trip.
@@ -361,7 +370,7 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 		}
 
 		// Scan for [key:: value] metadata tokens in the remainder.
-		owner, startDate, dueDate, priority, pinned, progress, recurrence, description, blockedBy, extraTokens, createdAt, completedAt, manualOrder := scanTaskTokens(remainder)
+		owner, startDate, dueDate, priority, pinned, progress, recurrence, description, blockedBy, extraTokens, createdAt, completedAt, manualOrder, modifiedAt, estimate := scanTaskTokens(remainder)
 
 		depth := parseLeadingIndent(indent, spacesPerTab)
 
@@ -383,6 +392,8 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 			CreatedAt:   createdAt,
 			CompletedAt: completedAt,
 			ManualOrder: manualOrder,
+			ModifiedAt:  modifiedAt,
+			Estimate:    estimate,
 			ExtraTokens: extraTokens,
 			LineNumber:  lineNumber,
 			FileDate:    blockFileDate,
@@ -1263,8 +1274,15 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		if block.CompletedAt != "" {
 			tokens = append(tokens, fmt.Sprintf("[completed:: %s]", block.CompletedAt))
 		}
+		if block.ModifiedAt != "" {
+			tokens = append(tokens, fmt.Sprintf("[modified:: %s]", block.ModifiedAt))
+		}
 		if block.ManualOrder > 0 {
 			tokens = append(tokens, fmt.Sprintf("[order:: %d]", block.ManualOrder))
+		}
+		// Estimate (#439): raw duration string after order, before ExtraTokens.
+		if block.Estimate != "" {
+			tokens = append(tokens, fmt.Sprintf("[estimate:: %s]", block.Estimate))
 		}
 		// Append unknown Dataview tokens verbatim so they survive the
 		// round-trip (Dataview-compatible interop — SPECS.md §4.1).

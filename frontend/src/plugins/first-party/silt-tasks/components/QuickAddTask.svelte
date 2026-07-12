@@ -31,6 +31,12 @@
     placeholder?: string
     /** Called with the new block id after a successful create. */
     onCreated?: (id: string) => void
+    /**
+     * Optional pre-create gate. Return false (or a Promise resolving false)
+     * to abort without calling createTask — used for soft WIP confirm on
+     * board column quick-add. Defaults to allow.
+     */
+    beforeCreate?: () => boolean | Promise<boolean>
     /** Called when the user cancels (Escape) or blurs with an empty title. */
     onCancel?: () => void
     /**
@@ -63,6 +69,7 @@
     status = 'TODO',
     placeholder = 'Add a task — Enter to add',
     onCreated,
+    beforeCreate,
     onCancel,
     keepOpenAfterCreate = true,
     autofocus = true,
@@ -88,11 +95,15 @@
     if (!t || busy) return
     busy = true
     errorMsg = ''
-    const fn =
-      createTask ??
-      ((opts: { title: string; dueDate?: string; status?: TaskStatus }) =>
-        ctx!.createTask(opts))
     try {
+      if (beforeCreate) {
+        const ok = await beforeCreate()
+        if (!ok) return
+      }
+      const fn =
+        createTask ??
+        ((opts: { title: string; dueDate?: string; status?: TaskStatus }) =>
+          ctx!.createTask(opts))
       const id = await fn({
         title: t,
         dueDate,

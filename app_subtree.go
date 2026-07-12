@@ -258,33 +258,42 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (
 // [ts:: YYYY-MM-DDTHH:MM:SS]); pass empty to omit either (nullable per
 // ARCHITECTURE.md §2.2). The SDK generates `ts` client-side and passes it
 // through; the binding is a pure transport so the caller controls attribution.
-func (a *App) AppendTaskComment(taskID, text, author, ts string) (string, error) {
-	return a.appendTaskComment(taskID, text, author, ts)
+//
+// parentCommentID nests the new NOTE under an existing comment (#438). Empty
+// keeps the historical top-level behavior (direct child of the task). When
+// set, the parent must be a NOTE already in the task's sub-tree; the reply
+// is spliced immediately after that parent and its existing descendants.
+func (a *App) AppendTaskComment(taskID, text, author, ts, parentCommentID string) (string, error) {
+	return a.appendTaskComment(taskID, text, author, ts, parentCommentID)
 }
 
 // PluginAppendTaskComment is the plugin-SDK wrapper for AppendTaskComment,
 // gated by the standard capability + session checks so a third-party plugin
 // without the CapContentMutate grant can't splice NOTE blocks into a task's
 // sub-tree. Mirrors PluginSaveSubtreeBlocks.
-func (a *App) PluginAppendTaskComment(pluginID, sessionToken, taskID, text, author, ts string) (string, error) {
+func (a *App) PluginAppendTaskComment(pluginID, sessionToken, taskID, text, author, ts, parentCommentID string) (string, error) {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return "", err
 	}
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return "", err
 	}
-	return a.appendTaskComment(taskID, text, author, ts)
+	return a.appendTaskComment(taskID, text, author, ts, parentCommentID)
 }
 
 // appendTaskComment is the shared core for the app-level and plugin-level
 // entry points. Read-modify-write under one LockBlockWrite+LockFileWrite hold:
 // parse the file, collect the existing child sub-tree, build a new NOTE block
-// with a fresh UUID + the author/ts attribution tokens, splice [existing...,
-// comment] back through spliceSubtree (the same helper SaveSubtreeBlocks uses),
+// with a fresh UUID + the author/ts attribution tokens, splice the updated
+// sub-tree back through spliceSubtree (the same helper SaveSubtreeBlocks uses),
 // then run the canonical write chain. The append is atomic with respect to
 // other comment posts and other task setters because the per-file write lock
 // serializes the whole read-modify-write.
-func (a *App) appendTaskComment(taskID, text, author, ts string) (string, error) {
+//
+// parentCommentID empty → top-level NOTE child of the task (depth taskDepth+1).
+// parentCommentID set → nested reply under that NOTE (depth parentDepth+1),
+// inserted after the parent and its existing descendants inside the sub-tree.
+func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID string) (string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -351,19 +360,19 @@ func (a *App) appendTaskComment(taskID, text, author, ts string) (string, error)
 				return
 			}
 
-			// Find the parent's depth so the new NOTE sits at parentDepth+1
+			// Find the task so the new top-level NOTE sits at taskDepth+1
 			// (spliceSubtree would otherwise anchor minDepth+delta and could
 			// re-indent existing children if we passed a shallow placeholder).
-			parentDepth := 0
-			parentFound := false
+			taskDepth := 0
+			taskFound := false
 			for _, b := range parsedBlocks {
 				if b.ID == taskID {
-					parentDepth = b.Depth
-					parentFound = true
+					taskDepth = b.Depth
+					taskFound = true
 					break
 				}
 			}
-			if !parentFound {
+			if !taskFound {
 				writeErr = fmt.Errorf("parent block %s not found in file %s", taskID, filePath)
 				return
 			}
@@ -371,14 +380,65 @@ func (a *App) appendTaskComment(taskID, text, author, ts string) (string, error)
 			existing := extractSubtree(parsedBlocks, taskID)
 			comment := parser.ParsedBlock{
 				ID:        newID,
-				ParentID:  taskID,
 				Type:      parser.BlockNote,
-				Depth:     parentDepth + 1,
 				CleanText: text,
 				Author:    author,
 				Timestamp: ts,
 			}
-			merged, ok := spliceSubtree(parsedBlocks, taskID, append(existing, comment))
+
+			var newSubtree []parser.ParsedBlock
+			if parentCommentID == "" {
+				// Top-level: direct child of the task, append at end.
+				comment.ParentID = taskID
+				comment.Depth = taskDepth + 1
+				newSubtree = append(existing, comment)
+			} else {
+				// Nested reply (#438): parent must be a NOTE already in this
+				// task's sub-tree. Insert immediately after the parent and its
+				// existing descendants so sibling order stays stable.
+				parentIdx := -1
+				parentDepth := 0
+				for i, b := range existing {
+					if b.ID == parentCommentID {
+						if b.Type != parser.BlockNote {
+							writeErr = fmt.Errorf("parent comment %s is not a NOTE", parentCommentID)
+							return
+						}
+						parentIdx = i
+						parentDepth = b.Depth
+						break
+					}
+				}
+				if parentIdx < 0 {
+					// Distinguish "not a NOTE / missing entirely" from "exists
+					// but outside this task" for a clearer error.
+					for _, b := range parsedBlocks {
+						if b.ID == parentCommentID {
+							if b.Type != parser.BlockNote {
+								writeErr = fmt.Errorf("parent comment %s is not a NOTE", parentCommentID)
+								return
+							}
+							writeErr = fmt.Errorf("parent comment %s is not under task %s", parentCommentID, taskID)
+							return
+						}
+					}
+					writeErr = fmt.Errorf("parent comment %s not found", parentCommentID)
+					return
+				}
+				comment.ParentID = parentCommentID
+				comment.Depth = parentDepth + 1
+				// Walk past the parent's existing descendants (depth > parent).
+				insertAt := parentIdx + 1
+				for insertAt < len(existing) && existing[insertAt].Depth > parentDepth {
+					insertAt++
+				}
+				newSubtree = make([]parser.ParsedBlock, 0, len(existing)+1)
+				newSubtree = append(newSubtree, existing[:insertAt]...)
+				newSubtree = append(newSubtree, comment)
+				newSubtree = append(newSubtree, existing[insertAt:]...)
+			}
+
+			merged, ok := spliceSubtree(parsedBlocks, taskID, newSubtree)
 			if !ok {
 				writeErr = fmt.Errorf("parent block %s not found in file %s", taskID, filePath)
 				return

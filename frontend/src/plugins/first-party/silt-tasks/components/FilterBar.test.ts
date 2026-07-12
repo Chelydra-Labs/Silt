@@ -167,5 +167,43 @@ describe('FilterBar facet search (#462)', () => {
   })
 })
 
+describe('FilterBar stale chip (#440)', () => {
+  it('toggles filters.stale true then false', async () => {
+    const onFiltersChange = vi.fn()
+    const { rerender } = render(FilterBar, {
+      props: makeProps({ onFiltersChange })
+    })
+
+    const chip = screen.getByTestId('filter-stale-toggle')
+    await fireEvent.click(chip)
+    expect(onFiltersChange).toHaveBeenCalledWith(
+      expect.objectContaining({ stale: true })
+    )
+
+    await rerender(
+      makeProps({
+        onFiltersChange,
+        filters: {
+          owners: [],
+          priorities: [],
+          dueDate: '',
+          tags: [],
+          stale: true
+        }
+      })
+    )
+    await fireEvent.click(screen.getByTestId('filter-stale-toggle'))
+    expect(onFiltersChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ stale: false })
+    )
+  })
+
+  it('exposes 30-day stale semantics via title', () => {
+    render(FilterBar, { props: makeProps() })
+    const chip = screen.getByTestId('filter-stale-toggle')
+    expect(chip.getAttribute('title') ?? '').toMatch(/30 days/i)
+  })
+})
+
 // Keep the PluginContext type import referenced (no-unused).
 export type __KeepCtxImport = _Ctx

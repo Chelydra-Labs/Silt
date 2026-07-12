@@ -13,9 +13,12 @@
   import type { PluginContext, PluginManifest } from '../../sdk'
   import FilterBar from './components/FilterBar.svelte'
   import ConfirmModal from './components/ConfirmModal.svelte'
+  import TasksCommandPalette from './components/TasksCommandPalette.svelte'
   import ListView from './views/ListView.svelte'
   import BoardView from './views/BoardView.svelte'
   import CalendarView from './views/CalendarView.svelte'
+  import { settings } from '../../../settings/store.svelte'
+  import { matchHotkey } from '../../../settings/hotkeys'
   import {
     getTaskHubState,
     setDisplayMode,
@@ -49,6 +52,7 @@
     persistDefaultGroupBy,
     persistDefaultSort
   } from './settings'
+  import { cloneColumns, columnsEqual } from './columns'
   import { viewMatchesState } from './savedViews'
 
   interface Props {
@@ -109,11 +113,8 @@
         // DONE]) would otherwise compare equal and silently revert the trim.
         const persistedCols = loadColumns()
         const currentCols = getTaskHubState().columns
-        if (
-          persistedCols.length &&
-          (persistedCols.length !== currentCols.length ||
-            persistedCols.some((c, i) => c !== currentCols[i]))
-        ) {
+        // columnsEqual covers name + wipLimit so a WIP-only change still hydrates.
+        if (persistedCols.length && !columnsEqual(persistedCols, currentCols)) {
           setColumns(persistedCols)
         }
         // Saved views (#427): system defaults (code-defined) + user views
@@ -153,11 +154,7 @@
         if (sortVal !== getTaskHubState().sort) setSort(sortVal)
         const cols = loadColumns()
         const curCols = getTaskHubState().columns
-        if (
-          cols.length &&
-          (cols.length !== curCols.length ||
-            cols.some((c, i) => c !== curCols[i]))
-        ) {
+        if (cols.length && !columnsEqual(cols, curCols)) {
           setColumns(cols)
         }
       })
@@ -189,31 +186,66 @@
     void persistDefaultSort(s)
   }
 
+  // Hub-scoped command palette (#436). Opened by tasks_command_palette
+  // (default Ctrl+K). Same chord as format_link — only fires when focus is
+  // not an input/textarea/contenteditable/ProseMirror so the editor keeps
+  // its link shortcut.
+  let paletteOpen = $state(false)
+
+  function isEditableTarget(t: EventTarget | null): boolean {
+    if (!(t instanceof HTMLElement)) return false
+    if (
+      t instanceof HTMLInputElement ||
+      t instanceof HTMLTextAreaElement ||
+      t.isContentEditable
+    )
+      return true
+    return !!t.closest?.('.ProseMirror')
+  }
+
   // Ctrl+Shift+V cycles List → Board → Calendar → List. Guard against the
   // browser's paste-without-formatting shortcut when the user is typing in
   // an input/textarea/contenteditable so the hub doesn't steal the keystroke
   // mid-composition.
   function onGlobalKeydown(e: KeyboardEvent) {
     if (!(e.ctrlKey && e.shiftKey) || e.key !== 'V') return
-    const t = e.target as HTMLElement
-    if (
-      t instanceof HTMLInputElement ||
-      t instanceof HTMLTextAreaElement ||
-      t.isContentEditable
-    )
-      return
+    if (isEditableTarget(e.target)) return
     e.preventDefault()
     const order: DisplayMode[] = ['list', 'board', 'calendar']
     const idx = order.indexOf(getTaskHubState().displayMode)
     chooseMode(order[(idx + 1) % order.length])
   }
-  // One always-on keydown listener dispatches to both the mode-cycle
-  // shortcut and the saved-view-popover escape (cheaper than two
-  // window-level listeners and avoids an $effect re-run race between
-  // the popover's open/close transitions).
+
+  function onPaletteHotkey(e: KeyboardEvent) {
+    if (paletteOpen) return
+    const hotkeys = settings.config?.hotkeys ?? {}
+    if (!matchHotkey(e, hotkeys.tasks_command_palette)) return
+    if (isEditableTarget(e.target)) return
+    e.preventDefault()
+    paletteOpen = true
+  }
+
+  // One always-on keydown listener dispatches mode-cycle, palette open, and
+  // saved-view-popover escape (cheaper than three window-level listeners).
   function onWindowKeydown(e: KeyboardEvent) {
     onGlobalKeydown(e)
+    onPaletteHotkey(e)
     onPopoverKeydown(e)
+  }
+
+  function handlePaletteFindTask() {
+    // Delegate to the app-level SearchModal via the same CustomEvent pattern
+    // as open-settings / open-template-picker (PLAN #436: actual open_search
+    // path, not a invented Ctrl+P binding).
+    window.dispatchEvent(new CustomEvent('open-search'))
+  }
+
+  function handlePaletteAddTask() {
+    window.dispatchEvent(new CustomEvent('open-quick-add'))
+  }
+
+  function handlePaletteApplyView(view: SavedView) {
+    applySavedView(view)
   }
   $effect(() => {
     window.addEventListener('keydown', onWindowKeydown)
@@ -390,10 +422,11 @@
         owners: [...hubState.filters.owners],
         priorities: [...hubState.filters.priorities],
         dueDate: hubState.filters.dueDate,
-        tags: [...hubState.filters.tags]
+        tags: [...hubState.filters.tags],
+        stale: hubState.filters.stale
       },
       calendarSubMode: hubState.calendarSubMode,
-      columns: [...hubState.columns],
+      columns: cloneColumns(hubState.columns),
       system: false,
       ...overrides
     }
@@ -879,4 +912,17 @@
       onCancel={cancelDeleteModal}
     />
   {/if}
+
+  <!-- Hub-scoped command palette (#436). Mounted only while open so focus
+       trap + Escape listeners clean up with the overlay. -->
+  <TasksCommandPalette
+    open={paletteOpen}
+    onClose={() => (paletteOpen = false)}
+    onDisplayMode={chooseMode}
+    onGroupBy={chooseGroupBy}
+    onSort={chooseSort}
+    onApplyView={handlePaletteApplyView}
+    onFindTask={handlePaletteFindTask}
+    onAddTask={handlePaletteAddTask}
+  />
 </div>

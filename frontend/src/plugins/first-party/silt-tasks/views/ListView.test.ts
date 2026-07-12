@@ -1287,3 +1287,35 @@ describe('Tasks view — manual ordering (#426)', () => {
     expect(alert?.textContent).toContain("Couldn't reorder task")
   })
 })
+
+describe('ListView — subtask badge (#434)', () => {
+  beforeEach(() => {
+    resetTaskHubState()
+    mocks.sqliteQuery.mockReset()
+    mocks.blockChangedCallbacks.length = 0
+  })
+  afterEach(cleanup)
+
+  it('renders [done/total] badge when subtask_total > 0', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("status != 'DONE'")) {
+        return {
+          rows: [
+            {
+              ...task('p1', 'Parent task'),
+              subtask_total: 3,
+              subtask_done: 1
+            }
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    expect(screen.getByTestId('tasks-subtask-badge-p1').textContent).toContain(
+      '[1/3]'
+    )
+  })
+})

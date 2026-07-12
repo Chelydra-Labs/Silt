@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { fly } from 'svelte/transition'
   import type { PluginContext, SubtreeBlock } from '../../../sdk'
   import RichText from '../../../../components/RichText.svelte'
@@ -13,8 +13,10 @@
    * FetchSubtree re-hydrates author/timestamp on each load via the block_meta
    * projection from #418/#37. Reads via ctx.fetchSubtree, writes via
    * ctx.addTaskComment (composes a NOTE + splices into the sub-tree), deletes
-   * via ctx.deleteBlock. The host re-queries comments_count through
-   * onCommentsChanged after each mutation.
+   * via ctx.deleteBlock. Nested replies (#438) use parentCommentId; the UI
+   * shows two levels (top-level + first-level replies), flattening deeper
+   * nesting under the top-level ancestor. The host re-queries comments_count
+   * through onCommentsChanged after each mutation.
    */
   interface Props {
     taskId: string
@@ -49,6 +51,10 @@
     line: number
     /** True until the server-confirmed UUID replaces the optimistic id. */
     pending: boolean
+    /** Block parent_id — taskId for top-level, parent comment id for replies. */
+    parentId: string
+    /** Nested replies flattened to one level under a top-level comment. */
+    replies: Comment[]
   }
 
   let comments = $state<Comment[]>([])
@@ -63,6 +69,11 @@
   let composerAuthor = $state('')
   let composerPending = $state(false)
   let liveMessage = $state('')
+  // Inline reply composer: which comment is being replied to, plus its draft.
+  let replyToId = $state<string | null>(null)
+  let replyText = $state('')
+  let replyPending = $state(false)
+  let replyTextareaEl = $state<HTMLTextAreaElement | null>(null)
 
   // YYYY-MM-DD HH:MM (local) for display; "Undated" fallback for legacy
   // NOTEs without a [ts::] token. Mirrors the TaskEditDrawer inline formatter
@@ -95,8 +106,86 @@
       author: b.author ?? '',
       timestamp: b.timestamp ?? '',
       line: b.line_number ?? 0,
-      pending: false
+      pending: false,
+      parentId: b.parent_id ?? '',
+      replies: []
     }
+  }
+
+  function isNoteBlock(b: SubtreeBlock): boolean {
+    return (b.type ?? '').toUpperCase() === 'NOTE'
+  }
+
+  function sortComments(list: Comment[]): Comment[] {
+    // Sort by timestamp ascending; undated (empty ts) fall to the end,
+    // keeping their original file order via the line-number tiebreaker so
+    // legacy comments don't reshuffle when a new dated comment arrives.
+    return [...list].sort((a, b) => {
+      const at = a.timestamp || '9999'
+      const bt = b.timestamp || '9999'
+      if (at !== bt) return at < bt ? -1 : 1
+      return a.line - b.line
+    })
+  }
+
+  /**
+   * Build a two-level thread from flat NOTE blocks (#438). Top-level =
+   * parent_id === taskId (or missing parent). Replies attach under their
+   * top-level ancestor; deeper nesting is flattened into that first reply
+   * list so the UI stays two levels deep.
+   */
+  function buildThread(blocks: SubtreeBlock[], taskId: string): Comment[] {
+    const notes = (blocks ?? []).filter(isNoteBlock)
+    const byId = new Map(notes.map((b) => [b.id, b]))
+
+    function isTopLevel(b: SubtreeBlock): boolean {
+      return !b.parent_id || b.parent_id === taskId
+    }
+
+    /** Walk parent_id until a top-level NOTE; null if none found. */
+    function topLevelAncestorId(b: SubtreeBlock): string | null {
+      let pid = b.parent_id
+      let guard = 0
+      while (pid && pid !== taskId && guard++ < 64) {
+        const parent = byId.get(pid)
+        if (!parent) return null
+        if (isTopLevel(parent)) return parent.id
+        pid = parent.parent_id
+      }
+      return null
+    }
+
+    const tops: Comment[] = []
+    const repliesByTop = new Map<string, Comment[]>()
+
+    for (const b of notes) {
+      const c = toComment(b)
+      if (isTopLevel(b)) {
+        tops.push(c)
+        continue
+      }
+      const topId = topLevelAncestorId(b)
+      if (!topId) {
+        // Orphan / non-NOTE parent chain — treat as top-level so it still
+        // renders rather than vanishing from the thread.
+        tops.push(c)
+        continue
+      }
+      const list = repliesByTop.get(topId) ?? []
+      list.push(c)
+      repliesByTop.set(topId, list)
+    }
+
+    const sortedTops = sortComments(tops)
+    for (const top of sortedTops) {
+      top.replies = sortComments(repliesByTop.get(top.id) ?? [])
+    }
+    return sortedTops
+  }
+
+  /** Flat count for the badge (top-level + all replies). */
+  function countComments(list: Comment[]): number {
+    return list.reduce((n, c) => n + 1 + c.replies.length, 0)
   }
 
   async function load() {
@@ -104,17 +193,7 @@
     errorMsg = ''
     try {
       const subtree = await ctx.fetchSubtree(taskId)
-      const mapped = (subtree ?? []).map(toComment)
-      // Sort by timestamp ascending; undated (empty ts) fall to the end,
-      // keeping their original file order via the line-number tiebreaker so
-      // legacy comments don't reshuffle when a new dated comment arrives.
-      mapped.sort((a, b) => {
-        const at = a.timestamp || '9999'
-        const bt = b.timestamp || '9999'
-        if (at !== bt) return at < bt ? -1 : 1
-        return a.line - b.line
-      })
-      comments = mapped
+      comments = buildThread(subtree ?? [], taskId)
     } catch (e) {
       errorMsg = friendlyCaughtError(e)
       errorRetryable = false
@@ -154,7 +233,7 @@
       // while a comment post is in flight: the optimistic entry is already
       // in `comments`, and a wholesale replace now would flicker out the
       // pending entry until the post completes and re-triggers block:changed.
-      if (composerPending) return
+      if (composerPending || replyPending) return
       void load()
     })
     return () => {
@@ -171,6 +250,8 @@
   })
 
   let canSubmit = $derived(composerText.trim().length > 0 && !composerPending)
+  let canSubmitReply = $derived(replyText.trim().length > 0 && !replyPending)
+  let totalCount = $derived(countComments(comments))
 
   async function submit() {
     const text = composerText.trim()
@@ -186,8 +267,10 @@
       body: text,
       author,
       timestamp: now,
-      line: comments.length,
-      pending: true
+      line: totalCount,
+      pending: true,
+      parentId: taskId,
+      replies: []
     }
     comments = [...comments, optimistic]
     composerText = ''
@@ -215,6 +298,82 @@
     }
   }
 
+  async function startReply(comment: Comment) {
+    replyToId = comment.id
+    replyText = ''
+    await tick()
+    replyTextareaEl?.focus()
+  }
+
+  function cancelReply() {
+    replyToId = null
+    replyText = ''
+  }
+
+  async function submitReply() {
+    const text = replyText.trim()
+    const parentId = replyToId
+    if (!text || !parentId || replyPending) return
+    const author = composerAuthor.trim()
+    const now = new Date().toISOString().slice(0, 19)
+    const optimisticKey = nextKey()
+    const optimistic: Comment = {
+      id: `optimistic-${Date.now()}`,
+      key: optimisticKey,
+      body: text,
+      author,
+      timestamp: now,
+      line: totalCount,
+      pending: true,
+      parentId,
+      replies: []
+    }
+
+    // Attach under the top-level ancestor that owns parentId (parent may
+    // itself be a reply — flatten into that top-level's reply list).
+    comments = comments.map((top) => {
+      if (top.id === parentId) {
+        return { ...top, replies: [...top.replies, optimistic] }
+      }
+      if (top.replies.some((r) => r.id === parentId)) {
+        return { ...top, replies: [...top.replies, optimistic] }
+      }
+      return top
+    })
+    replyText = ''
+    replyPending = true
+    errorMsg = ''
+    errorRetryable = false
+    try {
+      const realId = await ctx.addTaskComment(
+        taskId,
+        text,
+        author || undefined,
+        parentId
+      )
+      comments = comments.map((top) => ({
+        ...top,
+        replies: top.replies.map((r) =>
+          r.key === optimisticKey ? { ...r, id: realId, pending: false } : r
+        )
+      }))
+      replyToId = null
+      onCommentsChanged?.()
+      liveMessage = 'Reply added'
+    } catch (e) {
+      comments = comments.map((top) => ({
+        ...top,
+        replies: top.replies.filter((r) => r.key !== optimisticKey)
+      }))
+      replyText = text
+      errorMsg = friendlyCaughtError(e)
+      errorRetryable = false
+      liveMessage = 'Reply failed to post'
+    } finally {
+      replyPending = false
+    }
+  }
+
   function onComposerKey(e: KeyboardEvent) {
     // Enter posts; Shift+Enter inserts a newline (default). Preventing the
     // newline on Enter keeps the composer single-line-by-default, matching
@@ -225,20 +384,36 @@
     }
   }
 
+  function onReplyKey(e: KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      void submitReply()
+    } else if (e.key === 'Escape') {
+      // Stop bubble so TaskEditDrawer's window Escape handler doesn't close
+      // the drawer while the user is only dismissing the reply composer.
+      e.preventDefault()
+      e.stopPropagation()
+      cancelReply()
+    }
+  }
+
   async function onDelete(comment: Comment) {
     if (!window.confirm('Delete this comment?')) return
-    // Capture the index before filtering so a failed delete restores the
-    // comment at its original position — appending at the end would reshuffle
-    // the thread order on every transient failure.
-    const idx = comments.findIndex((c) => c.id === comment.id)
-    comments = comments.filter((c) => c.id !== comment.id)
+    // Snapshot the full tree so a failed delete restores exact structure
+    // (top-level index + reply nesting), not a reshuffled flat append.
+    const snapshot = comments
+    comments = comments
+      .filter((c) => c.id !== comment.id)
+      .map((top) => ({
+        ...top,
+        replies: top.replies.filter((r) => r.id !== comment.id)
+      }))
     try {
       await ctx.deleteBlock(comment.id)
       onCommentsChanged?.()
       liveMessage = 'Comment deleted'
     } catch (e) {
-      // Restore on failure so the user sees the delete didn't take.
-      comments = [...comments.slice(0, idx), comment, ...comments.slice(idx)]
+      comments = snapshot
       errorMsg = friendlyCaughtError(e)
       errorRetryable = false
       liveMessage = 'Comment failed to delete'
@@ -278,6 +453,98 @@
   }
 </script>
 
+{#snippet commentBody(c: Comment)}
+  <div class="text-type-sm text-text-primary leading-snug">
+    {#each splitBold(c.body) as run}
+      {#if run.bold}
+        <strong>
+          <RichText text={run.text} {notebook} {section} {page} {fileDate} />
+        </strong>
+      {:else}
+        <RichText text={run.text} {notebook} {section} {page} {fileDate} />
+      {/if}
+    {/each}
+  </div>
+{/snippet}
+
+{#snippet commentArticle(c: Comment, nested: boolean)}
+  <!-- svelte-ignore a11y_unknown_role -->
+  <!-- role="comment" is a valid WAI-ARIA 1.3 role; svelte-check's
+       allowlist predates it. Semantic intent: each item is a
+       standalone comment in the thread. -->
+  <article
+    role="comment"
+    class="rounded border border-surface-card-border bg-surface-card p-2"
+    class:ml-4={nested}
+    class:border-l-2={nested}
+    class:border-l-accent-primary-start={nested}
+    transition:fly={{ duration: 120, y: -4 }}
+  >
+    <header class="flex items-center justify-between gap-2 mb-1">
+      <p class="text-type-2xs font-label-sm text-text-muted">
+        <span class="text-text-primary">{c.author || 'Unknown'}</span>
+        <span aria-hidden="true"> · </span>
+        <time datetime={c.timestamp || undefined}
+          >{formatTimestamp(c.timestamp)}</time
+        >
+        {#if c.pending}<span aria-hidden="true"> · saving…</span>{/if}
+      </p>
+      <div class="flex items-center gap-1">
+        <button
+          type="button"
+          class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1"
+          aria-label="Reply to comment"
+          title="Reply"
+          onclick={() => startReply(c)}
+        >
+          Reply
+        </button>
+        <button
+          type="button"
+          class="material-symbols-outlined text-icon-sm text-text-muted hover:text-error transition-colors"
+          aria-label="Delete comment"
+          title="Delete comment"
+          onclick={() => void onDelete(c)}
+        >
+          delete
+        </button>
+      </div>
+    </header>
+    {@render commentBody(c)}
+    {#if replyToId === c.id}
+      <div class="mt-2 flex flex-col gap-1.5" data-testid="reply-composer">
+        <label for="reply-composer-{c.id}" class="sr-only">Reply text</label>
+        <textarea
+          id="reply-composer-{c.id}"
+          bind:this={replyTextareaEl}
+          bind:value={replyText}
+          onkeydown={onReplyKey}
+          placeholder="Write a reply…"
+          aria-label="Reply text"
+          class="w-full resize-y min-h-[2rem] rounded border border-surface-card-border bg-surface-card px-2 py-1 text-type-sm text-text-primary focus:outline-none focus:border-accent-primary-start"
+          rows="2"></textarea>
+        <div class="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            class="px-2 py-0.5 rounded text-type-xs font-label-sm text-text-muted hover:text-text-primary transition-colors"
+            onclick={cancelReply}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onclick={() => void submitReply()}
+            disabled={!canSubmitReply}
+            class="px-2.5 py-1 rounded bg-accent-primary-start text-text-on-accent text-type-xs font-label-sm-bold disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-110 transition-all"
+          >
+            Reply
+          </button>
+        </div>
+      </div>
+    {/if}
+  </article>
+{/snippet}
+
 <section
   aria-labelledby="comment-thread-heading"
   class="pt-3 border-t border-surface-card-border"
@@ -291,9 +558,9 @@
     </h3>
     <span
       class="text-type-2xs font-label-sm text-text-muted bg-surface-card border border-surface-card-border rounded-full px-1.5 py-0.5"
-      aria-label="{comments.length} comments"
+      aria-label="{totalCount} comments"
     >
-      {comments.length}
+      {totalCount}
     </span>
   </div>
 
@@ -319,59 +586,17 @@
   {:else}
     <ul class="flex flex-col gap-2">
       {#each comments as c (c.key)}
-        <li>
-          <!-- svelte-ignore a11y_unknown_role -->
-          <!-- role="comment" is a valid WAI-ARIA 1.3 role; svelte-check's
-               allowlist predates it. Semantic intent: each item is a
-               standalone comment in the thread. -->
-          <article
-            role="comment"
-            class="rounded border border-surface-card-border bg-surface-card p-2"
-            transition:fly={{ duration: 120, y: -4 }}
-          >
-            <header class="flex items-center justify-between gap-2 mb-1">
-              <p class="text-type-2xs font-label-sm text-text-muted">
-                <span class="text-text-primary">{c.author || 'Unknown'}</span>
-                <span aria-hidden="true"> · </span>
-                <time datetime={c.timestamp || undefined}
-                  >{formatTimestamp(c.timestamp)}</time
-                >
-                {#if c.pending}<span aria-hidden="true"> · saving…</span>{/if}
-              </p>
-              <button
-                type="button"
-                class="material-symbols-outlined text-icon-sm text-text-muted hover:text-error transition-colors"
-                aria-label="Delete comment"
-                title="Delete comment"
-                onclick={() => void onDelete(c)}
-              >
-                delete
-              </button>
-            </header>
-            <div class="text-type-sm text-text-primary leading-snug">
-              {#each splitBold(c.body) as run}
-                {#if run.bold}
-                  <strong>
-                    <RichText
-                      text={run.text}
-                      {notebook}
-                      {section}
-                      {page}
-                      {fileDate}
-                    />
-                  </strong>
-                {:else}
-                  <RichText
-                    text={run.text}
-                    {notebook}
-                    {section}
-                    {page}
-                    {fileDate}
-                  />
-                {/if}
+        <li class="flex flex-col gap-2">
+          {@render commentArticle(c, false)}
+          {#if c.replies.length > 0}
+            <ul class="flex flex-col gap-2">
+              {#each c.replies as r (r.key)}
+                <li>
+                  {@render commentArticle(r, true)}
+                </li>
               {/each}
-            </div>
-          </article>
+            </ul>
+          {/if}
         </li>
       {/each}
     </ul>

@@ -403,6 +403,12 @@ func Defaults() SystemConfig {
 			// <vault>/.silt/tasks.md. "N" for New; Shift+T was taken by the
 			// template picker.
 			"new_task": "Ctrl+Shift+N",
+			// Hub-scoped Tasks command palette (#436). Same chord as
+			// format_link (Ctrl+K); conflict is resolved by focus scope —
+			// the hub handler only fires when focus is not an input /
+			// textarea / contenteditable / ProseMirror, so the editor keeps
+			// format_link while typing.
+			"tasks_command_palette": "Ctrl+K",
 			// Tab strip hotkeys (#142). `tab` and `w` already parse cleanly
 			// via the frontend parseHotkey layer (KEY_ALIASES in
 			// frontend/src/settings/hotkeys.ts). Each may be remapped or
