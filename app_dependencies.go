@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"silt/backend/db"
 	"silt/backend/dependencies"
@@ -196,6 +197,7 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string) error {
 			for i := range parsedBlocks {
 				if parsedBlocks[i].ID == blockID && parsedBlocks[i].Type == parser.BlockTask {
 					parsedBlocks[i].BlockedBy = normalized
+					parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
 					found = true
 					break
 				}

@@ -603,6 +603,7 @@
     data-testid="filter-stale-toggle"
     onclick={toggleStale}
     aria-pressed={!!filters.stale}
+    title="Open tasks with no last-modified time, or last modified more than 30 days ago."
     class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {filters.stale
       ? 'border-accent-primary-start/40 text-text-primary'
       : ''}"

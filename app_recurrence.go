@@ -137,6 +137,7 @@ func (a *App) setTaskRecurrence(blockID, recurrenceRule string) error {
 						}
 					}
 					parsedBlocks[i].Recurrence = recurrenceRule
+					parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
 					found = true
 					break
 				}

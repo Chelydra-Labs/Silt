@@ -157,6 +157,8 @@
   // Estimate draft is the raw [estimate::] string (e.g. "2h"); empty clears.
   let estimateDraft = $state('')
   let estimatePending = $state(false)
+  // True after a failed estimate save until the next successful edit/clear.
+  let estimateInvalid = $state(false)
 
   /** Format minutes for the estimate input; hide missing/zero. */
   function formatEstimateDraft(mins: number | null | undefined): string {
@@ -236,6 +238,7 @@
     }
     if (untrack(() => !estimatePending)) {
       estimateDraft = formatEstimateDraft(task?.estimate_minutes)
+      estimateInvalid = false
     }
     metaError = ''
   })
@@ -525,16 +528,21 @@
     if (!task || estimatePending) return
     const trimmed = estimateDraft.trim()
     const prev = formatEstimateDraft(task.estimate_minutes)
-    if (trimmed === prev) return
+    if (trimmed === prev) {
+      estimateInvalid = false
+      return
+    }
     const prevDraft = estimateDraft
     estimateDraft = trimmed
     estimatePending = true
     metaError = ''
     try {
       await ctx.setTaskEstimate(task.id, trimmed)
+      estimateInvalid = false
       onMetaChanged?.()
     } catch (e) {
       estimateDraft = prevDraft
+      estimateInvalid = true
       metaError = errMsg(e)
     } finally {
       estimatePending = false
@@ -734,8 +742,9 @@
   })
 
   function onWindowKeydown(e: KeyboardEvent) {
-    // Don't close on Escape while a Popover (recurrence/due-date) or the
-    // BlockedDoneDialog is open — those consume Escape first.
+    // Don't close on Escape while a Popover (recurrence/due-date), the
+    // BlockedDoneDialog, or the comment reply composer is open — those
+    // consume Escape first (reply also stopPropagation on its keydown).
     if (
       e.key === 'Escape' &&
       task &&
@@ -743,6 +752,8 @@
       !dueDateOpen &&
       !pendingBlockedDone
     ) {
+      const active = document.activeElement as HTMLElement | null
+      if (active?.closest?.('[data-testid="reply-composer"]')) return
       e.preventDefault()
       onClose()
     }
@@ -1006,6 +1017,7 @@
               <span
                 class="text-text-muted ml-1"
                 data-testid="task-subtask-count"
+                aria-label="{task.subtask_done} of {task.subtask_total} subtasks done"
                 >[{task.subtask_done}/{task.subtask_total}]</span
               >
             {/if}
@@ -1056,6 +1068,7 @@
             bind:value={estimateDraft}
             readonly={estimatePending}
             aria-busy={estimatePending}
+            aria-invalid={estimateInvalid}
             aria-describedby="task-estimate-hint"
             onblur={() => void commitEstimate()}
             onkeydown={(e) => {

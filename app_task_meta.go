@@ -402,6 +402,7 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 					if parsedBlocks[i].Type == parser.BlockTask {
 						if newOrder, ok := orderByID[parsedBlocks[i].ID]; ok {
 							parsedBlocks[i].ManualOrder = newOrder
+							parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
 							found++
 						}
 					}

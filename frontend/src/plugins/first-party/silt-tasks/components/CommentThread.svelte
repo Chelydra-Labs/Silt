@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { fly } from 'svelte/transition'
   import type { PluginContext, SubtreeBlock } from '../../../sdk'
   import RichText from '../../../../components/RichText.svelte'
@@ -73,6 +73,7 @@
   let replyToId = $state<string | null>(null)
   let replyText = $state('')
   let replyPending = $state(false)
+  let replyTextareaEl = $state<HTMLTextAreaElement | null>(null)
 
   // YYYY-MM-DD HH:MM (local) for display; "Undated" fallback for legacy
   // NOTEs without a [ts::] token. Mirrors the TaskEditDrawer inline formatter
@@ -297,9 +298,11 @@
     }
   }
 
-  function startReply(comment: Comment) {
+  async function startReply(comment: Comment) {
     replyToId = comment.id
     replyText = ''
+    await tick()
+    replyTextareaEl?.focus()
   }
 
   function cancelReply() {
@@ -386,7 +389,10 @@
       e.preventDefault()
       void submitReply()
     } else if (e.key === 'Escape') {
+      // Stop bubble so TaskEditDrawer's window Escape handler doesn't close
+      // the drawer while the user is only dismissing the reply composer.
       e.preventDefault()
+      e.stopPropagation()
       cancelReply()
     }
   }
@@ -510,6 +516,7 @@
         <label for="reply-composer-{c.id}" class="sr-only">Reply text</label>
         <textarea
           id="reply-composer-{c.id}"
+          bind:this={replyTextareaEl}
           bind:value={replyText}
           onkeydown={onReplyKey}
           placeholder="Write a reply…"

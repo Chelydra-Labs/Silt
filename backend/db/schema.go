@@ -114,7 +114,7 @@ func (dm *DatabaseManager) initSchema() error {
 		pinned INTEGER DEFAULT 0,           -- NULL/0/1 tri-state cache: NULL=absent, 0=[pin:: false], 1=[pin:: true]; reproducible from markdown on re-index (#135)
 		progress INTEGER DEFAULT 0,         -- 0-100; file-resident user intent (cached for query speed)
 		recur TEXT,                         -- recurrence rule (e.g. 'every week'); NULL for one-off tasks (#296)
-		comments_count INTEGER DEFAULT 0,   -- count of child NOTE blocks (derived cache)
+		comments_count INTEGER DEFAULT 0,   -- count of NOTE descendants under the task (derived cache)
 		links_count INTEGER DEFAULT 0,      -- count of ((uuid)) refs in raw_content (derived cache)
 		created_at TEXT,                    -- ISO 8601 local [created::] timestamp; NULL when absent (no backfill) (#417)
 		completed_at TEXT,                  -- ISO 8601 local [completed::] timestamp; NULL when not DONE (no backfill) (#417)
