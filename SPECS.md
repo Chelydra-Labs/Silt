@@ -972,17 +972,21 @@ editor:
   show_word_count: false      # opt-in word count in editor status
   focus_mode: false           # dim non-active paragraphs
   default_view_mode: "edit"   # "edit" or "source"
-  # Inline spellcheck (on by default; en-US only — multi-language packs,
-  # domain word lists, and custom-dictionary import/export).
+  # Inline spellcheck (on by default). en-US is bundled; other languages
+  # download on demand into the user-global dictionary cache.
   spellcheck_enabled: true
   spellcheck_language: "en-US"
+  # Enabled domain/technical word-list packs (merged as Set layers).
+  # Default includes the bundled software-terms list. Empty = none.
+  spellcheck_domains: ["software-terms"]
   # Typewriter mode keeps the active line at a fixed viewport ratio
   # (default off; ratio clamped to [0.1, 0.9]).
   typewriter_mode: false
   typewriter_mode_ratio: 0.5
   # Per-vault custom spellcheck words (a per-vault UI pref, so it lives here
   # in YAML). A linked notebook may carry its own co-located override
-  # (arrays replace; §3.1).
+  # (arrays replace; §3.1). Import/export as UTF-8 one-word-per-line .txt
+  # (# comments allowed; Hunspell personal-dictionary format).
   custom_dictionary: []
 
 # Task Parse Rules

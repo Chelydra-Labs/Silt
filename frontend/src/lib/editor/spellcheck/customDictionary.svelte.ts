@@ -1,25 +1,27 @@
 import {
   GetCustomDictionary,
   AddCustomDictionaryWord,
-  RemoveCustomDictionaryWord
+  RemoveCustomDictionaryWord,
+  PickCustomDictionaryExportPath,
+  PickCustomDictionaryImportFile,
+  ExportCustomDictionary,
+  ImportCustomDictionary
 } from '../../../../bindings/silt/app.js'
+import { friendlyPackError } from './dictionaryStatus.svelte'
 
 /**
- * Reactive custom-spellcheck-dictionary store (#196). Backs both the editor
- * (the spellcheck layer reads editor.custom_dictionary from settings.config)
- * and the Settings → Editor "Custom dictionary" management card (view/add/
- * remove). Reads + mutates via the atomic-config IPC in app_spellcheck.go;
- * the config:changed event then refreshes settings.config.editor.custom_dictionary,
- * which the editor's $effect (TipTapEditor) picks up to re-apply.
- *
- * v1 manages the VAULT dictionary (the common case). Linked-notebook co-located
- * overrides (Sprint 34) are a follow-up.
+ * Reactive custom-spellcheck-dictionary store (#196, #338). Backs the
+ * Settings → General "Custom dictionary" card (view/add/remove/import/export)
+ * and the editor Add-to-dictionary action.
  */
+
 let words = $state<string[]>([])
 let filter = $state('')
 let newWord = $state('')
 let loading = $state(false)
+let busy = $state(false)
 let error = $state<string | null>(null)
+let status = $state<string | null>(null)
 
 export const customDictionary = {
   get words() {
@@ -40,8 +42,14 @@ export const customDictionary = {
   get loading() {
     return loading
   },
+  get busy() {
+    return busy
+  },
   get error() {
     return error
+  },
+  get status() {
+    return status
   },
   /** Filtered view for the management-card list. */
   get filtered() {
@@ -57,7 +65,7 @@ export const customDictionary = {
     try {
       words = await GetCustomDictionary()
     } catch (e) {
-      error = String(e)
+      error = friendlyPackError(e)
     } finally {
       loading = false
     }
@@ -66,23 +74,79 @@ export const customDictionary = {
   /** Add the current newWord (or a passed-in word) via the IPC. */
   async add(word?: string): Promise<void> {
     const w = (word ?? newWord).trim()
-    if (!w) return
+    if (!w || busy) return
     error = null
+    status = null
+    busy = true
     try {
       words = await AddCustomDictionaryWord(w)
       if (!word) newWord = ''
     } catch (e) {
-      error = String(e)
+      error = friendlyPackError(e)
+    } finally {
+      busy = false
     }
   },
 
   /** Remove a word via the IPC. */
   async remove(word: string): Promise<void> {
+    if (busy) return
     error = null
+    status = null
+    busy = true
     try {
       words = await RemoveCustomDictionaryWord(word)
     } catch (e) {
-      error = String(e)
+      error = friendlyPackError(e)
+    } finally {
+      busy = false
+    }
+  },
+
+  /** Export via native save dialog. */
+  async exportFile(): Promise<void> {
+    if (busy) return
+    error = null
+    status = null
+    if (words.length === 0) {
+      status = 'Nothing to export — your dictionary is empty.'
+      return
+    }
+    busy = true
+    try {
+      const path = await PickCustomDictionaryExportPath()
+      if (!path) return
+      await ExportCustomDictionary(path)
+      status = 'Dictionary exported.'
+    } catch (e) {
+      error = friendlyPackError(e)
+    } finally {
+      busy = false
+    }
+  },
+
+  /** Import via native open dialog; merges into vault dictionary. */
+  async importFile(): Promise<void> {
+    if (busy) return
+    error = null
+    status = null
+    busy = true
+    try {
+      const path = await PickCustomDictionaryImportFile()
+      if (!path) return
+      const summary = await ImportCustomDictionary(path)
+      words = await GetCustomDictionary()
+      if (summary.added === 0 && summary.skipped > 0) {
+        status = `No new words — ${summary.skipped} were already in your dictionary.`
+      } else if (summary.skipped > 0) {
+        status = `Added ${summary.added} words (${summary.skipped} already present).`
+      } else {
+        status = `Added ${summary.added} words.`
+      }
+    } catch (e) {
+      error = friendlyPackError(e)
+    } finally {
+      busy = false
     }
   }
 }

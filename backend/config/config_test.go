@@ -1073,6 +1073,9 @@ func TestDefaults_SearchWritingAids(t *testing.T) {
 	if len(d.Editor.CustomDictionary) != 0 {
 		t.Errorf("defaults custom_dictionary should be empty, got %v", d.Editor.CustomDictionary)
 	}
+	if len(d.Editor.SpellcheckDomains) != 1 || d.Editor.SpellcheckDomains[0] != "software-terms" {
+		t.Errorf("defaults spellcheck_domains should be [software-terms], got %v", d.Editor.SpellcheckDomains)
+	}
 	// Sprint 17 hotkeys.
 	hkCases := map[string]string{
 		"find_in_page":           "Ctrl+F",
@@ -1113,6 +1116,21 @@ func TestNormalize_SearchWritingAids(t *testing.T) {
 	}
 	if cfg.Editor.CustomDictionary == nil || len(cfg.Editor.CustomDictionary) != 0 {
 		t.Errorf("normalize custom_dictionary nil → empty non-nil slice, got %v", cfg.Editor.CustomDictionary)
+	}
+	if len(cfg.Editor.SpellcheckDomains) != 1 || cfg.Editor.SpellcheckDomains[0] != "software-terms" {
+		t.Errorf("normalize spellcheck_domains nil → [software-terms], got %v", cfg.Editor.SpellcheckDomains)
+	}
+
+	// Explicit empty domains preserved (user turned all off).
+	cfg = normalize(SystemConfig{Editor: EditorConfig{SpellcheckDomains: []string{}}})
+	if cfg.Editor.SpellcheckDomains == nil || len(cfg.Editor.SpellcheckDomains) != 0 {
+		t.Errorf("normalize empty spellcheck_domains should stay empty, got %v", cfg.Editor.SpellcheckDomains)
+	}
+	// Unknown domain IDs dropped; known kept sorted.
+	cfg = normalize(SystemConfig{Editor: EditorConfig{SpellcheckDomains: []string{"python", "nope", "typescript", "python"}}})
+	wantDomains := []string{"python", "typescript"}
+	if !reflect.DeepEqual(cfg.Editor.SpellcheckDomains, wantDomains) {
+		t.Errorf("spellcheck_domains normalize: got %v want %v", cfg.Editor.SpellcheckDomains, wantDomains)
 	}
 
 	// Explicit values survive.

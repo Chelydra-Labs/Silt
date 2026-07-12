@@ -49,7 +49,14 @@ const CORE_INDEX: SettingsIndexEntry[] = [
   },
   {
     label: 'Custom dictionary',
-    keywords: ['spellcheck', 'words', 'add word', 'spelling'],
+    keywords: [
+      'spellcheck',
+      'words',
+      'add word',
+      'spelling',
+      'import',
+      'export'
+    ],
     sectionId: 'general',
     anchorId: 'general-dictionary'
   },
@@ -99,9 +106,41 @@ const CORE_INDEX: SettingsIndexEntry[] = [
   },
   {
     label: 'Spellcheck',
-    keywords: ['spelling', 'underline', 'misspelled'],
+    keywords: [
+      'spelling',
+      'underline',
+      'misspelled',
+      'language',
+      'dictionary',
+      'enable'
+    ],
     sectionId: 'editor',
-    anchorId: 'editor-preferences'
+    anchorId: 'editor-spellcheck-packs'
+  },
+  {
+    label: 'Spellcheck language',
+    keywords: [
+      'language pack',
+      'en-GB',
+      'german',
+      'french',
+      'spanish',
+      'dictionary download'
+    ],
+    sectionId: 'editor',
+    anchorId: 'editor-spellcheck-packs'
+  },
+  {
+    label: 'Domain word lists',
+    keywords: [
+      'software terms',
+      'typescript',
+      'python',
+      'technical',
+      'false positive'
+    ],
+    sectionId: 'editor',
+    anchorId: 'editor-spellcheck-packs'
   },
   {
     label: 'Typewriter mode',

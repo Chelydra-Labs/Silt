@@ -1,6 +1,6 @@
 {
   "schema": "current-approved-v3",
-  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json",
+  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update ./cmd/inventory/current-approved-v3.json",
   "description": "Approved Wails v3 IPC surface snapshot. The CI parity gate fails on any missing/extra/changed *App method signature versus this file. Other sections (events, frontend imports) are tracked for review visibility and refreshed whenever the fixture is regenerated.",
   "inventory": {
     "methods": [
@@ -31,6 +31,10 @@
       {
         "name": "ApplyTheme",
         "signature": "ApplyTheme(id, mode string) (ActiveThemeResult, error)"
+      },
+      {
+        "name": "CancelSpellcheckDownload",
+        "signature": "CancelSpellcheckDownload()"
       },
       {
         "name": "CheckForUpdates",
@@ -149,8 +153,20 @@
         "signature": "EnablePlugin(pluginID string) error"
       },
       {
+        "name": "EnsureDomainPack",
+        "signature": "EnsureDomainPack(id string) error"
+      },
+      {
+        "name": "EnsureLanguagePack",
+        "signature": "EnsureLanguagePack(lang string) error"
+      },
+      {
         "name": "ExportActiveTheme",
         "signature": "ExportActiveTheme(dstPath string) error"
+      },
+      {
+        "name": "ExportCustomDictionary",
+        "signature": "ExportCustomDictionary(path string) error"
       },
       {
         "name": "ExportVault",
@@ -197,8 +213,16 @@
         "signature": "GetCustomDictionary() ([]string, error)"
       },
       {
+        "name": "GetDomainPackWords",
+        "signature": "GetDomainPackWords(id string) ([]string, error)"
+      },
+      {
         "name": "GetGrantedCapabilities",
         "signature": "GetGrantedCapabilities() (map[string]map[string]string, error)"
+      },
+      {
+        "name": "GetLanguagePackContent",
+        "signature": "GetLanguagePackContent(lang string) (spellcheck.LanguagePackContent, error)"
       },
       {
         "name": "GetLocalAuthor",
@@ -261,6 +285,10 @@
         "signature": "GetUpdateSettings() (UpdateSettingsResult, error)"
       },
       {
+        "name": "ImportCustomDictionary",
+        "signature": "ImportCustomDictionary(path string) (spellcheck.ImportSummary, error)"
+      },
+      {
         "name": "ImportTheme",
         "signature": "ImportTheme(srcPath string) (*themes.ImportResult, error)"
       },
@@ -287,6 +315,14 @@
       {
         "name": "LinkNotebook",
         "signature": "LinkNotebook(folderPath string) (config.LinkedNotebook, error)"
+      },
+      {
+        "name": "ListDomainPacks",
+        "signature": "ListDomainPacks() ([]spellcheck.DomainPackInfo, error)"
+      },
+      {
+        "name": "ListLanguagePacks",
+        "signature": "ListLanguagePacks() ([]spellcheck.LanguagePackInfo, error)"
       },
       {
         "name": "ListModels",
@@ -335,6 +371,14 @@
       {
         "name": "PickBackgroundImage",
         "signature": "PickBackgroundImage(zone string) (*BackgroundImageResult, error)"
+      },
+      {
+        "name": "PickCustomDictionaryExportPath",
+        "signature": "PickCustomDictionaryExportPath() (string, error)"
+      },
+      {
+        "name": "PickCustomDictionaryImportFile",
+        "signature": "PickCustomDictionaryImportFile() (string, error)"
       },
       {
         "name": "PickExportPath",
@@ -874,6 +918,7 @@
       "frontend/src/components/settings/AIProviderTab.test.ts",
       "frontend/src/components/settings/AboutTab.svelte",
       "frontend/src/components/settings/AboutTab.test.ts",
+      "frontend/src/components/settings/EditorTab.svelte",
       "frontend/src/components/settings/GeneralTab.svelte",
       "frontend/src/components/settings/GeneralTab.test.ts",
       "frontend/src/components/settings/NetworkAuditViewer.svelte",
@@ -889,6 +934,8 @@
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.ts",
       "frontend/src/lib/editor/spellcheck/customDictionary.svelte.ts",
+      "frontend/src/lib/editor/spellcheck/dictionary.test.ts",
+      "frontend/src/lib/editor/spellcheck/dictionary.ts",
       "frontend/src/lib/editor/useAutosave.test.ts",
       "frontend/src/lib/editor/useAutosave.ts",
       "frontend/src/lib/editor/useFocusLock.test.ts",
@@ -934,6 +981,7 @@
       "frontend/src/components/settings/AboutTab.test.ts",
       "frontend/src/components/settings/AppearanceTab.svelte",
       "frontend/src/components/settings/AppearanceTab.test.ts",
+      "frontend/src/components/settings/EditorTab.svelte",
       "frontend/src/components/settings/GeneralTab.test.ts",
       "frontend/src/components/settings/PluginsTab.svelte",
       "frontend/src/components/settings/PluginsTab.test.ts",
@@ -985,6 +1033,7 @@
       "plugins:changed",
       "security:event",
       "settings:fingerprint-mismatch",
+      "spellcheck:download:progress",
       "templates:changed",
       "theme:changed",
       "theme:files-dropped",

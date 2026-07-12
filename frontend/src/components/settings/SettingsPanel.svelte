@@ -159,7 +159,7 @@
         </div>
       </div>
     {:else if section === 'general'}
-      <GeneralTab />
+      <GeneralTab {ringAnchor} />
     {:else if section === 'editor'}
       <EditorTab {ringAnchor} />
     {:else if section === 'appearance'}

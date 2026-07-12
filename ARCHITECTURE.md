@@ -843,11 +843,23 @@ re-indexes). A session revert log records the original blocks per page;
 Applies to in-vault pages; linked notebooks are read-only by design.
 
 **Inline spellcheck** — `frontend/src/lib/editor/spellcheck/`:
-`dictionary.ts` wraps `typo-js` (pure-JS Hunspell, BSD) loading the bundled
-`en-US` dictionary from `frontend/public/dictionaries/en-US/` via `fetch`
-(fully local — no network). A per-vault custom-word Set (from
-`editor.custom_dictionary`) is layered over Hunspell; a session-ignore Set
-backs the "Ignore" menu action. `SpellcheckExtension.ts` is a ProseMirror
+`dictionary.ts` wraps `typo-js` (pure-JS Hunspell, BSD). The default `en-US`
+dictionary loads from `frontend/public/dictionaries/en-US/` via `fetch`.
+Additional languages (`editor.spellcheck_language`) download on demand from
+version-pinned jsDelivr npm packages (wooorm/dictionaries) into a **user-global
+cache** (`UserConfigDir/silt/dictionaries/`) via `EnsureLanguagePack` /
+`GetLanguagePackContent` — offline after first fetch; errors surface loudly
+(no silent fallback to en-US). Domain/technical word lists
+(`editor.spellcheck_domains`, default `["software-terms"]`) and the per-vault
+custom dictionary (`editor.custom_dictionary`) are **Set layers** over Hunspell
+(typo-js has no public `addWord`); a session-ignore Set backs "Ignore".
+Bundled curated `software-terms` ships embedded in the Go binary
+(`backend/spellcheck/data/software-terms.txt`) and is served via
+`GetDomainPackWords`; other MIT domain packs download the same way as
+languages. Custom dictionary **import/export** uses native
+file dialogs and a plain UTF-8 one-word-per-line format (`#` comments allowed).
+**Note text never leaves the machine** — only optional dictionary *assets* are
+fetched when the user opts in. `SpellcheckExtension.ts` is a ProseMirror
 decoration plugin that walks text nodes, tokenizes (letters + contractions),
 skips camelCase + ALLCAPS acronyms (false-positive reduction), and skips
 fenced code blocks (ancestor check), inline code + link (the text node's own
@@ -860,7 +872,7 @@ var(--color-status-danger)` + skip-ink + under (WCAG: color+shape, theme-aware).
 dictionary via the atomic `AddCustomDictionaryWord` IPC + Ignore); right-click
 over a misspelled word opens it, and a FormatToolbar spellcheck button opens it
 for the cursor's word. No hotkey by design (wavy underline + right-click +
-toolbar button).
+toolbar button). Catalog + cache live in `backend/spellcheck`.
 
 **Typewriter mode** — `frontend/src/lib/editor/typewriter/TypewriterModeExtension.ts`
 is a ProseMirror PluginView.update that, on a keyboard-driven selection/doc

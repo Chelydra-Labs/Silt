@@ -22,8 +22,13 @@
   import {
     loadDictionary,
     setCustomWords,
+    loadDomainPacks,
     resetDictionary
   } from '../lib/editor/spellcheck/dictionary'
+  import {
+    dictionaryStatus,
+    friendlyPackError
+  } from '../lib/editor/spellcheck/dictionaryStatus.svelte'
   import SpellcheckMenu from './editor/SpellcheckMenu.svelte'
   import { TypewriterMode } from '../lib/editor/typewriter/TypewriterModeExtension'
   import {
@@ -807,37 +812,56 @@
     }
   })
 
-  // Spellcheck (#196): load the dictionary + apply the per-vault custom-word
-  // list whenever the spellcheck config changes (enable/disable, language,
-  // custom_dictionary edits). Disabled → no dictionary → checkWord returns
-  // true for everything → no underlines. After load/change, force a recheck so
-  // decorations refresh immediately (no editor reload needed).
+  // Spellcheck (#196 / #336 / #337): load language dictionary + custom words +
+  // domain packs whenever config changes. Disabled → reset → no underlines.
   $effect(() => {
     const enabled = settings.config?.editor?.spellcheck_enabled !== false
     const lang = settings.config?.editor?.spellcheck_language || 'en-US'
     const custom = settings.config?.editor?.custom_dictionary ?? []
+    const domains = (
+      settings.config?.editor as { spellcheck_domains?: string[] } | undefined
+    )?.spellcheck_domains ?? ['software-terms']
     const editor = editorInstance
     if (!editor) return
-    // Track the reactive inputs so the effect re-runs on each change.
     void enabled
     void lang
     void custom
+    void domains
     if (!enabled) {
-      // When disabled, reset the dictionary so checkWord returns true for
-      // everything (no squiggles) AND force a recheck to wipe stale
-      // decorations immediately — the user expects underlines to vanish.
       resetDictionary()
       requestSpellcheckRecheck(editor)
       return
     }
     setCustomWords(custom)
-    // Swallow load failures (logged in loadDictionary) — spellcheck degrades
-    // to off when the dictionary can't load (stripped build, test env).
+    void loadDomainPacks(domains)
+      .catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn('[silt] domain packs:', err)
+        pushNotification({
+          kind: 'error',
+          message:
+            dictionaryStatus.domainError ||
+            friendlyPackError(err) ||
+            'Could not load technical word lists.'
+        })
+      })
+      .finally(() => {
+        requestSpellcheckRecheck(editor)
+      })
     void loadDictionary(lang)
       .then(() => {
         requestSpellcheckRecheck(editor)
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        // Fail loudly: silent degrade leaves no squiggles and looks "fine".
+        pushNotification({
+          kind: 'error',
+          message:
+            dictionaryStatus.loadError ||
+            friendlyPackError(err) ||
+            'Could not load the spellcheck dictionary. Check Settings → Editor.'
+        })
+      })
   })
 
   // Spellcheck corrections menu (#196). Right-click on a misspelled word opens

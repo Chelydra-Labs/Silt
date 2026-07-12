@@ -123,9 +123,13 @@ vi.mock('../lib/editor/spellcheck/dictionary', () => ({
   isDictionaryLoaded: vi.fn(() => true),
   resetDictionary: vi.fn(),
   setCustomWords: vi.fn(),
+  setDomainWords: vi.fn(),
+  loadDomainPacks: vi.fn().mockResolvedValue(undefined),
   checkWord: vi.fn(() => true),
   ignoreWordSession: vi.fn(),
-  suggest: vi.fn(() => [])
+  suggest: vi.fn(() => []),
+  getDictionaryLoadError: vi.fn(() => null),
+  parseWordListText: vi.fn(() => [])
 }))
 
 async function openContextMenu(container: HTMLElement): Promise<void> {
