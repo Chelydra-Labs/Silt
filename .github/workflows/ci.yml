@@ -3,16 +3,16 @@ name: CI
 # Mirrors the local .githooks/pre-push gates so PRs are gated even when a
 # contributor has not installed the hooks locally.
 #
-# Note on generated assets: both `frontend/dist/` (the vite build output) and
-# `frontend/bindings/` (the Go→JS binding stubs) are gitignored build artifacts.
-# They are NOT committed, so a fresh CI checkout has neither. The flow below
-# regenerates them in the right order before any step that consumes them:
-#   1. npm install                (the `prepare` script seeds a placeholder
-#                                  frontend/dist/.gitkeep AND regenerates
-#                                  frontend/bindings/ from live Go App sigs)
-#   2. npm run build              (real vite build → real frontend/dist, and
-#                                  resolves the bindings imports)
-#   3. npm run check / go build / go test
+# Layout (wall-clock optimized, same gates as the former monolithic job):
+#   frontend  — vite build + svelte-check + Vitest (parallel)
+#   go-test   — go build/vet/race + inventory + withAIPreflight (parallel)
+#   wails-smoke — full wails3 build (always on main; path-filtered on PRs)
+#   build-and-test — aggregator with the historical required-check name
+#   security  — govulncheck + npm audit + gitleaks (unchanged, parallel)
+#
+# Note on generated assets: both `frontend/dist/` (vite) and
+# `frontend/bindings/` (Go→JS stubs) are gitignored. Jobs that need them
+# regenerate them; go-test only needs a non-empty dist for //go:embed.
 
 on:
   push:
@@ -20,20 +20,56 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  # Shared apt package set for Wails v3 CGO (GTK4 + WebKitGTK 6.0).
+  WEBVIEW_APT_PACKAGES: libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev
+
 jobs:
-  build-and-test:
-    name: Build & test (Go -race + frontend check/build)
+  # -------------------------------------------------------------------------
+  # Path filter — decides whether the Wails smoke is needed on this PR.
+  # Always "true" on push-to-main so main never skips the full pipeline.
+  # -------------------------------------------------------------------------
+  changes:
+    name: Detect app-relevant paths
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # On push events (main), force app=true so smoke always runs.
+          # paths-filter still evaluates; we OR with event_name below.
+          filters: |
+            app:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'frontend/**'
+              - 'build/**'
+              - 'wails.json'
+              - 'Taskfile.yml'
+              - 'Taskfile.yaml'
+              - '**/Taskfile.yml'
+              - '.github/workflows/ci.yml'
+              - 'VERSION'
+
+  # -------------------------------------------------------------------------
+  # Frontend: bindings + vite + typecheck + unit tests
+  # -------------------------------------------------------------------------
+  frontend:
+    name: Frontend (build + check + vitest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Linux webview dependencies
-        # Wails v3 on Linux builds against GTK4 + WebKitGTK 6.0 via CGO.
-        # ubuntu-latest doesn't ship the -dev packages, so install them
-        # before any Go compile / test / govulncheck step.
-        run: |
-          sudo apt update
-          sudo apt install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev
+        # wails3 generate bindings (npm prepare) loads Wails CGO packages.
+        uses: awalsh128/cache-apt-pkgs-action@v1.5.3
+        with:
+          packages: ${{ env.WEBVIEW_APT_PACKAGES }}
+          version: webview-1
 
       - uses: actions/setup-go@v6
         with:
@@ -46,24 +82,29 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install Wails CLI
-        # wails3 generate bindings reflects the Go App signatures into JS.
-        # Derive the CLI version from go.mod so CI always matches the
-        # library the project actually builds against (a hardcoded pin here
-        # would silently drift the moment go.mod bumps wails).
+      - name: Resolve Wails CLI version
+        id: wails-ver
         run: |
           WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
-          go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
+          echo "version=$WAILS_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Wails CLI
+        id: wails-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/wails3
+          key: wails3-${{ runner.os }}-${{ steps.wails-ver.outputs.version }}
+
+      - name: Install Wails CLI
+        if: steps.wails-cache.outputs.cache-hit != 'true'
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@${{ steps.wails-ver.outputs.version }}
 
       - name: Install frontend dependencies
         working-directory: frontend
-        # npm install (not ci) because the lockfile is generated on Windows
-        # and may not include all Linux-specific optional dependencies
-        # (e.g. @esbuild/linux-x64). npm install resolves missing platform
-        # packages; npm ci requires a perfectly synced lockfile. The `prepare`
-        # script also regenerates frontend/bindings/ from the live Go App
-        # signatures (CONTRIBUTING.md §"Wails bindings"), and seeds a
-        # placeholder frontend/dist/.gitkeep that lets `vite build` overwrite.
+        # npm install (not ci): lockfile is often generated on Windows and may
+        # omit Linux optional deps (e.g. @esbuild/linux-x64). prepare regenerates
+        # frontend/bindings/ from live Go App signatures.
         run: npm install
 
       - name: Build frontend (vite)
@@ -78,44 +119,44 @@ jobs:
         working-directory: frontend
         run: npm test
 
+  # -------------------------------------------------------------------------
+  # Go: compile, static analysis, race tests (no full Wails app link)
+  # -------------------------------------------------------------------------
+  go-test:
+    name: Go (build + vet + race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux webview dependencies
+        uses: awalsh128/cache-apt-pkgs-action@v1.5.3
+        with:
+          packages: ${{ env.WEBVIEW_APT_PACKAGES }}
+          version: webview-1
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Seed frontend/dist for go:embed
+        # main.go embeds all:frontend/dist. Real assets are not required for
+        # unit tests / go build of packages; a non-empty dir satisfies embed.
+        run: mkdir -p frontend/dist && touch frontend/dist/.gitkeep
+
       - name: Build Go
         run: go build ./...
 
-      - name: Wails3 build smoke test
-        # Verifies the full v3 build pipeline (Taskfile + bindings + frontend + Go binary)
-        # produces a working binary, not just that Go compiles.
-        run: wails3 build
-
       - name: go vet
-        # Standard static analysis. Runs alongside the project's custom
-        # withaipreflightdefer vettool below — both are go vet checks.
         run: go vet ./...
 
       - name: Binding parity check
-        # Replaces the old ">=180 methods" floor with an exact, deterministic
-        # comparison against the checked-in fixture at
-        # cmd/inventory/current-approved-v3.json. The gate FAILS on any
-        # missing, extra, or changed *App method signature (the IPC contract),
-        # so an accidental binding removal/rename/change is caught here rather
-        # than silently breaking the frontend at runtime. A deliberate surface
-        # change (new/removed/renamed binding) is made review-visible by
-        # regenerating the fixture in the same PR:
-        #
+        # Exact comparison against cmd/inventory/current-approved-v3.json.
+        # Deliberate IPC surface changes must regenerate the fixture in-PR:
         #   go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json
-        #
-        # Non-method sections (events, frontend imports) are reported as
-        # informational drift and do not fail the gate (they churn on routine
-        # feature work). The inventory is derived purely from source with
-        # repo-relative, forward-slashed paths, so the fixture is byte-identical
-        # across Windows/Linux/macOS — no platform-specific path noise.
         run: go run -tags tools ./cmd/inventory/ -compare cmd/inventory/current-approved-v3.json
 
       - name: withAIPreflight defer-contract analyzer
-        # Builds the vettool (gated out of the prod binary via //go:build tools)
-        # and runs it as a custom go vet check. Enforces that every caller of
-        # withAIPreflight defers the returned done func — a dropped defer would
-        # leak an unbalanced vaultClosingWG increment and deadlock the next
-        # vault close/switch (#482).
         run: |
           go build -tags tools -o ./.gobins/withaipreflightdefer ./cmd/withaipreflightdefer
           go vet -vettool=./.gobins/withaipreflightdefer ./...
@@ -123,20 +164,99 @@ jobs:
       - name: Test with race detector
         run: go test -race -count=1 ./...
 
-  # F8 (#242): dependency + secret scanning. Runs parallel to build-and-test
-  # so a vulnerable transitive dep or a leaked secret fails the PR fast.
+  # -------------------------------------------------------------------------
+  # Full Wails pipeline smoke (bindings + frontend + native binary)
+  # -------------------------------------------------------------------------
+  wails-smoke:
+    name: Wails3 build smoke
+    needs: [changes]
+    # Always on push-to-main; on PRs only when app-relevant paths changed.
+    if: >
+      github.event_name == 'push' ||
+      needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux webview dependencies
+        uses: awalsh128/cache-apt-pkgs-action@v1.5.3
+        with:
+          packages: ${{ env.WEBVIEW_APT_PACKAGES }}
+          version: webview-1
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Resolve Wails CLI version
+        id: wails-ver
+        run: |
+          WAILS_VERSION=$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
+          echo "version=$WAILS_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Wails CLI
+        id: wails-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/wails3
+          key: wails3-${{ runner.os }}-${{ steps.wails-ver.outputs.version }}
+
+      - name: Install Wails CLI
+        if: steps.wails-cache.outputs.cache-hit != 'true'
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@${{ steps.wails-ver.outputs.version }}
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Wails3 build smoke test
+        # Full v3 pipeline (Taskfile + bindings + frontend + Go binary).
+        run: wails3 build
+
+  # -------------------------------------------------------------------------
+  # Aggregator — keeps the historical required-check name for branch protection.
+  # -------------------------------------------------------------------------
+  build-and-test:
+    name: Build & test (Go -race + frontend check/build)
+    needs: [frontend, go-test, wails-smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require frontend + go-test; allow skipped wails-smoke
+        run: |
+          set -euo pipefail
+          fe="${{ needs.frontend.result }}"
+          gt="${{ needs.go-test.result }}"
+          ws="${{ needs.wails-smoke.result }}"
+          echo "frontend=$fe go-test=$gt wails-smoke=$ws"
+          if [ "$fe" != "success" ]; then
+            echo "::error::Frontend job failed ($fe)"
+            exit 1
+          fi
+          if [ "$gt" != "success" ]; then
+            echo "::error::Go test job failed ($gt)"
+            exit 1
+          fi
+          # skipped = path filter on PR; success = ran and passed
+          if [ "$ws" != "success" ] && [ "$ws" != "skipped" ]; then
+            echo "::error::Wails smoke job failed ($ws)"
+            exit 1
+          fi
+          echo "All required CI lanes green."
+
+  # F8 (#242): dependency + secret scanning. Runs parallel to build lanes.
   #
   # IMPORTANT: this job MUST be added to the "required status checks" list in
   # GitHub branch protection (Settings → Branches → main → Require status
-  # checks) before the PR merging — the gate only enforces what branch
-  # protection requires. The job name below is what to look for in the picker.
-  #
-  # npm audit uses --omit=dev so dev-only advisories (e.g. undici pulled by
-  # Vite's own tooling) don't redden the gate; --audit-level=high means only
-  # high+critical in the prod tree blocks merge. govulncheck reports only
-  # reachable vulns (uncalled advisories are printed but don't fail). gitleaks
-  # scans full history (fetch-depth: 0) so a secret introduced and removed in
-  # any prior commit is still caught.
+  # checks). The job name below is what to look for in the picker.
   security:
     name: Dependency + secret scanning
     runs-on: ubuntu-latest
@@ -147,45 +267,44 @@ jobs:
 
       - name: Install Linux webview dependencies
         # govulncheck analyzes Wails v3's CGO packages, which need the same
-        # GTK4 / WebKitGTK 6.0 dev headers as the build job.
-        run: |
-          sudo apt update
-          sudo apt install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev
+        # GTK4 / WebKitGTK 6.0 dev headers as the build jobs.
+        uses: awalsh128/cache-apt-pkgs-action@v1.5.3
+        with:
+          packages: ${{ env.WEBVIEW_APT_PACKAGES }}
+          version: webview-1
 
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
+      - name: Cache govulncheck
+        id: govuln-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/govulncheck
+          key: govulncheck-${{ runner.os }}-${{ hashFiles('go.mod') }}
+
       - name: govulncheck (reachable vulnerabilities)
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          if [ ! -x "$(go env GOPATH)/bin/govulncheck" ]; then
+            go install golang.org/x/vuln/cmd/govulncheck@latest
+          fi
           $(go env GOPATH)/bin/govulncheck ./...
 
       - uses: actions/setup-node@v6
         with:
-          # Aligned with the build-and-test job (22) and the README's stated
-          # Node prerequisite, so the security gate audits the same LTS line
-          # the app actually ships on.
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: npm audit (prod tree, high+critical)
         working-directory: frontend
-        # npm install (not ci) for the same platform-specific optional-dep
-        # reason as build-and-test. --omit=dev scopes to the prod tree so
-        # dev-only advisories don't redden the gate; --audit-level=high means
-        # only high/critical blocks merge.
         run: |
           npm install
           npm audit --omit=dev --audit-level=high
 
       - name: gitleaks (secrets in full history)
-        # Run the gitleaks CLI directly rather than via gitleaks-action, which
-        # requires a paid license for organization repos. The CLI binary is
-        # identical; only the action wrapper charges. gh release download
-        # fetches the latest stable binary for linux-x64.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
