@@ -44,14 +44,17 @@ export function getDictionaryLoadError(): string | null {
 export function loadDictionary(lang: string): Promise<Typo> {
   if (dict && currentLang === lang) return Promise.resolve(dict)
   if (loadPromise && currentLang === lang) return loadPromise
+  // Mark this request as the active language immediately so overlapping loads
+  // can detect they were superseded before writing module state.
+  const requestedLang = lang
   currentLang = lang
   dictionaryStatus.setLoadError(null)
   loadPromise = (async () => {
     try {
       let aff: string
       let dic: string
-      if (lang === 'en-US') {
-        const base = `/dictionaries/${lang}`
+      if (requestedLang === 'en-US') {
+        const base = `/dictionaries/${requestedLang}`
         const [affRes, dicRes] = await Promise.all([
           fetch(`${base}/index.aff`),
           fetch(`${base}/index.dic`)
@@ -64,21 +67,29 @@ export function loadDictionary(lang: string): Promise<Typo> {
         aff = await affRes.text()
         dic = await dicRes.text()
       } else {
-        await EnsureLanguagePack(lang)
-        const content = await GetLanguagePackContent(lang)
+        await EnsureLanguagePack(requestedLang)
+        const content = await GetLanguagePackContent(requestedLang)
         aff = content.aff
         dic = content.dic
         if (!aff?.trim() || !dic?.trim()) {
           throw new Error(
-            `Language pack "${lang}" is empty. Download it again from Settings.`
+            `Language pack "${requestedLang}" is empty. Download it again from Settings.`
           )
         }
       }
-      dict = new Typo(lang, aff, dic)
+      // A newer loadDictionary call won the race — do not clobber its state.
+      if (currentLang !== requestedLang) {
+        return new Typo(requestedLang, aff, dic)
+      }
+      dict = new Typo(requestedLang, aff, dic)
       cache.clear()
       dictionaryStatus.setLoadError(null)
       return dict
     } catch (err) {
+      // Only the active request may clear module state / report errors.
+      if (currentLang !== requestedLang) {
+        throw err instanceof Error ? err : new Error(String(err))
+      }
       loadPromise = null
       currentLang = ''
       dict = null
@@ -86,7 +97,7 @@ export function loadDictionary(lang: string): Promise<Typo> {
       dictionaryStatus.setLoadError(msg)
       // eslint-disable-next-line no-console
       console.warn(
-        `[silt] spellcheck dictionary "${lang}" failed to load:`,
+        `[silt] spellcheck dictionary "${requestedLang}" failed to load:`,
         err
       )
       throw err instanceof Error ? err : new Error(msg)
@@ -98,6 +109,11 @@ export function loadDictionary(lang: string): Promise<Typo> {
 /** True once the dictionary for the current language has finished loading. */
 export function isDictionaryLoaded(): boolean {
   return dict !== null && dict.loaded
+}
+
+/** Active language tag for the loaded (or in-flight) dictionary. */
+export function getActiveLanguage(): string {
+  return currentLang
 }
 
 /**

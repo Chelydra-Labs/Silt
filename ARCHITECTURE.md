@@ -853,9 +853,10 @@ cache** (`UserConfigDir/silt/dictionaries/`) via `EnsureLanguagePack` /
 (`editor.spellcheck_domains`, default `["software-terms"]`) and the per-vault
 custom dictionary (`editor.custom_dictionary`) are **Set layers** over Hunspell
 (typo-js has no public `addWord`); a session-ignore Set backs "Ignore".
-Bundled curated `software-terms` ships under
-`frontend/public/dictionaries/supplements/`; other MIT domain packs download
-the same way as languages. Custom dictionary **import/export** uses native
+Bundled curated `software-terms` ships embedded in the Go binary
+(`backend/spellcheck/data/software-terms.txt`) and is served via
+`GetDomainPackWords`; other MIT domain packs download the same way as
+languages. Custom dictionary **import/export** uses native
 file dialogs and a plain UTF-8 one-word-per-line format (`#` comments allowed).
 **Note text never leaves the machine** — only optional dictionary *assets* are
 fetched when the user opts in. `SpellcheckExtension.ts` is a ProseMirror

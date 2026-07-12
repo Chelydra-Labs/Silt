@@ -16,7 +16,10 @@ import {
   checkWord,
   hasDomainWord,
   resetDictionary,
-  loadDomainPacks
+  loadDomainPacks,
+  loadDictionary,
+  isDictionaryLoaded,
+  getActiveLanguage
 } from './dictionary'
 import { dictionaryStatus } from './dictionaryStatus.svelte'
 
@@ -79,5 +82,45 @@ describe('loadDomainPacks', () => {
     mocks.EnsureDomainPack.mockRejectedValue(new Error('network timeout'))
     await expect(loadDomainPacks(['typescript'])).rejects.toThrow()
     expect(dictionaryStatus.domainError).toBeTruthy()
+  })
+})
+
+describe('loadDictionary supersede race', () => {
+  beforeEach(() => {
+    resetDictionary()
+    mocks.EnsureLanguagePack.mockReset()
+    mocks.GetLanguagePackContent.mockReset()
+  })
+
+  it('does not let a slower load clobber a newer language', async () => {
+    let releaseSlow: (() => void) | undefined
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve
+    })
+
+    mocks.EnsureLanguagePack.mockImplementation(async (lang: string) => {
+      if (lang === 'en-GB') await slowGate
+    })
+    mocks.GetLanguagePackContent.mockImplementation(async (lang: string) => {
+      // Minimal valid-looking aff/dic payloads for Typo constructor.
+      return {
+        aff: 'SET UTF-8\n',
+        dic: `2\n${lang === 'en-GB' ? 'colour' : 'farbe'}\nx\n`
+      }
+    })
+
+    const slow = loadDictionary('en-GB')
+    // Start a second load before the first resolves.
+    const fast = loadDictionary('de')
+    // de is not en-US so it also goes through Ensure — resolve immediately.
+    await fast
+    expect(isDictionaryLoaded()).toBe(true)
+
+    releaseSlow!()
+    await slow
+
+    // Active language must remain the later request (de), not the slow en-GB.
+    expect(getActiveLanguage()).toBe('de')
+    expect(isDictionaryLoaded()).toBe(true)
   })
 })
