@@ -11,6 +11,8 @@
     label: string
     value: string
     onchange: (next: string) => void
+    /** When set, shows a small Reset control that calls this (parent decides dirty). */
+    onReset?: () => void
     bgForContrast?: string
     disabled?: boolean
     id?: string
@@ -20,6 +22,7 @@
     label,
     value,
     onchange,
+    onReset,
     bgForContrast,
     disabled = false,
     id
@@ -166,13 +169,26 @@
     <label class="text-type-sm font-label-sm text-text-primary" for={fieldId}
       >{label}</label
     >
-    {#if contrastLevel !== null}
-      <ContrastBadge
-        level={contrastLevel}
-        ratio={contrastRatio}
-        label={`${label} contrast`}
-      />
-    {/if}
+    <div class="flex items-center gap-2">
+      {#if onReset}
+        <button
+          type="button"
+          class="text-type-2xs font-label-sm text-text-muted hover:text-text-primary underline-offset-2 hover:underline bg-transparent border-none cursor-pointer px-0 py-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 rounded-sm disabled:opacity-40"
+          aria-label={`Reset ${label}`}
+          {disabled}
+          onclick={() => onReset()}
+        >
+          Reset
+        </button>
+      {/if}
+      {#if contrastLevel !== null}
+        <ContrastBadge
+          level={contrastLevel}
+          ratio={contrastRatio}
+          label={`${label} contrast`}
+        />
+      {/if}
+    </div>
   </div>
 
   <div class="flex items-center gap-2">

@@ -1358,6 +1358,68 @@ describe('ListView — server-side filtering via buildQuery (#526)', () => {
     expect(params).toContain('Alice')
   })
 
+  // Large-set regression (#526): filters must appear before LIMIT so the
+  // cap cannot drop matching rows that would have survived filter-then-limit.
+  it('owners filter + LIMIT 500 proves filter-then-limit on open SQL', async () => {
+    setFilters({
+      owners: ['Alice'],
+      priorities: [],
+      dueDate: '',
+      tags: []
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const openCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      String(c[0]).includes("AND t.status != 'DONE'")
+    )
+    expect(openCall).toBeTruthy()
+    const sql = String(openCall![0])
+    expect(sql).toContain('t.owner IN (?)')
+    expect(sql).toMatch(/LIMIT 500/)
+    const ownerIdx = sql.indexOf('t.owner IN (?)')
+    const limitIdx = sql.search(/LIMIT 500/)
+    expect(ownerIdx).toBeGreaterThanOrEqual(0)
+    expect(limitIdx).toBeGreaterThan(ownerIdx)
+  })
+
+  it('stale filter wires modified_at predicate and LIMIT 500 into open SQL', async () => {
+    setFilters({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: [],
+      stale: true
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const openCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      String(c[0]).includes("AND t.status != 'DONE'")
+    )
+    expect(openCall).toBeTruthy()
+    const sql = String(openCall![0])
+    expect(sql).toMatch(/modified_at/)
+    expect(sql).toMatch(/LIMIT 500/)
+  })
+
+  it('activeFilter=completed skips open query and loads DONE rows only', async () => {
+    setActiveFilter('completed')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const openCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      String(c[0]).includes("AND t.status != 'DONE'")
+    )
+    expect(openCall).toBeUndefined()
+
+    const doneCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      String(c[0]).includes("t.status = 'DONE'")
+    )
+    expect(doneCall).toBeTruthy()
+    expect(String(doneCall![0])).toContain("t.status = 'DONE'")
+  })
+
   it('open SQL includes priority + tag predicates when set', async () => {
     setFilters({
       owners: [],

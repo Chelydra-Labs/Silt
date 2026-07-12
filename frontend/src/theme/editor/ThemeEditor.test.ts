@@ -229,4 +229,40 @@ describe('ThemeEditor', () => {
     expect(screen.getByRole('button', { name: /^save$/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /save as new/i })).toBeTruthy()
   })
+
+  it('shows per-token Reset controls on Simple essentials', async () => {
+    render(ThemeEditor, {
+      props: {
+        themeId: 'cyber_forest',
+        sourceIsDisk: false,
+        onClose: vi.fn(),
+        injectJson: sampleJson
+      }
+    })
+    await tick()
+    expect(
+      screen.getByRole('button', { name: /reset app background/i })
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: /reset app text/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /reset accent/i })).toBeTruthy()
+  })
+
+  it('Surfaces advanced tab shows Surfaces heading and Reset group', async () => {
+    render(ThemeEditor, {
+      props: {
+        themeId: 'cyber_forest',
+        sourceIsDisk: false,
+        onClose: vi.fn(),
+        injectJson: sampleJson
+      }
+    })
+    await tick()
+    await fireEvent.click(screen.getByRole('tab', { name: /surfaces/i }))
+    await tick()
+    expect(screen.getByRole('heading', { name: /^surfaces$/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /reset group/i })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: /reset background/i })
+    ).toBeTruthy()
+  })
 })

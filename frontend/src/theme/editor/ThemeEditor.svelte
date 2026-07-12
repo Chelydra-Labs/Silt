@@ -12,7 +12,10 @@
   } from '../store.svelte'
   import {
     autoFixLightness,
+    classifyContrast,
+    contrastRatioWCAG,
     coreContrastPairs,
+    effectiveBackgroundWithScrim,
     type ContrastPair
   } from '../contrast'
   import { flattenTheme } from '../flatten'
@@ -412,8 +415,102 @@
     return ''
   }
 
+  function scaleValue(
+    kind: 'size' | 'line_height' | 'weight',
+    step: string
+  ): string {
+    return wc.draft?.typography?.scale?.[kind]?.[step] ?? ''
+  }
+
+  function setScaleValue(
+    kind: 'size' | 'line_height' | 'weight',
+    step: string,
+    value: string
+  ) {
+    if (!wc.draft) return
+    const scale = { ...(wc.draft.typography?.scale ?? {}) }
+    const bucket = { ...(scale[kind] ?? {}) }
+    const trimmed = value.trim()
+    if (trimmed) bucket[step] = trimmed
+    else delete bucket[step]
+    scale[kind] = bucket
+    wc.setAt('typography.scale', scale)
+  }
+
+  function resetGroupPaths(paths: string[]) {
+    wc.resetGroup(paths)
+  }
+
+  function colorGroupPaths(): string[] {
+    const p = (rel: string) => wc.modePath(rel)
+    return [
+      p('accent.primary.start'),
+      p('accent.primary.end'),
+      p('accent.primary.glow'),
+      p('accent.secondary.start'),
+      p('accent.secondary.end'),
+      p('accent.secondary.glow'),
+      p('hover'),
+      p('active'),
+      p('border_active'),
+      p('border_focus'),
+      p('text_muted'),
+      p('text_disabled'),
+      p('status.warn'),
+      p('status.danger'),
+      p('status.success'),
+      p('error.fg'),
+      p('error.bg'),
+      p('error.border')
+    ]
+  }
+
+  function surfacesGroupPaths(): string[] {
+    return [wc.modePath(`surfaces.${surfaceZone}`)]
+  }
+
+  function geometryGroupPaths(): string[] {
+    return [
+      wc.modePath('radius'),
+      wc.modePath('spacing'),
+      wc.modePath('shadow')
+    ]
+  }
+
+  function typographyGroupPaths(): string[] {
+    return [
+      'typography.font_family',
+      'typography.mono_font_family',
+      'typography.headline_font',
+      'typography.scale'
+    ]
+  }
+
+  function editorGroupPaths(): string[] {
+    return [wc.modePath('editor')]
+  }
+
+  function backgroundGroupPaths(): string[] {
+    return [wc.modePath(`surfaces.${bgZone}.background`)]
+  }
+
   const surfaceEdit = $derived(surfaceField(surfaceZone))
   const bgEdit = $derived(ensureSurface(bgZone).background)
+  const bgZoneSurf = $derived(ensureSurface(bgZone))
+  const bgEffective = $derived(
+    effectiveBackgroundWithScrim(
+      bgEdit?.image,
+      bgEdit?.scrim,
+      bgEdit?.opacity,
+      bgZoneSurf.bg
+    )
+  )
+  const bgTextContrastRatio = $derived(
+    contrastRatioWCAG(bgZoneSurf.text, bgEffective)
+  )
+  const bgTextContrastLevel = $derived(
+    classifyContrast(bgTextContrastRatio, true)
+  )
 </script>
 
 <svelte:window onkeydown={onWindowKey} />
@@ -614,6 +711,7 @@
               label="App background"
               value={wc.draft.modes[mode()].surfaces.app.bg}
               onchange={setAppBg}
+              onReset={() => wc.resetPath(wc.modePath('surfaces.app.bg'))}
             />
 
             <OklchColorField
@@ -621,6 +719,7 @@
               value={wc.draft.modes[mode()].surfaces.app.text}
               bgForContrast={appBg()}
               onchange={setAppText}
+              onReset={() => wc.resetPath(wc.modePath('surfaces.app.text'))}
             />
 
             <OklchColorField
@@ -628,6 +727,7 @@
               value={wc.draft.modes[mode()].accent.primary.start}
               bgForContrast={appBg()}
               onchange={setAccentStart}
+              onReset={() => wc.resetPath(wc.modePath('accent.primary.start'))}
             />
 
             <div class="flex flex-col gap-1.5">
@@ -679,12 +779,21 @@
           </div>
         {:else if wc.advancedGroup === 'surfaces'}
           <div class="max-w-2xl space-y-6">
-            <div>
-              <h3 class="text-type-lg font-headline-md mb-1">Surfaces</h3>
-              <p class="text-text-muted text-type-sm">
-                Per-zone background, border, and text. Unset zones inherit from
-                their parent.
-              </p>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-type-lg font-headline-md mb-1">Surfaces</h3>
+                <p class="text-text-muted text-type-sm">
+                  Per-zone background, border, and text. Unset zones inherit
+                  from their parent.
+                </p>
+              </div>
+              <button
+                type="button"
+                class="flex-shrink-0 text-type-xs font-label-sm text-text-muted hover:text-text-primary underline-offset-2 hover:underline bg-transparent border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 rounded-sm"
+                onclick={() => resetGroupPaths(surfacesGroupPaths())}
+              >
+                Reset group
+              </button>
             </div>
             <div class="flex flex-col gap-1.5">
               <label class="text-type-sm font-label-sm" for="surface-zone"
@@ -709,26 +818,43 @@
               label="Background"
               value={surfaceEdit.bg}
               onchange={(v) => updateSurface(surfaceZone, { bg: v })}
+              onReset={() =>
+                wc.resetPath(wc.modePath(`surfaces.${surfaceZone}.bg`))}
             />
             <OklchColorField
               label="Border"
               value={surfaceEdit.border}
               onchange={(v) => updateSurface(surfaceZone, { border: v })}
+              onReset={() =>
+                wc.resetPath(wc.modePath(`surfaces.${surfaceZone}.border`))}
             />
             <OklchColorField
               label="Text"
               value={surfaceEdit.text}
               bgForContrast={surfaceEdit.bg}
               onchange={(v) => updateSurface(surfaceZone, { text: v })}
+              onReset={() =>
+                wc.resetPath(wc.modePath(`surfaces.${surfaceZone}.text`))}
             />
           </div>
         {:else if wc.advancedGroup === 'color'}
           <div class="max-w-2xl space-y-6">
-            <div>
-              <h3 class="text-type-lg font-headline-md mb-1">Color & accent</h3>
-              <p class="text-text-muted text-type-sm">
-                Accents, status, error, and interaction tokens.
-              </p>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-type-lg font-headline-md mb-1">
+                  Color & accent
+                </h3>
+                <p class="text-text-muted text-type-sm">
+                  Accents, status, error, and interaction tokens.
+                </p>
+              </div>
+              <button
+                type="button"
+                class="flex-shrink-0 text-type-xs font-label-sm text-text-muted hover:text-text-primary underline-offset-2 hover:underline bg-transparent border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 rounded-sm"
+                onclick={() => resetGroupPaths(colorGroupPaths())}
+              >
+                Reset group
+              </button>
             </div>
             <OklchColorField
               label="Primary accent start"
@@ -736,75 +862,137 @@
               bgForContrast={appBg()}
               onchange={(v) =>
                 wc.setColor(wc.modePath('accent.primary.start'), v)}
+              onReset={() => wc.resetPath(wc.modePath('accent.primary.start'))}
             />
             <OklchColorField
               label="Primary accent end"
               value={wc.draft.modes[mode()].accent.primary.end}
               onchange={(v) =>
                 wc.setColor(wc.modePath('accent.primary.end'), v)}
+              onReset={() => wc.resetPath(wc.modePath('accent.primary.end'))}
             />
             <OklchColorField
               label="Primary glow"
               value={wc.draft.modes[mode()].accent.primary.glow}
               onchange={(v) =>
                 wc.setColor(wc.modePath('accent.primary.glow'), v)}
+              onReset={() => wc.resetPath(wc.modePath('accent.primary.glow'))}
             />
             <OklchColorField
               label="Secondary start"
               value={wc.draft.modes[mode()].accent.secondary.start}
               onchange={(v) =>
                 wc.setColor(wc.modePath('accent.secondary.start'), v)}
+              onReset={() =>
+                wc.resetPath(wc.modePath('accent.secondary.start'))}
+            />
+            <OklchColorField
+              label="Secondary end"
+              value={wc.draft.modes[mode()].accent.secondary.end}
+              onchange={(v) =>
+                wc.setColor(wc.modePath('accent.secondary.end'), v)}
+              onReset={() => wc.resetPath(wc.modePath('accent.secondary.end'))}
+            />
+            <OklchColorField
+              label="Secondary glow"
+              value={wc.draft.modes[mode()].accent.secondary.glow}
+              onchange={(v) =>
+                wc.setColor(wc.modePath('accent.secondary.glow'), v)}
+              onReset={() => wc.resetPath(wc.modePath('accent.secondary.glow'))}
             />
             <OklchColorField
               label="Hover"
               value={wc.draft.modes[mode()].hover}
               onchange={(v) => wc.setColor(wc.modePath('hover'), v)}
+              onReset={() => wc.resetPath(wc.modePath('hover'))}
             />
             <OklchColorField
               label="Active"
               value={wc.draft.modes[mode()].active}
               onchange={(v) => wc.setColor(wc.modePath('active'), v)}
+              onReset={() => wc.resetPath(wc.modePath('active'))}
+            />
+            <OklchColorField
+              label="Border active"
+              value={wc.draft.modes[mode()].border_active}
+              onchange={(v) => wc.setColor(wc.modePath('border_active'), v)}
+              onReset={() => wc.resetPath(wc.modePath('border_active'))}
+            />
+            <OklchColorField
+              label="Border focus"
+              value={wc.draft.modes[mode()].border_focus}
+              onchange={(v) => wc.setColor(wc.modePath('border_focus'), v)}
+              onReset={() => wc.resetPath(wc.modePath('border_focus'))}
             />
             <OklchColorField
               label="Text muted"
               value={wc.draft.modes[mode()].text_muted}
               bgForContrast={appBg()}
               onchange={(v) => wc.setColor(wc.modePath('text_muted'), v)}
+              onReset={() => wc.resetPath(wc.modePath('text_muted'))}
+            />
+            <OklchColorField
+              label="Text disabled"
+              value={wc.draft.modes[mode()].text_disabled}
+              bgForContrast={appBg()}
+              onchange={(v) => wc.setColor(wc.modePath('text_disabled'), v)}
+              onReset={() => wc.resetPath(wc.modePath('text_disabled'))}
             />
             <OklchColorField
               label="Status warn"
               value={wc.draft.modes[mode()].status.warn}
               onchange={(v) => wc.setColor(wc.modePath('status.warn'), v)}
+              onReset={() => wc.resetPath(wc.modePath('status.warn'))}
             />
             <OklchColorField
               label="Status danger"
               value={wc.draft.modes[mode()].status.danger}
               onchange={(v) => wc.setColor(wc.modePath('status.danger'), v)}
+              onReset={() => wc.resetPath(wc.modePath('status.danger'))}
             />
             <OklchColorField
               label="Status success"
               value={wc.draft.modes[mode()].status.success}
               onchange={(v) => wc.setColor(wc.modePath('status.success'), v)}
+              onReset={() => wc.resetPath(wc.modePath('status.success'))}
             />
             <OklchColorField
               label="Error foreground"
               value={wc.draft.modes[mode()].error.fg}
               bgForContrast={wc.draft.modes[mode()].error.bg}
               onchange={(v) => wc.setColor(wc.modePath('error.fg'), v)}
+              onReset={() => wc.resetPath(wc.modePath('error.fg'))}
             />
             <OklchColorField
               label="Error background"
               value={wc.draft.modes[mode()].error.bg}
               onchange={(v) => wc.setColor(wc.modePath('error.bg'), v)}
+              onReset={() => wc.resetPath(wc.modePath('error.bg'))}
+            />
+            <OklchColorField
+              label="Error border"
+              value={wc.draft.modes[mode()].error.border}
+              onchange={(v) => wc.setColor(wc.modePath('error.border'), v)}
+              onReset={() => wc.resetPath(wc.modePath('error.border'))}
             />
           </div>
         {:else if wc.advancedGroup === 'typography'}
           <div class="max-w-xl space-y-6">
-            <div>
-              <h3 class="text-type-lg font-headline-md mb-1">Typography</h3>
-              <p class="text-text-muted text-type-sm">
-                Theme-level font families (shared across dark and light).
-              </p>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-type-lg font-headline-md mb-1">Typography</h3>
+                <p class="text-text-muted text-type-sm">
+                  Theme-level font families and optional type scale (shared
+                  across dark and light).
+                </p>
+              </div>
+              <button
+                type="button"
+                class="flex-shrink-0 text-type-xs font-label-sm text-text-muted hover:text-text-primary underline-offset-2 hover:underline bg-transparent border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 rounded-sm"
+                onclick={() => resetGroupPaths(typographyGroupPaths())}
+              >
+                Reset group
+              </button>
             </div>
             {#each [{ key: 'font_family', label: 'Body', cat: 'body' as const }, { key: 'mono_font_family', label: 'Mono', cat: 'mono' as const }, { key: 'headline_font', label: 'Headline', cat: 'display' as const }] as slot (slot.key)}
               <div class="flex flex-col gap-1.5">
@@ -828,14 +1016,103 @@
                 </select>
               </div>
             {/each}
+
+            <div class="pt-2 border-t border-surface-panel-border space-y-4">
+              <h4 class="text-type-sm font-label-sm-bold text-text-primary">
+                Type scale (optional)
+              </h4>
+              <div class="space-y-3">
+                <p class="text-type-xs text-text-muted font-label-sm">Size</p>
+                {#each ['xs', 'sm', 'base', 'lg', 'xl', '2xl'] as step (step)}
+                  <div class="flex flex-col gap-1.5">
+                    <label
+                      class="text-type-sm font-label-sm"
+                      for={`scale-size-${step}`}>Size {step}</label
+                    >
+                    <input
+                      id={`scale-size-${step}`}
+                      type="text"
+                      class="h-10 px-3 rounded-md bg-surface-panel border border-surface-panel-border font-mono text-type-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 max-w-xs"
+                      value={scaleValue('size', step)}
+                      placeholder="e.g. 0.875rem"
+                      onchange={(e) =>
+                        setScaleValue(
+                          'size',
+                          step,
+                          (e.currentTarget as HTMLInputElement).value
+                        )}
+                    />
+                  </div>
+                {/each}
+              </div>
+              <div class="space-y-3">
+                <p class="text-type-xs text-text-muted font-label-sm">
+                  Line height
+                </p>
+                {#each ['tight', 'normal', 'relaxed'] as step (step)}
+                  <div class="flex flex-col gap-1.5">
+                    <label
+                      class="text-type-sm font-label-sm"
+                      for={`scale-lh-${step}`}>Line height {step}</label
+                    >
+                    <input
+                      id={`scale-lh-${step}`}
+                      type="text"
+                      class="h-10 px-3 rounded-md bg-surface-panel border border-surface-panel-border font-mono text-type-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 max-w-xs"
+                      value={scaleValue('line_height', step)}
+                      placeholder="e.g. 1.5"
+                      onchange={(e) =>
+                        setScaleValue(
+                          'line_height',
+                          step,
+                          (e.currentTarget as HTMLInputElement).value
+                        )}
+                    />
+                  </div>
+                {/each}
+              </div>
+              <div class="space-y-3">
+                <p class="text-type-xs text-text-muted font-label-sm">Weight</p>
+                {#each ['normal', 'medium', 'semibold'] as step (step)}
+                  <div class="flex flex-col gap-1.5">
+                    <label
+                      class="text-type-sm font-label-sm"
+                      for={`scale-weight-${step}`}>Weight {step}</label
+                    >
+                    <input
+                      id={`scale-weight-${step}`}
+                      type="text"
+                      class="h-10 px-3 rounded-md bg-surface-panel border border-surface-panel-border font-mono text-type-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 max-w-xs"
+                      value={scaleValue('weight', step)}
+                      placeholder="e.g. 500"
+                      onchange={(e) =>
+                        setScaleValue(
+                          'weight',
+                          step,
+                          (e.currentTarget as HTMLInputElement).value
+                        )}
+                    />
+                  </div>
+                {/each}
+              </div>
+            </div>
           </div>
         {:else if wc.advancedGroup === 'geometry'}
           <div class="max-w-xl space-y-6">
-            <div>
-              <h3 class="text-type-lg font-headline-md mb-1">Geometry</h3>
-              <p class="text-text-muted text-type-sm">
-                Radius and spacing ramps for this mode.
-              </p>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-type-lg font-headline-md mb-1">Geometry</h3>
+                <p class="text-text-muted text-type-sm">
+                  Radius, spacing, and shadow ramps for this mode.
+                </p>
+              </div>
+              <button
+                type="button"
+                class="flex-shrink-0 text-type-xs font-label-sm text-text-muted hover:text-text-primary underline-offset-2 hover:underline bg-transparent border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 rounded-sm"
+                onclick={() => resetGroupPaths(geometryGroupPaths())}
+              >
+                Reset group
+              </button>
             </div>
             {#each ['sm', 'md', 'lg', 'xl', 'full'] as step (step)}
               <div class="flex flex-col gap-1.5">
@@ -864,14 +1141,106 @@
                 />
               </div>
             {/each}
+            <div class="pt-2 border-t border-surface-panel-border space-y-4">
+              <h4 class="text-type-sm font-label-sm-bold text-text-primary">
+                Spacing
+              </h4>
+              {#each ['sm', 'md', 'lg', 'xl'] as step (step)}
+                <div class="flex flex-col gap-1.5">
+                  <label
+                    class="text-type-sm font-label-sm"
+                    for={`spacing-${step}`}>Spacing {step}</label
+                  >
+                  <input
+                    id={`spacing-${step}`}
+                    type="text"
+                    class="h-10 px-3 rounded-md bg-surface-panel border border-surface-panel-border font-mono text-type-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 max-w-xs"
+                    value={wc.draft.modes[mode()].spacing?.[
+                      step as keyof NonNullable<
+                        typeof wc.draft.modes.dark.spacing
+                      >
+                    ] ?? ''}
+                    placeholder={step === 'sm'
+                      ? '4px'
+                      : step === 'md'
+                        ? '8px'
+                        : step === 'lg'
+                          ? '16px'
+                          : '24px'}
+                    onchange={(e) => {
+                      const m = wc.draft!.modes[mode()]
+                      const spacing = {
+                        sm: m.spacing?.sm ?? '4px',
+                        md: m.spacing?.md ?? '8px',
+                        lg: m.spacing?.lg ?? '16px',
+                        xl: m.spacing?.xl ?? '24px',
+                        [step]: (e.currentTarget as HTMLInputElement).value
+                      }
+                      wc.setAt(wc.modePath('spacing'), spacing)
+                    }}
+                  />
+                </div>
+              {/each}
+            </div>
+            <div class="pt-2 border-t border-surface-panel-border space-y-4">
+              <h4 class="text-type-sm font-label-sm-bold text-text-primary">
+                Shadow
+              </h4>
+              {#each ['sm', 'md', 'lg'] as step (step)}
+                <div class="flex flex-col gap-1.5">
+                  <label
+                    class="text-type-sm font-label-sm"
+                    for={`shadow-${step}`}>Shadow {step}</label
+                  >
+                  <input
+                    id={`shadow-${step}`}
+                    type="text"
+                    class="h-10 px-3 rounded-md bg-surface-panel border border-surface-panel-border font-mono text-type-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 w-full"
+                    value={wc.draft.modes[mode()].shadow?.[
+                      step as keyof NonNullable<
+                        typeof wc.draft.modes.dark.shadow
+                      >
+                    ] ?? ''}
+                    placeholder="CSS box-shadow"
+                    onchange={(e) => {
+                      const m = wc.draft!.modes[mode()]
+                      const shadow = {
+                        sm:
+                          m.shadow?.sm ??
+                          '0 1px 2px color-mix(in oklch, var(--color-surface-app) 40%, transparent)',
+                        md:
+                          m.shadow?.md ??
+                          '0 4px 12px color-mix(in oklch, var(--color-surface-app) 35%, transparent)',
+                        lg:
+                          m.shadow?.lg ??
+                          '0 12px 32px color-mix(in oklch, var(--color-surface-app) 30%, transparent)',
+                        [step]: (e.currentTarget as HTMLInputElement).value
+                      }
+                      wc.setAt(wc.modePath('shadow'), shadow)
+                    }}
+                  />
+                </div>
+              {/each}
+            </div>
           </div>
         {:else if wc.advancedGroup === 'editor'}
           <div class="max-w-xl space-y-6">
-            <div>
-              <h3 class="text-type-lg font-headline-md mb-1">Editor tokens</h3>
-              <p class="text-text-muted text-type-sm">
-                Caret, selection, links, and highlight on the writing canvas.
-              </p>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-type-lg font-headline-md mb-1">
+                  Editor tokens
+                </h3>
+                <p class="text-text-muted text-type-sm">
+                  Caret, selection, links, and highlight on the writing canvas.
+                </p>
+              </div>
+              <button
+                type="button"
+                class="flex-shrink-0 text-type-xs font-label-sm text-text-muted hover:text-text-primary underline-offset-2 hover:underline bg-transparent border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 rounded-sm"
+                onclick={() => resetGroupPaths(editorGroupPaths())}
+              >
+                Reset group
+              </button>
             </div>
             {#each [{ key: 'caret', label: 'Caret' }, { key: 'selection', label: 'Selection' }, { key: 'selection_text', label: 'Selection text' }, { key: 'link', label: 'Link' }, { key: 'link_hover', label: 'Link hover' }, { key: 'highlight', label: 'Highlight' }] as field (field.key)}
               {@const ed = wc.draft.modes[mode()].editor}
@@ -913,17 +1282,36 @@
                   }
                   wc.setAt(wc.modePath('editor'), editor)
                 }}
+                onReset={() => {
+                  // Reset whole editor block when seed has no per-key path.
+                  const seedEd = wc.seed?.modes[mode()].editor
+                  if (seedEd && field.key in seedEd) {
+                    wc.resetPath(wc.modePath(`editor.${field.key}`))
+                  } else {
+                    wc.resetPath(wc.modePath('editor'))
+                  }
+                }}
               />
             {/each}
           </div>
         {:else if wc.advancedGroup === 'background'}
           <div class="max-w-xl space-y-6">
-            <div>
-              <h3 class="text-type-lg font-headline-md mb-1">Background</h3>
-              <p class="text-text-muted text-type-sm">
-                Per-zone image overlay. Assets stage via PickImageFile +
-                PrepareBackgroundAsset; nothing writes until Save.
-              </p>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-type-lg font-headline-md mb-1">Background</h3>
+                <p class="text-text-muted text-type-sm">
+                  Per-zone image overlay. Assets stage via PickImageFile +
+                  PrepareBackgroundAsset; nothing writes until Save. Scrim is
+                  the readability control (image luminance is not sampled yet).
+                </p>
+              </div>
+              <button
+                type="button"
+                class="flex-shrink-0 text-type-xs font-label-sm text-text-muted hover:text-text-primary underline-offset-2 hover:underline bg-transparent border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 rounded-sm"
+                onclick={() => resetGroupPaths(backgroundGroupPaths())}
+              >
+                Reset group
+              </button>
             </div>
             <div class="flex flex-col gap-1.5">
               <label class="text-type-sm font-label-sm" for="bg-zone"
@@ -938,6 +1326,18 @@
                   <option value={z}>{z}</option>
                 {/each}
               </select>
+            </div>
+            <div
+              class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-surface-panel-border bg-surface-panel/40 px-3 py-2"
+            >
+              <span class="text-type-sm font-label-sm text-text-primary">
+                Zone text on effective background
+              </span>
+              <ContrastBadge
+                level={bgTextContrastLevel}
+                ratio={bgTextContrastRatio}
+                label="Zone text on effective background"
+              />
             </div>
             <div class="flex flex-wrap gap-2">
               <button
@@ -1045,6 +1445,10 @@
               label="Scrim"
               value={bgEdit?.scrim ?? ensureSurface(bgZone).bg}
               onchange={(v) => updateBackground({ scrim: v })}
+              onReset={() =>
+                wc.resetPath(
+                  wc.modePath(`surfaces.${bgZone}.background.scrim`)
+                )}
             />
           </div>
         {/if}

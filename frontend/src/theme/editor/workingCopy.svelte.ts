@@ -61,6 +61,18 @@ export function createWorkingCopy() {
     schedulePreview()
   }
 
+  /** Reset several document paths to seed in one draft write. */
+  function resetGroup(paths: string[]): void {
+    if (!seed || !draft || paths.length === 0) return
+    let next = draft
+    for (const path of paths) {
+      const value = getAtPath(seed, path)
+      next = setAtPath(next, path, structuredClone(value))
+    }
+    draft = next
+    schedulePreview()
+  }
+
   function setAt(path: string, value: unknown): void {
     if (!draft) return
     draft = setAtPath(draft, path, value)
@@ -167,6 +179,7 @@ export function createWorkingCopy() {
     loadFromJson,
     resetAll,
     resetPath,
+    resetGroup,
     setAt,
     setColor,
     setEditMode,

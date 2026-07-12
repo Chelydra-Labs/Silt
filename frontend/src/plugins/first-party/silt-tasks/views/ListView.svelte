@@ -109,6 +109,8 @@
               } else {
                 openSql += " AND t.status != 'DONE'"
               }
+              // Filter-then-limit: under sort:manual, groups past the 500th
+              // matching row never load, so within-group DnD can look incomplete.
               openSql += ' LIMIT 500'
               return ctx.sqliteQuery(openSql, params)
             })()
@@ -159,8 +161,10 @@
         const fresh = openItems.find((i) => i.id === selectedTask!.id)
         if (fresh) selectedTask = fresh
       }
-      openTruncated = openRes.truncated
-      doneTruncated = doneRes.truncated
+      // Backend truncated only fires at maxPluginQueryRows (5000), not SQL LIMIT.
+      // Signal intentional design caps so the footer is useful.
+      openTruncated = openRes.truncated || openItems.length >= 500
+      doneTruncated = doneRes.truncated || doneItems.length >= 200
     } catch (e) {
       if (my !== loadSeq) return
       errorMsg = e instanceof Error ? e.message : String(e)
@@ -777,44 +781,25 @@
       </div>
     {:else}
       {#if filteredOpen.length === 0}
-        {#if openItems.length > 0}
-          <div
-            class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
-            data-testid="tasks-no-filter-match"
+        <div
+          class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
+        >
+          <span
+            class="material-symbols-outlined text-accent-primary-start text-5xl mb-2"
+            aria-hidden="true">celebrate</span
           >
-            <span
-              class="material-symbols-outlined text-text-muted text-5xl mb-2"
-              aria-hidden="true">filter_list_off</span
-            >
-            <h3 class="font-headline-md text-text-primary mb-1">
-              No tasks match filters
-            </h3>
-            <p class="text-text-muted text-type-md font-body-md">
-              Open tasks exist, but none match the current filters. Clear or
-              adjust filters to see them again.
-            </p>
-          </div>
-        {:else}
-          <div
-            class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
-          >
-            <span
-              class="material-symbols-outlined text-accent-primary-start text-5xl mb-2"
-              aria-hidden="true">celebrate</span
-            >
-            <h3 class="font-headline-md text-text-primary mb-1">
-              All caught up!
-            </h3>
-            <p class="text-text-muted text-type-md font-body-md">
-              You have no active tasks. Restore a completed task below to the
-              active list, type in the box below, or use
-              <kbd
-                class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-type-xs"
-                >Ctrl+Shift+N</kbd
-              > to capture a new task.
-            </p>
-          </div>
-        {/if}
+          <h3 class="font-headline-md text-text-primary mb-1">
+            All caught up!
+          </h3>
+          <p class="text-text-muted text-type-md font-body-md">
+            You have no active tasks. Restore a completed task below to the
+            active list, type in the box below, or use
+            <kbd
+              class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-type-xs"
+              >Ctrl+Shift+N</kbd
+            > to capture a new task.
+          </p>
+        </div>
       {/if}
 
       {#if hubGroupBy === 'dueDate'}

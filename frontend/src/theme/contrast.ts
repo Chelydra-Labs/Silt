@@ -112,30 +112,66 @@ export interface ContrastPair {
 }
 
 /**
+ * Effective background for text-on-image contrast.
+ *
+ * v1 does not sample image luminance. When a scrim is set it is the authoring
+ * control for readability and is used as the effective background; otherwise
+ * the solid zone fallback is used. `imageRef` / `opacity` are reserved for a
+ * future sampling path.
+ */
+export function effectiveBackgroundWithScrim(
+  imageRef: string | undefined,
+  scrim: string | undefined,
+  opacity: number | undefined,
+  solidFallback: string
+): string {
+  void imageRef
+  void opacity
+  const s = scrim?.trim()
+  if (s) return s
+  return solidFallback
+}
+
+/**
  * Core readability pairs for the editor summary strip. Resolves only concrete
  * (non-var()) token values; missing keys yield fail with null ratio.
+ * App/editor pairs prefer `--silt-bg-*-scrim` as the effective bg when present
+ * (text-on-image authoring control; image luminance not sampled yet).
  */
 export function coreContrastPairs(
   tokens: Record<string, string>
 ): ContrastPair[] {
-  const pairs: { id: string; label: string; fgKey: string; bgKey: string }[] = [
+  const pairs: {
+    id: string
+    label: string
+    fgKey: string
+    bgKey: string
+    scrimKey?: string
+    imageKey?: string
+  }[] = [
     {
       id: 'app-text',
       label: 'App text on app background',
       fgKey: '--color-surface-app-text',
-      bgKey: '--color-surface-app'
+      bgKey: '--color-surface-app',
+      scrimKey: '--silt-bg-app-scrim',
+      imageKey: '--silt-bg-app-image'
     },
     {
       id: 'muted-text',
       label: 'Muted text on app background',
       fgKey: '--color-text-muted',
-      bgKey: '--color-surface-app'
+      bgKey: '--color-surface-app',
+      scrimKey: '--silt-bg-app-scrim',
+      imageKey: '--silt-bg-app-image'
     },
     {
       id: 'accent',
       label: 'Accent on app background',
       fgKey: '--color-accent-primary-start',
-      bgKey: '--color-surface-app'
+      bgKey: '--color-surface-app',
+      scrimKey: '--silt-bg-app-scrim',
+      imageKey: '--silt-bg-app-image'
     },
     {
       id: 'error',
@@ -147,13 +183,21 @@ export function coreContrastPairs(
       id: 'editor-text',
       label: 'Editor text on editor background',
       fgKey: '--color-surface-editor-text',
-      bgKey: '--color-surface-editor'
+      bgKey: '--color-surface-editor',
+      scrimKey: '--silt-bg-editor-scrim',
+      imageKey: '--silt-bg-editor-image'
     }
   ]
 
-  return pairs.map(({ id, label, fgKey, bgKey }) => {
+  return pairs.map(({ id, label, fgKey, bgKey, scrimKey, imageKey }) => {
     const fg = resolveConcrete(tokens, fgKey)
-    const bg = resolveConcrete(tokens, bgKey)
+    const solidBg = resolveConcrete(tokens, bgKey)
+    const scrim = scrimKey ? resolveConcrete(tokens, scrimKey) : undefined
+    const image = imageKey ? resolveConcrete(tokens, imageKey) : undefined
+    const bg =
+      solidBg != null
+        ? effectiveBackgroundWithScrim(image, scrim, undefined, solidBg)
+        : (scrim ?? undefined)
     const ratio =
       fg && bg && !fg.startsWith('var(') && !bg.startsWith('var(')
         ? contrastRatioWCAG(fg, bg)

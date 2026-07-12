@@ -321,3 +321,103 @@ func TestPrepareBackgroundAsset_LargeStaging(t *testing.T) {
 		t.Errorf("staged file missing at %s: %v", full, err)
 	}
 }
+
+func TestSaveCustomTheme_MaterializesStagingBackground(t *testing.T) {
+	themesDir := t.TempDir()
+	src := writeAsset(t, "big.png", 60*1024)
+	ref, isBase64, err := PrepareBackgroundAsset(themesDir, src)
+	if err != nil {
+		t.Fatalf("PrepareBackgroundAsset: %v", err)
+	}
+	if isBase64 {
+		t.Fatalf("expected staging ref for large image, got base64")
+	}
+
+	th := validV2Theme()
+	th.Name = "Staged BG Theme"
+	th.Modes.Dark.Surfaces.App.Background = &Background{Image: ref, Size: "cover"}
+
+	info, err := SaveCustomTheme(themesDir, th, false)
+	if err != nil {
+		t.Fatalf("SaveCustomTheme: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(themesDir, info.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if strings.Contains(body, editorStagingDir) {
+		t.Errorf("theme JSON still references %s", editorStagingDir)
+	}
+	// json.Marshal escapes " as \u0022 inside strings by default.
+	wantAssetPath := info.ID + `.assets/`
+	if !strings.Contains(body, wantAssetPath) {
+		t.Errorf("expected assets path %q in theme JSON; body snippet:\n%s", wantAssetPath, body)
+	}
+
+	inner, ok := cssURLInner(ref)
+	if !ok {
+		t.Fatalf("could not parse staging ref %q", ref)
+	}
+	filename := strings.TrimPrefix(filepath.ToSlash(inner), editorStagingDir+"/")
+	assetPath := filepath.Join(themesDir, info.ID+".assets", filename)
+	if _, err := os.Stat(assetPath); err != nil {
+		t.Errorf("materialized asset missing at %s: %v", assetPath, err)
+	}
+	// In-memory theme should also be rewritten for the caller.
+	wantRefPrefix := `url("` + info.ID + `.assets/`
+	if th.Modes.Dark.Surfaces.App.Background == nil ||
+		!strings.HasPrefix(th.Modes.Dark.Surfaces.App.Background.Image, wantRefPrefix) {
+		t.Errorf("in-memory theme image not rewritten: %+v", th.Modes.Dark.Surfaces.App.Background)
+	}
+}
+
+func TestSaveCustomTheme_DataURIBackgroundUnchanged(t *testing.T) {
+	themesDir := t.TempDir()
+	src := writeAsset(t, "tiny.png", 1024)
+	ref, isBase64, err := PrepareBackgroundAsset(themesDir, src)
+	if err != nil {
+		t.Fatalf("PrepareBackgroundAsset: %v", err)
+	}
+	if !isBase64 {
+		t.Fatalf("expected data-URI ref for small image, got %q", ref)
+	}
+
+	th := validV2Theme()
+	th.Name = "Inline BG Theme"
+	th.Modes.Dark.Surfaces.App.Background = &Background{Image: ref}
+
+	info, err := SaveCustomTheme(themesDir, th, false)
+	if err != nil {
+		t.Fatalf("SaveCustomTheme: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(themesDir, info.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	// json.Marshal escapes " as \u0022; match the data URI payload itself.
+	if !strings.Contains(body, "data:image/png;base64,") {
+		t.Errorf("data-URI background not preserved in theme JSON; body snippet:\n%s", body)
+	}
+	if strings.Contains(body, editorStagingDir) {
+		t.Error("unexpected staging ref for data-URI background")
+	}
+	if _, err := os.Stat(filepath.Join(themesDir, info.ID+".assets")); !os.IsNotExist(err) {
+		t.Errorf("expected no assets dir for data-URI-only theme, err=%v", err)
+	}
+}
+
+func TestSaveCustomTheme_MissingStagingBackgroundErrors(t *testing.T) {
+	themesDir := t.TempDir()
+	th := validV2Theme()
+	th.Name = "Missing Staging"
+	th.Modes.Dark.Surfaces.App.Background = &Background{
+		Image: `url(".editor-staging/deadbeef.png")`,
+	}
+	if _, err := SaveCustomTheme(themesDir, th, false); err == nil {
+		t.Fatal("expected error for missing staged asset")
+	}
+}

@@ -96,6 +96,12 @@ func SaveCustomTheme(themesDir string, t *Theme, overwrite bool) (*ThemeInfo, er
 		return nil, fmt.Errorf("failed to ensure themes dir %s: %w", themesDir, err)
 	}
 
+	// Staging refs from PrepareBackgroundAsset must land in <id>.assets/ before
+	// the theme JSON is written, or the saved theme would point at a transient path.
+	if err := materializeStagingBackgrounds(themesDir, t); err != nil {
+		return nil, err
+	}
+
 	canon, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to re-serialize theme: %w", err)
@@ -108,6 +114,114 @@ func SaveCustomTheme(themesDir string, t *Theme, overwrite bool) (*ThemeInfo, er
 	InvalidateThemeCache(t.ID)
 	info := t.AsInfo("disk")
 	return &info, nil
+}
+
+// materializeStagingBackgrounds walks both modes' surfaces; for each
+// background.image that references editorStagingDir (e.g. url(".editor-staging/foo.png")),
+// copy the staged file into themesDir/<themeID>.assets/<filename> and rewrite
+// the image ref to url("<themeID>.assets/<filename>").
+// Data-URI refs and already-materialized <id>.assets/ refs are left alone.
+// Missing staging file → return error (fail loud).
+func materializeStagingBackgrounds(themesDir string, t *Theme) error {
+	if t == nil {
+		return nil
+	}
+	if err := materializeSurfacesStaging(themesDir, t.ID, &t.Modes.Dark.Surfaces); err != nil {
+		return err
+	}
+	return materializeSurfacesStaging(themesDir, t.ID, &t.Modes.Light.Surfaces)
+}
+
+func materializeSurfacesStaging(themesDir, themeID string, surfaces *Surfaces) error {
+	if err := materializeSurfaceStaging(themesDir, themeID, &surfaces.App); err != nil {
+		return err
+	}
+	// Optional zones are pointers; app is a value field (handled above).
+	for _, s := range []*Surface{
+		surfaces.Sidebar, surfaces.Editor, surfaces.Panel, surfaces.Modal,
+		surfaces.Popover, surfaces.Card, surfaces.Titlebar, surfaces.Activitybar,
+	} {
+		if s == nil {
+			continue
+		}
+		if err := materializeSurfaceStaging(themesDir, themeID, s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func materializeSurfaceStaging(themesDir, themeID string, s *Surface) error {
+	if s == nil || s.Background == nil || s.Background.Image == "" {
+		return nil
+	}
+	newRef, err := materializeStagingImageRef(themesDir, themeID, s.Background.Image)
+	if err != nil {
+		return err
+	}
+	if newRef != "" {
+		s.Background.Image = newRef
+	}
+	return nil
+}
+
+// materializeStagingImageRef rewrites a staging url(...) ref into a permanent
+// <themeID>.assets/ ref after copying the file. Returns "" when the ref is not
+// a staging path (data URI, already-materialized assets, bare colors, etc.).
+func materializeStagingImageRef(themesDir, themeID, image string) (string, error) {
+	inner, ok := cssURLInner(image)
+	if !ok {
+		return "", nil
+	}
+	if strings.HasPrefix(inner, "data:") {
+		return "", nil
+	}
+	rel := filepath.ToSlash(inner)
+	stagingPrefix := editorStagingDir + "/"
+	if !strings.HasPrefix(rel, stagingPrefix) {
+		return "", nil
+	}
+	filename := rel[len(stagingPrefix):]
+	// Content-addressed staging names are single path segments; reject traversal.
+	if filename == "" || strings.Contains(filename, "..") || strings.Contains(filename, "/") {
+		return "", fmt.Errorf("invalid staging background ref %q", image)
+	}
+
+	src := filepath.Join(themesDir, editorStagingDir, filename)
+	raw, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("staged background asset missing: %s", filename)
+		}
+		return "", fmt.Errorf("failed to read staged background %s: %w", filename, err)
+	}
+
+	assetsDir := filepath.Join(themesDir, themeID+".assets")
+	if err := os.MkdirAll(assetsDir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create theme assets dir: %w", err)
+	}
+	dst := filepath.Join(assetsDir, filename)
+	if err := os.WriteFile(dst, raw, 0o600); err != nil {
+		return "", fmt.Errorf("failed to materialize background asset: %w", err)
+	}
+	return fmt.Sprintf("url(\"%s.assets/%s\")", themeID, filename), nil
+}
+
+// cssURLInner extracts the path/data from a CSS url("...") / url('...') / url(...)
+// value. Returns ok=false when the string is not a url() wrapper.
+func cssURLInner(ref string) (string, bool) {
+	ref = strings.TrimSpace(ref)
+	if !strings.HasPrefix(ref, "url(") || !strings.HasSuffix(ref, ")") {
+		return "", false
+	}
+	inner := strings.TrimSpace(ref[len("url(") : len(ref)-1])
+	if len(inner) >= 2 {
+		if (inner[0] == '"' && inner[len(inner)-1] == '"') ||
+			(inner[0] == '\'' && inner[len(inner)-1] == '\'') {
+			inner = inner[1 : len(inner)-1]
+		}
+	}
+	return inner, true
 }
 
 // assertOverwritableCustomID refuses first-class embed ids and missing files.

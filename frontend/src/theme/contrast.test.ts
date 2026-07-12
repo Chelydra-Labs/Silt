@@ -5,7 +5,8 @@ import {
   autoFixLightness,
   classifyContrast,
   contrastRatioWCAG,
-  coreContrastPairs
+  coreContrastPairs,
+  effectiveBackgroundWithScrim
 } from './contrast'
 
 describe('classifyContrast', () => {
@@ -97,5 +98,40 @@ describe('coreContrastPairs', () => {
     const editor = pairs.find((p) => p.id === 'editor-text')!
     expect(editor.ratio).not.toBeNull()
     expect(editor.level).toBe('pass')
+  })
+
+  it('uses scrim as effective bg for app/editor pairs when present', () => {
+    const pairs = coreContrastPairs({
+      '--color-surface-app': '#0e0f12',
+      '--color-surface-app-text': '#dee3e6',
+      '--color-text-muted': '#8b8b94',
+      '--color-accent-primary-start': '#2dd4bf',
+      '--color-error': '#e8728a',
+      '--color-error-bg': '#171015',
+      '--color-surface-editor': '#111216',
+      '--color-surface-editor-text': '#dee3e6',
+      '--silt-bg-app-image': 'url("asset://bg.png")',
+      '--silt-bg-app-scrim': '#000000',
+      '--silt-bg-editor-image': 'url("asset://ed.png")',
+      '--silt-bg-editor-scrim': '#111111'
+    })
+    const app = pairs.find((p) => p.id === 'app-text')!
+    const editor = pairs.find((p) => p.id === 'editor-text')!
+    expect(app.bg).toBe('#000000')
+    expect(editor.bg).toBe('#111111')
+  })
+})
+
+describe('effectiveBackgroundWithScrim', () => {
+  it('prefers scrim when set; otherwise solid fallback', () => {
+    expect(
+      effectiveBackgroundWithScrim('url(x)', '#0a0a0a', 0.4, '#ffffff')
+    ).toBe('#0a0a0a')
+    expect(
+      effectiveBackgroundWithScrim('url(x)', undefined, 0.4, '#ffffff')
+    ).toBe('#ffffff')
+    expect(effectiveBackgroundWithScrim(undefined, '  ', 0.2, '#abc')).toBe(
+      '#abc'
+    )
   })
 })
