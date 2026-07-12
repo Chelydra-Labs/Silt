@@ -1,12 +1,9 @@
 <script lang="ts">
-  // List display mode of the Tasks hub (#424). The time-horizon grouping
+  // List display mode of the Tasks hub (#424/#526). Time-horizon grouping
   // (Overdue/Today/Upcoming/Later/No Date/Completed) is the legacy Tasks
-  // behavior; the grouping-engine issue (#423) generalizes the section
-  // pattern into arbitrary dimensions. This phase keeps the proven queries
-  // + binning and adds a client-side filter bridge against the unified hub
-  // state so the hub's shared FilterBar + scope breadcrumb affect the list
-  // immediately. Phase 2 moves filtering server-side via the unified
-  // buildQuery and adds the group-by selector.
+  // behavior; the grouping engine (#423) generalizes sections into arbitrary
+  // dimensions. Filtering is server-side via buildQuery so hub FilterBar +
+  // scope + smart-list constraints apply before the LIMIT 500 cap.
   //
   // The header (title + count) lives in TasksHub.svelte; this component
   // reports its open/done counts upward via onCountChange.
@@ -23,8 +20,9 @@
   import { formatEstimateSum, type TaskDetail } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
   import ErrorBanner from '../components/ErrorBanner.svelte'
-  import { getTaskHubState, type GroupBy, type SortMode } from '../state.svelte'
+  import { getTaskHubState } from '../state.svelte'
   import { binByDimension, type GroupSection } from '../grouping'
+  import { buildQuery } from '../query'
 
   interface Props {
     ctx: PluginContext
@@ -67,40 +65,81 @@
     blockers: { id: string; clean_content?: string }[]
   } | null>(null)
 
+  // Monotonic token so concurrent reload() calls can identify their own
+  // response vs a later one (rapid scope/filter switches).
+  let loadSeq = 0
   async function reload() {
+    const my = ++loadSeq
     loading = true
     errorMsg = ''
     try {
-      const [openRes, doneRes] = await Promise.all([
-        ctx.sqliteQuery(
-          `SELECT b.id, b.notebook, b.section, b.page, b.file_date,
-                  b.clean_content,
-                  t.status, t.owner, t.start_date, t.due_date,
-                  t.priority, t.pinned, t.progress,
-                  t.recur AS recurrence, t.comments_count, t.links_count,
-                  t.created_at, t.completed_at, t.manual_order,
-                  t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done,
-                  (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags,
-                  (SELECT GROUP_CONCAT(blocked_by_id, '|') FROM task_dependencies WHERE block_id = b.id) AS blocked_by,
-                  EXISTS (
-                    SELECT 1 FROM task_dependencies d
-                    JOIN tasks bt ON bt.block_id = d.blocked_by_id
-                    WHERE d.block_id = b.id AND bt.status != 'DONE'
-                  ) AS is_blocked
-           FROM blocks b JOIN tasks t ON b.id = t.block_id
-           WHERE t.status != 'DONE'
-           ORDER BY t.due_date IS NULL, t.due_date ASC, t.priority ASC
-           LIMIT 500`
-        ),
-        ctx.sqliteQuery(
-          `SELECT b.id, b.notebook, b.section, b.page, b.file_date,
-                  b.clean_content, t.status
-           FROM blocks b JOIN tasks t ON b.id = t.block_id
-           WHERE t.status = 'DONE'
-           ORDER BY b.file_date DESC
-           LIMIT 200`
-        )
-      ])
+      const hub = getTaskHubState()
+      const ctxLike = {
+        activeNotebook: ctx.activeNotebook,
+        activeSection: ctx.activeSection,
+        activePage: ctx.activePage,
+        today: ctx.today
+      }
+
+      // Open path: buildQuery + force open-only + LIMIT 500. Skip entirely
+      // when the smart-list is Completed (open set is empty by definition).
+      const openPromise =
+        hub.activeFilter === 'completed'
+          ? Promise.resolve({ rows: [] as unknown[], truncated: false })
+          : (() => {
+              const { sql, params } = buildQuery(
+                hub.scope,
+                hub.filters,
+                ctxLike,
+                {
+                  groupBy: hub.groupBy,
+                  sort: hub.sort,
+                  activeFilter: hub.activeFilter
+                }
+              )
+              // buildQuery only forces open for date smart-lists / stale;
+              // 'all' does not. Always append so the open list never mixes DONE.
+              let openSql = sql
+              const orderIdx = openSql.search(/ ORDER BY /i)
+              if (orderIdx >= 0) {
+                openSql =
+                  openSql.slice(0, orderIdx) +
+                  " AND t.status != 'DONE'" +
+                  openSql.slice(orderIdx)
+              } else {
+                openSql += " AND t.status != 'DONE'"
+              }
+              openSql += ' LIMIT 500'
+              return ctx.sqliteQuery(openSql, params)
+            })()
+
+      // Done path: completed rows with scope + owners/priorities/tags only.
+      // Skip for date smart-lists (Completed section is hidden there).
+      const donePromise =
+        hub.activeFilter === 'all' || hub.activeFilter === 'completed'
+          ? (() => {
+              const { sql: dSql, params: dParams } = buildQuery(
+                hub.scope,
+                {
+                  owners: hub.filters.owners,
+                  priorities: hub.filters.priorities,
+                  tags: hub.filters.tags,
+                  dueDate: '',
+                  stale: false
+                },
+                ctxLike,
+                { activeFilter: 'completed' }
+              )
+              const doneSql = dSql.replace(
+                /\s+ORDER BY[\s\S]*$/i,
+                ' ORDER BY b.file_date DESC LIMIT 200'
+              )
+              return ctx.sqliteQuery(doneSql, dParams)
+            })()
+          : Promise.resolve({ rows: [] as unknown[], truncated: false })
+
+      const [openRes, doneRes] = await Promise.all([openPromise, donePromise])
+      if (my !== loadSeq) return
       openItems = ((openRes.rows as unknown as TaskDetail[]) ?? []).map(
         (r) => ({
           ...r,
@@ -123,9 +162,10 @@
       openTruncated = openRes.truncated
       doneTruncated = doneRes.truncated
     } catch (e) {
+      if (my !== loadSeq) return
       errorMsg = e instanceof Error ? e.message : String(e)
     } finally {
-      loading = false
+      if (my === loadSeq) loading = false
     }
   }
 
@@ -136,6 +176,23 @@
     nowInterval = setInterval(() => {
       nowTick++
     }, 60_000)
+  })
+
+  // Reload whenever any reactive input the query depends on changes.
+  $effect(() => {
+    const hub = getTaskHubState()
+    void hub.scope
+    void hub.groupBy
+    void hub.sort
+    void hub.activeFilter
+    void ctx.activeNotebook
+    void ctx.activeSection
+    void ctx.activePage
+    void hub.filters.owners
+    void hub.filters.priorities
+    void hub.filters.dueDate
+    void hub.filters.tags
+    void hub.filters.stale
     void reload()
   })
 
@@ -146,84 +203,8 @@
   let tomorrow = $derived(plusDaysISO(today, 1))
   let weekAhead = $derived(plusDaysISO(today, 7))
 
-  // Client-side filter bridge (#424): apply the hub's scope + filter
-  // selection to the fetched open set. At default state (scope=vault,
-  // empty filters) this is a no-op so legacy behavior is unchanged. The
-  // grouping-engine issue (#423) moves this server-side via buildQuery.
-  function passesHubFilters(item: TaskDetail): boolean {
-    const s = getTaskHubState()
-    if (s.scope === 'notebook' && item.notebook !== ctx.activeNotebook)
-      return false
-    if (
-      s.scope === 'section' &&
-      (item.notebook !== ctx.activeNotebook ||
-        item.section !== ctx.activeSection)
-    )
-      return false
-    if (
-      s.scope === 'page' &&
-      (item.notebook !== ctx.activeNotebook ||
-        item.section !== ctx.activeSection ||
-        item.page !== ctx.activePage)
-    )
-      return false
-    if (s.filters.owners.length && !s.filters.owners.includes(item.owner))
-      return false
-    if (
-      s.filters.priorities.length &&
-      !s.filters.priorities.includes(item.priority)
-    )
-      return false
-    // Smart-list filter (#432): date-based smart lists (today/overdue/
-    // upcoming) take precedence over filters.dueDate so clicking a smart
-    // list after picking a due-date quick-pick doesn't produce an empty
-    // intersection. Mirrors the WHERE clauses emitted by buildQuery.
-    const af = s.activeFilter
-    if (af === 'completed') return false // open row, but smart-list wants DONE
-    const smartListIsDateBased =
-      af === 'today' || af === 'overdue' || af === 'upcoming'
-    if (smartListIsDateBased) {
-      if (af === 'today' && item.due_date !== today) return false
-      if (af === 'overdue' && (!item.due_date || item.due_date >= today))
-        return false
-      if (
-        af === 'upcoming' &&
-        (!item.due_date || item.due_date <= today || item.due_date > weekAhead)
-      )
-        return false
-    } else if (s.filters.dueDate) {
-      const d = s.filters.dueDate
-      if (d === 'none') {
-        if (item.due_date) return false
-      } else if (d === 'overdue') {
-        if (!item.due_date || item.due_date >= today) return false
-      } else if (d === 'today') {
-        if (item.due_date !== today) return false
-      } else if (d === 'week') {
-        if (
-          !item.due_date ||
-          item.due_date < today ||
-          item.due_date > weekAhead
-        )
-          return false
-      }
-    }
-    if (s.filters.tags.length) {
-      const itemTags = (item.tags ?? '').split('|').filter(Boolean)
-      if (!s.filters.tags.some((t) => itemTags.includes(t))) return false
-    }
-    // Stale filter (#440): open tasks with no modified_at or last touch
-    // older than 30 local days. ListView only loads open rows, so status
-    // is already non-DONE.
-    if (s.filters.stale) {
-      const cutoff = plusDaysISO(today, -30)
-      const mod = (item.modified_at ?? '').slice(0, 10)
-      if (mod && mod >= cutoff) return false
-    }
-    return true
-  }
-
-  let filteredOpen = $derived(openItems.filter(passesHubFilters))
+  // Server-side filtering (#526): openItems already match hub scope/filters.
+  let filteredOpen = $derived(openItems)
 
   // Smart-list filter for the Completed section (#432): 'completed' shows
   // only done rows; the other smart-list values empty the Completed section

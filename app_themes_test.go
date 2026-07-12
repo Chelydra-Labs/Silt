@@ -890,3 +890,180 @@ func TestImportTheme_ConcurrentSameID(t *testing.T) {
 		}
 	}
 }
+
+// --- Custom theme editor IPC (#393) ----------------------------------------
+
+func TestGetThemeJSON_IPCEmbeddedAndDisk(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	// Embedded first-class.
+	raw, err := app.GetThemeJSON(themes.DefaultThemeID)
+	if err != nil {
+		t.Fatalf("GetThemeJSON(default): %v", err)
+	}
+	if !strings.Contains(raw, themes.DefaultThemeID) {
+		t.Errorf("expected default id in JSON, got %s", raw[:min(80, len(raw))])
+	}
+
+	// Disk custom.
+	writeFile(t, filepath.Join(app.vaultPath, ".system", "themes", "terra-test.json"), validCustomThemeJSON)
+	raw2, err := app.GetThemeJSON("terra-test")
+	if err != nil {
+		t.Fatalf("GetThemeJSON(disk): %v", err)
+	}
+	if !strings.Contains(raw2, "Terra Test") {
+		t.Errorf("expected custom name in JSON")
+	}
+}
+
+func TestSaveCustomTheme_IPCNewAndOverwrite(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	res, err := app.SaveCustomTheme(SaveCustomThemeRequest{
+		JSON:      validCustomThemeJSON,
+		Overwrite: false,
+		Name:      "Editor Saved",
+	})
+	if err != nil {
+		t.Fatalf("SaveCustomTheme(new): %v", err)
+	}
+	if res.Info.ID != "editor-saved" {
+		t.Errorf("id = %q, want editor-saved", res.Info.ID)
+	}
+	if res.Applied {
+		t.Error("Applied should be false without Apply")
+	}
+
+	// Overwrite the same custom theme with a description change.
+	body := strings.Replace(validCustomThemeJSON, `"terra-test"`, `"`+res.Info.ID+`"`, 1)
+	body = strings.Replace(body, `"a second theme"`, `"overwritten"`, 1)
+	body = strings.Replace(body, `"Terra Test"`, `"Editor Saved"`, 1)
+	res2, err := app.SaveCustomTheme(SaveCustomThemeRequest{
+		JSON:      body,
+		Overwrite: true,
+	})
+	if err != nil {
+		t.Fatalf("SaveCustomTheme(overwrite): %v", err)
+	}
+	if res2.Info.ID != res.Info.ID {
+		t.Errorf("overwrite id changed: %q → %q", res.Info.ID, res2.Info.ID)
+	}
+
+	// Refuse overwrite of pure embed.
+	embedJSON, err := app.GetThemeJSON(themes.DefaultThemeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.SaveCustomTheme(SaveCustomThemeRequest{
+		JSON:      embedJSON,
+		Overwrite: true,
+	}); err == nil {
+		t.Fatal("expected refuse overwrite of embed")
+	}
+}
+
+func TestSaveCustomTheme_IPCApply(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	res, err := app.SaveCustomTheme(SaveCustomThemeRequest{
+		JSON:  validCustomThemeJSON,
+		Name:  "Applied Theme",
+		Apply: true,
+	})
+	if err != nil {
+		t.Fatalf("SaveCustomTheme(apply): %v", err)
+	}
+	if !res.Applied {
+		t.Error("expected Applied=true")
+	}
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.ActiveTheme != res.Info.ID {
+		t.Errorf("active = %q, want %q", settings.ActiveTheme, res.Info.ID)
+	}
+}
+
+func TestRenameAndDeleteCustomTheme_IPC(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	res, err := app.SaveCustomTheme(SaveCustomThemeRequest{
+		JSON: validCustomThemeJSON,
+		Name: "Rename Me",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := res.Info.ID
+
+	if err := app.RenameCustomTheme(id, "Renamed"); err != nil {
+		t.Fatalf("RenameCustomTheme: %v", err)
+	}
+	raw, err := app.GetThemeJSON(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, "Renamed") {
+		t.Error("rename did not persist")
+	}
+
+	// Refuse delete while active.
+	if _, err := app.ApplyTheme(id, "dark"); err != nil {
+		t.Fatalf("ApplyTheme: %v", err)
+	}
+	if err := app.DeleteCustomTheme(id); err == nil {
+		t.Fatal("expected refuse delete of active theme")
+	}
+
+	// Switch away, then delete.
+	if _, err := app.ApplyTheme(themes.DefaultThemeID, "dark"); err != nil {
+		t.Fatalf("ApplyTheme default: %v", err)
+	}
+	if err := app.DeleteCustomTheme(id); err != nil {
+		t.Fatalf("DeleteCustomTheme: %v", err)
+	}
+	if _, err := app.GetThemeJSON(id); err == nil {
+		t.Fatal("expected missing after delete")
+	}
+
+	// Refuse delete of embed.
+	if err := app.DeleteCustomTheme(themes.DefaultThemeID); err == nil {
+		t.Fatal("expected refuse delete of embed")
+	}
+}
+
+func TestPrepareBackgroundAsset_IPC(t *testing.T) {
+	configDirOverride(t)
+	app := newTestApp(t)
+
+	src := filepath.Join(t.TempDir(), "pick.png")
+	writeBytes(t, src, make([]byte, 1024))
+
+	res, err := app.PrepareBackgroundAsset(src)
+	if err != nil {
+		t.Fatalf("PrepareBackgroundAsset: %v", err)
+	}
+	if res == nil || !res.Base64 {
+		t.Fatalf("expected base64 result, got %+v", res)
+	}
+	if !strings.HasPrefix(res.Reference, "url(\"data:image/png;base64,") {
+		t.Errorf("unexpected reference: %q", res.Reference)
+	}
+}
+
+func TestSaveCustomTheme_IPCBeforeVault(t *testing.T) {
+	configDirOverride(t)
+	app := &App{} // no vault
+	if _, err := app.SaveCustomTheme(SaveCustomThemeRequest{JSON: validCustomThemeJSON}); err == nil {
+		t.Fatal("expected vault-not-loaded error")
+	}
+	if _, err := app.GetThemeJSON(themes.DefaultThemeID); err != nil {
+		// GetThemeJSON works without vault for embeds.
+		t.Fatalf("GetThemeJSON without vault should still serve embeds: %v", err)
+	}
+}

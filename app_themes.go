@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
+
 	"silt/backend/themes"
 	"silt/backend/vault"
 )
@@ -405,4 +407,189 @@ func (a *App) ExportActiveTheme(dstPath string) error {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
 	return themes.ExportThemeToPath(a.themesDir(), settings.ActiveTheme, dstPath)
+}
+
+// --- Custom theme editor IPC (#393, #401) ----------------------------------
+
+// SaveCustomThemeRequest is the IPC payload for SaveCustomTheme.
+// JSON is the full v2 theme document; Overwrite replaces an existing on-disk
+// custom theme (refused for built-ins); Apply selects the saved theme as
+// active and emits theme:changed; Name optionally overrides the theme name
+// before save (and drives the new-id slug when Overwrite is false).
+type SaveCustomThemeRequest struct {
+	JSON      string `json:"json"`
+	Overwrite bool   `json:"overwrite"`
+	Apply     bool   `json:"apply"`
+	Name      string `json:"name,omitempty"`
+}
+
+// SaveCustomThemeResult is returned by SaveCustomTheme after a successful write.
+type SaveCustomThemeResult struct {
+	Info    themes.ThemeInfo `json:"info"`
+	Applied bool             `json:"applied"`
+}
+
+// PrepareBackgroundAssetResult is the IPC payload for PrepareBackgroundAsset:
+// a CSS background-image reference for the editor working copy, plus whether
+// the asset was inlined as a data URI.
+type PrepareBackgroundAssetResult struct {
+	Reference string `json:"reference"`
+	Base64    bool   `json:"base64"`
+}
+
+// GetThemeJSON returns the canonical JSON string for the theme with the given
+// id (on-disk custom first, else embedded first-class). Used by the custom
+// theme editor to seed its working copy.
+func (a *App) GetThemeJSON(id string) (string, error) {
+	a.vaultMu.RLock()
+	themesDir := a.themesDir()
+	a.vaultMu.RUnlock()
+	raw, err := themes.GetThemeJSON(themesDir, id)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// SaveCustomTheme validates and persists a custom theme. overwrite=false
+// always allocates a new id from the name; overwrite=true replaces an
+// existing on-disk custom theme only. When Apply is true the saved theme
+// becomes active (themeWriteMu → UpdateSettings) and theme:changed is
+// emitted. themes:changed is always emitted on success so the picker refreshes.
+func (a *App) SaveCustomTheme(req SaveCustomThemeRequest) (*SaveCustomThemeResult, error) {
+	a.vaultMu.RLock()
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
+	if vaultPath == "" {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	if strings.TrimSpace(req.JSON) == "" {
+		return nil, fmt.Errorf("theme JSON is empty")
+	}
+
+	t, err := themes.ParseAndValidate([]byte(req.JSON))
+	if err != nil {
+		return nil, err
+	}
+	if name := strings.TrimSpace(req.Name); name != "" {
+		t.Name = name
+	}
+
+	themesDir := filepath.Join(vaultPath, ".system", "themes")
+	a.themeWriteMu.Lock()
+	defer a.themeWriteMu.Unlock()
+
+	info, err := themes.SaveCustomTheme(themesDir, t, req.Overwrite)
+	if err != nil {
+		log.Printf("themes: SaveCustomTheme failed: %v", err)
+		return nil, err
+	}
+
+	result := &SaveCustomThemeResult{Info: *info}
+	if req.Apply {
+		settings, err := vault.LoadSettings()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load settings: %w", err)
+		}
+		// Lock order: themeWriteMu (held) → settingsWriteMu (inside UpdateSettings).
+		if _, err := vault.UpdateSettings(func(s *vault.AppSettings) {
+			s.ActiveTheme = info.ID
+		}); err != nil {
+			return nil, fmt.Errorf("failed to persist active theme: %w", err)
+		}
+		a.emit("theme:changed", map[string]string{
+			"id": info.ID, "mode": settings.ThemeMode,
+		})
+		result.Applied = true
+	}
+
+	log.Printf("themes: SaveCustomTheme → id=%q overwrite=%v applied=%v", info.ID, req.Overwrite, result.Applied)
+	a.emit("themes:changed", struct{}{})
+	return result, nil
+}
+
+// RenameCustomTheme updates only the display name of an on-disk custom theme.
+// Built-in (embedded) ids are refused.
+func (a *App) RenameCustomTheme(id, name string) error {
+	a.vaultMu.RLock()
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
+	if vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	themesDir := filepath.Join(vaultPath, ".system", "themes")
+	a.themeWriteMu.Lock()
+	defer a.themeWriteMu.Unlock()
+	if err := themes.RenameCustomTheme(themesDir, id, name); err != nil {
+		return err
+	}
+	a.emit("themes:changed", struct{}{})
+	return nil
+}
+
+// DeleteCustomTheme removes an on-disk custom theme and its assets directory.
+// Refuses the active theme, built-in ids, and missing files.
+func (a *App) DeleteCustomTheme(id string) error {
+	a.vaultMu.RLock()
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
+	if vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+
+	settings, err := vault.LoadSettings()
+	if err != nil {
+		return fmt.Errorf("failed to load settings: %w", err)
+	}
+	if settings.ActiveTheme == id {
+		return fmt.Errorf("cannot delete the active theme %q; switch themes first", id)
+	}
+
+	themesDir := filepath.Join(vaultPath, ".system", "themes")
+	a.themeWriteMu.Lock()
+	defer a.themeWriteMu.Unlock()
+	if err := themes.DeleteCustomTheme(themesDir, id); err != nil {
+		return err
+	}
+	log.Printf("themes: DeleteCustomTheme(%q)", id)
+	a.emit("themes:changed", struct{}{})
+	return nil
+}
+
+// PickImageFile opens the native image picker and returns the chosen path
+// without writing anything. Empty string means the user cancelled. The
+// frontend feeds the path to PrepareBackgroundAsset for editor preview.
+func (a *App) PickImageFile() (string, error) {
+	if a.wailsApp == nil {
+		return "", fmt.Errorf("application context not ready")
+	}
+	selected, err := a.openFileDialog("Select an image", []FileFilter{
+		{DisplayName: "Images (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.svg)", Pattern: "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.svg"},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to open file picker: %w", err)
+	}
+	return selected, nil
+}
+
+// PrepareBackgroundAsset stages an image for the custom theme editor without
+// mutating any theme file. Small images become data URIs; large ones land in
+// <themesDir>/.editor-staging/ and return a relative url() reference.
+func (a *App) PrepareBackgroundAsset(srcPath string) (*PrepareBackgroundAssetResult, error) {
+	a.vaultMu.RLock()
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
+	if vaultPath == "" {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	themesDir := filepath.Join(vaultPath, ".system", "themes")
+	// Staging writes are serialized with other theme-dir mutations so a
+	// concurrent delete/import cannot race MkdirAll/WriteFile on the same tree.
+	a.themeWriteMu.Lock()
+	defer a.themeWriteMu.Unlock()
+	ref, isBase64, err := themes.PrepareBackgroundAsset(themesDir, srcPath)
+	if err != nil {
+		return nil, err
+	}
+	return &PrepareBackgroundAssetResult{Reference: ref, Base64: isBase64}, nil
 }

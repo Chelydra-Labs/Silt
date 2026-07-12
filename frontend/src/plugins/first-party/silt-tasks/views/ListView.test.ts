@@ -19,7 +19,14 @@ import type {
   PluginEventPayload
 } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
-import { resetTaskHubState, setGroupBy, setSort } from '../state.svelte'
+import {
+  resetTaskHubState,
+  setActiveFilter,
+  setFilters,
+  setGroupBy,
+  setScope,
+  setSort
+} from '../state.svelte'
 
 // jsdom polyfills: the shared drawer uses Svelte transition:fly (element.
 // animate()); the sub-editor modal's TipTap needs Range.getClientRects +
@@ -187,7 +194,7 @@ describe('Tasks view', () => {
 
   it('renders undated tasks under a No Date group (#370 AC1)', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [task('u1', 'undated task', { due_date: '' })],
           truncated: false
@@ -210,7 +217,7 @@ describe('Tasks view', () => {
 
   it('renders a dated task under Today and not under No Date (#370 AC2)', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [
             task('t1', 'today task', {
@@ -240,7 +247,7 @@ describe('Tasks view', () => {
   it('renders overdue tasks in a visually-distinct group (#370 AC3)', async () => {
     const ymd = yesterdayStr()
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [task('o1', 'overdue task', { due_date: ymd })],
           truncated: false
@@ -264,7 +271,7 @@ describe('Tasks view', () => {
 
   it('Completed group is collapsed by default and expands on click (#370 AC4)', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return { rows: [], truncated: false }
       }
       if (sql.includes("status = 'DONE'")) {
@@ -303,7 +310,7 @@ describe('Tasks view', () => {
 
   it('completed toggle reflects done-task count (#370 AC5; open count now hub-owned)', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [task('a', 'open a'), task('b', 'open b', { due_date: '' })],
           truncated: false
@@ -340,7 +347,7 @@ describe('Tasks view', () => {
 
   it('mark-done calls updateBlockState with DONE and removes the row (#370 AC6)', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return { rows: [task('m1', 'finish me')], truncated: false }
       }
       return { rows: [], truncated: false }
@@ -359,7 +366,7 @@ describe('Tasks view', () => {
 
   it('single-clicking an open row opens the inspector drawer (no longer navigates away)', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return { rows: [task('nav1', 'Drawer task')], truncated: false }
       }
       return { rows: [], truncated: false }
@@ -390,7 +397,7 @@ describe('Tasks view', () => {
 
   it('clicking the pencil affordance opens the sub-editor modal', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'"))
+      if (sql.includes("AND t.status != 'DONE'"))
         return { rows: [task('p1', 'Pencil task')], truncated: false }
       return { rows: [], truncated: false }
     })
@@ -411,7 +418,7 @@ describe('Tasks view', () => {
 
   it('Shift+Enter on a row opens the sub-editor directly', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'"))
+      if (sql.includes("AND t.status != 'DONE'"))
         return { rows: [task('k1', 'Keyboard task')], truncated: false }
       return { rows: [], truncated: false }
     })
@@ -431,7 +438,7 @@ describe('Tasks view', () => {
 
   it('drawer hides "Open source page" for a standalone (.silt) task', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'"))
+      if (sql.includes("AND t.status != 'DONE'"))
         return { rows: [task('s1', 'Standalone')], truncated: false }
       return { rows: [], truncated: false }
     })
@@ -456,7 +463,7 @@ describe('Tasks view', () => {
 
   it('drawer shows "Open source page" for an in-page task', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'"))
+      if (sql.includes("AND t.status != 'DONE'"))
         return {
           rows: [
             task('ip1', 'In page', {
@@ -486,7 +493,7 @@ describe('Tasks view', () => {
       .fn()
       .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'"))
+      if (sql.includes("AND t.status != 'DONE'"))
         return {
           rows: [{ ...task('b1', 'Blocked'), is_blocked: 1 }],
           truncated: false
@@ -515,7 +522,7 @@ describe('Tasks view', () => {
       .fn()
       .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prereq' }])
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'"))
+      if (sql.includes("AND t.status != 'DONE'"))
         return {
           rows: [{ ...task('b2', 'Blocked'), is_blocked: 1 }],
           truncated: false
@@ -555,7 +562,7 @@ describe('Tasks view', () => {
   it('focusBlockId scrolls into view and highlights the targeted row (#374 AC4)', async () => {
     const targetId = 'focus-target-1'
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return { rows: [task(targetId, 'jump here')], truncated: false }
       }
       return { rows: [], truncated: false }
@@ -595,7 +602,7 @@ describe('Tasks view', () => {
     // with a bumped focusKey, and asserting scrollIntoView fires twice.
     const targetId = 'repeat-target'
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return { rows: [task(targetId, 'click me twice')], truncated: false }
       }
       return { rows: [], truncated: false }
@@ -639,19 +646,21 @@ describe('Tasks view', () => {
     }
   })
 
-  it('SQL pushes undated tasks to the tail of the open list (#370 AC1 sort)', async () => {
+  it('open SQL forces non-DONE and orders by due date via buildQuery (#370/#526)', async () => {
     mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
 
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
     const openCall = mocks.sqliteQuery.mock.calls.find((c) =>
-      String(c[0]).includes("status != 'DONE'")
+      String(c[0]).includes("AND t.status != 'DONE'")
     )
     expect(openCall).toBeTruthy()
     const sql = String(openCall![0])
-    expect(sql).toMatch(/ORDER BY t\.due_date IS NULL/)
-    expect(sql).toMatch(/status != 'DONE'/)
+    // buildQuery dueDate sort: nulls last via COALESCE, then priority.
+    expect(sql).toMatch(/ORDER BY COALESCE\(t\.due_date/)
+    expect(sql).toMatch(/t\.status != 'DONE'/)
+    expect(sql).toMatch(/LIMIT 500/)
   })
 
   it('Upcoming group is capped at today+7; beyond-week lands in Later (#370 open question #3 + review)', async () => {
@@ -659,7 +668,7 @@ describe('Tasks view', () => {
     const today8 = dateOffsetStr(8)
     const today3 = dateOffsetStr(3)
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [
             task('in8', 'beyond-week', { due_date: today8 }),
@@ -699,7 +708,7 @@ describe('Tasks view', () => {
     const today = todayStr()
     const tomorrow = dateOffsetStr(1)
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [task('tm1', 'due tomorrow', { due_date: tomorrow })],
           truncated: false
@@ -740,7 +749,7 @@ describe('Tasks view', () => {
     // This locks the gap closed.
     const today30 = dateOffsetStr(30)
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [task('far', 'plan next month', { due_date: today30 })],
           truncated: false
@@ -875,7 +884,7 @@ describe('Tasks view — inline quick-add (#409, replaces #399 toolbar toggle)',
 describe('Tasks view — truncated footer (#372 hardening)', () => {
   it('renders the truncated footer when the SQLite cap truncated results', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         // 500-row cap (defensive memory safeguard) hit — surface the
         // notice so the user knows there are hidden rows below.
         return { rows: [task('one', 'only rendered task')], truncated: true }
@@ -916,7 +925,7 @@ describe('Tasks view — grouping engine (#423)', () => {
 
   it("groupBy='none' renders a single flat section with no group headers", async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [
             task('a', 'task a', { owner: 'Alice' }),
@@ -947,7 +956,7 @@ describe('Tasks view — grouping engine (#423)', () => {
 
   it("groupBy='owner' bins rows under per-owner sections with a trailing Unassigned", async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [
             task('a', 'alice task', { owner: 'Alice', due_date: '' }),
@@ -987,7 +996,7 @@ describe('Tasks view — grouping engine (#423)', () => {
 
   it("groupBy='status' renders lanes in TODO/DOING/DONE order", async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [
             task('d', 'doing', { status: 'DOING', due_date: '' }),
@@ -1025,7 +1034,7 @@ describe('Tasks view — grouping engine (#423)', () => {
   it("default groupBy='dueDate' still renders the legacy time-horizon buckets", async () => {
     // The default (set by resetTaskHubState) is dueDate per #423.
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [task('td', 'today', { due_date: todayStr() })],
           truncated: false
@@ -1060,7 +1069,7 @@ describe('Tasks view — manual ordering (#426)', () => {
 
   it("sort='manual' renders a drag handle on each row", async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [task('m1', 'manual row', { manual_order: 1 })]
         }
@@ -1079,7 +1088,7 @@ describe('Tasks view — manual ordering (#426)', () => {
 
   it("sort='manual' rows are within a role=listitem container with a draggable handle", async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return { rows: [task('m1', 'manual row', { manual_order: 1 })] }
       }
       return { rows: [], truncated: false }
@@ -1099,7 +1108,7 @@ describe('Tasks view — manual ordering (#426)', () => {
 
   it("sort != 'manual' does NOT render a drag handle (rows open drawer on click)", async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return { rows: [task('d1', 'dueDate row', { manual_order: 1 })] }
       }
       return { rows: [], truncated: false }
@@ -1121,7 +1130,7 @@ describe('Tasks view — manual ordering (#426)', () => {
     //   [B, A, C] → new orders B=1 (was 2 → CHANGE), A=2 (was 1 → CHANGE),
     //   C=3 (unchanged).
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [
             task('A', 'task a', { manual_order: 1, due_date: '' }),
@@ -1165,7 +1174,7 @@ describe('Tasks view — manual ordering (#426)', () => {
     // reflects the new sequence; the next reload would preserve it because
     // the persisted manual_order matches the new positions.
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [
             task('X', 'task x', { manual_order: 1, due_date: '' }),
@@ -1209,7 +1218,7 @@ describe('Tasks view — manual ordering (#426)', () => {
     // groupBy=owner with two single-task groups; dragging across owners
     // shouldn't fire setTaskOrder (the List's manual drag is within-group).
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [
             task('p', 'pat task', {
@@ -1249,7 +1258,7 @@ describe('Tasks view — manual ordering (#426)', () => {
 
   it('reports a failed setTaskOrders via the role="alert" banner', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [
             task('A', 'task a', { manual_order: 1, due_date: '' }),
@@ -1298,7 +1307,7 @@ describe('ListView — subtask badge (#434)', () => {
 
   it('renders [done/total] badge when subtask_total > 0', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("status != 'DONE'")) {
+      if (sql.includes("AND t.status != 'DONE'")) {
         return {
           rows: [
             {
@@ -1316,6 +1325,138 @@ describe('ListView — subtask badge (#434)', () => {
     await flush()
     expect(screen.getByTestId('tasks-subtask-badge-p1').textContent).toContain(
       '[1/3]'
+    )
+  })
+})
+
+describe('ListView — server-side filtering via buildQuery (#526)', () => {
+  beforeEach(() => {
+    resetTaskHubState()
+    mocks.sqliteQuery.mockReset()
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    mocks.blockChangedCallbacks.length = 0
+  })
+  afterEach(cleanup)
+
+  it('open SQL includes owner filter predicates and bound params', async () => {
+    setFilters({
+      owners: ['Alice'],
+      priorities: [],
+      dueDate: '',
+      tags: []
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const openCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      String(c[0]).includes("AND t.status != 'DONE'")
+    )
+    expect(openCall).toBeTruthy()
+    const sql = String(openCall![0])
+    const params = openCall![1] as unknown[]
+    expect(sql).toContain('t.owner IN (?)')
+    expect(params).toContain('Alice')
+  })
+
+  it('open SQL includes priority + tag predicates when set', async () => {
+    setFilters({
+      owners: [],
+      priorities: [1, 2],
+      dueDate: '',
+      tags: ['work']
+    })
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const openCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      String(c[0]).includes("AND t.status != 'DONE'")
+    )
+    expect(openCall).toBeTruthy()
+    const sql = String(openCall![0])
+    const params = openCall![1] as unknown[]
+    expect(sql).toContain('t.priority IN (?, ?)')
+    expect(sql).toMatch(/raw_path IN \(\?\)/)
+    expect(params).toEqual(expect.arrayContaining([1, 2, 'work']))
+  })
+
+  it('notebook scope binds activeNotebook into open SQL', async () => {
+    setScope('notebook')
+    const ctx = makeCtx()
+    ctx.activeNotebook = 'Work'
+    render(Tasks, { ctx, manifest: MANIFEST })
+    await flush()
+
+    const openCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      String(c[0]).includes("AND t.status != 'DONE'")
+    )
+    expect(openCall).toBeTruthy()
+    expect(String(openCall![0])).toContain('b.notebook = ?')
+    expect(openCall![1] as unknown[]).toContain('Work')
+  })
+
+  it('activeFilter=today wires due_date constraint into open SQL', async () => {
+    setActiveFilter('today')
+    const ctx = makeCtx()
+    render(Tasks, { ctx, manifest: MANIFEST })
+    await flush()
+
+    const openCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      String(c[0]).includes("AND t.status != 'DONE'")
+    )
+    expect(openCall).toBeTruthy()
+    expect(String(openCall![0])).toContain('t.due_date = ?')
+    expect(openCall![1] as unknown[]).toContain(ctx.today)
+  })
+
+  it('reloads when filters change (sqliteQuery called again)', async () => {
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const afterMount = mocks.sqliteQuery.mock.calls.length
+    expect(afterMount).toBeGreaterThan(0)
+
+    setFilters({
+      owners: ['Bob'],
+      priorities: [],
+      dueDate: '',
+      tags: []
+    })
+    await flush()
+    await new Promise((r) => setTimeout(r, 0))
+    await flush()
+
+    expect(mocks.sqliteQuery.mock.calls.length).toBeGreaterThan(afterMount)
+    const lastOpen = [...mocks.sqliteQuery.mock.calls]
+      .reverse()
+      .find((c) => String(c[0]).includes("AND t.status != 'DONE'"))
+    expect(lastOpen).toBeTruthy()
+    expect(String(lastOpen![0])).toContain('t.owner IN (?)')
+    expect(lastOpen![1] as unknown[]).toContain('Bob')
+  })
+
+  it('done SQL uses completed status + file_date order with scope filters', async () => {
+    setScope('notebook')
+    setFilters({
+      owners: ['Alice'],
+      priorities: [],
+      dueDate: '',
+      tags: []
+    })
+    const ctx = makeCtx()
+    ctx.activeNotebook = 'Work'
+    render(Tasks, { ctx, manifest: MANIFEST })
+    await flush()
+
+    const doneCall = mocks.sqliteQuery.mock.calls.find((c) =>
+      String(c[0]).includes("t.status = 'DONE'")
+    )
+    expect(doneCall).toBeTruthy()
+    const sql = String(doneCall![0])
+    expect(sql).toContain("t.status = 'DONE'")
+    expect(sql).toMatch(/ORDER BY b\.file_date DESC LIMIT 200/)
+    expect(sql).toContain('b.notebook = ?')
+    expect(sql).toContain('t.owner IN (?)')
+    expect(doneCall![1] as unknown[]).toEqual(
+      expect.arrayContaining(['Work', 'Alice'])
     )
   })
 })
