@@ -14,6 +14,9 @@ func TestParseEstimateMinutes(t *testing.T) {
 		{"2.5d", 1200, true},
 		{"1.5h", 90, true},
 		{"  45 M  ", 45, true},
+		{"0m", 0, false},
+		{"0h", 0, false},
+		{"0d", 0, false},
 		{"", 0, false},
 		{"   ", 0, false},
 		{"abc", 0, false},
@@ -41,6 +44,8 @@ func TestFormatEstimateMinutes(t *testing.T) {
 		{90, "1.5h"},
 		{480, "1d"},
 		{960, "2d"},
+		{1200, "2.5d"}, // 2.5 work-days — not "20h"
+		{240, "4h"},
 	}
 	for _, c := range cases {
 		if got := FormatEstimateMinutes(c.mins); got != c.want {

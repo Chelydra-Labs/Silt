@@ -1204,4 +1204,66 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(mocks.updateBlockState).toHaveBeenCalledWith('t1', 'DOING')
     expect(screen.queryByTestId('board-wip-confirm')).toBeNull()
   })
+
+  it('prompts on quick-add into an over-WIP column; cancel does not create', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO', wipLimit: 1 },
+        { name: 'DOING' },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'Already there' })
+    ])
+
+    await fireEvent.click(screen.getByTestId('board-add-status-TODO'))
+    await flush()
+    const input = screen.getByPlaceholderText(/Add to To Do/i)
+    await fireEvent.input(input, { target: { value: 'New over limit' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+
+    expect(mocks.createTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('board-wip-quickadd-confirm')).toBeInTheDocument()
+
+    await fireEvent.click(
+      screen.getByTestId('board-wip-quickadd-confirm-cancel')
+    )
+    await flush()
+
+    expect(mocks.createTask).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('board-wip-quickadd-confirm')).toBeNull()
+  })
+
+  it('creates via quick-add when over-WIP is confirmed', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO', wipLimit: 1 },
+        { name: 'DOING' },
+        { name: 'DONE' }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    await renderBoard('status', [
+      row({ id: 't1', status: 'TODO', clean_content: 'Already there' })
+    ])
+
+    await fireEvent.click(screen.getByTestId('board-add-status-TODO'))
+    await flush()
+    const input = screen.getByPlaceholderText(/Add to To Do/i)
+    await fireEvent.input(input, { target: { value: 'New over limit' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByTestId('board-wip-quickadd-confirm-confirm')
+    )
+    await flush()
+
+    expect(mocks.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'New over limit', status: 'TODO' })
+    )
+  })
 })

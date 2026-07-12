@@ -107,6 +107,10 @@
     fromColKey: string
     toCol: Lane
   } | null>(null)
+  // Soft WIP confirm for per-column quick-add (create path, not drag).
+  let pendingQuickAddWip = $state<{
+    resolve: (ok: boolean) => void
+  } | null>(null)
 
   // --- Hub state (reactive reads) -----------------------------------------
   let groupBy = $derived(getTaskHubState().groupBy)
@@ -1046,10 +1050,25 @@
     status?: TaskStatus
     dueDate?: string
     onCreated?: (id: string) => void
+    beforeCreate?: () => boolean | Promise<boolean>
   } | null {
     if (groupBy === 'status') {
       if (!ALL_STATUSES.includes(col.value as TaskStatus)) return null
-      return { status: col.value as TaskStatus }
+      return {
+        status: col.value as TaskStatus,
+        // Soft WIP confirm when the next create would exceed the column cap
+        // (drag/keyboard already go through commitDrop → wouldExceedWip).
+        beforeCreate: () => {
+          const limit = wipLimitFor(col.value)
+          if (limit == null) return true
+          const live = columns.find((c) => c.key === col.key)
+          const count = live?.items.length ?? 0
+          if (count + 1 <= limit) return true
+          return new Promise<boolean>((resolve) => {
+            pendingQuickAddWip = { resolve }
+          })
+        }
+      }
     }
     if (groupBy === 'owner') {
       // Unassigned (value='') → new task already has no owner; nothing to set.
@@ -1576,6 +1595,7 @@
                     status={qa.status}
                     dueDate={qa.dueDate}
                     onCreated={qa.onCreated}
+                    beforeCreate={qa.beforeCreate}
                     placeholder={`Add to ${col.label} — Enter to add`}
                     keepOpenAfterCreate={true}
                     onCancel={() => {
@@ -1668,6 +1688,26 @@
     dataTestId="board-wip-confirm"
     onConfirm={confirmWipOverLimit}
     onCancel={cancelWipOverLimit}
+  />
+{/if}
+
+{#if pendingQuickAddWip}
+  <ConfirmModal
+    title="WIP limit"
+    message="This column is over its WIP limit. Add anyway?"
+    confirmLabel="Add anyway"
+    cancelLabel="Cancel"
+    dataTestId="board-wip-quickadd-confirm"
+    onConfirm={() => {
+      const p = pendingQuickAddWip
+      pendingQuickAddWip = null
+      p?.resolve(true)
+    }}
+    onCancel={() => {
+      const p = pendingQuickAddWip
+      pendingQuickAddWip = null
+      p?.resolve(false)
+    }}
   />
 {/if}
 

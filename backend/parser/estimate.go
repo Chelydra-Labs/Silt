@@ -27,6 +27,11 @@ func ParseEstimateMinutes(raw string) (minutes int, ok bool) {
 	if err != nil || n < 0 {
 		return 0, false
 	}
+	// Zero is not a useful estimate — treat as invalid so callers clear the
+	// token rather than storing an invisible [estimate:: 0m] on disk.
+	if n == 0 {
+		return 0, false
+	}
 	switch strings.ToLower(m[2]) {
 	case "m":
 		minutes = int(n + 0.5)
@@ -38,20 +43,25 @@ func ParseEstimateMinutes(raw string) (minutes int, ok bool) {
 	default:
 		return 0, false
 	}
-	if minutes < 0 {
+	if minutes <= 0 {
 		return 0, false
 	}
 	return minutes, true
 }
 
 // FormatEstimateMinutes renders minutes as a compact duration for UI rollups
-// (e.g. 90 → "1.5h", 480 → "1d", 30 → "30m"). Not used for the on-disk token.
+// and cache→display reconstruction (e.g. 90 → "1.5h", 480 → "1d", 1200 → "2.5d",
+// 30 → "30m"). Prefer day units when minutes are a multiple of 60 within a
+// work-day so "2.5d" does not round-trip display as "20h".
 func FormatEstimateMinutes(minutes int) string {
 	if minutes <= 0 {
 		return ""
 	}
-	if minutes%480 == 0 {
-		return fmt.Sprintf("%dd", minutes/480)
+	// Whole or fractional work-days (480m) when divisible by 60 so 2.5d
+	// (1200m) formats as "2.5d" rather than "20h".
+	if minutes >= 480 && minutes%60 == 0 {
+		d := float64(minutes) / 480
+		return fmt.Sprintf("%gd", d)
 	}
 	if minutes%60 == 0 {
 		return fmt.Sprintf("%dh", minutes/60)

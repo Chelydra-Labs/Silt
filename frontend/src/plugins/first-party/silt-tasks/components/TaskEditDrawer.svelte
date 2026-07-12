@@ -160,10 +160,15 @@
   // True after a failed estimate save until the next successful edit/clear.
   let estimateInvalid = $state(false)
 
-  /** Format minutes for the estimate input; hide missing/zero. */
+  /** Format minutes for the estimate input; hide missing/zero.
+   * Prefer work-day units when ≥ 1d and divisible by 60 so 2.5d (1200m)
+   * reloads as "2.5d" rather than "20h" (matches FormatEstimateMinutes). */
   function formatEstimateDraft(mins: number | null | undefined): string {
     if (mins == null || mins <= 0) return ''
-    if (mins % 480 === 0) return `${mins / 480}d`
+    if (mins >= 480 && mins % 60 === 0) {
+      const d = mins / 480
+      return `${d}d`
+    }
     if (mins % 60 === 0) return `${mins / 60}h`
     if (mins % 30 === 0 && mins > 60) return `${mins / 60}h`
     return `${mins}m`
