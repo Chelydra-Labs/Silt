@@ -230,6 +230,78 @@ describe('ThemeEditor', () => {
     expect(screen.getByRole('button', { name: /save as new/i })).toBeTruthy()
   })
 
+  it('surfaces the real IPC error when GetThemeJSON fails', async () => {
+    const getThemeJSONFn = vi
+      .fn()
+      .mockRejectedValue(new Error('theme "gone" not found'))
+    render(ThemeEditor, {
+      props: {
+        themeId: 'gone',
+        sourceIsDisk: false,
+        onClose: vi.fn(),
+        getThemeJSONFn
+      }
+    })
+    await tick()
+    await tick()
+    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.getByText(/theme "gone" not found/i)).toBeTruthy()
+    expect(screen.queryByText(/missing dark\/light modes/i)).toBeNull()
+  })
+
+  it('re-seeds from GetThemeJSON after a successful save', async () => {
+    const savedJson = JSON.stringify({
+      ...sampleDoc,
+      id: 'user-saved',
+      name: 'Saved Custom',
+      modes: {
+        ...sampleDoc.modes,
+        dark: {
+          ...sampleDoc.modes.dark,
+          surfaces: {
+            app: {
+              bg: '#0e0f12',
+              border: '#1c1d24',
+              text: '#dee3e6',
+              background: {
+                image: 'url("user-saved.assets/photo.png")',
+                size: 'cover',
+                opacity: 1
+              }
+            }
+          }
+        }
+      }
+    })
+    const getThemeJSONFn = vi.fn().mockResolvedValue(savedJson)
+    mocks.saveCustomTheme.mockResolvedValue({
+      info: { id: 'user-saved', name: 'Saved Custom', source: 'disk' },
+      applied: true
+    })
+    vi.stubGlobal('prompt', () => 'Saved Custom')
+
+    render(ThemeEditor, {
+      props: {
+        themeId: 'cyber_forest',
+        sourceIsDisk: false,
+        onClose: vi.fn(),
+        injectJson: sampleJson,
+        getThemeJSONFn,
+        saveCustomThemeFn: mocks.saveCustomTheme
+      }
+    })
+    await tick()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /save as new theme/i })
+    )
+    await tick()
+    await tick()
+
+    expect(getThemeJSONFn).toHaveBeenCalledWith('user-saved')
+    expect(screen.getByText(/Theme Editor · Saved Custom/)).toBeTruthy()
+  })
+
   it('shows per-token Reset controls on Simple essentials', async () => {
     render(ThemeEditor, {
       props: {

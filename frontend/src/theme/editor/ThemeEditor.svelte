@@ -127,33 +127,16 @@
         const json = await getThemeJSONFn(themeId)
         wc.loadFromJson(json)
       }
-      wc.previewNow()
+      if (wc.draft) wc.previewNow()
     } catch (err) {
-      wc.loadFromJson('{}') // sets loadError via parse failure path if empty modes
-      // Prefer the IPC message when GetThemeJSON fails before parse.
+      // IPC/network failures must not be rewritten as a parse error.
       const msg = err instanceof Error ? err.message : String(err)
-      // loadFromJson may have set a parse error; surface the real cause.
-      if (!wc.draft) {
-        // Re-assign via a known-bad path isn't ideal; set via loadError is private.
-        // loadFromJson already set loadError for bad JSON; for IPC errors force it:
-        try {
-          wc.loadFromJson(
-            JSON.stringify({
-              schema_version: '2.0.0',
-              id: themeId,
-              name: 'Error',
-              modes: null
-            })
-          )
-        } catch {
-          /* ignore */
-        }
-        setStatus({
-          kind: 'error',
-          message: `Failed to load theme: ${msg}`,
-          fields: []
-        })
-      }
+      wc.setLoadError(msg)
+      setStatus({
+        kind: 'error',
+        message: `Failed to load theme: ${msg}`,
+        fields: []
+      })
     } finally {
       wc.loading = false
     }
@@ -201,14 +184,10 @@
       })
       if (!res) throw new Error('Save returned no result')
       const id = res.info?.id ?? themeId
-      // Re-seed so dirty clears without a full remount.
-      wc.loadFromJson(
-        JSON.stringify({
-          ...wc.draft,
-          id,
-          name: res.info?.name ?? name
-        })
-      )
+      // Re-seed from disk so staging refs match materialized <id>.assets/ paths.
+      const fresh = await getThemeJSONFn(id)
+      wc.loadFromJson(fresh)
+      wc.previewNow()
       setStatus({
         kind: 'success',
         message: `Saved theme "${res.info?.name ?? name}".`,
@@ -373,28 +352,40 @@
     if (!pair.fg || !pair.bg) return
     const fixed = autoFixLightness(pair.fg, pair.bg, 4.5)
     if (!fixed) return
-    // Map pair id → draft path for the edited mode.
+    // Editor zone may be inherited — materialize then set text.
+    if (pair.id === 'editor-text') {
+      updateSurface('editor', { text: fixed })
+      return
+    }
     const paths: Record<string, string> = {
       'app-text': wc.modePath('surfaces.app.text'),
       'muted-text': wc.modePath('text_muted'),
       accent: wc.modePath('accent.primary.start'),
-      error: wc.modePath('error.fg'),
-      'editor-text': (() => {
-        // Editor zone may be inherited; ensure concrete then set text.
-        updateSurface('editor', { text: fixed })
-        return ''
-      })()
+      error: wc.modePath('error.fg')
     }
-    if (pair.id === 'editor-text') return
     const path = paths[pair.id]
     if (path) wc.setColor(path, fixed)
   }
 
   function onWindowKey(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      // Dirty confirm on leave; clean closes immediately.
-      requestClose()
+    if (e.key !== 'Escape') return
+    // Escape in a form field blurs/cancels the field — not the whole editor.
+    const t = e.target
+    if (t instanceof HTMLElement) {
+      const tag = t.tagName
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        t.isContentEditable
+      ) {
+        return
+      }
+      if (t.closest('[data-focus-trap], [role="dialog"], [role="listbox"]')) {
+        return
+      }
     }
+    requestClose()
   }
 
   function selectAdvanced(id: AdvancedGroup) {

@@ -43,6 +43,13 @@ export function createWorkingCopy() {
     }
   }
 
+  /** Surface an IPC/bootstrap failure without a fake parse path. */
+  function setLoadError(message: string): void {
+    loadError = message
+    seed = null
+    draft = null
+  }
+
   function resetAll(): void {
     if (!seed) return
     draft = structuredClone(seed)
@@ -170,6 +177,7 @@ export function createWorkingCopy() {
     get loadError() {
       return loadError
     },
+    setLoadError,
     get loading() {
       return loading
     },
