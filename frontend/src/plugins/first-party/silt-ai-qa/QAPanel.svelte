@@ -1,12 +1,14 @@
 <script lang="ts">
-  // Q&A sidebar panel (#227) — first-party sidebar-panel surface component.
+  // AI Assistant panel content — used inside the right drawer host.
   import type { PluginContext } from '../../sdk'
   import { getQAController } from './state.svelte'
 
   interface Props {
     ctx: PluginContext
+    onClose?: () => void
+    variant?: 'drawer' | 'panel'
   }
-  let { ctx }: Props = $props()
+  let { ctx, onClose, variant = 'drawer' }: Props = $props()
 
   const ctl = $derived(getQAController())
   let question = $state('')
@@ -38,7 +40,7 @@
     if (!ctl) return ''
     switch (ctl.panelStatus) {
       case 'asking':
-        return 'Retrieving…'
+        return 'Searching…'
       case 'streaming':
         return 'Answering…'
       case 'no-results':
@@ -61,21 +63,37 @@
   )
 </script>
 
-<div class="qa-panel" role="region" aria-label="AI Search">
+<div
+  class="qa-panel"
+  class:drawer={variant === 'drawer'}
+  role="region"
+  aria-label="AI Assistant"
+>
   <header class="qa-header">
     <span class="material-symbols-outlined" aria-hidden="true"
       >manage_search</span
     >
-    <h2>AI Search</h2>
+    <h2>AI Assistant</h2>
     <button
       type="button"
       class="qa-clear"
       onclick={() => ctl?.clear()}
       disabled={!ctl || ctl.messages.length === 0}
-      title="Clear conversation"
+      title="Start a new chat"
     >
-      Clear
+      New chat
     </button>
+    {#if onClose}
+      <button
+        type="button"
+        class="qa-close"
+        onclick={onClose}
+        aria-label="Close AI Assistant"
+        title="Close (Esc)"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">close</span>
+      </button>
+    {/if}
   </header>
 
   {#if ctl?.progress?.status === 'indexing'}
@@ -98,16 +116,39 @@
     {#if ctl && ctl.messages.length === 0 && !statusLabel()}
       <div class="qa-empty">
         <p>
-          Ask a natural-language question about your notes. Answers cite source
-          blocks you can open with one click.
+          Search your vault. Answers cite source blocks you can open with one
+          click.
         </p>
-        <ol>
-          <li>Configure chat + embedding models (Settings → AI Provider).</li>
+        <ul class="qa-suggestions">
           <li>
-            Rebuild the index (Settings → AI Search) if this is the first run.
+            <button
+              type="button"
+              class="qa-suggest"
+              onclick={() => {
+                question = 'What did I decide about…?'
+                inputEl?.focus()
+              }}
+            >
+              What did I decide about…?
+            </button>
           </li>
-          <li>Type a question below and press Enter.</li>
-        </ol>
+          <li>
+            <button
+              type="button"
+              class="qa-suggest"
+              onclick={() => {
+                question = 'Find notes about…'
+                inputEl?.focus()
+              }}
+            >
+              Find notes about…
+            </button>
+          </li>
+        </ul>
+        <p class="qa-hint">
+          Tip: set chat + embedding models under Settings → AI Provider, then
+          rebuild the index under Settings → AI Assistant.
+        </p>
       </div>
     {/if}
     {#if ctl}
@@ -126,12 +167,6 @@
                     class="qa-cite"
                     title={c.snippet}
                     onclick={() => navigateTo(c.blockId)}
-                    onkeydown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        navigateTo(c.blockId)
-                      }
-                    }}
                   >
                     [{c.index}] {c.notebook}/{c.page}
                   </button>
@@ -168,13 +203,13 @@
   {/if}
 
   <div class="qa-input-row">
-    <label class="sr-only" for="qa-input">Question</label>
+    <label class="sr-only" for="qa-input">Search your vault</label>
     <textarea
       id="qa-input"
       bind:this={inputEl}
       bind:value={question}
       rows="2"
-      placeholder="What did I decide about…?"
+      placeholder="Search your vault…"
       onkeydown={onKeydown}
       disabled={busy}></textarea>
     {#if busy}
@@ -188,7 +223,7 @@
         onclick={() => void onAsk()}
         disabled={!question.trim()}
       >
-        Ask
+        Search
       </button>
     {/if}
   </div>
@@ -199,28 +234,32 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    min-height: 12rem;
-    background: var(--surface-panel, #1a1a1e);
-    color: var(--surface-sidebar-text, #e8e8ec);
+    min-height: 0;
+    background: transparent;
+    color: var(--color-text-primary, var(--surface-sidebar-text, #e8e8ec));
     font-size: 0.8125rem;
+  }
+  .qa-panel.drawer {
+    min-height: 100%;
   }
   .qa-header {
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    padding: 0.5rem 0.6rem;
-    border-bottom: 1px solid var(--surface-panel-border, #2a2a30);
+    padding: 0.65rem 0.75rem;
+    border-bottom: 1px solid var(--color-surface-panel-border, #2a2a30);
+    flex-shrink: 0;
   }
   .qa-header h2 {
     margin: 0;
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     font-weight: 600;
     flex: 1;
   }
   .qa-clear {
     background: transparent;
     border: none;
-    color: var(--surface-sidebar-text-muted, #9a9aa3);
+    color: var(--color-text-muted, #9a9aa3);
     cursor: pointer;
     font-size: 0.75rem;
   }
@@ -228,9 +267,29 @@
     opacity: 0.4;
     cursor: default;
   }
+  .qa-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border: none;
+    border-radius: 0.35rem;
+    background: transparent;
+    color: var(--color-text-muted, #9a9aa3);
+    cursor: pointer;
+  }
+  .qa-close:hover {
+    background: var(--color-hover, rgba(255, 255, 255, 0.06));
+    color: inherit;
+  }
+  .qa-close .material-symbols-outlined {
+    font-size: 1.1rem;
+  }
   .qa-banner {
-    padding: 0.4rem 0.6rem;
+    padding: 0.45rem 0.75rem;
     font-size: 0.75rem;
+    flex-shrink: 0;
   }
   .qa-banner.warn {
     background: color-mix(in srgb, #f59e0b 15%, transparent);
@@ -241,24 +300,22 @@
   .qa-messages {
     flex: 1;
     overflow-y: auto;
-    padding: 0.5rem 0.6rem;
+    padding: 0.75rem;
     display: flex;
     flex-direction: column;
-    gap: 0.6rem;
-  }
-  .qa-msg[data-role='user'] .qa-msg-body {
-    opacity: 0.9;
+    gap: 0.75rem;
+    min-height: 0;
   }
   .qa-msg-role {
     font-size: 0.65rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--surface-sidebar-text-muted, #9a9aa3);
+    color: var(--color-text-muted, #9a9aa3);
     margin-bottom: 0.15rem;
   }
   .qa-msg-body {
     white-space: pre-wrap;
-    line-height: 1.4;
+    line-height: 1.45;
   }
   .qa-cites,
   .qa-sources ul {
@@ -270,76 +327,100 @@
     gap: 0.25rem;
   }
   .qa-cite {
-    border: 1px solid var(--surface-panel-border, #2a2a30);
+    border: 1px solid var(--color-surface-panel-border, #2a2a30);
     background: color-mix(
       in srgb,
-      var(--accent-primary-start, #6366f1) 12%,
+      var(--color-accent-primary-start, #6366f1) 12%,
       transparent
     );
     color: inherit;
     border-radius: 999px;
-    padding: 0.1rem 0.45rem;
+    padding: 0.15rem 0.5rem;
     font-size: 0.7rem;
     cursor: pointer;
   }
   .qa-cite:hover,
   .qa-cite:focus-visible {
-    outline: 2px solid var(--accent-primary-start, #6366f1);
+    outline: 2px solid var(--color-accent-primary-start, #6366f1);
     outline-offset: 1px;
   }
   .qa-sources {
-    padding: 0.35rem 0.6rem;
-    border-top: 1px solid var(--surface-panel-border, #2a2a30);
+    padding: 0.45rem 0.75rem;
+    border-top: 1px solid var(--color-surface-panel-border, #2a2a30);
+    flex-shrink: 0;
   }
   .qa-sources-label {
     font-size: 0.65rem;
     text-transform: uppercase;
-    color: var(--surface-sidebar-text-muted, #9a9aa3);
+    color: var(--color-text-muted, #9a9aa3);
     margin-bottom: 0.25rem;
   }
   .qa-status {
     font-size: 0.75rem;
-    color: var(--surface-sidebar-text-muted, #9a9aa3);
+    color: var(--color-text-muted, #9a9aa3);
     font-style: italic;
   }
   .qa-empty {
-    opacity: 0.85;
+    opacity: 0.9;
     line-height: 1.45;
-    font-size: 0.78rem;
-  }
-  .qa-empty ol {
-    margin: 0.4rem 0 0;
-    padding-left: 1.1rem;
+    font-size: 0.8125rem;
   }
   .qa-empty p {
     margin: 0;
   }
+  .qa-suggestions {
+    list-style: none;
+    margin: 0.75rem 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .qa-suggest {
+    text-align: left;
+    border: 1px solid var(--color-surface-panel-border, #2a2a30);
+    background: transparent;
+    color: inherit;
+    border-radius: 0.45rem;
+    padding: 0.45rem 0.6rem;
+    font: inherit;
+    cursor: pointer;
+  }
+  .qa-suggest:hover {
+    border-color: var(--color-accent-primary-start, #6366f1);
+  }
+  .qa-hint {
+    font-size: 0.72rem;
+    opacity: 0.7;
+    margin-top: 0.5rem !important;
+  }
   .qa-input-row {
     display: flex;
-    gap: 0.35rem;
-    padding: 0.5rem 0.6rem;
-    border-top: 1px solid var(--surface-panel-border, #2a2a30);
+    gap: 0.4rem;
+    padding: 0.65rem 0.75rem;
+    border-top: 1px solid var(--color-surface-panel-border, #2a2a30);
+    flex-shrink: 0;
   }
   .qa-input-row textarea {
     flex: 1;
     resize: none;
-    border-radius: 0.4rem;
-    border: 1px solid var(--surface-panel-border, #2a2a30);
-    background: var(--surface-input, #121216);
+    border-radius: 0.45rem;
+    border: 1px solid var(--color-surface-panel-border, #2a2a30);
+    background: var(--color-surface-input, #121216);
     color: inherit;
-    padding: 0.35rem 0.5rem;
+    padding: 0.45rem 0.55rem;
     font: inherit;
   }
   .qa-btn {
     border: none;
-    border-radius: 0.4rem;
-    padding: 0 0.75rem;
+    border-radius: 0.45rem;
+    padding: 0 0.85rem;
     font: inherit;
     font-weight: 600;
     cursor: pointer;
   }
   .qa-btn.ask {
-    background: var(--accent-primary-start, #6366f1);
+    background: var(--color-accent-primary-start, #6366f1);
     color: #fff;
   }
   .qa-btn.ask:disabled {

@@ -59,6 +59,7 @@
   } from './lib/editor/editorRegistry.svelte'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import PluginModalHost from './components/PluginModalHost.svelte'
+  import AISearchDrawer from './plugins/first-party/silt-ai-qa/AISearchDrawer.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import ToastContainer from './components/ToastContainer.svelte'
@@ -1517,168 +1518,170 @@
         {/if}
       {/if}
 
-      <!-- Content viewport -->
-      <div
-        class="flex-1 h-full min-w-0 flex flex-col overflow-hidden bg-surface-app"
-      >
-        {#if settings.config?.ui?.open_devtools_on_startup === true}
-          <div
-            class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-type-2xs font-mono px-2 py-1 rounded opacity-80 pointer-events-none"
-          >
-            view={activeView} nb={activeNotebook || '-'} pg={activePage || '-'} tab={activeTabId ||
-              '-'} dt={displayedTabs.length} nr={notesReady}
-          </div>
-        {/if}
-        {#if activeView === 'notes'}
-          {#if notesReady}
+      <!-- Content viewport + optional AI Search right drawer -->
+      <div class="flex-1 h-full min-w-0 flex overflow-hidden bg-surface-app">
+        <div class="flex-1 h-full min-w-0 flex flex-col overflow-hidden">
+          {#if settings.config?.ui?.open_devtools_on_startup === true}
             <div
-              id="silt-tabpanel"
-              role="tabpanel"
-              aria-labelledby="silt-tab-{activeTabId}"
-              class="flex-1 min-h-0 flex flex-col overflow-hidden"
+              class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-type-2xs font-mono px-2 py-1 rounded opacity-80 pointer-events-none"
             >
-              {#each displayedTabs as tab (tab.id)}
-                <div
-                  class="flex-1 min-h-0 flex flex-col overflow-hidden"
-                  style:display={tab.id === activeTabId ? 'flex' : 'none'}
-                >
-                  <VirtualScrollContainer
-                    notebook={tab.notebook}
-                    section={tab.section}
-                    page={tab.page}
-                    viewMode={tab.viewMode}
-                    onToggleViewMode={() => handleToggleViewMode(tab.id)}
-                    isActive={tab.id === activeTabId}
-                    targetBlockId={tab.id === activeTabId
-                      ? searchTargetBlockId
-                      : ''}
-                    targetKey={tab.id === activeTabId ? searchTargetKey : ''}
-                    activeFocusedBlockAncestors={tab.id === activeTabId
-                      ? activeFocusedBlockAncestors
-                      : []}
-                    onBlockFocus={tab.id === activeTabId
-                      ? handleBlockFocus
-                      : undefined}
-                    onBlockBlur={tab.id === activeTabId
-                      ? handleBlockBlur
-                      : undefined}
-                    onPageRenamed={(newName) => {
-                      // Update the tab's page name AND the active triple.
-                      openTabs = openTabs.map((t) =>
-                        t.id === tab.id ? { ...t, page: newName } : t
-                      )
-                      if (tab.id === activeTabId) activePage = newName
-                    }}
-                    onFirstEdit={tab.preview
-                      ? () => handlePromoteTab(tab.id)
-                      : undefined}
-                    onSaveStateChange={(s) => {
-                      // Surface the editor's save state on the tab header
-                      // so it's visible from any tab (#167).
-                      openTabs = openTabs.map((t) =>
-                        t.id === tab.id
-                          ? { ...t, dirty: s.dirty, saveError: s.error }
-                          : t
-                      )
-                    }}
-                  />
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <div
-              class="flex-1 flex flex-col items-center justify-center text-center px-8 select-none"
-            >
-              <span
-                class="material-symbols-outlined text-text-muted text-display-sm mb-4 opacity-40"
-                >edit_note</span
-              >
-              <h2
-                class="font-headline-md text-headline-md text-text-primary mb-2"
-              >
-                {#if openTabs.length > 0 && !activeTabId}
-                  No active tab — click a tab above to switch
-                {:else if !activeNotebook}
-                  Create or open a notebook to begin
-                {:else if openTabs.length === 0}
-                  No pages open
-                {:else}
-                  Select or create a page
-                {/if}
-              </h2>
-              <p class="text-text-muted font-body-md max-w-md mb-5">
-                {#if openTabs.length === 0}
-                  Click a page in the sidebar to open it in a tab. Single-click
-                  opens a preview; double-click opens a pinned tab.
-                {:else}
-                  Silt organizes notes as Notebook › Section › Page. Use the
-                  sidebar navigator to create your first notebook, then add a
-                  section and a page to start writing.
-                {/if}
-              </p>
-              {#if activeNotebook && openTabs.length === 0}
-                <div class="flex items-center gap-3">
-                  <button
-                    onclick={() => {
-                      window.dispatchEvent(
-                        new CustomEvent('create-page-inline', {
-                          detail: { sectionName: activeSection || '' }
-                        })
-                      )
-                    }}
-                    class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-surface-app font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
-                  >
-                    <span
-                      class="material-symbols-outlined text-icon-lg"
-                      aria-hidden="true">note_add</span
-                    >
-                    Create Page
-                  </button>
-                  <button
-                    onclick={() => {
-                      templatePickerMode = 'new-page'
-                      showTemplatePicker = true
-                    }}
-                    class="px-4 py-2 rounded-lg bg-transparent border border-surface-panel-border text-text-primary font-label-sm-bold hover:bg-hover transition-all cursor-pointer flex items-center gap-2"
-                  >
-                    <span
-                      class="material-symbols-outlined text-icon-lg"
-                      aria-hidden="true">article</span
-                    >
-                    New from Template
-                  </button>
-                </div>
-              {/if}
+              view={activeView} nb={activeNotebook || '-'} pg={activePage ||
+                '-'} tab={activeTabId || '-'} dt={displayedTabs.length} nr={notesReady}
             </div>
           {/if}
-        {:else if activeView === 'tags'}
-          <TagsExplorer {selectedTag} />
-        {:else if activeView === 'tasks' || activeView === 'calendar' || activeView === 'kanban'}
-          <PluginView
-            pluginId="silt-tasks"
-            {activeNotebook}
-            {activeSection}
-            {activePage}
-            focusBlockId={tasksFocusBlockId}
-            focusKey={tasksFocusKey}
-          />
-        {:else if activeView === 'settings'}
-          <SettingsPanel
-            bind:section={settingsSection}
-            {activeNotebook}
-            {activeSection}
-            {activePage}
-          />
-        {:else}
-          <!-- Unknown view -->
-          <div class="flex-1 p-8 flex flex-col select-none">
-            <h1
-              class="font-headline-lg text-headline-lg text-text-primary mb-2 capitalize"
-            >
-              {activeView}
-            </h1>
-          </div>
-        {/if}
+          {#if activeView === 'notes'}
+            {#if notesReady}
+              <div
+                id="silt-tabpanel"
+                role="tabpanel"
+                aria-labelledby="silt-tab-{activeTabId}"
+                class="flex-1 min-h-0 flex flex-col overflow-hidden"
+              >
+                {#each displayedTabs as tab (tab.id)}
+                  <div
+                    class="flex-1 min-h-0 flex flex-col overflow-hidden"
+                    style:display={tab.id === activeTabId ? 'flex' : 'none'}
+                  >
+                    <VirtualScrollContainer
+                      notebook={tab.notebook}
+                      section={tab.section}
+                      page={tab.page}
+                      viewMode={tab.viewMode}
+                      onToggleViewMode={() => handleToggleViewMode(tab.id)}
+                      isActive={tab.id === activeTabId}
+                      targetBlockId={tab.id === activeTabId
+                        ? searchTargetBlockId
+                        : ''}
+                      targetKey={tab.id === activeTabId ? searchTargetKey : ''}
+                      activeFocusedBlockAncestors={tab.id === activeTabId
+                        ? activeFocusedBlockAncestors
+                        : []}
+                      onBlockFocus={tab.id === activeTabId
+                        ? handleBlockFocus
+                        : undefined}
+                      onBlockBlur={tab.id === activeTabId
+                        ? handleBlockBlur
+                        : undefined}
+                      onPageRenamed={(newName) => {
+                        // Update the tab's page name AND the active triple.
+                        openTabs = openTabs.map((t) =>
+                          t.id === tab.id ? { ...t, page: newName } : t
+                        )
+                        if (tab.id === activeTabId) activePage = newName
+                      }}
+                      onFirstEdit={tab.preview
+                        ? () => handlePromoteTab(tab.id)
+                        : undefined}
+                      onSaveStateChange={(s) => {
+                        // Surface the editor's save state on the tab header
+                        // so it's visible from any tab (#167).
+                        openTabs = openTabs.map((t) =>
+                          t.id === tab.id
+                            ? { ...t, dirty: s.dirty, saveError: s.error }
+                            : t
+                        )
+                      }}
+                    />
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <div
+                class="flex-1 flex flex-col items-center justify-center text-center px-8 select-none"
+              >
+                <span
+                  class="material-symbols-outlined text-text-muted text-display-sm mb-4 opacity-40"
+                  >edit_note</span
+                >
+                <h2
+                  class="font-headline-md text-headline-md text-text-primary mb-2"
+                >
+                  {#if openTabs.length > 0 && !activeTabId}
+                    No active tab — click a tab above to switch
+                  {:else if !activeNotebook}
+                    Create or open a notebook to begin
+                  {:else if openTabs.length === 0}
+                    No pages open
+                  {:else}
+                    Select or create a page
+                  {/if}
+                </h2>
+                <p class="text-text-muted font-body-md max-w-md mb-5">
+                  {#if openTabs.length === 0}
+                    Click a page in the sidebar to open it in a tab.
+                    Single-click opens a preview; double-click opens a pinned
+                    tab.
+                  {:else}
+                    Silt organizes notes as Notebook › Section › Page. Use the
+                    sidebar navigator to create your first notebook, then add a
+                    section and a page to start writing.
+                  {/if}
+                </p>
+                {#if activeNotebook && openTabs.length === 0}
+                  <div class="flex items-center gap-3">
+                    <button
+                      onclick={() => {
+                        window.dispatchEvent(
+                          new CustomEvent('create-page-inline', {
+                            detail: { sectionName: activeSection || '' }
+                          })
+                        )
+                      }}
+                      class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-surface-app font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
+                    >
+                      <span
+                        class="material-symbols-outlined text-icon-lg"
+                        aria-hidden="true">note_add</span
+                      >
+                      Create Page
+                    </button>
+                    <button
+                      onclick={() => {
+                        templatePickerMode = 'new-page'
+                        showTemplatePicker = true
+                      }}
+                      class="px-4 py-2 rounded-lg bg-transparent border border-surface-panel-border text-text-primary font-label-sm-bold hover:bg-hover transition-all cursor-pointer flex items-center gap-2"
+                    >
+                      <span
+                        class="material-symbols-outlined text-icon-lg"
+                        aria-hidden="true">article</span
+                      >
+                      New from Template
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          {:else if activeView === 'tags'}
+            <TagsExplorer {selectedTag} />
+          {:else if activeView === 'tasks' || activeView === 'calendar' || activeView === 'kanban'}
+            <PluginView
+              pluginId="silt-tasks"
+              {activeNotebook}
+              {activeSection}
+              {activePage}
+              focusBlockId={tasksFocusBlockId}
+              focusKey={tasksFocusKey}
+            />
+          {:else if activeView === 'settings'}
+            <SettingsPanel
+              bind:section={settingsSection}
+              {activeNotebook}
+              {activeSection}
+              {activePage}
+            />
+          {:else}
+            <!-- Unknown view -->
+            <div class="flex-1 p-8 flex flex-col select-none">
+              <h1
+                class="font-headline-lg text-headline-lg text-text-primary mb-2 capitalize"
+              >
+                {activeView}
+              </h1>
+            </div>
+          {/if}
+        </div>
+        <AISearchDrawer />
       </div>
     </div>
   {/if}

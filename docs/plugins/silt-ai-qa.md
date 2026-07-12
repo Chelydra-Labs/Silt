@@ -1,9 +1,9 @@
-# AI Search (`silt-ai-qa`)
+# AI Assistant (`silt-ai-qa`)
 
 Search your vault with hybrid keyword + semantic retrieval, and get answers
 grounded in your own notes with clickable citations.
 
-**Off by default.** Enable under **Settings → AI Search** (or Plugins).
+**Off by default.** Enable under **Settings → AI Assistant** (or Plugins).
 
 ## What it does
 
@@ -21,11 +21,11 @@ grounded in your own notes with clickable citations.
    - Configure a **chat** model (local Ollama or OpenAI-compatible).
    - Configure an **embedding** model independently (e.g. `nomic-embed-text`).
    - See [BRING_YOUR_OWN_MODEL.md](../BRING_YOUR_OWN_MODEL.md).
-2. **Settings → AI Search**
+2. **Settings → AI Assistant**
    - Enable the plugin.
    - Optionally limit **notebook scope**.
    - Click **Rebuild index** (first run). Progress shows in the panel.
-3. Open the **AI Search** sidebar panel and ask a question.
+3. Open the **AI Assistant** drawer from the status bar and ask a question.
 
 ## Privacy
 

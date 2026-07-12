@@ -46,18 +46,18 @@ describe('QAPanel', () => {
     const { getByText } = render(QAPanel, {
       props: { ctx: {} as PluginContext }
     })
-    expect(getByText(/natural-language question/i)).toBeTruthy()
+    expect(getByText(/Answers cite source blocks/i)).toBeTruthy()
   })
 
-  it('calls ask on Ask button', async () => {
+  it('calls ask on Search button', async () => {
     const { getByPlaceholderText, getByRole } = render(QAPanel, {
       props: { ctx: {} as PluginContext }
     })
     const input = getByPlaceholderText(
-      /What did I decide/i
+      /Search your vault/i
     ) as HTMLTextAreaElement
     await fireEvent.input(input, { target: { value: 'billing?' } })
-    await fireEvent.click(getByRole('button', { name: /^Ask$/i }))
+    await fireEvent.click(getByRole('button', { name: /^Search$/i }))
     expect(mockCtl.ask).toHaveBeenCalled()
   })
 
@@ -112,12 +112,12 @@ describe('QAPanel', () => {
     window.removeEventListener('navigate-to-block', nav as any)
   })
 
-  it('Clear resets conversation', async () => {
+  it('New chat resets conversation', async () => {
     mockCtl.messages = [{ role: 'user', content: 'hi' }]
     const { getByRole } = render(QAPanel, {
       props: { ctx: {} as PluginContext }
     })
-    await fireEvent.click(getByRole('button', { name: /Clear/i }))
+    await fireEvent.click(getByRole('button', { name: /New chat/i }))
     expect(mockCtl.clear).toHaveBeenCalled()
   })
 })

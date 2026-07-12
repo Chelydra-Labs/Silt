@@ -2,13 +2,12 @@
 //
 // Off by default. Builds an incremental vector index in the plugin SQLite
 // store (sqlite-vec), hybrid-retrieves with FTS5, and answers via
-// ctx.ai.complete (streaming when available). Surfaces: sidebar Q&A panel +
-// bespoke settings page.
+// ctx.ai.complete (streaming when available). Surfaces: right drawer (AI
+// Search) toggled from the status bar + bespoke settings page.
 
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { registerSurface, unregisterSurface } from '../../surfaces'
 import QAHub from './QAHub.svelte'
-import QAPanel from './QAPanel.svelte'
 import QASettings from './QASettings.svelte'
 import {
   createQAController,
@@ -17,10 +16,11 @@ import {
 } from './state.svelte'
 import { resetIndexState } from './embed_index'
 import { resolveSettings } from './settings'
+import { resetAISearchDrawer, toggleAISearchDrawer } from './drawer.svelte'
 
 export const manifest: PluginManifest = {
   id: 'silt-ai-qa',
-  name: 'AI Search',
+  name: 'AI Assistant',
   version: '0.1.0',
   author: 'Silt',
   description:
@@ -29,27 +29,28 @@ export const manifest: PluginManifest = {
   capabilities: { ai: true, 'plugin-db': true }
 }
 
-export const PANEL_SURFACE_ID = 'silt-ai-qa:panel'
+export const TOGGLE_SURFACE_ID = 'silt-ai-qa:toggle'
 const PLUGIN_ID = 'silt-ai-qa'
 
 let offSave: (() => void) | null = null
 let offBlock: (() => void) | null = null
 let offConfig: (() => void) | null = null
 
-function mountPanel() {
-  unregisterSurface(PANEL_SURFACE_ID)
+function mountToggle() {
+  unregisterSurface(TOGGLE_SURFACE_ID)
   registerSurface({
-    id: PANEL_SURFACE_ID,
+    id: TOGGLE_SURFACE_ID,
     pluginID: PLUGIN_ID,
-    kind: 'sidebar-panel',
-    label: 'AI Search',
+    kind: 'status-bar-item',
+    label: 'AI Assistant',
     icon: 'manage_search',
-    component: QAPanel
+    onClick: () => toggleAISearchDrawer()
   })
 }
 
-function unmountPanel() {
-  unregisterSurface(PANEL_SURFACE_ID)
+function unmountToggle() {
+  unregisterSurface(TOGGLE_SURFACE_ID)
+  resetAISearchDrawer()
 }
 
 export default {
@@ -60,7 +61,7 @@ export default {
     const ctl = createQAController()
     setQAController(ctl)
     ctl.loadSettings(ctx)
-    mountPanel()
+    mountToggle()
     // First-run / resume: rebuild when empty or embedding model changed.
     void ctl.ensureIndex(ctx)
 
@@ -73,7 +74,6 @@ export default {
     offBlock = ctx.on('block:changed', (evt) => {
       const c = getQAController()
       if (!c) return
-      // Coalesce to page-level reindex via the same debounce path.
       c.schedulePageIndex(
         ctx,
         evt.notebook ?? '',
@@ -86,7 +86,6 @@ export default {
       const c = getQAController()
       if (!c) return
       c.loadSettings(ctx)
-      // Re-resolve settings from store after config write; re-check model.
       void (async () => {
         try {
           const raw = (await ctx.getPluginSettings()) as Record<string, unknown>
@@ -94,7 +93,6 @@ export default {
         } catch {
           /* ignore */
         }
-        // Embedding model / readiness may have changed on AI Provider page.
         void c.ensureIndex(ctx)
       })()
     })
@@ -104,7 +102,7 @@ export default {
     offBlock?.()
     offConfig?.()
     offSave = offBlock = offConfig = null
-    unmountPanel()
+    unmountToggle()
     getQAController()?.dispose()
     setQAController(null)
     resetIndexState()
@@ -114,7 +112,7 @@ export default {
     offBlock?.()
     offConfig?.()
     offSave = offBlock = offConfig = null
-    unmountPanel()
+    unmountToggle()
     getQAController()?.dispose()
     setQAController(null)
     resetIndexState()
