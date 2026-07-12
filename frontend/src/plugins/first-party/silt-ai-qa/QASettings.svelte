@@ -122,9 +122,16 @@
   <section class="card">
     <h3>Models</h3>
     <p class="hint">
-      Chat and embedding models are configured on the AI Provider page.
-      Embeddings power the index; chat answers questions. See
-      docs/BRING_YOUR_OWN_MODEL.md.
+      Chat and embedding models are configured on the
+      <button
+        type="button"
+        class="link"
+        onclick={() => ctx.openSettings?.('ai' as any)}
+      >
+        AI Provider
+      </button>
+      page. Embeddings power the index; chat answers questions. See BRING_YOUR_OWN_MODEL
+      in the docs.
     </p>
     <ul class="status-list">
       <li>Chat: {chatUnconfigured ? 'not configured' : 'ready'}</li>
@@ -314,5 +321,14 @@
   .index-status {
     font-size: 0.8rem;
     opacity: 0.85;
+  }
+  .link {
+    background: none;
+    border: none;
+    color: var(--accent-primary-start, #6366f1);
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    text-decoration: underline;
   }
 </style>

@@ -1,6 +1,6 @@
 {
   "schema": "current-approved-v3",
-  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update ./cmd/inventory/current-approved-v3.json",
+  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json",
   "description": "Approved Wails v3 IPC surface snapshot. The CI parity gate fails on any missing/extra/changed *App method signature versus this file. Other sections (events, frontend imports) are tracked for review visibility and refreshed whenever the fixture is regenerated.",
   "inventory": {
     "methods": [
@@ -415,6 +415,10 @@
       {
         "name": "PickVaultExportPath",
         "signature": "PickVaultExportPath(defaultFilename string) (string, error)"
+      },
+      {
+        "name": "PluginAICancelStream",
+        "signature": "PluginAICancelStream(pluginID, sessionToken, streamID string) error"
       },
       {
         "name": "PluginAIComplete",
@@ -918,6 +922,7 @@
       "frontend/src/components/settings/AIProviderTab.test.ts",
       "frontend/src/components/settings/AboutTab.svelte",
       "frontend/src/components/settings/AboutTab.test.ts",
+      "frontend/src/components/settings/EditorTab.spellcheck.test.ts",
       "frontend/src/components/settings/EditorTab.svelte",
       "frontend/src/components/settings/GeneralTab.svelte",
       "frontend/src/components/settings/GeneralTab.test.ts",
@@ -981,6 +986,7 @@
       "frontend/src/components/settings/AboutTab.test.ts",
       "frontend/src/components/settings/AppearanceTab.svelte",
       "frontend/src/components/settings/AppearanceTab.test.ts",
+      "frontend/src/components/settings/EditorTab.spellcheck.test.ts",
       "frontend/src/components/settings/EditorTab.svelte",
       "frontend/src/components/settings/GeneralTab.test.ts",
       "frontend/src/components/settings/PluginsTab.svelte",
@@ -989,6 +995,8 @@
       "frontend/src/components/settings/VaultArchiveModal.svelte",
       "frontend/src/components/settings/VaultArchiveModal.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
+      "frontend/src/plugins/context.ai.test.ts",
+      "frontend/src/plugins/context.ts",
       "frontend/src/plugins/events.test.ts",
       "frontend/src/plugins/events.ts",
       "frontend/src/plugins/first-party/silt-tasks/Sidebar.test.ts",
@@ -1015,6 +1023,9 @@
       "frontend/src/updates/store.test.ts"
     ],
     "frontend_events": [
+      "ai:complete:delta",
+      "ai:complete:done",
+      "ai:complete:error",
       "block:changed",
       "config:changed",
       "config:error",
@@ -1046,6 +1057,6 @@
       "vault:moved",
       "vault:watch-coverage"
     ],
-    "plugin_method_count": 50
+    "plugin_method_count": 51
   }
 }

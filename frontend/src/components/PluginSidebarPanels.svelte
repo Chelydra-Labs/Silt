@@ -61,7 +61,7 @@
           </span>
         </summary>
         <div
-          class="h-72 mt-1 rounded-lg overflow-hidden border border-surface-panel-border"
+          class="h-[28rem] min-h-72 mt-1 rounded-lg overflow-hidden border border-surface-panel-border"
         >
           {#if surface.component}
             {@const Panel = surface.component}

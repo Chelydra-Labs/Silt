@@ -60,8 +60,9 @@ export default {
     const ctl = createQAController()
     setQAController(ctl)
     ctl.loadSettings(ctx)
-    void ctl.refreshIndexInfo(ctx)
     mountPanel()
+    // First-run / resume: rebuild when empty or embedding model changed.
+    void ctl.ensureIndex(ctx)
 
     offSave = ctx.on('editor:save', (evt) => {
       const c = getQAController()
@@ -85,7 +86,7 @@ export default {
       const c = getQAController()
       if (!c) return
       c.loadSettings(ctx)
-      // Re-resolve settings from store after config write.
+      // Re-resolve settings from store after config write; re-check model.
       void (async () => {
         try {
           const raw = (await ctx.getPluginSettings()) as Record<string, unknown>
@@ -93,6 +94,8 @@ export default {
         } catch {
           /* ignore */
         }
+        // Embedding model / readiness may have changed on AI Provider page.
+        void c.ensureIndex(ctx)
       })()
     })
   },

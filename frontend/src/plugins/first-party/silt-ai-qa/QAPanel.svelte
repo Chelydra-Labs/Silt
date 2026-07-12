@@ -93,6 +93,21 @@
   {/if}
 
   <div class="qa-messages" aria-live="polite" aria-relevant="additions text">
+    {#if ctl && ctl.messages.length === 0 && !statusLabel()}
+      <div class="qa-empty">
+        <p>
+          Ask a natural-language question about your notes. Answers cite source
+          blocks you can open with one click.
+        </p>
+        <ol>
+          <li>Configure chat + embedding models (Settings → AI Provider).</li>
+          <li>
+            Rebuild the index (Settings → AI Q&amp;A) if this is the first run.
+          </li>
+          <li>Type a question below and press Enter.</li>
+        </ol>
+      </div>
+    {/if}
     {#if ctl}
       {#each ctl.messages as msg, i (i)}
         <div class="qa-msg" data-role={msg.role}>
@@ -130,7 +145,7 @@
     {/if}
   </div>
 
-  {#if ctl && ctl.citations.length > 0 && ctl.panelStatus === 'idle'}
+  {#if ctl && ctl.citations.length > 0}
     <div class="qa-sources">
       <div class="qa-sources-label">Sources</div>
       <ul>
@@ -284,6 +299,18 @@
     font-size: 0.75rem;
     color: var(--surface-sidebar-text-muted, #9a9aa3);
     font-style: italic;
+  }
+  .qa-empty {
+    opacity: 0.85;
+    line-height: 1.45;
+    font-size: 0.78rem;
+  }
+  .qa-empty ol {
+    margin: 0.4rem 0 0;
+    padding-left: 1.1rem;
+  }
+  .qa-empty p {
+    margin: 0;
   }
   .qa-input-row {
     display: flex;

@@ -794,6 +794,10 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 	// Producer aborts if the buffer fills (consumer not keeping up).
 	deltaCh := make(chan string, aiStreamBufferCap)
 
+	// Audit stream start (one row); terminal status is audited when the
+	// goroutine finishes (#226 — not per-token).
+	a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, "stream-start", nil)
+
 	go func() {
 		defer a.wg.Done()
 		defer drainDone()

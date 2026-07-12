@@ -271,6 +271,22 @@ func TestNormalize_NeverNil(t *testing.T) {
 // writes a silt-tasks entry covering every key the frontend loaders
 // (settings.ts) read, and Active contains silt-tasks (Phase 10 / #429
 // retired the standalone silt-calendar and silt-kanban ids).
+// TestDefaults_AIPluginsOffByDefault pins Sprint 20/22 product choice: AI
+// plugins ship disabled so a fresh vault never phones a model until the user
+// opts in (silt-ai-summary #220, silt-ai-qa #224).
+func TestDefaults_AIPluginsOffByDefault(t *testing.T) {
+	d := Defaults()
+	disabled := map[string]bool{}
+	for _, id := range d.Plugins.Disabled {
+		disabled[id] = true
+	}
+	for _, id := range []string{"silt-ai-summary", "silt-ai-qa"} {
+		if !disabled[id] {
+			t.Errorf("Defaults().Plugins.Disabled missing %q (AI plugins must ship off by default)", id)
+		}
+	}
+}
+
 func TestDefaults_ContainsSiltTasks(t *testing.T) {
 	d := Defaults()
 	ps, ok := d.Plugins.PluginSettings["silt-tasks"].(map[string]any)

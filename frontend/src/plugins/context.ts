@@ -879,6 +879,11 @@ function createAIStream(
     }
   }
 
+  // Fail-safe: if cancel is requested and no terminal event arrives within
+  // a short window, settle the stream as cancelled so iterators/`result()`
+  // cannot hang forever.
+  let cancelTimer: ReturnType<typeof setTimeout> | null = null
+
   const stream: PluginAIStream = {
     streamId,
     cancel: async () => {
@@ -887,12 +892,29 @@ function createAIStream(
       } catch (err) {
         throw normalizeAIError(err)
       }
+      if (!finalResult && !finalError) {
+        if (cancelTimer) clearTimeout(cancelTimer)
+        cancelTimer = setTimeout(() => {
+          if (finalResult || finalError) return
+          const err = normalizeAIError({
+            code: 'timeout',
+            message: 'stream cancelled'
+          })
+          finalError = err
+          push({ kind: 'error', err })
+          resultReject?.(err)
+          cleanup()
+        }, 2000)
+      }
     },
     result: () => resultPromise,
     async *[Symbol.asyncIterator]() {
       while (true) {
         while (queue.length === 0) {
-          if (closed && queue.length === 0) return
+          if (closed && queue.length === 0) {
+            if (finalError) throw finalError
+            return
+          }
           await new Promise<void>((r) => {
             wake = r
           })

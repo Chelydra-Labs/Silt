@@ -7,13 +7,15 @@ import {
 } from '../../../settings/ai-setup'
 import { settings as appSettings } from '../../../settings/store.svelte'
 import { createConversation, type Conversation } from './conversation'
-import { hybridRetrieve } from './retrieve'
+import { hybridRetrieve, RetrieveError } from './retrieve'
 import { buildRAGMessages, NO_RESULTS_MESSAGE, parseCitations } from './rag'
 import { resolveSettings } from './settings'
 import type { Citation, IndexProgress, QASettings } from './types'
 import {
+  ensureIndexReady,
   getIndexInfo,
   indexPage,
+  needsFullRebuildForModel,
   rebuildIndex,
   resetIndexState
 } from './embed_index'
@@ -41,13 +43,13 @@ export function createQAController() {
   let citations: Citation[] = $state([])
   let conversation: Conversation = createConversation()
   let activeStream: PluginAIStream | null = null
+  let askInFlight = false
   let indexTimer: ReturnType<typeof setTimeout> | null = null
+  /** Serializes rebuild / page index so they never interleave. */
+  let indexChain: Promise<void> = Promise.resolve()
+  let disposed = false
 
-  function loadSettings(ctx: PluginContext) {
-    void ctx.getSetting?.('' as any) // keep ctx warm
-    // Settings live in plugin_settings via getPluginSettings path on the host;
-    // the panel/settings page push updates through updatePluginSetting.
-    // Controller reads from app settings store when available.
+  function loadSettings(_ctx?: PluginContext) {
     const raw = (appSettings.config?.plugins?.plugin_settings as any)?.[
       'silt-ai-qa'
     ] as Record<string, unknown> | undefined
@@ -68,12 +70,23 @@ export function createQAController() {
     )
   }
 
+  function configuredEmbedModel(): string {
+    return String(appSettings.config?.ai?.embedding?.model ?? '').trim()
+  }
+
   async function refreshIndexInfo(ctx: PluginContext) {
     try {
       const info = await getIndexInfo(ctx)
       progress = {
         ...progress,
-        status: info.chunkCount > 0 ? 'ready' : progress.status,
+        status:
+          info.chunkCount > 0
+            ? 'ready'
+            : progress.status === 'indexing'
+              ? 'indexing'
+              : info.chunkCount === 0
+                ? 'idle'
+                : progress.status,
         model: info.model,
         dimensions: info.dimensions,
         chunkCount: info.chunkCount
@@ -81,6 +94,13 @@ export function createQAController() {
     } catch {
       /* ignore */
     }
+  }
+
+  function runIndexJob(job: () => Promise<void>): Promise<void> {
+    const next = indexChain.then(job, job)
+    // Keep the chain alive even if a job fails.
+    indexChain = next.catch(() => {})
+    return next
   }
 
   async function rebuild(ctx: PluginContext) {
@@ -93,18 +113,75 @@ export function createQAController() {
       }
       return
     }
-    try {
-      await rebuildIndex(ctx, settings, (p) => {
-        progress = p
-      })
-    } catch (e: any) {
+    await runIndexJob(async () => {
+      if (disposed) return
+      try {
+        await rebuildIndex(ctx, settings, (p) => {
+          if (!disposed) progress = p
+        })
+      } catch (e: any) {
+        if (!disposed) {
+          progress = {
+            status: 'error',
+            done: 0,
+            total: 0,
+            lastError: e?.message ?? String(e)
+          }
+        }
+        throw e
+      }
+    })
+  }
+
+  /**
+   * On vault open / config change: ensure schema, rebuild if empty or model
+   * mismatch, otherwise refresh status.
+   */
+  async function ensureIndex(ctx: PluginContext) {
+    if (!embedReady()) {
       progress = {
-        status: 'error',
+        status: 'unconfigured',
         done: 0,
         total: 0,
-        lastError: e?.message ?? String(e)
+        message: 'Configure an embedding model in Settings → AI Provider'
       }
+      return
     }
+    await runIndexJob(async () => {
+      if (disposed) return
+      try {
+        await ensureIndexReady(ctx)
+        const model = configuredEmbedModel()
+        const info = await getIndexInfo(ctx)
+        const mustRebuild =
+          info.chunkCount === 0 ||
+          (await needsFullRebuildForModel(ctx, model, info.dimensions))
+        if (mustRebuild) {
+          await rebuildIndex(ctx, settings, (p) => {
+            if (!disposed) progress = p
+          })
+        } else {
+          progress = {
+            status: 'ready',
+            done: 0,
+            total: 0,
+            model: info.model,
+            dimensions: info.dimensions,
+            chunkCount: info.chunkCount,
+            message: `Indexed ${info.chunkCount} chunks`
+          }
+        }
+      } catch (e: any) {
+        if (!disposed) {
+          progress = {
+            status: 'error',
+            done: 0,
+            total: 0,
+            lastError: e?.message ?? String(e)
+          }
+        }
+      }
+    })
   }
 
   function schedulePageIndex(
@@ -113,17 +190,32 @@ export function createQAController() {
     section: string,
     page: string
   ) {
-    if (!settings.auto_reembed || !embedReady()) return
+    if (!settings.auto_reembed || !embedReady() || disposed) return
     if (indexTimer) clearTimeout(indexTimer)
     indexTimer = setTimeout(() => {
-      void indexPage(ctx, notebook, section, page, settings, (p) => {
-        progress = p
-      }).catch((e: any) => {
-        progress = {
-          status: 'error',
-          done: 0,
-          total: 0,
-          lastError: e?.message ?? String(e)
+      void runIndexJob(async () => {
+        if (disposed) return
+        try {
+          // Model change mid-session: full rebuild instead of partial page.
+          const model = configuredEmbedModel()
+          if (await needsFullRebuildForModel(ctx, model)) {
+            await rebuildIndex(ctx, settings, (p) => {
+              if (!disposed) progress = p
+            })
+            return
+          }
+          await indexPage(ctx, notebook, section, page, settings, (p) => {
+            if (!disposed) progress = p
+          })
+        } catch (e: any) {
+          if (!disposed) {
+            progress = {
+              status: 'error',
+              done: 0,
+              total: 0,
+              lastError: e?.message ?? String(e)
+            }
+          }
         }
       })
     }, settings.reindex_debounce_ms)
@@ -132,6 +224,7 @@ export function createQAController() {
   async function ask(ctx: PluginContext, question: string) {
     const q = question.trim()
     if (!q) return
+    if (askInFlight) return
     if (!chatReady()) {
       panelStatus = 'no-chat-provider'
       errorMessage = 'Configure a chat model in Settings → AI Provider'
@@ -144,11 +237,13 @@ export function createQAController() {
       return
     }
 
+    askInFlight = true
     conversation.addUser(q)
     answer = ''
-    citations = []
+    // Keep prior citations visible until a new answer lands.
     panelStatus = 'asking'
     errorMessage = ''
+    let assistantStarted = false
 
     try {
       const passages = await hybridRetrieve(ctx, q, settings)
@@ -156,6 +251,7 @@ export function createQAController() {
         panelStatus = 'no-results'
         answer = NO_RESULTS_MESSAGE
         conversation.addAssistant(NO_RESULTS_MESSAGE)
+        citations = []
         return
       }
 
@@ -174,6 +270,7 @@ export function createQAController() {
         })
         activeStream = stream as PluginAIStream
         conversation.addAssistant('')
+        assistantStarted = true
         let acc = ''
         for await (const delta of activeStream) {
           acc += delta
@@ -197,7 +294,12 @@ export function createQAController() {
           })
           answer = res.content
           citations = parseCitations(answer, passages)
-          conversation.addAssistant(answer, citations)
+          if (assistantStarted) {
+            conversation.updateLastAssistant(answer, citations)
+          } else {
+            conversation.addAssistant(answer, citations)
+            assistantStarted = true
+          }
           panelStatus = 'idle'
           return
         }
@@ -207,8 +309,20 @@ export function createQAController() {
       }
     } catch (e: any) {
       panelStatus = 'error'
-      errorMessage = e?.message ?? String(e)
-      conversation.addAssistant(`Error: ${errorMessage}`)
+      if (e instanceof RetrieveError) {
+        errorMessage = e.message
+      } else {
+        errorMessage = e?.message ?? String(e)
+      }
+      const errText = `Error: ${errorMessage}`
+      answer = errText
+      if (assistantStarted) {
+        conversation.updateLastAssistant(errText)
+      } else {
+        conversation.addAssistant(errText)
+      }
+    } finally {
+      askInFlight = false
     }
   }
 
@@ -220,7 +334,9 @@ export function createQAController() {
         /* ignore */
       }
       activeStream = null
-      panelStatus = 'idle'
+      if (panelStatus === 'streaming' || panelStatus === 'asking') {
+        panelStatus = 'idle'
+      }
     }
   }
 
@@ -233,6 +349,7 @@ export function createQAController() {
   }
 
   function dispose() {
+    disposed = true
     if (indexTimer) clearTimeout(indexTimer)
     indexTimer = null
     void stop()
@@ -261,12 +378,16 @@ export function createQAController() {
     get messages() {
       return conversation.getMessages()
     },
+    get askInFlight() {
+      return askInFlight
+    },
     loadSettings,
     setSettings,
     chatReady,
     embedReady,
     refreshIndexInfo,
     rebuild,
+    ensureIndex,
     schedulePageIndex,
     ask,
     stop,
