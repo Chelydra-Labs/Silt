@@ -44,6 +44,9 @@ export function friendlyPackError(err: unknown): string {
   if (lower.includes('exceeds') || lower.includes('limit')) {
     return 'File is too large to import or download.'
   }
+  if (lower.includes('cancel')) {
+    return 'Download cancelled.'
+  }
   if (lower.includes('vault not loaded')) {
     return 'Open a vault before changing spellcheck dictionaries.'
   }

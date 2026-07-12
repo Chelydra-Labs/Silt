@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnsureLanguage_MockCDN(t *testing.T) {
@@ -151,5 +152,58 @@ func TestPathTraversalRejected(t *testing.T) {
 	}
 	if sanitizeID("en-GB") != "en-GB" {
 		t.Error("expected pass-through")
+	}
+}
+
+func TestEnsureLanguage_Cancel(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SILT_DICTIONARY_CACHE", root)
+
+	// Slow server so cancel can win.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(5 * time.Second):
+			_, _ = w.Write([]byte("SET UTF-8\n"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	LanguageDownloadBase = srv.URL
+	HTTPClient = srv.Client()
+	t.Cleanup(func() {
+		LanguageDownloadBase = ""
+		HTTPClient = &http.Client{Timeout: downloadTimeout}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+	err := EnsureLanguage(ctx, "en-GB", nil)
+	if err == nil {
+		t.Fatal("expected cancel error")
+	}
+	if !strings.Contains(err.Error(), "cancel") {
+		t.Errorf("error = %v, want cancel", err)
+	}
+}
+
+func TestLanguageInstalled_IntegrityMismatch(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SILT_DICTIONARY_CACHE", root)
+	dir := LanguageDir(root, "en-GB")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	aff := []byte("SET UTF-8\n")
+	dic := []byte("1\ncolour\n")
+	_ = atomicWrite(filepath.Join(dir, "index.aff"), aff)
+	_ = atomicWrite(filepath.Join(dir, "index.dic"), dic)
+	spec := LanguageByID("en-GB")
+	_ = writeManifest(dir, Manifest{
+		ID: "en-GB", Package: spec.NPMPackage, Version: spec.Version,
+		SHA256: "deadbeef",
+	})
+	if languageInstalled(root, *spec) {
+		t.Fatal("expected integrity mismatch to fail install check")
 	}
 }

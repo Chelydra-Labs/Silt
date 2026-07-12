@@ -18,18 +18,27 @@ const (
 	maxLanguageFile = 8 << 20 // 8 MiB per aff/dic/license
 	maxDomainFile   = 4 << 20 // 4 MiB per word list
 	userAgent       = "Silt-spellcheck"
+	downloadChunk   = 64 * 1024
 )
 
 // HTTPClient is overridable in tests.
 var HTTPClient = &http.Client{Timeout: downloadTimeout}
 
-// ProgressFunc is called with (received, total) during multi-file downloads.
+// ProgressFunc is called with (bytesReceived, totalBytes) during downloads.
 // total may be -1 when Content-Length is unknown.
 type ProgressFunc func(received, total int64)
 
 // EnsureLanguage downloads a language pack into the cache if missing or stale.
 // Bundled languages are a no-op. Unknown IDs and path-unsafe IDs fail loudly.
+// Concurrent calls for the same langID are serialized. ctx cancellation aborts
+// the HTTP transfer and leaves no partial install (temp files cleaned).
 func EnsureLanguage(ctx context.Context, langID string, onProgress ProgressFunc) error {
+	return withEnsureLock("lang:"+langID, func() error {
+		return ensureLanguageLocked(ctx, langID, onProgress)
+	})
+}
+
+func ensureLanguageLocked(ctx context.Context, langID string, onProgress ProgressFunc) error {
 	spec := LanguageByID(langID)
 	if spec == nil {
 		return fmt.Errorf("unknown language pack %q", langID)
@@ -58,17 +67,21 @@ func EnsureLanguage(ctx context.Context, langID string, onProgress ProgressFunc)
 	}
 
 	affURL, dicURL, licURL := LanguageURLs(*spec)
+	var affData, dicData []byte
 	var totalBytes int64
 	for _, item := range []struct {
 		url, name string
+		dest      *[]byte
 	}{
-		{affURL, "index.aff"},
-		{dicURL, "index.dic"},
-		{licURL, "license"},
+		{affURL, "index.aff", &affData},
+		{dicURL, "index.dic", &dicData},
+		{licURL, "license", nil},
 	} {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("download cancelled: %w", err)
+		}
 		data, err := fetchBytes(ctx, item.url, maxLanguageFile, onProgress)
 		if err != nil {
-			// License is nice-to-have; aff/dic are required.
 			if item.name == "license" {
 				continue
 			}
@@ -80,6 +93,9 @@ func EnsureLanguage(ctx context.Context, langID string, onProgress ProgressFunc)
 		if err := atomicWrite(filepath.Join(dir, item.name), data); err != nil {
 			return fmt.Errorf("write %s: %w", item.name, err)
 		}
+		if item.dest != nil {
+			*item.dest = data
+		}
 		totalBytes += int64(len(data))
 	}
 
@@ -89,12 +105,19 @@ func EnsureLanguage(ctx context.Context, langID string, onProgress ProgressFunc)
 		Version:   spec.Version,
 		FetchedAt: time.Now().UTC(),
 		Bytes:     totalBytes,
+		SHA256:    contentSHA256(affData, dicData),
 	})
 }
 
 // EnsureDomain downloads a domain word list into the cache if missing or stale.
-// Bundled domains are a no-op.
+// Bundled domains are a no-op. Concurrent calls for the same id are serialized.
 func EnsureDomain(ctx context.Context, domainID string, onProgress ProgressFunc) error {
+	return withEnsureLock("domain:"+domainID, func() error {
+		return ensureDomainLocked(ctx, domainID, onProgress)
+	})
+}
+
+func ensureDomainLocked(ctx context.Context, domainID string, onProgress ProgressFunc) error {
 	spec := DomainByID(domainID)
 	if spec == nil {
 		return fmt.Errorf("unknown domain pack %q", domainID)
@@ -122,6 +145,9 @@ func EnsureDomain(ctx context.Context, domainID string, onProgress ProgressFunc)
 		return fmt.Errorf("create domain cache: %w", err)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("download cancelled: %w", err)
+	}
 	data, err := fetchBytes(ctx, spec.WordURL, maxDomainFile, onProgress)
 	if err != nil {
 		return fmt.Errorf("download domain %s: %w", domainID, err)
@@ -144,6 +170,7 @@ func EnsureDomain(ctx context.Context, domainID string, onProgress ProgressFunc)
 		Version:   spec.Version,
 		FetchedAt: time.Now().UTC(),
 		Bytes:     int64(len(data)),
+		SHA256:    contentSHA256(data),
 	})
 }
 
@@ -215,24 +242,46 @@ func fetchBytes(ctx context.Context, url string, maxBytes int64, onProgress Prog
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := HTTPClient.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("download cancelled: %w", ctx.Err())
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %s", resp.Status)
 	}
-	limited := io.LimitReader(resp.Body, maxBytes+1)
-	data, err := io.ReadAll(limited)
-	if err != nil {
-		return nil, err
+
+	total := resp.ContentLength
+	buf := make([]byte, 0, 64*1024)
+	chunk := make([]byte, downloadChunk)
+	var received int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("download cancelled: %w", err)
+		}
+		n, readErr := resp.Body.Read(chunk)
+		if n > 0 {
+			received += int64(n)
+			if received > maxBytes {
+				return nil, fmt.Errorf("response exceeds %d byte limit", maxBytes)
+			}
+			buf = append(buf, chunk[:n]...)
+			if onProgress != nil {
+				onProgress(received, total)
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("download cancelled: %w", ctx.Err())
+			}
+			return nil, readErr
+		}
 	}
-	if int64(len(data)) > maxBytes {
-		return nil, fmt.Errorf("response exceeds %d byte limit", maxBytes)
-	}
-	if onProgress != nil {
-		onProgress(int64(len(data)), resp.ContentLength)
-	}
-	return data, nil
+	return buf, nil
 }
 
 func gunzip(data []byte) ([]byte, error) {

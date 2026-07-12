@@ -15,7 +15,8 @@
     ListLanguagePacks,
     ListDomainPacks,
     EnsureLanguagePack,
-    EnsureDomainPack
+    EnsureDomainPack,
+    CancelSpellcheckDownload
   } from '../../../bindings/silt/app.js'
   import {
     dictionaryStatus,
@@ -145,9 +146,16 @@
       await refreshPacks()
       return true
     } catch (err) {
-      packError = friendlyPackError(err)
-      packStatus = null
-      failedLangId = id
+      const msg = String(err)
+      if (msg.toLowerCase().includes('cancel')) {
+        packStatus = 'Download cancelled.'
+        packError = null
+        failedLangId = null
+      } else {
+        packError = friendlyPackError(err)
+        packStatus = null
+        failedLangId = id
+      }
       draftEditor().spellcheck_language = prevId
       return false
     } finally {
@@ -207,9 +215,16 @@
       await refreshPacks()
       return true
     } catch (err) {
-      packError = friendlyPackError(err)
-      packStatus = null
-      failedDomainId = id
+      const msg = String(err)
+      if (msg.toLowerCase().includes('cancel')) {
+        packStatus = 'Download cancelled.'
+        packError = null
+        failedDomainId = null
+      } else {
+        packError = friendlyPackError(err)
+        packStatus = null
+        failedDomainId = id
+      }
       return false
     } finally {
       packBusy = null
@@ -247,6 +262,18 @@
       }
       failedDomainId = null
     }
+  }
+
+  function cancelDownload() {
+    try {
+      CancelSpellcheckDownload()
+    } catch {
+      /* ignore */
+    }
+    packStatus = 'Download cancelled.'
+    packBusy = null
+    packProgress = null
+    unsubscribeProgress()
   }
 
   function deepClone<T>(value: T): T {
@@ -635,23 +662,6 @@
 
             <label class="flex items-center gap-2.5 cursor-pointer select-none">
               <input
-                checked={draft.editor?.spellcheck_enabled !== false}
-                onchange={(e: Event) => {
-                  draftEditor().spellcheck_enabled = (
-                    e.currentTarget as HTMLInputElement
-                  ).checked
-                  touch()
-                }}
-                type="checkbox"
-                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
-              />
-              <span class="text-text-primary text-type-md font-body-md">
-                Spellcheck (underline misspelled words)
-              </span>
-            </label>
-
-            <label class="flex items-center gap-2.5 cursor-pointer select-none">
-              <input
                 checked={draft.editor?.typewriter_mode === true}
                 onchange={(e: Event) => {
                   draftEditor().typewriter_mode = (
@@ -667,23 +677,29 @@
               </span>
             </label>
           </div>
+        </div>
+      </div>
 
-          <!-- Spellcheck language + domain word lists (#336 / #337) -->
-          <div
-            id="editor-spellcheck-packs"
-            class="space-y-4 pt-2 border-t border-surface-panel-border/60 {ringClass(
-              'editor-spellcheck-packs'
-            )}"
-            aria-labelledby="spellcheck-packs-heading"
-            aria-busy={packBusy !== null || packsLoading}
-          >
-            <h5
+      <!-- Spellcheck dictionaries card (#336 / #337 / #537) -->
+      <div
+        id="editor-spellcheck-packs"
+        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-5 {ringClass(
+          'editor-spellcheck-packs'
+        )}"
+        aria-labelledby="spellcheck-packs-heading"
+        aria-busy={packBusy !== null || packsLoading}
+      >
+        <div
+          class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+        >
+          <div class="space-y-1">
+            <h4
               id="spellcheck-packs-heading"
-              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+              class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs"
             >
               Spellcheck dictionaries
-            </h5>
-            <p class="text-text-muted text-type-sm font-body-md">
+            </h4>
+            <p class="text-text-muted text-type-sm font-body-md max-w-xl">
               Additional languages download once and work offline. Technical
               word lists cut underlines on terms like TypeScript or Docker. Note
               text never leaves your machine — only dictionary files download
@@ -691,135 +707,164 @@
               you save settings. Manage personal words under General → Custom
               dictionary.
             </p>
-            {#if draft.editor?.spellcheck_enabled === false}
-              <p class="text-text-muted text-type-sm font-body-md">
-                Language and word lists apply when spellcheck is on.
-              </p>
-            {/if}
+          </div>
+          <label
+            class="flex items-center gap-2.5 cursor-pointer select-none shrink-0"
+          >
+            <input
+              checked={draft.editor?.spellcheck_enabled !== false}
+              onchange={(e: Event) => {
+                draftEditor().spellcheck_enabled = (
+                  e.currentTarget as HTMLInputElement
+                ).checked
+                touch()
+              }}
+              type="checkbox"
+              class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
+            />
+            <span class="text-text-primary text-type-md font-body-md">
+              Enable spellcheck
+            </span>
+          </label>
+        </div>
 
-            {#if packsLoading}
-              <p class="text-text-muted text-type-sm font-body-md">
-                Loading dictionaries…
-              </p>
-            {:else}
-              <label class="flex flex-col gap-1.5 max-w-sm">
-                <span
-                  class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
-                  >Language</span
-                >
-                <select
-                  value={draft.editor?.spellcheck_language || 'en-US'}
-                  onchange={onLanguageChange}
-                  disabled={packBusy !== null}
-                  class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {#each languagePacks as pack (pack.id)}
-                    <option value={pack.id}>
-                      {pack.label} ({statusLabel(pack)})
-                    </option>
-                  {:else}
-                    <option value="en-US">English (US) (Included)</option>
-                  {/each}
-                </select>
-              </label>
-              {#if languagePacks.some((p) => p.license.includes('GPL') || p.license.includes('MPL'))}
-                <p class="text-text-muted text-type-2xs font-body-md max-w-lg">
-                  Some languages use open-source licenses (e.g. GPL or MPL). The
-                  license file is saved with the download.
-                </p>
-              {/if}
+        {#if draft.editor?.spellcheck_enabled === false}
+          <p class="text-text-muted text-type-sm font-body-md">
+            Language and word lists apply when spellcheck is on.
+          </p>
+        {/if}
 
-              <fieldset class="space-y-2">
-                <legend
-                  class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider mb-1"
-                >
-                  Technical word lists
-                </legend>
-                {#each domainPacks as pack (pack.id)}
-                  <label
-                    class="flex items-start gap-2.5 select-none {packBusy
-                      ? 'cursor-not-allowed opacity-70'
-                      : 'cursor-pointer'}"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={domainEnabled(pack.id)}
-                      disabled={packBusy !== null}
-                      onchange={(e: Event) => {
-                        void toggleDomain(
-                          pack.id,
-                          (e.currentTarget as HTMLInputElement).checked
-                        )
-                      }}
-                      class="w-4 h-4 mt-0.5 accent-[var(--color-accent-primary-end)] cursor-pointer disabled:cursor-not-allowed"
-                    />
-                    <span class="flex flex-col gap-0.5">
-                      <span class="text-text-primary text-type-md font-body-md">
-                        {pack.label}
-                        <span class="text-text-muted text-type-sm">
-                          ({statusLabel(pack)})</span
-                        >
-                      </span>
-                    </span>
-                  </label>
-                {:else}
-                  <p class="text-text-muted text-type-sm font-body-md">
-                    Couldn't load word lists.
-                  </p>
-                {/each}
-              </fieldset>
-            {/if}
-
-            <p
-              class="text-text-muted text-type-sm font-body-md min-h-[1.25rem]"
-              aria-live="polite"
+        {#if packsLoading}
+          <p class="text-text-muted text-type-sm font-body-md">
+            Loading dictionaries…
+          </p>
+        {:else}
+          <label class="flex flex-col gap-1.5 max-w-sm">
+            <span
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+              >Language</span
             >
-              {#if packBusy}
-                {packStatus ?? `Downloading…`}
-                {#if packProgress != null}
-                  ({packProgress}%)
-                {/if}
-              {:else if packStatus}
-                {packStatus}
+            <select
+              value={draft.editor?.spellcheck_language || 'en-US'}
+              onchange={onLanguageChange}
+              disabled={packBusy !== null}
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {#each languagePacks as pack (pack.id)}
+                <option value={pack.id}>
+                  {pack.label} ({statusLabel(pack)})
+                </option>
+              {:else}
+                <option value="en-US">English (US) (Included)</option>
+              {/each}
+            </select>
+          </label>
+          {#if languagePacks.some((p) => p.license.includes('GPL') || p.license.includes('MPL'))}
+            <p class="text-text-muted text-type-2xs font-body-md max-w-lg">
+              Some languages use open-source licenses (e.g. GPL or MPL). The
+              license file is saved with the download.
+            </p>
+          {/if}
+
+          <fieldset class="space-y-2">
+            <legend
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider mb-1"
+            >
+              Technical word lists
+            </legend>
+            {#each domainPacks as pack (pack.id)}
+              <label
+                class="flex items-start gap-2.5 select-none {packBusy
+                  ? 'cursor-not-allowed opacity-70'
+                  : 'cursor-pointer'}"
+              >
+                <input
+                  type="checkbox"
+                  checked={domainEnabled(pack.id)}
+                  disabled={packBusy !== null}
+                  onchange={(e: Event) => {
+                    void toggleDomain(
+                      pack.id,
+                      (e.currentTarget as HTMLInputElement).checked
+                    )
+                  }}
+                  class="w-4 h-4 mt-0.5 accent-[var(--color-accent-primary-end)] cursor-pointer disabled:cursor-not-allowed"
+                />
+                <span class="flex flex-col gap-0.5">
+                  <span class="text-text-primary text-type-md font-body-md">
+                    {pack.label}
+                    <span class="text-text-muted text-type-sm">
+                      ({statusLabel(pack)})</span
+                    >
+                  </span>
+                </span>
+              </label>
+            {:else}
+              <p class="text-text-muted text-type-sm font-body-md">
+                Couldn't load word lists.
+              </p>
+            {/each}
+          </fieldset>
+        {/if}
+
+        <div
+          class="flex flex-wrap items-center gap-3 min-h-[1.5rem]"
+          aria-live="polite"
+        >
+          {#if packBusy}
+            <p class="text-text-muted text-type-sm font-body-md">
+              {packStatus ?? `Downloading…`}
+              {#if packProgress != null}
+                ({packProgress}%)
               {/if}
             </p>
-            {#if packError || dictionaryStatus.loadError || dictionaryStatus.domainError}
-              <div
-                class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
-                role="alert"
-              >
-                <span class="material-symbols-outlined text-icon-lg">error</span
-                >
-                <div class="flex-1 space-y-2">
-                  <p>
-                    {packError ||
-                      dictionaryStatus.loadError ||
-                      dictionaryStatus.domainError}
-                  </p>
-                  {#if failedLangId}
-                    <button
-                      type="button"
-                      onclick={() => void retryFailedLanguage()}
-                      disabled={packBusy !== null}
-                      class="px-3 py-1 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm font-label-sm-bold cursor-pointer disabled:opacity-50"
-                    >
-                      Retry download
-                    </button>
-                  {:else if failedDomainId}
-                    <button
-                      type="button"
-                      onclick={() => void retryFailedDomain()}
-                      disabled={packBusy !== null}
-                      class="px-3 py-1 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm font-label-sm-bold cursor-pointer disabled:opacity-50"
-                    >
-                      Retry download
-                    </button>
-                  {/if}
-                </div>
-              </div>
-            {/if}
-          </div>
+            <button
+              type="button"
+              onclick={cancelDownload}
+              class="px-3 py-1 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm font-label-sm-bold cursor-pointer hover:brightness-110"
+            >
+              Cancel
+            </button>
+          {:else if packStatus}
+            <p class="text-text-muted text-type-sm font-body-md">
+              {packStatus}
+            </p>
+          {/if}
         </div>
+        {#if packError || dictionaryStatus.loadError || dictionaryStatus.domainError}
+          <div
+            class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
+            role="alert"
+          >
+            <span class="material-symbols-outlined text-icon-lg">error</span>
+            <div class="flex-1 space-y-2">
+              <p>
+                {packError ||
+                  dictionaryStatus.loadError ||
+                  dictionaryStatus.domainError}
+              </p>
+              {#if failedLangId}
+                <button
+                  type="button"
+                  onclick={() => void retryFailedLanguage()}
+                  disabled={packBusy !== null}
+                  class="px-3 py-1 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm font-label-sm-bold cursor-pointer disabled:opacity-50"
+                >
+                  Retry download
+                </button>
+              {:else if failedDomainId}
+                <button
+                  type="button"
+                  onclick={() => void retryFailedDomain()}
+                  disabled={packBusy !== null}
+                  class="px-3 py-1 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm font-label-sm-bold cursor-pointer disabled:opacity-50"
+                >
+                  Retry download
+                </button>
+              {/if}
+            </div>
+          </div>
+        {/if}
       </div>
 
       <!-- Error banner -->

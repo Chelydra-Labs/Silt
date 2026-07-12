@@ -106,7 +106,14 @@ const CORE_INDEX: SettingsIndexEntry[] = [
   },
   {
     label: 'Spellcheck',
-    keywords: ['spelling', 'underline', 'misspelled', 'language', 'dictionary'],
+    keywords: [
+      'spelling',
+      'underline',
+      'misspelled',
+      'language',
+      'dictionary',
+      'enable'
+    ],
     sectionId: 'editor',
     anchorId: 'editor-spellcheck-packs'
   },

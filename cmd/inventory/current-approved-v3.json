@@ -33,6 +33,10 @@
         "signature": "ApplyTheme(id, mode string) (ActiveThemeResult, error)"
       },
       {
+        "name": "CancelSpellcheckDownload",
+        "signature": "CancelSpellcheckDownload()"
+      },
+      {
         "name": "CheckForUpdates",
         "signature": "CheckForUpdates() (updates.UpdateInfo, error)"
       },

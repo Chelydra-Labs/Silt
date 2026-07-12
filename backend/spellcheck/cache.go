@@ -1,6 +1,8 @@
 package spellcheck
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +10,15 @@ import (
 	"strings"
 	"time"
 )
+
+// contentSHA256 returns a hex SHA-256 of the concatenated parts.
+func contentSHA256(parts ...[]byte) string {
+	h := sha256.New()
+	for _, p := range parts {
+		_, _ = h.Write(p)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 // CacheRoot returns <UserConfigDir>/silt/dictionaries. Overridable in tests via
 // SILT_DICTIONARY_CACHE (absolute path).
@@ -43,13 +54,15 @@ func sanitizeID(id string) string {
 }
 
 // Manifest records what was cached so Ensure can skip re-download when the
-// pinned catalog version matches.
+// pinned catalog version matches. SHA256 is a hex digest of the pack payload
+// (language: aff+dic; domain: words.txt) for cache integrity on later loads.
 type Manifest struct {
 	ID        string    `json:"id"`
 	Package   string    `json:"package"`
 	Version   string    `json:"version"`
 	FetchedAt time.Time `json:"fetched_at"`
 	Bytes     int64     `json:"bytes"`
+	SHA256    string    `json:"sha256,omitempty"`
 }
 
 func readManifest(dir string) (Manifest, error) {
@@ -89,7 +102,7 @@ func atomicWrite(path string, data []byte) error {
 }
 
 // languageInstalled reports whether a complete language pack for the catalog
-// version is present on disk.
+// version is present on disk and passes integrity when a SHA256 was stored.
 func languageInstalled(root string, spec LanguageSpec) bool {
 	if spec.Bundled {
 		return true
@@ -99,16 +112,19 @@ func languageInstalled(root string, spec LanguageSpec) bool {
 	if err != nil || m.Version != spec.Version {
 		return false
 	}
-	for _, name := range []string{"index.aff", "index.dic"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
-			return false
-		}
+	aff, err1 := os.ReadFile(filepath.Join(dir, "index.aff"))
+	dic, err2 := os.ReadFile(filepath.Join(dir, "index.dic"))
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if m.SHA256 != "" && contentSHA256(aff, dic) != m.SHA256 {
+		return false
 	}
 	return true
 }
 
 // domainInstalled reports whether a complete domain pack for the catalog
-// version is present (or bundled).
+// version is present (or bundled) and passes integrity when a SHA256 was stored.
 func domainInstalled(root string, spec DomainSpec) bool {
 	if spec.Bundled {
 		return true
@@ -118,7 +134,11 @@ func domainInstalled(root string, spec DomainSpec) bool {
 	if err != nil || m.Version != spec.Version {
 		return false
 	}
-	if _, err := os.Stat(filepath.Join(dir, "words.txt")); err != nil {
+	words, err := os.ReadFile(filepath.Join(dir, "words.txt"))
+	if err != nil {
+		return false
+	}
+	if m.SHA256 != "" && contentSHA256(words) != m.SHA256 {
 		return false
 	}
 	return true

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"silt/backend/spellcheck"
 )
@@ -22,6 +24,38 @@ import (
 // lists reactively from settings.config.
 
 const spellcheckDownloadProgressEvent = "spellcheck:download:progress"
+
+// Active pack download cancel (UI only allows one at a time).
+var (
+	spellPackCancelMu sync.Mutex
+	spellPackCancel   context.CancelFunc
+)
+
+func setSpellPackCancel(cancel context.CancelFunc) {
+	spellPackCancelMu.Lock()
+	defer spellPackCancelMu.Unlock()
+	if spellPackCancel != nil {
+		spellPackCancel()
+	}
+	spellPackCancel = cancel
+}
+
+func clearSpellPackCancel() {
+	spellPackCancelMu.Lock()
+	defer spellPackCancelMu.Unlock()
+	spellPackCancel = nil
+}
+
+// CancelSpellcheckDownload aborts the in-flight language/domain pack download
+// if any. Safe when idle (no-op).
+func (a *App) CancelSpellcheckDownload() {
+	spellPackCancelMu.Lock()
+	defer spellPackCancelMu.Unlock()
+	if spellPackCancel != nil {
+		spellPackCancel()
+		spellPackCancel = nil
+	}
+}
 
 // SetTypewriterMode atomically toggles editor.typewriter_mode (#187), mirroring
 // SetFocusMode: vaultMu.RLock + configMu.Lock + saveConfigTracked. Used by the
@@ -130,8 +164,15 @@ func (a *App) ListLanguagePacks() ([]spellcheck.LanguagePackInfo, error) {
 // EnsureLanguagePack downloads a language pack into the user-global cache if
 // needed. Bundled languages (en-US) are a no-op. Progress is emitted on
 // spellcheck:download:progress. Fails loudly on network/unknown-id errors —
-// never silently falls back to another language.
+// never silently falls back to another language. Cancellable via
+// CancelSpellcheckDownload.
 func (a *App) EnsureLanguagePack(lang string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	setSpellPackCancel(cancel)
+	defer func() {
+		cancel()
+		clearSpellPackCancel()
+	}()
 	emit := func(received, total int64) {
 		a.emit(spellcheckDownloadProgressEvent, map[string]any{
 			"kind":     "language",
@@ -140,7 +181,7 @@ func (a *App) EnsureLanguagePack(lang string) error {
 			"total":    total,
 		})
 	}
-	return spellcheck.EnsureLanguage(context.Background(), lang, emit)
+	return spellcheck.EnsureLanguage(ctx, lang, emit)
 }
 
 // GetLanguagePackContent returns aff+dic text for a non-bundled installed
@@ -160,8 +201,14 @@ func (a *App) ListDomainPacks() ([]spellcheck.DomainPackInfo, error) {
 }
 
 // EnsureDomainPack downloads a domain word list if needed. Bundled packs are a
-// no-op.
+// no-op. Cancellable via CancelSpellcheckDownload.
 func (a *App) EnsureDomainPack(id string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	setSpellPackCancel(cancel)
+	defer func() {
+		cancel()
+		clearSpellPackCancel()
+	}()
 	emit := func(received, total int64) {
 		a.emit(spellcheckDownloadProgressEvent, map[string]any{
 			"kind":     "domain",
@@ -170,7 +217,7 @@ func (a *App) EnsureDomainPack(id string) error {
 			"total":    total,
 		})
 	}
-	return spellcheck.EnsureDomain(context.Background(), id, emit)
+	return spellcheck.EnsureDomain(ctx, id, emit)
 }
 
 // GetDomainPackWords returns the parsed word list for a domain pack (bundled

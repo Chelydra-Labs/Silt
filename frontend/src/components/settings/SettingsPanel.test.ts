@@ -72,6 +72,7 @@ vi.mock('../../../bindings/silt/app.js', () => ({
   ]),
   EnsureLanguagePack: vi.fn().mockResolvedValue(undefined),
   EnsureDomainPack: vi.fn().mockResolvedValue(undefined),
+  CancelSpellcheckDownload: vi.fn(),
   GetLanguagePackContent: vi.fn(),
   GetDomainPackWords: vi.fn().mockResolvedValue([])
 }))
