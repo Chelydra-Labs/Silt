@@ -145,4 +145,31 @@ describe('theme store', () => {
       expect.any(Function)
     )
   })
+
+  it('theme:changed with matching id+mode still updates name (#533)', async () => {
+    await initTheme()
+    const call = eventsOnMock.mock.calls.find(
+      (c: unknown[]) => c[0] === 'theme:changed'
+    )
+    expect(call).toBeTruthy()
+    const handler = call![1] as (ev: { data: unknown }) => void | Promise<void>
+    const beforeInject = injectTokensMock.mock.calls.length
+    await handler({
+      data: { id: 'cyber_forest', mode: 'dark', name: 'Renamed Forest' }
+    })
+    expect(themeState.name).toBe('Renamed Forest')
+    // No re-inject when only the display name changed.
+    expect(injectTokensMock.mock.calls.length).toBe(beforeInject)
+  })
+
+  it('initTheme dispose allows re-subscribe (#534)', async () => {
+    const off = vi.fn()
+    eventsOnMock.mockReturnValue(off)
+    const dispose = await initTheme()
+    expect(eventsOnMock).toHaveBeenCalledTimes(1)
+    dispose()
+    expect(off).toHaveBeenCalled()
+    await initTheme()
+    expect(eventsOnMock).toHaveBeenCalledTimes(2)
+  })
 })

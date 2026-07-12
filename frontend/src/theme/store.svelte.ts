@@ -154,6 +154,8 @@ let schemeMedia: MediaQueryList | null = null
 let started = false
 let themesStarted = false
 let offThemesChanged: (() => void) | null = null
+let offThemeChanged: (() => void) | null = null
+let onSchemeChange: (() => void) | null = null
 
 /**
  * Test-only: reset module-level state (the `started` / `themesStarted`
@@ -162,6 +164,12 @@ let offThemesChanged: (() => void) | null = null
  * code (and intentionally not re-exported from the public surface).
  */
 export function _resetForTests(): void {
+  if (schemeMedia && onSchemeChange) {
+    schemeMedia.removeEventListener('change', onSchemeChange)
+  }
+  onSchemeChange = null
+  offThemeChanged?.()
+  offThemeChanged = null
   schemeMedia = null
   started = false
   themesStarted = false
@@ -219,10 +227,16 @@ export async function refreshActiveTheme(): Promise<void> {
 /**
  * Initialize the theme engine on startup. Loads the active theme over IPC,
  * injects it before/with the first meaningful paint, and wires up the
- * "system" mode listener + theme:changed event. Safe to call once.
+ * "system" mode listener + theme:changed event. Idempotent until disposed.
+ * Returns a disposer that removes listeners and resets the started guard
+ * so HMR / remount can re-init cleanly (#534).
  */
-export async function initTheme(): Promise<void> {
-  if (started) return
+export async function initTheme(): Promise<() => void> {
+  if (started) {
+    return () => {
+      /* already started elsewhere — no-op dispose from this call */
+    }
+  }
   started = true
 
   // Watch prefers-color-scheme so "system" mode follows the OS live, with
@@ -232,24 +246,28 @@ export async function initTheme(): Promise<void> {
   if (typeof window !== 'undefined' && window.matchMedia) {
     schemeMedia = window.matchMedia('(prefers-color-scheme: light)')
     systemScheme.mode = schemeMedia.matches ? 'light' : 'dark'
-    schemeMedia.addEventListener('change', () => {
+    onSchemeChange = () => {
       systemScheme.mode = schemeMedia!.matches ? 'light' : 'dark'
       if (themeState.mode === 'system') restoreActiveTheme()
-    })
+    }
+    schemeMedia.addEventListener('change', onSchemeChange)
   }
 
   // Re-paint when the backend reports a theme change. The event carries the
-  // resolved {id, mode}; if it matches what this window already applied
-  // (the common case -- our own applyTheme call), skip the redundant
-  // GetActiveTheme round-trip + re-inject. Falls through to a re-fetch when
-  // the change is external or the local state hasn't caught up yet.
-  Events.On('theme:changed', async (ev: any) => {
-    const payload: { id?: string; mode?: string } | null = ev.data
+  // resolved {id, mode, name?}. When id+mode already match (common after our
+  // own applyTheme), skip the GetActiveTheme round-trip + re-inject — but
+  // still apply a payload name so active rename (#533) updates the label.
+  offThemeChanged = Events.On('theme:changed', async (ev: any) => {
+    const payload: { id?: string; mode?: string; name?: string } | null =
+      ev.data
     if (
       payload &&
       payload.id === themeState.id &&
       payload.mode === themeState.mode
     ) {
+      if (typeof payload.name === 'string' && payload.name.length > 0) {
+        themeState.name = payload.name
+      }
       return
     }
     try {
@@ -269,6 +287,17 @@ export async function initTheme(): Promise<void> {
     themeState.error = err instanceof Error ? err.message : String(err)
     // On error the shell still renders from the index.css :root fallbacks;
     // initTheme is fire-and-forget so nothing blocks on a loader.
+  }
+
+  return () => {
+    if (schemeMedia && onSchemeChange) {
+      schemeMedia.removeEventListener('change', onSchemeChange)
+    }
+    onSchemeChange = null
+    offThemeChanged?.()
+    offThemeChanged = null
+    schemeMedia = null
+    started = false
   }
 }
 
