@@ -970,7 +970,7 @@
               <div
                 class="px-3 pb-3 space-y-4 border-t border-surface-panel-border pt-3"
               >
-                {#each [{ key: 'hover' as const, label: 'Hover (from app background)' }, { key: 'active' as const, label: 'Active (from app background)' }, { key: 'text_disabled' as const, label: 'Text disabled (from app background)' }] as d (d.key)}
+                {#each [{ key: 'hover' as const, label: 'Hover (from app background)' }, { key: 'active' as const, label: 'Active (from app background)' }, { key: 'text_disabled' as const, label: 'Text disabled (from app text)' }] as d (d.key)}
                   {@const dPath = wc.modePath(d.key)}
                   <div class="space-y-2">
                     <OklchColorField

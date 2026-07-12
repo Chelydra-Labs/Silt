@@ -148,6 +148,7 @@
           id={dataTestId ? `${dataTestId}-error` : undefined}
           class="mt-1.5 text-type-2xs font-label-sm text-status-danger"
           role="status"
+          aria-live="polite"
         >
           {error}
         </p>

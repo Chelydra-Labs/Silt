@@ -103,11 +103,6 @@ export function createWorkingCopy() {
     mutationGen += 1
   }
 
-  function markDirty(): void {
-    dirtyFlag = true
-    bumpMutation()
-  }
-
   function clearDirty(): void {
     dirtyFlag = false
     bumpMutation()
@@ -201,6 +196,11 @@ export function createWorkingCopy() {
 
   function setAt(path: string, value: unknown): void {
     if (!draft) return
+    // Manual edit of a derived path auto-locks so seed edits won't clobber it.
+    // Applied here (not only setColor) so any caller path stays consistent.
+    if (isDerivedPath(path)) {
+      lockDerived(path)
+    }
     // undefined means "remove this key" (fonts, optional surfaces, etc.).
     let next =
       value === undefined
@@ -210,16 +210,16 @@ export function createWorkingCopy() {
     // Re-derive unlocked interaction tokens when a seed color changes (#529).
     next = applyDerivedFromSeedEdit(next, path)
     draft = next
-    markDirty()
+    // Recompute vs seed so editing back to original clears dirty (sticky-dirty fix).
+    // One JSON.stringify per mutation is far cheaper than full-doc clone; hot path
+    // cost remains path-spine clone + flatten, not structuredClone(theme).
+    recomputeDirty()
+    bumpMutation()
     schedulePreview()
   }
 
   /** Convenience: set a color string at a document path. */
   function setColor(path: string, value: string): void {
-    // Manual edit of a derived path auto-locks so seed edits won't clobber it.
-    if (isDerivedPath(path)) {
-      lockDerived(path)
-    }
     setAt(path, value)
   }
 
@@ -292,7 +292,8 @@ export function createWorkingCopy() {
     if (derived == null) return
     unlockDerived(path)
     draft = setAtPath(draft, path, derived)
-    markDirty()
+    recomputeDirty()
+    bumpMutation()
     schedulePreview()
   }
 
