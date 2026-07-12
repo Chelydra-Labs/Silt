@@ -7,7 +7,7 @@ import (
 
 // Theme is the parsed canonical v2 theme. It mirrors the JSON schema in
 // docs/theme-system-v2-rfc.md §2 and DESIGN.md §7 / SPECS.md §6.4: a
-// modes-based object with hue-agnostic semantic accents, 7 named surface
+// modes-based object with hue-agnostic semantic accents, 9 named surface
 // zones, OKLCH-aware colors, and optional geometry/typography/editor/
 // background sub-trees. See themes/cyber_forest.json for the canonical
 // example.
@@ -55,9 +55,10 @@ type Modes struct {
 
 // Mode is one appearance (dark or light) of a theme.
 //
-// Surface model: 7 named zones (app/sidebar/editor/panel/modal/popover/card),
-// each {bg, border, text}. Only `app` is required; the others inherit from
-// their parent zone (RFC §5) via var() fallback chains emitted by Flatten.
+// Surface model: 9 named zones (app/sidebar/editor/panel/modal/popover/card/
+// titlebar/activitybar), each {bg, border, text}. Only `app` is required; the
+// others inherit from their parent zone (RFC §5) via var() fallback chains
+// emitted by Flatten.
 // The flat v1 bg model and the binary chrome block are removed.
 //
 // Interaction tokens (hover/active/border_active/border_focus) are
@@ -66,23 +67,23 @@ type Modes struct {
 // radius/spacing/shadow/editor are optional; Flatten emits sensible defaults
 // so a theme that omits them renders with v1-equivalent geometry/type.
 type Mode struct {
-	Surfaces     Surfaces `json:"surfaces"`
-	Hover        string   `json:"hover"`
-	Active       string   `json:"active"`
-	BorderActive string   `json:"border_active"`
-	BorderFocus  string   `json:"border_focus"`
-	TextMuted    string   `json:"text_muted"`
-	TextDisabled string   `json:"text_disabled"`
-	Accent       Accent   `json:"accent"`
-	Status       Status   `json:"status"`
-	Error        Error    `json:"error"`
-	Radius       *Radius  `json:"radius,omitempty"`
-	Spacing      *Spacing `json:"spacing,omitempty"`
-	Shadow       *Shadow  `json:"shadow,omitempty"`
-	Editor       *Editor  `json:"editor,omitempty"`
-	FocusGlow       string   `json:"focus_glow,omitempty"`
-	BorderGlow      string   `json:"border_glow,omitempty"`
-	NavIcons        map[string]string `json:"nav_icons,omitempty"`
+	Surfaces     Surfaces          `json:"surfaces"`
+	Hover        string            `json:"hover"`
+	Active       string            `json:"active"`
+	BorderActive string            `json:"border_active"`
+	BorderFocus  string            `json:"border_focus"`
+	TextMuted    string            `json:"text_muted"`
+	TextDisabled string            `json:"text_disabled"`
+	Accent       Accent            `json:"accent"`
+	Status       Status            `json:"status"`
+	Error        Error             `json:"error"`
+	Radius       *Radius           `json:"radius,omitempty"`
+	Spacing      *Spacing          `json:"spacing,omitempty"`
+	Shadow       *Shadow           `json:"shadow,omitempty"`
+	Editor       *Editor           `json:"editor,omitempty"`
+	FocusGlow    string            `json:"focus_glow,omitempty"`
+	BorderGlow   string            `json:"border_glow,omitempty"`
+	NavIcons     map[string]string `json:"nav_icons,omitempty"`
 }
 
 // Surfaces holds the 9 named surface zones. App is the always-authored root;
