@@ -56,6 +56,22 @@ export interface TaskDetail {
   subtask_done: number
 }
 
+/**
+ * Format a single task's estimate minutes for display / drawer draft.
+ * Mirrors backend/parser.FormatEstimateMinutes: whole/half work-days as Nd
+ * (so 2.5d stays "2.5d", not "20h"), otherwise hours/minutes. Keep in sync.
+ */
+export function formatEstimateMinutes(mins: number | null | undefined): string {
+  if (mins == null || mins <= 0) return ''
+  // Whole or half work-days only (480m / 240m steps): 1d, 1.5d, 2d, 2.5d…
+  if (mins >= 480 && mins % 240 === 0) {
+    return `${mins / 480}d`
+  }
+  if (mins % 60 === 0) return `${mins / 60}h`
+  if (mins % 30 === 0 && mins > 60) return `${mins / 60}h`
+  return `${mins}m`
+}
+
 /** Format a sum of estimate minutes for section/column headers (e.g. "6.5h"). */
 export function formatEstimateSum(mins: number): string {
   if (mins <= 0) return ''

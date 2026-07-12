@@ -323,10 +323,15 @@
     // Soft WIP-limit guard (#437, status dimension only): pause before the
     // persist so the user can confirm or cancel. Optimistic placement runs
     // first so Cancel can snap the card back (mirrors the DONE-blocked flow).
+    // Skip WIP when blocked-DONE will also fire — one modal is enough; the
+    // blocked-DONE dialog already implies the move proceeds if confirmed.
+    const skipWipForBlockedDone =
+      groupBy === 'status' && toCol.value === 'DONE' && !!card.is_blocked
     if (
       wouldExceedWip(card, fromColKey, toCol) &&
       !pendingWipConfirm &&
-      !pendingBlockedDone
+      !pendingBlockedDone &&
+      !skipWipForBlockedDone
     ) {
       applyOptimistic(card, fromColKey, toCol)
       pendingWipConfirm = { card, fromColKey, toCol }

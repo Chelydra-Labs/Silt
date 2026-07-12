@@ -45,14 +45,17 @@ func taskDerivedCounts(blocks []parser.ParsedBlock) (comments, subtaskTotal, sub
 		switch b.Type {
 		case parser.BlockNote:
 			// Nested replies: walk up until a TASK ancestor (or root).
+			// Depth-capped to match CommentThread's frontend guard and to
+			// survive a cyclic ParentID graph from SaveSubtreeBlocks /
+			// hand-edited markdown (self-loop alone is not enough for A→B→A).
 			pid := b.ParentID
-			for pid != "" {
+			for steps := 0; pid != "" && steps < 64; steps++ {
 				if typeOf[pid] == parser.BlockTask {
 					comments[pid]++
 					break
 				}
 				next := parentOf[pid]
-				if next == pid {
+				if next == "" || next == pid {
 					break
 				}
 				pid = next

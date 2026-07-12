@@ -14,7 +14,12 @@
     return friendlyCaughtError(e)
   }
   import type { TaskDetail } from '../types'
-  import { PRIORITY_LABELS, laneLabel, priorityClass } from '../types'
+  import {
+    PRIORITY_LABELS,
+    formatEstimateMinutes,
+    laneLabel,
+    priorityClass
+  } from '../types'
   import DependencyPicker from './DependencyPicker.svelte'
   import BlockedDoneDialog from './BlockedDoneDialog.svelte'
   import CommentThread from './CommentThread.svelte'
@@ -160,19 +165,8 @@
   // True after a failed estimate save until the next successful edit/clear.
   let estimateInvalid = $state(false)
 
-  /** Format minutes for the estimate input; hide missing/zero.
-   * Prefer work-day units when ≥ 1d and divisible by 60 so 2.5d (1200m)
-   * reloads as "2.5d" rather than "20h" (matches FormatEstimateMinutes). */
-  function formatEstimateDraft(mins: number | null | undefined): string {
-    if (mins == null || mins <= 0) return ''
-    if (mins >= 480 && mins % 60 === 0) {
-      const d = mins / 480
-      return `${d}d`
-    }
-    if (mins % 60 === 0) return `${mins / 60}h`
-    if (mins % 30 === 0 && mins > 60) return `${mins / 60}h`
-    return `${mins}m`
-  }
+  // Shared with list/board rollups via types.formatEstimateMinutes (Go twin:
+  // parser.FormatEstimateMinutes) so drawer draft and query reconstruction match.
 
   // Pending DONE-on-blocked confirmation (#302). Picking DONE on a task with
   // open prerequisites pauses here and renders the shared BlockedDoneDialog
@@ -242,7 +236,7 @@
       titleDraft = task?.clean_content ?? ''
     }
     if (untrack(() => !estimatePending)) {
-      estimateDraft = formatEstimateDraft(task?.estimate_minutes)
+      estimateDraft = formatEstimateMinutes(task?.estimate_minutes)
       estimateInvalid = false
     }
     metaError = ''
@@ -532,7 +526,7 @@
   async function commitEstimate() {
     if (!task || estimatePending) return
     const trimmed = estimateDraft.trim()
-    const prev = formatEstimateDraft(task.estimate_minutes)
+    const prev = formatEstimateMinutes(task.estimate_minutes)
     if (trimmed === prev) {
       estimateInvalid = false
       return

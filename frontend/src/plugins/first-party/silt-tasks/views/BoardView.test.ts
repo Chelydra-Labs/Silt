@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 
 // jsdom polyfills — BoardView pulls in TaskEditDrawer/TaskSubEditorModal
 // (transition:fly + TipTap), which need the Web Animations API + caret rects.
@@ -1203,6 +1209,56 @@ describe('BoardView — dimension-aware Board (#421)', () => {
 
     expect(mocks.updateBlockState).toHaveBeenCalledWith('t1', 'DOING')
     expect(screen.queryByTestId('board-wip-confirm')).toBeNull()
+  })
+
+  it('WIP over-limit + blocked DONE skips WIP dialog and opens blocked-DONE only', async () => {
+    mocks.tasksSettings = {
+      columns: [
+        { name: 'TODO' },
+        { name: 'DOING' },
+        { name: 'DONE', wipLimit: 1 }
+      ]
+    }
+    await initTasksSettings(makeCtx())
+    mocks.getTaskBlockers.mockResolvedValue([
+      { id: 'blocker-1', clean_content: 'Prerequisite' }
+    ])
+    await renderBoard('status', [
+      row({
+        id: 'tb',
+        status: 'TODO',
+        clean_content: 'blocked',
+        is_blocked: 1
+      }),
+      row({ id: 'td', status: 'DONE', clean_content: 'already done' })
+    ])
+
+    const todoCard = screen
+      .getByRole('group', { name: 'To Do' })
+      .querySelector<HTMLElement>('[data-card]')!
+    const doneCol = screen.getByRole('group', { name: 'Done' })
+
+    await fireEvent.dragStart(todoCard)
+    await fireEvent.drop(doneCol)
+    await flush()
+
+    // Single dialog: blocked-DONE, not WIP confirm first.
+    expect(screen.queryByTestId('board-wip-confirm')).toBeNull()
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Complete blocked task?'
+    })
+    expect(dialog).toBeInTheDocument()
+
+    // Cancel reverts to TODO (use dialog-scoped Cancel — not the scrim).
+    await fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Cancel' })
+    )
+    await flush()
+    expect(
+      screen.getByRole('group', { name: 'To Do' }).querySelector('[data-card]')
+        ?.textContent
+    ).toContain('blocked')
+    expect(mocks.updateBlockState).not.toHaveBeenCalled()
   })
 
   it('prompts on quick-add into an over-WIP column; cancel does not create', async () => {

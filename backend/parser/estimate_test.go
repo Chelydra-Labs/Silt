@@ -45,6 +45,9 @@ func TestFormatEstimateMinutes(t *testing.T) {
 		{480, "1d"},
 		{960, "2d"},
 		{1200, "2.5d"}, // 2.5 work-days — not "20h"
+		{720, "1.5d"},
+		{540, "9h"},  // not "1.125d"
+		{600, "10h"}, // not "1.25d"
 		{240, "4h"},
 	}
 	for _, c := range cases {

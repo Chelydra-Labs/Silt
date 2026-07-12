@@ -855,6 +855,19 @@ describe('TaskEditDrawer — estimate editor (#439)', () => {
     expect(input.value).toBe('2.5d')
   })
 
+  it('formats non-half-day hours as hours not fractional days (540 → 9h)', () => {
+    const ctx = makeCtx()
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({ estimate_minutes: 540 }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+    const input = screen.getByTestId('task-estimate-input') as HTMLInputElement
+    expect(input.value).toBe('9h')
+  })
+
   it('typing + Enter commits via ctx.setTaskEstimate', async () => {
     const setTaskEstimate = vi.fn().mockResolvedValue(true)
     const ctx = makeCtx({ setTaskEstimate })

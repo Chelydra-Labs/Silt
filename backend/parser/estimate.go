@@ -51,15 +51,15 @@ func ParseEstimateMinutes(raw string) (minutes int, ok bool) {
 
 // FormatEstimateMinutes renders minutes as a compact duration for UI rollups
 // and cache→display reconstruction (e.g. 90 → "1.5h", 480 → "1d", 1200 → "2.5d",
-// 30 → "30m"). Prefer day units when minutes are a multiple of 60 within a
-// work-day so "2.5d" does not round-trip display as "20h".
+// 540 → "9h", 30 → "30m"). Prefer day units only for whole/half work-days so
+// "2.5d" does not display as "20h", while "9h" does not become "1.125d".
+// Keep in sync with frontend formatEstimateMinutes (types.ts).
 func FormatEstimateMinutes(minutes int) string {
 	if minutes <= 0 {
 		return ""
 	}
-	// Whole or fractional work-days (480m) when divisible by 60 so 2.5d
-	// (1200m) formats as "2.5d" rather than "20h".
-	if minutes >= 480 && minutes%60 == 0 {
+	// Whole or half work-days only (480m / 240m steps): 1d, 1.5d, 2d, 2.5d…
+	if minutes >= 480 && minutes%240 == 0 {
 		d := float64(minutes) / 480
 		return fmt.Sprintf("%gd", d)
 	}
