@@ -129,6 +129,15 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      const currentIdx = TYPE_CHIPS.findIndex((c) => c.id === typeFilter)
+      const nextIdx = e.shiftKey
+        ? (currentIdx - 1 + TYPE_CHIPS.length) % TYPE_CHIPS.length
+        : (currentIdx + 1) % TYPE_CHIPS.length
+      typeFilter = TYPE_CHIPS[nextIdx].id
+      return
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (results.length > 0) {

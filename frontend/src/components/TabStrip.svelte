@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { TabEntry } from '../lib/tabs'
   import { fade, fly } from 'svelte/transition'
+  import ContextMenu from './ContextMenu.svelte'
 
   interface Props {
     tabs: TabEntry[]
@@ -22,6 +23,59 @@
     onReorderTab,
     showDirtyIndicators = true
   }: Props = $props()
+
+  let contextMenu = $state<{
+    open: boolean
+    anchor: { x: number; y: number } | null
+    tab: TabEntry | null
+  }>({
+    open: false,
+    anchor: null,
+    tab: null
+  })
+
+  function handleTabContextMenu(e: MouseEvent, tab: TabEntry): void {
+    e.preventDefault()
+    e.stopPropagation()
+    contextMenu = {
+      open: true,
+      anchor: { x: e.clientX, y: e.clientY },
+      tab
+    }
+  }
+
+  function closeContextMenu(): void {
+    contextMenu = { open: false, anchor: null, tab: null }
+  }
+
+  function handleCloseOtherTabs(targetTabId: string): void {
+    const toClose = tabs.filter((t) => t.id !== targetTabId)
+    closeContextMenu()
+    for (const t of toClose) {
+      onCloseTab(t.id)
+    }
+  }
+
+  function handleCloseTabsToRight(targetTabId: string): void {
+    const idx = tabs.findIndex((t) => t.id === targetTabId)
+    closeContextMenu()
+    if (idx !== -1) {
+      const toClose = tabs.slice(idx + 1)
+      for (const t of toClose) {
+        onCloseTab(t.id)
+      }
+    }
+  }
+
+  async function handleCopyPageReference(tab: TabEntry): Promise<void> {
+    closeContextMenu()
+    const ref = `[[${tab.notebook}/${tab.section ? tab.section + '/' : ''}${tab.page}]]`
+    try {
+      await navigator.clipboard.writeText(ref)
+    } catch {
+      // ignore
+    }
+  }
 
   // Roving tabindex: the active tab (or the first tab if none active) is the
   // only tab in the tab sequence. Arrow keys move focus between tabs without
@@ -200,6 +254,7 @@
           onfocus={() => (focusedIndex = i)}
           onauxclick={(e) => handleAuxClick(e, tab)}
           ondblclick={() => handleDblClick(tab)}
+          oncontextmenu={(e) => handleTabContextMenu(e, tab)}
         >
           {#if tab.id === activeTabId}
             <div class="active-tab-indicator"></div>
@@ -241,6 +296,76 @@
       {/each}
     </div>
   </div>
+
+  <ContextMenu
+    open={contextMenu.open}
+    anchor={contextMenu.anchor}
+    onClose={closeContextMenu}
+    ariaLabel="Tab actions"
+  >
+    {#if contextMenu.tab}
+      {@const targetTab = contextMenu.tab}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => {
+          closeContextMenu()
+          onCloseTab(targetTab.id)
+        }}
+      >
+        <span class="material-symbols-outlined text-icon-md">close</span>
+        Close Tab
+      </button>
+
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => handleCloseOtherTabs(targetTab.id)}
+      >
+        <span class="material-symbols-outlined text-icon-md"
+          >tab_unselected</span
+        >
+        Close Other Tabs
+      </button>
+
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => handleCloseTabsToRight(targetTab.id)}
+      >
+        <span class="material-symbols-outlined text-icon-md"
+          >tab_close_right</span
+        >
+        Close Tabs to Right
+      </button>
+
+      <div class="context-menu-separator"></div>
+
+      {#if targetTab.preview}
+        <button
+          type="button"
+          role="menuitem"
+          onclick={() => {
+            closeContextMenu()
+            onPromoteTab(targetTab.id)
+          }}
+        >
+          <span class="material-symbols-outlined text-icon-md">push_pin</span>
+          Pin Tab
+        </button>
+        <div class="context-menu-separator"></div>
+      {/if}
+
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => handleCopyPageReference(targetTab)}
+      >
+        <span class="material-symbols-outlined text-icon-md">link</span>
+        Copy Page Reference
+      </button>
+    {/if}
+  </ContextMenu>
 {/if}
 
 <style>

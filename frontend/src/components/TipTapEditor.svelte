@@ -1514,37 +1514,53 @@
       >
         <button
           type="button"
-          class="context-menu-item"
+          class="context-menu-item justify-between"
           role="menuitem"
           onclick={handleCut}
           disabled={selectionEmpty}
         >
-          <span class="material-symbols-outlined text-icon-md">content_cut</span
+          <span class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-icon-md"
+              >content_cut</span
+            >
+            Cut
+          </span>
+          <span class="ml-auto text-type-2xs text-text-muted/70 font-mono pl-4"
+            >Ctrl+X</span
           >
-          Cut
         </button>
         <button
           type="button"
-          class="context-menu-item"
+          class="context-menu-item justify-between"
           role="menuitem"
           onclick={handleCopy}
           disabled={selectionEmpty}
         >
-          <span class="material-symbols-outlined text-icon-md"
-            >content_copy</span
+          <span class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-icon-md"
+              >content_copy</span
+            >
+            Copy
+          </span>
+          <span class="ml-auto text-type-2xs text-text-muted/70 font-mono pl-4"
+            >Ctrl+C</span
           >
-          Copy
         </button>
         <button
           type="button"
-          class="context-menu-item"
+          class="context-menu-item justify-between"
           role="menuitem"
           onclick={handlePaste}
         >
-          <span class="material-symbols-outlined text-icon-md"
-            >content_paste</span
+          <span class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-icon-md"
+              >content_paste</span
+            >
+            Paste
+          </span>
+          <span class="ml-auto text-type-2xs text-text-muted/70 font-mono pl-4"
+            >Ctrl+V</span
           >
-          Paste
         </button>
 
         <div class="context-menu-separator"></div>
@@ -1618,14 +1634,19 @@
         <div class="context-menu-separator"></div>
         <button
           type="button"
-          class="context-menu-item"
+          class="context-menu-item justify-between"
           role="menuitem"
           onclick={handleClearFormatting}
         >
-          <span class="material-symbols-outlined text-icon-md"
-            >format_clear</span
+          <span class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-icon-md"
+              >format_clear</span
+            >
+            Clear Formatting
+          </span>
+          <span class="ml-auto text-type-2xs text-text-muted/70 font-mono pl-4"
+            >Ctrl+\</span
           >
-          Clear Formatting
         </button>
       </div>
     </div>
