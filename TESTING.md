@@ -126,6 +126,10 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
       vice-versa.
 - [ ] `[[Page]]` / `[[Section/Page#Heading|alias]]`: chip resolves, click opens
       the page (heading scrolls); unresolved/ambiguous chips are non-links.
+- [ ] Unresolved chip: hover → "Create page" → page created in active
+      notebook/section, chip becomes a link, navigates to the new page.
+- [ ] Ambiguous chip: hover → candidate pick list + "Create page" button;
+      pick navigates, create uses the typed target name.
 - [ ] Rename/move target page rewrites inbound `[[…]]` (alias/heading preserved);
       block UUIDs unchanged.
 - [ ] Tab context: **Copy Page Path** (plain path) and **Copy Page Reference**
@@ -139,6 +143,10 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
 **Writing Assistant proposed edit**
 - [ ] Selection replace shows in-editor strike + ghost preview before Accept.
 - [ ] Accept = one history step + autosave; Reject/Esc clears preview with no disk write.
+- [ ] Multi-paragraph proposal on a block-spanning selection: Accept creates one
+      note block per paragraph (structure preserved, not flattened).
+- [ ] Schema-incompatible multi-paragraph proposal (e.g. inside a table cell):
+      in-editor preview not shown; panel Accept uses SDK apply path (no silent drop).
 
 **Drawers**
 - [ ] Opening Writing Assistant closes AI Q&A and vice versa; Escape only affects the open drawer.
