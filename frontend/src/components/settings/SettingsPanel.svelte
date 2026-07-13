@@ -146,8 +146,19 @@
     )}
   >
     {#if settings.loading && !settings.config && section !== 'general'}
-      <div class="p-8 text-text-muted animate-pulse font-body-md">
-        Loading settings…
+      <div class="p-8 max-w-4xl flex flex-col gap-4 select-none">
+        <div
+          class="h-6 w-48 rounded bg-surface-panel-border/40 animate-pulse"
+        ></div>
+        <div
+          class="h-10 w-full rounded-lg bg-surface-panel-border/30 animate-pulse"
+        ></div>
+        <div
+          class="h-10 w-full rounded-lg bg-surface-panel-border/30 animate-pulse"
+        ></div>
+        <div
+          class="h-10 w-3/4 rounded-lg bg-surface-panel-border/30 animate-pulse"
+        ></div>
       </div>
     {:else if !settings.config && settings.error && section !== 'general'}
       <div class="p-8">

@@ -39,12 +39,40 @@
     debounceTimer = setTimeout(runSearch, 180)
   }
 
+  let dialogEl = $state<HTMLDivElement | null>(null)
+  let previouslyFocused: HTMLElement | null = null
+
+  const FOCUSABLE =
+    'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+  function focusableEls(): HTMLElement[] {
+    if (!dialogEl) return []
+    return Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE))
+  }
+
   function pick(res: any) {
     onPick(res.id)
     onClose()
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Tab' && dialogEl) {
+      const els = focusableEls()
+      if (els.length === 0) return
+      const first = els[0]
+      const last = els[els.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (e.shiftKey) {
+        if (active === first || !dialogEl.contains(active)) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else if (active === last || !dialogEl.contains(active)) {
+        e.preventDefault()
+        first.focus()
+      }
+      return
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       selectedIdx = Math.min(selectedIdx + 1, results.length - 1)
@@ -61,7 +89,11 @@
   }
 
   onMount(() => {
+    previouslyFocused = document.activeElement as HTMLElement | null
     inputEl?.focus()
+    return () => {
+      previouslyFocused?.focus?.()
+    }
   })
 </script>
 
@@ -75,6 +107,7 @@
     class="absolute inset-0 cursor-default border-none p-0 bg-transparent"
   ></button>
   <div
+    bind:this={dialogEl}
     role="dialog"
     aria-modal="true"
     aria-label="Embed a block"

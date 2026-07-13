@@ -185,9 +185,17 @@
     >
       {#if section.pages.length === 0 && (!section.children || section.children.length === 0)}
         <div
-          class="text-surface-sidebar-text-muted text-type-xs font-body-md py-1.5 px-2 italic"
+          class="text-surface-sidebar-text-muted text-type-2xs font-body-md py-1.5 px-2.5 flex items-center justify-between select-none"
         >
-          No pages. Click + to add one.
+          <span class="italic">No pages</span>
+          <button
+            type="button"
+            onclick={() => onCreatePageInline(sectionKey)}
+            class="text-type-2xs text-accent-primary-start hover:underline border-none bg-transparent cursor-pointer p-0 font-medium"
+            title="Create a new page in this section"
+          >
+            + Add Page
+          </button>
         </div>
       {:else}
         {#each sortedPages as pg (pg.name)}
