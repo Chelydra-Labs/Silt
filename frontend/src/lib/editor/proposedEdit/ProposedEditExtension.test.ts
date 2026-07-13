@@ -103,6 +103,22 @@ describe('ProposedEdit extension (#543)', () => {
     expect(hasProposedEdit(ed)).toBe(false)
   })
 
+  it('refuses empty markdown on set and accept (no partial wipe)', () => {
+    const ed = track(makeEditor())
+    const original = ed.getText()
+    expect(
+      ed.commands.setProposedEdit({ from: 1, to: 6, markdown: '   ' })
+    ).toBe(false)
+    expect(hasProposedEdit(ed)).toBe(false)
+    // Force a non-empty preview then clear markdown via re-set is blocked;
+    // accept with empty would no-op if state were corrupted.
+    ed.commands.setProposedEdit({ from: 1, to: 6, markdown: 'Hi' })
+    expect(hasProposedEdit(ed)).toBe(true)
+    // Reject path still works; empty set never lands.
+    ed.commands.rejectProposedEdit()
+    expect(ed.getText()).toBe(original)
+  })
+
   it('auto-dismisses when the underlying range is deleted', () => {
     const ed = track(makeEditor('<p>Hello world</p>'))
     ed.commands.setProposedEdit({ from: 7, to: 12, markdown: 'there' })

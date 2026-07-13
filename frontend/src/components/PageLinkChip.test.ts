@@ -95,4 +95,30 @@ describe('PageLinkChip (#545)', () => {
     })
     expect(screen.queryByRole('link')).toBeNull()
   })
+
+  it('shows candidate list on hover and navigates on pick', async () => {
+    mocks.resolvePageLink.mockResolvedValue({
+      exists: false,
+      ambiguous: true,
+      candidates: [
+        { notebook: 'Work', section: 'A', page: 'Site' },
+        { notebook: 'Archive', section: 'B', page: 'Site' }
+      ]
+    })
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-page', handler)
+    render(PageLinkChip, { props: { target: 'Site' } })
+    await waitFor(() => {
+      expect(screen.getByRole('button')).toBeTruthy()
+    })
+    await fireEvent.mouseEnter(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Work › A › Site')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByText('Work › A › Site'))
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler.mock.calls[0][0].detail.notebook).toBe('Work')
+    expect(handler.mock.calls[0][0].detail.page).toBe('Site')
+    window.removeEventListener('navigate-to-page', handler)
+  })
 })

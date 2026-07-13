@@ -153,10 +153,11 @@ describe('AutosaveManager', () => {
       const autosave = new AutosaveManager(deps)
 
       autosave.trigger()
-      // Advance past the debounce; save() starts (saving) then the IPC
-      // resolves (saved).
+      // Advance past the debounce; save() starts (saving), IPC resolves, then
+      // the SAVING_MIN_DISPLAY_MS floor elapses before 'saved'.
       await vi.advanceTimersByTimeAsync(150)
       await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(300)
 
       const phases = (
         deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
@@ -171,6 +172,7 @@ describe('AutosaveManager', () => {
       autosave.trigger()
       await vi.advanceTimersByTimeAsync(150)
       await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(300) // SAVING_MIN_DISPLAY_MS
 
       const phasesBefore = (
         deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
@@ -194,6 +196,7 @@ describe('AutosaveManager', () => {
       autosave.trigger()
       await vi.advanceTimersByTimeAsync(150)
       await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(300) // SAVING_MIN_DISPLAY_MS
 
       // A new edit mid-hold flips back to pending and cancels the revert.
       // markDirty() represents the dirty transition without scheduling a new
@@ -210,6 +213,27 @@ describe('AutosaveManager', () => {
       expect(calls.at(-1)).toBe('pending')
       const savedIdx = calls.indexOf('saved')
       expect(calls.slice(savedIdx + 1)).not.toContain('idle')
+    })
+
+    it('holds saving for at least SAVING_MIN_DISPLAY_MS (non-blocking)', async () => {
+      const deps = makeDeps()
+      const autosave = new AutosaveManager(deps)
+
+      autosave.trigger()
+      await vi.advanceTimersByTimeAsync(150)
+      await vi.advanceTimersByTimeAsync(0)
+      // IPC done; onUpdate already fired; phase still 'saving' until floor.
+      expect(deps.onUpdate).toHaveBeenCalled()
+      let phases = (
+        deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.map((c: any[]) => c[0].phase)
+      expect(phases.at(-1)).toBe('saving')
+
+      await vi.advanceTimersByTimeAsync(300)
+      phases = (
+        deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.map((c: any[]) => c[0].phase)
+      expect(phases.at(-1)).toBe('saved')
     })
 
     it('emits error phase on save failure', async () => {

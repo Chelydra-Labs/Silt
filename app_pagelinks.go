@@ -39,10 +39,19 @@ func (a *App) ResolvePageLink(target string) (parser.PageReference, error) {
 	return out, nil
 }
 
+// pageLinksRewriteResult is the payload of the "page-links:rewritten" event
+// emitted after a rename/move rewrites inbound wiki-links (#545 harden).
+type pageLinksRewriteResult struct {
+	Rewritten int `json:"rewritten"`
+	Failed    int `json:"failed"`
+}
+
 // rewriteInboundPageLinks rewrites [[…]] links that point at oldNB/oldSec/oldPage
 // so they point at newNB/newSec/newPage, preserving |alias and #heading. Runs
 // inside the caller's LockFileWrite; reindexes each rewritten source file.
 // Block UUIDs are never touched — only the link text changes (#545).
+// Emits page-links:rewritten when any file was rewritten or failed so the UI
+// can surface partial failure (silent log-only was a hardening gap).
 func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, newPage string) {
 	if a.db == nil || oldPage == "" || newPage == "" {
 		return
@@ -62,6 +71,7 @@ func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, new
 	})
 	if err != nil {
 		log.Printf("rewriteInboundPageLinks: list: %v", err)
+		a.emit("page-links:rewritten", pageLinksRewriteResult{Failed: 1})
 		return
 	}
 	if len(rows) == 0 {
@@ -84,6 +94,8 @@ func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, new
 		byFile[k] = append(byFile[k], rewrite{oldRaw: r.TargetRaw, newRaw: newRaw})
 	}
 
+	rewritten := 0
+	failed := 0
 	for k, rewrites := range byFile {
 		// Deduplicate rewrite pairs (same oldRaw may appear on many blocks).
 		seen := map[string]string{}
@@ -94,16 +106,19 @@ func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, new
 		notebookDir, err := a.resolveNotebookDir(k.nb, source)
 		if err != nil {
 			log.Printf("rewriteInboundPageLinks: resolve %s: %v", k.nb, err)
+			failed++
 			continue
 		}
 		filePath := filepath.Join(notebookDir, k.sec, k.page+".md")
 		if !isPathWithinRoot(filePath, notebookDir) {
 			log.Printf("rewriteInboundPageLinks: path escapes root: %s", filePath)
+			failed++
 			continue
 		}
 		contentBytes, err := os.ReadFile(filePath)
 		if err != nil {
 			log.Printf("rewriteInboundPageLinks: read %s: %v", filePath, err)
+			failed++
 			continue
 		}
 		content := string(contentBytes)
@@ -119,9 +134,19 @@ func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, new
 		a.tracker.RegisterWrite(filePath)
 		if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
 			log.Printf("rewriteInboundPageLinks: write %s: %v", filePath, err)
+			failed++
 			continue
 		}
 		a.reindexFile(filePath, k.nb, k.sec, k.page)
+		rewritten++
+	}
+	if rewritten > 0 || failed > 0 {
+		log.Printf("rewriteInboundPageLinks: rewritten=%d failed=%d (%s/%s/%s → %s/%s/%s)",
+			rewritten, failed, oldNB, oldSec, oldPage, newNB, newSec, newPage)
+		a.emit("page-links:rewritten", pageLinksRewriteResult{
+			Rewritten: rewritten,
+			Failed:    failed,
+		})
 	}
 }
 

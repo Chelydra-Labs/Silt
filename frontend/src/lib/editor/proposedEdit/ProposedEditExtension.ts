@@ -254,6 +254,8 @@ export const ProposedEdit = Extension.create({
         (opts: ProposedEditOptions): Command =>
         ({ tr, dispatch }) => {
           if (rangeCollapsed(opts.from, opts.to)) return false
+          // Empty / whitespace-only proposals are not previewable (#543).
+          if (!opts.markdown?.trim()) return false
           if (dispatch) {
             dispatch(tr.setMeta(SET_META, { ...opts } as ActiveProposal))
           }
@@ -265,9 +267,14 @@ export const ProposedEdit = Extension.create({
           const st = key.getState(state)
           if (!st?.proposal) return false
           const { from, to, markdown, onAccept } = st.proposal
+          // Empty content must not wipe the selection (plan: accept no-ops).
+          if (!markdown?.trim()) return false
           // Build the replacement inline content and apply ONE transaction.
           // The editor applies the change itself, sidestepping the focus lock
           // that blocks the backend MutateBlock path on a focused editor.
+          // Note: multi-paragraph AI output is flattened to a single line
+          // (Silt prose blocks are single-line); true multi-node replace is
+          // a follow-up.
           const slice = proposedMarkdownToSlice(state.schema, markdown)
           const apply = state.tr.replace(from, to, slice)
           // Clear the proposal in the same transaction (meta-only; no extra

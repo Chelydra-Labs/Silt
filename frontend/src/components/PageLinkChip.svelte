@@ -28,6 +28,14 @@
 
   const label = $derived(alias || target)
 
+  function pathLabel(c: {
+    notebook: string
+    section: string
+    page: string
+  }): string {
+    return [c.notebook, c.section, c.page].filter(Boolean).join(' › ')
+  }
+
   async function load() {
     loading = true
     try {
@@ -67,17 +75,78 @@
       )
     }
   }
+
+  function openCandidate(c: {
+    notebook: string
+    section: string
+    page: string
+  }) {
+    showHover = false
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-page', {
+        detail: {
+          notebook: c.notebook,
+          section: c.section ?? '',
+          page: c.page,
+          heading: heading || undefined
+        }
+      })
+    )
+  }
 </script>
 
 {#if loading}
   <span class="text-text-muted italic text-[0.85em] mx-0.5">[[…]]</span>
 {:else if ref?.ambiguous}
-  <span
-    class="inline-flex items-center align-baseline text-status-warning mx-0.5 text-[0.85em]"
-    title="Ambiguous page link — multiple matches"
-  >
-    [[{label}]]
-  </span>
+  <div class="inline-block relative">
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <span
+      role="button"
+      tabindex="0"
+      onmouseenter={enter}
+      onmouseleave={leave}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          showHover = !showHover
+        }
+      }}
+      class="inline-flex items-center align-baseline text-status-warning mx-0.5 text-[0.85em] cursor-help underline decoration-dotted underline-offset-4"
+      title="Ambiguous page link — multiple matches. Hover to pick one."
+    >
+      [[{label}]]
+    </span>
+    {#if showHover && ref.candidates?.length}
+      <div
+        transition:fade={{ duration: 120 }}
+        class="absolute z-50 top-full left-0 mt-1 w-80 max-w-[80vw] glass-palette border border-surface-popover-border rounded-lg shadow-2xl p-3 text-left"
+        style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-popover) 94%, transparent);"
+        onmouseenter={enter}
+        onmouseleave={leave}
+        role="group"
+        aria-label="Ambiguous page link matches"
+      >
+        <div
+          class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold mb-2"
+        >
+          Multiple matches
+        </div>
+        <ul class="flex flex-col gap-1 m-0 p-0 list-none">
+          {#each ref.candidates as c (pathLabel(c))}
+            <li>
+              <button
+                type="button"
+                class="w-full text-left px-2 py-1.5 rounded-md text-sm text-text-primary hover:bg-hover cursor-pointer border-0 bg-transparent"
+                onclick={() => openCandidate(c)}
+              >
+                {pathLabel(c)}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+  </div>
 {:else if !ref?.exists}
   <span
     class="inline-flex items-center align-baseline text-text-muted line-through mx-0.5 text-[0.85em]"

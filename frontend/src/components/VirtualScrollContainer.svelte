@@ -104,7 +104,21 @@
 
   $effect(() => {
     if ((targetBlockId || targetHeading) && targetKey !== handledTargetKey) {
-      scrollToBlock(targetKey)
+      void tryScrollToTarget(targetKey)
+    }
+  })
+
+  // Retry heading/block scroll once blocks finish loading (#545 harden).
+  // tryScrollToTarget only marks the key handled on success; until then a
+  // blocks update re-attempts so navigate-to-page#heading doesn't race load.
+  $effect(() => {
+    if (
+      blocks.length > 0 &&
+      (targetBlockId || targetHeading) &&
+      targetKey &&
+      targetKey !== handledTargetKey
+    ) {
+      void tryScrollToTarget(targetKey)
     }
   })
 
@@ -153,18 +167,31 @@
     }
   }
 
-  async function scrollToBlock(key: string) {
-    handledTargetKey = key
+  /** Scroll to targetBlockId or targetHeading. Returns true if the target was
+   *  found and scrolled; false when the page is still loading (caller retries). */
+  async function tryScrollToTarget(key: string): Promise<boolean> {
     await tick()
     if (targetBlockId) {
       const el = document.querySelector(`[data-id="${targetBlockId}"]`)
       if (el instanceof HTMLElement) {
         el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        handledTargetKey = key
+        return true
       }
-      return
+      // DOM may lag setContent; only mark handled if blocks list is empty
+      // (nothing will appear) or the id is known missing after load.
+      if (!loading && blocks.length > 0) {
+        const known = blocks.some((b) => b.id === targetBlockId)
+        if (!known) {
+          handledTargetKey = key
+          return false
+        }
+      }
+      return false
     }
     // Wiki-link #heading: scroll to the HEADER whose clean_text matches (#545).
     if (targetHeading) {
+      if (loading || blocks.length === 0) return false
       const header = blocks.find(
         (b) =>
           b.type === 'HEADER' &&
@@ -175,9 +202,18 @@
         const el = document.querySelector(`[data-id="${header.id}"]`)
         if (el instanceof HTMLElement) {
           el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+          handledTargetKey = key
+          return true
         }
+        // Header known in index but not yet in DOM — retry on next tick cycle.
+        return false
       }
+      // No matching header after load — give up so we don't loop forever.
+      handledTargetKey = key
+      return false
     }
+    handledTargetKey = key
+    return false
   }
 
   function handleBlocksUpdated(updatedBlocks: ParsedBlock[]) {

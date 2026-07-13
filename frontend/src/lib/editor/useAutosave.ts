@@ -39,6 +39,9 @@ export interface AutosaveDeps {
 
 /** How long the transient "Saved" confirmation stays visible before idle. */
 const SAVED_HOLD_MS = 2000
+/** Minimum time the "Saving…" phase stays visible so sub-ms local writes still
+ *  register as honest in-flight feedback (#546 anti-flicker). */
+const SAVING_MIN_DISPLAY_MS = 300
 
 /**
  * Manages debounced autosave for a TipTap editor page. The component creates
@@ -60,6 +63,10 @@ export class AutosaveManager {
   private lastEmitted: SaveState = { phase: 'idle', dirty: false, error: null }
   private pendingSave: Promise<void> | null = null
   private saveQueued = false
+  private savingStartedAt = 0
+  /** Bumps on each in-flight save so a deferred "saved" emit is ignored if a
+   *  newer save has started (min-display floor must not race). */
+  private saveGeneration = 0
   private deps: AutosaveDeps
 
   constructor(deps: AutosaveDeps) {
@@ -116,6 +123,8 @@ export class AutosaveManager {
     )
     // The write is now genuinely in flight: surface the honest 'saving' phase,
     // distinct from the 'pending' debounce above (#546).
+    this.savingStartedAt = Date.now()
+    const saveGen = ++this.saveGeneration
     this.emit('saving', true, null)
     this.pendingSave = (async () => {
       try {
@@ -130,8 +139,9 @@ export class AutosaveManager {
           updatedBlocks as unknown as BindingParsedBlock[]
         )
         this.deps.onStateChange(false, null)
-        this.emit('saved', false, null)
-        this.armSavedHold()
+        // Min-display floor is non-blocking: flush/pendingSave complete after
+        // IPC so unmount is not delayed; UI still holds "Saving…" briefly.
+        this.scheduleSavedAfterFloor(saveGen)
         dispatchPluginEvent('editor:save', {
           notebook: this.deps.getNotebook(),
           section: this.deps.getSection(),
@@ -140,6 +150,7 @@ export class AutosaveManager {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         console.error('AutosaveManager: SaveFileBlocks failed:', e)
+        // Errors skip the min-display floor — fail-loud immediately.
         this.deps.onStateChange(true, msg)
         this.emit('error', true, msg)
         pushNotification({
@@ -163,6 +174,24 @@ export class AutosaveManager {
         void this.save()
       }
     }
+  }
+
+  /** After a successful write, keep phase at 'saving' until SAVING_MIN_DISPLAY_MS
+   *  has elapsed, then emit 'saved'. Generation-guarded so a newer save wins. */
+  private scheduleSavedAfterFloor(saveGen: number): void {
+    const elapsed = Date.now() - this.savingStartedAt
+    const remain = Math.max(0, SAVING_MIN_DISPLAY_MS - elapsed)
+    const finish = () => {
+      if (this.saveGeneration !== saveGen) return
+      if (this.lastEmitted.phase !== 'saving') return
+      this.emit('saved', false, null)
+      this.armSavedHold()
+    }
+    if (remain === 0) {
+      finish()
+      return
+    }
+    setTimeout(finish, remain)
   }
 
   /** Hold the "Saved" confirmation for a beat, then revert to idle if idle. */

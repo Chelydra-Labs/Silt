@@ -267,6 +267,96 @@ func TestRenamePage_RewritesInboundWikiLinks(t *testing.T) {
 	}
 }
 
+// TestMovePage_RewritesInboundWikiLinks verifies MovePage rewrites section-
+// qualified [[…]] targets via the reverse index (#545).
+func TestMovePage_RewritesInboundWikiLinks(t *testing.T) {
+	app := newTestApp(t)
+
+	targetPath := filepath.Join(app.vaultPath, "Work", "FromSec", "Moved.md")
+	sourcePath := filepath.Join(app.vaultPath, "Work", "Other.md")
+	writeFile(t, targetPath, "---\nnotebook: \"Work\"\nsection: \"FromSec\"\npage: \"Moved\"\n---\n\n"+
+		"body <!-- id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa -->\n")
+	writeFile(t, sourcePath, "---\nnotebook: \"Work\"\nsection: \"\"\npage: \"Other\"\n---\n\n"+
+		"See [[FromSec/Moved]] please <!-- id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb -->\n")
+
+	for _, p := range []struct {
+		path, nb, sec, page string
+	}{
+		{targetPath, "Work", "FromSec", "Moved"},
+		{sourcePath, "Work", "", "Other"},
+	} {
+		b, _ := os.ReadFile(p.path)
+		blocks, meta, _, _, err := parser.ParseFileContent(string(b), p.nb, p.sec, p.page, "2026-01-01", app.spacesPerTab)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p.page, err)
+		}
+		if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+			t.Fatalf("index %s: %v", p.page, err)
+		}
+	}
+
+	if err := app.MovePage("Work", "FromSec", "ToSec", "Moved"); err != nil {
+		t.Fatalf("MovePage: %v", err)
+	}
+
+	src, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "[[ToSec/Moved]]") {
+		t.Errorf("expected section-qualified rewrite, got:\n%s", s)
+	}
+	if strings.Contains(s, "[[FromSec/Moved]]") {
+		t.Errorf("old section path should be gone, got:\n%s", s)
+	}
+}
+
+// TestRenameSection_RewritesInboundWikiLinks verifies RenameSection rewrites
+// inbound links for every page under the old section (#545).
+func TestRenameSection_RewritesInboundWikiLinks(t *testing.T) {
+	app := newTestApp(t)
+
+	targetPath := filepath.Join(app.vaultPath, "Work", "OldSec", "Page1.md")
+	sourcePath := filepath.Join(app.vaultPath, "Work", "Hub.md")
+	writeFile(t, targetPath, "---\nnotebook: \"Work\"\nsection: \"OldSec\"\npage: \"Page1\"\n---\n\n"+
+		"body <!-- id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa -->\n")
+	writeFile(t, sourcePath, "---\nnotebook: \"Work\"\nsection: \"\"\npage: \"Hub\"\n---\n\n"+
+		"Link [[OldSec/Page1|p1]] <!-- id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb -->\n")
+
+	for _, p := range []struct {
+		path, nb, sec, page string
+	}{
+		{targetPath, "Work", "OldSec", "Page1"},
+		{sourcePath, "Work", "", "Hub"},
+	} {
+		b, _ := os.ReadFile(p.path)
+		blocks, meta, _, _, err := parser.ParseFileContent(string(b), p.nb, p.sec, p.page, "2026-01-01", app.spacesPerTab)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p.page, err)
+		}
+		if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+			t.Fatalf("index %s: %v", p.page, err)
+		}
+	}
+
+	if err := app.RenameSection("Work", "OldSec", "NewSec"); err != nil {
+		t.Fatalf("RenameSection: %v", err)
+	}
+
+	src, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "[[NewSec/Page1|p1]]") {
+		t.Errorf("expected section rename rewrite, got:\n%s", s)
+	}
+	if strings.Contains(s, "[[OldSec/") {
+		t.Errorf("old section path should be gone, got:\n%s", s)
+	}
+}
+
 func TestRenamePage_NameCollision(t *testing.T) {
 	app := newTestApp(t)
 

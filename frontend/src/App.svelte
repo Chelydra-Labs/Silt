@@ -999,6 +999,35 @@
       if (!w) return
       pushNotification(reMintToast(w, openPage))
     })
+    // Wiki-link rename rewrite summary (#545 harden). Partial failures used
+    // to be log-only; surface a toast so inbound [[…]] that failed to update
+    // are not silent.
+    const offPageLinksRewritten = Events.On(
+      'page-links:rewritten',
+      (ev: any) => {
+        const d = ev?.data as
+          { rewritten?: number; failed?: number } | undefined
+        if (!d) return
+        const rewritten = d.rewritten ?? 0
+        const failed = d.failed ?? 0
+        if (failed > 0) {
+          pushNotification({
+            kind: 'error',
+            message:
+              rewritten > 0
+                ? `Updated ${rewritten} linked page(s); ${failed} could not be rewritten.`
+                : `Could not rewrite wiki-links in ${failed} page(s). Check the log for details.`,
+            autoDismissMs: 0
+          })
+        } else if (rewritten > 0) {
+          pushNotification({
+            kind: 'info',
+            message: `Updated wiki-links in ${rewritten} page(s).`,
+            autoDismissMs: 4000
+          })
+        }
+      }
+    )
 
     // Native menu events (#503) — the Go-side menu items emit these; wire
     // them to the same handlers the keyboard shortcuts use so menu and
@@ -1104,6 +1133,7 @@
       offVaultInitWarnings()
       offVaultWatchCoverage()
       offReMintWarning()
+      offPageLinksRewritten()
       offMenuNewPage()
       offMenuOpenVault()
       offMenuSave()
