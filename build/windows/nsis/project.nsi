@@ -74,23 +74,47 @@ ManifestDPIAware true
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
 !if "${WAILS_INSTALL_SCOPE}" == "user"
-    InstallDir "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
+    ## Silt: per-user install retains the CompanyName subdirectory so existing
+    ## installs (from the v2 custom template) upgrade in place without data
+    ## loss. The wails3 default omits CompanyName; we override it here to match
+    ## Silt's historical install path.
+    InstallDir "$LOCALAPPDATA\Programs\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
 !else
     InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
 !endif
 ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
-   !insertmacro wails.checkArchitecture
+    !insertmacro wails.checkArchitecture
+
+    ## Preserve a prior install directory across upgrades. The per-user
+    ## format stores InstallDir under the uninstall key. Without this the
+    ## installer defaults to the path above every time — the user's
+    ## previously-chosen directory is lost on auto-updates.
+    SetRegView 64
+    ReadRegStr $0 HKCU "${UNINST_KEY}" "InstallDir"
+    ${If} $0 != ""
+        StrCpy $INSTDIR $0
+    ${EndIf}
 FunctionEnd
 
 Section
     !insertmacro wails.setShellContext
 
+    ## If a prior version is installed (per-user), silently run its
+    ## uninstaller first for a clean upgrade. The wails3 writeUninstaller
+    ## macro registers the uninstall string under HKLM or HKCU depending on
+    ## WAILS_INSTALL_SCOPE; for user scope it's HKCU.
+    SetRegView 64
+    ReadRegStr $0 HKCU "${UNINST_KEY}" "UninstallString"
+    ${If} $0 != ""
+        ExecWait '"$0" /S _?=$INSTDIR'
+    ${EndIf}
+
     !insertmacro wails.webview2runtime
 
     SetOutPath $INSTDIR
-    
+
     !insertmacro wails.files
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -98,11 +122,11 @@ Section
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
-    
+
     !insertmacro wails.writeUninstaller
 SectionEnd
 
-Section "uninstall" 
+Section "uninstall"
     !insertmacro wails.setShellContext
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
