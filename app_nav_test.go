@@ -202,6 +202,71 @@ func TestRenamePage_UpdatesFrontmatterAndFile(t *testing.T) {
 	}
 }
 
+// TestRenamePage_RewritesInboundWikiLinks verifies that RenamePage rewrites
+// [[OldTarget]] → [[NewTarget]] in other pages via the page_links reverse
+// index, while preserving block UUIDs on the renamed page (#545).
+func TestRenamePage_RewritesInboundWikiLinks(t *testing.T) {
+	app := newTestApp(t)
+
+	targetID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	sourceID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+	targetPath := filepath.Join(app.vaultPath, "Work", "Target.md")
+	sourcePath := filepath.Join(app.vaultPath, "Work", "Source.md")
+	writeFile(t, targetPath, "---\nnotebook: \"Work\"\nsection: \"\"\npage: \"Target\"\n---\n\n"+
+		"target body <!-- id: "+targetID+" -->\n")
+	writeFile(t, sourcePath, "---\nnotebook: \"Work\"\nsection: \"\"\npage: \"Source\"\n---\n\n"+
+		"See [[Target#Goals|the target]] please <!-- id: "+sourceID+" -->\n")
+
+	for _, p := range []struct {
+		path, nb, sec, page string
+	}{
+		{targetPath, "Work", "", "Target"},
+		{sourcePath, "Work", "", "Source"},
+	} {
+		b, _ := os.ReadFile(p.path)
+		blocks, meta, _, _, err := parser.ParseFileContent(string(b), p.nb, p.sec, p.page, "2026-01-01", app.spacesPerTab)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p.page, err)
+		}
+		if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+			t.Fatalf("index %s: %v", p.page, err)
+		}
+	}
+
+	if err := app.RenamePage("Work", "", "Target", "Renamed"); err != nil {
+		t.Fatalf("RenamePage: %v", err)
+	}
+
+	src, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "[[Renamed#Goals|the target]]") {
+		t.Errorf("expected rewritten wiki-link, got:\n%s", s)
+	}
+	if strings.Contains(s, "[[Target") {
+		t.Errorf("old target should be gone, got:\n%s", s)
+	}
+	// Block UUID on the renamed page is preserved.
+	renamed, err := os.ReadFile(filepath.Join(app.vaultPath, "Work", "Renamed.md"))
+	if err != nil {
+		t.Fatalf("read renamed: %v", err)
+	}
+	if !strings.Contains(string(renamed), targetID) {
+		t.Errorf("block UUID must survive rename, got:\n%s", renamed)
+	}
+	// ResolvePageLink finds the new name.
+	ref, err := app.ResolvePageLink("Renamed")
+	if err != nil {
+		t.Fatalf("ResolvePageLink: %v", err)
+	}
+	if !ref.Exists || ref.Page != "Renamed" {
+		t.Errorf("ResolvePageLink Renamed: %+v", ref)
+	}
+}
+
 func TestRenamePage_NameCollision(t *testing.T) {
 	app := newTestApp(t)
 

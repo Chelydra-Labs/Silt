@@ -14,6 +14,7 @@ import {
 import {
   EmbedNode,
   BlockReferenceNode,
+  PageLinkNode,
   CalloutBlock,
   CodeBlock
 } from './schema'
@@ -85,6 +86,7 @@ function makeEditor() {
       ...SiltColorMarkExtensions,
       EmbedNode,
       BlockReferenceNode,
+      PageLinkNode,
       UniqueBlockIds
     ]
   })
@@ -119,6 +121,7 @@ function makeEditorWithNewBlocks() {
       ...SiltTableExtensions,
       EmbedNode,
       BlockReferenceNode,
+      PageLinkNode,
       UniqueBlockIds,
       TrailingNode.configure({
         node: 'noteBlock',

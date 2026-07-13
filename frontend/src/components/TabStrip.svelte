@@ -3,6 +3,7 @@
   import { fade, fly } from 'svelte/transition'
   import ContextMenu from './ContextMenu.svelte'
   import { pushNotification } from '../notifications/store.svelte'
+  import { ResolvePageLink } from '../../bindings/silt/app.js'
 
   interface Props {
     tabs: TabEntry[]
@@ -72,8 +73,7 @@
     }
   }
 
-  // Plain vault path — not a wiki-link. Real page-link grammar is a separate
-  // feature; until then this copies a human-readable path only.
+  // Plain vault path — human-readable path only (sibling of wiki-link copy).
   async function handleCopyPagePath(tab: TabEntry): Promise<void> {
     closeContextMenu()
     const path = [tab.notebook, tab.section, tab.page].filter(Boolean).join('/')
@@ -84,6 +84,28 @@
         kind: 'error',
         message: 'Copy failed: clipboard could not be written.'
       })
+    }
+  }
+
+  // Wiki-link reference [[shortest-unique-path]] via ResolvePageLink (#545).
+  async function handleCopyPageReference(tab: TabEntry): Promise<void> {
+    closeContextMenu()
+    const full = [tab.notebook, tab.section, tab.page].filter(Boolean).join('/')
+    try {
+      const resolved = await ResolvePageLink(full)
+      const shortest =
+        resolved?.exists && resolved.shortest ? resolved.shortest : full
+      await navigator.clipboard.writeText(`[[${shortest}]]`)
+    } catch {
+      // Fall back to the full path form so copy still produces a useful link.
+      try {
+        await navigator.clipboard.writeText(`[[${full}]]`)
+      } catch {
+        pushNotification({
+          kind: 'error',
+          message: 'Copy failed: clipboard could not be written.'
+        })
+      }
     }
   }
 
@@ -394,6 +416,14 @@
       >
         <span class="material-symbols-outlined text-icon-md">content_copy</span>
         Copy Page Path
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => handleCopyPageReference(targetTab)}
+      >
+        <span class="material-symbols-outlined text-icon-md">link</span>
+        Copy Page Reference
       </button>
     {/if}
   </ContextMenu>

@@ -466,6 +466,7 @@
   let activeFocusedBlockAncestors = $state<string[]>([])
   let searchTargetDate = $state('')
   let searchTargetBlockId = $state('')
+  let searchTargetHeading = $state('')
   let searchTargetKey = $state('')
   // Tasks view focus target (#374) — set by openTasksView when a
   // navigation resolves to a `.silt` block. PluginView passes these
@@ -788,6 +789,23 @@
         handleSearchJump(d.notebook, d.section, d.page, d.date, d.blockId)
       }
     }
+    // Wiki-link navigation (#545). Opens the resolved page; optional heading
+    // scrolls to the matching HEADER block after open.
+    function handleNavigateToPage(e: Event) {
+      const d = (e as CustomEvent).detail
+      if (!d?.notebook || !d?.page) return
+      handleSearchJump(
+        d.notebook,
+        d.section ?? '',
+        d.page,
+        d.date ?? '',
+        d.blockId ?? ''
+      )
+      if (d.heading) {
+        searchTargetHeading = d.heading
+        searchTargetKey = `heading:${d.heading}:${Date.now()}`
+      }
+    }
     function handleNavigateToTag(e: Event) {
       const tagPath = (e as CustomEvent).detail
       if (tagPath) {
@@ -841,6 +859,7 @@
 
     window.addEventListener('keydown', handleGlobalKeyDown)
     window.addEventListener('navigate-to-block', handleNavigateToBlock)
+    window.addEventListener('navigate-to-page', handleNavigateToPage)
     window.addEventListener('navigate-to-tag', handleNavigateToTag)
     window.addEventListener('switch-view', handleSwitchView)
     window.addEventListener('open-plugin-manager', handleOpenPluginManager)
@@ -1061,6 +1080,7 @@
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
+      window.removeEventListener('navigate-to-page', handleNavigateToPage)
       window.removeEventListener('navigate-to-tag', handleNavigateToTag)
       window.removeEventListener('switch-view', handleSwitchView)
       window.removeEventListener('open-plugin-manager', handleOpenPluginManager)
@@ -1196,6 +1216,7 @@
     activeView = 'notes'
     searchTargetDate = date
     searchTargetBlockId = blockId
+    searchTargetHeading = ''
     searchTargetKey = `${date}:${blockId}:${Date.now()}`
   }
 
@@ -1568,6 +1589,9 @@
                       isActive={tab.id === activeTabId}
                       targetBlockId={tab.id === activeTabId
                         ? searchTargetBlockId
+                        : ''}
+                      targetHeading={tab.id === activeTabId
+                        ? searchTargetHeading
                         : ''}
                       targetKey={tab.id === activeTabId ? searchTargetKey : ''}
                       activeFocusedBlockAncestors={tab.id === activeTabId

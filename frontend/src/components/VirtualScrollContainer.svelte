@@ -25,6 +25,8 @@
     /** Toggle this tab's view mode (floating button). */
     onToggleViewMode?: () => void
     targetBlockId?: string
+    /** Wiki-link heading scroll target (#545); matches HEADER clean_text. */
+    targetHeading?: string
     targetKey?: string
     onBlockFocus?: (blockId: string, ancestors: string[]) => void
     onBlockBlur?: () => void
@@ -47,6 +49,7 @@
     viewMode,
     onToggleViewMode,
     targetBlockId = '',
+    targetHeading = '',
     targetKey = '',
     onBlockFocus,
     onBlockBlur,
@@ -100,7 +103,7 @@
   })
 
   $effect(() => {
-    if (targetBlockId && targetKey !== handledTargetKey) {
+    if ((targetBlockId || targetHeading) && targetKey !== handledTargetKey) {
       scrollToBlock(targetKey)
     }
   })
@@ -157,6 +160,22 @@
       const el = document.querySelector(`[data-id="${targetBlockId}"]`)
       if (el instanceof HTMLElement) {
         el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }
+      return
+    }
+    // Wiki-link #heading: scroll to the HEADER whose clean_text matches (#545).
+    if (targetHeading) {
+      const header = blocks.find(
+        (b) =>
+          b.type === 'HEADER' &&
+          (b.clean_text === targetHeading ||
+            b.clean_text?.replace(/^#+\s*/, '') === targetHeading)
+      )
+      if (header?.id) {
+        const el = document.querySelector(`[data-id="${header.id}"]`)
+        if (el instanceof HTMLElement) {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        }
       }
     }
   }

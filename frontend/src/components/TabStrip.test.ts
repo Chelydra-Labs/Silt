@@ -3,6 +3,14 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 import TabStrip from './TabStrip.svelte'
 import type { TabEntry } from '../lib/tabs'
 
+const mocks = vi.hoisted(() => ({
+  resolvePageLink: vi.fn()
+}))
+
+vi.mock('../../bindings/silt/app.js', () => ({
+  ResolvePageLink: mocks.resolvePageLink
+}))
+
 function mkTab(
   ref: { notebook: string; section: string; page: string },
   opts: {
@@ -493,7 +501,7 @@ describe('TabStrip (#142)', () => {
             el.textContent?.replace(/\s+/g, ' ').trim() === 'close Close Tab'
         )
       expect(closeOnly).toBeTruthy()
-      expect(screen.queryByText('Copy Page Reference')).toBeNull()
+      expect(menuItem('Copy Page Reference')).toBeTruthy()
     })
 
     it('shows Pin Tab only for preview tabs', async () => {
@@ -593,6 +601,29 @@ describe('TabStrip (#142)', () => {
       await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
       await fireEvent.click(menuItem('Copy Page Path'))
       expect(writeText).toHaveBeenCalledWith('Work/Projects/Site')
+    })
+
+    it('Copy Page Reference writes [[shortest]] via ResolvePageLink (#545)', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.assign(navigator, { clipboard: { writeText } })
+      mocks.resolvePageLink.mockResolvedValue({
+        exists: true,
+        shortest: 'Site',
+        notebook: 'Work',
+        section: 'Projects',
+        page: 'Site'
+      })
+
+      const tabs = [
+        mkTab({ notebook: 'Work', section: 'Projects', page: 'Site' })
+      ]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-Site' })
+      })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
+      await fireEvent.click(menuItem('Copy Page Reference'))
+      expect(mocks.resolvePageLink).toHaveBeenCalledWith('Work/Projects/Site')
+      expect(writeText).toHaveBeenCalledWith('[[Site]]')
     })
   })
 })
