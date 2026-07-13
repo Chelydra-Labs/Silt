@@ -1,17 +1,19 @@
 # DO NOT EDIT - Generated automatically by `wails3 build`
+# Silt overrides: these defaults are a safety net; the Taskfile passes
+# explicit -D defines to makensis, which take precedence via !ifndef.
 
 !include "x64.nsh"
 !include "WinVer.nsh"
 !include "FileFunc.nsh"
 
 !ifndef INFO_PROJECTNAME
-    !define INFO_PROJECTNAME ""
+    !define INFO_PROJECTNAME "silt"
 !endif
 !ifndef INFO_COMPANYNAME
-    !define INFO_COMPANYNAME "My Company"
+    !define INFO_COMPANYNAME "Chelydra Labs"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "My Product"
+    !define INFO_PRODUCTNAME "Silt"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "0.1.0"
