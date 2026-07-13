@@ -65,6 +65,12 @@
     aiSearchDrawer,
     toggleAISearchDrawer
   } from './plugins/first-party/silt-ai-qa/drawer.svelte'
+  import WritingAssistantDrawer from './plugins/first-party/silt-ai-assistant/WritingAssistantDrawer.svelte'
+  import { writingAssistantChrome } from './plugins/first-party/silt-ai-assistant/state.svelte'
+  import {
+    writingAssistantDrawer,
+    toggleWritingAssistantDrawer
+  } from './plugins/first-party/silt-ai-assistant/drawer.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import ToastContainer from './components/ToastContainer.svelte'
@@ -1354,6 +1360,10 @@
         ? () => toggleAISearchDrawer()
         : undefined}
       aiAssistantOpen={aiSearchDrawer.open}
+      onWritingAssistantClick={writingAssistantChrome.available
+        ? () => toggleWritingAssistantDrawer()
+        : undefined}
+      writingAssistantOpen={writingAssistantDrawer.open}
     >
       {#if activeView === 'notes'}
         <TabStrip
@@ -1691,6 +1701,7 @@
           {/if}
         </div>
         <AISearchDrawer />
+        <WritingAssistantDrawer />
       </div>
     </div>
   {/if}

@@ -283,7 +283,7 @@ func TestDefaults_AIPluginsOffByDefault(t *testing.T) {
 	for _, id := range d.Plugins.Disabled {
 		disabled[id] = true
 	}
-	for _, id := range []string{"silt-ai-summary", "silt-ai-qa"} {
+	for _, id := range []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant"} {
 		if !disabled[id] {
 			t.Errorf("Defaults().Plugins.Disabled missing %q (AI plugins must ship off by default)", id)
 		}
@@ -316,6 +316,34 @@ func TestNormalize_SeedsSiltAIQADisabledOnUpgrade(t *testing.T) {
 	for _, id := range cfg.Plugins.Disabled {
 		if id == "silt-ai-qa" {
 			t.Fatal("normalize must not re-disable silt-ai-qa after seed marker is set")
+		}
+	}
+}
+
+// TestNormalize_SeedsSiltAIAssistantDisabledOnUpgrade: upgraded vaults must
+// gain silt-ai-assistant in disabled exactly once (Sprint 23 / #230).
+func TestNormalize_SeedsSiltAIAssistantDisabledOnUpgrade(t *testing.T) {
+	cfg := normalize(SystemConfig{
+		Plugins: PluginsConfig{
+			Disabled:       []string{"silt-ai-summary", "silt-ai-qa"},
+			PluginSettings: map[string]any{},
+		},
+	})
+	found := false
+	for _, id := range cfg.Plugins.Disabled {
+		if id == "silt-ai-assistant" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("normalize must append silt-ai-assistant to disabled on upgrade; got %v", cfg.Plugins.Disabled)
+	}
+	cfg.Plugins.Disabled = []string{"silt-ai-summary", "silt-ai-qa"} // user enabled Writing Assistant
+	cfg = normalize(cfg)
+	for _, id := range cfg.Plugins.Disabled {
+		if id == "silt-ai-assistant" {
+			t.Fatal("normalize must not re-disable silt-ai-assistant after seed marker is set")
 		}
 	}
 }

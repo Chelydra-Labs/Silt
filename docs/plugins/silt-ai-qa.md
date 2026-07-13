@@ -51,4 +51,5 @@ grounded in your own notes with clickable citations.
 ## Related
 
 - Plugin author notes: [PLUGIN_DEVELOPMENT.md](../PLUGIN_DEVELOPMENT.md) (sqlite-vec, `ctx.ai`)
+- Writing transforms (not Q&A): [silt-ai-assistant.md](./silt-ai-assistant.md)
 - Sprint issues: #224–#228
