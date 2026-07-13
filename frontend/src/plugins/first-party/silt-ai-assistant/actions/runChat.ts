@@ -11,6 +11,20 @@ export type StreamSession = {
   cancel: () => void
 }
 
+function abortError(): Error {
+  const err = new Error('Cancelled')
+  err.name = 'AbortError'
+  return err
+}
+
+/** True when the provider rejected streaming specifically (not auth/rate-limit). */
+export function isStreamUnsupportedError(e: unknown): boolean {
+  const err = e as { code?: string; message?: string }
+  const code = String(err?.code ?? '')
+  const msg = String(err?.message ?? '')
+  return code.includes('bad-request') || /stream/i.test(msg)
+}
+
 export async function completeBuffered(
   ctx: PluginContext,
   messages: PluginAIChatMessage[],
@@ -31,6 +45,9 @@ export async function completeBuffered(
  * Stream a completion. `onSession` receives a cancel handle as soon as the
  * stream is open. `isCancelled` is polled each delta — when true, cancel() is
  * invoked and an AbortError is thrown so callers can ignore the result.
+ *
+ * Buffered fallback only when the provider rejects streaming (same gate as
+ * silt-ai-qa). Auth/rate-limit/timeout errors surface without a second request.
  */
 export async function completeStreaming(
   ctx: PluginContext,
@@ -59,27 +76,21 @@ export async function completeStreaming(
 
     if (opts.isCancelled?.()) {
       await stream.cancel()
-      const err = new Error('Cancelled')
-      err.name = 'AbortError'
-      throw err
+      throw abortError()
     }
 
     let full = ''
     for await (const delta of stream) {
       if (opts.isCancelled?.()) {
         await stream.cancel()
-        const err = new Error('Cancelled')
-        err.name = 'AbortError'
-        throw err
+        throw abortError()
       }
       full += delta
       onDelta(delta, full)
     }
     const final = await stream.result()
     if (opts.isCancelled?.()) {
-      const err = new Error('Cancelled')
-      err.name = 'AbortError'
-      throw err
+      throw abortError()
     }
     return {
       content: final.content || full,
@@ -87,22 +98,21 @@ export async function completeStreaming(
     }
   } catch (e) {
     if (
-      e instanceof Error &&
-      (e.name === 'AbortError' || opts.isCancelled?.())
+      (e instanceof Error && e.name === 'AbortError') ||
+      opts.isCancelled?.()
     ) {
+      throw e instanceof Error && e.name === 'AbortError' ? e : abortError()
+    }
+    // Only fall back when the provider cannot stream (mirrors silt-ai-qa).
+    if (!isStreamUnsupportedError(e)) {
       throw e
     }
-    // Providers that reject streaming fall back to buffered complete.
     if (opts.isCancelled?.()) {
-      const err = new Error('Cancelled')
-      err.name = 'AbortError'
-      throw err
+      throw abortError()
     }
     const res = await completeBuffered(ctx, messages, maxTokens)
     if (opts.isCancelled?.()) {
-      const err = new Error('Cancelled')
-      err.name = 'AbortError'
-      throw err
+      throw abortError()
     }
     onDelta(res.content, res.content)
     return { content: res.content, model: res.model }

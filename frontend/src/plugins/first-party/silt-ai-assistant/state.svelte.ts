@@ -81,9 +81,6 @@ export function createAssistantController() {
   function discard() {
     cancelActiveStream()
     runGeneration++
-    if (proposal && proposal.status === 'ready') {
-      proposal = { ...proposal, status: 'discarded' }
-    }
     proposal = null
     streamText = ''
     panelStatus = 'idle'
@@ -242,7 +239,6 @@ export function createAssistantController() {
       errorMessage = res.error
       return false
     }
-    proposal = { ...proposal, status: 'accepted' }
     panelStatus = 'applied'
     statusDetail = res.detail || 'Applied.'
     streamText = ''
