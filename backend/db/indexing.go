@@ -642,7 +642,11 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 
 		// page_links reverse index (#545): extract every [[target]] /
 		// [[target#heading]] / [[target|alias]] occurrence from the block
-		// body. INSERT OR IGNORE keeps the PK unique when a target repeats.
+		// body. CODE blocks are excluded — literal [[…]] inside fenced code
+		// is not a link and must not be rewritten on rename.
+		if block.Type == parser.BlockCode {
+			continue
+		}
 		for _, pl := range parser.PageLinkRegex.FindAllStringSubmatch(block.CleanText, -1) {
 			target := pl[1]
 			if target == "" {
@@ -946,6 +950,10 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 			}
 
 			// page_links reverse index (#545) — mirror IndexFileBlocks.
+			// CODE blocks are excluded (literal [[…]] in code is not a link).
+			if block.Type == parser.BlockCode {
+				continue
+			}
 			for _, pl := range parser.PageLinkRegex.FindAllStringSubmatch(block.CleanText, -1) {
 				target := pl[1]
 				if target == "" {

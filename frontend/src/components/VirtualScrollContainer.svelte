@@ -84,6 +84,7 @@
   // ensure edit-to-pin promotion fires exactly once per tab mount.
   let hasFirstEdit = false
   let handledTargetKey = $state('')
+  let scrollAttemptCount = 0
 
   // Editor status state
   let dirty = $state(false)
@@ -104,6 +105,7 @@
 
   $effect(() => {
     if ((targetBlockId || targetHeading) && targetKey !== handledTargetKey) {
+      scrollAttemptCount = 0
       void tryScrollToTarget(targetKey)
     }
   })
@@ -168,9 +170,18 @@
   }
 
   /** Scroll to targetBlockId or targetHeading. Returns true if the target was
-   *  found and scrolled; false when the page is still loading (caller retries). */
+   *  found and scrolled; false when the page is still loading (caller retries).
+   *  Bounded by MAX_SCROLL_ATTEMPTS so a permanently-absent target can't cause
+   *  unbounded re-scrolls after later block updates (e.g. autosave). */
+  const MAX_SCROLL_ATTEMPTS = 5
   async function tryScrollToTarget(key: string): Promise<boolean> {
     await tick()
+    scrollAttemptCount++
+    // After too many attempts, give up — the target is genuinely absent.
+    if (scrollAttemptCount > MAX_SCROLL_ATTEMPTS) {
+      handledTargetKey = key
+      return false
+    }
     if (targetBlockId) {
       const el = document.querySelector(`[data-id="${targetBlockId}"]`)
       if (el instanceof HTMLElement) {

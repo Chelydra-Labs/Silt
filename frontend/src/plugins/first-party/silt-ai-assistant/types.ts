@@ -65,6 +65,9 @@ export interface ScopeContext {
   /** TipTap from/to when available (for replace). */
   selectionFrom?: number
   selectionTo?: number
+  /** Selected text at capture time; validates the range is still valid when
+   *  the AI response arrives (positions drift if the user edits mid-stream). */
+  selectionChecksum?: string
   /** Existing task titles on the page (for dedupe). */
   existingTaskTitles?: string[]
   /** Target block id for mutate when replacing a whole block. */

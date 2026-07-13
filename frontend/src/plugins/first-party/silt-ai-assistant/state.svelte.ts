@@ -35,6 +35,9 @@ export type RunOpts = {
    *  ready proposal is previewed inline in the editor. */
   selectionFrom?: number
   selectionTo?: number
+  /** Selected text at capture time; validates the range is still valid when
+   *  the AI response arrives (positions drift if the user edits mid-stream). */
+  selectionChecksum?: string
 }
 
 export function createAssistantController() {
@@ -139,11 +142,18 @@ export function createAssistantController() {
     if (result.kind !== 'replace-selection') return
     const from = lastRun?.opts.selectionFrom
     const to = lastRun?.opts.selectionTo
+    const checksum = lastRun?.opts.selectionChecksum
     if (from == null || to == null || from >= to) return
     const handle = getEditor(
       editorKey(result.scope.notebook, result.scope.section, result.scope.page)
     )
     if (!handle) return
+    // Validate the selection hasn't drifted during streaming: if the text at
+    // the captured positions no longer matches what was selected, the
+    // positions are stale and accept would replace the wrong content.
+    if (checksum && !handle.verifySelectionText(from, to, checksum)) {
+      return
+    }
     const ok = handle.setProposedEdit({
       from,
       to,
@@ -212,7 +222,8 @@ export function createAssistantController() {
         blockId: opts.blockId,
         instruction: opts.instruction ?? instruction,
         selectionFrom: opts.selectionFrom,
-        selectionTo: opts.selectionTo
+        selectionTo: opts.selectionTo,
+        selectionChecksum: opts.selectionChecksum
       }
     }
     openWritingAssistantDrawerExclusive()

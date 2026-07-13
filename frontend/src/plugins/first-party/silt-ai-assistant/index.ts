@@ -42,17 +42,21 @@ function selectionTextFromEditor(editor: unknown): string {
   }
 }
 
-/** Capture the editor's PM selection range for the in-editor proposed-edit
- *  preview (#543). Returns null when there is no non-empty selection. */
+/** Capture the editor's PM selection range and selected text for the in-editor
+ *  proposed-edit preview (#543). Returns null when there is no non-empty
+ *  selection. The selected text is captured so we can validate the range is
+ *  still valid when the AI response arrives (positions drift if the user
+ *  edits during streaming). */
 function selectionRangeFromEditor(
   editor: unknown
-): { from: number; to: number } | null {
+): { from: number; to: number; text: string } | null {
   try {
-    const sel = (
-      editor as { state?: { selection: { from: number; to: number } } }
-    ).state?.selection
+    const state = (editor as { state?: any })?.state
+    const sel = state?.selection
     if (!sel || sel.from === sel.to) return null
-    return { from: sel.from, to: sel.to }
+    const text = state.doc.textBetween(sel.from, sel.to, '\n') ?? ''
+    if (!text) return null
+    return { from: sel.from, to: sel.to, text }
   } catch {
     return null
   }
@@ -83,7 +87,13 @@ function registerSlashCommands(ctx: PluginContext) {
         openWritingAssistantDrawerExclusive()
         void c.run(ctx, action.id, {
           selectionText,
-          ...(range ? { selectionFrom: range.from, selectionTo: range.to } : {})
+          ...(range
+            ? {
+                selectionFrom: range.from,
+                selectionTo: range.to,
+                selectionChecksum: range.text
+              }
+            : {})
         })
       }
     })

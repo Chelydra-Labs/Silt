@@ -60,6 +60,7 @@ const SAVING_MIN_DISPLAY_MS = 300
 export class AutosaveManager {
   private timeout: ReturnType<typeof setTimeout> | null = null
   private savedHoldTimeout: ReturnType<typeof setTimeout> | null = null
+  private savingFloorTimeout: ReturnType<typeof setTimeout> | null = null
   private lastEmitted: SaveState = { phase: 'idle', dirty: false, error: null }
   private pendingSave: Promise<void> | null = null
   private saveQueued = false
@@ -103,6 +104,18 @@ export class AutosaveManager {
     while (this.pendingSave) {
       await this.pendingSave
     }
+    this.clearSavingFloor()
+  }
+
+  /** Tear down all timers. Call on component destroy to prevent stale phase
+   *  emissions after the editor is gone. */
+  dispose(): void {
+    if (this.timeout) {
+      clearTimeout(this.timeout)
+      this.timeout = null
+    }
+    this.clearSavingFloor()
+    this.clearSavedHold()
   }
 
   /** Mark the editor as clean (e.g. after loading new content). */
@@ -191,7 +204,17 @@ export class AutosaveManager {
       finish()
       return
     }
-    setTimeout(finish, remain)
+    this.savingFloorTimeout = setTimeout(() => {
+      this.savingFloorTimeout = null
+      finish()
+    }, remain)
+  }
+
+  private clearSavingFloor(): void {
+    if (this.savingFloorTimeout) {
+      clearTimeout(this.savingFloorTimeout)
+      this.savingFloorTimeout = null
+    }
   }
 
   /** Hold the "Saved" confirmation for a beat, then revert to idle if idle. */

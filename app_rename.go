@@ -176,7 +176,11 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 			return
 		}
 
-		// 4. Clear old index entries + re-index at new path.
+		// 4. Rewrite inbound [[…]] wiki-links BEFORE clearing the old index,
+		// so the resolution-based rewrite sees the pre-rename page inventory.
+		a.rewriteInboundPageLinks(safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage)
+
+		// 5. Clear old index entries + re-index at new path.
 		a.coordinator.WithDBWrite(func() {
 			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeSection, safeOldPage)
 		})
@@ -184,11 +188,6 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 			_ = a.db.ForgetFile(oldFile)
 		})
 		a.reindexFile(newFile, safeNotebook, safeSection, safeNewPage)
-
-		// 5. Rewrite inbound [[…]] wiki-links that pointed at the old page
-		// so they track the rename (Obsidian/Foam model). Block UUIDs stay
-		// untouched; only the path text inside [[…]] changes (#545).
-		a.rewriteInboundPageLinks(safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage)
 	})
 
 	return runErr
@@ -277,7 +276,11 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 			log.Printf("MovePage: WriteFileAtomic failed at %s (file already moved): %v", newFile, err)
 		}
 
-		// 5. Clear old index entries + re-index at the new path. These run
+		// 5. Rewrite inbound [[…]] BEFORE clearing the old index, so the
+		// resolution-based rewrite sees the pre-move page inventory (#545).
+		a.rewriteInboundPageLinks(safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage)
+
+		// 6. Clear old index entries + re-index at the new path. These run
 		// unconditionally — even if the frontmatter write failed, the file
 		// has already moved and the old index entries must be cleaned up.
 		a.coordinator.WithDBWrite(func() {
@@ -287,10 +290,6 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 			_ = a.db.ForgetFile(oldFile)
 		})
 		a.reindexFile(newFile, safeNotebook, safeTo, safePage)
-
-		// Rewrite inbound [[…]] wiki-links that encoded the old section path
-		// so they track the move (#545).
-		a.rewriteInboundPageLinks(safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage)
 		// If frontmatter write failed, the file has already moved — do not
 		// surface the error to the user. The scanner reconciles stale
 		// frontmatter on the next pass (comment at line 3380).
@@ -448,11 +447,16 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 			return
 		}
 
-		// 4. Clear old index entries + re-index all pages at new paths.
+		// 5. Collect page file names, then rewrite inbound [[…]] BEFORE
+		// clearing the old index, so the resolution-based rewrite sees the
+		// pre-rename page inventory (#545).
 		var pageFiles []string
 		for _, fc := range files {
 			pageFiles = append(pageFiles, fc.name)
 		}
+		a.rewriteInboundPageLinksForSection(safeNotebook, safeOldSection, safeNewSection, pageFiles)
+
+		// 6. Clear old index entries + re-index all pages at new paths.
 		a.coordinator.WithDBWrite(func() {
 			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeOldSection, "")
 		})
@@ -465,10 +469,6 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 			})
 			a.reindexFile(newPath, safeNotebook, safeNewSection, pageName)
 		}
-
-		// 5. Rewrite inbound [[…]] wiki-links that encoded the old section
-		// segment so they track the rename (#545).
-		a.rewriteInboundPageLinksForSection(safeNotebook, safeOldSection, safeNewSection, pageFiles)
 	})
 
 	return runErr

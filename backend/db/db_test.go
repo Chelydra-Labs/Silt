@@ -2318,3 +2318,43 @@ func TestIndexFileBlocks_PageLinksProjection(t *testing.T) {
 		t.Errorf("expected 3 page_links rows after re-index (no dupes), got %d", n)
 	}
 }
+
+// TestIndexFileBlocks_PageLinksExcludesCodeBlocks verifies that [[…]] inside
+// a fenced CODE block is NOT indexed (literal text, not a link). Review fix.
+func TestIndexFileBlocks_PageLinksExcludesCodeBlocks(t *testing.T) {
+	dm := newTestDB(t)
+	codeBlock := parser.ParsedBlock{
+		ID:         "codeblock-0000-0000-0000-000000000001",
+		Type:       parser.BlockCode,
+		Depth:      0,
+		RawText:    "```go\n// [[NotALink]]\n```",
+		CleanText:  "// [[NotALink]]",
+		LineNumber: 1,
+	}
+	noteBlock := parser.ParsedBlock{
+		ID:         "noteblock-0000-0000-0000-000000000002",
+		Type:       parser.BlockNote,
+		Depth:      0,
+		RawText:    "Real [[RealLink]] link",
+		CleanText:  "Real [[RealLink]] link",
+		LineNumber: 2,
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Projects", "Site",
+		[]parser.ParsedBlock{codeBlock, noteBlock}, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	var n int
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM page_links").Scan(&n); err != nil {
+		t.Fatalf("count page_links: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 page_link (from NOTE only), got %d", n)
+	}
+	var target string
+	if err := dm.SQLDB().QueryRow("SELECT target_raw FROM page_links").Scan(&target); err != nil {
+		t.Fatalf("select target_raw: %v", err)
+	}
+	if target != "RealLink" {
+		t.Errorf("expected RealLink, got %q", target)
+	}
+}

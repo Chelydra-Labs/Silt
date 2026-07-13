@@ -45,6 +45,10 @@ export interface EditorHandle {
    *  transaction and clears the preview. Returns false if no preview is
    *  active. The onAccept callback set on setProposedEdit fires. */
   acceptProposedEdit: () => boolean
+  /** Verify the text at [from,to) still matches the captured selection.
+   *  Guards against stale PM positions when the user edits during AI
+   *  streaming (#543 review fix). */
+  verifySelectionText: (from: number, to: number, expected: string) => boolean
 }
 
 const editors = new Map<string, EditorHandle>()

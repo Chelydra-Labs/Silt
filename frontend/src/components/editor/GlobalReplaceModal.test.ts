@@ -392,7 +392,8 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,
-      acceptProposedEdit: () => false
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
     })
     mocks.SaveFileBlocks.mockImplementation(async () => {
       order.push('SaveFileBlocks')
@@ -444,7 +445,8 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,
-      acceptProposedEdit: () => false
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
     })
 
     await renderAndPreview('foo', 'qux')

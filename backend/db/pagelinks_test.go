@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strings"
 	"testing"
 
 	"silt/backend/parser"
@@ -89,6 +90,51 @@ func TestMapTargetRawAndRewrite(t *testing.T) {
 		t.Errorf("unrelated: n=%d out=%s", n2, out2)
 	}
 	_ = parser.PageLinkRegex // ensure package link
+}
+
+func TestRewritePageLinksInContent_SkipsCodeFences(t *testing.T) {
+	in := "See [[Daily]]\n```go\n// [[Daily]] in code\n```\nMore [[Daily]]\n"
+	out, n := RewritePageLinksInContent(in, "Daily", "Journal")
+	if n != 2 {
+		t.Fatalf("expected 2 rewrites (outside fence), got %d: %s", n, out)
+	}
+	if strings.Contains(out, "```go\n// [[Journal]]") {
+		t.Errorf("code fence link must NOT be rewritten:\n%s", out)
+	}
+	if !strings.Contains(out, "See [[Journal]]") || !strings.Contains(out, "More [[Journal]]") {
+		t.Errorf("prose links should be rewritten:\n%s", out)
+	}
+}
+
+func TestRewritePageLinksInContent_CaseInsensitive(t *testing.T) {
+	in := "See [[daily]] and [[DAILY]]"
+	out, n := RewritePageLinksInContent(in, "Daily", "Journal")
+	if n != 2 {
+		t.Fatalf("expected 2 case-insensitive rewrites, got %d: %s", n, out)
+	}
+	if !strings.Contains(out, "[[Journal]]") {
+		t.Errorf("expected rewritten:\n%s", out)
+	}
+}
+
+func TestResolvePageLinkAgainst_AmbiguousBasenameNotResolvedToExists(t *testing.T) {
+	pages := []PageLoc{
+		{Source: "vault", Notebook: "Work", Section: "Journal", Page: "Daily"},
+		{Source: "vault", Notebook: "Archive", Section: "Old", Page: "Daily"},
+	}
+	// Ambiguous → Exists=false, Ambiguous=true
+	ref := ResolvePageLinkAgainst("Daily", pages)
+	if ref.Exists || !ref.Ambiguous {
+		t.Fatalf("expected ambiguous, got %+v", ref)
+	}
+}
+
+func TestMapTargetRaw_CaseInsensitive(t *testing.T) {
+	// Case-insensitive match: [[daily]] matches page "Daily", mapped to the
+	// canonical new page name (resolution is case-insensitive regardless).
+	if got := MapTargetRaw("daily", "Work", "Journal", "Daily", "Work", "Journal", "Diary"); got != "Diary" {
+		t.Errorf("case-insensitive basename: %q", got)
+	}
 }
 
 func TestResolvePageLink_DB(t *testing.T) {

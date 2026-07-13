@@ -162,7 +162,8 @@ function registerFake(key: string, flush: () => Promise<boolean>): void {
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,
-      acceptProposedEdit: () => false
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
     })
   )
 }

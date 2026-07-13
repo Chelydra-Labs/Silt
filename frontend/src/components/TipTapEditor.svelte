@@ -1095,6 +1095,15 @@
       acceptProposedEdit: () => {
         if (!editorInstance || editorInstance.isDestroyed) return false
         return editorInstance.commands.acceptProposedEdit()
+      },
+      verifySelectionText: (from: number, to: number, expected: string) => {
+        if (!editorInstance || editorInstance.isDestroyed) return false
+        try {
+          const text = editorInstance.state.doc.textBetween(from, to, '\n')
+          return text === expected
+        } catch {
+          return false
+        }
       }
     })
   })

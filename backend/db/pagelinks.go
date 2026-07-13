@@ -52,6 +52,36 @@ func (dm *DatabaseManager) ListDistinctPages() ([]PageLoc, error) {
 	return out, rows.Err()
 }
 
+// ListAllPageLinks returns every row in the page_links reverse index. Used by
+// the rename rewrite pass to resolve-gate each target (ambiguous links are
+// left untouched) rather than blindly matching path variants.
+func (dm *DatabaseManager) ListAllPageLinks() ([]PageLinkRow, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	rows, err := db.Query(`SELECT source_notebook, source_section, source_page, source_block_id,
+	             target_raw, COALESCE(heading, ''), COALESCE(alias, '')
+	      FROM page_links`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PageLinkRow
+	for rows.Next() {
+		var r PageLinkRow
+		if err := rows.Scan(
+			&r.SourceNotebook, &r.SourceSection, &r.SourcePage, &r.SourceBlockID,
+			&r.TargetRaw, &r.Heading, &r.Alias,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ListPageLinksByTargetRaws returns reverse-index rows whose target_raw is in
 // the given candidate list (used by rename/move rewrite).
 func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLinkRow, error) {
@@ -219,33 +249,33 @@ func ShortestUniquePath(loc PageLoc, pages []PageLoc) string {
 
 // MapTargetRaw rewrites a stored target_raw from an old page location to a new
 // one, preserving the path "depth" the author used (basename vs section/page
-// vs full path).
+// vs full path). Case-insensitive to match resolution semantics.
 func MapTargetRaw(oldRaw, oldNB, oldSec, oldPage, newNB, newSec, newPage string) string {
-	oldRaw = NormalizePageLinkTarget(oldRaw)
+	oldRawNorm := NormalizePageLinkTarget(oldRaw)
 	oldVars := PathVariants(oldNB, oldSec, oldPage)
 	newVars := PathVariants(newNB, newSec, newPage)
 	for i, v := range oldVars {
-		if v == oldRaw {
+		if strings.EqualFold(v, oldRawNorm) {
 			if i < len(newVars) {
 				return newVars[i]
 			}
-			// Depth mismatch (e.g. section cleared): use longest available.
 			return newVars[len(newVars)-1]
 		}
 	}
-	// Suffix form not in the fixed variant list (nested partial): swap page leaf.
-	if strings.HasSuffix(oldRaw, "/"+oldPage) {
-		prefix := strings.TrimSuffix(oldRaw, oldPage)
-		// If the prefix embedded the old section path, rebuild from new location.
-		if oldSec != "" && (oldRaw == oldSec+"/"+oldPage || strings.HasSuffix(oldRaw, "/"+oldSec+"/"+oldPage) || oldRaw == oldNB+"/"+oldSec+"/"+oldPage) {
+	// Suffix form not in the fixed variant list (nested partial): swap page
+	// leaf, preserving the prefix path the author typed.
+	if strings.HasSuffix(strings.ToLower(oldRawNorm), strings.ToLower("/"+oldPage)) {
+		prefix := oldRawNorm[:len(oldRawNorm)-len(oldPage)]
+		if oldSec != "" && (strings.EqualFold(oldRawNorm, oldSec+"/"+oldPage) ||
+			strings.HasSuffix(strings.ToLower(oldRawNorm), strings.ToLower("/"+oldSec+"/"+oldPage)) ||
+			strings.EqualFold(oldRawNorm, oldNB+"/"+oldSec+"/"+oldPage)) {
 			return MapTargetRaw(oldSec+"/"+oldPage, oldNB, oldSec, oldPage, newNB, newSec, newPage)
 		}
 		return prefix + newPage
 	}
-	if oldRaw == oldPage {
+	if strings.EqualFold(oldRawNorm, oldPage) {
 		return newPage
 	}
-	// Last resort: shortest new form.
 	if len(newVars) > 0 {
 		return newVars[0]
 	}
@@ -253,28 +283,46 @@ func MapTargetRaw(oldRaw, oldNB, oldSec, oldPage, newNB, newSec, newPage string)
 }
 
 // RewritePageLinksInContent replaces [[oldTarget…]] occurrences with
-// [[newTarget…]], preserving #heading and |alias. Returns the new content and
-// the number of replacements.
+// [[newTarget…]], preserving #heading and |alias. Case-insensitive target
+// match (consistent with resolution). Fenced code regions (``` … ```) are
+// skipped so literal [[…]] in code samples is never corrupted. Returns the
+// new content and the number of replacements.
 func RewritePageLinksInContent(content, oldTarget, newTarget string) (string, int) {
-	if oldTarget == "" || newTarget == "" || oldTarget == newTarget {
+	if oldTarget == "" || newTarget == "" || strings.EqualFold(oldTarget, newTarget) {
 		return content, 0
 	}
+	targetLower := strings.ToLower(oldTarget)
 	n := 0
-	out := parser.PageLinkRegex.ReplaceAllStringFunc(content, func(match string) string {
-		m := parser.PageLinkRegex.FindStringSubmatch(match)
-		if m == nil || m[1] != oldTarget {
-			return match
+	lines := strings.Split(content, "\n")
+	inFence := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
 		}
-		n++
-		built := "[[" + newTarget
-		if m[2] != "" {
-			built += "#" + m[2]
+		if inFence {
+			continue
 		}
-		if m[3] != "" {
-			built += "|" + m[3]
-		}
-		built += "]]"
-		return built
-	})
-	return out, n
+		lines[i] = parser.PageLinkRegex.ReplaceAllStringFunc(line, func(match string) string {
+			m := parser.PageLinkRegex.FindStringSubmatch(match)
+			if m == nil || strings.ToLower(m[1]) != targetLower {
+				return match
+			}
+			n++
+			built := "[[" + newTarget
+			if m[2] != "" {
+				built += "#" + m[2]
+			}
+			if m[3] != "" {
+				built += "|" + m[3]
+			}
+			built += "]]"
+			return built
+		})
+	}
+	if n == 0 {
+		return content, 0
+	}
+	return strings.Join(lines, "\n"), n
 }

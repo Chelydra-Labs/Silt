@@ -267,6 +267,57 @@ func TestRenamePage_RewritesInboundWikiLinks(t *testing.T) {
 	}
 }
 
+// TestRenamePage_DoesNotRewriteAmbiguousBasenameLinks verifies that renaming
+// one of two same-basename pages does NOT rewrite links pointing at the other
+// page (review fix for #545).
+func TestRenamePage_DoesNotRewriteAmbiguousBasenameLinks(t *testing.T) {
+	app := newTestApp(t)
+
+	// Two pages named "Daily" in different sections — basename is ambiguous.
+	dailyA := filepath.Join(app.vaultPath, "Work", "Journal", "Daily.md")
+	dailyB := filepath.Join(app.vaultPath, "Archive", "Old", "Daily.md")
+	// A third page links to [[Daily]] (ambiguous target).
+	source := filepath.Join(app.vaultPath, "Work", "Hub.md")
+	writeFile(t, dailyA, "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\n---\n\n"+
+		"body A <!-- id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa -->\n")
+	writeFile(t, dailyB, "---\nnotebook: \"Archive\"\nsection: \"Old\"\npage: \"Daily\"\n---\n\n"+
+		"body B <!-- id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb -->\n")
+	writeFile(t, source, "---\nnotebook: \"Work\"\nsection: \"\"\npage: \"Hub\"\n---\n\n"+
+		"Link [[Daily]] <!-- id: cccccccc-cccc-4ccc-8ccc-cccccccccccc -->\n")
+
+	for _, p := range []struct {
+		path, nb, sec, page string
+	}{
+		{dailyA, "Work", "Journal", "Daily"},
+		{dailyB, "Archive", "Old", "Daily"},
+		{source, "Work", "", "Hub"},
+	} {
+		b, _ := os.ReadFile(p.path)
+		blocks, meta, _, _, err := parser.ParseFileContent(string(b), p.nb, p.sec, p.page, "2026-01-01", app.spacesPerTab)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p.page, err)
+		}
+		if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+			t.Fatalf("index %s: %v", p.page, err)
+		}
+	}
+
+	// Rename Work/Journal/Daily → Work/Journal/Renamed.
+	if err := app.RenamePage("Work", "Journal", "Daily", "Renamed"); err != nil {
+		t.Fatalf("RenamePage: %v", err)
+	}
+
+	// The ambiguous [[Daily]] link must be UNCHANGED — it could refer to
+	// either page and must not be silently rewritten.
+	src, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if !strings.Contains(string(src), "[[Daily]]") {
+		t.Errorf("ambiguous [[Daily]] must NOT be rewritten:\n%s", src)
+	}
+}
+
 // TestMovePage_RewritesInboundWikiLinks verifies MovePage rewrites section-
 // qualified [[…]] targets via the reverse index (#545).
 func TestMovePage_RewritesInboundWikiLinks(t *testing.T) {
