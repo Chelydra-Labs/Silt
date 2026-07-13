@@ -217,6 +217,18 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # --- platform-specific native build deps ---
+      # Must run before Install Wails CLI: the wails3 binary links against
+      # GTK4 + WebKitGTK, so their -dev packages must be present at compile
+      # time. Failing to order these correctly means the Linux build leg
+      # always fails, which blocks the entire release (the `release` job
+      # needs the full `build` matrix).
+      - name: Install Linux deps (webkitgtk-6.0 + GTK4)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkitgtk-6.0-dev libgtk-4-dev build-essential pkg-config
+
       - name: Install Wails CLI
         # bash is required even on windows-latest: the default shell there is
         # pwsh, which can't parse `VAR=$(...)`, `${VAR}`, or `$GITHUB_PATH`.
@@ -244,13 +256,6 @@ jobs:
         run: |
           cd frontend
           npm install
-
-      # --- platform-specific native build deps ---
-      - name: Install Linux deps (webkitgtk-6.0 + GTK4)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkitgtk-6.0-dev libgtk-4-dev build-essential pkg-config
 
       - name: Install NSIS and expose makensis
         if: runner.os == 'Windows'
