@@ -6,7 +6,22 @@ import { docToBlocks } from './converters'
 import { pushNotification } from '../../notifications/store.svelte'
 import { dispatch as dispatchPluginEvent } from '../../plugins/events'
 
+/**
+ * The save lifecycle phase, distinct from the dirty flag (#546).
+ *
+ * - `idle`    — on disk matches the editor; nothing to announce.
+ * - `pending` — dirty, the debounce timer is running (NOT "Saving…").
+ * - `saving`  — a write is actually in flight (`SaveFileBlocks` awaited).
+ * - `saved`   — the write succeeded; held briefly for a "Saved" confirmation.
+ * - `error`   — the write failed (fail-loud).
+ *
+ * The critical fix: `pending` (debounce) must never be shown as "Saving…";
+ * only `saving` (in-flight IPC) is.
+ */
+export type SavePhase = 'idle' | 'pending' | 'saving' | 'saved' | 'error'
+
 export interface SaveState {
+  phase: SavePhase
   dirty: boolean
   error: string | null
 }
@@ -21,6 +36,9 @@ export interface AutosaveDeps {
   onStateChange: (dirty: boolean, error: string | null) => void
   onSaveStateChange?: (state: SaveState) => void
 }
+
+/** How long the transient "Saved" confirmation stays visible before idle. */
+const SAVED_HOLD_MS = 2000
 
 /**
  * Manages debounced autosave for a TipTap editor page. The component creates
@@ -38,7 +56,8 @@ export interface AutosaveDeps {
  */
 export class AutosaveManager {
   private timeout: ReturnType<typeof setTimeout> | null = null
-  private lastEmitted: SaveState = { dirty: false, error: null }
+  private savedHoldTimeout: ReturnType<typeof setTimeout> | null = null
+  private lastEmitted: SaveState = { phase: 'idle', dirty: false, error: null }
   private pendingSave: Promise<void> | null = null
   private saveQueued = false
   private deps: AutosaveDeps
@@ -64,7 +83,7 @@ export class AutosaveManager {
   /** Mark the editor as dirty (e.g. on editor transaction). */
   markDirty(): void {
     this.deps.onStateChange(true, null)
-    this.emitSaveState(true, null)
+    this.emit('pending', true, null)
   }
 
   /** Flush any pending save immediately. Call on unmount or page change. */
@@ -82,7 +101,7 @@ export class AutosaveManager {
   /** Mark the editor as clean (e.g. after loading new content). */
   markClean(): void {
     this.deps.onStateChange(false, null)
-    this.emitSaveState(false, null)
+    this.emit('idle', false, null)
   }
 
   private async save(): Promise<void> {
@@ -95,6 +114,9 @@ export class AutosaveManager {
     const updatedBlocks = measureFrameBudget('tiptap-transaction', () =>
       docToBlocks(editor.getJSON())
     )
+    // The write is now genuinely in flight: surface the honest 'saving' phase,
+    // distinct from the 'pending' debounce above (#546).
+    this.emit('saving', true, null)
     this.pendingSave = (async () => {
       try {
         await SaveFileBlocks(
@@ -108,7 +130,8 @@ export class AutosaveManager {
           updatedBlocks as unknown as BindingParsedBlock[]
         )
         this.deps.onStateChange(false, null)
-        this.emitSaveState(false, null)
+        this.emit('saved', false, null)
+        this.armSavedHold()
         dispatchPluginEvent('editor:save', {
           notebook: this.deps.getNotebook(),
           section: this.deps.getSection(),
@@ -118,7 +141,7 @@ export class AutosaveManager {
         const msg = e instanceof Error ? e.message : String(e)
         console.error('AutosaveManager: SaveFileBlocks failed:', e)
         this.deps.onStateChange(true, msg)
-        this.emitSaveState(true, msg)
+        this.emit('error', true, msg)
         pushNotification({
           kind: 'error',
           message: `Save failed: ${msg}`,
@@ -142,9 +165,31 @@ export class AutosaveManager {
     }
   }
 
-  private emitSaveState(dirty: boolean, error: string | null): void {
-    const next: SaveState = { dirty, error }
+  /** Hold the "Saved" confirmation for a beat, then revert to idle if idle. */
+  private armSavedHold(): void {
+    this.clearSavedHold()
+    this.savedHoldTimeout = setTimeout(() => {
+      this.savedHoldTimeout = null
+      // Only revert if no new edit superseded the saved state.
+      if (this.lastEmitted.phase === 'saved') {
+        this.emit('idle', false, null)
+      }
+    }, SAVED_HOLD_MS)
+  }
+
+  private clearSavedHold(): void {
+    if (this.savedHoldTimeout) {
+      clearTimeout(this.savedHoldTimeout)
+      this.savedHoldTimeout = null
+    }
+  }
+
+  private emit(phase: SavePhase, dirty: boolean, error: string | null): void {
+    // A new non-saved phase supersedes any pending saved→idle revert.
+    if (phase !== 'saved') this.clearSavedHold()
+    const next: SaveState = { phase, dirty, error }
     if (
+      next.phase !== this.lastEmitted.phase ||
       next.dirty !== this.lastEmitted.dirty ||
       next.error !== this.lastEmitted.error
     ) {

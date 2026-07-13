@@ -108,6 +108,7 @@
     parts.push(tab.page)
     let tip = parts.join(' › ')
     if (tab.saveError) tip += ' — save failed'
+    else if (tab.savePhase === 'saving') tip += ' — saving…'
     else if (tab.dirty) tip += ' — unsaved edits'
     return tip
   }
@@ -282,6 +283,8 @@
                 <span class="material-symbols-outlined text-icon-xs">error</span
                 >
               </span>
+            {:else if showDirtyIndicators && tab.savePhase === 'saving'}
+              <span class="dirty-dot saving" aria-hidden="true"></span>
             {:else if showDirtyIndicators && tab.dirty}
               <span class="dirty-dot" aria-hidden="true"></span>
             {/if}
@@ -290,7 +293,7 @@
               title="Close tab"
               class="tab-close"
               class:has-indicator={showDirtyIndicators &&
-                (tab.dirty || tab.saveError)}
+                (tab.dirty || tab.saveError || tab.savePhase === 'saving')}
               onclick={(e) => {
                 e.stopPropagation()
                 onCloseTab(tab.id)
@@ -534,6 +537,24 @@
     transition:
       transform 120ms ease,
       opacity 120ms ease;
+  }
+
+  /* In-flight save: the dot pulses so an actively-writing tab is visibly
+     distinct from a merely-dirty (debouncing) one (#546). */
+  .dirty-dot.saving {
+    animation: silt-tab-saving-pulse 1.1s ease-in-out infinite;
+  }
+
+  @keyframes silt-tab-saving-pulse {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.35;
+      transform: scale(0.7);
+    }
   }
 
   .tab-close {

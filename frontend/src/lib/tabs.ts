@@ -66,6 +66,10 @@ export interface TabEntry extends PageRef {
   dirty?: boolean
   /** Non-null when the tab's last save failed (#167). Runtime only. */
   saveError?: string | null
+  /** Save lifecycle phase (#546): idle/pending/saving/saved/error. Runtime
+   *  only — drives the in-flight tab indicator; `dirty`/`saveError` stay the
+   *  authoritative dirty/error signals. */
+  savePhase?: 'idle' | 'pending' | 'saving' | 'saved' | 'error'
 }
 
 /**

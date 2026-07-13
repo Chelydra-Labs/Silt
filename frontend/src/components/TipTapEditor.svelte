@@ -129,8 +129,9 @@
     wordCount?: number
     /** Emitted when the editor's save state changes (dirty/error → clean).
      *  Used by the tab strip to show per-tab dirty/save-failed indicators
-     *  (#167). */
+     *  (#167) and the status bar to show the in-flight phase (#546). */
     onSaveStateChange?: (state: {
+      phase: 'idle' | 'pending' | 'saving' | 'saved' | 'error'
       dirty: boolean
       error: string | null
     }) => void

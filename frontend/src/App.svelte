@@ -1591,10 +1591,15 @@
                         : undefined}
                       onSaveStateChange={(s) => {
                         // Surface the editor's save state on the tab header
-                        // so it's visible from any tab (#167).
+                        // so it's visible from any tab (#167, #546).
                         openTabs = openTabs.map((t) =>
                           t.id === tab.id
-                            ? { ...t, dirty: s.dirty, saveError: s.error }
+                            ? {
+                                ...t,
+                                dirty: s.dirty,
+                                saveError: s.error,
+                                savePhase: s.phase
+                              }
                             : t
                         )
                       }}
