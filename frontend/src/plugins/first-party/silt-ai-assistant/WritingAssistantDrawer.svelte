@@ -21,6 +21,7 @@
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && writingAssistantDrawer.open) {
       e.preventDefault()
+      getAssistantController()?.discard()
       closeWritingAssistantDrawer()
     }
   }

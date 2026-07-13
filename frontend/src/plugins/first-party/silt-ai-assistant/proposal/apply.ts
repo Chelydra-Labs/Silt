@@ -4,7 +4,8 @@
 import type { PluginContext } from '../../../sdk'
 import type { Proposal } from '../types'
 
-export type ApplyResult = { ok: true } | { ok: false; error: string }
+export type ApplyResult =
+  { ok: true; detail?: string } | { ok: false; error: string }
 
 /**
  * Apply a ready proposal. Mutates the vault only through SDK content-mutate APIs.
@@ -37,6 +38,25 @@ export async function applyProposal(
   }
 }
 
+/** Splice proposed text into a block: partial selection replace or full replace. */
+export function buildReplacedBlockText(
+  blockText: string,
+  selectionText: string | undefined,
+  proposed: string,
+  replaceFullBlock?: boolean
+): string {
+  if (replaceFullBlock || !selectionText?.trim()) {
+    return proposed
+  }
+  const sel = selectionText
+  const idx = blockText.indexOf(sel)
+  if (idx < 0) {
+    // Selection not found in stored block text — fall back to full replace.
+    return proposed
+  }
+  return blockText.slice(0, idx) + proposed + blockText.slice(idx + sel.length)
+}
+
 async function applyMarkdown(
   ctx: PluginContext,
   proposal: Proposal
@@ -46,13 +66,17 @@ async function applyMarkdown(
 
   const blockId = proposal.scope.targetBlockId
   if (proposal.kind === 'replace-selection' && blockId) {
-    // Replace whole block clean content while preserving identity via mutateBlock.
-    const ok = await ctx.mutateBlock(blockId, md)
+    const next = buildReplacedBlockText(
+      proposal.scope.targetBlockText ?? md,
+      proposal.scope.selectionText,
+      md,
+      proposal.scope.replaceFullBlock
+    )
+    const ok = await ctx.mutateBlock(blockId, next)
     if (!ok) return { ok: false, error: 'mutateBlock failed' }
-    return { ok: true }
+    return { ok: true, detail: 'Block updated' }
   }
 
-  // Insert as a new NOTE block on the active page.
   const { notebook, section, page } = proposal.scope
   if (!notebook || !page) {
     return {
@@ -67,7 +91,7 @@ async function applyMarkdown(
     type: 'NOTE',
     text: md
   })
-  return { ok: true }
+  return { ok: true, detail: 'Inserted into note' }
 }
 
 async function applyTasks(
@@ -78,20 +102,58 @@ async function applyTasks(
   if (tasks.length === 0) return { ok: false, error: 'No tasks to insert' }
 
   const { notebook, section, page } = proposal.scope
+  let applied = 0
+  const errors: string[] = []
   for (const title of tasks) {
-    if (notebook && page) {
-      await ctx.createBlock({
-        notebook,
-        section: section || '',
-        page,
-        type: 'TASK',
-        text: title
-      })
-    } else {
-      await ctx.createTask({ title, status: 'TODO' })
+    try {
+      if (notebook && page) {
+        await ctx.createBlock({
+          notebook,
+          section: section || '',
+          page,
+          type: 'TASK',
+          text: title
+        })
+      } else {
+        await ctx.createTask({ title, status: 'TODO' })
+      }
+      applied++
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e))
     }
   }
-  return { ok: true }
+  if (applied === 0) {
+    return {
+      ok: false,
+      error: errors[0] || 'Failed to create tasks'
+    }
+  }
+  if (errors.length) {
+    return {
+      ok: true,
+      detail: `Inserted ${applied} of ${tasks.length} tasks (${errors.length} failed)`
+    }
+  }
+  return { ok: true, detail: `Inserted ${applied} task(s)` }
+}
+
+async function loadExistingTags(
+  ctx: PluginContext,
+  blockId: string
+): Promise<string[]> {
+  try {
+    const { rows } = await ctx.sqliteQuery(
+      `SELECT raw_path AS tag FROM tags WHERE block_id = ?`,
+      [blockId]
+    )
+    return rows
+      .map((r) =>
+        typeof r.tag === 'string' ? r.tag.replace(/^#/, '').trim() : ''
+      )
+      .filter(Boolean)
+  } catch {
+    return []
+  }
 }
 
 async function applyTags(
@@ -105,10 +167,11 @@ async function applyTags(
 
   const blockId = proposal.scope.targetBlockId ?? proposal.scope.blockId
   if (blockId) {
-    // Merge with existing tags on a task when possible.
     try {
-      await ctx.setTaskTags(blockId, tags)
-      return { ok: true }
+      const existing = await loadExistingTags(ctx, blockId)
+      const merged = [...new Set([...existing, ...tags])]
+      await ctx.setTaskTags(blockId, merged)
+      return { ok: true, detail: 'Tags merged onto task' }
     } catch {
       /* fall through to hashtag insert */
     }
@@ -126,7 +189,7 @@ async function applyTags(
     type: 'NOTE',
     text: line
   })
-  return { ok: true }
+  return { ok: true, detail: 'Tags inserted' }
 }
 
 async function applyLinks(
@@ -150,5 +213,5 @@ async function applyLinks(
     type: 'NOTE',
     text: lines
   })
-  return { ok: true }
+  return { ok: true, detail: 'Related links inserted' }
 }

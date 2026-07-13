@@ -2,6 +2,7 @@
   // Writing Assistant panel — drawer or hub (#230).
   import type { PluginContext } from '../../sdk'
   import { enabledActions, actionById } from './catalog'
+  import { acceptLabel, outcomeSummary } from './proposal/outcome'
   import { getAssistantController } from './state.svelte'
   import type { ActionId } from './types'
 
@@ -18,6 +19,13 @@
   )
   const proposal = $derived(ctl?.proposal)
   const streamText = $derived(ctl?.streamText ?? '')
+  const selectedMeta = $derived(
+    ctl ? actionById(ctl.selectedAction) : undefined
+  )
+  const showEmbedBanner = $derived(
+    !!ctl && selectedMeta?.needsEmbed && !ctl.embedReady() && ctl.chatReady()
+  )
+  const showChatBanner = $derived(!!ctl && !ctl.chatReady())
 
   function statusLabel(): string {
     if (!ctl) return ''
@@ -28,6 +36,10 @@
         return 'Generating…'
       case 'ready':
         return 'Proposal ready — review before accepting'
+      case 'applied':
+        return ctl.statusDetail || 'Applied.'
+      case 'cancelled':
+        return ctl.statusDetail || 'Cancelled.'
       case 'no-chat-provider':
         return 'Chat model not configured'
       case 'no-embedding-provider':
@@ -37,8 +49,16 @@
       case 'error':
         return ctl.errorMessage || 'Error'
       default:
-        return ''
+        return ctl.statusDetail || ''
     }
+  }
+
+  function breadcrumb(r: {
+    notebook?: string
+    section?: string
+    page?: string
+  }): string {
+    return [r.notebook, r.section, r.page].filter(Boolean).join(' / ')
   }
 
   async function onRun() {
@@ -46,6 +66,11 @@
     await ctl.run(ctx, ctl.selectedAction, {
       instruction: ctl.instruction
     })
+  }
+
+  async function onRegenerate() {
+    if (!ctl || busy) return
+    await ctl.regenerate(ctx)
   }
 
   async function onAccept() {
@@ -84,23 +109,29 @@
     {/if}
   </header>
 
-  {#if ctl && !ctl.chatReady()}
+  {#if showChatBanner}
     <div class="wa-banner" role="status">
       <p>Configure a chat model to use writing actions.</p>
       <button type="button" class="wa-link" onclick={openAISettings}
         >Open AI Provider</button
       >
     </div>
+  {:else if showEmbedBanner}
+    <div class="wa-banner" role="status">
+      <p>Related notes need an embedding model.</p>
+      <button type="button" class="wa-link" onclick={openAISettings}
+        >Open AI Provider</button
+      >
+    </div>
   {/if}
 
-  <div class="wa-actions" role="listbox" aria-label="Actions">
+  <div class="wa-actions" role="group" aria-label="Actions">
     {#each actions as a (a.id)}
       <button
         type="button"
-        role="option"
         class="wa-action"
         class:active={ctl?.selectedAction === a.id}
-        aria-selected={ctl?.selectedAction === a.id}
+        aria-pressed={ctl?.selectedAction === a.id}
         disabled={busy}
         onclick={() => pickAction(a.id)}
       >
@@ -133,15 +164,33 @@
     >
       {busy ? 'Running…' : 'Run'}
     </button>
+    {#if busy}
+      <button type="button" class="wa-secondary" onclick={onDiscard}>
+        Cancel
+      </button>
+    {:else if ctl?.lastRun}
+      <button
+        type="button"
+        class="wa-secondary"
+        disabled={!ctl}
+        onclick={() => void onRegenerate()}
+      >
+        Regenerate
+      </button>
+    {/if}
   </div>
 
-  <div class="wa-status" role="status" aria-live="polite" aria-atomic="false">
+  <div class="wa-status" role="status" aria-live="polite" aria-atomic="true">
     {statusLabel()}
   </div>
 
-  <div class="wa-output" aria-live="polite">
+  <div class="wa-output">
     {#if proposal?.warning}
       <p class="wa-warn">{proposal.warning}</p>
+    {/if}
+
+    {#if proposal?.status === 'ready'}
+      <p class="wa-outcome">{outcomeSummary(proposal)}</p>
     {/if}
 
     {#if proposal?.tags?.length}
@@ -172,8 +221,12 @@
                 checked={proposal.selectedRelatedIds?.includes(r.blockId)}
                 onchange={() => ctl?.toggleRelated(r.blockId)}
               />
-              <span class="wa-snippet" title={r.snippet}>{r.snippet}</span>
-              <span class="wa-badge">{r.score.toFixed(2)}</span>
+              <span class="wa-related">
+                {#if breadcrumb(r)}
+                  <span class="wa-crumb">{breadcrumb(r)}</span>
+                {/if}
+                <span class="wa-snippet" title={r.snippet}>{r.snippet}</span>
+              </span>
             </label>
           </li>
         {/each}
@@ -182,16 +235,22 @@
       <pre class="wa-preview">{streamText || proposal?.proposedMarkdown}</pre>
     {:else if !busy}
       <p class="wa-empty">
-        Run an action to preview a proposal. Nothing is written until you
-        accept.
+        Run an action or use a slash command. Nothing is written until you
+        accept. Slash: Draft, Rewrite succinct, Improve clarity, Extract tasks,
+        Suggest tags, Suggest related.
       </p>
     {/if}
   </div>
 
   {#if proposal?.status === 'ready'}
     <div class="wa-footer">
-      <button type="button" class="wa-primary" onclick={() => void onAccept()}>
-        Accept
+      <button
+        type="button"
+        class="wa-primary"
+        aria-label={acceptLabel(proposal)}
+        onclick={() => void onAccept()}
+      >
+        {acceptLabel(proposal)}
       </button>
       <button type="button" class="wa-secondary" onclick={onDiscard}>
         Discard
@@ -309,6 +368,8 @@
     font: inherit;
   }
   .wa-run-row {
+    display: flex;
+    gap: 0.5rem;
     padding: 0 1rem 0.5rem;
   }
   .wa-primary {
@@ -360,10 +421,14 @@
     color: var(--color-text-muted);
     font-size: 0.875rem;
   }
-  .wa-warn {
+  .wa-warn,
+  .wa-outcome {
     color: var(--color-text-muted);
     font-size: 0.8rem;
     margin: 0 0 0.5rem;
+  }
+  .wa-outcome {
+    color: var(--color-text-primary);
   }
   .wa-checklist {
     list-style: none;
@@ -378,6 +443,17 @@
     align-items: flex-start;
     gap: 0.4rem;
     font-size: 0.85rem;
+  }
+  .wa-related {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+    flex: 1;
+  }
+  .wa-crumb {
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
   }
   .wa-snippet {
     flex: 1;

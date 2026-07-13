@@ -69,9 +69,23 @@ export interface ScopeContext {
   existingTaskTitles?: string[]
   /** Target block id for mutate when replacing a whole block. */
   targetBlockId?: string
-  /** Target block raw text (with tokens) when replacing. */
+  /** Target block clean text when replacing (selection splice base). */
   targetBlockText?: string
+  /** True when the selection covers the entire target block. */
+  replaceFullBlock?: boolean
 }
+
+export type PanelStatus =
+  | 'idle'
+  | 'running'
+  | 'streaming'
+  | 'ready'
+  | 'error'
+  | 'no-chat-provider'
+  | 'no-embedding-provider'
+  | 'no-input'
+  | 'applied'
+  | 'cancelled'
 
 export interface TagSuggestion {
   tag: string
@@ -108,13 +122,3 @@ export interface Proposal {
   warning?: string
   createdAt: number
 }
-
-export type PanelStatus =
-  | 'idle'
-  | 'running'
-  | 'streaming'
-  | 'ready'
-  | 'error'
-  | 'no-chat-provider'
-  | 'no-embedding-provider'
-  | 'no-input'

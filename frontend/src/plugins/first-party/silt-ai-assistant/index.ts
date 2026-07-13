@@ -14,7 +14,6 @@ import {
   getAssistantController,
   syncWritingAssistantChrome
 } from './state.svelte'
-import { resolveSettings } from './settings'
 
 export const manifest: PluginManifest = {
   id: 'silt-ai-assistant',
@@ -26,8 +25,6 @@ export const manifest: PluginManifest = {
   icon: 'ink_pen',
   capabilities: { ai: true, 'content-mutate': true }
 }
-
-const PLUGIN_ID = 'silt-ai-assistant'
 
 function selectionTextFromEditor(editor: unknown): string {
   try {
@@ -45,14 +42,12 @@ function selectionTextFromEditor(editor: unknown): string {
   }
 }
 
+/**
+ * Register slash commands for the full catalog. Enabled state is enforced at
+ * invoke time so settings toggles apply without re-registering.
+ */
 function registerSlashCommands(ctx: PluginContext) {
-  const raw = ctx as any
-  // Settings loaded from controller when available.
-  const ctl = getAssistantController()
-  const settings = ctl?.settings ?? resolveSettings(null)
-
   for (const action of ACTION_CATALOG) {
-    if (!isActionEnabled(settings, action.id)) continue
     ctx.registerSlashCommand({
       id: action.id,
       label: action.slashLabel,
@@ -61,13 +56,18 @@ function registerSlashCommands(ctx: PluginContext) {
       onSelect: (editor) => {
         const c = getAssistantController()
         if (!c) return
+        c.loadSettings()
+        if (!isActionEnabled(c.settings, action.id)) {
+          openWritingAssistantDrawer()
+          void c.run(ctx, action.id, {})
+          return
+        }
         const selectionText = selectionTextFromEditor(editor)
         openWritingAssistantDrawer()
         void c.run(ctx, action.id, { selectionText })
       }
     })
   }
-  void raw
 }
 
 export default {
@@ -80,6 +80,9 @@ export default {
     syncWritingAssistantChrome(ctl)
     ctl.loadSettings()
     registerSlashCommands(ctx)
+    ctx.on('config:changed', () => {
+      getAssistantController()?.loadSettings()
+    })
   },
   onVaultClose() {
     getAssistantController()?.dispose()

@@ -37,7 +37,7 @@ describe('silt-ai-assistant plugin entry', () => {
 
     plugin.onVaultOpen?.(ctx)
     expect(getAssistantController()).not.toBeNull()
-    // Six curated actions by default
+    // Full catalog registered; enabled state enforced at invoke
     expect(mocks.registerSlashCommand).toHaveBeenCalledTimes(6)
     const ids = (
       mocks.registerSlashCommand.mock.calls as unknown as Array<

@@ -10,7 +10,9 @@ import { runExtractTasks } from './actions/extractTasks'
 import { runSuggestRelated } from './actions/suggestRelated'
 import { runSuggestTags } from './actions/suggestTags'
 import { runWritingAction } from './actions/writing'
+import type { StreamSession } from './actions/runChat'
 import { enabledActions, isActionEnabled } from './catalog'
+import { formatAIError, isAbortError } from './errors'
 import { applyProposal } from './proposal/apply'
 import { resolveSettings } from './settings'
 import { buildScope } from './scope'
@@ -22,16 +24,28 @@ import type {
 } from './types'
 import { openWritingAssistantDrawer } from './drawer.svelte'
 
+export type RunOpts = {
+  selectionText?: string
+  blockId?: string
+  instruction?: string
+}
+
 export function createAssistantController() {
   let settings: AssistantSettings = $state(resolveSettings(null))
   let panelStatus: PanelStatus = $state('idle')
   let errorMessage = $state('')
+  let statusDetail = $state('')
   let streamText = $state('')
   let proposal: Proposal | null = $state(null)
   let instruction = $state('')
   let selectedAction: ActionId = $state('draft-expand')
   let runInFlight = false
   let disposed = false
+  let runGeneration = 0
+  let cancelRequested = false
+  let streamSession: StreamSession | null = null
+  let lastRun: { actionId: ActionId; opts: RunOpts } | null = null
+  let appliedClearTimer: ReturnType<typeof setTimeout> | null = null
 
   function loadSettings() {
     const raw = (appSettings.config?.plugins?.plugin_settings as any)?.[
@@ -58,7 +72,15 @@ export function createAssistantController() {
     )
   }
 
+  function cancelActiveStream() {
+    cancelRequested = true
+    streamSession?.cancel()
+    streamSession = null
+  }
+
   function discard() {
+    cancelActiveStream()
+    runGeneration++
     if (proposal && proposal.status === 'ready') {
       proposal = { ...proposal, status: 'discarded' }
     }
@@ -66,18 +88,23 @@ export function createAssistantController() {
     streamText = ''
     panelStatus = 'idle'
     errorMessage = ''
+    statusDetail = ''
+    runInFlight = false
   }
 
   async function run(
     ctx: PluginContext,
     actionId: ActionId,
-    opts: {
-      selectionText?: string
-      blockId?: string
-      instruction?: string
-    } = {}
+    opts: RunOpts = {}
   ) {
-    if (runInFlight || disposed) return
+    if (disposed) return
+    // Allow re-run: cancel prior work first.
+    if (runInFlight) {
+      cancelActiveStream()
+    }
+
+    loadSettings()
+
     if (!isActionEnabled(settings, actionId)) {
       panelStatus = 'error'
       errorMessage = 'That action is disabled in Writing Assistant settings.'
@@ -96,12 +123,24 @@ export function createAssistantController() {
       return
     }
 
+    const gen = ++runGeneration
+    cancelRequested = false
+    streamSession = null
     runInFlight = true
     selectedAction = actionId
     proposal = null
     streamText = ''
     errorMessage = ''
+    statusDetail = ''
     panelStatus = 'running'
+    lastRun = {
+      actionId,
+      opts: {
+        selectionText: opts.selectionText,
+        blockId: opts.blockId,
+        instruction: opts.instruction ?? instruction
+      }
+    }
     openWritingAssistantDrawer()
 
     try {
@@ -111,10 +150,7 @@ export function createAssistantController() {
         instruction: opts.instruction ?? instruction
       })
 
-      const needsInput =
-        actionId !== 'draft-expand' ||
-        !!(opts.instruction ?? instruction).trim() ||
-        !!scope.inputText.trim()
+      if (gen !== runGeneration || disposed) return
 
       if (actionId === 'draft-expand') {
         if (
@@ -131,7 +167,6 @@ export function createAssistantController() {
         errorMessage = 'Select text or open a note with content first.'
         return
       }
-      void needsInput
 
       let result: Proposal
       switch (actionId) {
@@ -142,8 +177,13 @@ export function createAssistantController() {
           result = await runWritingAction(ctx, actionId, scope, settings, {
             instruction: opts.instruction ?? instruction,
             onStream: (full) => {
-              streamText = full
-            }
+              if (gen === runGeneration) streamText = full
+            },
+            onSession: (session) => {
+              streamSession = session
+            },
+            isCancelled: () =>
+              cancelRequested || gen !== runGeneration || disposed
           })
           break
         case 'extract-tasks':
@@ -159,7 +199,7 @@ export function createAssistantController() {
           throw new Error(`Unknown action: ${actionId}`)
       }
 
-      if (disposed) return
+      if (gen !== runGeneration || disposed || cancelRequested) return
       proposal = result
       streamText = result.proposedMarkdown
       if (result.status === 'error') {
@@ -169,13 +209,29 @@ export function createAssistantController() {
         panelStatus = 'ready'
       }
     } catch (e) {
-      if (disposed) return
+      if (gen !== runGeneration || disposed) return
+      if (isAbortError(e) || cancelRequested) {
+        panelStatus = 'cancelled'
+        errorMessage = ''
+        statusDetail = 'Cancelled.'
+        proposal = null
+        streamText = ''
+        return
+      }
       panelStatus = 'error'
-      errorMessage = e instanceof Error ? e.message : String(e)
+      errorMessage = formatAIError(e)
       proposal = null
     } finally {
-      runInFlight = false
+      if (gen === runGeneration) {
+        runInFlight = false
+        streamSession = null
+      }
     }
+  }
+
+  async function regenerate(ctx: PluginContext) {
+    if (!lastRun) return
+    await run(ctx, lastRun.actionId, lastRun.opts)
   }
 
   async function accept(ctx: PluginContext): Promise<boolean> {
@@ -187,9 +243,17 @@ export function createAssistantController() {
       return false
     }
     proposal = { ...proposal, status: 'accepted' }
-    panelStatus = 'idle'
+    panelStatus = 'applied'
+    statusDetail = res.detail || 'Applied.'
     streamText = ''
     proposal = null
+    if (appliedClearTimer) clearTimeout(appliedClearTimer)
+    appliedClearTimer = setTimeout(() => {
+      if (panelStatus === 'applied') {
+        panelStatus = 'idle'
+        statusDetail = ''
+      }
+    }, 2500)
     return true
   }
 
@@ -211,8 +275,11 @@ export function createAssistantController() {
 
   function dispose() {
     disposed = true
+    cancelActiveStream()
+    runGeneration++
     proposal = null
     streamText = ''
+    if (appliedClearTimer) clearTimeout(appliedClearTimer)
   }
 
   return {
@@ -224,6 +291,9 @@ export function createAssistantController() {
     },
     get errorMessage() {
       return errorMessage
+    },
+    get statusDetail() {
+      return statusDetail
     },
     get streamText() {
       return streamText
@@ -243,13 +313,18 @@ export function createAssistantController() {
     set selectedAction(v: ActionId) {
       selectedAction = v
     },
+    get lastRun() {
+      return lastRun
+    },
     loadSettings,
     setSettings,
     chatReady,
     embedReady,
     run,
+    regenerate,
     accept,
     discard,
+    cancelActiveStream,
     toggleTag,
     toggleRelated,
     dispose

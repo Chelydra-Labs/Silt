@@ -5,7 +5,8 @@ import { resolveSettings } from '../settings'
 import {
   buildWritingMessages,
   parseWritingOutput,
-  runWritingAction
+  runWritingAction,
+  writingProposalKind
 } from './writing'
 
 describe('writing actions', () => {
@@ -23,6 +24,31 @@ describe('writing actions', () => {
 
   it('parses fenced markdown output', () => {
     expect(parseWritingOutput('```\n- a\n```')).toBe('- a')
+  })
+
+  it('uses insert-below when no target block', () => {
+    expect(
+      writingProposalKind('improve-clarity', {
+        notebook: 'n',
+        section: '',
+        page: 'p',
+        inputText: 'x',
+        truncated: false
+      })
+    ).toBe('insert-below')
+  })
+
+  it('uses replace-selection when target block resolved', () => {
+    expect(
+      writingProposalKind('rewrite-succinct', {
+        notebook: 'n',
+        section: '',
+        page: 'p',
+        inputText: 'x',
+        truncated: false,
+        targetBlockId: 'b1'
+      })
+    ).toBe('replace-selection')
   })
 
   it('runs improve-clarity with mocked complete (no write)', async () => {
