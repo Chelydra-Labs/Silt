@@ -1634,19 +1634,14 @@
         <div class="context-menu-separator"></div>
         <button
           type="button"
-          class="context-menu-item justify-between"
+          class="context-menu-item"
           role="menuitem"
           onclick={handleClearFormatting}
         >
-          <span class="flex items-center gap-2">
-            <span class="material-symbols-outlined text-icon-md"
-              >format_clear</span
-            >
-            Clear Formatting
-          </span>
-          <span class="ml-auto text-type-2xs text-text-muted/70 font-mono pl-4"
-            >Ctrl+\</span
+          <span class="material-symbols-outlined text-icon-md"
+            >format_clear</span
           >
+          Clear Formatting
         </button>
       </div>
     </div>

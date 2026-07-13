@@ -418,4 +418,136 @@ describe('TabStrip (#142)', () => {
     const tab = screen.getAllByRole('tab')[0]
     expect(tab.getAttribute('title')).toContain('save failed')
   })
+
+  describe('tab context menu', () => {
+    // Material icon ligatures are part of the accessible name (e.g.
+    // "close Close Tab"), so match on the label substring carefully.
+    function menuItem(label: string): HTMLElement {
+      return screen.getByRole('menuitem', { name: new RegExp(label, 'i') })
+    }
+
+    it('opens on right-click with close actions and copy path', async () => {
+      const tabs = [
+        mkTab({ notebook: 'Work', section: 'Projects', page: 'Site' }),
+        mkTab({ notebook: 'Work', section: '', page: 'Top' })
+      ]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-Site' })
+      })
+      const tab = screen.getAllByRole('tab')[0]
+      await fireEvent.contextMenu(tab)
+
+      expect(menuItem('Close Other Tabs')).toBeTruthy()
+      expect(menuItem('Close Tabs to Right')).toBeTruthy()
+      expect(menuItem('Copy Page Path')).toBeTruthy()
+      // Exact "Close Tab" (not "Close Tabs to Right" / "Close Other Tabs")
+      const closeOnly = screen
+        .getAllByRole('menuitem')
+        .find(
+          (el) =>
+            el.textContent?.replace(/\s+/g, ' ').trim() === 'close Close Tab'
+        )
+      expect(closeOnly).toBeTruthy()
+      expect(screen.queryByText('Copy Page Reference')).toBeNull()
+    })
+
+    it('shows Pin Tab only for preview tabs', async () => {
+      const tabs = [
+        mkTab(
+          { notebook: 'Work', section: '', page: 'Preview' },
+          { preview: true, id: 'tab-Preview' }
+        ),
+        mkTab({ notebook: 'Work', section: '', page: 'Pinned' })
+      ]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-Preview' })
+      })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
+      expect(menuItem('Pin Tab')).toBeTruthy()
+
+      cleanup()
+      render(TabStrip, {
+        props: defaultProps({
+          tabs: [mkTab({ notebook: 'Work', section: '', page: 'Pinned' })],
+          activeTabId: 'tab-Pinned'
+        })
+      })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
+      expect(screen.queryByRole('menuitem', { name: /Pin Tab/i })).toBeNull()
+    })
+
+    it('disables Close Other Tabs when only one tab is open', async () => {
+      const tabs = [mkTab({ notebook: 'Work', section: '', page: 'Only' })]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-Only' })
+      })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
+      expect(menuItem('Close Other Tabs')).toBeDisabled()
+    })
+
+    it('disables Close Tabs to Right on the rightmost tab', async () => {
+      const tabs = [
+        mkTab({ notebook: 'Work', section: '', page: 'A' }),
+        mkTab({ notebook: 'Work', section: '', page: 'B' })
+      ]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-A' })
+      })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[1])
+      expect(menuItem('Close Tabs to Right')).toBeDisabled()
+    })
+
+    it('Close Tab / Close Others / Close to Right call onCloseTab with correct ids', async () => {
+      const tabs = [
+        mkTab({ notebook: 'Work', section: '', page: 'A' }),
+        mkTab({ notebook: 'Work', section: '', page: 'B' }),
+        mkTab({ notebook: 'Work', section: '', page: 'C' })
+      ]
+      const props = defaultProps({ tabs, activeTabId: 'tab-B' })
+      render(TabStrip, { props })
+
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[1])
+      const closeOnly = screen
+        .getAllByRole('menuitem')
+        .find(
+          (el) =>
+            el.textContent?.replace(/\s+/g, ' ').trim() === 'close Close Tab'
+        )!
+      await fireEvent.click(closeOnly)
+      expect(props.onCloseTab).toHaveBeenCalledWith('tab-B')
+
+      cleanup()
+      const props2 = defaultProps({ tabs, activeTabId: 'tab-B' })
+      render(TabStrip, { props: props2 })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[1])
+      await fireEvent.click(menuItem('Close Other Tabs'))
+      expect(props2.onCloseTab).toHaveBeenCalledWith('tab-A')
+      expect(props2.onCloseTab).toHaveBeenCalledWith('tab-C')
+      expect(props2.onCloseTab).not.toHaveBeenCalledWith('tab-B')
+
+      cleanup()
+      const props3 = defaultProps({ tabs, activeTabId: 'tab-A' })
+      render(TabStrip, { props: props3 })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
+      await fireEvent.click(menuItem('Close Tabs to Right'))
+      expect(props3.onCloseTab).toHaveBeenCalledWith('tab-B')
+      expect(props3.onCloseTab).toHaveBeenCalledWith('tab-C')
+      expect(props3.onCloseTab).not.toHaveBeenCalledWith('tab-A')
+    })
+
+    it('Copy Page Path writes a plain vault path (not wiki-link syntax)', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.assign(navigator, { clipboard: { writeText } })
+
+      const tabs = [
+        mkTab({ notebook: 'Work', section: 'Projects', page: 'Site' })
+      ]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-Site' })
+      })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
+      await fireEvent.click(menuItem('Copy Page Path'))
+      expect(writeText).toHaveBeenCalledWith('Work/Projects/Site')
+    })
+  })
 })

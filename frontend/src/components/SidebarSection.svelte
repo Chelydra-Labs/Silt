@@ -190,8 +190,13 @@
           <span class="italic">No pages</span>
           <button
             type="button"
-            onclick={() => onCreatePageInline(sectionKey)}
-            class="text-type-2xs text-accent-primary-start hover:underline border-none bg-transparent cursor-pointer p-0 font-medium"
+            onclick={() => {
+              // Match header +: select section first so create lands in the
+              // active-section path (title focus / nav highlight).
+              onSelectSection(sectionKey)
+              onCreatePageInline(sectionKey)
+            }}
+            class="text-type-2xs text-accent-primary-start hover:underline border-none bg-transparent cursor-pointer p-0 font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary-start rounded-sm"
             title="Create a new page in this section"
           >
             + Add Page

@@ -269,6 +269,13 @@
     outline: 2px solid var(--color-accent-primary-start);
     outline-offset: -2px;
   }
+  :global(
+    [data-context-menu-root] [role='menuitem']:disabled,
+    [data-context-menu-root] [role='menuitem'][aria-disabled='true']
+  ) {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
   :global([data-context-menu-root] .context-menu-separator) {
     height: 1px;
     margin: 4px 6px;

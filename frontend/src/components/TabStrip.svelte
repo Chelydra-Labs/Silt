@@ -2,6 +2,7 @@
   import type { TabEntry } from '../lib/tabs'
   import { fade, fly } from 'svelte/transition'
   import ContextMenu from './ContextMenu.svelte'
+  import { pushNotification } from '../notifications/store.svelte'
 
   interface Props {
     tabs: TabEntry[]
@@ -27,10 +28,12 @@
   let contextMenu = $state<{
     open: boolean
     anchor: { x: number; y: number } | null
+    anchorEl: HTMLElement | null
     tab: TabEntry | null
   }>({
     open: false,
     anchor: null,
+    anchorEl: null,
     tab: null
   })
 
@@ -40,12 +43,14 @@
     contextMenu = {
       open: true,
       anchor: { x: e.clientX, y: e.clientY },
+      // Pass the tab button so ContextMenu can restore focus on Escape/close.
+      anchorEl: e.currentTarget as HTMLElement,
       tab
     }
   }
 
   function closeContextMenu(): void {
-    contextMenu = { open: false, anchor: null, tab: null }
+    contextMenu = { open: false, anchor: null, anchorEl: null, tab: null }
   }
 
   function handleCloseOtherTabs(targetTabId: string): void {
@@ -67,13 +72,18 @@
     }
   }
 
-  async function handleCopyPageReference(tab: TabEntry): Promise<void> {
+  // Plain vault path — not a wiki-link. Real page-link grammar is a separate
+  // feature; until then this copies a human-readable path only.
+  async function handleCopyPagePath(tab: TabEntry): Promise<void> {
     closeContextMenu()
-    const ref = `[[${tab.notebook}/${tab.section ? tab.section + '/' : ''}${tab.page}]]`
+    const path = [tab.notebook, tab.section, tab.page].filter(Boolean).join('/')
     try {
-      await navigator.clipboard.writeText(ref)
+      await navigator.clipboard.writeText(path)
     } catch {
-      // ignore
+      pushNotification({
+        kind: 'error',
+        message: 'Copy failed: clipboard could not be written.'
+      })
     }
   }
 
@@ -300,17 +310,24 @@
   <ContextMenu
     open={contextMenu.open}
     anchor={contextMenu.anchor}
+    anchorEl={contextMenu.anchorEl}
     onClose={closeContextMenu}
     ariaLabel="Tab actions"
   >
     {#if contextMenu.tab}
       {@const targetTab = contextMenu.tab}
+      {@const targetIdx = tabs.findIndex((t) => t.id === targetTab.id)}
+      {@const canCloseOthers = tabs.length > 1}
+      {@const canCloseToRight = targetIdx !== -1 && targetIdx < tabs.length - 1}
       <button
         type="button"
         role="menuitem"
         onclick={() => {
+          // Capture id before close — closeContextMenu nulls contextMenu.tab
+          // and can invalidate the {@const} binding mid-handler.
+          const id = targetTab.id
           closeContextMenu()
-          onCloseTab(targetTab.id)
+          onCloseTab(id)
         }}
       >
         <span class="material-symbols-outlined text-icon-md">close</span>
@@ -320,7 +337,12 @@
       <button
         type="button"
         role="menuitem"
-        onclick={() => handleCloseOtherTabs(targetTab.id)}
+        disabled={!canCloseOthers}
+        aria-disabled={!canCloseOthers}
+        onclick={() => {
+          if (!canCloseOthers) return
+          handleCloseOtherTabs(targetTab.id)
+        }}
       >
         <span class="material-symbols-outlined text-icon-md"
           >tab_unselected</span
@@ -331,7 +353,12 @@
       <button
         type="button"
         role="menuitem"
-        onclick={() => handleCloseTabsToRight(targetTab.id)}
+        disabled={!canCloseToRight}
+        aria-disabled={!canCloseToRight}
+        onclick={() => {
+          if (!canCloseToRight) return
+          handleCloseTabsToRight(targetTab.id)
+        }}
       >
         <span class="material-symbols-outlined text-icon-md"
           >tab_close_right</span
@@ -346,8 +373,9 @@
           type="button"
           role="menuitem"
           onclick={() => {
+            const id = targetTab.id
             closeContextMenu()
-            onPromoteTab(targetTab.id)
+            onPromoteTab(id)
           }}
         >
           <span class="material-symbols-outlined text-icon-md">push_pin</span>
@@ -359,10 +387,10 @@
       <button
         type="button"
         role="menuitem"
-        onclick={() => handleCopyPageReference(targetTab)}
+        onclick={() => handleCopyPagePath(targetTab)}
       >
-        <span class="material-symbols-outlined text-icon-md">link</span>
-        Copy Page Reference
+        <span class="material-symbols-outlined text-icon-md">content_copy</span>
+        Copy Page Path
       </button>
     {/if}
   </ContextMenu>
