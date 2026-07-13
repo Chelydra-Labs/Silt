@@ -176,7 +176,11 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 			return
 		}
 
-		// 4. Clear old index entries + re-index at new path.
+		// 4. Rewrite inbound [[…]] wiki-links BEFORE clearing the old index,
+		// so the resolution-based rewrite sees the pre-rename page inventory.
+		a.rewriteInboundPageLinks(safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage)
+
+		// 5. Clear old index entries + re-index at new path.
 		a.coordinator.WithDBWrite(func() {
 			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeSection, safeOldPage)
 		})
@@ -272,7 +276,11 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 			log.Printf("MovePage: WriteFileAtomic failed at %s (file already moved): %v", newFile, err)
 		}
 
-		// 5. Clear old index entries + re-index at the new path. These run
+		// 5. Rewrite inbound [[…]] BEFORE clearing the old index, so the
+		// resolution-based rewrite sees the pre-move page inventory (#545).
+		a.rewriteInboundPageLinks(safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage)
+
+		// 6. Clear old index entries + re-index at the new path. These run
 		// unconditionally — even if the frontmatter write failed, the file
 		// has already moved and the old index entries must be cleaned up.
 		a.coordinator.WithDBWrite(func() {
@@ -439,11 +447,16 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 			return
 		}
 
-		// 4. Clear old index entries + re-index all pages at new paths.
+		// 5. Collect page file names, then rewrite inbound [[…]] BEFORE
+		// clearing the old index, so the resolution-based rewrite sees the
+		// pre-rename page inventory (#545).
 		var pageFiles []string
 		for _, fc := range files {
 			pageFiles = append(pageFiles, fc.name)
 		}
+		a.rewriteInboundPageLinksForSection(safeNotebook, safeOldSection, safeNewSection, pageFiles)
+
+		// 6. Clear old index entries + re-index all pages at new paths.
 		a.coordinator.WithDBWrite(func() {
 			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeOldSection, "")
 		})

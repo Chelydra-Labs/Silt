@@ -19,6 +19,7 @@ import { describe, it, expect, vi } from 'vitest'
 // component that imports it.
 const mocks = vi.hoisted(() => ({
   resolveBlockReference: vi.fn(),
+  resolvePageLink: vi.fn(),
   pluginMutateBlock: vi.fn(),
   fetchPageBlocks: vi.fn(),
   saveFileBlocks: vi.fn(),
@@ -29,6 +30,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../../bindings/silt/app.js', () => ({
   ResolveBlockReference: mocks.resolveBlockReference,
+  ResolvePageLink: mocks.resolvePageLink,
   PluginMutateBlock: mocks.pluginMutateBlock,
   FetchPageBlocks: mocks.fetchPageBlocks,
   SaveFileBlocks: mocks.saveFileBlocks,

@@ -3,6 +3,14 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 import TabStrip from './TabStrip.svelte'
 import type { TabEntry } from '../lib/tabs'
 
+const mocks = vi.hoisted(() => ({
+  resolvePageLink: vi.fn()
+}))
+
+vi.mock('../../bindings/silt/app.js', () => ({
+  ResolvePageLink: mocks.resolvePageLink
+}))
+
 function mkTab(
   ref: { notebook: string; section: string; page: string },
   opts: {
@@ -11,6 +19,7 @@ function mkTab(
     id?: string
     dirty?: boolean
     saveError?: string | null
+    savePhase?: 'idle' | 'pending' | 'saving' | 'saved' | 'error'
   } = {}
 ): TabEntry {
   return {
@@ -22,7 +31,8 @@ function mkTab(
     lastActivatedAt: opts.lastActivatedAt ?? Date.now(),
     viewMode: 'edit',
     dirty: opts.dirty,
-    saveError: opts.saveError
+    saveError: opts.saveError,
+    savePhase: opts.savePhase
   }
 }
 
@@ -384,6 +394,49 @@ describe('TabStrip (#142)', () => {
     expect(screen.queryByText('error')).toBeNull()
   })
 
+  it('saving tab shows the pulsing saving dot (#546)', () => {
+    const tabs = [
+      mkTab(
+        { notebook: 'W', section: '', page: 'A' },
+        { dirty: true, savePhase: 'saving' }
+      )
+    ]
+    const { container } = render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const dot = container.querySelector('.dirty-dot')
+    expect(dot).toBeInTheDocument()
+    expect(dot?.classList.contains('saving')).toBe(true)
+  })
+
+  it('saving tab tooltip includes saving hint (#546)', () => {
+    const tabs = [
+      mkTab(
+        { notebook: 'W', section: '', page: 'A' },
+        { dirty: true, savePhase: 'saving' }
+      )
+    ]
+    render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    const tab = screen.getAllByRole('tab')[0]
+    expect(tab.getAttribute('title')).toContain('saving')
+  })
+
+  it('error glyph takes priority over the saving dot (#546)', () => {
+    const tabs = [
+      mkTab(
+        { notebook: 'W', section: '', page: 'A' },
+        { saveError: 'disk full', savePhase: 'error' }
+      )
+    ]
+    const { container } = render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: 'tab-A' })
+    })
+    expect(screen.getByText('error')).toBeInTheDocument()
+    expect(container.querySelector('.dirty-dot')).toBeNull()
+  })
+
   it('dirty glyph hidden when showDirtyIndicators is false (#167)', () => {
     const tabs = [
       mkTab({ notebook: 'W', section: '', page: 'A' }, { dirty: true })
@@ -448,7 +501,7 @@ describe('TabStrip (#142)', () => {
             el.textContent?.replace(/\s+/g, ' ').trim() === 'close Close Tab'
         )
       expect(closeOnly).toBeTruthy()
-      expect(screen.queryByText('Copy Page Reference')).toBeNull()
+      expect(menuItem('Copy Page Reference')).toBeTruthy()
     })
 
     it('shows Pin Tab only for preview tabs', async () => {
@@ -548,6 +601,29 @@ describe('TabStrip (#142)', () => {
       await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
       await fireEvent.click(menuItem('Copy Page Path'))
       expect(writeText).toHaveBeenCalledWith('Work/Projects/Site')
+    })
+
+    it('Copy Page Reference writes [[shortest]] via ResolvePageLink (#545)', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.assign(navigator, { clipboard: { writeText } })
+      mocks.resolvePageLink.mockResolvedValue({
+        exists: true,
+        shortest: 'Site',
+        notebook: 'Work',
+        section: 'Projects',
+        page: 'Site'
+      })
+
+      const tabs = [
+        mkTab({ notebook: 'Work', section: 'Projects', page: 'Site' })
+      ]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-Site' })
+      })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
+      await fireEvent.click(menuItem('Copy Page Reference'))
+      expect(mocks.resolvePageLink).toHaveBeenCalledWith('Work/Projects/Site')
+      expect(writeText).toHaveBeenCalledWith('[[Site]]')
     })
   })
 })

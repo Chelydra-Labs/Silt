@@ -607,6 +607,52 @@ func TestResolveBlockReference_FoundAndMissing(t *testing.T) {
 	}
 }
 
+func TestResolvePageLink_FoundAmbiguousMissing(t *testing.T) {
+	app := newTestApp(t)
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13",
+		"22222222-2222-2222-2222-222222222222", "ship")
+	writeSamplePage(t, app, "Archive", "Old", "Daily", "2026-06-13",
+		"33333333-3333-3333-3333-333333333333", "old")
+	writeSamplePage(t, app, "Personal", "", "Inbox", "2026-06-13",
+		"44444444-4444-4444-4444-444444444444", "todo")
+
+	// Unique basename
+	inbox, err := app.ResolvePageLink("Inbox")
+	if err != nil {
+		t.Fatalf("ResolvePageLink Inbox: %v", err)
+	}
+	if !inbox.Exists || inbox.Page != "Inbox" || inbox.Notebook != "Personal" {
+		t.Fatalf("Inbox: %+v", inbox)
+	}
+
+	// Ambiguous basename
+	amb, err := app.ResolvePageLink("Daily")
+	if err != nil {
+		t.Fatalf("ResolvePageLink Daily: %v", err)
+	}
+	if amb.Exists || !amb.Ambiguous || len(amb.Candidates) != 2 {
+		t.Fatalf("Daily ambiguous: %+v", amb)
+	}
+
+	// Section disambiguates
+	sec, err := app.ResolvePageLink("Journal/Daily")
+	if err != nil {
+		t.Fatalf("ResolvePageLink Journal/Daily: %v", err)
+	}
+	if !sec.Exists || sec.Notebook != "Work" {
+		t.Fatalf("Journal/Daily: %+v", sec)
+	}
+
+	// Missing soft-fails
+	miss, err := app.ResolvePageLink("NoSuch")
+	if err != nil {
+		t.Fatalf("ResolvePageLink missing: %v", err)
+	}
+	if miss.Exists || miss.Ambiguous {
+		t.Errorf("expected soft-fail: %+v", miss)
+	}
+}
+
 func TestMutateBlock_PreservesTaskSyntaxAndUUID(t *testing.T) {
 	app := newTestApp(t)
 	taskID := "33333333-3333-3333-3333-333333333333"

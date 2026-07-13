@@ -39,8 +39,27 @@ unsolicited.
 
 1. Run an action (sidebar **Run** or slash command).
 2. Review the streamed or structured proposal.
-3. **Accept** applies the change via the plugin SDK (markdown stays source of
-   truth). **Discard** drops it — nothing is written.
+3. **Accept** applies the change (markdown stays source of truth). **Discard**
+   drops it — nothing is written.
+
+### In-editor proposed edits (selection range)
+
+When a run targets an **editor selection** on the focused page, the Writing
+Assistant can preview the replacement **in the editor** (struck original range +
+ghost proposed text) before Accept. **Accept** (or Ctrl/Cmd+Enter) applies one
+ProseMirror replace transaction — a single undo step — then the normal autosave
+path writes to disk. **Reject** / **Escape** clears the preview only (no
+`docChanged`, no disk write). If the page is not focused, or the proposal is not
+a selection replace, the panel preview + SDK apply path remains.
+
+## Drawer
+
+The Writing Assistant opens in a right-side drawer. It is **mutually exclusive**
+with the **AI Assistant** (Q&A) drawer: opening one closes the other so they
+never squeeze the note pane. Toggle either from its title-bar icon.
+
+**Escape** discards any in-flight proposal, then closes the Writing Assistant
+drawer.
 
 ## Slash commands
 

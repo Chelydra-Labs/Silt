@@ -3,6 +3,7 @@
   import { fade, fly } from 'svelte/transition'
   import ContextMenu from './ContextMenu.svelte'
   import { pushNotification } from '../notifications/store.svelte'
+  import { ResolvePageLink } from '../../bindings/silt/app.js'
 
   interface Props {
     tabs: TabEntry[]
@@ -72,8 +73,7 @@
     }
   }
 
-  // Plain vault path — not a wiki-link. Real page-link grammar is a separate
-  // feature; until then this copies a human-readable path only.
+  // Plain vault path — human-readable path only (sibling of wiki-link copy).
   async function handleCopyPagePath(tab: TabEntry): Promise<void> {
     closeContextMenu()
     const path = [tab.notebook, tab.section, tab.page].filter(Boolean).join('/')
@@ -84,6 +84,28 @@
         kind: 'error',
         message: 'Copy failed: clipboard could not be written.'
       })
+    }
+  }
+
+  // Wiki-link reference [[shortest-unique-path]] via ResolvePageLink (#545).
+  async function handleCopyPageReference(tab: TabEntry): Promise<void> {
+    closeContextMenu()
+    const full = [tab.notebook, tab.section, tab.page].filter(Boolean).join('/')
+    try {
+      const resolved = await ResolvePageLink(full)
+      const shortest =
+        resolved?.exists && resolved.shortest ? resolved.shortest : full
+      await navigator.clipboard.writeText(`[[${shortest}]]`)
+    } catch {
+      // Fall back to the full path form so copy still produces a useful link.
+      try {
+        await navigator.clipboard.writeText(`[[${full}]]`)
+      } catch {
+        pushNotification({
+          kind: 'error',
+          message: 'Copy failed: clipboard could not be written.'
+        })
+      }
     }
   }
 
@@ -108,6 +130,7 @@
     parts.push(tab.page)
     let tip = parts.join(' › ')
     if (tab.saveError) tip += ' — save failed'
+    else if (tab.savePhase === 'saving') tip += ' — saving…'
     else if (tab.dirty) tip += ' — unsaved edits'
     return tip
   }
@@ -282,6 +305,8 @@
                 <span class="material-symbols-outlined text-icon-xs">error</span
                 >
               </span>
+            {:else if showDirtyIndicators && tab.savePhase === 'saving'}
+              <span class="dirty-dot saving" aria-hidden="true"></span>
             {:else if showDirtyIndicators && tab.dirty}
               <span class="dirty-dot" aria-hidden="true"></span>
             {/if}
@@ -290,7 +315,7 @@
               title="Close tab"
               class="tab-close"
               class:has-indicator={showDirtyIndicators &&
-                (tab.dirty || tab.saveError)}
+                (tab.dirty || tab.saveError || tab.savePhase === 'saving')}
               onclick={(e) => {
                 e.stopPropagation()
                 onCloseTab(tab.id)
@@ -391,6 +416,14 @@
       >
         <span class="material-symbols-outlined text-icon-md">content_copy</span>
         Copy Page Path
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => handleCopyPageReference(targetTab)}
+      >
+        <span class="material-symbols-outlined text-icon-md">link</span>
+        Copy Page Reference
       </button>
     {/if}
   </ContextMenu>
@@ -534,6 +567,24 @@
     transition:
       transform 120ms ease,
       opacity 120ms ease;
+  }
+
+  /* In-flight save: the dot pulses so an actively-writing tab is visibly
+     distinct from a merely-dirty (debouncing) one (#546). */
+  .dirty-dot.saving {
+    animation: silt-tab-saving-pulse 1.1s ease-in-out infinite;
+  }
+
+  @keyframes silt-tab-saving-pulse {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.35;
+      transform: scale(0.7);
+    }
   }
 
   .tab-close {

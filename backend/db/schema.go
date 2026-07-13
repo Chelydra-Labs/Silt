@@ -245,6 +245,39 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create files table: %w", err)
 	}
 
+	// Page Links Table — the reverse index of [[target]] wiki links parsed off
+	// block bodies (#545). Re-derivable from markdown (rule 4 — SQLite is
+	// working memory); the markdown is the source of truth. Each row is one
+	// link occurrence in one block. The target_* columns are the best-effort
+	// resolution at index time (NULL when unresolved); the raw target string
+	// is preserved verbatim so a rename can find inbound links by exact text.
+	// The target-raw index serves the rename-rewrite lookup; the resolved
+	// target index serves a future backlinks panel.
+	createPageLinksTable := `
+	CREATE TABLE IF NOT EXISTS page_links (
+		source_notebook TEXT NOT NULL,
+		source_section  TEXT NOT NULL,
+		source_page     TEXT NOT NULL,
+		source_block_id TEXT NOT NULL,
+		target_raw      TEXT NOT NULL,
+		target_notebook TEXT,
+		target_section  TEXT,
+		target_page     TEXT,
+		heading         TEXT,
+		alias           TEXT,
+		PRIMARY KEY (source_notebook, source_section, source_page, source_block_id, target_raw),
+		FOREIGN KEY(source_block_id) REFERENCES blocks(id) ON DELETE CASCADE
+	);`
+	if _, err := db.Exec(createPageLinksTable); err != nil {
+		return fmt.Errorf("failed to create page_links table: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_page_links_raw ON page_links(target_raw);`); err != nil {
+		return fmt.Errorf("failed to create page_links raw index: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_page_links_target ON page_links(target_notebook, target_section, target_page);`); err != nil {
+		return fmt.Errorf("failed to create page_links target index: %w", err)
+	}
+
 	// Create covered indexes
 	indexes := []string{
 		// #100: replace the pre-source idx_blocks_file (keyed on notebook..)

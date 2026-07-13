@@ -2249,3 +2249,112 @@ func TestDistinctOwners_Prefix(t *testing.T) {
 		}
 	}
 }
+
+// TestIndexFileBlocks_PageLinksProjection verifies [[target]] wiki links in a
+// block body are extracted into the page_links reverse index (#545), including
+// the #heading and |alias portions, and that re-indexing a page does not
+// accumulate duplicates (the blocks-row clear cascades to page_links).
+func TestIndexFileBlocks_PageLinksProjection(t *testing.T) {
+	dm := newTestDB(t)
+
+	blocks := []parser.ParsedBlock{
+		{
+			ID:         "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			Type:       parser.BlockNote,
+			RawText:    "see [[Meetings]] and [[Work/Projects/Site#Goals]] plus [[Inbox|To process]]",
+			CleanText:  "see [[Meetings]] and [[Work/Projects/Site#Goals]] plus [[Inbox|To process]]",
+			LineNumber: 1,
+		},
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks failed: %v", err)
+	}
+
+	type row struct {
+		target  string
+		heading *string
+		alias   *string
+	}
+	got := []row{}
+	rows, err := dm.SQLDB().Query(`SELECT target_raw, heading, alias FROM page_links ORDER BY target_raw`)
+	if err != nil {
+		t.Fatalf("query page_links: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.target, &r.heading, &r.alias); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 page_links rows, got %d: %+v", len(got), got)
+	}
+	byTarget := map[string]row{}
+	for _, r := range got {
+		byTarget[r.target] = r
+	}
+	if _, ok := byTarget["Meetings"]; !ok {
+		t.Errorf("missing target Meetings: %+v", byTarget)
+	}
+	if r, ok := byTarget["Work/Projects/Site"]; !ok || r.heading == nil || *r.heading != "Goals" {
+		t.Errorf("target Work/Projects/Site heading mismatch: %+v", byTarget["Work/Projects/Site"])
+	}
+	if r, ok := byTarget["Inbox"]; !ok || r.alias == nil || *r.alias != "To process" {
+		t.Errorf("target Inbox alias mismatch: %+v", byTarget["Inbox"])
+	}
+
+	// Re-index the same page: the blocks-row DELETE must cascade to page_links
+	// so rows don't accumulate duplicates.
+	if err := dm.IndexFileBlocks("vault", "Work", "Journal", "Daily", blocks, nil); err != nil {
+		t.Fatalf("re-index failed: %v", err)
+	}
+	var n int
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM page_links").Scan(&n); err != nil {
+		t.Fatalf("count after re-index: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("expected 3 page_links rows after re-index (no dupes), got %d", n)
+	}
+}
+
+// TestIndexFileBlocks_PageLinksExcludesCodeBlocks verifies that [[…]] inside
+// a fenced CODE block is NOT indexed (literal text, not a link). Review fix.
+func TestIndexFileBlocks_PageLinksExcludesCodeBlocks(t *testing.T) {
+	dm := newTestDB(t)
+	codeBlock := parser.ParsedBlock{
+		ID:         "codeblock-0000-0000-0000-000000000001",
+		Type:       parser.BlockCode,
+		Depth:      0,
+		RawText:    "```go\n// [[NotALink]]\n```",
+		CleanText:  "// [[NotALink]]",
+		LineNumber: 1,
+	}
+	noteBlock := parser.ParsedBlock{
+		ID:         "noteblock-0000-0000-0000-000000000002",
+		Type:       parser.BlockNote,
+		Depth:      0,
+		RawText:    "Real [[RealLink]] link",
+		CleanText:  "Real [[RealLink]] link",
+		LineNumber: 2,
+	}
+	if err := dm.IndexFileBlocks("vault", "Work", "Projects", "Site",
+		[]parser.ParsedBlock{codeBlock, noteBlock}, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	var n int
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM page_links").Scan(&n); err != nil {
+		t.Fatalf("count page_links: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 page_link (from NOTE only), got %d", n)
+	}
+	var target string
+	if err := dm.SQLDB().QueryRow("SELECT target_raw FROM page_links").Scan(&target); err != nil {
+		t.Fatalf("select target_raw: %v", err)
+	}
+	if target != "RealLink" {
+		t.Errorf("expected RealLink, got %q", target)
+	}
+}

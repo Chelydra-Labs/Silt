@@ -28,6 +28,12 @@ grounded in your own notes with clickable citations.
 3. Open the **AI Assistant** drawer from the title-bar icon (next to Search)
    and ask a question.
 
+## Drawer
+
+The AI Assistant drawer is **mutually exclusive** with the **Writing Assistant**
+drawer: opening one closes the other so they never squeeze the note pane.
+**Escape** closes the AI Assistant drawer.
+
 ## Privacy
 
 - Note content is sent to the **configured embedding endpoint** when indexing

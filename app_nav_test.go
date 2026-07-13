@@ -202,6 +202,212 @@ func TestRenamePage_UpdatesFrontmatterAndFile(t *testing.T) {
 	}
 }
 
+// TestRenamePage_RewritesInboundWikiLinks verifies that RenamePage rewrites
+// [[OldTarget]] → [[NewTarget]] in other pages via the page_links reverse
+// index, while preserving block UUIDs on the renamed page (#545).
+func TestRenamePage_RewritesInboundWikiLinks(t *testing.T) {
+	app := newTestApp(t)
+
+	targetID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	sourceID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+	targetPath := filepath.Join(app.vaultPath, "Work", "Target.md")
+	sourcePath := filepath.Join(app.vaultPath, "Work", "Source.md")
+	writeFile(t, targetPath, "---\nnotebook: \"Work\"\nsection: \"\"\npage: \"Target\"\n---\n\n"+
+		"target body <!-- id: "+targetID+" -->\n")
+	writeFile(t, sourcePath, "---\nnotebook: \"Work\"\nsection: \"\"\npage: \"Source\"\n---\n\n"+
+		"See [[Target#Goals|the target]] please <!-- id: "+sourceID+" -->\n")
+
+	for _, p := range []struct {
+		path, nb, sec, page string
+	}{
+		{targetPath, "Work", "", "Target"},
+		{sourcePath, "Work", "", "Source"},
+	} {
+		b, _ := os.ReadFile(p.path)
+		blocks, meta, _, _, err := parser.ParseFileContent(string(b), p.nb, p.sec, p.page, "2026-01-01", app.spacesPerTab)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p.page, err)
+		}
+		if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+			t.Fatalf("index %s: %v", p.page, err)
+		}
+	}
+
+	if err := app.RenamePage("Work", "", "Target", "Renamed"); err != nil {
+		t.Fatalf("RenamePage: %v", err)
+	}
+
+	src, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "[[Renamed#Goals|the target]]") {
+		t.Errorf("expected rewritten wiki-link, got:\n%s", s)
+	}
+	if strings.Contains(s, "[[Target") {
+		t.Errorf("old target should be gone, got:\n%s", s)
+	}
+	// Block UUID on the renamed page is preserved.
+	renamed, err := os.ReadFile(filepath.Join(app.vaultPath, "Work", "Renamed.md"))
+	if err != nil {
+		t.Fatalf("read renamed: %v", err)
+	}
+	if !strings.Contains(string(renamed), targetID) {
+		t.Errorf("block UUID must survive rename, got:\n%s", renamed)
+	}
+	// ResolvePageLink finds the new name.
+	ref, err := app.ResolvePageLink("Renamed")
+	if err != nil {
+		t.Fatalf("ResolvePageLink: %v", err)
+	}
+	if !ref.Exists || ref.Page != "Renamed" {
+		t.Errorf("ResolvePageLink Renamed: %+v", ref)
+	}
+}
+
+// TestRenamePage_DoesNotRewriteAmbiguousBasenameLinks verifies that renaming
+// one of two same-basename pages does NOT rewrite links pointing at the other
+// page (review fix for #545).
+func TestRenamePage_DoesNotRewriteAmbiguousBasenameLinks(t *testing.T) {
+	app := newTestApp(t)
+
+	// Two pages named "Daily" in different sections — basename is ambiguous.
+	dailyA := filepath.Join(app.vaultPath, "Work", "Journal", "Daily.md")
+	dailyB := filepath.Join(app.vaultPath, "Archive", "Old", "Daily.md")
+	// A third page links to [[Daily]] (ambiguous target).
+	source := filepath.Join(app.vaultPath, "Work", "Hub.md")
+	writeFile(t, dailyA, "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\n---\n\n"+
+		"body A <!-- id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa -->\n")
+	writeFile(t, dailyB, "---\nnotebook: \"Archive\"\nsection: \"Old\"\npage: \"Daily\"\n---\n\n"+
+		"body B <!-- id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb -->\n")
+	writeFile(t, source, "---\nnotebook: \"Work\"\nsection: \"\"\npage: \"Hub\"\n---\n\n"+
+		"Link [[Daily]] <!-- id: cccccccc-cccc-4ccc-8ccc-cccccccccccc -->\n")
+
+	for _, p := range []struct {
+		path, nb, sec, page string
+	}{
+		{dailyA, "Work", "Journal", "Daily"},
+		{dailyB, "Archive", "Old", "Daily"},
+		{source, "Work", "", "Hub"},
+	} {
+		b, _ := os.ReadFile(p.path)
+		blocks, meta, _, _, err := parser.ParseFileContent(string(b), p.nb, p.sec, p.page, "2026-01-01", app.spacesPerTab)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p.page, err)
+		}
+		if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+			t.Fatalf("index %s: %v", p.page, err)
+		}
+	}
+
+	// Rename Work/Journal/Daily → Work/Journal/Renamed.
+	if err := app.RenamePage("Work", "Journal", "Daily", "Renamed"); err != nil {
+		t.Fatalf("RenamePage: %v", err)
+	}
+
+	// The ambiguous [[Daily]] link must be UNCHANGED — it could refer to
+	// either page and must not be silently rewritten.
+	src, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if !strings.Contains(string(src), "[[Daily]]") {
+		t.Errorf("ambiguous [[Daily]] must NOT be rewritten:\n%s", src)
+	}
+}
+
+// TestMovePage_RewritesInboundWikiLinks verifies MovePage rewrites section-
+// qualified [[…]] targets via the reverse index (#545).
+func TestMovePage_RewritesInboundWikiLinks(t *testing.T) {
+	app := newTestApp(t)
+
+	targetPath := filepath.Join(app.vaultPath, "Work", "FromSec", "Moved.md")
+	sourcePath := filepath.Join(app.vaultPath, "Work", "Other.md")
+	writeFile(t, targetPath, "---\nnotebook: \"Work\"\nsection: \"FromSec\"\npage: \"Moved\"\n---\n\n"+
+		"body <!-- id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa -->\n")
+	writeFile(t, sourcePath, "---\nnotebook: \"Work\"\nsection: \"\"\npage: \"Other\"\n---\n\n"+
+		"See [[FromSec/Moved]] please <!-- id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb -->\n")
+
+	for _, p := range []struct {
+		path, nb, sec, page string
+	}{
+		{targetPath, "Work", "FromSec", "Moved"},
+		{sourcePath, "Work", "", "Other"},
+	} {
+		b, _ := os.ReadFile(p.path)
+		blocks, meta, _, _, err := parser.ParseFileContent(string(b), p.nb, p.sec, p.page, "2026-01-01", app.spacesPerTab)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p.page, err)
+		}
+		if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+			t.Fatalf("index %s: %v", p.page, err)
+		}
+	}
+
+	if err := app.MovePage("Work", "FromSec", "ToSec", "Moved"); err != nil {
+		t.Fatalf("MovePage: %v", err)
+	}
+
+	src, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "[[ToSec/Moved]]") {
+		t.Errorf("expected section-qualified rewrite, got:\n%s", s)
+	}
+	if strings.Contains(s, "[[FromSec/Moved]]") {
+		t.Errorf("old section path should be gone, got:\n%s", s)
+	}
+}
+
+// TestRenameSection_RewritesInboundWikiLinks verifies RenameSection rewrites
+// inbound links for every page under the old section (#545).
+func TestRenameSection_RewritesInboundWikiLinks(t *testing.T) {
+	app := newTestApp(t)
+
+	targetPath := filepath.Join(app.vaultPath, "Work", "OldSec", "Page1.md")
+	sourcePath := filepath.Join(app.vaultPath, "Work", "Hub.md")
+	writeFile(t, targetPath, "---\nnotebook: \"Work\"\nsection: \"OldSec\"\npage: \"Page1\"\n---\n\n"+
+		"body <!-- id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa -->\n")
+	writeFile(t, sourcePath, "---\nnotebook: \"Work\"\nsection: \"\"\npage: \"Hub\"\n---\n\n"+
+		"Link [[OldSec/Page1|p1]] <!-- id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb -->\n")
+
+	for _, p := range []struct {
+		path, nb, sec, page string
+	}{
+		{targetPath, "Work", "OldSec", "Page1"},
+		{sourcePath, "Work", "", "Hub"},
+	} {
+		b, _ := os.ReadFile(p.path)
+		blocks, meta, _, _, err := parser.ParseFileContent(string(b), p.nb, p.sec, p.page, "2026-01-01", app.spacesPerTab)
+		if err != nil {
+			t.Fatalf("parse %s: %v", p.page, err)
+		}
+		if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+			t.Fatalf("index %s: %v", p.page, err)
+		}
+	}
+
+	if err := app.RenameSection("Work", "OldSec", "NewSec"); err != nil {
+		t.Fatalf("RenameSection: %v", err)
+	}
+
+	src, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "[[NewSec/Page1|p1]]") {
+		t.Errorf("expected section rename rewrite, got:\n%s", s)
+	}
+	if strings.Contains(s, "[[OldSec/") {
+		t.Errorf("old section path should be gone, got:\n%s", s)
+	}
+}
+
 func TestRenamePage_NameCollision(t *testing.T) {
 	app := newTestApp(t)
 

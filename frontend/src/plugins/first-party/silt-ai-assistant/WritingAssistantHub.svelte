@@ -1,7 +1,7 @@
 <script lang="ts">
   // Main plugin view when opened from Plugins / activity (informational hub).
   import type { PluginContext, PluginManifest } from '../../sdk'
-  import { openWritingAssistantDrawer } from './drawer.svelte'
+  import { openWritingAssistantDrawerExclusive } from '../../../lib/drawers.svelte'
   import { enabledActions } from './catalog'
   import { getAssistantController } from './state.svelte'
 
@@ -26,7 +26,7 @@
   <button
     type="button"
     class="mb-6 px-4 py-2 rounded-lg bg-accent-primary-start text-surface-app font-semibold"
-    onclick={() => openWritingAssistantDrawer()}
+    onclick={() => openWritingAssistantDrawerExclusive()}
   >
     Open assistant panel
   </button>

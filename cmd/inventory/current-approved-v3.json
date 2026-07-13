@@ -713,6 +713,10 @@
         "signature": "ResolveBlockReference(blockID string) (parser.BlockReference, error)"
       },
       {
+        "name": "ResolvePageLink",
+        "signature": "ResolvePageLink(target string) (parser.PageReference, error)"
+      },
+      {
         "name": "ResolveQuarantinedLinks",
         "signature": "ResolveQuarantinedLinks() ([]QuarantinedLinkInfo, error)"
       },
@@ -889,6 +893,7 @@
       "menu:settings",
       "menu:toggle-format-toolbar",
       "menu:toggle-sidebar",
+      "page-links:rewritten",
       "plugins:changed",
       "security:event",
       "templates:changed",
@@ -902,14 +907,20 @@
       "frontend/src/App.menu-save.test.ts",
       "frontend/src/App.svelte",
       "frontend/src/components/BlockPickerModal.svelte",
+      "frontend/src/components/BlockPickerModal.test.ts",
       "frontend/src/components/BlockReferenceChip.svelte",
       "frontend/src/components/BlockReferenceChip.test.ts",
       "frontend/src/components/EmbedPortal.svelte",
       "frontend/src/components/EmbedPortal.test.ts",
+      "frontend/src/components/PageLinkChip.svelte",
+      "frontend/src/components/PageLinkChip.test.ts",
       "frontend/src/components/PluginView.test.ts",
       "frontend/src/components/SearchModal.svelte",
+      "frontend/src/components/SearchModal.test.ts",
       "frontend/src/components/Sidebar.svelte",
       "frontend/src/components/Sidebar.test.ts",
+      "frontend/src/components/TabStrip.svelte",
+      "frontend/src/components/TabStrip.test.ts",
       "frontend/src/components/TagSidebarPanel.svelte",
       "frontend/src/components/TagsExplorer.svelte",
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
@@ -1045,6 +1056,7 @@
       "menu:settings",
       "menu:toggle-format-toolbar",
       "menu:toggle-sidebar",
+      "page-links:rewritten",
       "plugins:changed",
       "security:event",
       "settings:fingerprint-mismatch",

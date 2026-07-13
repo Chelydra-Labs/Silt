@@ -5,6 +5,7 @@ import {
   HeaderBlock,
   EmbedNode,
   BlockReferenceNode,
+  PageLinkNode,
   MentionNode,
   InlineMathNode,
   BlockMathNode,
@@ -17,6 +18,7 @@ import NoteBlockView from '../../components/editor/NoteBlockView.svelte'
 import HeaderBlockView from '../../components/editor/HeaderBlockView.svelte'
 import EmbedNodeView from '../../components/editor/EmbedNodeView.svelte'
 import BlockReferenceNodeView from '../../components/editor/BlockReferenceNodeView.svelte'
+import PageLinkNodeView from '../../components/editor/PageLinkNodeView.svelte'
 import MentionNodeView from '../../components/editor/MentionNodeView.svelte'
 import MathNodeView from '../../components/editor/MathNodeView.svelte'
 import EmbedBlockNodeView from '../../components/editor/EmbedBlockNodeView.svelte'
@@ -52,6 +54,13 @@ export const SiltBlockExtensionsWithNodeViews = [
   BlockReferenceNode.extend({
     addNodeView() {
       return SvelteNodeViewRenderer(BlockReferenceNodeView)
+    }
+  }),
+  // Wiki / page link chip (#545). Inline atomic node rendering [[target]]
+  // as a clickable PageLinkChip that resolves via ResolvePageLink.
+  PageLinkNode.extend({
+    addNodeView() {
+      return SvelteNodeViewRenderer(PageLinkNodeView)
     }
   }),
   // @-mention chip (#184). Inline atomic node rendering @[name] as a

@@ -260,6 +260,30 @@ type BlockChangedEvent struct {
 	FileDate string `json:"file_date"`
 }
 
+// PageReference is the resolved location of a [[target]] wiki-link (#545).
+// Missing targets return Exists=false (no error) so the UI can render an
+// unresolved chip. Ambiguous targets (same basename across pages) return
+// Ambiguous=true with Candidates populated; Exists stays false.
+type PageReference struct {
+	Target     string     `json:"target"`
+	Exists     bool       `json:"exists"`
+	Ambiguous  bool       `json:"ambiguous"`
+	Source     string     `json:"source"`
+	Notebook   string     `json:"notebook"`
+	Section    string     `json:"section"`
+	Page       string     `json:"page"`
+	Shortest   string     `json:"shortest"` // shortest unique path for this page
+	Candidates []PagePath `json:"candidates,omitempty"`
+}
+
+// PagePath is one candidate page location for an ambiguous wiki-link.
+type PagePath struct {
+	Source   string `json:"source"`
+	Notebook string `json:"notebook"`
+	Section  string `json:"section"`
+	Page     string `json:"page"`
+}
+
 // TagNode is one node of the hierarchical tag tree returned by QueryTagHierarchy.
 type TagNode struct {
 	Name     string    `json:"name"`

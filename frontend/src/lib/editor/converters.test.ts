@@ -14,6 +14,7 @@ import {
 import {
   EmbedNode,
   BlockReferenceNode,
+  PageLinkNode,
   CalloutBlock,
   CodeBlock
 } from './schema'
@@ -85,6 +86,7 @@ function makeEditor() {
       ...SiltColorMarkExtensions,
       EmbedNode,
       BlockReferenceNode,
+      PageLinkNode,
       UniqueBlockIds
     ]
   })
@@ -119,6 +121,7 @@ function makeEditorWithNewBlocks() {
       ...SiltTableExtensions,
       EmbedNode,
       BlockReferenceNode,
+      PageLinkNode,
       UniqueBlockIds,
       TrailingNode.configure({
         node: 'noteBlock',
@@ -1106,6 +1109,33 @@ describe('uniqueIdPlugin', () => {
   it('round-trips embeds and refs through docToBlocks (#85)', () => {
     const block = mkBlock('NOTE', {
       clean_text: `Pre {{embed:${UUID_A}}} mid ((${UUID_B})) post`
+    })
+    const doc = blocksToDoc([block])
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe(block.clean_text)
+  })
+
+  it('tokenizes [[target]] page links in clean_text as pageLinkNode (#545)', () => {
+    const block = mkBlock('NOTE', {
+      clean_text:
+        'See [[Meetings]] and [[Work/Projects/Site#Goals]] plus [[Inbox|To process]].'
+    })
+    const doc = blocksToDoc([block])
+    const noteNode = doc.content[0] as any
+    const links = noteNode.content.filter((c: any) => c.type === 'pageLinkNode')
+    expect(links).toHaveLength(3)
+    expect(links[0].attrs.target).toBe('Meetings')
+    expect(links[1].attrs.target).toBe('Work/Projects/Site')
+    expect(links[1].attrs.heading).toBe('Goals')
+    expect(links[2].attrs.target).toBe('Inbox')
+    expect(links[2].attrs.alias).toBe('To process')
+  })
+
+  it('round-trips page links through docToBlocks byte-for-byte (#545)', () => {
+    const block = mkBlock('NOTE', {
+      clean_text:
+        'Link [[Simple]] and [[Path/To/Page#Section]] and [[Page#H|Alias]] end'
     })
     const doc = blocksToDoc([block])
     const back = docToBlocks(doc)

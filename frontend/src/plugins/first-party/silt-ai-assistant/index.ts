@@ -4,7 +4,7 @@
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { ACTION_CATALOG } from './catalog'
 import { isActionEnabled } from './catalog'
-import { openWritingAssistantDrawer } from './drawer.svelte'
+import { openWritingAssistantDrawerExclusive } from '../../../lib/drawers.svelte'
 import { resetWritingAssistantDrawer } from './drawer.svelte'
 import WritingAssistantHub from './WritingAssistantHub.svelte'
 import AssistantSettings from './AssistantSettings.svelte'
@@ -42,6 +42,26 @@ function selectionTextFromEditor(editor: unknown): string {
   }
 }
 
+/** Capture the editor's PM selection range and selected text for the in-editor
+ *  proposed-edit preview (#543). Returns null when there is no non-empty
+ *  selection. The selected text is captured so we can validate the range is
+ *  still valid when the AI response arrives (positions drift if the user
+ *  edits during streaming). */
+function selectionRangeFromEditor(
+  editor: unknown
+): { from: number; to: number; text: string } | null {
+  try {
+    const state = (editor as { state?: any })?.state
+    const sel = state?.selection
+    if (!sel || sel.from === sel.to) return null
+    const text = state.doc.textBetween(sel.from, sel.to, '\n') ?? ''
+    if (!text) return null
+    return { from: sel.from, to: sel.to, text }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Register slash commands for the full catalog. Enabled state is enforced at
  * invoke time so settings toggles apply without re-registering.
@@ -58,13 +78,23 @@ function registerSlashCommands(ctx: PluginContext) {
         if (!c) return
         c.loadSettings()
         if (!isActionEnabled(c.settings, action.id)) {
-          openWritingAssistantDrawer()
+          openWritingAssistantDrawerExclusive()
           void c.run(ctx, action.id, {})
           return
         }
         const selectionText = selectionTextFromEditor(editor)
-        openWritingAssistantDrawer()
-        void c.run(ctx, action.id, { selectionText })
+        const range = selectionRangeFromEditor(editor)
+        openWritingAssistantDrawerExclusive()
+        void c.run(ctx, action.id, {
+          selectionText,
+          ...(range
+            ? {
+                selectionFrom: range.from,
+                selectionTo: range.to,
+                selectionChecksum: range.text
+              }
+            : {})
+        })
       }
     })
   }

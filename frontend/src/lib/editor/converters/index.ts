@@ -45,10 +45,12 @@ export type {
   TextToken,
   MarkToken,
   EmbedToken,
-  BlockReferenceToken
+  BlockReferenceToken,
+  PageLinkToken
 } from './tokenize'
 
 export { serializeInlineContent } from './serialize'
+export { legacyTokenizeInline } from './serialize'
 
 export {
   blocksToDoc,

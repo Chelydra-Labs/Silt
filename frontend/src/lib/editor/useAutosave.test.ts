@@ -134,6 +134,157 @@ describe('AutosaveManager', () => {
     expect(deps.onStateChange).toHaveBeenCalledWith(false, null)
   })
 
+  describe('save phase state machine (#546)', () => {
+    it('emits pending on trigger (debounce, not Saving…)', () => {
+      const deps = makeDeps()
+      const autosave = new AutosaveManager(deps)
+
+      autosave.trigger()
+
+      expect(deps.onSaveStateChange).toHaveBeenCalledWith({
+        phase: 'pending',
+        dirty: true,
+        error: null
+      })
+    })
+
+    it('emits saving → saved across a successful save', async () => {
+      const deps = makeDeps()
+      const autosave = new AutosaveManager(deps)
+
+      autosave.trigger()
+      // Advance past the debounce; save() starts (saving), IPC resolves, then
+      // the SAVING_MIN_DISPLAY_MS floor elapses before 'saved'.
+      await vi.advanceTimersByTimeAsync(150)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(300)
+
+      const phases = (
+        deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.map((c: any[]) => c[0].phase)
+      expect(phases).toEqual(['pending', 'saving', 'saved'])
+    })
+
+    it('reverts saved → idle after the hold window', async () => {
+      const deps = makeDeps()
+      const autosave = new AutosaveManager(deps)
+
+      autosave.trigger()
+      await vi.advanceTimersByTimeAsync(150)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(300) // SAVING_MIN_DISPLAY_MS
+
+      const phasesBefore = (
+        deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.map((c: any[]) => c[0].phase)
+      expect(phasesBefore).toContain('saved')
+
+      // Advance past SAVED_HOLD_MS (2000). The hold timer fires → idle.
+      await vi.advanceTimersByTimeAsync(2000)
+
+      const last = (
+        deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.at(-1)![0]
+      expect(last.phase).toBe('idle')
+      expect(last.dirty).toBe(false)
+    })
+
+    it('cancels the saved→idle revert when a new edit arrives', async () => {
+      const deps = makeDeps()
+      const autosave = new AutosaveManager(deps)
+
+      autosave.trigger()
+      await vi.advanceTimersByTimeAsync(150)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(300) // SAVING_MIN_DISPLAY_MS
+
+      // A new edit mid-hold flips back to pending and cancels the revert.
+      // markDirty() represents the dirty transition without scheduling a new
+      // save, isolating the hold-cancellation from a second save cycle.
+      autosave.markDirty()
+
+      // Advance past SAVED_HOLD_MS; the revert timer was cancelled, so idle
+      // must NOT fire.
+      await vi.advanceTimersByTimeAsync(2000)
+
+      const calls = (
+        deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.map((c: any[]) => c[0].phase)
+      expect(calls.at(-1)).toBe('pending')
+      const savedIdx = calls.indexOf('saved')
+      expect(calls.slice(savedIdx + 1)).not.toContain('idle')
+    })
+
+    it('holds saving for at least SAVING_MIN_DISPLAY_MS (non-blocking)', async () => {
+      const deps = makeDeps()
+      const autosave = new AutosaveManager(deps)
+
+      autosave.trigger()
+      await vi.advanceTimersByTimeAsync(150)
+      await vi.advanceTimersByTimeAsync(0)
+      // IPC done; onUpdate already fired; phase still 'saving' until floor.
+      expect(deps.onUpdate).toHaveBeenCalled()
+      let phases = (
+        deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.map((c: any[]) => c[0].phase)
+      expect(phases.at(-1)).toBe('saving')
+
+      await vi.advanceTimersByTimeAsync(300)
+      phases = (
+        deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.map((c: any[]) => c[0].phase)
+      expect(phases.at(-1)).toBe('saved')
+    })
+
+    it('emits error phase on save failure', async () => {
+      const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
+      vi.mocked(SaveFileBlocks).mockRejectedValueOnce(new Error('disk full'))
+      const deps = makeDeps()
+      const autosave = new AutosaveManager(deps)
+
+      autosave.trigger()
+      await vi.advanceTimersByTimeAsync(150)
+      await vi.advanceTimersByTimeAsync(0)
+
+      const last = (
+        deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.at(-1)![0]
+      expect(last.phase).toBe('error')
+      expect(last.dirty).toBe(true)
+      expect(last.error).toBe('disk full')
+    })
+
+    it('markClean() emits idle after a dirty state', () => {
+      const deps = makeDeps()
+      const autosave = new AutosaveManager(deps)
+
+      // Put it in a non-idle state first so the idle transition is observable.
+      autosave.trigger()
+      expect(
+        (deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>).mock
+          .calls.length
+      ).toBeGreaterThan(0)
+
+      autosave.markClean()
+
+      const last = (
+        deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.at(-1)![0]
+      expect(last).toEqual({ phase: 'idle', dirty: false, error: null })
+    })
+
+    it('dedupes consecutive identical states', () => {
+      const deps = makeDeps()
+      const autosave = new AutosaveManager(deps)
+
+      autosave.trigger()
+      autosave.trigger()
+
+      // Both triggers emit the same 'pending' state; only the first emits.
+      expect(deps.onSaveStateChange).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it('does not save when editor is null', async () => {
     const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps({ getEditor: () => null })

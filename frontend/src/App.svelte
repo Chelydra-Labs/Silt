@@ -61,16 +61,14 @@
   import PluginModalHost from './components/PluginModalHost.svelte'
   import AISearchDrawer from './plugins/first-party/silt-ai-qa/AISearchDrawer.svelte'
   import { aiAssistantChrome } from './plugins/first-party/silt-ai-qa/state.svelte'
-  import {
-    aiSearchDrawer,
-    toggleAISearchDrawer
-  } from './plugins/first-party/silt-ai-qa/drawer.svelte'
+  import { aiSearchDrawer } from './plugins/first-party/silt-ai-qa/drawer.svelte'
   import WritingAssistantDrawer from './plugins/first-party/silt-ai-assistant/WritingAssistantDrawer.svelte'
   import { writingAssistantChrome } from './plugins/first-party/silt-ai-assistant/state.svelte'
+  import { writingAssistantDrawer } from './plugins/first-party/silt-ai-assistant/drawer.svelte'
   import {
-    writingAssistantDrawer,
-    toggleWritingAssistantDrawer
-  } from './plugins/first-party/silt-ai-assistant/drawer.svelte'
+    toggleAISearchDrawerExclusive,
+    toggleWritingAssistantDrawerExclusive
+  } from './lib/drawers.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import ToastContainer from './components/ToastContainer.svelte'
@@ -468,6 +466,7 @@
   let activeFocusedBlockAncestors = $state<string[]>([])
   let searchTargetDate = $state('')
   let searchTargetBlockId = $state('')
+  let searchTargetHeading = $state('')
   let searchTargetKey = $state('')
   // Tasks view focus target (#374) — set by openTasksView when a
   // navigation resolves to a `.silt` block. PluginView passes these
@@ -790,6 +789,23 @@
         handleSearchJump(d.notebook, d.section, d.page, d.date, d.blockId)
       }
     }
+    // Wiki-link navigation (#545). Opens the resolved page; optional heading
+    // scrolls to the matching HEADER block after open.
+    function handleNavigateToPage(e: Event) {
+      const d = (e as CustomEvent).detail
+      if (!d?.notebook || !d?.page) return
+      handleSearchJump(
+        d.notebook,
+        d.section ?? '',
+        d.page,
+        d.date ?? '',
+        d.blockId ?? ''
+      )
+      if (d.heading) {
+        searchTargetHeading = d.heading
+        searchTargetKey = `heading:${d.heading}:${Date.now()}`
+      }
+    }
     function handleNavigateToTag(e: Event) {
       const tagPath = (e as CustomEvent).detail
       if (tagPath) {
@@ -843,6 +859,7 @@
 
     window.addEventListener('keydown', handleGlobalKeyDown)
     window.addEventListener('navigate-to-block', handleNavigateToBlock)
+    window.addEventListener('navigate-to-page', handleNavigateToPage)
     window.addEventListener('navigate-to-tag', handleNavigateToTag)
     window.addEventListener('switch-view', handleSwitchView)
     window.addEventListener('open-plugin-manager', handleOpenPluginManager)
@@ -982,6 +999,35 @@
       if (!w) return
       pushNotification(reMintToast(w, openPage))
     })
+    // Wiki-link rename rewrite summary (#545 harden). Partial failures used
+    // to be log-only; surface a toast so inbound [[…]] that failed to update
+    // are not silent.
+    const offPageLinksRewritten = Events.On(
+      'page-links:rewritten',
+      (ev: any) => {
+        const d = ev?.data as
+          { rewritten?: number; failed?: number } | undefined
+        if (!d) return
+        const rewritten = d.rewritten ?? 0
+        const failed = d.failed ?? 0
+        if (failed > 0) {
+          pushNotification({
+            kind: 'error',
+            message:
+              rewritten > 0
+                ? `Updated ${rewritten} linked page(s); ${failed} could not be rewritten.`
+                : `Could not rewrite wiki-links in ${failed} page(s). Check the log for details.`,
+            autoDismissMs: 0
+          })
+        } else if (rewritten > 0) {
+          pushNotification({
+            kind: 'info',
+            message: `Updated wiki-links in ${rewritten} page(s).`,
+            autoDismissMs: 4000
+          })
+        }
+      }
+    )
 
     // Native menu events (#503) — the Go-side menu items emit these; wire
     // them to the same handlers the keyboard shortcuts use so menu and
@@ -1063,6 +1109,7 @@
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
       window.removeEventListener('navigate-to-block', handleNavigateToBlock)
+      window.removeEventListener('navigate-to-page', handleNavigateToPage)
       window.removeEventListener('navigate-to-tag', handleNavigateToTag)
       window.removeEventListener('switch-view', handleSwitchView)
       window.removeEventListener('open-plugin-manager', handleOpenPluginManager)
@@ -1086,6 +1133,7 @@
       offVaultInitWarnings()
       offVaultWatchCoverage()
       offReMintWarning()
+      offPageLinksRewritten()
       offMenuNewPage()
       offMenuOpenVault()
       offMenuSave()
@@ -1198,6 +1246,7 @@
     activeView = 'notes'
     searchTargetDate = date
     searchTargetBlockId = blockId
+    searchTargetHeading = ''
     searchTargetKey = `${date}:${blockId}:${Date.now()}`
   }
 
@@ -1357,11 +1406,11 @@
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
       onAIAssistantClick={aiAssistantChrome.available
-        ? () => toggleAISearchDrawer()
+        ? () => toggleAISearchDrawerExclusive()
         : undefined}
       aiAssistantOpen={aiSearchDrawer.open}
       onWritingAssistantClick={writingAssistantChrome.available
-        ? () => toggleWritingAssistantDrawer()
+        ? () => toggleWritingAssistantDrawerExclusive()
         : undefined}
       writingAssistantOpen={writingAssistantDrawer.open}
     >
@@ -1571,6 +1620,9 @@
                       targetBlockId={tab.id === activeTabId
                         ? searchTargetBlockId
                         : ''}
+                      targetHeading={tab.id === activeTabId
+                        ? searchTargetHeading
+                        : ''}
                       targetKey={tab.id === activeTabId ? searchTargetKey : ''}
                       activeFocusedBlockAncestors={tab.id === activeTabId
                         ? activeFocusedBlockAncestors
@@ -1593,10 +1645,15 @@
                         : undefined}
                       onSaveStateChange={(s) => {
                         // Surface the editor's save state on the tab header
-                        // so it's visible from any tab (#167).
+                        // so it's visible from any tab (#167, #546).
                         openTabs = openTabs.map((t) =>
                           t.id === tab.id
-                            ? { ...t, dirty: s.dirty, saveError: s.error }
+                            ? {
+                                ...t,
+                                dirty: s.dirty,
+                                saveError: s.error,
+                                savePhase: s.phase
+                              }
                             : t
                         )
                       }}

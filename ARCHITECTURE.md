@@ -731,7 +731,7 @@ The editor's transaction lifecycle is wired to the Go backend:
 - **Load:** `FetchPageBlocks(notebook, section, page)` returns a flat `[]ParsedBlock`; `blocksToDoc(blocks)` converts to ProseMirror doc JSON; `editor.commands.setContent(doc)` populates the editor.
 - **Save:** `editor.on('update')` (debounced via `editor.auto_save_delay_ms`) → `docToBlocks(editor.getJSON())` → `SaveFileBlocks(notebook, section, page, blocks)`. Go's `RenderFileContent` remains the single on-disk serializer.
 - **Focus lock:** the editor's `onFocus`/`onBlur` events drive `Acquire/ReleaseFocusLock`; a 20s heartbeat (`RefreshFocusLock`) keeps the lease alive while focused.
-- **Per-tab save-state:** `TipTapEditor` exposes `onSaveStateChange({ dirty, error })` on dirty/error/clean transitions. The callback threads through `VirtualScrollContainer` → `App.svelte`, which writes `TabEntry.dirty` / `TabEntry.saveError`. The tab strip renders a dirty glyph (`circle` icon in `--color-text-muted`) or error glyph (`error` icon in `--color-status-danger`) before the page name, visible from any tab — not just the active one. Controlled by `ui.show_tab_dirty_indicators` (default true). The in-editor footer indicator remains the authoritative surface; the tab glyph is a secondary always-visible hint.
+- **Per-tab save-state:** `TipTapEditor` exposes `onSaveStateChange({ phase, dirty, error })` on save-pipeline transitions (`phase`: `idle` | `pending` | `saving` | `saved` | `error`). Debounce is `pending` (silent); only `saving` shows "Saving…"; success holds transient "Saved" (~2s) in the editor footer. The callback threads through `VirtualScrollContainer` → `App.svelte`, which writes `TabEntry.dirty` / `TabEntry.saveError` / optional `TabEntry.savePhase`. The tab strip renders a dirty glyph, a subtle saving indicator on the active tab when phase is `saving`, or an error glyph — visible from any tab. Controlled by `ui.show_tab_dirty_indicators` (default true). Fail-loud errors stay assertive; `pending` is never labeled "Saving…".
 
 The ProseMirror schema defines block node types that map to `parser.ParsedBlock`:
 the three prose types (`taskBlock`, `noteBlock`, `headerBlock`) map 1:1, plus
@@ -765,12 +765,13 @@ searchable FTS5 document, and one SDK mutation target.
 
 NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render the Svelte UI for each block type — checkbox cycle for tasks, drag handles, meta badges. The slash menu (`/` at block start) surfaces commands to change block types.
 
-**Smart Graph NodeViews.** Two additional schema nodes render Smart Graph syntax as live, interactive elements inside the editor. The converter layer (`frontend/src/lib/editor/converters.ts`) tokenizes `clean_text` and emits the corresponding node types inline within the parent `noteBlock`; on save, the textual tokens are reconstructed byte-for-byte so the on-disk file is round-trip identical.
+**Smart Graph NodeViews.** Three additional schema nodes render Smart Graph syntax as live, interactive elements inside the editor. The converter layer (`frontend/src/lib/editor/converters.ts`) tokenizes `clean_text` and emits the corresponding node types inline within the parent `noteBlock`; on save, the textual tokens are reconstructed byte-for-byte so the on-disk file is round-trip identical.
 
 - `embedNode` (block-level, atomic) — `{{embed:uuid}}` becomes a live `EmbedPortal` NodeView. The portal fetches the referenced block via `ResolveBlockReference` and renders it as a nested live view.
 - `blockReferenceNode` (inline, atomic) — `((uuid))` becomes a clickable `BlockReferenceChip` NodeView that navigates to the referenced block via the `navigate-to-block` DOM event.
+- `pageLinkNode` (inline, atomic) — `[[target]]` / `[[target#heading|alias]]` becomes a clickable `PageLinkChip` NodeView. Resolution is `ResolvePageLink` (shortest unique path); click dispatches `navigate-to-page` (optional heading scroll). A derived `page_links` table (FK cascade from `blocks`) indexes outbound targets for rename rewrite.
 
-The NodeView wrappers (`frontend/src/components/editor/EmbedNodeView.svelte`, `BlockReferenceNodeView.svelte`) re-use the existing read-mode `EmbedPortal.svelte` and `BlockReferenceChip.svelte` components — the same rendering pipeline serves both the read-mode (search snippets, standalone embeds) and the NodeView contexts.
+The NodeView wrappers (`frontend/src/components/editor/EmbedNodeView.svelte`, `BlockReferenceNodeView.svelte`, `PageLinkNodeView.svelte`) re-use the existing read-mode chip/portal components — the same rendering pipeline serves both the read-mode and the NodeView contexts.
 
 5.2 View Mode — Edit ↔ Source toggle
 

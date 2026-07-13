@@ -80,6 +80,24 @@ var BlockRefRegex = regexp.MustCompile(`\(\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}
 // EmbedRegex matches a live block embed {{embed:uuid}}.
 var EmbedRegex = regexp.MustCompile(`\{\{embed:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}\}`)
 
+// PageLinkRegex matches a wiki / page link [[target]] with optional
+// #heading and |alias (#545). Obsidian-compatible grammar. Read-only detector
+// used by the resolver and the reverse-index extractor; the frontend converter
+// owns the editor-side tokenization. Capture groups: 1=target, 2=heading,
+// 3=alias. The target excludes brackets, pipe, and hash so the match stops at
+// the first heading/alias delimiter.
+var PageLinkRegex = regexp.MustCompile(`\[\[([^\[\]\|#]+)(?:#([^\[\]\|]+))?(?:\|([^\[\]]+))?\]\]`)
+
+// PageLinkTarget extracts the raw target string from a [[…]] match (without
+// the heading/alias portions), used by the reverse-index extractor.
+func PageLinkTarget(raw string) string {
+	m := PageLinkRegex.FindStringSubmatch(raw)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
 // NumberedListRegex matches numbered list prefixes like 1. or 1) followed by space.
 var NumberedListRegex = regexp.MustCompile(`^(\d+[.)]\s)`)
 

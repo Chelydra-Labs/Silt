@@ -124,6 +124,24 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
 - [ ] `((uuid))` reference: hover preview, click scrolls to source.
 - [ ] `{{embed:uuid}}`: live portal; editing the embed updates the source and
       vice-versa.
+- [ ] `[[Page]]` / `[[Section/Page#Heading|alias]]`: chip resolves, click opens
+      the page (heading scrolls); unresolved/ambiguous chips are non-links.
+- [ ] Rename/move target page rewrites inbound `[[…]]` (alias/heading preserved);
+      block UUIDs unchanged.
+- [ ] Tab context: **Copy Page Path** (plain path) and **Copy Page Reference**
+      (`[[shortest]]`).
+
+**Autosave status**
+- [ ] Typing shows dirty tab only (no "Saving…" during debounce).
+- [ ] In-flight save shows muted "Saving…"; success shows transient "Saved".
+- [ ] Save failure is assertive "Save failed" (fail-loud).
+
+**Writing Assistant proposed edit**
+- [ ] Selection replace shows in-editor strike + ghost preview before Accept.
+- [ ] Accept = one history step + autosave; Reject/Esc clears preview with no disk write.
+
+**Drawers**
+- [ ] Opening Writing Assistant closes AI Q&A and vice versa; Escape only affects the open drawer.
 
 **Tasks (silt-tasks hub)**
 - [ ] Task checkbox cycle (`[ ]`/`[/]`/`[x]`) writes to disk and re-indexes.
