@@ -485,6 +485,18 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer stmtTag.Close()
 
+	// page_links reverse index (#545): one row per [[target]] occurrence in a
+	// block body. The per-block blocks-row DELETE above cascades to page_links
+	// via FK ON DELETE CASCADE, so each insert here is additive. target_* are
+	// left NULL — resolution happens on demand (ResolvePageLink) so re-indexing
+	// never needs the full pages list. INSERT OR IGNORE keeps the PK unique
+	// when the same target appears twice in one block.
+	stmtPageLink, err := tx.Prepare("INSERT OR IGNORE INTO page_links (source_notebook, source_section, source_page, source_block_id, target_raw, target_notebook, target_section, target_page, heading, alias) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("failed to prepare page_links insert: %w", err)
+	}
+	defer stmtPageLink.Close()
+
 	// block_meta upsert (#418): sparse projection — one row per NOTE block
 	// carrying [author::] and/or [ts::]. UPSERT (ON CONFLICT replace) by
 	// block_id so re-indexing the same block overwrites stale values rather
@@ -628,6 +640,27 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 			}
 		}
 
+		// page_links reverse index (#545): extract every [[target]] /
+		// [[target#heading]] / [[target|alias]] occurrence from the block
+		// body. INSERT OR IGNORE keeps the PK unique when a target repeats.
+		for _, pl := range parser.PageLinkRegex.FindAllStringSubmatch(block.CleanText, -1) {
+			target := pl[1]
+			if target == "" {
+				continue
+			}
+			var heading, alias interface{}
+			if pl[2] != "" {
+				heading = pl[2]
+			}
+			if pl[3] != "" {
+				alias = pl[3]
+			}
+			if _, err := stmtPageLink.Exec(notebook, section, page, block.ID, target, heading, alias); err != nil {
+				log.Printf("db.IndexFileBlocks: page_link insert error for block %s target %q: %v", block.ID, target, err)
+				continue
+			}
+		}
+
 		// 4. block_meta projection (#418): NOTE blocks carrying
 		// [author::] and/or [ts::] get a sparse projection row. NOTE-only
 		// by construction (scanTaskTokens has no author/ts cases). A NOTE
@@ -730,6 +763,14 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		return 0, nil, err
 	}
 	defer stmtTag.Close()
+
+	// page_links reverse index (#545) — mirror IndexFileBlocks (see comment
+	// there). The block-row clear above cascades to page_links via FK.
+	stmtPageLink, err := tx.Prepare("INSERT OR IGNORE INTO page_links (source_notebook, source_section, source_page, source_block_id, target_raw, target_notebook, target_section, target_page, heading, alias) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)")
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to prepare page_links insert: %w", err)
+	}
+	defer stmtPageLink.Close()
 
 	// block_meta upsert/clear (#418) — mirror IndexFileBlocks (see comment
 	// there). Sparse projection for NOTE blocks with [author::]/[ts::].
@@ -900,6 +941,25 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				_, err = stmtTag.Exec(block.ID, tagPath, level0, level1, level2)
 				if err != nil {
 					log.Printf("db.IndexScanResults: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
+					continue
+				}
+			}
+
+			// page_links reverse index (#545) — mirror IndexFileBlocks.
+			for _, pl := range parser.PageLinkRegex.FindAllStringSubmatch(block.CleanText, -1) {
+				target := pl[1]
+				if target == "" {
+					continue
+				}
+				var heading, alias interface{}
+				if pl[2] != "" {
+					heading = pl[2]
+				}
+				if pl[3] != "" {
+					alias = pl[3]
+				}
+				if _, err := stmtPageLink.Exec(res.Notebook, res.Section, res.Page, block.ID, target, heading, alias); err != nil {
+					log.Printf("db.IndexScanResults: page_link insert error for block %s target %q: %v", block.ID, target, err)
 					continue
 				}
 			}

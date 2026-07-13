@@ -726,6 +726,61 @@ export const BlockReferenceNode = Node.create({
   }
 })
 
+// ---- PageLinkNode (inline, atomic) --------------------------------------
+// Renders a wiki / page link `[[target]]` (Obsidian-compatible) as an inline
+// PageLinkChip NodeView (#545). `target` is a vault-relative path or basename;
+// optional `heading` and `alias`. The textual form `[[target#heading|alias]]`
+// is reconstructed in clean_text on save; the converter tokenizer parses it
+// back. Clicking navigates to the resolved page via ResolvePageLink.
+export const PageLinkNode = Node.create({
+  name: 'pageLinkNode',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      target: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-target') || '',
+        renderHTML: (attrs) =>
+          (attrs as { target?: string }).target
+            ? { 'data-target': (attrs as { target?: string }).target }
+            : {}
+      },
+      heading: {
+        default: null as string | null,
+        parseHTML: (el) => el.getAttribute('data-heading') || null,
+        renderHTML: (attrs) => {
+          const h = (attrs as { heading?: string | null }).heading
+          return h ? { 'data-heading': h } : {}
+        }
+      },
+      alias: {
+        default: null as string | null,
+        parseHTML: (el) => el.getAttribute('data-alias') || null,
+        renderHTML: (attrs) => {
+          const a = (attrs as { alias?: string | null }).alias
+          return a ? { 'data-alias': a } : {}
+        }
+      }
+    }
+  },
+
+  parseHTML() {
+    return [{ tag: 'span[data-type="page-link"]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'span',
+      mergeAttributes({ 'data-type': 'page-link' }, HTMLAttributes)
+    ]
+  }
+})
+
 // ---- MathNode (inline + block, atomic) -----------------------------------
 // Renders LaTeX math via KaTeX (#191). Two nodes share one attr (`latex`,
 // the raw source): InlineMathNode (`$...$`, inline atomic) and BlockMathNode

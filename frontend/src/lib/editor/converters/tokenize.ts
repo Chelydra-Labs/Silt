@@ -41,6 +41,15 @@ export type MathInlineToken = {
   kind: 'mathInline'
   latex: string
 }
+/** Wiki / page link `[[target]]`, `[[target#heading]]`, `[[target|alias]]`,
+ *  `[[target#heading|alias]]` (#545). Obsidian-compatible grammar. `target` is
+ *  a vault-relative path or basename; `heading`/`alias` are optional. */
+export type PageLinkToken = {
+  kind: 'pageLink'
+  target: string
+  heading?: string
+  alias?: string
+}
 export type Token =
   | TextToken
   | MarkToken
@@ -48,6 +57,7 @@ export type Token =
   | BlockReferenceToken
   | MentionToken
   | MathInlineToken
+  | PageLinkToken
 
 // ---- Tokenize stage: recursive-descent parser ----------------------------
 
@@ -205,7 +215,7 @@ function parseInlineTokens(
 // node produced by the sole-content-NOTE path in blocks.ts; emitting a block
 // node inside inline content would violate the ProseMirror schema.
 const ATOMIC_INLINE_TOKEN =
-  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)|@\[([^\[\]\n]+)\]|(?<!\$)\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\$)/gi
+  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)|@\[([^\[\]\n]+)\]|(?<!\$)\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\$)|\[\[([^\[\]\|#]+)(?:#([^\[\]\|]+))?(?:\|([^\[\]]+))?\]\]/gi
 
 // Inline code span. Matched BEFORE atomic tokens so that `$x$` / `@[a]` /
 // `((uuid))` written inside backticks stays literal code (not a math node,
@@ -250,6 +260,13 @@ function splitAtomicTokens(text: string): Token[] {
         tokens.push({ kind: 'mention', name: match[4] })
       } else if (match[5] !== undefined) {
         tokens.push({ kind: 'mathInline', latex: match[5] })
+      } else if (match[6] !== undefined) {
+        tokens.push({
+          kind: 'pageLink',
+          target: match[6],
+          ...(match[7] ? { heading: match[7] } : {}),
+          ...(match[8] ? { alias: match[8] } : {})
+        })
       }
       i += match[0].length
       continue
