@@ -458,6 +458,21 @@ Block Reference ((uuid)): Inline placeholder text that renders as an interactive
 
 Block Embed `{{embed:uuid}}`: Renders a live, interactive portal displaying the source block inline. Edits made in the embed write back to the source block, and edits to the source block update every embed of it in real time. In the editor both `((uuid))` and `{{embed:uuid}}` render as live, interactive elements; the on-disk tokens are preserved verbatim on save so the file stays round-trip identical with any plain-Markdown tool.
 
+5.3 Page Links (Wiki Links)
+
+Obsidian-compatible page links use double brackets:
+
+- `[[target]]` — link to a page
+- `[[target|alias]]` — display alias
+- `[[target#heading]]` — open and scroll to a HEADER whose text matches `heading`
+- `[[target#heading|alias]]` — both
+
+`target` is a vault-relative path or basename (backslashes normalized to `/`; empty section is `Notebook/Page`, never `//`). Resolution uses **shortest unique path**: exact path → unique basename → unique path-suffix. Ambiguous basenames (same page name in two places) do not auto-resolve; the chip shows an ambiguous state. Linked notebooks are disambiguated by `blocks.source`.
+
+In the editor, `[[…]]` is an inline atomic `pageLinkNode` (`PageLinkChip`). On save the exact syntax is reconstructed in `clean_text` (byte-for-byte round-trip). Click navigates via `ResolvePageLink` + `navigate-to-page`. Tab context menu **Copy Page Reference** emits `[[shortest-unique-path]]`; **Copy Page Path** remains the plain path string.
+
+A derived `page_links` reverse index (rebuilt on re-index; FK cascade from `blocks`) powers rename/move rewrite: `RenamePage` / `MovePage` / `RenameSection` rewrite inbound `[[old…]]` → `[[new…]]` while preserving `|alias` and `#heading`. Block UUIDs are never rewritten. `![[embed-page]]` and `#^block` are out of scope for v1 (block identity stays `((uuid))`).
+
 6. User Interface Specification
 
 6.1 Color Palette & Dark-Mode Aesthetics
