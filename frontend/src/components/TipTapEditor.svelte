@@ -14,6 +14,10 @@
   import { PlainPaste } from '../lib/editor/plainPaste'
   import { Search } from '../lib/editor/search/searchExtension'
   import {
+    ProposedEdit,
+    hasProposedEdit
+  } from '../lib/editor/proposedEdit/ProposedEditExtension'
+  import {
     Spellcheck,
     requestSpellcheckRecheck,
     findMisspellingAt,
@@ -700,6 +704,9 @@
     // In-page find (Ctrl+F) — wraps prosemirror-search; decorations + match
     // navigation. Cheap when the query is empty (FindBar closed).
     Search,
+    // In-editor proposed-edit preview for Writing Assistant (#543). Decoration
+    // only until accept; cheap (empty DecorationSet) when no proposal is shown.
+    ProposedEdit,
     // Inline spellcheck (#196) — wavy underlines on misspellings. The
     // dictionary loads + the decoration set rebuilds when the spellcheck config
     // changes (see the $effect below); cheap (no decorations) when disabled.
@@ -1072,6 +1079,22 @@
       },
       forceExternalReload: () => {
         pendingExternalReload = true
+      },
+      setProposedEdit: (opts) => {
+        if (!editorInstance || editorInstance.isDestroyed) return false
+        return editorInstance.commands.setProposedEdit(opts)
+      },
+      clearProposedEdit: () => {
+        if (!editorInstance || editorInstance.isDestroyed) return
+        editorInstance.commands.rejectProposedEdit()
+      },
+      hasProposal: () => {
+        if (!editorInstance || editorInstance.isDestroyed) return false
+        return hasProposedEdit(editorInstance)
+      },
+      acceptProposedEdit: () => {
+        if (!editorInstance || editorInstance.isDestroyed) return false
+        return editorInstance.commands.acceptProposedEdit()
       }
     })
   })

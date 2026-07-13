@@ -28,6 +28,23 @@ export interface EditorHandle {
    *  block update, bypassing the focused-edit guard. Only safe right after a
    *  flush synced the editor to disk, so there is nothing unsaved to clobber. */
   forceExternalReload: () => void
+  /** Show an in-editor proposed-edit preview over a selection range (#543).
+   *  No-op if the editor has no selection / is not mounted. Returns true if
+   *  the preview was set. */
+  setProposedEdit: (opts: {
+    from: number
+    to: number
+    markdown: string
+    onAccept?: () => void
+  }) => boolean
+  /** Clear any active in-editor proposed-edit preview (#543). */
+  clearProposedEdit: () => void
+  /** Whether an in-editor proposed-edit preview is currently shown (#543). */
+  hasProposal: () => boolean
+  /** Accept the active in-editor proposed edit — applies the editor
+   *  transaction and clears the preview. Returns false if no preview is
+   *  active. The onAccept callback set on setProposedEdit fires. */
+  acceptProposedEdit: () => boolean
 }
 
 const editors = new Map<string, EditorHandle>()

@@ -388,7 +388,11 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
         dirty = false
         return true
       },
-      forceExternalReload: () => order.push('forceExternalReload')
+      forceExternalReload: () => order.push('forceExternalReload'),
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false
     })
     mocks.SaveFileBlocks.mockImplementation(async () => {
       order.push('SaveFileBlocks')
@@ -436,7 +440,11 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       key: 'vault\x00notes\x00page1',
       isDirty: () => true,
       flush: async () => false,
-      forceExternalReload: vi.fn()
+      forceExternalReload: vi.fn(),
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false
     })
 
     await renderAndPreview('foo', 'qux')

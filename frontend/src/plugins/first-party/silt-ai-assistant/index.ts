@@ -42,6 +42,22 @@ function selectionTextFromEditor(editor: unknown): string {
   }
 }
 
+/** Capture the editor's PM selection range for the in-editor proposed-edit
+ *  preview (#543). Returns null when there is no non-empty selection. */
+function selectionRangeFromEditor(
+  editor: unknown
+): { from: number; to: number } | null {
+  try {
+    const sel = (
+      editor as { state?: { selection: { from: number; to: number } } }
+    ).state?.selection
+    if (!sel || sel.from === sel.to) return null
+    return { from: sel.from, to: sel.to }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Register slash commands for the full catalog. Enabled state is enforced at
  * invoke time so settings toggles apply without re-registering.
@@ -63,8 +79,12 @@ function registerSlashCommands(ctx: PluginContext) {
           return
         }
         const selectionText = selectionTextFromEditor(editor)
+        const range = selectionRangeFromEditor(editor)
         openWritingAssistantDrawerExclusive()
-        void c.run(ctx, action.id, { selectionText })
+        void c.run(ctx, action.id, {
+          selectionText,
+          ...(range ? { selectionFrom: range.from, selectionTo: range.to } : {})
+        })
       }
     })
   }

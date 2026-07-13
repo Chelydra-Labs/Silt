@@ -23,11 +23,18 @@ import type {
   Proposal
 } from './types'
 import { openWritingAssistantDrawerExclusive } from '../../../lib/drawers.svelte'
+import { editorKey, getEditor } from '../../../lib/editor/editorRegistry.svelte'
 
 export type RunOpts = {
   selectionText?: string
   blockId?: string
   instruction?: string
+  /** TipTap selection range for in-editor proposed-edit preview (#543).
+   *  Captured at invoke time; the editor extension maps positions through any
+   *  intervening edits. When set with a `replace-selection` proposal, the
+   *  ready proposal is previewed inline in the editor. */
+  selectionFrom?: number
+  selectionTo?: number
 }
 
 export function createAssistantController() {
@@ -46,6 +53,15 @@ export function createAssistantController() {
   let streamSession: StreamSession | null = null
   let lastRun: { actionId: ActionId; opts: RunOpts } | null = null
   let appliedClearTimer: ReturnType<typeof setTimeout> | null = null
+  /** The editor handle currently showing an in-editor proposed-edit preview
+   *  (#543), or null when the proposal is panel-only. When set, accept/discard
+   *  route through the editor (PM transaction) instead of applyProposal so the
+   *  change is never applied twice. */
+  let editorPreview: {
+    key: string
+    from: number
+    to: number
+  } | null = null
 
   function loadSettings() {
     const raw = (appSettings.config?.plugins?.plugin_settings as any)?.[
@@ -81,12 +97,70 @@ export function createAssistantController() {
   function discard() {
     cancelActiveStream()
     runGeneration++
+    clearEditorPreview()
     proposal = null
     streamText = ''
     panelStatus = 'idle'
     errorMessage = ''
     statusDetail = ''
     runInFlight = false
+  }
+
+  /** Mark the proposal applied after an in-editor accept (the PM transaction
+   *  already changed the doc + triggered autosave; do NOT call applyProposal,
+   *  which would double-apply via the backend MutateBlock path). */
+  function markEditorApplied() {
+    editorPreview = null
+    panelStatus = 'applied'
+    statusDetail = 'Applied.'
+    streamText = ''
+    proposal = null
+    if (appliedClearTimer) clearTimeout(appliedClearTimer)
+    appliedClearTimer = setTimeout(() => {
+      if (panelStatus === 'applied') {
+        panelStatus = 'idle'
+        statusDetail = ''
+      }
+    }, 2500)
+  }
+
+  /** Drop any active in-editor preview (discard / dispose / re-run). */
+  function clearEditorPreview() {
+    if (!editorPreview) return
+    const handle = getEditor(editorPreview.key)
+    handle?.clearProposedEdit()
+    editorPreview = null
+  }
+
+  /** When a replace-selection proposal is ready and the editor that invoked it
+   *  is mounted with a valid selection range, preview the edit inline (#543).
+   *  Subsequent accept/discard route through that editor. */
+  function maybeShowEditorPreview(ctx: PluginContext, result: Proposal) {
+    if (result.kind !== 'replace-selection') return
+    const from = lastRun?.opts.selectionFrom
+    const to = lastRun?.opts.selectionTo
+    if (from == null || to == null || from >= to) return
+    const handle = getEditor(
+      editorKey(result.scope.notebook, result.scope.section, result.scope.page)
+    )
+    if (!handle) return
+    const ok = handle.setProposedEdit({
+      from,
+      to,
+      markdown: result.proposedMarkdown,
+      onAccept: markEditorApplied
+    })
+    if (ok) {
+      editorPreview = {
+        key: editorKey(
+          result.scope.notebook,
+          result.scope.section,
+          result.scope.page
+        ),
+        from,
+        to
+      }
+    }
   }
 
   async function run(
@@ -125,6 +199,7 @@ export function createAssistantController() {
     streamSession = null
     runInFlight = true
     selectedAction = actionId
+    clearEditorPreview()
     proposal = null
     streamText = ''
     errorMessage = ''
@@ -135,7 +210,9 @@ export function createAssistantController() {
       opts: {
         selectionText: opts.selectionText,
         blockId: opts.blockId,
-        instruction: opts.instruction ?? instruction
+        instruction: opts.instruction ?? instruction,
+        selectionFrom: opts.selectionFrom,
+        selectionTo: opts.selectionTo
       }
     }
     openWritingAssistantDrawerExclusive()
@@ -204,6 +281,7 @@ export function createAssistantController() {
         errorMessage = result.errorMessage || 'Action failed'
       } else {
         panelStatus = 'ready'
+        maybeShowEditorPreview(ctx, result)
       }
     } catch (e) {
       if (gen !== runGeneration || disposed) return
@@ -233,6 +311,15 @@ export function createAssistantController() {
 
   async function accept(ctx: PluginContext): Promise<boolean> {
     if (!proposal || proposal.status !== 'ready') return false
+    // When an in-editor preview is active, the editor applies the change via a
+    // PM transaction (its onAccept callback marks the proposal applied). Do NOT
+    // also call applyProposal — that would double-apply through MutateBlock.
+    if (editorPreview) {
+      const handle = getEditor(editorPreview.key)
+      if (handle?.acceptProposedEdit()) return true
+      // Editor went away (unmounted) — fall through to the SDK path.
+      editorPreview = null
+    }
     const res = await applyProposal(ctx, proposal)
     if (!res.ok) {
       panelStatus = 'error'
@@ -273,6 +360,7 @@ export function createAssistantController() {
     disposed = true
     cancelActiveStream()
     runGeneration++
+    clearEditorPreview()
     proposal = null
     streamText = ''
     if (appliedClearTimer) clearTimeout(appliedClearTimer)
