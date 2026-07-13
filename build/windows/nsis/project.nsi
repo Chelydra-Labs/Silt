@@ -124,6 +124,12 @@ Section
     !insertmacro wails.associateCustomProtocols
 
     !insertmacro wails.writeUninstaller
+
+    ## The wails3 writeUninstaller macro does not write InstallDir to the
+    ## registry. We write it ourselves so the .onInit block above can find
+    ## the prior install location on upgrade.
+    SetRegView 64
+    WriteRegStr HKCU "${UNINST_KEY}" "InstallDir" "$INSTDIR"
 SectionEnd
 
 Section "uninstall"
