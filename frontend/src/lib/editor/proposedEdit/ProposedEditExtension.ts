@@ -1,5 +1,5 @@
 // ProposedEdit — in-editor preview of a Writing Assistant proposal over an
-// arbitrary editor selection range (#543).
+// arbitrary editor selection range (#543, #548).
 //
 // The proposal lives entirely in the editor's VIEW layer (a ProseMirror
 // DecorationSet): it never mutates the document, never fires `docChanged`,
@@ -8,6 +8,12 @@
 // applies the change itself, so there is no focus-lock conflict with the
 // backend block writer. Reject / Esc clears the decorations with a meta-only
 // transaction (no history entry).
+//
+// Multi-paragraph proposals on block-spanning selections accept as multiple
+// noteBlock nodes (one per paragraph), preserving structure (#548).
+// Schema-incompatible proposals (the target context doesn't allow block
+// nodes) are detected at preview time so the WA controller falls back to
+// the panel-only apply path.
 //
 // This mirrors the spellcheck decoration pattern (SpellcheckExtension) and the
 // ProseMirror guidance: decorations influence drawing, not the document.
@@ -40,6 +46,9 @@ export interface ProposedEditOptions {
   /** Optional host callback fired after a successful accept (e.g. the Writing
    *  Assistant controller marking the proposal 'accepted'). */
   onAccept?: () => void
+  /** Date for the block-identity comment of new noteBlocks created by a
+   *  multi-block accept. Defaults to today. */
+  fileDate?: string
 }
 
 interface ActiveProposal {
@@ -47,6 +56,7 @@ interface ActiveProposal {
   to: number
   markdown: string
   onAccept?: () => void
+  fileDate: string
 }
 
 interface PluginState {
@@ -140,13 +150,12 @@ function renderPreviewWidget(
   return wrap
 }
 
-/** Parse proposed markdown into inline ProseMirror content for the accept
- *  transaction. Block-level structure is collapsed to inline (a selection
- *  within a Silt block is inline content); newlines collapse to spaces,
- *  matching the single-line block model the Go serializer uses. */
-function proposedMarkdownToSlice(schema: Schema, markdown: string): Slice {
-  const singleLine = markdown.replace(/\r?\n/g, ' ')
-  const json = legacyTokenizeInline(singleLine)
+/** Convert inline NodeJSON[] from legacyTokenizeInline into PMNode[]
+ *  (text + atomic inline nodes), schema-aware. */
+function inlineNodesFromJSON(
+  schema: Schema,
+  json: ReturnType<typeof legacyTokenizeInline>
+): PMNode[] {
   const nodes: PMNode[] = []
   for (const j of json) {
     const node = j as {
@@ -172,7 +181,95 @@ function proposedMarkdownToSlice(schema: Schema, markdown: string): Slice {
       }
     }
   }
-  return new Slice(Fragment.from(nodes), 0, 0)
+  return nodes
+}
+
+/** Parse proposed markdown into inline ProseMirror content for the accept
+ *  transaction. Block-level structure is collapsed to inline (a selection
+ *  within a Silt block is inline content); newlines collapse to spaces,
+ *  matching the single-line block model the Go serializer uses. */
+function proposedMarkdownToSlice(schema: Schema, markdown: string): Slice {
+  const singleLine = markdown.replace(/\r?\n/g, ' ')
+  const json = legacyTokenizeInline(singleLine)
+  return new Slice(Fragment.from(inlineNodesFromJSON(schema, json)), 0, 0)
+}
+
+/** Split multi-paragraph markdown into paragraphs (double-newline breaks).
+ *  Single newlines within a paragraph are preserved as inline breaks (the Go
+ *  serializer collapses single \n→space for prose types). */
+function splitParagraphs(markdown: string): string[] {
+  return markdown
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+}
+
+/** Parse multi-paragraph markdown into a Slice of noteBlock nodes (one per
+ *  paragraph). Used when the selection spans blocks AND the proposal has
+ *  multiple paragraphs — each paragraph becomes its own noteBlock,
+ *  preserving structure instead of flattening to one line (#548).
+ *
+ *  The slice uses openStart=openEnd=0 (complete block nodes). Silt's
+ *  noteBlock has isolating:true, so partial-block merging via openStart=1
+ *  is not possible — the accept command expands the selection to whole-block
+ *  boundaries before calling this. */
+function proposedMarkdownToBlockSlice(
+  schema: Schema,
+  markdown: string,
+  fileDate: string
+): Slice | null {
+  const blockType = schema.nodes.noteBlock
+  if (!blockType) return null
+  const paragraphs = splitParagraphs(markdown)
+  if (paragraphs.length === 0) return null
+  const blockNodes: PMNode[] = paragraphs.map((para) => {
+    const inlineJSON = legacyTokenizeInline(para)
+    const content = inlineNodesFromJSON(schema, inlineJSON)
+    return blockType.create(
+      {
+        id: crypto.randomUUID(),
+        depth: 0,
+        bullet: '- ',
+        file_date: fileDate
+      },
+      content
+    )
+  })
+  return new Slice(Fragment.from(blockNodes), 0, 0)
+}
+
+/** True when the selection spans block boundaries AND the markdown has
+ *  multiple paragraphs — the multi-block accept path should be used. */
+function wouldUseMultiBlock(
+  state: EditorState,
+  from: number,
+  to: number,
+  markdown: string
+): boolean {
+  if (!/\n\s*\n/.test(markdown)) return false
+  const $from = state.doc.resolve(from)
+  const $to = state.doc.resolve(to)
+  return $from.parent !== $to.parent
+}
+
+/** Check if the target position's content model allows noteBlock nodes
+ *  (schema-incompatible proposals fall back to the panel-only path). */
+function multiBlockAllowed(
+  state: EditorState,
+  from: number,
+  to: number
+): boolean {
+  const blockType = state.schema.nodes.noteBlock
+  if (!blockType) return false
+  const $from = state.doc.resolve(from)
+  const $to = state.doc.resolve(to)
+  const range = $from.blockRange($to)
+  if (!range) return false
+  return range.parent.type.contentMatch.matchType(blockType) !== null
+}
+
+function todayDate(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 export const ProposedEdit = Extension.create({
@@ -252,12 +349,30 @@ export const ProposedEdit = Extension.create({
     return {
       setProposedEdit:
         (opts: ProposedEditOptions): Command =>
-        ({ tr, dispatch }) => {
+        ({ state, tr, dispatch }) => {
           if (rangeCollapsed(opts.from, opts.to)) return false
           // Empty / whitespace-only proposals are not previewable (#543).
           if (!opts.markdown?.trim()) return false
+          // Schema-incompatible dry-run (#548): if the multi-block path
+          // would be used, verify the target allows noteBlock. If not,
+          // return false so the WA controller falls back to the panel-only
+          // apply path (no silent drop).
+          if (
+            wouldUseMultiBlock(state, opts.from, opts.to, opts.markdown) &&
+            !multiBlockAllowed(state, opts.from, opts.to)
+          ) {
+            return false
+          }
           if (dispatch) {
-            dispatch(tr.setMeta(SET_META, { ...opts } as ActiveProposal))
+            dispatch(
+              tr.setMeta(SET_META, {
+                from: opts.from,
+                to: opts.to,
+                markdown: opts.markdown,
+                onAccept: opts.onAccept,
+                fileDate: opts.fileDate ?? todayDate()
+              } as ActiveProposal)
+            )
           }
           return true
         },
@@ -266,17 +381,42 @@ export const ProposedEdit = Extension.create({
         ({ state, dispatch }) => {
           const st = key.getState(state)
           if (!st?.proposal) return false
-          const { from, to, markdown, onAccept } = st.proposal
+          const { from, to, markdown, onAccept, fileDate } = st.proposal
           // Empty content must not wipe the selection (plan: accept no-ops).
           if (!markdown?.trim()) return false
-          // Build the replacement inline content and apply ONE transaction.
+          // Build the replacement content and apply ONE transaction.
           // The editor applies the change itself, sidestepping the focus lock
           // that blocks the backend MutateBlock path on a focused editor.
-          // Note: multi-paragraph AI output is flattened to a single line
-          // (Silt prose blocks are single-line); true multi-node replace is
-          // a follow-up.
-          const slice = proposedMarkdownToSlice(state.schema, markdown)
-          const apply = state.tr.replace(from, to, slice)
+          let slice: Slice
+          let replaceFrom = from
+          let replaceTo = to
+          if (wouldUseMultiBlock(state, from, to, markdown)) {
+            // Multi-paragraph proposal on a block-spanning selection: each
+            // paragraph becomes its own noteBlock (#548). noteBlock has
+            // isolating:true, so we expand the selection to cover the ENTIRE
+            // selected blocks (from before the first to after the last) and
+            // use openStart=openEnd=0 for a clean whole-block replacement.
+            const $from = state.doc.resolve(from)
+            const $to = state.doc.resolve(to)
+            replaceFrom = $from.before($from.depth)
+            replaceTo = $to.after($to.depth)
+            const blockSlice = proposedMarkdownToBlockSlice(
+              state.schema,
+              markdown,
+              fileDate
+            )
+            if (!blockSlice) {
+              // Schema doesn't have noteBlock — fall back to inline path.
+              slice = proposedMarkdownToSlice(state.schema, markdown)
+              replaceFrom = from
+              replaceTo = to
+            } else {
+              slice = blockSlice
+            }
+          } else {
+            slice = proposedMarkdownToSlice(state.schema, markdown)
+          }
+          const apply = state.tr.replace(replaceFrom, replaceTo, slice)
           // Clear the proposal in the same transaction (meta-only; no extra
           // doc step). addToHistory defaults on so accept is one undo step.
           apply.setMeta(CLEAR_META, true)
