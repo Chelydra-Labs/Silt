@@ -1,7 +1,6 @@
 <script lang="ts">
   // Inline [[target]] wiki-link chip (#545). Resolves via ResolvePageLink and
   // dispatches navigate-to-page on click/Enter. Mirrors BlockReferenceChip.
-  import { onMount } from 'svelte'
   import { fade } from 'svelte/transition'
   import { ResolvePageLink } from '../../bindings/silt/app.js'
 
@@ -36,6 +35,8 @@
     return [c.notebook, c.section, c.page].filter(Boolean).join(' › ')
   }
 
+  let lastResolvedTarget = ''
+
   async function load() {
     loading = true
     try {
@@ -47,8 +48,14 @@
     }
   }
 
-  onMount(() => {
-    load()
+  // Re-resolve when target changes (future-proofs reuse in read-mode surfaces
+  // where the prop can change without a remount). In the editor NodeView path,
+  // PM creates a fresh node instance on attr change so this is a no-op there.
+  $effect(() => {
+    if (target && target !== lastResolvedTarget) {
+      lastResolvedTarget = target
+      void load()
+    }
   })
 
   function enter() {

@@ -120,7 +120,7 @@ func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, new
 	}
 	sort.Slice(srcKeys, func(i, j int) bool {
 		a, b := srcKeys[i], srcKeys[j]
-		return a.nb+a.sec+a.page < b.nb+b.sec+b.page
+		return a.nb+"\x00"+a.sec+"\x00"+a.page < b.nb+"\x00"+b.sec+"\x00"+b.page
 	})
 
 	rewritten := 0

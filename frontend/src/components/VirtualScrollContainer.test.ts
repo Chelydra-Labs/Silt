@@ -296,3 +296,95 @@ describe('Edit↔Source scroll preservation (#319)', () => {
     expect(scrollTopVal).toBe(0)
   })
 })
+
+// Wiki-link [[Page#Heading]] scroll-to-heading + retry logic (#545 harden).
+// Exercises tryScrollToTarget: success, retry-after-load, give-up, and
+// block-id scroll.
+describe('VirtualScrollContainer heading/block scroll (#545)', () => {
+  let scrollIntoViewMock: ReturnType<typeof vi.fn>
+
+  const headerBlock = {
+    id: 'hdr-1111-2222-3333-4444',
+    parent_id: '',
+    type: 'HEADER',
+    depth: 0,
+    raw_text: '## Goals',
+    clean_text: '## Goals',
+    status: '',
+    owner: '',
+    start_date: '',
+    due_date: '',
+    priority: 3,
+    line_number: 1,
+    file_date: '2026-07-13'
+  }
+
+  // The module-level vi.mock for bindings is already hoisted above. We
+  // re-import FetchPageBlocks inside the test to override its return value.
+  beforeEach(() => {
+    scrollIntoViewMock = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoViewMock as any
+    // Inject a DOM element matching the header block's data-id so
+    // querySelector('[data-id="..."]') finds it (the TipTapEditor stub
+    // doesn't render real block DOM).
+    const el = document.createElement('div')
+    el.setAttribute('data-id', 'hdr-1111-2222-3333-4444')
+    el.id = 'scroll-target'
+    document.body.appendChild(el)
+  })
+  afterEach(() => {
+    document.getElementById('scroll-target')?.remove()
+    cleanup()
+  })
+
+  it('scrolls to a matching HEADER on targetHeading + targetKey', async () => {
+    const { FetchPageBlocks } = await import('../../bindings/silt/app.js')
+    vi.mocked(FetchPageBlocks).mockResolvedValue([headerBlock] as any)
+
+    render(VirtualScrollContainer, {
+      props: {
+        ...baseProps(),
+        targetHeading: 'Goals',
+        targetKey: 'heading:Goals:1'
+      }
+    })
+    // Wait for blocks to load and the retry effect to fire.
+    await waitFor(() => {
+      expect(scrollIntoViewMock).toHaveBeenCalled()
+    })
+  })
+
+  it('gives up after MAX_SCROLL_ATTEMPTS when no header matches', async () => {
+    const { FetchPageBlocks } = await import('../../bindings/silt/app.js')
+    vi.mocked(FetchPageBlocks).mockResolvedValue([
+      { ...headerBlock, id: 'other', clean_text: 'Other' }
+    ] as any)
+
+    render(VirtualScrollContainer, {
+      props: {
+        ...baseProps(),
+        targetHeading: 'NonExistent',
+        targetKey: 'heading:NonExistent:1'
+      }
+    })
+    // Wait a few ticks — the retry effect should fire and give up.
+    await new Promise((r) => setTimeout(r, 50))
+    expect(scrollIntoViewMock).not.toHaveBeenCalled()
+  })
+
+  it('scrolls to a block by targetBlockId when the block exists', async () => {
+    const { FetchPageBlocks } = await import('../../bindings/silt/app.js')
+    vi.mocked(FetchPageBlocks).mockResolvedValue([headerBlock] as any)
+
+    render(VirtualScrollContainer, {
+      props: {
+        ...baseProps(),
+        targetBlockId: 'hdr-1111-2222-3333-4444',
+        targetKey: 'date:hdr:1'
+      }
+    })
+    await waitFor(() => {
+      expect(scrollIntoViewMock).toHaveBeenCalled()
+    })
+  })
+})
