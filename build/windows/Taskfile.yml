@@ -125,14 +125,16 @@ tasks:
       - wails3 generate webview2bootstrapper -dir "{{.ROOT_DIR}}/build/windows/nsis"
       - |
         {{if eq OS "windows"}}
-        makensis {{if eq .INSTALL_SCOPE "user"}}-DWAILS_INSTALL_SCOPE=user -DREQUEST_EXECUTION_LEVEL=user {{end}}-DINFO_PROJECTNAME={{.APP_NAME}} -DINFO_COMPANYNAME="Chelydra Labs" -DINFO_PRODUCTNAME="Silt" -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}\{{.BIN_DIR}}\{{.APP_NAME}}.exe" project.nsi
+        makensis {{if eq .INSTALL_SCOPE "user"}}-DWAILS_INSTALL_SCOPE=user -DREQUEST_EXECUTION_LEVEL=user {{end}}-DINFO_PROJECTNAME={{.APP_NAME}} -DINFO_COMPANYNAME="Chelydra Labs" -DINFO_PRODUCTNAME="Silt" -DINFO_PRODUCTVERSION={{.VERSION}} -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}\{{.BIN_DIR}}\{{.APP_NAME}}.exe" project.nsi
         {{else}}
-        makensis {{if eq .INSTALL_SCOPE "user"}}-DWAILS_INSTALL_SCOPE=user -DREQUEST_EXECUTION_LEVEL=user {{end}}-DINFO_PROJECTNAME={{.APP_NAME}} -DINFO_COMPANYNAME="Chelydra Labs" -DINFO_PRODUCTNAME="Silt" -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}.exe" project.nsi
+        makensis {{if eq .INSTALL_SCOPE "user"}}-DWAILS_INSTALL_SCOPE=user -DREQUEST_EXECUTION_LEVEL=user {{end}}-DINFO_PROJECTNAME={{.APP_NAME}} -DINFO_COMPANYNAME="Chelydra Labs" -DINFO_PRODUCTNAME="Silt" -DINFO_PRODUCTVERSION={{.VERSION}} -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}.exe" project.nsi
         {{end}}
     vars:
       ARCH: '{{.ARCH | default ARCH}}'
       ARG_FLAG: '{{if eq .ARCH "amd64"}}AMD64{{else}}ARM64{{end}}'
       INSTALL_SCOPE: '{{.INSTALL_SCOPE | default "user"}}'
+      VERSION:
+        sh: tr -d '[:space:]' < '{{.ROOT_DIR}}/VERSION'
 
   create:msix:package:
     summary: Creates an MSIX package
