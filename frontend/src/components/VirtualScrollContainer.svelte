@@ -505,15 +505,33 @@
     </button>
   </div>
 
-  <!-- Floating Editor Status Bar (Word Count) -->
-  {#if showWordCount && wordCount > 0 && viewMode === 'edit'}
+  <!-- Floating Editor Status Bar (Loud Error Alert + Word Count) -->
+  {#if viewMode === 'edit' && (saveError || (showWordCount && wordCount > 0))}
     <div
-      class="absolute bottom-6 right-6 z-40 flex items-center px-3 py-1.5 bg-surface-popover/60 backdrop-blur-md border border-surface-popover-border/50 rounded-full shadow-lg text-type-xs font-medium tracking-wide text-text-muted transition-all duration-300 opacity-60 hover:opacity-100"
+      class="absolute bottom-6 right-6 z-40 flex items-center gap-3 px-3.5 py-1.5 bg-surface-popover/80 backdrop-blur-md border border-surface-popover-border/60 rounded-full shadow-lg text-type-xs font-medium tracking-wide text-text-muted transition-all duration-300 opacity-70 hover:opacity-100 select-none"
     >
-      <div class="font-mono text-text-muted/80" role="status" aria-live="off">
-        {wordCount}
-        {wordCount === 1 ? 'word' : 'words'}
-      </div>
+      <!-- Fail-loud save error indicator -->
+      {#if saveError}
+        <div
+          class="flex items-center gap-1.5"
+          role="status"
+          aria-live="assertive"
+        >
+          <span class="w-2 h-2 rounded-full bg-status-danger animate-pulse"
+          ></span>
+          <span class="text-status-danger font-semibold">Save failed</span>
+        </div>
+      {/if}
+
+      {#if showWordCount && wordCount > 0}
+        {#if saveError}
+          <div class="w-px h-3 bg-surface-popover-border"></div>
+        {/if}
+        <div class="font-mono text-text-muted/80" role="status" aria-live="off">
+          {wordCount}
+          {wordCount === 1 ? 'word' : 'words'}
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

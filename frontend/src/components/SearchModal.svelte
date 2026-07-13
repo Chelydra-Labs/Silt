@@ -128,7 +128,36 @@
     }
   }
 
+  function isTypeChipFocused(): boolean {
+    const active = document.activeElement as HTMLElement | null
+    return !!active?.closest('[data-type-chips]')
+  }
+
+  function cycleTypeChip(delta: number): void {
+    const currentIdx = TYPE_CHIPS.findIndex((c) => c.id === typeFilter)
+    const nextIdx = (currentIdx + delta + TYPE_CHIPS.length) % TYPE_CHIPS.length
+    typeFilter = TYPE_CHIPS[nextIdx].id
+    // Keep focus on the newly selected chip so arrow keys continue to work.
+    queueMicrotask(() => {
+      const chip = document.querySelector<HTMLElement>(
+        `[data-type-chips] [data-type-chip="${TYPE_CHIPS[nextIdx].id}"]`
+      )
+      chip?.focus()
+    })
+  }
+
   function handleKeyDown(e: KeyboardEvent) {
+    // Tab must remain normal focus order so Vault/Linked, sort, clear, results,
+    // and "Replace in vault…" stay keyboard-reachable. Cycle type chips with
+    // ArrowLeft/Right only when focus is already on the chip group.
+    if (
+      (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+      isTypeChipFocused()
+    ) {
+      e.preventDefault()
+      cycleTypeChip(e.key === 'ArrowRight' ? 1 : -1)
+      return
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (results.length > 0) {
@@ -257,8 +286,9 @@
     </div>
 
     <!-- Filter controls (#186): scope (vault vs incl-linked) + category chips +
-         sort. Keyboard-reachable via Tab; the chips drive the `type` filter,
-         scope drives VaultOnly, sort drives the SQL ORDER BY. -->
+         sort. Keyboard-reachable via Tab; type chips also cycle with ←/→ when
+         focused. Chips drive the `type` filter, scope drives VaultOnly, sort
+         drives the SQL ORDER BY. -->
     <div
       class="flex items-center gap-2 px-4 py-2 border-b border-surface-modal-border bg-surface-modal/20 flex-wrap"
       role="toolbar"
@@ -291,10 +321,11 @@
       </div>
 
       <!-- Category chips: filter by block type (single-select; "" = All). -->
-      <div class="flex items-center gap-1 flex-wrap">
+      <div class="flex items-center gap-1 flex-wrap" data-type-chips>
         {#each TYPE_CHIPS as chip (chip.id)}
           <button
             type="button"
+            data-type-chip={chip.id}
             class="px-2 py-1 rounded-md text-type-xs font-label-sm-bold transition-colors border cursor-pointer"
             class:bg-accent-primary-start={typeFilter === chip.id}
             class:text-surface-app={typeFilter === chip.id}

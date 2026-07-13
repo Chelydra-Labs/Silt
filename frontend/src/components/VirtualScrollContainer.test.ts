@@ -170,6 +170,22 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(btn).toHaveAttribute('aria-pressed', 'true')
     expect(btn).toHaveAttribute('aria-keyshortcuts', 'Ctrl+Shift+V')
   })
+
+  it('does not show Saving…/Saved chrome on dirty (silent success)', async () => {
+    render(VirtualScrollContainer, { props: baseProps() })
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-dirty'))
+    expect(screen.queryByText('Saving...')).toBeNull()
+    expect(screen.queryByText('Saved')).toBeNull()
+  })
+
+  it('shows assertive Save failed when the editor reports an error', async () => {
+    render(VirtualScrollContainer, { props: baseProps() })
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-error'))
+    const status = screen.getByText('Save failed')
+    expect(status).toBeTruthy()
+    const live = status.closest('[aria-live]')
+    expect(live?.getAttribute('aria-live')).toBe('assertive')
+  })
 })
 
 describe('Edit↔Source scroll preservation (#319)', () => {

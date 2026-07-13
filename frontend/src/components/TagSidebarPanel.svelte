@@ -117,9 +117,24 @@
     {#if filteredTree.length === 0}
       <div class="text-text-muted text-center py-10 font-body-md text-type-md">
         {#if tree.length === 0}
-          No tags yet. Add <span class="text-accent-secondary-start"
-            >#tag/path</span
-          > to a block.
+          <div class="flex flex-col items-center gap-2 px-4 py-6 select-none">
+            <span
+              class="material-symbols-outlined text-text-muted/60 text-icon-2xl"
+              >label_off</span
+            >
+            <p class="font-medium text-text-primary">No tags yet</p>
+            <p class="text-type-xs text-text-muted leading-relaxed">
+              Type <code
+                class="px-1.5 py-0.5 rounded bg-surface-sidebar-text/10 text-accent-secondary-start font-mono text-type-2xs"
+                >#project</code
+              >
+              or
+              <code
+                class="px-1.5 py-0.5 rounded bg-surface-sidebar-text/10 text-accent-secondary-start font-mono text-type-2xs"
+                >#todo/urgent</code
+              > in any note to create tags.
+            </p>
+          </div>
         {:else}
           No tags match "{query}".
         {/if}

@@ -23,11 +23,7 @@
   <!-- First run onboarding -->
   <div class="onboarding-container select-none">
     <div class="onboarding-card">
-      <img
-        src={logo}
-        alt="Silt Logo"
-        class="onboarding-logo animate-spin-slow"
-      />
+      <img src={logo} alt="Silt Logo" class="onboarding-logo" />
       <h1 class="onboarding-title font-headline-lg">Silt</h1>
       <p class="onboarding-description font-body-md">
         Capture ideas. Connect them. Get work done. A fast, private workspace
@@ -42,17 +38,3 @@
     </div>
   </div>
 {/if}
-
-<style>
-  .animate-spin-slow {
-    animation: spin 8s linear infinite;
-  }
-  @keyframes spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
-</style>

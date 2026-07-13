@@ -39,29 +39,77 @@
     debounceTimer = setTimeout(runSearch, 180)
   }
 
+  let dialogEl = $state<HTMLDivElement | null>(null)
+  let previouslyFocused: HTMLElement | null = null
+
+  const FOCUSABLE =
+    'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+  function focusableEls(): HTMLElement[] {
+    if (!dialogEl) return []
+    return Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE))
+  }
+
   function pick(res: any) {
     onPick(res.id)
     onClose()
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      onClose()
+      return
+    }
+    // Dialog-scoped trap (same pattern as ConfirmDialog): runs on window
+    // capture so Tab still wraps when focus is on clear/result buttons, not
+    // only when the search input is focused.
+    if (e.key === 'Tab' && dialogEl) {
+      const els = focusableEls()
+      if (els.length === 0) return
+      const first = els[0]
+      const last = els[els.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (e.shiftKey) {
+        if (active === first || !dialogEl.contains(active)) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else if (active === last || !dialogEl.contains(active)) {
+        e.preventDefault()
+        first.focus()
+      }
+      return
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      selectedIdx = Math.min(selectedIdx + 1, results.length - 1)
+      if (results.length > 0) {
+        selectedIdx = Math.min(selectedIdx + 1, results.length - 1)
+      }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      selectedIdx = Math.max(selectedIdx - 1, 0)
+      if (results.length > 0) {
+        selectedIdx = Math.max(selectedIdx - 1, 0)
+      }
     } else if (e.key === 'Enter') {
       e.preventDefault()
       if (results[selectedIdx]) pick(results[selectedIdx])
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      onClose()
     }
   }
 
   onMount(() => {
+    previouslyFocused = document.activeElement as HTMLElement | null
+    window.addEventListener('keydown', handleKeydown, true)
     inputEl?.focus()
+    return () => {
+      window.removeEventListener('keydown', handleKeydown, true)
+      // Only restore if the prior element is still in the document (e.g. a
+      // tab/button that wasn't unmounted while the picker was open).
+      if (previouslyFocused?.isConnected) {
+        previouslyFocused.focus()
+      }
+    }
   })
 </script>
 
@@ -75,6 +123,7 @@
     class="absolute inset-0 cursor-default border-none p-0 bg-transparent"
   ></button>
   <div
+    bind:this={dialogEl}
     role="dialog"
     aria-modal="true"
     aria-label="Embed a block"
@@ -100,7 +149,6 @@
         bind:this={inputEl}
         bind:value={query}
         oninput={onInput}
-        onkeydown={handleKeydown}
         type="text"
         placeholder="Search blocks to embed…"
         class="bg-transparent border-none outline-none text-text-primary text-type-lg font-body-md w-full focus:ring-0 placeholder:text-text-muted"

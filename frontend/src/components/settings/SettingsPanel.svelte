@@ -146,8 +146,28 @@
     )}
   >
     {#if settings.loading && !settings.config && section !== 'general'}
-      <div class="p-8 text-text-muted animate-pulse font-body-md">
-        Loading settings…
+      <div
+        class="skeleton-container p-8 max-w-4xl select-none"
+        role="status"
+        aria-busy="true"
+        aria-live="polite"
+      >
+        <span class="sr-only">Loading settings…</span>
+        <div class="skeleton-row">
+          <div
+            class="skeleton-text title"
+            style="width: 40%; height: 16px"
+          ></div>
+        </div>
+        <div class="skeleton-row">
+          <div class="skeleton-text" style="width: 100%; height: 40px"></div>
+        </div>
+        <div class="skeleton-row">
+          <div class="skeleton-text" style="width: 100%; height: 40px"></div>
+        </div>
+        <div class="skeleton-row">
+          <div class="skeleton-text" style="width: 75%; height: 40px"></div>
+        </div>
       </div>
     {:else if !settings.config && settings.error && section !== 'general'}
       <div class="p-8">
@@ -192,3 +212,18 @@
     {/if}
   </div>
 </div>
+
+<style>
+  /* Visually hidden but available to assistive tech (no global .sr-only). */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>

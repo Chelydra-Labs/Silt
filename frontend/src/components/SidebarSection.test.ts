@@ -189,6 +189,17 @@ describe('SidebarSection (#88 deep-nesting)', () => {
     expect(onSelectPage).toHaveBeenCalledWith('Journal', 'Daily')
   })
 
+  it('empty-state + Add Page selects section then creates (matches header +)', async () => {
+    const props = makeProps({
+      section: { name: 'Empty', path: 'Empty', pages: [], children: [] },
+      expandedSections: new Set(['Empty'])
+    })
+    render(SidebarSection, { props })
+    await fireEvent.click(screen.getByRole('button', { name: /\+ Add Page/i }))
+    expect(props.onSelectSection).toHaveBeenCalledWith('Empty')
+    expect(props.onCreatePageInline).toHaveBeenCalledWith('Empty')
+  })
+
   it('emits pinPage on double-click (#142)', async () => {
     const onPinPage = vi.fn()
     const props = makeProps({

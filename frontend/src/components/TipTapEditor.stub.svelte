@@ -21,4 +21,27 @@
   })
 </script>
 
-<div data-testid="tiptap-stub" data-page={page}></div>
+<div data-testid="tiptap-stub" data-page={page}>
+  <!-- Test seams: drive parent save-state wiring without a real editor. -->
+  <button
+    type="button"
+    data-testid="tiptap-stub-emit-dirty"
+    onclick={() => onSaveStateChange?.({ dirty: true, error: null })}
+  >
+    emit dirty
+  </button>
+  <button
+    type="button"
+    data-testid="tiptap-stub-emit-error"
+    onclick={() => onSaveStateChange?.({ dirty: false, error: 'disk full' })}
+  >
+    emit error
+  </button>
+  <button
+    type="button"
+    data-testid="tiptap-stub-emit-clean"
+    onclick={() => onSaveStateChange?.({ dirty: false, error: null })}
+  >
+    emit clean
+  </button>
+</div>

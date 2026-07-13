@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { TabEntry } from '../lib/tabs'
   import { fade, fly } from 'svelte/transition'
+  import ContextMenu from './ContextMenu.svelte'
+  import { pushNotification } from '../notifications/store.svelte'
 
   interface Props {
     tabs: TabEntry[]
@@ -22,6 +24,68 @@
     onReorderTab,
     showDirtyIndicators = true
   }: Props = $props()
+
+  let contextMenu = $state<{
+    open: boolean
+    anchor: { x: number; y: number } | null
+    anchorEl: HTMLElement | null
+    tab: TabEntry | null
+  }>({
+    open: false,
+    anchor: null,
+    anchorEl: null,
+    tab: null
+  })
+
+  function handleTabContextMenu(e: MouseEvent, tab: TabEntry): void {
+    e.preventDefault()
+    e.stopPropagation()
+    contextMenu = {
+      open: true,
+      anchor: { x: e.clientX, y: e.clientY },
+      // Pass the tab button so ContextMenu can restore focus on Escape/close.
+      anchorEl: e.currentTarget as HTMLElement,
+      tab
+    }
+  }
+
+  function closeContextMenu(): void {
+    contextMenu = { open: false, anchor: null, anchorEl: null, tab: null }
+  }
+
+  function handleCloseOtherTabs(targetTabId: string): void {
+    const toClose = tabs.filter((t) => t.id !== targetTabId)
+    closeContextMenu()
+    for (const t of toClose) {
+      onCloseTab(t.id)
+    }
+  }
+
+  function handleCloseTabsToRight(targetTabId: string): void {
+    const idx = tabs.findIndex((t) => t.id === targetTabId)
+    closeContextMenu()
+    if (idx !== -1) {
+      const toClose = tabs.slice(idx + 1)
+      for (const t of toClose) {
+        onCloseTab(t.id)
+      }
+    }
+  }
+
+  // Plain vault path — not a wiki-link. Real page-link grammar is a separate
+  // feature; until then this copies a human-readable path only.
+  async function handleCopyPagePath(tab: TabEntry): Promise<void> {
+    closeContextMenu()
+    const path = [tab.notebook, tab.section, tab.page].filter(Boolean).join('/')
+    try {
+      await navigator.clipboard.writeText(path)
+    } catch {
+      pushNotification({
+        kind: 'error',
+        message: 'Copy failed: clipboard could not be written.'
+      })
+    }
+  }
 
   // Roving tabindex: the active tab (or the first tab if none active) is the
   // only tab in the tab sequence. Arrow keys move focus between tabs without
@@ -200,6 +264,7 @@
           onfocus={() => (focusedIndex = i)}
           onauxclick={(e) => handleAuxClick(e, tab)}
           ondblclick={() => handleDblClick(tab)}
+          oncontextmenu={(e) => handleTabContextMenu(e, tab)}
         >
           {#if tab.id === activeTabId}
             <div class="active-tab-indicator"></div>
@@ -241,6 +306,94 @@
       {/each}
     </div>
   </div>
+
+  <ContextMenu
+    open={contextMenu.open}
+    anchor={contextMenu.anchor}
+    anchorEl={contextMenu.anchorEl}
+    onClose={closeContextMenu}
+    ariaLabel="Tab actions"
+  >
+    {#if contextMenu.tab}
+      {@const targetTab = contextMenu.tab}
+      {@const targetIdx = tabs.findIndex((t) => t.id === targetTab.id)}
+      {@const canCloseOthers = tabs.length > 1}
+      {@const canCloseToRight = targetIdx !== -1 && targetIdx < tabs.length - 1}
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => {
+          // Capture id before close — closeContextMenu nulls contextMenu.tab
+          // and can invalidate the {@const} binding mid-handler.
+          const id = targetTab.id
+          closeContextMenu()
+          onCloseTab(id)
+        }}
+      >
+        <span class="material-symbols-outlined text-icon-md">close</span>
+        Close Tab
+      </button>
+
+      <button
+        type="button"
+        role="menuitem"
+        disabled={!canCloseOthers}
+        aria-disabled={!canCloseOthers}
+        onclick={() => {
+          if (!canCloseOthers) return
+          handleCloseOtherTabs(targetTab.id)
+        }}
+      >
+        <span class="material-symbols-outlined text-icon-md"
+          >tab_unselected</span
+        >
+        Close Other Tabs
+      </button>
+
+      <button
+        type="button"
+        role="menuitem"
+        disabled={!canCloseToRight}
+        aria-disabled={!canCloseToRight}
+        onclick={() => {
+          if (!canCloseToRight) return
+          handleCloseTabsToRight(targetTab.id)
+        }}
+      >
+        <span class="material-symbols-outlined text-icon-md"
+          >tab_close_right</span
+        >
+        Close Tabs to Right
+      </button>
+
+      <div class="context-menu-separator"></div>
+
+      {#if targetTab.preview}
+        <button
+          type="button"
+          role="menuitem"
+          onclick={() => {
+            const id = targetTab.id
+            closeContextMenu()
+            onPromoteTab(id)
+          }}
+        >
+          <span class="material-symbols-outlined text-icon-md">push_pin</span>
+          Pin Tab
+        </button>
+        <div class="context-menu-separator"></div>
+      {/if}
+
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => handleCopyPagePath(targetTab)}
+      >
+        <span class="material-symbols-outlined text-icon-md">content_copy</span>
+        Copy Page Path
+      </button>
+    {/if}
+  </ContextMenu>
 {/if}
 
 <style>

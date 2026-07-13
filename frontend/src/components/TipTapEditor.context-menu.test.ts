@@ -174,6 +174,8 @@ describe('TipTapEditor context menu', () => {
     ]) {
       expect(text).toContain(label)
     }
+    // Clear Formatting has no registered keymap — do not show a phantom chord.
+    expect(text).not.toContain('Ctrl+\\')
 
     unmount()
   })
