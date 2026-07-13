@@ -42,6 +42,15 @@ unsolicited.
 3. **Accept** applies the change via the plugin SDK (markdown stays source of
    truth). **Discard** drops it — nothing is written.
 
+## Drawer
+
+The Writing Assistant opens in a right-side drawer. It is **mutually exclusive**
+with the **AI Assistant** (Q&A) drawer: opening one closes the other so they
+never squeeze the note pane. Toggle either from its title-bar icon.
+
+**Escape** discards any in-flight proposal, then closes the Writing Assistant
+drawer.
+
 ## Slash commands
 
 When the plugin is enabled, slash commands appear for each enabled action.

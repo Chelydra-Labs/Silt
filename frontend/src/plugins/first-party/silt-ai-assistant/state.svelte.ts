@@ -22,7 +22,7 @@ import type {
   PanelStatus,
   Proposal
 } from './types'
-import { openWritingAssistantDrawer } from './drawer.svelte'
+import { openWritingAssistantDrawerExclusive } from '../../../lib/drawers.svelte'
 
 export type RunOpts = {
   selectionText?: string
@@ -138,7 +138,7 @@ export function createAssistantController() {
         instruction: opts.instruction ?? instruction
       }
     }
-    openWritingAssistantDrawer()
+    openWritingAssistantDrawerExclusive()
 
     try {
       const scope = await buildScope(ctx, settings, {

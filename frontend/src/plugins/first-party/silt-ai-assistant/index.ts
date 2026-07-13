@@ -4,7 +4,7 @@
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { ACTION_CATALOG } from './catalog'
 import { isActionEnabled } from './catalog'
-import { openWritingAssistantDrawer } from './drawer.svelte'
+import { openWritingAssistantDrawerExclusive } from '../../../lib/drawers.svelte'
 import { resetWritingAssistantDrawer } from './drawer.svelte'
 import WritingAssistantHub from './WritingAssistantHub.svelte'
 import AssistantSettings from './AssistantSettings.svelte'
@@ -58,12 +58,12 @@ function registerSlashCommands(ctx: PluginContext) {
         if (!c) return
         c.loadSettings()
         if (!isActionEnabled(c.settings, action.id)) {
-          openWritingAssistantDrawer()
+          openWritingAssistantDrawerExclusive()
           void c.run(ctx, action.id, {})
           return
         }
         const selectionText = selectionTextFromEditor(editor)
-        openWritingAssistantDrawer()
+        openWritingAssistantDrawerExclusive()
         void c.run(ctx, action.id, { selectionText })
       }
     })

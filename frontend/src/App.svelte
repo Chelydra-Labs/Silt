@@ -61,16 +61,14 @@
   import PluginModalHost from './components/PluginModalHost.svelte'
   import AISearchDrawer from './plugins/first-party/silt-ai-qa/AISearchDrawer.svelte'
   import { aiAssistantChrome } from './plugins/first-party/silt-ai-qa/state.svelte'
-  import {
-    aiSearchDrawer,
-    toggleAISearchDrawer
-  } from './plugins/first-party/silt-ai-qa/drawer.svelte'
+  import { aiSearchDrawer } from './plugins/first-party/silt-ai-qa/drawer.svelte'
   import WritingAssistantDrawer from './plugins/first-party/silt-ai-assistant/WritingAssistantDrawer.svelte'
   import { writingAssistantChrome } from './plugins/first-party/silt-ai-assistant/state.svelte'
+  import { writingAssistantDrawer } from './plugins/first-party/silt-ai-assistant/drawer.svelte'
   import {
-    writingAssistantDrawer,
-    toggleWritingAssistantDrawer
-  } from './plugins/first-party/silt-ai-assistant/drawer.svelte'
+    toggleAISearchDrawerExclusive,
+    toggleWritingAssistantDrawerExclusive
+  } from './lib/drawers.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import ToastContainer from './components/ToastContainer.svelte'
@@ -1357,11 +1355,11 @@
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
       onAIAssistantClick={aiAssistantChrome.available
-        ? () => toggleAISearchDrawer()
+        ? () => toggleAISearchDrawerExclusive()
         : undefined}
       aiAssistantOpen={aiSearchDrawer.open}
       onWritingAssistantClick={writingAssistantChrome.available
-        ? () => toggleWritingAssistantDrawer()
+        ? () => toggleWritingAssistantDrawerExclusive()
         : undefined}
       writingAssistantOpen={writingAssistantDrawer.open}
     >
