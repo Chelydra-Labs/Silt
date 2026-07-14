@@ -54,8 +54,8 @@ updates:
       # Group all patch + minor prod bumps into one PR
       patch-minor:
         update-types:
-          - "version-update:semver-patch"
-          - "version-update:semver-minor"
+          - "patch"
+          - "minor"
       # Dev deps in their own PR
       dev-deps:
         dependency-type: development
