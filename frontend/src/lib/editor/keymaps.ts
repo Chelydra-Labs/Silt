@@ -780,6 +780,24 @@ export const SiltBlockKeymaps = Extension.create({
           return true
         }
 
+        // Clear the quote marker next (parallel to bullet clearing — the two
+        // are mutually exclusive on noteBlock, but quote needs its own step
+        // or Backspace would consume the keypress on a sole empty quoted
+        // block without removing the "> " marker).
+        if (
+          info.node.type.name === 'noteBlock' &&
+          info.node.attrs.quote &&
+          info.node.attrs.quote !== ''
+        ) {
+          const tr = this.editor.state.tr.setNodeAttribute(
+            info.pos,
+            'quote',
+            ''
+          )
+          this.editor.view.dispatch(tr)
+          return true
+        }
+
         // Non-empty block at start: try to merge its content into the same-type
         // sibling above. Same-type-sibling merge takes precedence over the
         // empty-block unindent/delete path below (#364). If no same-type sibling
@@ -796,7 +814,11 @@ export const SiltBlockKeymaps = Extension.create({
 
         // Delete the block and focus the previous one (if any).
         const { doc } = this.editor.state
-        if (doc.childCount <= 1) return false
+        // Consume the keypress as a no-op: this is the sole, empty block at
+        // depth 0 — nothing to delete, merge, or unindent. Returning false
+        // would fall through to StarterKit/ProseMirror's default chain, which
+        // synthesizes a new node on an empty sole block (#552).
+        if (doc.childCount <= 1) return true
 
         // Find the current block's top-level index.
         let blockIndex = -1

@@ -18,7 +18,8 @@
 //   docToBlocks. Line numbers are positional, not semantic.
 // - Notes carry a `bullet` attr ('- ', '* ', '+ ', or '' for plain prose) so
 //   the Go serializer (renderBlock) preserves the original bullet marker.
-//   The editor-created default is '- ' (matching renderBlock's default).
+//   The editor-created default is '' (blank prose) — explicit actions (input
+//   rules, Enter-inheritance, slash-Note) set a bullet when the user wants one.
 
 import { Node, Mark, mergeAttributes, InputRule } from '@tiptap/core'
 import { newlineInCode } from '@tiptap/pm/commands'
@@ -263,11 +264,11 @@ export const NoteBlock = Node.create({
         renderHTML: (attrs) => ({ 'data-depth': String(attrs.depth) })
       },
       bullet: {
-        // '- ' (default), '* ', '+ ', or '' (plain prose, no bullet marker)
-        default: '- ',
+        // '- ', '* ', '+ ', or '' (plain prose — the default for new pages)
+        default: '',
         parseHTML: (el) => {
           const b = el.getAttribute('data-bullet')
-          return b !== null ? b : '- '
+          return b !== null ? b : ''
         },
         renderHTML: (attrs) => ({ 'data-bullet': attrs.bullet })
       },

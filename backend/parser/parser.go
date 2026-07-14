@@ -1178,9 +1178,11 @@ func RenderFileContent(blocks []ParsedBlock, originalBody, frontmatter string, s
 // that produces on-disk block syntax), kept next to ParseLine so any format
 // tweak has one place to update.
 //
-// Newly created editor blocks arrive with an empty RawText; they are emitted
-// as "- " bullet notes so the outliner round-trips. Existing notes preserve
-// their original bullet marker ("- ", "* ", "+ ") or plain-text style.
+// Newly created editor blocks arrive with an empty RawText; blocks that also
+// have empty content are emitted without a bullet so blank pages round-trip as
+// blank (not as "- "). Blocks with fresh content but no RawText still get the
+// "- " outliner default. Existing notes preserve their original bullet marker
+// ("- ", "* ", "+ ") or plain-text style.
 func renderBlock(block ParsedBlock, spacesPerTab int) string {
 	if spacesPerTab <= 0 {
 		spacesPerTab = 4
@@ -1323,12 +1325,20 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		}
 		return fmt.Sprintf("%s %s%s", hashes, block.CleanText, idSuffix)
 	} else {
-		// BlockNote. Newly created blocks arrive with an empty RawText, so
-		// default to the "- " bullet used by the outliner instead of
-		// dropping the marker on every editor-created line.
-		prefix := "- "
+		// BlockNote. Newly created blocks arrive with an empty RawText.
+		// Default to "- " only when there is fresh content to show — an
+		// empty RawText + empty CleanText is a blank placeholder that must
+		// round-trip without a bullet (otherwise blank pages regain "- "
+		// on the first autosave).
+		prefix := ""
 		trimmedRaw := strings.TrimSpace(block.RawText)
-		if trimmedRaw != "" {
+		trimmedClean := strings.TrimSpace(block.CleanText)
+		if trimmedRaw == "" && trimmedClean == "" {
+			// Empty-empty: no bullet, no content — bare id line only.
+		} else if trimmedRaw == "" {
+			// Fresh content with no raw text: outliner default "- ".
+			prefix = "- "
+		} else if trimmedRaw != "" {
 			if strings.HasPrefix(trimmedRaw, "- ") {
 				prefix = "- "
 			} else if strings.HasPrefix(trimmedRaw, "* ") {

@@ -118,6 +118,10 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
 - [ ] Block drag-handle reorders/indents; Alt+ArrowUp/Down moves by keyboard.
 - [ ] Find/replace in-page (Ctrl+F / Ctrl+H); global search (Ctrl+Shift+F)
       filters + sort; global replace (Ctrl+Shift+G) with per-match accept + undo.
+- [ ] New page opens as blank prose (no bullet marker); Backspace on the blank
+      line is a clean no-op (no duplicate line created) — reload stays blank.
+- [ ] Typing `- `, `* `, `+ `, or `1. ` at the start of a blank line still
+      creates the bullet/numbered marker (explicit input rules unaffected).
 
 **Smart Graph**
 - [ ] `#ns/sub/leaf` tags render as pills and aggregate hierarchically.
@@ -130,6 +134,10 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
       notebook/section, chip becomes a link, navigates to the new page.
 - [ ] Ambiguous chip: hover → candidate pick list + "Create page" button;
       pick navigates, create uses the typed target name.
+- [ ] `[[ExistingNotebook/Page]]` (first segment matches a real notebook name)
+      creates the page in that notebook (section empty); `[[RandomSection/Page]]`
+      (first segment does not match any notebook) creates in the active notebook
+      under that section. Hover shows the resolved path subtitle.
 - [ ] Rename/move target page rewrites inbound `[[…]]` (alias/heading preserved);
       block UUIDs unchanged.
 - [ ] Tab context: **Copy Page Path** (plain path) and **Copy Page Reference**
@@ -192,6 +200,9 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
 **Themes & templates**
 - [ ] Theme picker: switch, mode toggle (Dark/Light/System), import a JSON
       (rejected if unsafe), export.
+- [ ] Caret is clearly visible on click in both a light theme (e.g. Cyber Forest
+      light) and a dark theme — the thin 1–2px caret line reads at a glance
+      against the editor surface in every first-class theme.
 - [ ] Theme-picker swatches show surface identity: warm (Linen), neutral
       (Graphite), and cool (Frost) themes are distinguishable at a glance by
       the base chip fill across all 11 themes in both dark and light modes.

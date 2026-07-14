@@ -9,7 +9,7 @@
   "--color-active": "#decfa9",
   "--color-border-active": "#bfb094",
   "--color-border-focus": "#8c7e65",
-  "--color-editor-caret": "#4a8a9c",
+  "--color-editor-caret": "#427b8b",
   "--color-editor-highlight": "rgba(176,132,40,0.25)",
   "--color-editor-link": "#686da3",
   "--color-editor-link-hover": "#565b8e",

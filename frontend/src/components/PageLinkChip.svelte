@@ -4,7 +4,11 @@
   // Ambiguous and unresolved chips offer create-or-pick (#549).
   import { fade } from 'svelte/transition'
   import { onDestroy } from 'svelte'
-  import { ResolvePageLink, CreatePage } from '../../bindings/silt/app.js'
+  import {
+    ResolvePageLink,
+    CreatePage,
+    ListNavigation
+  } from '../../bindings/silt/app.js'
   import { getActiveLocation } from '../plugins/location.svelte'
 
   interface Props {
@@ -28,8 +32,17 @@
   let showHover = $state(false)
   let creating = $state(false)
   let createError = $state('')
+  let createPath = $state('')
+  let createTarget = $state<{
+    notebook: string
+    section: string
+    page: string
+  } | null>(null)
+  let resolvingPath = $state(false)
   let hoverTimer: ReturnType<typeof setTimeout> | null = null
   let createErrorTimer: ReturnType<typeof setTimeout> | null = null
+  let createPathVersion = 0
+  let destroyed = false
 
   const label = $derived(alias || target)
 
@@ -60,18 +73,44 @@
   $effect(() => {
     if (target && target !== lastResolvedTarget) {
       lastResolvedTarget = target
+      // Invalidate the create-path cache so a stale target doesn't misroute
+      // createPage() if the popover is open during the prop change.
+      createTarget = null
+      createPath = ''
+      resolvingPath = false
       void load()
     }
   })
 
   onDestroy(() => {
+    destroyed = true
     if (hoverTimer) clearTimeout(hoverTimer)
     if (createErrorTimer) clearTimeout(createErrorTimer)
   })
 
+  async function refreshCreatePath() {
+    const v = ++createPathVersion
+    resolvingPath = true
+    try {
+      const resolved = await parseTargetForCreate(target)
+      if (destroyed || v !== createPathVersion) return
+      createTarget = resolved
+      createPath = pathLabel(resolved)
+    } catch {
+      if (destroyed || v !== createPathVersion) return
+      createTarget = null
+      createPath = ''
+    } finally {
+      if (!destroyed && v === createPathVersion) resolvingPath = false
+    }
+  }
+
   function enter() {
     if (hoverTimer) clearTimeout(hoverTimer)
-    hoverTimer = setTimeout(() => (showHover = true), 250)
+    hoverTimer = setTimeout(() => {
+      showHover = true
+      void refreshCreatePath()
+    }, 250)
   }
 
   function leave() {
@@ -107,6 +146,19 @@
     navigateTo(c.notebook, c.section ?? '', c.page)
   }
 
+  // Resolve notebook display names for 2-segment disambiguation (#551).
+  // Names are globally unique (ARCHITECTURE §3.1). Lazy — only called on the
+  // 2-segment create path, never per-render. Falls back to [] on IPC failure
+  // so the chip degrades to section/page (active notebook).
+  async function listNotebookNames(): Promise<string[]> {
+    try {
+      const tree = await ListNavigation()
+      return (tree?.notebooks ?? []).map((n) => n.name)
+    } catch {
+      return []
+    }
+  }
+
   // Parse a wiki-link target into {notebook, section, page} for CreatePage.
   // Defaults notebook/section to the active location. For path targets like
   // "Section/Page" or "Notebook/Section/Page", splits the path accordingly.
@@ -114,11 +166,20 @@
   // first is the notebook, the last is the page, and everything in between is
   // the (multi-segment) section — matching how ResolvePageLink interprets the
   // same target, so the created page resolves back to the original link.
-  function parseTargetForCreate(rawTarget: string): {
+  //
+  // For 2-segment targets (#551): if the first segment matches an existing
+  // notebook name, treat it as notebook/page (section empty); otherwise fall
+  // back to section/page in the active notebook. The match is case-insensitive
+  // to mirror ResolvePageLink (PageMatchesTarget uses strings.EqualFold), so
+  // [[archive/Page]] targets an "Archive" notebook the same way the link would
+  // resolve if the page already existed. The returned notebook keeps the
+  // registered casing because resolveSourceByName / CreatePage match notebook
+  // names exactly — passing the user's typed casing would misroute the create.
+  async function parseTargetForCreate(rawTarget: string): Promise<{
     notebook: string
     section: string
     page: string
-  } {
+  }> {
     const loc = getActiveLocation()
     const activeNotebook = loc.notebook || ''
     const activeSection = loc.section || ''
@@ -131,6 +192,12 @@
       }
     }
     if (parts.length === 2) {
+      const names = await listNotebookNames()
+      const lower = parts[0].toLowerCase()
+      const notebook = names.find((n) => n.toLowerCase() === lower)
+      if (notebook) {
+        return { notebook, section: '', page: parts[1] }
+      }
       return { notebook: activeNotebook, section: parts[0], page: parts[1] }
     }
     return {
@@ -150,7 +217,8 @@
       createErrorTimer = setTimeout(() => (createError = ''), 6000)
     }
     try {
-      const { notebook, section, page } = parseTargetForCreate(target)
+      const { notebook, section, page } =
+        createTarget ?? (await parseTargetForCreate(target))
       if (!notebook) {
         fail('Open a notebook first.')
         return
@@ -230,6 +298,15 @@
           <p class="text-type-2xs text-text-muted mb-1">
             Creates a new page; existing matches remain.
           </p>
+          {#if resolvingPath}
+            <p class="text-type-2xs text-text-muted mb-1.5 italic">
+              Resolving…
+            </p>
+          {:else if createPath}
+            <p class="text-type-2xs text-text-muted mb-1.5 font-mono">
+              {createPath}
+            </p>
+          {/if}
           <button
             type="button"
             class="w-full text-left px-2 py-1.5 rounded-md text-sm text-accent-primary-start hover:bg-hover cursor-pointer border-0 bg-transparent inline-flex items-center gap-1.5"
@@ -287,6 +364,13 @@
         {#if createError}
           <p class="text-type-2xs text-status-danger mb-1.5" role="alert">
             {createError}
+          </p>
+        {/if}
+        {#if resolvingPath}
+          <p class="text-type-2xs text-text-muted mb-1.5 italic">Resolving…</p>
+        {:else if createPath}
+          <p class="text-type-2xs text-text-muted mb-1.5 font-mono">
+            {createPath}
           </p>
         {/if}
         <button

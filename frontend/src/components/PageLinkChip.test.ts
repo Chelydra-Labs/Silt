@@ -15,13 +15,15 @@ import PageLinkChip from './PageLinkChip.svelte'
 const mocks = vi.hoisted(() => ({
   resolvePageLink: vi.fn(),
   createPage: vi.fn(),
+  listNavigation: vi.fn(),
   activeNotebook: 'Work',
   activeSection: 'Journal'
 }))
 
 vi.mock('../../bindings/silt/app.js', () => ({
   ResolvePageLink: mocks.resolvePageLink,
-  CreatePage: mocks.createPage
+  CreatePage: mocks.createPage,
+  ListNavigation: mocks.listNavigation
 }))
 
 vi.mock('../plugins/location.svelte', () => ({
@@ -380,5 +382,207 @@ describe('PageLinkChip create-or-pick (#549)', () => {
     expect(
       screen.getByText('Creates a new page; existing matches remain.')
     ).toBeTruthy()
+  })
+})
+
+describe('PageLinkChip 2-segment wiki-link disambiguation (#551)', () => {
+  beforeEach(() => vi.clearAllMocks())
+  afterEach(() => cleanup())
+
+  it('2-seg where first segment matches a notebook name → notebook/page (section empty)', async () => {
+    mocks.resolvePageLink.mockResolvedValue({ exists: false })
+    mocks.createPage.mockResolvedValue('')
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        { name: 'Archive', sections: [] },
+        { name: 'Work', sections: [] }
+      ]
+    })
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-page', handler)
+
+    render(PageLinkChip, { props: { target: 'Archive/Page' } })
+    await waitFor(() => {
+      expect(screen.getByText('[[Archive/Page]]')).toBeTruthy()
+    })
+    await fireEvent.mouseEnter(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Create page')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByText('Create page'))
+
+    await waitFor(() => {
+      expect(mocks.createPage).toHaveBeenCalledTimes(1)
+    })
+    expect(mocks.createPage).toHaveBeenCalledWith('Archive', '', 'Page', '')
+    expect(handler.mock.calls[0][0].detail.notebook).toBe('Archive')
+    expect(handler.mock.calls[0][0].detail.section).toBe('')
+    expect(handler.mock.calls[0][0].detail.page).toBe('Page')
+    window.removeEventListener('navigate-to-page', handler)
+  })
+
+  it('2-seg where first segment does NOT match a notebook → section/page (active notebook)', async () => {
+    mocks.resolvePageLink.mockResolvedValue({ exists: false })
+    mocks.createPage.mockResolvedValue('')
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [{ name: 'Archive', sections: [] }]
+    })
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-page', handler)
+
+    render(PageLinkChip, { props: { target: 'Projects/Meeting' } })
+    await waitFor(() => {
+      expect(screen.getByText('[[Projects/Meeting]]')).toBeTruthy()
+    })
+    await fireEvent.mouseEnter(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Create page')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByText('Create page'))
+
+    await waitFor(() => {
+      expect(mocks.createPage).toHaveBeenCalledTimes(1)
+    })
+    expect(mocks.createPage).toHaveBeenCalledWith(
+      'Work',
+      'Projects',
+      'Meeting',
+      ''
+    )
+    window.removeEventListener('navigate-to-page', handler)
+  })
+
+  it('2-seg falls back to section/page when ListNavigation rejects', async () => {
+    mocks.resolvePageLink.mockResolvedValue({ exists: false })
+    mocks.createPage.mockResolvedValue('')
+    mocks.listNavigation.mockRejectedValue(new Error('IPC unavailable'))
+
+    render(PageLinkChip, { props: { target: 'Projects/Meeting' } })
+    await waitFor(() => {
+      expect(screen.getByText('[[Projects/Meeting]]')).toBeTruthy()
+    })
+    await fireEvent.mouseEnter(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Create page')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByText('Create page'))
+
+    await waitFor(() => {
+      expect(mocks.createPage).toHaveBeenCalledTimes(1)
+    })
+    expect(mocks.createPage).toHaveBeenCalledWith(
+      'Work',
+      'Projects',
+      'Meeting',
+      ''
+    )
+  })
+
+  it('2-seg matches notebook names case-insensitively (mirrors ResolvePageLink)', async () => {
+    mocks.resolvePageLink.mockResolvedValue({ exists: false })
+    mocks.createPage.mockResolvedValue('')
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [{ name: 'Archive', sections: [] }]
+    })
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-page', handler)
+
+    render(PageLinkChip, { props: { target: 'archive/Page' } })
+    await waitFor(() => {
+      expect(screen.getByText('[[archive/Page]]')).toBeTruthy()
+    })
+    await fireEvent.mouseEnter(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Create page')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByText('Create page'))
+
+    await waitFor(() => {
+      expect(mocks.createPage).toHaveBeenCalledTimes(1)
+    })
+    // 'archive' ≈ 'Archive' (EqualFold, as in PageMatchesTarget) → notebook/page,
+    // and the notebook keeps its registered canonical casing so CreatePage routes
+    // via resolveSourceByName (exact match) to the right folder.
+    expect(mocks.createPage).toHaveBeenCalledWith('Archive', '', 'Page', '')
+    expect(handler.mock.calls[0][0].detail.notebook).toBe('Archive')
+    expect(handler.mock.calls[0][0].detail.section).toBe('')
+    expect(handler.mock.calls[0][0].detail.page).toBe('Page')
+    window.removeEventListener('navigate-to-page', handler)
+  })
+
+  it('1-seg target is unaffected by ListNavigation', async () => {
+    mocks.resolvePageLink.mockResolvedValue({ exists: false })
+    mocks.createPage.mockResolvedValue('')
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [{ name: 'Work', sections: [] }]
+    })
+
+    render(PageLinkChip, { props: { target: 'SimplePage' } })
+    await waitFor(() => {
+      expect(screen.getByText('[[SimplePage]]')).toBeTruthy()
+    })
+    await fireEvent.mouseEnter(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Create page')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByText('Create page'))
+
+    await waitFor(() => {
+      expect(mocks.createPage).toHaveBeenCalledTimes(1)
+    })
+    expect(mocks.createPage).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'SimplePage',
+      ''
+    )
+    // ListNavigation must not be called for 1-seg targets
+    expect(mocks.listNavigation).not.toHaveBeenCalled()
+  })
+
+  it('3-seg target is unaffected by ListNavigation', async () => {
+    mocks.resolvePageLink.mockResolvedValue({ exists: false })
+    mocks.createPage.mockResolvedValue('')
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [{ name: 'Other', sections: [] }]
+    })
+
+    render(PageLinkChip, { props: { target: 'Notebook/Section/Page' } })
+    await waitFor(() => {
+      expect(screen.getByText('[[Notebook/Section/Page]]')).toBeTruthy()
+    })
+    await fireEvent.mouseEnter(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Create page')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByText('Create page'))
+
+    await waitFor(() => {
+      expect(mocks.createPage).toHaveBeenCalledTimes(1)
+    })
+    expect(mocks.createPage).toHaveBeenCalledWith(
+      'Notebook',
+      'Section',
+      'Page',
+      ''
+    )
+    // ListNavigation must not be called for 3+ seg targets
+    expect(mocks.listNavigation).not.toHaveBeenCalled()
+  })
+
+  it('shows resolved path subtitle in the hover popover', async () => {
+    mocks.resolvePageLink.mockResolvedValue({ exists: false })
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [{ name: 'Archive', sections: [] }]
+    })
+
+    render(PageLinkChip, { props: { target: 'Archive/Page' } })
+    await waitFor(() => {
+      expect(screen.getByText('[[Archive/Page]]')).toBeTruthy()
+    })
+    await fireEvent.mouseEnter(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Archive › Page')).toBeTruthy()
+    })
   })
 })
