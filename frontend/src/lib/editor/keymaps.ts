@@ -812,20 +812,25 @@ export const SiltBlockKeymaps = Extension.create({
         // `depth` attr is the header level (1-6), not indentation — a sole
         // empty headerBlock would be caught by info.depth > 0 and unindented
         // instead of converted. Only converts when the block is the sole
-        // child (multi-block docs use the normal unindent/delete paths).
+        // top-level child (tree depth 1); a block nested inside a container
+        // like a callout (tree depth > 1) falls through to the #569 guard
+        // which returns false for nested blocks.
         const { doc } = this.editor.state
         const blockType = info.node.type.name
         if (
           doc.childCount <= 1 &&
           (blockType === 'taskBlock' || blockType === 'headerBlock')
         ) {
-          const baseAttrs = {
-            id: info.node.attrs.id,
-            depth: 0,
-            file_date: info.node.attrs.file_date || '',
-            bullet: ''
+          const active = findActiveBlock(this.editor)
+          if (active && active.depth === 1) {
+            const baseAttrs = {
+              id: info.node.attrs.id,
+              depth: 0,
+              file_date: info.node.attrs.file_date || '',
+              bullet: ''
+            }
+            return this.editor.commands.setNode('noteBlock', baseAttrs)
           }
-          return this.editor.commands.setNode('noteBlock', baseAttrs)
         }
 
         if (info.depth > 0) {
