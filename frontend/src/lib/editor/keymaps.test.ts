@@ -661,6 +661,95 @@ describe('Backspace handler — backward merge (#364)', () => {
   })
 })
 
+describe('Backspace on an empty sole block (#552 — no duplicate)', () => {
+  // A single empty noteBlock at depth 0 is the post-seed new-page state.
+  // Backspace at the start must be a no-op (return true), not fall through to
+  // StarterKit/ProseMirror's default chain which synthesizes a duplicate node.
+
+  it('empty sole block, bullet:"", Backspace is a clean no-op (childCount stays 1)', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        { type: 'noteBlock', attrs: { id: 'only', depth: 0, bullet: '' } }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1) // start of the only block
+    const before = editor.state.doc.toJSON()
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.toJSON()).toEqual(before)
+    editor.destroy()
+  })
+
+  it('legacy bullet repro: empty bullet:"- " → first Backspace clears → second Backspace does NOT create a duplicate', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        { type: 'noteBlock', attrs: { id: 'only', depth: 0, bullet: '- ' } }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1)
+    // First Backspace clears the bullet.
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('')
+    // Second Backspace: empty sole block, no bullet → no-op, no duplicate.
+    editor.commands.setTextSelection(1)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    editor.destroy()
+  })
+
+  it('mid-block char deletion is unchanged (handler returns false → default path)', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'only', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'hi' }]
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(3) // end of content (not at start)
+    // Not at start → handler returns false, falling through to ProseMirror's
+    // default char-deletion path (jsdom doesn't fire the default; the handler
+    // return value is what matters — it did not consume the key).
+    expect(pressKey(editor, 'Backspace')).toBe(false)
+    expect(editor.state.doc.childCount).toBe(1)
+    editor.destroy()
+  })
+
+  it('non-empty sole block at start still falls through (scope guard)', () => {
+    // A non-empty sole block at start calls mergeSiblingBlock, which returns
+    // false (no sibling) and falls through to the default. This documents that
+    // the #552 fix only narrows the empty-sole-block path — the non-empty
+    // sole-block-at-start behavior is unchanged (predates this fix).
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'only', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'hello' }]
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1) // start of the only block
+    expect(pressKey(editor, 'Backspace')).toBe(false)
+    expect(editor.state.doc.childCount).toBe(1)
+    editor.destroy()
+  })
+})
+
 describe('format_subscript keymap (#511 — Ctrl+Shift, chord)', () => {
   // The config default moved format_subscript to Ctrl+Shift, (ProseMirror
   // Mod-Shift-,). format_* actions are editor-scoped — the global matchHotkey

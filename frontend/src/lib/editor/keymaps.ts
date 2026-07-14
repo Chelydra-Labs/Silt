@@ -796,7 +796,11 @@ export const SiltBlockKeymaps = Extension.create({
 
         // Delete the block and focus the previous one (if any).
         const { doc } = this.editor.state
-        if (doc.childCount <= 1) return false
+        // Consume the keypress as a no-op: this is the sole, empty block at
+        // depth 0 — nothing to delete, merge, or unindent. Returning false
+        // would fall through to StarterKit/ProseMirror's default chain, which
+        // synthesizes a new node on an empty sole block (#552).
+        if (doc.childCount <= 1) return true
 
         // Find the current block's top-level index.
         let blockIndex = -1
