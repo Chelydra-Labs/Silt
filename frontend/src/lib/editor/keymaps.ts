@@ -806,19 +806,52 @@ export const SiltBlockKeymaps = Extension.create({
           return mergeSiblingBlock(this.editor, 'backward')
         }
 
+        // Sole empty taskBlock or headerBlock: convert to noteBlock so the
+        // user has a one-press escape from an unwanted block type (#568).
+        // This must run BEFORE the unindent check because headerBlock's
+        // `depth` attr is the header level (1-6), not indentation — a sole
+        // empty headerBlock would be caught by info.depth > 0 and unindented
+        // instead of converted. Only converts when the block is the sole
+        // top-level child (tree depth 1); a block nested inside a container
+        // like a callout (tree depth > 1) falls through to the #569 guard
+        // which returns false for nested blocks.
+        const { doc } = this.editor.state
+        const blockType = info.node.type.name
+        if (
+          doc.childCount <= 1 &&
+          (blockType === 'taskBlock' || blockType === 'headerBlock')
+        ) {
+          const active = findActiveBlock(this.editor)
+          if (active && active.depth === 1) {
+            const baseAttrs = {
+              id: info.node.attrs.id,
+              depth: 0,
+              file_date: info.node.attrs.file_date || '',
+              bullet: ''
+            }
+            return this.editor.commands.setNode('noteBlock', baseAttrs)
+          }
+        }
+
         if (info.depth > 0) {
           // Unindent first.
           setBlockDepth(this.editor, info.pos, info.depth - 1)
           return true
         }
 
-        // Delete the block and focus the previous one (if any).
-        const { doc } = this.editor.state
         // Consume the keypress as a no-op: this is the sole, empty block at
         // depth 0 — nothing to delete, merge, or unindent. Returning false
         // would fall through to StarterKit/ProseMirror's default chain, which
         // synthesizes a new node on an empty sole block (#552).
-        if (doc.childCount <= 1) return true
+        if (doc.childCount <= 1) {
+          // Guard: only consume as no-op if the selection is in a top-level
+          // child. A block nested inside a sole callout (tree depth 2, attr
+          // depth 0) has findActiveBlock returning at a depth > 1, meaning
+          // the caret is inside a container, not directly in a doc child (#569).
+          const active = findActiveBlock(this.editor)
+          if (active && active.depth > 1) return false
+          return true
+        }
 
         // Find the current block's top-level index.
         let blockIndex = -1

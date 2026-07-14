@@ -8,8 +8,8 @@ import {
   UniqueBlockIds,
   SiltBlockKeymaps
 } from './index'
-import { EmbedNode, BlockReferenceNode } from './schema'
-import { setBlockAlign, moveActiveBlock } from './keymaps'
+import { EmbedNode, BlockReferenceNode, CalloutBlock } from './schema'
+import { setBlockAlign, moveActiveBlock, findActiveBlock } from './keymaps'
 import type { DocJSON } from './types'
 
 // Mirror the makeEditor() pattern from converters.test.ts — a real TipTap
@@ -773,6 +773,221 @@ describe('Backspace on an empty sole block (#552 — no duplicate)', () => {
     editor.commands.setTextSelection(1)
     expect(pressKey(editor, 'Backspace')).toBe(true)
     expect(editor.state.doc.childCount).toBe(1)
+    editor.destroy()
+  })
+
+  it('sole empty taskBlock converts to noteBlock on Backspace (#568)', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'taskBlock',
+          attrs: {
+            id: 'task-1',
+            depth: 0,
+            status: 'TODO',
+            file_date: '2026-06-14'
+          }
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1) // start of the only block
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    const child = editor.state.doc.child(0)
+    expect(child.type.name).toBe('noteBlock')
+    expect(child.attrs.id).toBe('task-1')
+    expect(child.attrs.depth).toBe(0)
+    expect(child.attrs.bullet).toBe('')
+    expect(child.attrs.file_date).toBe('2026-06-14')
+    editor.destroy()
+  })
+
+  it('sole empty headerBlock converts to noteBlock on Backspace (#568)', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'headerBlock',
+          attrs: { id: 'hdr-1', depth: 2, file_date: '2026-06-14' }
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1) // start of the only block
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    const child = editor.state.doc.child(0)
+    expect(child.type.name).toBe('noteBlock')
+    expect(child.attrs.id).toBe('hdr-1')
+    expect(child.attrs.depth).toBe(0)
+    expect(child.attrs.bullet).toBe('')
+    expect(child.attrs.file_date).toBe('2026-06-14')
+    editor.destroy()
+  })
+
+  it('non-empty taskBlock at start: Backspace unchanged (#568 regression)', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'taskBlock',
+          attrs: { id: 'task-1', depth: 0, status: 'TODO' },
+          content: [{ type: 'text', text: 'do something' }]
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1) // start of the only block
+    // Non-empty → mergeSiblingBlock runs (no sibling → returns false).
+    expect(pressKey(editor, 'Backspace')).toBe(false)
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).type.name).toBe('taskBlock')
+    editor.destroy()
+  })
+
+  it('non-empty headerBlock at start: Backspace unchanged (#568 regression)', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'headerBlock',
+          attrs: { id: 'hdr-1', depth: 2 },
+          content: [{ type: 'text', text: 'A heading' }]
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1) // start of the only block
+    // Non-empty → mergeSiblingBlock runs (no sibling → returns false).
+    // The header's depth attr (level 2) must NOT trigger unindent before
+    // the isBlockEmpty check fires.
+    expect(pressKey(editor, 'Backspace')).toBe(false)
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).type.name).toBe('headerBlock')
+    expect(editor.state.doc.child(0).attrs.depth).toBe(2)
+    editor.destroy()
+  })
+
+  it('nested block inside sole callout has tree depth > 1 (#569 nesting predicate)', () => {
+    // The #569 guard returns false when findActiveBlock's tree depth > 1
+    // (i.e., the caret is inside a nested block within a container, not
+    // in a direct doc child). jsdom's ProseMirror base keymap also consumes
+    // Backspace at the start of an empty nested block without mutating the
+    // doc, so doc-state assertions after a full keypress can't distinguish
+    // the guard from a no-op consumption. Instead, verify the predicate
+    // that drives the guard — the tree-depth test — directly.
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions,
+        CalloutBlock,
+        ...SiltInlineMarkExtensions,
+        ...SiltColorMarkExtensions,
+        EmbedNode,
+        BlockReferenceNode,
+        UniqueBlockIds,
+        SiltBlockKeymaps
+      ]
+    })
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: { variant: 'info', id: 'callout-1' },
+          content: [
+            {
+              type: 'noteBlock',
+              attrs: { id: 'nested-1', depth: 0, bullet: '' }
+            }
+          ]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // Position 2 = inside the nested noteBlock (callout at pos 0, content
+    // at pos 1, noteBlock content at pos 2).
+    editor.commands.setTextSelection(2)
+    // The tree depth must be > 1, confirming the block is nested inside a
+    // container and the #569 guard will return false (preventing no-op
+    // consumption).
+    const active = findActiveBlock(editor)
+    expect(active).not.toBeNull()
+    expect(active!.depth).toBeGreaterThan(1)
+    // Verify the doc structure is intact (sole callout with nested block).
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.firstChild?.type.name).toBe('calloutBlock')
+    editor.destroy()
+  })
+
+  it('nested empty taskBlock inside sole callout is not converted to noteBlock (#568 regression)', () => {
+    // A sole callout containing a nested empty taskBlock should NOT have
+    // the taskBlock converted to noteBlock on Backspace. The #568 type
+    // conversion guards on tree depth === 1 (direct doc child), so nested
+    // blocks fall through to the #569 guard.
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions,
+        CalloutBlock,
+        ...SiltInlineMarkExtensions,
+        ...SiltColorMarkExtensions,
+        EmbedNode,
+        BlockReferenceNode,
+        UniqueBlockIds,
+        SiltBlockKeymaps
+      ]
+    })
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: { variant: 'info', id: 'callout-1' },
+          content: [
+            {
+              type: 'taskBlock',
+              attrs: { id: 'nested-task', depth: 0, status: 'TODO' }
+            }
+          ]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.setTextSelection(2) // inside nested taskBlock
+    // The tree depth is > 1 — the #568 conversion branch must leave this
+    // nested block untouched.
+    const active = findActiveBlock(editor)
+    expect(active).not.toBeNull()
+    expect(active!.depth).toBeGreaterThan(1)
+    // The nested block's type must NOT be mutated.
+    expect(active!.node.type.name).toBe('taskBlock')
     editor.destroy()
   })
 })
