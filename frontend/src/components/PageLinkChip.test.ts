@@ -478,12 +478,14 @@ describe('PageLinkChip 2-segment wiki-link disambiguation (#551)', () => {
     )
   })
 
-  it('2-seg is case-sensitive (lowercase does not match capitalized notebook name)', async () => {
+  it('2-seg matches notebook names case-insensitively (mirrors ResolvePageLink)', async () => {
     mocks.resolvePageLink.mockResolvedValue({ exists: false })
     mocks.createPage.mockResolvedValue('')
     mocks.listNavigation.mockResolvedValue({
       notebooks: [{ name: 'Archive', sections: [] }]
     })
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-page', handler)
 
     render(PageLinkChip, { props: { target: 'archive/Page' } })
     await waitFor(() => {
@@ -498,8 +500,14 @@ describe('PageLinkChip 2-segment wiki-link disambiguation (#551)', () => {
     await waitFor(() => {
       expect(mocks.createPage).toHaveBeenCalledTimes(1)
     })
-    // 'archive' !== 'Archive' → falls back to section/page
-    expect(mocks.createPage).toHaveBeenCalledWith('Work', 'archive', 'Page', '')
+    // 'archive' ≈ 'Archive' (EqualFold, as in PageMatchesTarget) → notebook/page,
+    // and the notebook keeps its registered canonical casing so CreatePage routes
+    // via resolveSourceByName (exact match) to the right folder.
+    expect(mocks.createPage).toHaveBeenCalledWith('Archive', '', 'Page', '')
+    expect(handler.mock.calls[0][0].detail.notebook).toBe('Archive')
+    expect(handler.mock.calls[0][0].detail.section).toBe('')
+    expect(handler.mock.calls[0][0].detail.page).toBe('Page')
+    window.removeEventListener('navigate-to-page', handler)
   })
 
   it('1-seg target is unaffected by ListNavigation', async () => {

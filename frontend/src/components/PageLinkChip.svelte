@@ -164,7 +164,12 @@
   //
   // For 2-segment targets (#551): if the first segment matches an existing
   // notebook name, treat it as notebook/page (section empty); otherwise fall
-  // back to section/page in the active notebook.
+  // back to section/page in the active notebook. The match is case-insensitive
+  // to mirror ResolvePageLink (PageMatchesTarget uses strings.EqualFold), so
+  // [[archive/Page]] targets an "Archive" notebook the same way the link would
+  // resolve if the page already existed. The returned notebook keeps the
+  // registered casing because resolveSourceByName / CreatePage match notebook
+  // names exactly — passing the user's typed casing would misroute the create.
   async function parseTargetForCreate(rawTarget: string): Promise<{
     notebook: string
     section: string
@@ -183,8 +188,10 @@
     }
     if (parts.length === 2) {
       const names = await listNotebookNames()
-      if (names.includes(parts[0])) {
-        return { notebook: parts[0], section: '', page: parts[1] }
+      const lower = parts[0].toLowerCase()
+      const notebook = names.find((n) => n.toLowerCase() === lower)
+      if (notebook) {
+        return { notebook, section: '', page: parts[1] }
       }
       return { notebook: activeNotebook, section: parts[0], page: parts[1] }
     }
