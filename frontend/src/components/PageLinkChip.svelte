@@ -4,7 +4,11 @@
   // Ambiguous and unresolved chips offer create-or-pick (#549).
   import { fade } from 'svelte/transition'
   import { onDestroy } from 'svelte'
-  import { ResolvePageLink, CreatePage } from '../../bindings/silt/app.js'
+  import {
+    ResolvePageLink,
+    CreatePage,
+    ListNavigation
+  } from '../../bindings/silt/app.js'
   import { getActiveLocation } from '../plugins/location.svelte'
 
   interface Props {
@@ -28,6 +32,7 @@
   let showHover = $state(false)
   let creating = $state(false)
   let createError = $state('')
+  let createPath = $state('') // Resolved "nb › sec › page" subtitle for the Create button
   let hoverTimer: ReturnType<typeof setTimeout> | null = null
   let createErrorTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -69,9 +74,21 @@
     if (createErrorTimer) clearTimeout(createErrorTimer)
   })
 
+  async function refreshCreatePath() {
+    try {
+      const resolved = await parseTargetForCreate(target)
+      createPath = pathLabel(resolved)
+    } catch {
+      createPath = ''
+    }
+  }
+
   function enter() {
     if (hoverTimer) clearTimeout(hoverTimer)
-    hoverTimer = setTimeout(() => (showHover = true), 250)
+    hoverTimer = setTimeout(() => {
+      showHover = true
+      void refreshCreatePath()
+    }, 250)
   }
 
   function leave() {
@@ -107,6 +124,19 @@
     navigateTo(c.notebook, c.section ?? '', c.page)
   }
 
+  // Resolve notebook display names for 2-segment disambiguation (#551).
+  // Names are globally unique (ARCHITECTURE §3.1). Lazy — only called on the
+  // 2-segment create path, never per-render. Falls back to [] on IPC failure
+  // so the chip degrades to section/page (active notebook).
+  async function listNotebookNames(): Promise<string[]> {
+    try {
+      const tree = await ListNavigation()
+      return (tree?.notebooks ?? []).map((n) => n.name)
+    } catch {
+      return []
+    }
+  }
+
   // Parse a wiki-link target into {notebook, section, page} for CreatePage.
   // Defaults notebook/section to the active location. For path targets like
   // "Section/Page" or "Notebook/Section/Page", splits the path accordingly.
@@ -114,11 +144,15 @@
   // first is the notebook, the last is the page, and everything in between is
   // the (multi-segment) section — matching how ResolvePageLink interprets the
   // same target, so the created page resolves back to the original link.
-  function parseTargetForCreate(rawTarget: string): {
+  //
+  // For 2-segment targets (#551): if the first segment matches an existing
+  // notebook name, treat it as notebook/page (section empty); otherwise fall
+  // back to section/page in the active notebook.
+  async function parseTargetForCreate(rawTarget: string): Promise<{
     notebook: string
     section: string
     page: string
-  } {
+  }> {
     const loc = getActiveLocation()
     const activeNotebook = loc.notebook || ''
     const activeSection = loc.section || ''
@@ -131,6 +165,10 @@
       }
     }
     if (parts.length === 2) {
+      const names = await listNotebookNames()
+      if (names.includes(parts[0])) {
+        return { notebook: parts[0], section: '', page: parts[1] }
+      }
       return { notebook: activeNotebook, section: parts[0], page: parts[1] }
     }
     return {
@@ -150,7 +188,7 @@
       createErrorTimer = setTimeout(() => (createError = ''), 6000)
     }
     try {
-      const { notebook, section, page } = parseTargetForCreate(target)
+      const { notebook, section, page } = await parseTargetForCreate(target)
       if (!notebook) {
         fail('Open a notebook first.')
         return
@@ -230,6 +268,11 @@
           <p class="text-type-2xs text-text-muted mb-1">
             Creates a new page; existing matches remain.
           </p>
+          {#if createPath}
+            <p class="text-type-2xs text-text-muted mb-1.5 font-mono">
+              {createPath}
+            </p>
+          {/if}
           <button
             type="button"
             class="w-full text-left px-2 py-1.5 rounded-md text-sm text-accent-primary-start hover:bg-hover cursor-pointer border-0 bg-transparent inline-flex items-center gap-1.5"
@@ -287,6 +330,11 @@
         {#if createError}
           <p class="text-type-2xs text-status-danger mb-1.5" role="alert">
             {createError}
+          </p>
+        {/if}
+        {#if createPath}
+          <p class="text-type-2xs text-text-muted mb-1.5 font-mono">
+            {createPath}
           </p>
         {/if}
         <button
