@@ -296,6 +296,32 @@ func TestCreatePage_Scaffolding(t *testing.T) {
 	}
 }
 
+func TestCreatePage_NestedSection(t *testing.T) {
+	app := newTestApp(t)
+
+	// Sections may be a nested path (e.g. "Projects/Active") so a wiki-link
+	// like [[Work/Projects/Active/Site]] creates <vault>/Work/Projects/Active/Site.md
+	// and round-trips back through ResolvePageLink. CreatePage must preserve the
+	// slash in the section rather than sanitizing it to a single segment.
+	if _, err := app.CreatePage("Work", "Projects/Active", "Site", "2026-06-13"); err != nil {
+		t.Fatalf("CreatePage with nested section failed: %v", err)
+	}
+
+	filePath := filepath.Join(app.vaultPath, "Work", "Projects", "Active", "Site.md")
+	if _, err := os.Stat(filePath); err != nil {
+		t.Fatalf("nested-section page was not created at expected path %q: %v", filePath, err)
+	}
+
+	contentBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("failed to read scaffolded file: %v", err)
+	}
+	content := string(contentBytes)
+	if !strings.Contains(content, `section: "Projects/Active"`) || !strings.Contains(content, `page: "Site"`) {
+		t.Errorf("scaffolded metadata does not preserve the nested section, got:\n%s", content)
+	}
+}
+
 func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
 	app := newTestApp(t)
 

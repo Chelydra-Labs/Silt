@@ -104,6 +104,10 @@
   // Parse a wiki-link target into {notebook, section, page} for CreatePage.
   // Defaults notebook/section to the active location. For path targets like
   // "Section/Page" or "Notebook/Section/Page", splits the path accordingly.
+  // Sections may be nested (e.g. "Projects/Active"), so for 3+ segments the
+  // first is the notebook, the last is the page, and everything in between is
+  // the (multi-segment) section — matching how ResolvePageLink interprets the
+  // same target, so the created page resolves back to the original link.
   function parseTargetForCreate(rawTarget: string): {
     notebook: string
     section: string
@@ -116,8 +120,8 @@
     if (parts.length >= 3) {
       return {
         notebook: parts[0],
-        section: parts[1],
-        page: parts.slice(2).join('/')
+        section: parts.slice(1, -1).join('/'),
+        page: parts[parts.length - 1]
       }
     }
     if (parts.length === 2) {

@@ -31,6 +31,7 @@ import {
   Slice,
   type Mark,
   type Node as PMNode,
+  type ResolvedPos,
   type Schema
 } from '@tiptap/pm/model'
 import { legacyTokenizeInline } from '../converters'
@@ -212,24 +213,41 @@ function splitParagraphs(markdown: string): string[] {
  *  The slice uses openStart=openEnd=0 (complete block nodes). Silt's
  *  noteBlock has isolating:true, so partial-block merging via openStart=1
  *  is not possible — the accept command expands the selection to whole-block
- *  boundaries before calling this. */
+ *  boundaries before calling this.
+ *
+ *  New blocks inherit the outline attrs (depth/bullet/quote/align) of the
+ *  first replaced noteBlock so an AI rewrite preserves indentation and list
+ *  marker instead of flattening nested/quoted/plain blocks to top-level
+ *  bullets. */
 function proposedMarkdownToBlockSlice(
   schema: Schema,
   markdown: string,
-  fileDate: string
+  fileDate: string,
+  inheritAttrs?: {
+    depth: number
+    bullet: string
+    quote: string
+    align: string
+  }
 ): Slice | null {
   const blockType = schema.nodes.noteBlock
   if (!blockType) return null
   const paragraphs = splitParagraphs(markdown)
   if (paragraphs.length === 0) return null
+  const depth = inheritAttrs?.depth ?? 0
+  const bullet = inheritAttrs?.bullet ?? '- '
+  const quote = inheritAttrs?.quote ?? ''
+  const align = inheritAttrs?.align ?? 'left'
   const blockNodes: PMNode[] = paragraphs.map((para) => {
     const inlineJSON = legacyTokenizeInline(para)
     const content = inlineNodesFromJSON(schema, inlineJSON)
     return blockType.create(
       {
         id: crypto.randomUUID(),
-        depth: 0,
-        bullet: '- ',
+        depth,
+        bullet,
+        quote,
+        align,
         file_date: fileDate
       },
       content
@@ -252,6 +270,18 @@ function wouldUseMultiBlock(
   return $from.parent !== $to.parent
 }
 
+/** True when `pos` sits anywhere inside a GFM table cell or header. The table
+ *  cell content model is `block+` (so it accepts noteBlock), but the table
+ *  serializer flattens block children to inline text — multi-paragraph
+ *  proposals must fall back to the panel-only apply path there. */
+function withinTableCell($pos: ResolvedPos): boolean {
+  for (let d = $pos.depth; d > 0; d--) {
+    const name = $pos.node(d).type.name
+    if (name === 'tableCell' || name === 'tableHeader') return true
+  }
+  return false
+}
+
 /** Check if the target position's content model allows noteBlock nodes
  *  (schema-incompatible proposals fall back to the panel-only path). */
 function multiBlockAllowed(
@@ -263,6 +293,10 @@ function multiBlockAllowed(
   if (!blockType) return false
   const $from = state.doc.resolve(from)
   const $to = state.doc.resolve(to)
+  // Table cells accept noteBlock (block+) but can't round-trip block children
+  // through the GFM table serializer, so multi-paragraph proposals there must
+  // fall back to the panel-only apply path.
+  if (withinTableCell($from) || withinTableCell($to)) return false
   const range = $from.blockRange($to)
   if (!range) return false
   return range.parent.type.contentMatch.matchType(blockType) !== null
@@ -400,10 +434,24 @@ export const ProposedEdit = Extension.create({
             const $to = state.doc.resolve(to)
             replaceFrom = $from.before($from.depth)
             replaceTo = $to.after($to.depth)
+            // Inherit outline attrs from the first replaced noteBlock so the
+            // rewrite keeps the original indentation/list marker/quote rather
+            // than resetting every block to a top-level bullet.
+            const firstBlock = $from.parent
+            const inherit =
+              firstBlock.type.name === 'noteBlock'
+                ? {
+                    depth: (firstBlock.attrs.depth as number) ?? 0,
+                    bullet: (firstBlock.attrs.bullet as string) ?? '- ',
+                    quote: (firstBlock.attrs.quote as string) ?? '',
+                    align: (firstBlock.attrs.align as string) ?? 'left'
+                  }
+                : undefined
             const blockSlice = proposedMarkdownToBlockSlice(
               state.schema,
               markdown,
-              fileDate
+              fileDate,
+              inherit
             )
             if (!blockSlice) {
               // Schema doesn't have noteBlock — fall back to inline path.

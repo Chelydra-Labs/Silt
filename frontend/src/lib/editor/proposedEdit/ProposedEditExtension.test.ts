@@ -6,7 +6,7 @@ import {
   hasProposedEdit,
   getProposedEditRange
 } from './ProposedEditExtension'
-import { SiltBlockExtensions } from '../index'
+import { SiltBlockExtensions, SiltTableExtensions } from '../index'
 
 function makeEditor(content = '<p>Hello world</p>'): Editor {
   const el = document.createElement('div')
@@ -38,6 +38,32 @@ function makeSiltEditor(content: string): Editor {
       ProposedEdit
     ],
     content
+  })
+}
+
+/** Silt editor that also loads the GFM table family — needed to exercise the
+ *  table-cell fallback in the dry-run check. Accepts JSON content for precise
+ *  control over cell children. */
+function makeSiltTableEditor(content: Record<string, unknown>): Editor {
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  return new Editor({
+    element: el,
+    extensions: [
+      StarterKit.configure({
+        heading: false,
+        bulletList: false,
+        orderedList: false,
+        listItem: false,
+        blockquote: false,
+        codeBlock: false,
+        horizontalRule: false
+      }),
+      ...SiltBlockExtensions,
+      ...SiltTableExtensions,
+      ProposedEdit
+    ],
+    content: content as any
   })
 }
 
@@ -376,5 +402,111 @@ describe('ProposedEdit multi-block replace (#548)', () => {
     expect(blocks[0].content[0].text).toBe('One')
     expect(blocks[1].content[0].text).toBe('Two')
     expect(blocks[2].content[0].text).toBe('Three')
+  })
+
+  it('multi-block accept inherits depth and bullet from the first noteBlock', () => {
+    // First block is an indented '*' bullet; the second matches. An AI rewrite
+    // should preserve the indentation + marker instead of flattening to a
+    // top-level '- ' bullet.
+    const ed = track(
+      makeSiltEditor(
+        '<div data-type="note" data-depth="2" data-bullet="* ">First</div>' +
+          '<div data-type="note" data-depth="2" data-bullet="* ">Second</div>'
+      )
+    )
+    expect(noteBlocks(ed)[0].attrs.depth).toBe(2)
+    expect(noteBlocks(ed)[0].attrs.bullet).toBe('* ')
+    ed.commands.setProposedEdit({
+      from: 1,
+      to: 14,
+      markdown: 'Para one\n\nPara two'
+    })
+    ed.commands.acceptProposedEdit()
+    const blocks = noteBlocks(ed)
+    expect(blocks.length).toBe(2)
+    expect(blocks[0].attrs.depth).toBe(2)
+    expect(blocks[0].attrs.bullet).toBe('* ')
+    expect(blocks[1].attrs.depth).toBe(2)
+    expect(blocks[1].attrs.bullet).toBe('* ')
+  })
+
+  it('multi-block accept inherits a quote marker from the first noteBlock', () => {
+    const ed = track(
+      makeSiltEditor(
+        '<div data-type="note" data-bullet="" data-quote="> ">First</div>' +
+          '<div data-type="note" data-bullet="" data-quote="> ">Second</div>'
+      )
+    )
+    ed.commands.setProposedEdit({
+      from: 1,
+      to: 14,
+      markdown: 'Para one\n\nPara two'
+    })
+    ed.commands.acceptProposedEdit()
+    const blocks = noteBlocks(ed)
+    expect(blocks.length).toBe(2)
+    // Both replacement blocks stay quotes rather than becoming bullets.
+    expect(blocks[0].attrs.quote).toBe('> ')
+    expect(blocks[0].attrs.bullet).toBe('')
+    expect(blocks[1].attrs.quote).toBe('> ')
+  })
+
+  it('table-cell multi-paragraph proposal falls back to panel path', () => {
+    // A table cell's content model is block+ (it accepts noteBlock), but the
+    // GFM table serializer flattens block children to inline text. A
+    // multi-paragraph proposal spanning noteBlocks inside one cell must NOT
+    // take the multi-block path — setProposedEdit returns false so the WA
+    // controller uses the panel-only apply.
+    const ed = track(
+      makeSiltTableEditor({
+        type: 'doc',
+        content: [
+          {
+            type: 'table',
+            content: [
+              {
+                type: 'tableRow',
+                content: [
+                  {
+                    type: 'tableCell',
+                    content: [
+                      {
+                        type: 'noteBlock',
+                        attrs: { bullet: '- ' },
+                        content: [{ type: 'text', text: 'First' }]
+                      },
+                      {
+                        type: 'noteBlock',
+                        attrs: { bullet: '- ' },
+                        content: [{ type: 'text', text: 'Second' }]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      })
+    )
+    // Resolve the content range of the two noteBlocks inside the cell.
+    let from = -1
+    let to = -1
+    ed.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'noteBlock') {
+        if (from === -1) from = pos + 1
+        to = pos + node.nodeSize - 1
+      }
+      return true
+    })
+    expect(from).toBeGreaterThan(-1)
+    expect(to).toBeGreaterThan(from)
+    const ok = ed.commands.setProposedEdit({
+      from,
+      to,
+      markdown: 'Para one\n\nPara two'
+    })
+    expect(ok).toBe(false)
+    expect(hasProposedEdit(ed)).toBe(false)
   })
 })
