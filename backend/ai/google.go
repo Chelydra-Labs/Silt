@@ -21,7 +21,8 @@ type googleContent struct {
 }
 
 type googleTextPart struct {
-	Text string `json:"text"`
+	Text    string `json:"text"`
+	Thought bool   `json:"thought,omitempty"`
 }
 
 // googleGenerateRequest is the generateContent request body.
@@ -234,9 +235,14 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 		}
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("provider returned no content (finishReason: %s)", reason)}
 	}
-	// Concatenate all text parts (a single turn may span multiple segments).
+	// Concatenate non-thought text parts. Gemini 2.5+ thinking models emit
+	// reasoning in parts with thought:true — those are internal scratchpad,
+	// not the user-facing answer, so they are skipped.
 	var sb strings.Builder
 	for _, p := range resp.Candidates[0].Content.Parts {
+		if p.Thought {
+			continue
+		}
 		sb.WriteString(p.Text)
 	}
 	out := CompleteResult{Content: sb.String(), Model: model}

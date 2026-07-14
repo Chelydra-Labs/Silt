@@ -303,3 +303,43 @@ func searchString(s, substr string) bool {
 	}
 	return false
 }
+
+func TestCompleteGoogle_FiltersThoughtParts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Gemini 2.5+ thinking models emit reasoning in parts with thought:true.
+		// The content extraction must skip those and keep only the answer.
+		resp := map[string]any{
+			"candidates": []map[string]any{
+				{
+					"content": map[string]any{
+						"parts": []map[string]any{
+							{"text": "Let me analyze the passages step by step.", "thought": true},
+							{"text": "The passages do not mention page counts.", "thought": true},
+							{"text": "I don't have information about your total page count."},
+						},
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-2.5-flash"},
+		Messages: []ChatMessage{{Role: "user", Content: "How many pages?"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if contains(res.Content, "step by step") {
+		t.Errorf("thought text leaked into content: %q", res.Content)
+	}
+	if contains(res.Content, "passages do not") {
+		t.Errorf("thought text leaked into content: %q", res.Content)
+	}
+	want := "I don't have information about your total page count."
+	if res.Content != want {
+		t.Errorf("content = %q, want %q", res.Content, want)
+	}
+}
