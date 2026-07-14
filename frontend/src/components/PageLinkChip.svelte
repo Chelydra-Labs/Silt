@@ -73,6 +73,11 @@
   $effect(() => {
     if (target && target !== lastResolvedTarget) {
       lastResolvedTarget = target
+      // Invalidate the create-path cache so a stale target doesn't misroute
+      // createPage() if the popover is open during the prop change.
+      createTarget = null
+      createPath = ''
+      resolvingPath = false
       void load()
     }
   })
