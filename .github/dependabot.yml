@@ -61,8 +61,9 @@ updates:
         dependency-type: development
     # TypeScript 7 is blocked upstream: svelte-check 4.7.x crashes on TS 7's
     # rewritten sys API (typescript.sys.useCaseSensitiveFileNames is undefined).
-    # Suppress major bumps until svelte-check ships TS 7 support.
-    # Tracking: sveltejs/language-tools#2733, #572.
+    # Suppress major bumps until svelte-check ships TS 7 support. The next
+    # svelte-check bump PR from Dependabot is the trigger to re-evaluate.
+    # Tracking: sveltejs/language-tools#2733.
     ignore:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
