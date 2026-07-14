@@ -850,6 +850,30 @@ describe('Backspace on an empty sole block (#552 — no duplicate)', () => {
     editor.destroy()
   })
 
+  it('non-empty headerBlock at start: Backspace unchanged (#568 regression)', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'headerBlock',
+          attrs: { id: 'hdr-1', depth: 2 },
+          content: [{ type: 'text', text: 'A heading' }]
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1) // start of the only block
+    // Non-empty → mergeSiblingBlock runs (no sibling → returns false).
+    // The header's depth attr (level 2) must NOT trigger unindent before
+    // the isBlockEmpty check fires.
+    expect(pressKey(editor, 'Backspace')).toBe(false)
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).type.name).toBe('headerBlock')
+    expect(editor.state.doc.child(0).attrs.depth).toBe(2)
+    editor.destroy()
+  })
+
   it('nested empty noteBlock inside sole callout: Backspace returns false (#569)', () => {
     // Extend the test editor with CalloutBlock so we can construct a doc
     // with a sole callout containing a nested empty noteBlock.

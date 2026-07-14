@@ -825,8 +825,7 @@ export const SiltBlockKeymaps = Extension.create({
             file_date: info.node.attrs.file_date || '',
             bullet: ''
           }
-          this.editor.commands.setNode('noteBlock', baseAttrs)
-          return true
+          return this.editor.commands.setNode('noteBlock', baseAttrs)
         }
 
         if (info.depth > 0) {
