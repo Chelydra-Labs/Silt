@@ -3,6 +3,7 @@
   // dispatches navigate-to-page on click/Enter. Mirrors BlockReferenceChip.
   // Ambiguous and unresolved chips offer create-or-pick (#549).
   import { fade } from 'svelte/transition'
+  import { onDestroy } from 'svelte'
   import { ResolvePageLink, CreatePage } from '../../bindings/silt/app.js'
   import { getActiveLocation } from '../plugins/location.svelte'
 
@@ -61,6 +62,11 @@
       lastResolvedTarget = target
       void load()
     }
+  })
+
+  onDestroy(() => {
+    if (hoverTimer) clearTimeout(hoverTimer)
+    if (createErrorTimer) clearTimeout(createErrorTimer)
   })
 
   function enter() {
@@ -226,12 +232,13 @@
             onclick={() => void createPage()}
             disabled={creating}
             aria-label="Create page '{target}'"
-            aria-live="polite"
           >
             <span class="material-symbols-outlined text-[1.1em]"
               >add_circle</span
             >
-            {creating ? 'Creating…' : 'Create page'}
+            <span aria-live="polite"
+              >{creating ? 'Creating…' : 'Create page'}</span
+            >
           </button>
         </div>
       </div>
@@ -284,10 +291,11 @@
           onclick={() => void createPage()}
           disabled={creating}
           aria-label="Create page '{target}'"
-          aria-live="polite"
         >
           <span class="material-symbols-outlined text-[1.1em]">add_circle</span>
-          {creating ? 'Creating…' : 'Create page'}
+          <span aria-live="polite"
+            >{creating ? 'Creating…' : 'Create page'}</span
+          >
         </button>
       </div>
     {/if}

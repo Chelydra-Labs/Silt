@@ -425,41 +425,45 @@ export const ProposedEdit = Extension.create({
           let replaceFrom = from
           let replaceTo = to
           if (wouldUseMultiBlock(state, from, to, markdown)) {
-            // Multi-paragraph proposal on a block-spanning selection: each
-            // paragraph becomes its own noteBlock (#548). noteBlock has
-            // isolating:true, so we expand the selection to cover the ENTIRE
-            // selected blocks (from before the first to after the last) and
-            // use openStart=openEnd=0 for a clean whole-block replacement.
-            const $from = state.doc.resolve(from)
-            const $to = state.doc.resolve(to)
-            replaceFrom = $from.before($from.depth)
-            replaceTo = $to.after($to.depth)
-            // Inherit outline attrs from the first replaced noteBlock so the
-            // rewrite keeps the original indentation/list marker/quote rather
-            // than resetting every block to a top-level bullet.
-            const firstBlock = $from.parent
-            const inherit =
-              firstBlock.type.name === 'noteBlock'
-                ? {
-                    depth: (firstBlock.attrs.depth as number) ?? 0,
-                    bullet: (firstBlock.attrs.bullet as string) ?? '- ',
-                    quote: (firstBlock.attrs.quote as string) ?? '',
-                    align: (firstBlock.attrs.align as string) ?? 'left'
-                  }
-                : undefined
-            const blockSlice = proposedMarkdownToBlockSlice(
-              state.schema,
-              markdown,
-              fileDate,
-              inherit
-            )
-            if (!blockSlice) {
-              // Schema doesn't have noteBlock — fall back to inline path.
+            try {
+              // Multi-paragraph proposal on a block-spanning selection: each
+              // paragraph becomes its own noteBlock (#548). noteBlock has
+              // isolating:true, so we expand the selection to cover the ENTIRE
+              // selected blocks (from before the first to after the last) and
+              // use openStart=openEnd=0 for a clean whole-block replacement.
+              const $from = state.doc.resolve(from)
+              const $to = state.doc.resolve(to)
+              replaceFrom = $from.before($from.depth)
+              replaceTo = $to.after($to.depth)
+              // Inherit outline attrs from the first replaced noteBlock so the
+              // rewrite keeps the original indentation/list marker/quote rather
+              // than resetting every block to a top-level bullet.
+              const firstBlock = $from.parent
+              const inherit =
+                firstBlock.type.name === 'noteBlock'
+                  ? {
+                      depth: (firstBlock.attrs.depth as number) ?? 0,
+                      bullet: (firstBlock.attrs.bullet as string) ?? '- ',
+                      quote: (firstBlock.attrs.quote as string) ?? '',
+                      align: (firstBlock.attrs.align as string) ?? 'left'
+                    }
+                  : undefined
+              const blockSlice = proposedMarkdownToBlockSlice(
+                state.schema,
+                markdown,
+                fileDate,
+                inherit
+              )
+              if (!blockSlice) throw new Error('no noteBlock in schema')
+              slice = blockSlice
+            } catch {
+              // Safety net (#548 harden): the doc may have changed between
+              // preview and accept (positions stale, block structure shifted,
+              // schema mismatch). Fall back to the inline path, which is
+              // always safe for any valid range.
               slice = proposedMarkdownToSlice(state.schema, markdown)
               replaceFrom = from
               replaceTo = to
-            } else {
-              slice = blockSlice
             }
           } else {
             slice = proposedMarkdownToSlice(state.schema, markdown)
