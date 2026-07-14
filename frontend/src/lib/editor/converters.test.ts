@@ -813,6 +813,18 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(doc.content).toHaveLength(1)
     expect(doc.content[0].type).toBe('noteBlock')
     expect(doc.content[0].content).toEqual([])
+    // New pages open as blank prose — no bullet by default.
+    expect((doc.content[0].attrs as any).bullet).toBe('')
+  })
+
+  it('blocksToDoc([]) → docToBlocks → empty raw_text (blank page round-trip)', () => {
+    const doc = blocksToDoc([])
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].type).toBe('NOTE')
+    // bullet:'' + cleanText:'' → raw_text must be '' (no "- " reintroduced).
+    expect(back[0].raw_text).toBe('')
+    expect(back[0].clean_text).toBe('')
   })
 
   it('defensively maps an unknown node type to NOTE', () => {

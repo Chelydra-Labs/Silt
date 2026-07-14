@@ -261,7 +261,7 @@ function proposedMarkdownToBlockSlice(
   const paragraphs = splitParagraphs(markdown)
   if (paragraphs.length === 0) return null
   const depth = inheritAttrs?.depth ?? 0
-  const bullet = inheritAttrs?.bullet ?? '- '
+  const bullet = inheritAttrs?.bullet ?? ''
   const quote = inheritAttrs?.quote ?? ''
   const align = inheritAttrs?.align ?? 'left'
   const blockNodes: PMNode[] = paragraphs.map((para) => {
@@ -469,7 +469,7 @@ export const ProposedEdit = Extension.create({
                 firstBlock.type.name === 'noteBlock'
                   ? {
                       depth: (firstBlock.attrs.depth as number) ?? 0,
-                      bullet: (firstBlock.attrs.bullet as string) ?? '- ',
+                      bullet: (firstBlock.attrs.bullet as string) ?? '',
                       quote: (firstBlock.attrs.quote as string) ?? '',
                       align: (firstBlock.attrs.align as string) ?? 'left'
                     }

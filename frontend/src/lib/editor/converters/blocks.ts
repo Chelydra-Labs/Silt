@@ -1002,14 +1002,15 @@ export function blocksToDoc(blocks: ParsedBlock[]): DocJSON {
   const content: NodeJSON[] = blocks.map(blockToNode)
   // ProseMirror requires a doc to have at least one block child; an empty
   // blocks list yields a single empty note node so the editor always has a
-  // place to type (the Placeholder extension shows its hint here).
+  // place to type (the Placeholder extension shows its hint here). The seed
+  // carries no bullet — new pages open as blank prose.
   if (content.length === 0) {
     content.push({
       type: 'noteBlock',
       attrs: {
         id: crypto.randomUUID(),
         depth: 0,
-        bullet: '- ',
+        bullet: '',
         file_date: new Date().toISOString().slice(0, 10)
       },
       content: []
@@ -1282,7 +1283,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         // coexist.
         block.raw_text = `${quoteMarker}${baseCleanText}`
       } else {
-        const bullet: string = attrs.bullet !== undefined ? attrs.bullet : '- '
+        const bullet: string = attrs.bullet !== undefined ? attrs.bullet : ''
         block.raw_text = `${bullet}${cleanText}`
       }
     } else {

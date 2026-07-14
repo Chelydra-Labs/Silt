@@ -903,6 +903,57 @@ func TestRenderFileContent_DefaultsBulletForNewBlockNote(t *testing.T) {
 	}
 }
 
+func TestRenderFileContent_EmptyEmptyNoteHasNoBullet(t *testing.T) {
+	// A blank placeholder (empty RawText + empty CleanText) must serialize
+	// without a "- " bullet so that blank new pages round-trip as blank.
+	// The first autosave of an emptied page must not reintroduce the bullet.
+	block := ParsedBlock{
+		ID:        "blank-id",
+		Type:      BlockNote,
+		RawText:   "",
+		CleanText: "",
+	}
+	content := RenderFileContent([]ParsedBlock{block}, "", "", 4)
+	trimmed := strings.TrimSpace(content)
+	if strings.HasPrefix(trimmed, "- ") {
+		t.Errorf("expected no bullet for empty-empty note, got: %s", content)
+	}
+	// The id comment should still be present (bare id line).
+	if !strings.Contains(content, "blank-id") {
+		t.Errorf("expected id in output, got: %s", content)
+	}
+}
+
+func TestRenderFileContent_BareIdNoteRoundTrip(t *testing.T) {
+	// Render an empty-empty note, parse it back, and confirm it survives as
+	// a single NOTE with empty CleanText and the same id. This is the
+	// durability guarantee: blank pages must not gain a bullet on reload.
+	const id = "11111111-1111-1111-1111-111111111111"
+	block := ParsedBlock{
+		ID:        id,
+		Type:      BlockNote,
+		RawText:   "",
+		CleanText: "",
+	}
+	content := RenderFileContent([]ParsedBlock{block}, "", "", 4)
+	blocks, _, _, _, err := ParseFileContent(content, "NB", "", "PG", "2026-06-14", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block after round-trip, got %d", len(blocks))
+	}
+	if blocks[0].Type != BlockNote {
+		t.Errorf("expected BlockNote, got %v", blocks[0].Type)
+	}
+	if blocks[0].CleanText != "" {
+		t.Errorf("expected empty CleanText, got %q", blocks[0].CleanText)
+	}
+	if blocks[0].ID != id {
+		t.Errorf("expected id %q, got %q", id, blocks[0].ID)
+	}
+}
+
 // blocksEqual compares the semantic fields of two ParsedBlock slices — the
 // fields that must survive a render→parse round trip. LineNumber/RawText can
 // shift (e.g. when preserved unmanaged lines move) so they are not compared.
