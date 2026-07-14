@@ -59,6 +59,13 @@ updates:
       # Dev deps in their own PR
       dev-deps:
         dependency-type: development
+    # TypeScript 7 is blocked upstream: svelte-check 4.7.x crashes on TS 7's
+    # rewritten sys API (typescript.sys.useCaseSensitiveFileNames is undefined).
+    # Suppress major bumps until svelte-check ships TS 7 support.
+    # Tracking: sveltejs/language-tools#2733, #572.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # Go module dependencies (golang.org/x/sys, wails, modernc.org/sqlite, etc.).
   # Catches transitive Go advisories the way npm updates catch frontend ones;
