@@ -66,7 +66,7 @@ jobs:
 
       - name: Install Linux webview dependencies
         # wails3 generate bindings (npm prepare) loads Wails CGO packages.
-        uses: awalsh128/cache-apt-pkgs-action@v1.5.3
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
           packages: ${{ env.WEBVIEW_APT_PACKAGES }}
           version: webview-1
@@ -129,7 +129,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Linux webview dependencies
-        uses: awalsh128/cache-apt-pkgs-action@v1.5.3
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
           packages: ${{ env.WEBVIEW_APT_PACKAGES }}
           version: webview-1
@@ -179,7 +179,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Linux webview dependencies
-        uses: awalsh128/cache-apt-pkgs-action@v1.5.3
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
           packages: ${{ env.WEBVIEW_APT_PACKAGES }}
           version: webview-1
@@ -268,7 +268,7 @@ jobs:
       - name: Install Linux webview dependencies
         # govulncheck analyzes Wails v3's CGO packages, which need the same
         # GTK4 / WebKitGTK 6.0 dev headers as the build jobs.
-        uses: awalsh128/cache-apt-pkgs-action@v1.5.3
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
           packages: ${{ env.WEBVIEW_APT_PACKAGES }}
           version: webview-1
