@@ -349,4 +349,52 @@ describe('PageLinkChip create-or-pick (#549)', () => {
     expect(mocks.createPage).not.toHaveBeenCalled()
     window.removeEventListener('navigate-to-page', handler)
   })
+
+  it('shows error when no active notebook is open (CreatePage not called)', async () => {
+    mocks.activeNotebook = ''
+    mocks.activeSection = ''
+    mocks.resolvePageLink.mockResolvedValue({ exists: false })
+    mocks.createPage.mockResolvedValue('')
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-page', handler)
+
+    render(PageLinkChip, { props: { target: 'NewPage' } })
+    await waitFor(() => {
+      expect(screen.getByText('[[NewPage]]')).toBeTruthy()
+    })
+    await fireEvent.mouseEnter(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Create page')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByText('Create page'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Open a notebook first.')).toBeTruthy()
+    })
+    expect(mocks.createPage).not.toHaveBeenCalled()
+    expect(handler).not.toHaveBeenCalled()
+    window.removeEventListener('navigate-to-page', handler)
+    // Restore defaults for subsequent tests
+    mocks.activeNotebook = 'Work'
+    mocks.activeSection = 'Journal'
+  })
+
+  it('ambiguous Create button shows heads-up subtitle about deepening ambiguity', async () => {
+    mocks.resolvePageLink.mockResolvedValue({
+      exists: false,
+      ambiguous: true,
+      candidates: [{ notebook: 'A', section: '', page: 'X' }]
+    })
+    render(PageLinkChip, { props: { target: 'X' } })
+    await waitFor(() => {
+      expect(screen.getByRole('button')).toBeTruthy()
+    })
+    await fireEvent.mouseEnter(screen.getByRole('button'))
+    await waitFor(() => {
+      expect(screen.getByText('Create page')).toBeTruthy()
+    })
+    expect(
+      screen.getByText('Creates a new page; existing matches remain.')
+    ).toBeTruthy()
+  })
 })

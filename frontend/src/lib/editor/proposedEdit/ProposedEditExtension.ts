@@ -80,26 +80,52 @@ function rangeCollapsed(from: number, to: number): boolean {
   return from >= to
 }
 
-/** Build the decorations for an active proposal: a strike over the original
- *  range plus a non-editable preview widget with Accept/Reject controls. */
+/** Compute the visual strike range for the proposal. For multi-block proposals
+ *  on isolating noteBlocks, the accept path expands to whole-block boundaries;
+ *  the strike must match so the user sees exactly what will be replaced, not
+ *  just their selection. */
+function expandedStrikeRange(
+  state: EditorState,
+  proposal: ActiveProposal
+): { from: number; to: number } {
+  if (
+    wouldUseMultiBlock(state, proposal.from, proposal.to, proposal.markdown)
+  ) {
+    const $from = state.doc.resolve(proposal.from)
+    const $to = state.doc.resolve(proposal.to)
+    return {
+      from: $from.before($from.depth),
+      to: $to.after($to.depth)
+    }
+  }
+  return { from: proposal.from, to: proposal.to }
+}
+
+/** Build the decorations for an active proposal: a strike over the range that
+ *  Accept will replace (expanded for multi-block) plus a non-editable preview
+ *  widget with Accept/Reject controls at the end of the struck range. */
 function buildDecos(
-  doc: PMNode,
+  state: EditorState,
   proposal: ActiveProposal,
   commands: AcceptRejectCommands
 ): DecorationSet {
+  const { from: strikeFrom, to: strikeTo } = expandedStrikeRange(
+    state,
+    proposal
+  )
   const decos: Decoration[] = [
-    Decoration.inline(proposal.from, proposal.to, {
+    Decoration.inline(strikeFrom, strikeTo, {
       class: 'silt-proposed-delete'
     })
   ]
   decos.push(
-    Decoration.widget(
-      proposal.to,
-      () => renderPreviewWidget(proposal, commands),
-      { side: 1, key: 'silt-proposed-edit-widget', stopEvent: () => true }
-    )
+    Decoration.widget(strikeTo, () => renderPreviewWidget(proposal, commands), {
+      side: 1,
+      key: 'silt-proposed-edit-widget',
+      stopEvent: () => true
+    })
   )
-  return DecorationSet.create(doc, decos)
+  return DecorationSet.create(state.doc, decos)
 }
 
 /** Render the preview + Accept/Reject controls as a non-editable widget. */
@@ -333,7 +359,7 @@ export const ProposedEdit = Extension.create({
               }
               return {
                 proposal: set,
-                decos: buildDecos(newState.doc, set, commands)
+                decos: buildDecos(newState, set, commands)
               }
             }
             if (tr.getMeta(CLEAR_META)) {

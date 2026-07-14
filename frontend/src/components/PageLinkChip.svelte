@@ -226,6 +226,9 @@
               {createError}
             </p>
           {/if}
+          <p class="text-type-2xs text-text-muted mb-1">
+            Creates a new page; existing matches remain.
+          </p>
           <button
             type="button"
             class="w-full text-left px-2 py-1.5 rounded-md text-sm text-accent-primary-start hover:bg-hover cursor-pointer border-0 bg-transparent inline-flex items-center gap-1.5"
