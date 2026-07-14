@@ -90,7 +90,7 @@ jobs:
 
       - name: Cache Wails CLI
         id: wails-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/go/bin/wails3
           key: wails3-${{ runner.os }}-${{ steps.wails-ver.outputs.version }}
@@ -203,7 +203,7 @@ jobs:
 
       - name: Cache Wails CLI
         id: wails-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/go/bin/wails3
           key: wails3-${{ runner.os }}-${{ steps.wails-ver.outputs.version }}
@@ -280,7 +280,7 @@ jobs:
 
       - name: Cache govulncheck
         id: govuln-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/go/bin/govulncheck
           key: govulncheck-${{ runner.os }}-${{ hashFiles('go.mod') }}
