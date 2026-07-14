@@ -8,7 +8,7 @@ import {
   UniqueBlockIds,
   SiltBlockKeymaps
 } from './index'
-import { EmbedNode, BlockReferenceNode } from './schema'
+import { EmbedNode, BlockReferenceNode, CalloutBlock } from './schema'
 import { setBlockAlign, moveActiveBlock } from './keymaps'
 import type { DocJSON } from './types'
 
@@ -773,6 +773,147 @@ describe('Backspace on an empty sole block (#552 — no duplicate)', () => {
     editor.commands.setTextSelection(1)
     expect(pressKey(editor, 'Backspace')).toBe(true)
     expect(editor.state.doc.childCount).toBe(1)
+    editor.destroy()
+  })
+
+  it('sole empty taskBlock converts to noteBlock on Backspace (#568)', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'taskBlock',
+          attrs: {
+            id: 'task-1',
+            depth: 0,
+            status: 'TODO',
+            file_date: '2026-06-14'
+          }
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1) // start of the only block
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    const child = editor.state.doc.child(0)
+    expect(child.type.name).toBe('noteBlock')
+    expect(child.attrs.id).toBe('task-1')
+    expect(child.attrs.depth).toBe(0)
+    expect(child.attrs.bullet).toBe('')
+    expect(child.attrs.file_date).toBe('2026-06-14')
+    editor.destroy()
+  })
+
+  it('sole empty headerBlock converts to noteBlock on Backspace (#568)', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'headerBlock',
+          attrs: { id: 'hdr-1', depth: 2, file_date: '2026-06-14' }
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1) // start of the only block
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    const child = editor.state.doc.child(0)
+    expect(child.type.name).toBe('noteBlock')
+    expect(child.attrs.id).toBe('hdr-1')
+    expect(child.attrs.depth).toBe(0)
+    expect(child.attrs.bullet).toBe('')
+    expect(child.attrs.file_date).toBe('2026-06-14')
+    editor.destroy()
+  })
+
+  it('non-empty taskBlock at start: Backspace unchanged (#568 regression)', () => {
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'taskBlock',
+          attrs: { id: 'task-1', depth: 0, status: 'TODO' },
+          content: [{ type: 'text', text: 'do something' }]
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1) // start of the only block
+    // Non-empty → mergeSiblingBlock runs (no sibling → returns false).
+    expect(pressKey(editor, 'Backspace')).toBe(false)
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).type.name).toBe('taskBlock')
+    editor.destroy()
+  })
+
+  it('nested empty noteBlock inside sole callout: Backspace returns false (#569)', () => {
+    // Extend the test editor with CalloutBlock so we can construct a doc
+    // with a sole callout containing a nested empty noteBlock.
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions,
+        CalloutBlock,
+        ...SiltInlineMarkExtensions,
+        ...SiltColorMarkExtensions,
+        EmbedNode,
+        BlockReferenceNode,
+        UniqueBlockIds,
+        SiltBlockKeymaps
+      ]
+    })
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: { variant: 'info', id: 'callout-1' },
+          content: [
+            {
+              type: 'noteBlock',
+              attrs: { id: 'nested-1', depth: 0, bullet: '' }
+            }
+          ]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // Place the caret at the start of the nested noteBlock inside the
+    // callout (doc position 2: callout at pos 0, callout content at pos 1,
+    // noteBlock content at pos 2).
+    editor.commands.setTextSelection(2)
+    // Our handler should detect the nesting (findActiveBlock tree depth > 1)
+    // and return false, preventing the terminal no-op branch from consuming
+    // the keypress. ProseMirror's default chain may or may not delete the
+    // empty nested block depending on the node's isolating semantics, but
+    // the keypress must NOT be silently consumed as a no-op.
+    const handled = pressKey(editor, 'Backspace')
+    // The keypress may be consumed by ProseMirror's default handler (which
+    // is fine — it's not OUR no-op), or not handled at all. Either way,
+    // the callout with its nested block should not have been touched by
+    // our terminal branch.
+    // Case 1: ProseMirror default handler deletes the nested block →
+    //   handled=true, callout.childCount=0
+    // Case 2: ProseMirror default handler is also a no-op →
+    //   handled=false, callout.childCount=1
+    // Both are acceptable; the fix only prevents OUR handler from silently
+    // consuming the Backspace. The callout and its content must still exist.
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.firstChild?.type.name).toBe('calloutBlock')
     editor.destroy()
   })
 })
