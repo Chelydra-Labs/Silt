@@ -27,10 +27,6 @@ updates:
     commit-message:
       prefix: chore
       include: scope
-    cooldown:
-      semver-major-days: 7
-      semver-minor-days: 3
-      semver-patch-days: 1
     groups:
       actions:
         patterns:
