@@ -1387,7 +1387,14 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 		if len(noteTokens) > 0 {
 			noteTokenStr = " " + strings.Join(noteTokens, " ")
 		}
-		return fmt.Sprintf("%s%s%s%s%s", indent, prefix,
-			strings.ReplaceAll(block.CleanText, "\n", " "), noteTokenStr, idSuffix)
+		cleanOut := strings.ReplaceAll(block.CleanText, "\n", " ")
+		// When CleanText is empty, the bullet prefix's trailing space
+		// collides with the leading space in noteTokenStr/idSuffix,
+		// producing "-  <!-- id -->" (#570 round-trip fidelity gap).
+		// Drop it so the separator comes from the following segment.
+		if cleanOut == "" && (noteTokenStr != "" || idSuffix != "") {
+			prefix = strings.TrimRight(prefix, " ")
+		}
+		return fmt.Sprintf("%s%s%s%s%s", indent, prefix, cleanOut, noteTokenStr, idSuffix)
 	}
 }

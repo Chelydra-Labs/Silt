@@ -688,6 +688,13 @@ func TestRenderFileContent_EmptyBulletRoundTrip(t *testing.T) {
 		FileDate:  "2026-06-14",
 	}
 	content := RenderFileContent([]ParsedBlock{block}, "", "", 4)
+	// Fidelity: the rendered line must use a single space between the bullet
+	// marker and the id comment, not the double space produced when the
+	// prefix's trailing space collides with idSuffix's leading space.
+	wantLine := fmt.Sprintf("- <!-- id: %s @ %s -->", id, block.FileDate)
+	if content != wantLine {
+		t.Fatalf("render fidelity: want %q, got %q", wantLine, content)
+	}
 	blocks, _, _, _, err := ParseFileContent(content, "NB", "", "PG", "2026-06-14", 4)
 	if err != nil {
 		t.Fatalf("ParseFileContent failed: %v", err)
@@ -705,6 +712,30 @@ func TestRenderFileContent_EmptyBulletRoundTrip(t *testing.T) {
 	reRendered := RenderFileContent(blocks, "", "", 4)
 	if content != reRendered {
 		t.Errorf("round-trip byte instability:\n  first:  %q\n  second: %q", content, reRendered)
+	}
+}
+
+// TestParseLine_EmptyBulletRenderFidelity verifies the #570 fix from the
+// parse side: parsing an existing "- <!-- id -->" line and re-rendering the
+// resulting block must reproduce the original line byte-for-byte (single
+// space, not the double space caused by prefix+idSuffix space collision).
+func TestParseLine_EmptyBulletRenderFidelity(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"dash bullet", "- <!-- id: 11111111-1111-1111-1111-111111111111 -->"},
+		{"star bullet", "* <!-- id: 22222222-2222-2222-2222-222222222222 -->"},
+		{"plus bullet", "+ <!-- id: 33333333-3333-3333-3333-333333333333 -->"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			block, _, _ := ParseLine(tc.line, 1, 4)
+			rendered := RenderFileContent([]ParsedBlock{block}, "", "", 4)
+			if rendered != tc.line {
+				t.Errorf("parse→render fidelity:\n  want: %q\n  got:  %q", tc.line, rendered)
+			}
+		})
 	}
 }
 
