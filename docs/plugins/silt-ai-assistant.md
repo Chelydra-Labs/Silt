@@ -52,6 +52,15 @@ path writes to disk. **Reject** / **Escape** clears the preview only (no
 `docChanged`, no disk write). If the page is not focused, or the proposal is not
 a selection replace, the panel preview + SDK apply path remains.
 
+**Multi-block proposals.** When the selection spans multiple blocks and the AI
+returns multi-paragraph markdown, Accept creates one note block per paragraph —
+paragraph structure is preserved instead of being flattened to a single line.
+Single-paragraph proposals, or proposals targeting a within-block selection,
+still use the inline replace path (flattened). If the target context can't
+accept block nodes (e.g. inside a table cell), the in-editor preview is not
+shown and the panel preview + SDK apply path handles the proposal instead — no
+proposal is ever silently dropped.
+
 ## Drawer
 
 The Writing Assistant opens in a right-side drawer. It is **mutually exclusive**

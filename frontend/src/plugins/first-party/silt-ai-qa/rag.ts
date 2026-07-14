@@ -5,7 +5,8 @@ import type { Citation, QAMessage, RetrievedPassage } from './types'
 export const SYSTEM_PROMPT = `You are a helpful assistant answering questions about the user's personal notes.
 Use ONLY the provided passages. Cite sources with [n] markers that match the passage numbers.
 If the passages do not contain enough information, say so clearly — do not invent facts or citations.
-When synthesizing across multiple notes, cite each source you use.`
+When synthesizing across multiple notes, cite each source you use.
+Answer the question directly — do not show your analysis, reasoning steps, or chain-of-thought.`
 
 /** Remove [n] citation markers from prior assistant text used as history. */
 export function stripCitationMarkers(text: string): string {

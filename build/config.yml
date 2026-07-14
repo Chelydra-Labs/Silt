@@ -42,6 +42,8 @@ dev_mode:
       type: blocking
     - cmd: wails3 task common:dev:frontend
       type: background
+    - cmd: 'timeout /t 3 /nobreak >nul 2>&1 || sleep 3'
+      type: blocking
     - cmd: wails3 task run
       type: primary
 

@@ -42,6 +42,31 @@ export function createQAController() {
   let answer = $state('')
   let citations: Citation[] = $state([])
   let conversation: Conversation = createConversation()
+  // Svelte 5 reactivity bridge: conversation.ts is a plain .ts module (no
+  // $state), so its internal messages array mutations are invisible to
+  // fine-grained reactivity. This epoch counter bumps on every mutation;
+  // the `messages` getter reads it to establish the reactive dependency.
+  let conversationEpoch = $state(0)
+  const _addUser = conversation.addUser
+  const _addAssistant = conversation.addAssistant
+  const _updateLast = conversation.updateLastAssistant
+  const _clear = conversation.clear
+  conversation.addUser = (c: string) => {
+    _addUser(c)
+    conversationEpoch++
+  }
+  conversation.addAssistant = (c: string, ci?: Citation[]) => {
+    _addAssistant(c, ci)
+    conversationEpoch++
+  }
+  conversation.updateLastAssistant = (c: string, ci?: Citation[]) => {
+    _updateLast(c, ci)
+    conversationEpoch++
+  }
+  conversation.clear = () => {
+    _clear()
+    conversationEpoch++
+  }
   let activeStream: PluginAIStream | null = null
   let askInFlight = false
   let indexTimer: ReturnType<typeof setTimeout> | null = null
@@ -376,6 +401,7 @@ export function createQAController() {
       return citations
     },
     get messages() {
+      conversationEpoch
       return conversation.getMessages()
     },
     get askInFlight() {

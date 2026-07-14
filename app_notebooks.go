@@ -700,7 +700,7 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection := sanitizeSectionPath(section)
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return "", fmt.Errorf("notebook and page names are required (section is optional)")

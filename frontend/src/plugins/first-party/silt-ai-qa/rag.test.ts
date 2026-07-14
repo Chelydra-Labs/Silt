@@ -3,7 +3,8 @@ import {
   buildRAGMessages,
   NO_RESULTS_MESSAGE,
   parseCitations,
-  stripCitationMarkers
+  stripCitationMarkers,
+  SYSTEM_PROMPT
 } from './rag'
 import type { RetrievedPassage } from './types'
 
@@ -90,5 +91,12 @@ describe('parseCitations', () => {
 describe('no-results message', () => {
   it('is non-empty guidance', () => {
     expect(NO_RESULTS_MESSAGE.length).toBeGreaterThan(20)
+  })
+})
+
+describe('SYSTEM_PROMPT', () => {
+  it('instructs the model to answer directly without showing reasoning', () => {
+    expect(SYSTEM_PROMPT).toMatch(/directly/i)
+    expect(SYSTEM_PROMPT).toMatch(/reasoning|chain-of-thought/i)
   })
 })

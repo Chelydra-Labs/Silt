@@ -1,8 +1,11 @@
 <script lang="ts">
   // Inline [[target]] wiki-link chip (#545). Resolves via ResolvePageLink and
   // dispatches navigate-to-page on click/Enter. Mirrors BlockReferenceChip.
+  // Ambiguous and unresolved chips offer create-or-pick (#549).
   import { fade } from 'svelte/transition'
-  import { ResolvePageLink } from '../../bindings/silt/app.js'
+  import { onDestroy } from 'svelte'
+  import { ResolvePageLink, CreatePage } from '../../bindings/silt/app.js'
+  import { getActiveLocation } from '../plugins/location.svelte'
 
   interface Props {
     target: string
@@ -23,7 +26,10 @@
   } | null>(null)
   let loading = $state(true)
   let showHover = $state(false)
+  let creating = $state(false)
+  let createError = $state('')
   let hoverTimer: ReturnType<typeof setTimeout> | null = null
+  let createErrorTimer: ReturnType<typeof setTimeout> | null = null
 
   const label = $derived(alias || target)
 
@@ -58,6 +64,11 @@
     }
   })
 
+  onDestroy(() => {
+    if (hoverTimer) clearTimeout(hoverTimer)
+    if (createErrorTimer) clearTimeout(createErrorTimer)
+  })
+
   function enter() {
     if (hoverTimer) clearTimeout(hoverTimer)
     hoverTimer = setTimeout(() => (showHover = true), 250)
@@ -68,18 +79,22 @@
     hoverTimer = setTimeout(() => (showHover = false), 150)
   }
 
+  function navigateTo(notebook: string, section: string, page: string) {
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-page', {
+        detail: {
+          notebook,
+          section: section ?? '',
+          page,
+          heading: heading || undefined
+        }
+      })
+    )
+  }
+
   function click() {
     if (ref && ref.exists) {
-      window.dispatchEvent(
-        new CustomEvent('navigate-to-page', {
-          detail: {
-            notebook: ref.notebook,
-            section: ref.section ?? '',
-            page: ref.page,
-            heading: heading || undefined
-          }
-        })
-      )
+      navigateTo(ref.notebook!, ref.section ?? '', ref.page!)
     }
   }
 
@@ -89,16 +104,69 @@
     page: string
   }) {
     showHover = false
-    window.dispatchEvent(
-      new CustomEvent('navigate-to-page', {
-        detail: {
-          notebook: c.notebook,
-          section: c.section ?? '',
-          page: c.page,
-          heading: heading || undefined
-        }
-      })
-    )
+    navigateTo(c.notebook, c.section ?? '', c.page)
+  }
+
+  // Parse a wiki-link target into {notebook, section, page} for CreatePage.
+  // Defaults notebook/section to the active location. For path targets like
+  // "Section/Page" or "Notebook/Section/Page", splits the path accordingly.
+  // Sections may be nested (e.g. "Projects/Active"), so for 3+ segments the
+  // first is the notebook, the last is the page, and everything in between is
+  // the (multi-segment) section — matching how ResolvePageLink interprets the
+  // same target, so the created page resolves back to the original link.
+  function parseTargetForCreate(rawTarget: string): {
+    notebook: string
+    section: string
+    page: string
+  } {
+    const loc = getActiveLocation()
+    const activeNotebook = loc.notebook || ''
+    const activeSection = loc.section || ''
+    const parts = rawTarget.replace(/\\/g, '/').split('/').filter(Boolean)
+    if (parts.length >= 3) {
+      return {
+        notebook: parts[0],
+        section: parts.slice(1, -1).join('/'),
+        page: parts[parts.length - 1]
+      }
+    }
+    if (parts.length === 2) {
+      return { notebook: activeNotebook, section: parts[0], page: parts[1] }
+    }
+    return {
+      notebook: activeNotebook,
+      section: activeSection,
+      page: parts[0] || rawTarget
+    }
+  }
+
+  async function createPage() {
+    if (creating) return
+    creating = true
+    createError = ''
+    if (createErrorTimer) clearTimeout(createErrorTimer)
+    const fail = (msg: string) => {
+      createError = msg
+      createErrorTimer = setTimeout(() => (createError = ''), 6000)
+    }
+    try {
+      const { notebook, section, page } = parseTargetForCreate(target)
+      if (!notebook) {
+        fail('Open a notebook first.')
+        return
+      }
+      if (!page) {
+        fail('No page name in link target.')
+        return
+      }
+      await CreatePage(notebook, section, page, '')
+      showHover = false
+      navigateTo(notebook, section, page)
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e))
+    } finally {
+      creating = false
+    }
   }
 </script>
 
@@ -110,6 +178,8 @@
     <span
       role="button"
       tabindex="0"
+      aria-haspopup="true"
+      aria-expanded={showHover}
       onmouseenter={enter}
       onmouseleave={leave}
       onkeydown={(e) => {
@@ -119,7 +189,7 @@
         }
       }}
       class="inline-flex items-center align-baseline text-status-warning mx-0.5 text-[0.85em] cursor-help underline decoration-dotted underline-offset-4"
-      title="Ambiguous page link — multiple matches. Hover to pick one."
+      title="Ambiguous page link — multiple matches. Hover to pick one or create."
     >
       [[{label}]]
     </span>
@@ -151,16 +221,89 @@
             </li>
           {/each}
         </ul>
+        <div class="mt-2 pt-2 border-t border-surface-popover-border">
+          {#if createError}
+            <p class="text-type-2xs text-status-danger mb-1.5" role="alert">
+              {createError}
+            </p>
+          {/if}
+          <p class="text-type-2xs text-text-muted mb-1">
+            Creates a new page; existing matches remain.
+          </p>
+          <button
+            type="button"
+            class="w-full text-left px-2 py-1.5 rounded-md text-sm text-accent-primary-start hover:bg-hover cursor-pointer border-0 bg-transparent inline-flex items-center gap-1.5"
+            onclick={() => void createPage()}
+            disabled={creating}
+            aria-label="Create page '{target}'"
+          >
+            <span class="material-symbols-outlined text-[1.1em]"
+              >add_circle</span
+            >
+            <span aria-live="polite"
+              >{creating ? 'Creating…' : 'Create page'}</span
+            >
+          </button>
+        </div>
       </div>
     {/if}
   </div>
 {:else if !ref?.exists}
-  <span
-    class="inline-flex items-center align-baseline text-text-muted line-through mx-0.5 text-[0.85em]"
-    title="Unresolved page link"
-  >
-    [[{label}]]
-  </span>
+  <div class="inline-block relative">
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <span
+      role="button"
+      tabindex="0"
+      aria-haspopup="true"
+      aria-expanded={showHover}
+      onmouseenter={enter}
+      onmouseleave={leave}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          showHover = !showHover
+        }
+      }}
+      class="inline-flex items-center align-baseline text-text-muted line-through mx-0.5 text-[0.85em] cursor-help underline decoration-dotted underline-offset-4"
+      title="Unresolved page link — hover to create the page."
+    >
+      [[{label}]]
+    </span>
+    {#if showHover}
+      <div
+        transition:fade={{ duration: 120 }}
+        class="absolute z-50 top-full left-0 mt-1 w-80 max-w-[80vw] glass-palette border border-surface-popover-border rounded-lg shadow-2xl p-3 text-left"
+        style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-popover) 94%, transparent);"
+        onmouseenter={enter}
+        onmouseleave={leave}
+        role="group"
+        aria-label="Unresolved page link"
+      >
+        <div
+          class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold mb-2"
+        >
+          Page not found
+        </div>
+        {#if createError}
+          <p class="text-type-2xs text-status-danger mb-1.5" role="alert">
+            {createError}
+          </p>
+        {/if}
+        <button
+          type="button"
+          class="w-full text-left px-2 py-1.5 rounded-md text-sm text-accent-primary-start hover:bg-hover cursor-pointer border-0 bg-transparent inline-flex items-center gap-1.5"
+          onclick={() => void createPage()}
+          disabled={creating}
+          aria-label="Create page '{target}'"
+        >
+          <span class="material-symbols-outlined text-[1.1em]">add_circle</span>
+          <span aria-live="polite"
+            >{creating ? 'Creating…' : 'Create page'}</span
+          >
+        </button>
+      </div>
+    {/if}
+  </div>
 {:else}
   <div class="inline-block relative">
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
