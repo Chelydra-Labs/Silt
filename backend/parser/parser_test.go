@@ -628,6 +628,86 @@ func TestParseLine_EdgeCases(t *testing.T) {
 	})
 }
 
+// TestParseLine_EmptyBulletContent covers the #570 fix: bullet-prefix
+// detection on a trailing-id-only line like "- <!-- id: uuid -->". cleanLine
+// ("- " after CleanLineID) must survive TrimSpace so HasPrefix("- ", "- ")
+// matches, preventing CleanText from picking up the bullet marker itself.
+func TestParseLine_EmptyBulletContent(t *testing.T) {
+	t.Run("empty bulleted line round-trips without mutation", func(t *testing.T) {
+		const id = "11111111-1111-1111-1111-111111111111"
+		line := fmt.Sprintf("- <!-- id: %s -->", id)
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.Type != BlockNote {
+			t.Fatalf("expected BlockNote, got %s", block.Type)
+		}
+		if block.CleanText != "" {
+			t.Errorf("expected empty CleanText, got %q", block.CleanText)
+		}
+		if block.ID != id {
+			t.Errorf("expected id %q, got %q", id, block.ID)
+		}
+	})
+
+	t.Run("non-empty bulleted content is unaffected", func(t *testing.T) {
+		const id = "22222222-2222-2222-2222-222222222222"
+		line := fmt.Sprintf("- real content <!-- id: %s -->", id)
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.CleanText != "real content" {
+			t.Errorf("expected 'real content', got %q", block.CleanText)
+		}
+	})
+
+	t.Run("star-bullet empty line round-trips", func(t *testing.T) {
+		const id = "33333333-3333-3333-3333-333333333333"
+		line := fmt.Sprintf("* <!-- id: %s -->", id)
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.CleanText != "" {
+			t.Errorf("expected empty CleanText, got %q", block.CleanText)
+		}
+	})
+
+	t.Run("plus-bullet empty line round-trips", func(t *testing.T) {
+		const id = "44444444-4444-4444-4444-444444444444"
+		line := fmt.Sprintf("+ <!-- id: %s -->", id)
+		block, _, _ := ParseLine(line, 1, 4)
+		if block.CleanText != "" {
+			t.Errorf("expected empty CleanText, got %q", block.CleanText)
+		}
+	})
+}
+
+// TestRenderFileContent_EmptyBulletRoundTrip verifies the #570 fix end-to-end:
+// a line that is just a bullet + id comment renders identically on re-serialization.
+func TestRenderFileContent_EmptyBulletRoundTrip(t *testing.T) {
+	const id = "11111111-1111-1111-1111-111111111111"
+	block := ParsedBlock{
+		ID:        id,
+		Type:      BlockNote,
+		RawText:   "- ",
+		CleanText: "",
+		FileDate:  "2026-06-14",
+	}
+	content := RenderFileContent([]ParsedBlock{block}, "", "", 4)
+	blocks, _, _, _, err := ParseFileContent(content, "NB", "", "PG", "2026-06-14", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block after round-trip, got %d", len(blocks))
+	}
+	if blocks[0].CleanText != "" {
+		t.Errorf("expected empty CleanText after round-trip, got %q", blocks[0].CleanText)
+	}
+	if blocks[0].ID != id {
+		t.Errorf("expected id %q, got %q", id, blocks[0].ID)
+	}
+	// Re-render and verify byte stability across two full passes.
+	reRendered := RenderFileContent(blocks, "", "", 4)
+	if content != reRendered {
+		t.Errorf("round-trip byte instability:\n  first:  %q\n  second: %q", content, reRendered)
+	}
+}
+
 func TestParseFileContent(t *testing.T) {
 	doc := `---
 notebook: Engineering

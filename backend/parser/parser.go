@@ -441,12 +441,18 @@ func ParseLine(line string, lineNumber int, spacesPerTab int) (ParsedBlock, stri
 	}
 
 	// Bullet note check (optional cleaning of bullet markers like "- ", "* ", "+ ", or numbered list prefixes "1. ", "1) ")
+	// Detect bullet prefix on cleanLine (pre-TrimSpace). cleanLineTrimmed is
+	// TrimSpace'd for header/task detection above, but for bullet stripping we
+	// need the trailing space to survive — a trailing-id-only line like
+	// "- <!-- id: -->" becomes "- " after CleanLineID, which TrimSpace reduces
+	// to "-", making HasPrefix fail (#570).
 	depth := parseLeadingIndent(newLine, spacesPerTab)
 	rawCleaned := cleanLineTrimmed
-	if strings.HasPrefix(cleanLineTrimmed, "- ") || strings.HasPrefix(cleanLineTrimmed, "* ") || strings.HasPrefix(cleanLineTrimmed, "+ ") {
-		rawCleaned = cleanLineTrimmed[2:]
-	} else if m := NumberedListRegex.FindString(cleanLineTrimmed); m != "" {
-		rawCleaned = cleanLineTrimmed[len(m):]
+	bulletBase := strings.TrimLeft(cleanLine, " \t")
+	if strings.HasPrefix(bulletBase, "- ") || strings.HasPrefix(bulletBase, "* ") || strings.HasPrefix(bulletBase, "+ ") {
+		rawCleaned = bulletBase[2:]
+	} else if m := NumberedListRegex.FindString(bulletBase); m != "" {
+		rawCleaned = bulletBase[len(m):]
 	}
 
 	// NOTE-block comment attribution (#418): scan the cleaned text for
@@ -1339,13 +1345,16 @@ func renderBlock(block ParsedBlock, spacesPerTab int) string {
 			// Fresh content with no raw text: outliner default "- ".
 			prefix = "- "
 		} else if trimmedRaw != "" {
-			if strings.HasPrefix(trimmedRaw, "- ") {
+			// Detect bullet prefix on RawText WITHOUT trailing TrimSpace.
+			// trimmedRaw collapses "- " to "-", making HasPrefix fail (#570).
+			bulletRaw := strings.TrimLeft(block.RawText, " \t")
+			if strings.HasPrefix(bulletRaw, "- ") {
 				prefix = "- "
-			} else if strings.HasPrefix(trimmedRaw, "* ") {
+			} else if strings.HasPrefix(bulletRaw, "* ") {
 				prefix = "* "
-			} else if strings.HasPrefix(trimmedRaw, "+ ") {
+			} else if strings.HasPrefix(bulletRaw, "+ ") {
 				prefix = "+ "
-			} else if m := NumberedListRegex.FindString(trimmedRaw); m != "" {
+			} else if m := NumberedListRegex.FindString(bulletRaw); m != "" {
 				prefix = m
 			} else {
 				prefix = ""
