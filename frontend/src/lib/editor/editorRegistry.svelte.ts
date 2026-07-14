@@ -36,6 +36,7 @@ export interface EditorHandle {
     to: number
     markdown: string
     onAccept?: () => void
+    fileDate?: string
   }) => boolean
   /** Clear any active in-editor proposed-edit preview (#543). */
   clearProposedEdit: () => void

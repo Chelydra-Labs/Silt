@@ -157,19 +157,11 @@ describe('PageLinkChip create-or-pick (#549)', () => {
   })
 
   it('ambiguous chip creates page via CreatePage and navigates', async () => {
-    mocks.resolvePageLink
-      .mockResolvedValueOnce({
-        exists: false,
-        ambiguous: true,
-        candidates: [{ notebook: 'A', section: '', page: 'X' }]
-      })
-      .mockResolvedValueOnce({
-        exists: true,
-        notebook: 'Work',
-        section: 'Journal',
-        page: 'X',
-        shortest: 'X'
-      })
+    mocks.resolvePageLink.mockResolvedValue({
+      exists: false,
+      ambiguous: true,
+      candidates: [{ notebook: 'A', section: '', page: 'X' }]
+    })
     mocks.createPage.mockResolvedValue('')
     const handler = vi.fn()
     window.addEventListener('navigate-to-page', handler)
@@ -201,7 +193,7 @@ describe('PageLinkChip create-or-pick (#549)', () => {
       expect(screen.getByText('[[Missing]]')).toBeTruthy()
     })
     const btn = screen.getByRole('button')
-    expect(btn.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(btn.getAttribute('aria-haspopup')).toBe('true')
     await fireEvent.mouseEnter(btn)
     await waitFor(() => {
       expect(screen.getByText('Create page')).toBeTruthy()
@@ -209,15 +201,7 @@ describe('PageLinkChip create-or-pick (#549)', () => {
   })
 
   it('unresolved chip creates page and navigates', async () => {
-    mocks.resolvePageLink
-      .mockResolvedValueOnce({ exists: false })
-      .mockResolvedValueOnce({
-        exists: true,
-        notebook: 'Work',
-        section: 'Journal',
-        page: 'NewPage',
-        shortest: 'NewPage'
-      })
+    mocks.resolvePageLink.mockResolvedValue({ exists: false })
     mocks.createPage.mockResolvedValue('')
     const handler = vi.fn()
     window.addEventListener('navigate-to-page', handler)

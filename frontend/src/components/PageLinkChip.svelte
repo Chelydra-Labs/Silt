@@ -145,24 +145,25 @@
     creating = true
     createError = ''
     if (createErrorTimer) clearTimeout(createErrorTimer)
+    const fail = (msg: string) => {
+      createError = msg
+      createErrorTimer = setTimeout(() => (createError = ''), 6000)
+    }
     try {
       const { notebook, section, page } = parseTargetForCreate(target)
       if (!notebook) {
-        createError = 'Open a notebook first.'
+        fail('Open a notebook first.')
         return
       }
       if (!page) {
-        createError = 'No page name in link target.'
+        fail('No page name in link target.')
         return
       }
       await CreatePage(notebook, section, page, '')
       showHover = false
       navigateTo(notebook, section, page)
-      // Re-resolve: the page now exists so the chip becomes a normal link.
-      await load()
     } catch (e) {
-      createError = e instanceof Error ? e.message : String(e)
-      createErrorTimer = setTimeout(() => (createError = ''), 6000)
+      fail(e instanceof Error ? e.message : String(e))
     } finally {
       creating = false
     }
@@ -177,7 +178,7 @@
     <span
       role="button"
       tabindex="0"
-      aria-haspopup="dialog"
+      aria-haspopup="true"
       aria-expanded={showHover}
       onmouseenter={enter}
       onmouseleave={leave}
@@ -253,7 +254,7 @@
     <span
       role="button"
       tabindex="0"
-      aria-haspopup="dialog"
+      aria-haspopup="true"
       aria-expanded={showHover}
       onmouseenter={enter}
       onmouseleave={leave}
