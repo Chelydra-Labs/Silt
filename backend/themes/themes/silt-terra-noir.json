@@ -144,7 +144,7 @@
         "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 20%, transparent)"
       },
       "editor": {
-        "caret": "oklch(0.575 0.157 42)",
+        "caret": "oklch(0.560 0.157 42)",
         "selection": "rgba(194,81,31,0.22)",
         "selection_text": "#2a2014",
         "link": "oklch(0.545 0.118 129)",

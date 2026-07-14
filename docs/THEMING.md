@@ -172,7 +172,7 @@ Caret, selection, link, and highlight colors for the writing canvas. These are i
 
 | JSON path | CSS variable | Meaning |
 | :--- | :--- | :--- |
-| `editor.caret` | `--color-editor-caret` | The text caret. |
+| `editor.caret` | `--color-editor-caret` | The text caret. **Contrast contract:** must meet ≥4.5:1 against `--color-surface-editor` in each mode (a thin 1–2px element needs the text-equivalent bar, not the 3:1 UI minimum). To verify, compute the WCAG ratio from the flatten-golden values (`frontend/src/theme/__fixtures__/flatten-goldens/<theme>.<mode>.json`). Darken the value (lower lightness, preserve hue) if a mode falls short — this is how the 8 light-mode carets were adjusted. |
 | `editor.selection` | `--color-editor-selection` | `::selection` fill. |
 | `editor.selection_text` | `--color-editor-selection-text` | `::selection` text. |
 | `editor.link` | `--color-editor-link` | Link color. |

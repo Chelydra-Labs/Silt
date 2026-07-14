@@ -9,7 +9,7 @@
   "--color-active": "#d4e2f1",
   "--color-border-active": "#8db4dd",
   "--color-border-focus": "#4b7db2",
-  "--color-editor-caret": "oklch(0.588 0.139 242)",
+  "--color-editor-caret": "oklch(0.578 0.139 242)",
   "--color-editor-highlight": "rgba(168,116,28,0.22)",
   "--color-editor-link": "oklch(0.511 0.23 277)",
   "--color-editor-link-hover": "oklch(0.398 0.177 277)",

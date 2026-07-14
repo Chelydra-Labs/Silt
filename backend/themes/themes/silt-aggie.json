@@ -124,7 +124,7 @@
         "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 20%, transparent)"
       },
       "editor": {
-        "caret": "#a07c00",
+        "caret": "#8e6e00",
         "selection": "rgba(160,124,0,0.22)",
         "selection_text": "#1e4d2b",
         "link": "#006144",
