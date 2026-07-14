@@ -748,6 +748,33 @@ describe('Backspace on an empty sole block (#552 — no duplicate)', () => {
     expect(editor.state.doc.childCount).toBe(1)
     editor.destroy()
   })
+
+  it('clears a quote marker before consuming Backspace on a sole empty block', () => {
+    // Parallel to bullet clearing: Backspace on a sole empty quoted noteBlock
+    // should clear the "> " quote marker first, not consume the keypress as a
+    // no-op while leaving the quote intact.
+    const editor = makeEditorWithKeymaps()
+    const single: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'only', depth: 0, bullet: '', quote: '> ' }
+        }
+      ]
+    }
+    editor.commands.setContent(single)
+    editor.commands.setTextSelection(1)
+    // First Backspace clears the quote.
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).attrs.quote).toBe('')
+    // Second Backspace: now empty, no markers → no-op (consumed).
+    editor.commands.setTextSelection(1)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(1)
+    editor.destroy()
+  })
 })
 
 describe('format_subscript keymap (#511 — Ctrl+Shift, chord)', () => {

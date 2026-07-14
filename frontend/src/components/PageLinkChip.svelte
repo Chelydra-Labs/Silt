@@ -32,9 +32,17 @@
   let showHover = $state(false)
   let creating = $state(false)
   let createError = $state('')
-  let createPath = $state('') // Resolved "nb › sec › page" subtitle for the Create button
+  let createPath = $state('')
+  let createTarget = $state<{
+    notebook: string
+    section: string
+    page: string
+  } | null>(null)
+  let resolvingPath = $state(false)
   let hoverTimer: ReturnType<typeof setTimeout> | null = null
   let createErrorTimer: ReturnType<typeof setTimeout> | null = null
+  let createPathVersion = 0
+  let destroyed = false
 
   const label = $derived(alias || target)
 
@@ -70,16 +78,25 @@
   })
 
   onDestroy(() => {
+    destroyed = true
     if (hoverTimer) clearTimeout(hoverTimer)
     if (createErrorTimer) clearTimeout(createErrorTimer)
   })
 
   async function refreshCreatePath() {
+    const v = ++createPathVersion
+    resolvingPath = true
     try {
       const resolved = await parseTargetForCreate(target)
+      if (destroyed || v !== createPathVersion) return
+      createTarget = resolved
       createPath = pathLabel(resolved)
     } catch {
+      if (destroyed || v !== createPathVersion) return
+      createTarget = null
       createPath = ''
+    } finally {
+      if (!destroyed && v === createPathVersion) resolvingPath = false
     }
   }
 
@@ -188,7 +205,8 @@
       createErrorTimer = setTimeout(() => (createError = ''), 6000)
     }
     try {
-      const { notebook, section, page } = await parseTargetForCreate(target)
+      const { notebook, section, page } =
+        createTarget ?? (await parseTargetForCreate(target))
       if (!notebook) {
         fail('Open a notebook first.')
         return
@@ -268,7 +286,11 @@
           <p class="text-type-2xs text-text-muted mb-1">
             Creates a new page; existing matches remain.
           </p>
-          {#if createPath}
+          {#if resolvingPath}
+            <p class="text-type-2xs text-text-muted mb-1.5 italic">
+              Resolving…
+            </p>
+          {:else if createPath}
             <p class="text-type-2xs text-text-muted mb-1.5 font-mono">
               {createPath}
             </p>
@@ -332,7 +354,9 @@
             {createError}
           </p>
         {/if}
-        {#if createPath}
+        {#if resolvingPath}
+          <p class="text-type-2xs text-text-muted mb-1.5 italic">Resolving…</p>
+        {:else if createPath}
           <p class="text-type-2xs text-text-muted mb-1.5 font-mono">
             {createPath}
           </p>
