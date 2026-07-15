@@ -45,3 +45,40 @@ export function clampToViewport(
   top = Math.max(POPOVER_MARGIN, top)
   return { left, top }
 }
+
+export interface AnchorRect {
+  /** Anchor top (e.g. cursor top, `coordsAtPos().top`). */
+  top: number
+  /** Anchor bottom (e.g. `coordsAtPos().bottom`). */
+  bottom: number
+  /** Anchor left (e.g. `coordsAtPos().left`). */
+  left: number
+}
+
+/**
+ * Position a popover relative to an anchor, flipping above the anchor when it
+ * would otherwise overflow the bottom of the viewport. Vertical flip is the
+ * common overflow case (a palette opening at the last visible line); the
+ * horizontal axis only clamps. Used by the slash palette and the table picker
+ * so they share one tested decision instead of two inline copies.
+ *
+ * Pure: reads viewport + anchor + popover size from the args (jsdom-testable).
+ */
+export function flipOrClamp(
+  anchor: AnchorRect,
+  popover: { width: number; height: number },
+  viewport: Viewport
+): { left: number; top: number } {
+  const opensBelow = anchor.bottom + popover.height + POPOVER_MARGIN
+  const opensAbove = anchor.top - popover.height - POPOVER_MARGIN
+  // Flip up when there is no room below but there IS room above; otherwise
+  // fall through to a plain clamp so the popover never overlaps the anchor.
+  const preferAbove =
+    anchor.bottom + popover.height > viewport.height - POPOVER_MARGIN &&
+    opensAbove >= POPOVER_MARGIN
+  const top = preferAbove ? opensAbove : anchor.bottom
+  return clampToViewport(
+    { x: anchor.left, y: top, width: popover.width, height: popover.height },
+    viewport
+  )
+}

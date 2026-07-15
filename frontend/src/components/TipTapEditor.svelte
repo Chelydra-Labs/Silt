@@ -85,7 +85,10 @@
   } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { classifySlashCommand } from '../lib/editor/builtinSlashCommands'
-  import { clampToViewport } from '../lib/editor/popoverPositioning'
+  import {
+    clampToViewport,
+    flipOrClamp
+  } from '../lib/editor/popoverPositioning'
   import {
     cutSelection,
     copySelection,
@@ -152,6 +155,17 @@
   let showSlashMenu = $state(false)
   let slashQuery = $state('')
   let slashMenuDismissed = $state(false)
+  // Measured size of the rendered slash palette, used for the flip/clamp
+  // decision so positioning reflects the real element rather than a fixed
+  // 256×300 estimate (#590). Falls back to the estimate until measured.
+  let paletteSize = $state({ width: 256, height: 300 })
+  $effect(() => {
+    if (!showSlashMenu) return
+    const el = document.getElementById('silt-slash-palette')
+    if (el && el.offsetWidth && el.offsetHeight) {
+      paletteSize = { width: el.offsetWidth, height: el.offsetHeight }
+    }
+  })
   let showTemplatePicker = $state(false)
   // Per-vault math opt-out (#191). Live so toggling it in Settings takes effect
   // on the next slash-menu open (hides the /math command).
@@ -942,15 +956,32 @@
   }
   function onEditorScroll(): void {
     selectionCoords = null
+    // Dismiss the slash palette on scroll (parity with the selection bubble)
+    // so it never floats at stale coordinates (#590).
+    if (showSlashMenu) {
+      showSlashMenu = false
+      slashMenuDismissed = true
+    }
+  }
+  function onWindowResize(): void {
+    // A resize can push an open palette off-screen; dismiss rather than chase
+    // the cursor (#590).
+    if (showSlashMenu) {
+      showSlashMenu = false
+      slashMenuDismissed = true
+    }
   }
   // Dismiss SelectionBubble when clicking outside the editor and bubble (#168).
+  // The slash palette is guarded by its dedicated data-slash-palette marker
+  // (decoupled from the .glass-palette visual class) so restyling the glass
+  // treatment cannot silently break dismissal (#584).
   function onDocumentClick(e: MouseEvent): void {
     const target = e.target as HTMLElement | null
     if (!target) return
     if (
       target.closest('.ProseMirror') ||
       target.closest('.selection-bubble') ||
-      target.closest('.glass-palette')
+      target.closest('[data-slash-palette]')
     )
       return
     selectionCoords = null
@@ -964,6 +995,7 @@
   window.addEventListener('silt:open-color-picker', onOpenColorPicker)
   window.addEventListener('silt:edit-math', onEditMath)
   window.addEventListener('scroll', onEditorScroll, true)
+  window.addEventListener('resize', onWindowResize)
   document.addEventListener('click', onDocumentClick)
 
   onDestroy(() => {
@@ -985,6 +1017,7 @@
     window.removeEventListener('silt:open-color-picker', onOpenColorPicker)
     window.removeEventListener('silt:edit-math', onEditMath)
     window.removeEventListener('scroll', onEditorScroll, true)
+    window.removeEventListener('resize', onWindowResize)
     document.removeEventListener('click', onDocumentClick)
   })
 
@@ -1122,8 +1155,11 @@
     const pos = selection.$from.start()
     try {
       const c = editorInstance.view.coordsAtPos(pos)
-      return clampToViewport(
-        { x: c.left, y: c.bottom, width: 256, height: 300 },
+      // Flip above the cursor when there is no room below, using the palette's
+      // measured size rather than a fixed estimate (#590).
+      return flipOrClamp(
+        { top: c.top, bottom: c.bottom, left: c.left },
+        { width: paletteSize.width, height: paletteSize.height },
         { width: window.innerWidth, height: window.innerHeight }
       )
     } catch (err) {
@@ -1661,6 +1697,7 @@
       <CommandPalette
         style="position: fixed; left: {coords.left}px; top: {coords.top}px;"
         query={slashQuery}
+        textboxEl={editorInstance?.view.dom ?? null}
         onSelect={handleSlashSelect}
         exclude={mathEnabled ? [] : ['math']}
         onClose={() => {
