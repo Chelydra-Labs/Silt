@@ -123,4 +123,35 @@ describe('PresetControl', () => {
       screen.getByRole('button', { name: 'What is Search Balance?' })
     ).toBeInTheDocument()
   })
+
+  it('clamps Advanced number input to customMin/customMax', async () => {
+    const onchange = vi.fn()
+    render(PresetControl, {
+      props: {
+        label: 'Answer Style',
+        tooltipText: 'How creative?',
+        options: numberOptions,
+        value: 0.5,
+        customMin: 0,
+        customMax: 2,
+        customStep: 0.1,
+        customLabel: 'Temperature',
+        onchange
+      }
+    })
+    const details = screen
+      .getByText('Advanced')
+      .closest('details') as HTMLDetailsElement
+    details.open = true
+    await fireEvent.click(screen.getByText('Advanced'))
+    const input = document.getElementById(
+      'preset-answer-style-custom'
+    ) as HTMLInputElement
+    // Typing 99 should clamp to the max of 2.
+    await fireEvent.change(input, { target: { value: '99' } })
+    expect(onchange).toHaveBeenCalledWith(2)
+    // Typing -5 should clamp to the min of 0.
+    await fireEvent.change(input, { target: { value: '-5' } })
+    expect(onchange).toHaveBeenCalledWith(0)
+  })
 })

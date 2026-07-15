@@ -87,8 +87,12 @@
   }
 
   function onNumberInput(raw: string) {
-    const n = Number(raw)
+    let n = Number(raw)
     if (Number.isNaN(n)) return
+    // Clamp to [customMin, customMax] so a typo doesn't dead-end the
+    // controller's validation gate with no per-field guidance.
+    if (typeof customMin === 'number') n = Math.max(n, customMin)
+    if (typeof customMax === 'number') n = Math.min(n, customMax)
     onchange(n as T)
   }
 

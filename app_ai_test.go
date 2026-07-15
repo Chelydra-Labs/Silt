@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -327,6 +328,51 @@ func TestPluginAIEmbed_SuccessFirstParty(t *testing.T) {
 	}
 	if res.Dimensions != 3 {
 		t.Errorf("dimensions = %d, want 3", res.Dimensions)
+	}
+}
+
+// TestPluginAIEmbed_TaskTypeThreadsToGoogle asserts that the optional TaskType
+// field on PluginAIEmbedInput flows through the app binding into the Google
+// batchEmbedContents request body — the end-to-end #610 contract.
+func TestPluginAIEmbed_TaskTypeThreadsToGoogle(t *testing.T) {
+	app := newTestApp(t)
+	var capturedBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"embeddings": []map[string]any{
+				{"values": []float64{0.1, 0.2}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	app.configMu.Lock()
+	app.cfg.AI.Embedding.BaseURL = srv.URL
+	app.cfg.AI.Embedding.Model = "text-embedding-004"
+	app.cfg.AI.Embedding.ProviderType = ai.ProviderGoogle
+	app.configMu.Unlock()
+
+	tok, err := app.RegisterPluginSession("silt-tasks")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	_, err = app.PluginAIEmbed("silt-tasks", tok, PluginAIEmbedInput{
+		Texts:    []string{"hello"},
+		TaskType: "RETRIEVAL_DOCUMENT",
+	})
+	if err != nil {
+		t.Fatalf("PluginAIEmbed: %v", err)
+	}
+	reqs, ok := capturedBody["requests"].([]any)
+	if !ok || len(reqs) != 1 {
+		t.Fatalf("expected 1 request in body, got %v", capturedBody)
+	}
+	item, _ := reqs[0].(map[string]any)
+	if item["taskType"] != "RETRIEVAL_DOCUMENT" {
+		t.Errorf("taskType = %v, want RETRIEVAL_DOCUMENT", item["taskType"])
 	}
 }
 

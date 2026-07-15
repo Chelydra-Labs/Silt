@@ -344,7 +344,11 @@ export function createQAController() {
     let assistantStarted = false
 
     try {
-      if (settings.stale_reason && !staleSearchToasted) {
+      if (
+        settings.stale_reason &&
+        !staleSearchToasted &&
+        !staleBannerDismissed
+      ) {
         staleSearchToasted = true
         pushNotification({
           kind: 'info',
