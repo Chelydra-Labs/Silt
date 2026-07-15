@@ -823,9 +823,10 @@ Plugins that need AI call the **user-configured** model server through
 never sees the endpoint URL, model name, or API key.
 
 **Reference consumers:** `silt-ai-summary` (note banner), `silt-ai-qa` (RAG
-Q&A), and `silt-ai-assistant` (Writing Assistant — curated actions with a
+Q&A), `silt-ai-assistant` (Writing Assistant — curated actions with a
 plugin-local accept/reject proposal flow; see
-`docs/plugins/silt-ai-assistant.md`).
+`docs/plugins/silt-ai-assistant.md`), and `silt-ai-agent` (tool-using agent
+loop; see `docs/plugins/silt-ai-agent.md`).
 
 Gated by the `ai` capability. Declare it in the manifest:
 
@@ -852,12 +853,27 @@ console.log(res.usage)   // { prompt_tokens, completion_tokens, total_tokens }
 ```
 
 `messages` follows the OpenAI chat format (`role` ∈ `system` / `user` /
-`assistant`). Optional fields: `model` (override the user's configured chat
+`assistant` / `tool`). Optional fields: `model` (override the user's configured chat
 model — use sparingly), `temperature`, `maxTokens`, `reasoningEffort`
 (`'none'`/`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'` — controls
 thinking on reasoning-capable models; not all providers support every value),
-`stream` (when `true`, returns a {@link PluginAIStream} handle — see below).
-Per-call overrides are merged over the user's provider config.
+`stream` (when `true`, returns a {@link PluginAIStream} handle — see below),
+`responseSchema` (a raw JSON Schema; native Google/Anthropic return a
+conforming JSON object, OpenAI-compatible providers fall back to prompt-only
+JSON). Per-call overrides are merged over the user's provider config.
+
+**Tool-calling (#595).** A plugin that wants to expose tools to the model
+passes `tools` (`PluginAIToolDef[]` — name / description / JSON-Schema
+`parameters`) plus optional `tool_choice` (`PluginAIToolChoice` — `{ mode:
+'auto' | 'none' | 'force', tool_name? }`). The provider encodes them in its
+own wire shape; the result carries any `tool_calls`
+(`PluginAIToolCall[]` — id / name / `arguments` as a raw JSON object). For
+multi-turn use, replay history with an `assistant` message carrying
+`tool_calls` and one `tool` message per result, correlated by
+`tool_call_id`. Streamed runs additionally surface in-progress tool-call
+fragments on `stream.toolDeltas` and via the `ai:complete:tool-delta`
+event. Reference consumer: `silt-ai-agent`
+([docs/plugins/silt-ai-agent.md](./plugins/silt-ai-agent.md)).
 
 **Streaming (`stream: true`, #226).** Supported for OpenAI-compatible and local
 (Ollama `/v1`) chat endpoints. Native Google/Anthropic reject streaming with a

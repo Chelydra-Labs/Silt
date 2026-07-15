@@ -523,8 +523,15 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `PluginAIEmbed` are. `PluginAIEmbed` accepts optional `task_type`
   (`RETRIEVAL_DOCUMENT` at index time / `RETRIEVAL_QUERY` at search time);
   Google includes it as `taskType` on each `batchEmbedContents` item, other
-  providers ignore it, and empty omits the field. The `ctx.ai.complete` SDK
-  wrapper normalizes `<think>`/`<thought>`/`<reasoning>` reasoning tags out of
+  providers ignore it, and empty omits the field. `PluginAIComplete` (#595)
+  also carries optional `tools` (`PluginAIToolDef[]`) + `tool_choice`
+  (`PluginAIToolChoice`), and the `CompleteResult` echoes back any
+  `tool_calls` (`PluginAIToolCall[]`) the model requested; `messages`
+  accepts a `tool` role (with `tool_call_id` / `tool_calls`) so a plugin can
+  drive a multi-turn tool-use loop (consumer: `silt-ai-agent`). Streamed
+  runs surface in-progress tool-call fragments via `ai:complete:tool-delta`
+  (alongside `ai:complete:delta`). The `ctx.ai.complete` SDK wrapper
+  normalizes `<think>`/`<thought>`/`<reasoning>` reasoning tags out of
   `content` (the OpenAI-compatible leak; native providers already separate
   reasoning) so every plugin consumer receives reasoning-free text — see
   `frontend/src/plugins/stripReasoning.ts`.
