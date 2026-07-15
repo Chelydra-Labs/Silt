@@ -71,6 +71,7 @@
   import { settings, appendDismissedTip } from '../settings/store.svelte'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
+  import BlockPickerModal from './BlockPickerModal.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import PluginNoteBanners from './editor/PluginNoteBanners.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
@@ -167,6 +168,10 @@
     }
   })
   let showTemplatePicker = $state(false)
+  // Block-embed picker (#593): selecting /embed opens BlockPickerModal; picking
+  // a block inserts a complete {{embed:UUID}} token (rendered as a live
+  // EmbedPortal by the existing tokenizer/NodeView pipeline).
+  let showEmbedPicker = $state(false)
   // Per-vault math opt-out (#191). Live so toggling it in Settings takes effect
   // on the next slash-menu open (hides the /math command).
   let mathEnabled = $derived(
@@ -958,6 +963,16 @@
     const align = (e as CustomEvent).detail as string
     if (align) setBlockAlign(editorInstance as any, align)
   }
+  // Dismiss the selection-anchored popovers (link / color / math) when an
+  // ancestor scrolls or the window resizes (#594). They capture their anchor
+  // coordinates once and render position:fixed, so without this they would
+  // float at stale screen positions. Dismiss is chosen over reposition for
+  // parity with the selection bubble (repositioning mid-text-entry is jarring).
+  function dismissFloatingPopovers(): void {
+    if (showLinkInput) showLinkInput = false
+    if (showColorPicker) showColorPicker = false
+    if (mathPopover) mathPopover = null
+  }
   function onEditorScroll(): void {
     selectionCoords = null
     // Dismiss the slash palette on scroll (parity with the selection bubble)
@@ -966,14 +981,16 @@
       showSlashMenu = false
       slashMenuDismissed = true
     }
+    dismissFloatingPopovers()
   }
   function onWindowResize(): void {
-    // A resize can push an open palette off-screen; dismiss rather than chase
-    // the cursor (#590).
+    // A resize can push an open palette/popover off-screen; dismiss rather
+    // than chase the cursor (#590 / #594).
     if (showSlashMenu) {
       showSlashMenu = false
       slashMenuDismissed = true
     }
+    dismissFloatingPopovers()
   }
   // Dismiss SelectionBubble when clicking outside the editor and bubble (#168).
   // The slash palette is guarded by its dedicated data-slash-palette marker
@@ -1263,7 +1280,10 @@
         break
       }
       case 'embed':
-        editorInstance.commands.insertContent('{{embed:')
+        // Open the block picker; the selected block is inserted as a complete
+        // {{embed:UUID}} token (#593). The bare '{{embed:' fragment the old
+        // path emitted never resolved into a live embed portal.
+        showEmbedPicker = true
         break
       case 'template':
         // The `/` text is already deleted above; open the picker. The editor
@@ -1290,6 +1310,29 @@
     const doc = blocksToDoc(blocks)
     editorInstance.commands.insertContent(doc.content)
     editorInstance.commands.focus()
+  }
+
+  // --- Block embed picker (#593) -------------------------------------------
+  // Mirrors the TemplatePicker pattern: a picker-backed slash command. Picking
+  // a block inserts a complete embed portal. The token is inserted as a
+  // pre-built embedNode (not raw `{{embed:uuid}}` text) because the editor has
+  // no live input rule that converts the raw token — only the block load
+  // path (blocksToDoc) tokenizes. Inserting the node renders the live
+  // EmbedPortal immediately and round-trips back to `{{embed:uuid}}` on save.
+  // Cancelling inserts nothing (the consumed '/embed' trigger text was already
+  // deleted before the dispatch).
+  function handleEmbedPick(blockId: string): void {
+    showEmbedPicker = false
+    if (!editorInstance || editorInstance.isDestroyed) return
+    editorInstance.commands.insertContent({
+      type: 'embedNode',
+      attrs: { id: crypto.randomUUID(), uuid: blockId, bullet: '' }
+    })
+    editorInstance.commands.focus()
+  }
+  function closeEmbedPicker(): void {
+    showEmbedPicker = false
+    editorInstance?.chain().focus().run()
   }
 
   // --- Focus lock (reuses the #38 TTL-lease bindings) -----------------------
@@ -1874,6 +1917,10 @@
     onClose={() => (showTemplatePicker = false)}
     onInsertBlocks={handleTemplateInsert}
   />
+{/if}
+
+{#if showEmbedPicker}
+  <BlockPickerModal onPick={handleEmbedPick} onClose={closeEmbedPicker} />
 {/if}
 
 <style>

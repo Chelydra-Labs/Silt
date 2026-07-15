@@ -249,7 +249,8 @@
   .mlp-commit {
     background: var(--color-accent-primary-start);
     border-color: transparent;
-    color: #001813;
+    /* Theme-safe text on accent (contrast-correct on light/high-contrast). */
+    color: var(--color-surface-popover);
   }
   .mlp-commit:hover {
     filter: brightness(1.08);

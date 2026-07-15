@@ -169,4 +169,27 @@ describe('TipTapEditor smart-graph content (#127)', () => {
 
     cleanup()
   })
+
+  // #593: picking a block from the /embed picker inserts a complete embed
+  // portal. The insertion is a pre-built embedNode (the editor has no live
+  // input rule that converts raw `{{embed:uuid}}` text), so it must render a
+  // live EmbedPortal immediately — not wait for a save+reload.
+  it('renders a live embedNode when an embedNode is inserted via commands (#593)', async () => {
+    const { editor, container, cleanup } = await mountNodeViewEditor([
+      mkBlock('NOTE', { clean_text: 'host line' })
+    ])
+
+    // Mirror handleEmbedPick: insert an embedNode pointing at FIXTURE_UUID_A.
+    editor.commands.insertContent({
+      type: 'embedNode',
+      attrs: { id: crypto.randomUUID(), uuid: FIXTURE_UUID_A, bullet: '' }
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector('.node-embedNode')).toBeTruthy()
+      expect(mocks.resolveBlockReference).toHaveBeenCalledWith(FIXTURE_UUID_A)
+    })
+
+    cleanup()
+  })
 })
