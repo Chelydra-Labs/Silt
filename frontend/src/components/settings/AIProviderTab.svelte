@@ -1017,6 +1017,13 @@
               <span class="flex-1"
                 >Failed to load audit log: {ai.auditError}</span
               >
+              <button
+                type="button"
+                onclick={() => void ai.loadAudit()}
+                class="text-type-xs font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
+              >
+                Retry
+              </button>
             </div>
           {:else if ai.audit.length === 0}
             <p class="text-text-muted text-type-sm font-body-md py-3">
