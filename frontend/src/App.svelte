@@ -50,7 +50,7 @@
   import { initThemes } from './theme/store.svelte'
   import { initTemplates } from './templates/store.svelte'
   import TemplatePicker from './templates/TemplatePicker.svelte'
-  import { matchHotkey } from './settings/hotkeys'
+  import { resolveGlobalHotkey } from './shell/globalHotkeys'
   import { findBarState } from './lib/editor/search/findBarState.svelte'
   import {
     clearAllEditors,
@@ -658,114 +658,82 @@
     }
 
     function handleGlobalKeyDown(e: KeyboardEvent) {
-      // Config-driven global shortcuts. Read live from the settings store so
-      // edits made in Settings → General take effect after Save (no rebind
-      // needed — the store is a reactive proxy read at event time). Editor-
-      // internal shortcuts (indent/unindent) are consumed by the editor's
-      // own keydown handler; cycle_view_layout is global (it changes the
-      // main view, not anything inside the contenteditable).
+      // Config-driven global shortcuts. Resolution (editor-focus guard +
+      // first-match-wins ordering) lives in the pure resolveGlobalHotkey so
+      // it is unit-tested; this handler only switch-dispatches the result.
       const hotkeys = settings.config?.hotkeys ?? {}
-
-      // If the editor (ProseMirror contenteditable) is focused, skip global
-      // bindings that collide with editor format shortcuts (#168). The main
-      // conflict is Ctrl+B (toggle_sidebar vs format_bold). ProseMirror
-      // handles format_* shortcuts inside the contenteditable; the global
-      // handler must not also fire.
-      const target = e.target as HTMLElement | null
-      if (target?.closest('.ProseMirror')) {
-        // Skip any hotkey consumed inside the editor (format, heading,
-        // alignment) so the global handler doesn't double-fire (#168, #169,
-        // #173). toggle_view_mode is intentionally NOT in this list: no
-        // editor-internal keymap handles it, so suppressing it left the view
-        // toggle dead while typing. The global handler now flips the active
-        // tab's mode directly regardless of editor focus (#171/#195).
-        for (const [action, binding] of Object.entries(hotkeys)) {
-          if (
-            (action.startsWith('format_') ||
-              action.startsWith('set_') ||
-              action.startsWith('align_')) &&
-            matchHotkey(e, binding)
-          ) {
-            return
-          }
-        }
-      }
-
-      // Global actions are mutually exclusive: the first chord that matches
-      // wins and the rest are skipped, so two global actions a user remapped
-      // to the same chord can't double-fire. The intentional global-vs-editor
-      // overlap (e.g. Ctrl+B = toggle_sidebar globally, format_bold in-editor)
-      // is resolved by the ProseMirror guard above, which returns before this
-      // chain runs when the editor is focused.
-      if (matchHotkey(e, hotkeys.open_search)) {
-        e.preventDefault()
-        showSearch = !showSearch
-      } else if (matchHotkey(e, hotkeys.find_in_page)) {
-        e.preventDefault()
-        findBarState.openFind()
-      } else if (matchHotkey(e, hotkeys.replace)) {
-        e.preventDefault()
-        findBarState.openReplace()
-      } else if (matchHotkey(e, hotkeys.global_replace)) {
-        e.preventDefault()
-        showGlobalReplace = !showGlobalReplace
-      } else if (matchHotkey(e, hotkeys.toggle_sidebar)) {
-        e.preventDefault()
-        sidebarCollapsed = !sidebarCollapsed
-        manuallyCollapsed = sidebarCollapsed
-      } else if (matchHotkey(e, hotkeys.focus_sidebar)) {
-        e.preventDefault()
-        void focusSidebar()
-      } else if (matchHotkey(e, hotkeys.cycle_view_layout)) {
-        e.preventDefault()
-        cycleView()
-      } else if (matchHotkey(e, hotkeys.open_template_picker)) {
-        e.preventDefault()
-        templatePickerMode = 'new-page'
-        showTemplatePicker = !showTemplatePicker
-      } else if (matchHotkey(e, hotkeys.new_task)) {
-        e.preventDefault()
-        showQuickAdd = !showQuickAdd
-      } else if (matchHotkey(e, hotkeys.toggle_view_mode)) {
-        e.preventDefault()
-        // Flip the active tab's view mode directly (#195) — no window-event
-        // indirection, App owns the per-tab state.
-        if (activeTabId) handleToggleViewMode(activeTabId)
-      } else if (matchHotkey(e, hotkeys.toggle_format_toolbar)) {
-        e.preventDefault()
-        void toggleFormatToolbar()
-      } else if (matchHotkey(e, hotkeys.toggle_focus_mode)) {
-        e.preventDefault()
-        void toggleFocusMode()
-      } else if (matchHotkey(e, hotkeys.toggle_typewriter_mode)) {
-        e.preventDefault()
-        void toggleTypewriterMode()
-      } else if (
-        hotkeys.open_settings &&
-        matchHotkey(e, hotkeys.open_settings)
-      ) {
-        e.preventDefault()
-        openSettings()
-        return
-      } else if (displayedTabs.length > 0) {
-        // Tab-strip hotkeys (#142). Ctrl+Tab / Ctrl+Shift+Tab cycle MRU;
-        // Ctrl+W closes the active tab. All three are remappable / disable-
-        // able (empty string) from Settings → General. No-op when 0 tabs.
-        if (matchHotkey(e, hotkeys.next_tab)) {
-          e.preventDefault()
+      const editorFocused = !!(e.target as HTMLElement | null)?.closest(
+        '.ProseMirror'
+      )
+      const action = resolveGlobalHotkey(
+        e,
+        hotkeys,
+        editorFocused,
+        displayedTabs.length > 0
+      )
+      if (!action) return
+      e.preventDefault()
+      switch (action) {
+        case 'open_search':
+          showSearch = !showSearch
+          break
+        case 'find_in_page':
+          findBarState.openFind()
+          break
+        case 'replace':
+          findBarState.openReplace()
+          break
+        case 'global_replace':
+          showGlobalReplace = !showGlobalReplace
+          break
+        case 'toggle_sidebar':
+          sidebarCollapsed = !sidebarCollapsed
+          manuallyCollapsed = sidebarCollapsed
+          break
+        case 'focus_sidebar':
+          void focusSidebar()
+          break
+        case 'cycle_view_layout':
+          cycleView()
+          break
+        case 'open_template_picker':
+          templatePickerMode = 'new-page'
+          showTemplatePicker = !showTemplatePicker
+          break
+        case 'new_task':
+          showQuickAdd = !showQuickAdd
+          break
+        case 'toggle_view_mode':
+          // Flip the active tab's view mode directly (#195) — no window-event
+          // indirection, App owns the per-tab state.
+          if (activeTabId) handleToggleViewMode(activeTabId)
+          break
+        case 'toggle_format_toolbar':
+          void toggleFormatToolbar()
+          break
+        case 'toggle_focus_mode':
+          void toggleFocusMode()
+          break
+        case 'toggle_typewriter_mode':
+          void toggleTypewriterMode()
+          break
+        case 'open_settings':
+          openSettings()
+          break
+        case 'next_tab':
           handleCycleTab(1)
-        } else if (matchHotkey(e, hotkeys.prev_tab)) {
-          e.preventDefault()
+          break
+        case 'prev_tab':
           handleCycleTab(-1)
-        } else if (matchHotkey(e, hotkeys.close_tab)) {
-          e.preventDefault()
+          break
+        case 'close_tab':
           // Guard: only close if the active tab is visible in the current
           // notebook's displayed set (#142 review: closing a hidden tab
           // from another notebook would be surprising to the user).
           if (activeTabId && displayedTabs.some((t) => t.id === activeTabId)) {
             handleCloseTab(activeTabId)
           }
-        }
+          break
       }
     }
 
