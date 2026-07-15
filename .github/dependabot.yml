@@ -1,86 +1,25 @@
-# Dependabot keeps GitHub Actions versions and npm/Go dependencies current so a
-# new transitive advisory is caught by the F8 security gate (via npm audit /
-# govulncheck) rather than landing unnoticed. Weekly cadence balances freshness
-# against PR noise; the open-pull-requests-limit caps flooding.
-#
-# groups: per the dependabot-triage skill, native groups prevent PR spam at
-# source (vs combining after the fact). A single grouped PR is auto-mergeable
-# as one unit; separate ungrouped PRs need manual triage per the matrix.
-#
-# cooldown: delays updates so a freshly published malicious or broken version
-# gets caught upstream (npm advisories, yanked releases) before it lands here.
-# Patch bumps still flow within a day; majors wait a week for review.
-#
-# GitHub Actions live in their own group because they are supply-chain risk
-# per the triage skill — a green CI proves our tests ran inside the new action,
-# not that the action's own code is benign. Keeping them grouped + separately
-# labelled makes "this is a code-execution surface" visible at review time.
-
 version: 2
-
 updates:
-  - package-ecosystem: github-actions
-    directory: /
+  - package-ecosystem: "npm"
+    directory: "/frontend"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: chore
-      include: scope
+      interval: "weekly"
     groups:
-      actions:
-        patterns:
-          - "*"
-
-  # Frontend npm dependencies (Vite, Svelte, TipTap, fonts). The lockfile
-  # lives in frontend/ so directory must point there.
-  - package-ecosystem: npm
-    directory: /frontend
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: chore
-      include: scope
-    cooldown:
-      semver-major-days: 7
-      semver-minor-days: 3
-      semver-patch-days: 1
-    groups:
-      # Group all patch + minor prod bumps into one PR
-      patch-minor:
+      patch:
         update-types:
           - "patch"
+      minor:
+        update-types:
           - "minor"
-      # Dev deps in their own PR
-      dev-deps:
-        dependency-type: development
-    # TypeScript 7 is blocked upstream: svelte-check 4.7.x crashes on TS 7's
-    # rewritten sys API (typescript.sys.useCaseSensitiveFileNames is undefined).
-    # Suppress major bumps until svelte-check ships TS 7 support. The next
-    # svelte-check bump PR from Dependabot is the trigger to re-evaluate.
-    # Tracking: sveltejs/language-tools#2733.
-    ignore:
-      - dependency-name: "typescript"
-        update-types: ["version-update:semver-major"]
 
-  # Go module dependencies (golang.org/x/sys, wails, modernc.org/sqlite, etc.).
-  # Catches transitive Go advisories the way npm updates catch frontend ones;
-  # govulncheck reports only reachable vulns, so dependabot also surfaces
-  # out-of-date-but-not-yet-advisory'd deps.
-  - package-ecosystem: gomod
-    directory: /
+  - package-ecosystem: "gomod"
+    directory: "/"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: chore
-      include: scope
-    cooldown:
-      semver-major-days: 7
-      semver-minor-days: 3
-      semver-patch-days: 1
+      interval: "weekly"
     groups:
-      gomod:
-        patterns:
-          - "*"
+      patch:
+        update-types:
+          - "patch"
+      minor:
+        update-types:
+          - "minor"
