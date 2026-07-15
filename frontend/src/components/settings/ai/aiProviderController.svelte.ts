@@ -7,19 +7,20 @@
 // Follows the repo's .svelte.ts state-module pattern (theme/editor/workingCopy,
 // silt-tasks/state). The one $effect that needs component context (the audit
 // lazy-load on <details> expand) stays in the component and calls loadAudit().
-import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
-import {
-  GetAIProviderConfig,
-  UpdateAIProviderConfig,
-  SetAIAPIKey,
-  CopyAIAPIKey,
-  ClearAIAPIKey,
-  SetUseKeyring,
-  TestAIConnection,
-  ListModels,
-  GetAIAudit,
-  ClearAIAudit
-} from '../../../../bindings/silt/app.js'
+  import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
+  import { updatePluginSetting } from '../../../settings/store.svelte'
+  import {
+    GetAIProviderConfig,
+    UpdateAIProviderConfig,
+    SetAIAPIKey,
+    CopyAIAPIKey,
+    ClearAIAPIKey,
+    SetUseKeyring,
+    TestAIConnection,
+    ListModels,
+    GetAIAudit,
+    ClearAIAudit
+  } from '../../../../bindings/silt/app.js'
 import type * as main from '../../../../bindings/silt/models.js'
 import type * as aiTypes from '../../../../bindings/silt/backend/ai/models.js'
 
@@ -41,6 +42,42 @@ export const ANTHROPIC_DEFAULT = 'https://api.anthropic.com'
 export function supportsEmbeddings(type: string): boolean {
   return type !== 'anthropic'
 }
+
+// Providers that accept a reasoning_effort-style field on chat completions.
+export function supportsReasoningEffort(type: string): boolean {
+  return type === 'openai-compatible' || type === 'google' || type === 'local'
+}
+
+function presetLabel(
+  value: number | string | undefined | null,
+  options: { value: number | string; label: string }[],
+  fallback: string
+): string {
+  if (value === undefined || value === null || value === '') return fallback
+  const hit = options.find((o) => o.value === value)
+  return hit?.label ?? 'Custom'
+}
+
+const TEMP_PRESETS = [
+  { value: 0.2, label: 'Precise' },
+  { value: 0.5, label: 'Natural' },
+  { value: 0.9, label: 'Creative' }
+]
+const REASONING_PRESETS = [
+  { value: 'none', label: 'Quick' },
+  { value: 'medium', label: 'Standard' },
+  { value: 'high', label: 'Deep' }
+]
+const TOKENS_PRESETS = [
+  { value: 512, label: 'Concise' },
+  { value: 2048, label: 'Standard' },
+  { value: 4096, label: 'Detailed' }
+]
+const DIM_PRESETS = [
+  { value: 0, label: 'Auto' },
+  { value: 768, label: 'Compact' },
+  { value: 1024, label: 'Balanced' }
+]
 
 export function providerDefaultURL(type: string): string {
   switch (type) {
@@ -218,6 +255,14 @@ export function createAIProviderController() {
     return fields.some((f) => advancedFieldError(which, f) !== null)
   }
 
+  async function markSearchIndexStale(reason: string) {
+    try {
+      await updatePluginSetting('silt-ai-qa', 'stale_reason', reason)
+    } catch {
+      /* best-effort — search still works with a stale index */
+    }
+  }
+
   async function persistProvider(which: Which): Promise<PersistResult> {
     if (!config)
       return { ok: false, message: 'AI provider settings are not loaded.' }
@@ -228,6 +273,9 @@ export function createAIProviderController() {
       }
     }
     const b = config[which]
+    // Snapshot pre-persist embedding fields for stale-index detection (#617).
+    const prevModel = config.embedding.model
+    const prevDims = config.embedding.dimensions
     const patch: main.AIProviderPatch = {
       provider_type: b.provider_type,
       base_url: b.base_url,
@@ -240,6 +288,19 @@ export function createAIProviderController() {
     }
     try {
       await UpdateAIProviderConfig(which, patch)
+      if (which === 'embedding' || syncProviders) {
+        const nextModel = config.embedding.model
+        const nextDims = config.embedding.dimensions
+        if (prevModel && nextModel && prevModel !== nextModel) {
+          await markSearchIndexStale(
+            `Search model changed from ${prevModel} to ${nextModel}`
+          )
+        } else if (prevDims !== nextDims && (prevDims || nextDims)) {
+          await markSearchIndexStale(
+            `Index Density changed from ${prevDims ?? 'Auto'} to ${nextDims ?? 'Auto'}`
+          )
+        }
+      }
       return { ok: true }
     } catch (e) {
       console.error('UpdateAIProviderConfig failed:', e)
@@ -617,17 +678,26 @@ export function createAIProviderController() {
     },
     get tuningSummary(): string {
       if (!config) return ''
+      const chat = config.chat
+      const style = presetLabel(chat.temperature ?? 0.5, TEMP_PRESETS, 'Default')
+      const depth = presetLabel(
+        chat.reasoning_effort ?? 'medium',
+        REASONING_PRESETS,
+        'Default'
+      )
+      const length = presetLabel(chat.max_tokens ?? 2048, TOKENS_PRESETS, 'Default')
+      const density = presetLabel(
+        config.embedding.dimensions ?? 0,
+        DIM_PRESETS,
+        'Auto'
+      )
       if (syncProviders) {
-        const chatModel = config.chat.model || 'none'
-        const embedModel = config.embedding.model || 'none'
-        return `Chat: ${chatModel} (Temp ${config.chat.temperature ?? 'default'}) · Embed: ${embedModel}`
+        return `${style}, ${depth}, ${length} · Index: ${density}`
       }
-      const b = config[activeRole]
-      const model = b.model || 'none'
       if (activeRole === 'chat') {
-        return `Chat Model: ${model} (Temp ${b.temperature ?? 'default'})`
+        return `${style}, ${depth}, ${length}`
       }
-      return `Embedding Model: ${model} (${b.dimensions ?? 'default'} dims)`
+      return `Index Density: ${density}`
     },
     get keyringSummary(): string {
       if (!config) return ''

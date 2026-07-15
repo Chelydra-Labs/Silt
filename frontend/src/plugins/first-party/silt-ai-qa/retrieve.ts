@@ -1,4 +1,4 @@
-// End-to-end hybrid retrieval for silt-ai-qa (#225).
+// End-to-end hybrid retrieval for silt-ai-qa (#225, #620).
 
 import type { PluginContext } from '../../sdk'
 import { fuseHybrid, trimToBudget, type RankedHit } from './hybrid'
@@ -34,13 +34,77 @@ export function ftsRowsToHits(rows: Record<string, unknown>[]): RankedHit[] {
   })
 }
 
+function cosine(a: number[], b: number[]): number {
+  const n = Math.min(a.length, b.length)
+  if (n === 0) return 0
+  let dot = 0
+  let na = 0
+  let nb = 0
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i]
+    na += a[i] * a[i]
+    nb += b[i] * b[i]
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb)
+  return denom === 0 ? 0 : dot / denom
+}
+
+/**
+ * Re-score fused candidates by query–passage cosine similarity.
+ * Fail-open: returns original order on any embed error.
+ */
+export async function rerankPassages(
+  ctx: PluginContext,
+  query: string,
+  passages: RetrievedPassage[]
+): Promise<RetrievedPassage[]> {
+  if (passages.length === 0) return passages
+  try {
+    const queryEmb = await ctx.ai.embed({
+      texts: [query],
+      taskType: 'RETRIEVAL_QUERY'
+    })
+    const qVec = queryEmb.embeddings[0]
+    if (!qVec) return passages
+
+    const BATCH = 16
+    const scores: number[] = new Array(passages.length).fill(0)
+    for (let i = 0; i < passages.length; i += BATCH) {
+      const batch = passages.slice(i, i + BATCH)
+      const res = await ctx.ai.embed({
+        texts: batch.map((p) => p.text),
+        taskType: 'RETRIEVAL_DOCUMENT'
+      })
+      for (let j = 0; j < batch.length; j++) {
+        const vec = res.embeddings[j]
+        scores[i + j] = vec ? cosine(qVec, vec) : 0
+      }
+    }
+
+    const ranked = passages
+      .map((p, i) => ({ p, score: scores[i] }))
+      .sort((a, b) => b.score - a.score)
+      .map((r, i) => ({
+        ...r.p,
+        score: r.score,
+        citeIndex: i + 1
+      }))
+    return ranked
+  } catch {
+    // Graceful degradation: keep RRF order.
+    return passages
+  }
+}
+
 export async function hybridRetrieve(
   ctx: PluginContext,
   question: string,
   settings: QASettings
 ): Promise<RetrievedPassage[]> {
   const k = Math.max(settings.top_k, 1)
-  const fetchK = Math.max(k * 2, 10)
+  const fetchK = settings.rerank_enabled
+    ? Math.max(k * 5, 50)
+    : Math.max(k * 2, 10)
 
   let vecHits: RankedHit[] = []
   let ftsRows: Record<string, unknown>[] = []
@@ -80,11 +144,19 @@ export async function hybridRetrieve(
   }
 
   const ftsHits = ftsRowsToHits(ftsRows).slice(0, fetchK)
+  // When reranking, fuse a wider candidate set first; otherwise fuse to k.
+  const fuseTopK = settings.rerank_enabled ? fetchK : k
   let fused = fuseHybrid(vecHits, ftsHits, {
     hybridWeight: settings.hybrid_weight,
-    topK: k,
+    topK: fuseTopK,
     minScore: settings.min_score
   })
+
+  if (settings.rerank_enabled) {
+    fused = await rerankPassages(ctx, question, fused)
+    fused = fused.slice(0, k).map((p, i) => ({ ...p, citeIndex: i + 1 }))
+  }
+
   fused = trimToBudget(fused, settings.max_context_chars)
   return fused.filter((p) => p.text.length > 0)
 }

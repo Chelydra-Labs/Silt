@@ -8,9 +8,16 @@
   } from '../../../settings/ai-setup'
   import { settings, saveConfig } from '../../../settings/store.svelte'
   import { loadPlugins, teardownPlugin } from '../../loader'
+  import PresetControl from '../../../components/settings/PresetControl.svelte'
   import { DEFAULT_SETTINGS, resolveSettings } from './settings'
   import type { QASettings } from './types'
   import { getQAController } from './state.svelte'
+  import {
+    SEARCH_BALANCE_PRESETS,
+    CONTEXT_BREADTH_PRESETS,
+    matchContextBreadth,
+    contextBreadthFromKey
+  } from './searchPresets'
 
   interface Props {
     ctx: PluginContext
@@ -65,6 +72,31 @@
     } catch {
       /* best-effort */
     }
+  }
+
+  async function saveKeys(patch: Partial<QASettings>) {
+    local = { ...local, ...patch }
+    try {
+      for (const [k, v] of Object.entries(patch)) {
+        await ctx.updatePluginSetting(k, v as never)
+      }
+      ctl?.setSettings(resolveSettings({ ...local } as any))
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  const contextBreadthKey = $derived(
+    matchContextBreadth(local.top_k, local.max_context_chars)
+  )
+
+  function onContextBreadthChange(key: string) {
+    const preset = contextBreadthFromKey(key)
+    if (!preset) return
+    void saveKeys({
+      top_k: preset.top_k,
+      max_context_chars: preset.max_context_chars
+    })
   }
 
   async function toggleEnabled() {
@@ -122,7 +154,7 @@
   <section class="card">
     <h3>Models</h3>
     <p class="hint">
-      Chat and embedding models are configured on the
+      Chat and search models are configured on the
       <button
         type="button"
         class="link"
@@ -130,12 +162,12 @@
       >
         AI Provider
       </button>
-      page. Embeddings power the index; chat answers questions. See BRING_YOUR_OWN_MODEL
-      in the docs.
+      page. The search model powers the search index; chat answers questions. See
+      BRING_YOUR_OWN_MODEL in the docs.
     </p>
     <ul class="status-list">
       <li>Chat: {chatUnconfigured ? 'not configured' : 'ready'}</li>
-      <li>Embedding: {embedUnconfigured ? 'not configured' : 'ready'}</li>
+      <li>Search model: {embedUnconfigured ? 'not configured' : 'ready'}</li>
     </ul>
   </section>
 
@@ -152,7 +184,7 @@
             (e.currentTarget as HTMLInputElement).checked
           )}
       />
-      <span>Auto re-embed on save</span>
+      <span>Auto-update search index on save</span>
     </label>
     <label class="field">
       <span>Notebook scope (comma-separated; empty = all)</span>
@@ -170,14 +202,35 @@
         }}
       />
     </label>
+    {#if ctl?.showStaleBanner}
+      <div class="stale-banner" role="alert" aria-live="polite">
+        <strong>Search index needs updating</strong>
+        <p>{ctl.settings.stale_reason}. Rebuild for accurate results.</p>
+        <div class="stale-actions">
+          <button
+            type="button"
+            class="primary warn"
+            disabled={rebuildBusy || embedUnconfigured || !enabled}
+            onclick={() => void onRebuild()}
+          >
+            Rebuild now
+          </button>
+          <button
+            type="button"
+            class="ghost"
+            onclick={() => ctl.dismissStaleBanner()}>Later</button
+          >
+        </div>
+      </div>
+    {/if}
     <div class="index-status" role="status">
       {#if ctl?.progress}
         Status: {ctl.progress.status}
         {#if ctl.progress.chunkCount != null}
-          · {ctl.progress.chunkCount} chunks
+          · {ctl.progress.chunkCount} notes indexed
         {/if}
         {#if ctl.progress.model}
-          · model {ctl.progress.model}
+          · search model {ctl.progress.model}
         {/if}
         {#if ctl.progress.dimensions}
           · {ctl.progress.dimensions}d
@@ -192,47 +245,90 @@
     <button
       type="button"
       class="primary"
+      class:warn={Boolean(local.stale_reason)}
       disabled={rebuildBusy || embedUnconfigured || !enabled}
       onclick={() => void onRebuild()}
     >
-      {rebuildBusy ? 'Rebuilding…' : 'Rebuild index'}
+      {rebuildBusy ? 'Updating…' : 'Update search index'}
     </button>
   </section>
 
   <section class="card">
-    <h3>Retrieval</h3>
-    <label class="field">
-      <span>Hybrid weight (vector) — {local.hybrid_weight.toFixed(2)}</span>
-      <input
-        type="range"
-        min="0"
-        max="1"
-        step="0.05"
+    <h3>Search</h3>
+    {#if loaded}
+      <PresetControl
+        label="Search Balance"
+        tooltipText="How should your search work? Keyword search finds notes containing your exact words. Semantic search finds notes with similar meaning even if the words are different."
+        tooltipTechnical="Technical: Hybrid weight in Reciprocal Rank Fusion. 0.0 = pure keyword, 1.0 = pure semantic."
+        options={[...SEARCH_BALANCE_PRESETS]}
         value={local.hybrid_weight}
-        disabled={!loaded}
-        onchange={(e) =>
-          void saveKey(
-            'hybrid_weight',
-            Number((e.currentTarget as HTMLInputElement).value)
-          )}
+        customLabel="Hybrid weight"
+        customMin={0}
+        customMax={1}
+        customStep={0.05}
+        customRange={true}
+        onchange={(v) => void saveKey('hybrid_weight', v)}
       />
-      <span class="hint">0 = keyword only · 1 = semantic only</span>
-    </label>
-    <label class="field">
-      <span>Top-k passages</span>
-      <input
-        type="number"
-        min="1"
-        max="50"
-        value={local.top_k}
-        disabled={!loaded}
-        onchange={(e) =>
-          void saveKey(
-            'top_k',
-            Number((e.currentTarget as HTMLInputElement).value)
-          )}
+      <PresetControl
+        label="Context Breadth"
+        tooltipText="How many of your notes should the AI read before answering? More notes means broader synthesis but slower responses."
+        tooltipTechnical="Technical: Top-K retrieval count + max context characters (character budget in the prompt). No hard ceiling — scales to your model's context window."
+        options={CONTEXT_BREADTH_PRESETS.map((p) => ({
+          value: p.value,
+          label: p.label,
+          description: p.description
+        }))}
+        value={contextBreadthKey === '__custom__' ? '' : contextBreadthKey}
+        onchange={(v) => onContextBreadthChange(String(v))}
       />
-    </label>
+      <details class="adv-details">
+        <summary>Advanced context limits</summary>
+        <label class="field">
+          <span>Notes to retrieve (top-k)</span>
+          <input
+            type="number"
+            min="1"
+            max="100"
+            value={local.top_k}
+            onchange={(e) =>
+              void saveKey(
+                'top_k',
+                Number((e.currentTarget as HTMLInputElement).value)
+              )}
+          />
+        </label>
+        <label class="field">
+          <span>Context budget (characters)</span>
+          <input
+            type="number"
+            min="1000"
+            value={local.max_context_chars}
+            onchange={(e) =>
+              void saveKey(
+                'max_context_chars',
+                Number((e.currentTarget as HTMLInputElement).value)
+              )}
+          />
+        </label>
+      </details>
+      <label class="row">
+        <input
+          type="checkbox"
+          checked={local.rerank_enabled}
+          onchange={(e) =>
+            void saveKey(
+              'rerank_enabled',
+              (e.currentTarget as HTMLInputElement).checked
+            )}
+        />
+        <span>Smart Re-ranking (Advanced)</span>
+      </label>
+      <p class="hint">
+        After finding matching notes, re-evaluates and re-orders them for higher
+        accuracy. Improves answer quality but adds a brief delay. Technical:
+        Cosine re-score on the top fused candidates before context injection.
+      </p>
+    {/if}
   </section>
 
   <section class="card">
@@ -330,5 +426,49 @@
     padding: 0;
     font: inherit;
     text-decoration: underline;
+  }
+  .adv-details {
+    font-size: 0.8rem;
+  }
+  .adv-details summary {
+    cursor: pointer;
+    opacity: 0.8;
+    margin-bottom: 0.35rem;
+  }
+  .primary.warn {
+    background: color-mix(in srgb, var(--color-status-warn, #fbbf24) 85%, #000);
+    color: #1a1a1a;
+  }
+  .stale-banner {
+    border: 1px solid
+      color-mix(in srgb, var(--color-status-warn, #fbbf24) 50%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-status-warn, #fbbf24) 12%,
+      transparent
+    );
+    border-radius: 0.4rem;
+    padding: 0.65rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .stale-banner p {
+    margin: 0;
+    font-size: 0.85rem;
+    opacity: 0.9;
+  }
+  .stale-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .ghost {
+    border: 1px solid var(--surface-panel-border, #2a2a30);
+    background: transparent;
+    border-radius: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    cursor: pointer;
+    color: inherit;
   }
 </style>

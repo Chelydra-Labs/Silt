@@ -15,10 +15,13 @@ import {
   ensureIndexReady,
   getIndexInfo,
   indexPage,
+  metaGet,
   needsFullRebuildForModel,
   rebuildIndex,
   resetIndexState
 } from './embed_index'
+import { pushNotification } from '../../../notifications/store.svelte'
+import { updatePluginSetting } from '../../../settings/store.svelte'
 
 export type PanelStatus =
   | 'idle'
@@ -73,6 +76,10 @@ export function createQAController() {
   /** Serializes rebuild / page index so they never interleave. */
   let indexChain: Promise<void> = Promise.resolve()
   let disposed = false
+  /** Session-scoped dismiss for the stale-index banner ("Later"). */
+  let staleBannerDismissed = $state(false)
+  /** Soft toast once per search session when querying a stale index. */
+  let staleSearchToasted = false
 
   function loadSettings(_ctx?: PluginContext) {
     const raw = (appSettings.config?.plugins?.plugin_settings as any)?.[
@@ -83,6 +90,40 @@ export function createQAController() {
 
   function setSettings(next: QASettings) {
     settings = next
+  }
+
+  async function setStaleReason(reason: string | null) {
+    settings = { ...settings, stale_reason: reason }
+    try {
+      await updatePluginSetting('silt-ai-qa', 'stale_reason', reason)
+    } catch {
+      /* best-effort */
+    }
+    if (reason) staleBannerDismissed = false
+  }
+
+  function dismissStaleBanner() {
+    staleBannerDismissed = true
+  }
+
+  async function checkTaskTypeMigration(ctx: PluginContext) {
+    const providerType = String(
+      appSettings.config?.ai?.embedding?.provider_type ?? ''
+    )
+    if (providerType !== 'google') return
+    try {
+      const ver = await metaGet(ctx, 'task_type_version')
+      const n = Number(ver ?? 0)
+      if (!Number.isFinite(n) || n < 1) {
+        if (!settings.stale_reason) {
+          await setStaleReason(
+            'Search index format updated — rebuild for best results'
+          )
+        }
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   function chatReady(): boolean {
@@ -144,6 +185,11 @@ export function createQAController() {
         await rebuildIndex(ctx, settings, (p) => {
           if (!disposed) progress = p
         })
+        if (!disposed) {
+          await setStaleReason(null)
+          staleBannerDismissed = false
+          staleSearchToasted = false
+        }
       } catch (e: any) {
         if (!disposed) {
           progress = {
@@ -176,6 +222,7 @@ export function createQAController() {
       if (disposed) return
       try {
         await ensureIndexReady(ctx)
+        await checkTaskTypeMigration(ctx)
         const model = configuredEmbedModel()
         const info = await getIndexInfo(ctx)
         const mustRebuild =
@@ -185,6 +232,10 @@ export function createQAController() {
           await rebuildIndex(ctx, settings, (p) => {
             if (!disposed) progress = p
           })
+          if (!disposed) {
+            await setStaleReason(null)
+            staleSearchToasted = false
+          }
         } else {
           progress = {
             status: 'ready',
@@ -193,7 +244,7 @@ export function createQAController() {
             model: info.model,
             dimensions: info.dimensions,
             chunkCount: info.chunkCount,
-            message: `Indexed ${info.chunkCount} chunks`
+            message: `Indexed ${info.chunkCount} notes`
           }
         }
       } catch (e: any) {
@@ -271,6 +322,13 @@ export function createQAController() {
     let assistantStarted = false
 
     try {
+      if (settings.stale_reason && !staleSearchToasted) {
+        staleSearchToasted = true
+        pushNotification({
+          kind: 'info',
+          message: 'Search index is outdated; results may be less accurate.'
+        })
+      }
       const passages = await hybridRetrieve(ctx, q, settings)
       if (passages.length === 0) {
         panelStatus = 'no-results'
@@ -407,8 +465,16 @@ export function createQAController() {
     get askInFlight() {
       return askInFlight
     },
+    get staleBannerDismissed() {
+      return staleBannerDismissed
+    },
+    get showStaleBanner() {
+      return Boolean(settings.stale_reason) && !staleBannerDismissed
+    },
     loadSettings,
     setSettings,
+    setStaleReason,
+    dismissStaleBanner,
     chatReady,
     embedReady,
     refreshIndexInfo,

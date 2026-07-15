@@ -112,7 +112,7 @@ export async function needsFullRebuildForModel(
   return false
 }
 
-async function metaGet(
+export async function metaGet(
   ctx: PluginContext,
   key: string
 ): Promise<string | null> {
@@ -327,7 +327,12 @@ async function indexChunks(
   let dims = 0
   let done = 0
   const total = chunks.length
-  onProgress?.({ status: 'indexing', done: 0, total, message: 'Embedding…' })
+  onProgress?.({
+    status: 'indexing',
+    done: 0,
+    total,
+    message: 'Building search index…'
+  })
 
   for (let i = 0; i < chunks.length; i += BATCH) {
     const batch = chunks.slice(i, i + BATCH)
@@ -388,7 +393,7 @@ async function indexChunks(
       total,
       model,
       dimensions: dims,
-      message: `Embedded ${done}/${total}`
+      message: `Indexed ${done}/${total}`
     })
   }
 
@@ -404,7 +409,7 @@ async function indexChunks(
     model,
     dimensions: dims,
     chunkCount: n,
-    message: `Indexed ${n} chunks`
+    message: `Indexed ${n} notes`
   })
 }
 

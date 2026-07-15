@@ -3,8 +3,8 @@
 import type { Citation, QAMessage, RetrievedPassage } from './types'
 
 export const SYSTEM_PROMPT = `You are a helpful assistant answering questions about the user's personal notes.
-Use ONLY the provided passages. Cite sources with [n] markers that match the passage numbers.
-If the passages do not contain enough information, say so clearly — do not invent facts or citations.
+Use ONLY the provided excerpts from their notes. Cite sources with [n] markers that match the excerpt numbers.
+If the notes do not contain enough information, say so clearly — do not invent facts or citations.
 When synthesizing across multiple notes, cite each source you use.
 Answer the question directly — do not show your analysis, reasoning steps, or chain-of-thought.`
 
@@ -45,7 +45,7 @@ export function buildRAGMessages(
 
   messages.push({
     role: 'user',
-    content: `Passages:\n\n${passageBlock || '(none)'}\n\nQuestion: ${question}`
+    content: `Notes:\n\n${passageBlock || '(none)'}\n\nQuestion: ${question}`
   })
   return messages
 }
@@ -83,4 +83,4 @@ export function parseCitations(
 }
 
 export const NO_RESULTS_MESSAGE =
-  'I could not find relevant passages in your notes for that question. Try different keywords, rebuild the index, or broaden the notebook scope in Settings.'
+  'I could not find relevant notes for that question. Try different keywords, update the search index, or broaden the notebook scope in Settings.'

@@ -23,7 +23,7 @@ export const manifest: PluginManifest = {
   version: '0.1.0',
   author: 'Silt',
   description:
-    'Search your vault with hybrid keyword + semantic retrieval, and get cited answers from your notes. Requires chat + embedding models.',
+    'Search your vault by keyword and meaning, and get cited answers from your notes. Requires chat + search models.',
   icon: 'auto_awesome',
   capabilities: { ai: true, 'plugin-db': true }
 }

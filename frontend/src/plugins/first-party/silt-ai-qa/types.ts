@@ -1,4 +1,4 @@
-// Types for silt-ai-qa (#224–#228).
+// Types for silt-ai-qa (#224–#228, Sprint 42).
 
 export interface QASettings {
   /** Notebooks to index. Empty = all notebooks. */
@@ -15,6 +15,10 @@ export interface QASettings {
   max_context_chars: number
   /** Debounce for incremental re-index after save (ms). */
   reindex_debounce_ms: number
+  /** Human-readable reason the search index is stale; null when fresh. */
+  stale_reason: string | null
+  /** When true, re-score fused candidates by query–passage cosine similarity. */
+  rerank_enabled: boolean
 }
 
 export interface ChunkRecord {
