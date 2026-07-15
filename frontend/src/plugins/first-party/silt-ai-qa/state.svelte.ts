@@ -16,6 +16,7 @@ import {
   getIndexInfo,
   indexPage,
   metaGet,
+  metaSet,
   needsFullRebuildForModel,
   rebuildIndex,
   resetIndexState
@@ -112,9 +113,11 @@ export function createQAController() {
     )
     if (providerType !== 'google') return
     try {
-      const ver = await metaGet(ctx, 'task_type_version')
-      const n = Number(ver ?? 0)
-      if (!Number.isFinite(n) || n < 1) {
+      // task_type_used records whether the index was built with Google's
+      // document/query task-type asymmetry. Missing or 'none' on a Google
+      // provider means the index predates #610 and should be rebuilt.
+      const used = await metaGet(ctx, 'task_type_used')
+      if (used !== 'asymmetric') {
         if (!settings.stale_reason) {
           await setStaleReason(
             'Search index format updated — rebuild for best results'
@@ -123,6 +126,22 @@ export function createQAController() {
       }
     } catch {
       /* ignore */
+    }
+  }
+
+  /** Stamp whether this index used Google's task-type asymmetry. */
+  async function stampTaskTypeMeta(ctx: PluginContext) {
+    const providerType = String(
+      appSettings.config?.ai?.embedding?.provider_type ?? ''
+    )
+    try {
+      await metaSet(
+        ctx,
+        'task_type_used',
+        providerType === 'google' ? 'asymmetric' : 'none'
+      )
+    } catch {
+      /* best-effort */
     }
   }
 
@@ -186,6 +205,7 @@ export function createQAController() {
           if (!disposed) progress = p
         })
         if (!disposed) {
+          await stampTaskTypeMeta(ctx)
           await setStaleReason(null)
           staleBannerDismissed = false
           staleSearchToasted = false
@@ -233,6 +253,7 @@ export function createQAController() {
             if (!disposed) progress = p
           })
           if (!disposed) {
+            await stampTaskTypeMeta(ctx)
             await setStaleReason(null)
             staleSearchToasted = false
           }
@@ -278,6 +299,7 @@ export function createQAController() {
             await rebuildIndex(ctx, settings, (p) => {
               if (!disposed) progress = p
             })
+            if (!disposed) await stampTaskTypeMeta(ctx)
             return
           }
           await indexPage(ctx, notebook, section, page, settings, (p) => {

@@ -97,7 +97,7 @@
   </header>
 
   {#if ctl?.showStaleBanner}
-    <div class="qa-banner stale" role="alert" aria-live="polite">
+    <div class="qa-banner stale" role="status">
       <div class="stale-copy">
         <strong>Search index needs updating</strong>
         <span>{ctl.settings.stale_reason}. Rebuild for accurate results.</span>

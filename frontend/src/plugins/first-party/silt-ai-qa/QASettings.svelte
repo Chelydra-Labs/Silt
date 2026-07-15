@@ -204,7 +204,7 @@
       />
     </label>
     {#if ctl?.showStaleBanner}
-      <div class="stale-banner" role="alert" aria-live="polite">
+      <div class="stale-banner" role="status">
         <strong>Search index needs updating</strong>
         <p>{ctl.settings.stale_reason}. Rebuild for accurate results.</p>
         <div class="stale-actions">

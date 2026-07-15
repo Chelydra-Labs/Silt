@@ -24,27 +24,40 @@
   const contentId = `${id}-content`
   let open = $derived(activeId === id)
   let rootEl: HTMLSpanElement | undefined = $state()
+  // When pinned by click, hover-exit should not close the tooltip.
+  let pinned = false
 
   function show() {
+    pinned = false
     activeId = id
   }
 
   function hide() {
+    if (pinned) return
+    if (activeId === id) activeId = null
+  }
+
+  function forceHide() {
+    pinned = false
     if (activeId === id) activeId = null
   }
 
   function toggle(e: MouseEvent) {
     e.preventDefault()
     e.stopPropagation()
-    if (open) hide()
-    else show()
+    if (open) {
+      forceHide()
+    } else {
+      pinned = true
+      activeId = id
+    }
   }
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && open) {
       e.preventDefault()
       e.stopPropagation()
-      hide()
+      forceHide()
       ;(e.currentTarget as HTMLElement)?.blur()
     }
   }
@@ -52,7 +65,7 @@
   function onDocPointerDown(e: PointerEvent) {
     if (!open || !rootEl) return
     if (rootEl.contains(e.target as Node)) return
-    hide()
+    forceHide()
   }
 
   $effect(() => {
@@ -73,7 +86,7 @@
     onmouseenter={show}
     onmouseleave={hide}
     onfocus={show}
-    onblur={hide}
+    onblur={forceHide}
     onclick={toggle}
     onkeydown={onKeydown}
   >

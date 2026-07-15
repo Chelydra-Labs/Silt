@@ -124,7 +124,7 @@ export async function metaGet(
   return typeof v === 'string' ? v : null
 }
 
-async function metaSet(
+export async function metaSet(
   ctx: PluginContext,
   key: string,
   value: string
@@ -399,8 +399,7 @@ async function indexChunks(
 
   await metaSet(ctx, 'model', model)
   await metaSet(ctx, 'updated_at', new Date().toISOString())
-  // Marks the index as built with document/query task-type asymmetry (#610).
-  await metaSet(ctx, 'task_type_version', '1')
+  // task_type_used is stamped by the controller, which knows the provider type.
   const n = await countChunks(ctx)
   onProgress?.({
     status: 'ready',

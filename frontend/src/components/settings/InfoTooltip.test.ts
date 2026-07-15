@@ -81,4 +81,20 @@ describe('InfoTooltip', () => {
     host.remove()
     void container
   })
+
+  it('stays open on mouseleave after click-pinning', async () => {
+    render(InfoTooltip, {
+      props: { text: 'Pinned', label: 'What is Pinned?' }
+    })
+    const btn = screen.getByRole('button', { name: 'What is Pinned?' })
+    // Click opens and pins.
+    await fireEvent.click(btn)
+    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+    // Mouse leaving should NOT close a click-pinned tooltip.
+    await fireEvent.mouseLeave(btn)
+    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+    // A second click closes it.
+    await fireEvent.click(btn)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
 })

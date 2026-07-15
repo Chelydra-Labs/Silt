@@ -80,7 +80,7 @@ describe('PresetControl', () => {
       'preset-answer-style-custom'
     ) as HTMLInputElement
     expect(input).toBeTruthy()
-    await fireEvent.input(input, { target: { value: '1.2' } })
+    await fireEvent.change(input, { target: { value: '1.2' } })
     expect(onchange).toHaveBeenCalledWith(1.2)
   })
 

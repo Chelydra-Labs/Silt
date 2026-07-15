@@ -187,7 +187,7 @@
               max={customMax ?? 1}
               step={customStep ?? 0.05}
               value={typeof value === 'number' ? value : Number(value)}
-              oninput={(e) =>
+              onchange={(e) =>
                 onNumberInput((e.currentTarget as HTMLInputElement).value)}
             />
             <span
@@ -205,7 +205,7 @@
             max={customMax}
             step={customStep ?? 1}
             value={typeof value === 'number' ? value : Number(value) || ''}
-            oninput={(e) =>
+            onchange={(e) =>
               onNumberInput((e.currentTarget as HTMLInputElement).value)}
           />
         {/if}
