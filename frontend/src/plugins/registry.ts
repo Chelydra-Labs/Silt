@@ -5,6 +5,7 @@ import AttachmentsPlugin from './first-party/silt-attachments'
 import AISummaryPlugin from './first-party/silt-ai-summary'
 import AIQAPlugin from './first-party/silt-ai-qa'
 import AIAssistantPlugin from './first-party/silt-ai-assistant'
+import AIAgentPlugin from './first-party/silt-ai-agent'
 
 // First-party plugin registry: bundled Svelte components that ship with the
 // app. Third-party plugins live in .system/plugins/ and are loaded by the
@@ -76,6 +77,17 @@ registerPlugin({
   onVaultOpen: AIAssistantPlugin.onVaultOpen,
   onVaultClose: AIAssistantPlugin.onVaultClose,
   onShutdown: AIAssistantPlugin.onShutdown,
+  source: 'first-party'
+})
+// silt-ai-agent (#596): AI agent that uses tools to search, read, create, and
+// organize notes. Drives ctx.ai.complete with a tool catalog; off by default;
+// ai + content-mutate + plugin-db + read-files.
+registerPlugin({
+  manifest: AIAgentPlugin.manifest,
+  component: AIAgentPlugin.component,
+  onVaultOpen: AIAgentPlugin.onVaultOpen,
+  onVaultClose: AIAgentPlugin.onVaultClose,
+  onShutdown: AIAgentPlugin.onShutdown,
   source: 'first-party'
 })
 

@@ -15,7 +15,8 @@ describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () =>
     'silt-tasks',
     'silt-ai-summary',
     'silt-ai-qa',
-    'silt-ai-assistant'
+    'silt-ai-assistant',
+    'silt-ai-agent'
   ]
 
   it('frontend registry ids match the Go FirstPartyPluginIDs roster', () => {
