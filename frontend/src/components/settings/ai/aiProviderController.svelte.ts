@@ -8,6 +8,7 @@
 // silt-tasks/state). The one $effect that needs component context (the audit
 // lazy-load on <details> expand) stays in the component and calls loadAudit().
 import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
+import { getEmbeddingCapabilities } from '../../../settings/modelCapabilities'
 import { updatePluginSetting } from '../../../settings/store.svelte'
 import {
   GetAIProviderConfig,
@@ -169,6 +170,17 @@ export function createAIProviderController() {
   let auditState = $state<AuditState>('idle')
   let auditError = $state<string | null>(null)
 
+  // Last values successfully written for embedding model/dimensions. Callers
+  // mutate config in place before persistProvider, so a "pre-persist" read of
+  // config.embedding is already the new value — compare against this instead.
+  let lastPersistedEmbedModel = ''
+  let lastPersistedEmbedDims: number | undefined
+
+  function rememberPersistedEmbedding(cfg: main.AIPublicConfig) {
+    lastPersistedEmbedModel = cfg.embedding.model ?? ''
+    lastPersistedEmbedDims = cfg.embedding.dimensions ?? undefined
+  }
+
   async function reload(): Promise<void> {
     loading = true
     loadError = null
@@ -181,6 +193,7 @@ export function createAIProviderController() {
         const sameUrl = config.chat.base_url === config.embedding.base_url
         const sameKey = config.chat.has_key === config.embedding.has_key
         syncProviders = sameType && sameUrl && sameKey
+        rememberPersistedEmbedding(config)
       }
       void loadModels('chat')
       void loadModels('embedding')
@@ -273,9 +286,16 @@ export function createAIProviderController() {
       }
     }
     const b = config[which]
-    // Snapshot pre-persist embedding fields for stale-index detection (#617).
-    const prevModel = config.embedding.model
-    const prevDims = config.embedding.dimensions
+    // Fixed-size models reject a dimensions override; clear any leftover
+    // Compact/Balanced value when the control is hidden for that model.
+    if (which === 'embedding') {
+      const caps = getEmbeddingCapabilities(b.model ?? '')
+      if (caps.supportsTruncation === false && b.dimensions != null) {
+        b.dimensions = undefined
+      }
+    }
+    const prevModel = lastPersistedEmbedModel
+    const prevDims = lastPersistedEmbedDims
     const patch: main.AIProviderPatch = {
       provider_type: b.provider_type,
       base_url: b.base_url,
@@ -288,8 +308,8 @@ export function createAIProviderController() {
     }
     try {
       await UpdateAIProviderConfig(which, patch)
-      if (which === 'embedding' || syncProviders) {
-        const nextModel = config.embedding.model
+      if (which === 'embedding') {
+        const nextModel = config.embedding.model ?? ''
         const nextDims = config.embedding.dimensions
         if (prevModel && nextModel && prevModel !== nextModel) {
           await markSearchIndexStale(
@@ -300,6 +320,7 @@ export function createAIProviderController() {
             `Index Density changed from ${prevDims ?? 'Auto'} to ${nextDims ?? 'Auto'}`
           )
         }
+        rememberPersistedEmbedding(config)
       }
       return { ok: true }
     } catch (e) {
