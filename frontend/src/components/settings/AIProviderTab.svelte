@@ -13,9 +13,13 @@
     LOCAL_DEFAULT,
     PROVIDER_TYPES,
     supportsEmbeddings,
+    supportsReasoningEffort,
     type ProviderType,
     type Which
   } from './ai/aiProviderController.svelte'
+  import PresetControl from './PresetControl.svelte'
+  import InfoTooltip from './InfoTooltip.svelte'
+  import { getEmbeddingCapabilities } from '../../settings/modelCapabilities'
 
   type Props = Record<string, never>
   let {}: Props = $props()
@@ -683,82 +687,189 @@
     {#snippet advancedTuningGrid(w: Which)}
       {@const b = ai.config![w]}
       {@const idPrefix = `ai-${w}`}
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {@const embedCaps =
+        w === 'embedding' ? getEmbeddingCapabilities(b.model ?? '') : null}
+      <div class="flex flex-col gap-5">
         {#if w === 'chat'}
-          <label class="flex flex-col gap-1.5" for="{idPrefix}-temperature">
-            <span
-              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
-              >Temperature</span
-            >
-            <input
-              id="{idPrefix}-temperature"
-              type="number"
-              min="0"
-              max="2"
-              step="0.1"
-              bind:value={b.temperature}
-              onblur={() => void ai.persistProvider(w)}
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
-            />
-            {#if ai.advancedFieldError(w, 'temperature')}
-              <span class="text-error text-type-2xs font-label-sm" role="alert"
-                >{ai.advancedFieldError(w, 'temperature')}</span
-              >
-            {/if}
-          </label>
+          <PresetControl
+            label="Answer Style"
+            tooltipText="How predictable or creative should the AI's answers be? Lower means more consistent and factual. Higher means more varied and exploratory."
+            tooltipTechnical="Technical: Temperature (0.0-2.0)."
+            options={[
+              {
+                value: 0.2,
+                label: 'Precise',
+                description:
+                  'Consistent, factual answers. Best for research and facts.'
+              },
+              {
+                value: 0.5,
+                label: 'Natural',
+                description:
+                  'Conversational, natural responses. Good for most questions.'
+              },
+              {
+                value: 0.9,
+                label: 'Creative',
+                description:
+                  'Varied, exploratory answers. Best for brainstorming.'
+              }
+            ]}
+            value={b.temperature ?? 0.5}
+            customLabel="Temperature"
+            customMin={0}
+            customMax={2}
+            customStep={0.1}
+            onchange={(v) => {
+              b.temperature = v
+              void ai.persistProvider(w)
+            }}
+          />
 
-          <label class="flex flex-col gap-1.5" for="{idPrefix}-max-tokens">
-            <span
-              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
-              >Max tokens</span
-            >
-            <input
-              id="{idPrefix}-max-tokens"
-              type="number"
-              min="1"
-              bind:value={b.max_tokens}
-              onblur={() => void ai.persistProvider(w)}
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
-            />
-            {#if ai.advancedFieldError(w, 'max_tokens')}
-              <span class="text-error text-type-2xs font-label-sm" role="alert"
-                >{ai.advancedFieldError(w, 'max_tokens')}</span
-              >
-            {/if}
-          </label>
-
-          <label class="flex flex-col gap-1.5" for="{idPrefix}-reasoning">
-            <span
-              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
-              >Reasoning effort</span
-            >
-            <select
-              id="{idPrefix}-reasoning"
-              value={b.reasoning_effort ?? ''}
-              onchange={(e) => {
-                const v = (e.currentTarget as HTMLSelectElement).value
-                b.reasoning_effort = v || undefined
+          {#if supportsReasoningEffort(b.provider_type)}
+            <PresetControl
+              label="Thinking Depth"
+              tooltipText="How much the AI works through a problem before answering. Deeper thinking produces more thorough answers but takes longer."
+              tooltipTechnical="Technical: Reasoning effort (none-max). Not all models support this."
+              options={[
+                {
+                  value: 'none',
+                  label: 'Quick',
+                  description: 'Fast responses with light reasoning.'
+                },
+                {
+                  value: 'medium',
+                  label: 'Standard',
+                  description: 'Balanced reasoning for everyday questions.'
+                },
+                {
+                  value: 'high',
+                  label: 'Deep',
+                  description:
+                    'Thorough analysis before answering. Slower but more complete.'
+                }
+              ]}
+              value={b.reasoning_effort ?? 'medium'}
+              customLabel="Reasoning effort"
+              customSelectOptions={[
+                { value: 'none', label: 'none' },
+                { value: 'minimal', label: 'minimal' },
+                { value: 'low', label: 'low' },
+                { value: 'medium', label: 'medium' },
+                { value: 'high', label: 'high' },
+                { value: 'xhigh', label: 'xhigh' },
+                { value: 'max', label: 'max' }
+              ]}
+              onchange={(v) => {
+                b.reasoning_effort = v
                 void ai.persistProvider(w)
               }}
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
-            >
-              <option value="">Default</option>
-              <option value="none">None</option>
-              <option value="minimal">Minimal</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="xhigh">xHigh</option>
-              <option value="max">Max</option>
-            </select>
-          </label>
+            />
+          {/if}
+
+          <PresetControl
+            label="Answer Length"
+            tooltipText="How long should the AI's answer be? Shorter answers are faster."
+            tooltipTechnical="Technical: Maximum output tokens."
+            options={[
+              {
+                value: 512,
+                label: 'Concise',
+                description: 'Short, to-the-point answers.'
+              },
+              {
+                value: 2048,
+                label: 'Standard',
+                description: 'Moderate length with enough detail.'
+              },
+              {
+                value: 4096,
+                label: 'Detailed',
+                description: 'In-depth answers with full explanations.'
+              }
+            ]}
+            value={b.max_tokens ?? 2048}
+            customLabel="Max tokens"
+            customMin={1}
+            customStep={1}
+            customSuffix="tokens"
+            onchange={(v) => {
+              b.max_tokens = v
+              void ai.persistProvider(w)
+            }}
+          />
         {/if}
 
-        <label class="flex flex-col gap-1.5" for="{idPrefix}-timeout">
-          <span
-            class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
-            >Timeout (ms)</span
-          >
+        {#if w === 'embedding'}
+          {#if embedCaps?.supportsTruncation === false}
+            <div class="flex flex-col gap-1.5">
+              <span
+                class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+                >Index Density</span
+              >
+              <span
+                class="inline-flex items-center gap-1.5 self-start rounded-lg border border-surface-panel-border bg-surface-panel/40 px-3 py-1.5 text-type-xs text-text-muted"
+              >
+                Fixed{embedCaps.nativeDimensions
+                  ? ` at ${embedCaps.nativeDimensions} dimensions`
+                  : ' dimensions'} (this model doesn't support truncation)
+              </span>
+            </div>
+          {:else}
+            <PresetControl
+              label="Index Density"
+              tooltipText="How detailed each search entry is. Higher means more precise search but more storage. Compact uses truncated dimensions to save space with minimal quality loss."
+              tooltipTechnical="Technical: Embedding output dimensions (Matryoshka Representation Learning truncation). Only supported by some models."
+              options={[
+                {
+                  value: 0,
+                  label: 'Auto',
+                  description:
+                    "Uses the model's recommended setting. Best for most users."
+                },
+                {
+                  value: 768,
+                  label: 'Compact',
+                  description:
+                    'Smaller index, faster search. Slight quality tradeoff.'
+                },
+                {
+                  value: 1024,
+                  label: 'Balanced',
+                  description: 'Good middle ground for large vaults.'
+                }
+              ]}
+              value={b.dimensions ?? 0}
+              customLabel="Dimensions"
+              customMin={1}
+              customStep={1}
+              customSuffix="dimensions"
+              onchange={(v) => {
+                b.dimensions = v === 0 ? undefined : v
+                void ai.persistProvider(w)
+              }}
+            />
+            {#if embedCaps?.supportsTruncation === undefined}
+              <p class="text-type-2xs text-text-muted m-0">
+                If this model doesn't support truncation, the API will reject it
+                — fall back to Auto.
+              </p>
+            {/if}
+          {/if}
+        {/if}
+
+        <div class="flex flex-col gap-1.5 max-w-xs">
+          <div class="flex items-center gap-1.5">
+            <label
+              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+              for="{idPrefix}-timeout">Timeout</label
+            >
+            <InfoTooltip
+              text="How long to wait before giving up on a response. Increase this if you use a slow model."
+              technical="Technical: Request timeout in milliseconds."
+              label="What is Timeout?"
+            />
+          </div>
           <input
             id="{idPrefix}-timeout"
             type="number"
@@ -773,29 +884,7 @@
               >{ai.advancedFieldError(w, 'timeout_ms')}</span
             >
           {/if}
-        </label>
-
-        {#if w === 'embedding'}
-          <label class="flex flex-col gap-1.5" for="{idPrefix}-dimensions">
-            <span
-              class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
-              >Dimensions</span
-            >
-            <input
-              id="{idPrefix}-dimensions"
-              type="number"
-              min="1"
-              bind:value={b.dimensions}
-              onblur={() => void ai.persistProvider(w)}
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
-            />
-            {#if ai.advancedFieldError(w, 'dimensions')}
-              <span class="text-error text-type-2xs font-label-sm" role="alert"
-                >{ai.advancedFieldError(w, 'dimensions')}</span
-              >
-            {/if}
-          </label>
-        {/if}
+        </div>
       </div>
     {/snippet}
 
@@ -867,14 +956,14 @@
             {#if ai.syncProviders}
               <div>
                 <h4 class="text-type-xs font-semibold text-text-primary mb-3">
-                  Chat Tuning
+                  AI Assistant
                 </h4>
                 {@render advancedTuningGrid('chat')}
               </div>
               {#if supportsEmbeddings(ai.config.chat.provider_type)}
                 <div class="border-t border-surface-panel-border/30 pt-4">
                   <h4 class="text-type-xs font-semibold text-text-primary mb-3">
-                    Embedding Tuning
+                    Search Index
                   </h4>
                   {@render advancedTuningGrid('embedding')}
                 </div>

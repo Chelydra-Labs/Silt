@@ -102,4 +102,150 @@ describe('hybridRetrieve', () => {
     const ids = passages.map((p) => p.blockId)
     expect(ids).toContain('b1')
   })
+
+  it('reranks by cosine similarity when enabled', async () => {
+    const embed = vi.fn(async ({ texts }: { texts: string[] }) => {
+      // Query embed: unit vector on x. Passage embeds: b-low closer than b-high.
+      if (texts.length === 1 && texts[0] === 'q') {
+        return { embeddings: [[1, 0]], model: 'm', dimensions: 2 }
+      }
+      return {
+        embeddings: texts.map((t) =>
+          t.includes('orthogonal') ? [0.1, 0.9] : [0.99, 0.01]
+        ),
+        model: 'm',
+        dimensions: 2
+      }
+    })
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({
+        rows: [
+          {
+            id: 'b-high',
+            notebook: 'N',
+            section: 'S',
+            page: 'P',
+            clean_content: 'orthogonal rrf first'
+          },
+          {
+            id: 'b-low',
+            notebook: 'N',
+            section: 'S',
+            page: 'P',
+            clean_content: 'aligned rrf second'
+          }
+        ]
+      })),
+      ai: { embed },
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('index_meta')) return { rows: [{ value: '2' }] }
+          if (sql.includes('embeddings')) return { rows: [] }
+          return { rows: [] }
+        }),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+
+    const passages = await hybridRetrieve(ctx, 'q', {
+      ...DEFAULT_SETTINGS,
+      hybrid_weight: 0,
+      top_k: 2,
+      rerank_enabled: true
+    })
+    expect(passages[0].blockId).toBe('b-low')
+  })
+
+  it('falls back to RRF order when rerank embed fails', async () => {
+    let call = 0
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({
+        rows: [
+          {
+            id: 'b1',
+            notebook: 'N',
+            section: 'S',
+            page: 'P',
+            clean_content: 'first'
+          }
+        ]
+      })),
+      ai: {
+        embed: vi.fn(async () => {
+          call++
+          // vectorSearch query embed succeeds once; rerank query fails.
+          if (call === 1) {
+            return { embeddings: [[0.1, 0.2]], model: 'm', dimensions: 2 }
+          }
+          throw new Error('rerank embed failed')
+        })
+      },
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('index_meta')) return { rows: [{ value: '2' }] }
+          return { rows: [] }
+        }),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+
+    const passages = await hybridRetrieve(ctx, 'q', {
+      ...DEFAULT_SETTINGS,
+      hybrid_weight: 0,
+      top_k: 1,
+      rerank_enabled: true
+    })
+    expect(passages[0].blockId).toBe('b1')
+  })
+
+  it('reuses the query embedding for both vector search and rerank', async () => {
+    const embed = vi.fn(async ({ texts }: { texts: string[] }) => {
+      if (texts.length === 1) {
+        return { embeddings: [[1, 0]], model: 'm', dimensions: 2 }
+      }
+      return {
+        embeddings: texts.map(() => [0.9, 0.1]),
+        model: 'm',
+        dimensions: 2
+      }
+    })
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({
+        rows: [
+          {
+            id: 'b1',
+            notebook: 'N',
+            section: 'S',
+            page: 'P',
+            clean_content: 'a note'
+          }
+        ]
+      })),
+      ai: { embed },
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('index_meta')) return { rows: [{ value: '2' }] }
+          return { rows: [] }
+        }),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+
+    await hybridRetrieve(ctx, 'q', {
+      ...DEFAULT_SETTINGS,
+      hybrid_weight: 0,
+      top_k: 1,
+      rerank_enabled: true
+    })
+
+    // RETRIEVAL_QUERY embed calls should be exactly 1 (pre-computed once
+    // and reused by both vectorSearch and rerankPassages — no duplicate).
+    const queryEmbeds = embed.mock.calls.filter(
+      (c: any[]) => c[0]?.taskType === 'RETRIEVAL_QUERY'
+    )
+    expect(queryEmbeds).toHaveLength(1)
+  })
 })

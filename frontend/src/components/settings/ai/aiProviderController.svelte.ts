@@ -8,6 +8,9 @@
 // silt-tasks/state). The one $effect that needs component context (the audit
 // lazy-load on <details> expand) stays in the component and calls loadAudit().
 import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
+import { getEmbeddingCapabilities } from '../../../settings/modelCapabilities'
+import { updatePluginSetting } from '../../../settings/store.svelte'
+import { getQAController } from '../../../plugins/first-party/silt-ai-qa/state.svelte'
 import {
   GetAIProviderConfig,
   UpdateAIProviderConfig,
@@ -41,6 +44,42 @@ export const ANTHROPIC_DEFAULT = 'https://api.anthropic.com'
 export function supportsEmbeddings(type: string): boolean {
   return type !== 'anthropic'
 }
+
+// Providers that accept a reasoning_effort-style field on chat completions.
+export function supportsReasoningEffort(type: string): boolean {
+  return type === 'openai-compatible' || type === 'google' || type === 'local'
+}
+
+function presetLabel(
+  value: number | string | undefined | null,
+  options: { value: number | string; label: string }[],
+  fallback: string
+): string {
+  if (value === undefined || value === null || value === '') return fallback
+  const hit = options.find((o) => o.value === value)
+  return hit?.label ?? 'Custom'
+}
+
+const TEMP_PRESETS = [
+  { value: 0.2, label: 'Precise' },
+  { value: 0.5, label: 'Natural' },
+  { value: 0.9, label: 'Creative' }
+]
+const REASONING_PRESETS = [
+  { value: 'none', label: 'Quick' },
+  { value: 'medium', label: 'Standard' },
+  { value: 'high', label: 'Deep' }
+]
+const TOKENS_PRESETS = [
+  { value: 512, label: 'Concise' },
+  { value: 2048, label: 'Standard' },
+  { value: 4096, label: 'Detailed' }
+]
+const DIM_PRESETS = [
+  { value: 0, label: 'Auto' },
+  { value: 768, label: 'Compact' },
+  { value: 1024, label: 'Balanced' }
+]
 
 export function providerDefaultURL(type: string): string {
   switch (type) {
@@ -132,6 +171,17 @@ export function createAIProviderController() {
   let auditState = $state<AuditState>('idle')
   let auditError = $state<string | null>(null)
 
+  // Last values successfully written for embedding model/dimensions. Callers
+  // mutate config in place before persistProvider, so a "pre-persist" read of
+  // config.embedding is already the new value — compare against this instead.
+  let lastPersistedEmbedModel = ''
+  let lastPersistedEmbedDims: number | undefined
+
+  function rememberPersistedEmbedding(cfg: main.AIPublicConfig) {
+    lastPersistedEmbedModel = cfg.embedding.model ?? ''
+    lastPersistedEmbedDims = cfg.embedding.dimensions ?? undefined
+  }
+
   async function reload(): Promise<void> {
     loading = true
     loadError = null
@@ -144,6 +194,7 @@ export function createAIProviderController() {
         const sameUrl = config.chat.base_url === config.embedding.base_url
         const sameKey = config.chat.has_key === config.embedding.has_key
         syncProviders = sameType && sameUrl && sameKey
+        rememberPersistedEmbedding(config)
       }
       void loadModels('chat')
       void loadModels('embedding')
@@ -218,6 +269,22 @@ export function createAIProviderController() {
     return fields.some((f) => advancedFieldError(which, f) !== null)
   }
 
+  async function markSearchIndexStale(reason: string) {
+    // Update the live QA controller (if loaded) so the amber banner appears
+    // immediately — the controller owns the reactive showStaleBanner state.
+    const ctl = getQAController()
+    if (ctl) {
+      await ctl.setStaleReason(reason)
+      return
+    }
+    // Plugin not loaded yet — persist directly so the banner shows on next load.
+    try {
+      await updatePluginSetting('silt-ai-qa', 'stale_reason', reason)
+    } catch (e) {
+      console.warn('Failed to mark search index stale:', e)
+    }
+  }
+
   async function persistProvider(which: Which): Promise<PersistResult> {
     if (!config)
       return { ok: false, message: 'AI provider settings are not loaded.' }
@@ -228,6 +295,16 @@ export function createAIProviderController() {
       }
     }
     const b = config[which]
+    // Fixed-size models reject a dimensions override; clear any leftover
+    // Compact/Balanced value when the control is hidden for that model.
+    if (which === 'embedding') {
+      const caps = getEmbeddingCapabilities(b.model ?? '')
+      if (caps.supportsTruncation === false && b.dimensions != null) {
+        b.dimensions = undefined
+      }
+    }
+    const prevModel = lastPersistedEmbedModel
+    const prevDims = lastPersistedEmbedDims
     const patch: main.AIProviderPatch = {
       provider_type: b.provider_type,
       base_url: b.base_url,
@@ -240,6 +317,20 @@ export function createAIProviderController() {
     }
     try {
       await UpdateAIProviderConfig(which, patch)
+      if (which === 'embedding') {
+        const nextModel = config.embedding.model ?? ''
+        const nextDims = config.embedding.dimensions
+        if (prevModel && nextModel && prevModel !== nextModel) {
+          await markSearchIndexStale(
+            `Search model changed from ${prevModel} to ${nextModel}`
+          )
+        } else if (prevDims !== nextDims && (prevDims || nextDims)) {
+          await markSearchIndexStale(
+            `Index Density changed from ${prevDims ?? 'Auto'} to ${nextDims ?? 'Auto'}`
+          )
+        }
+        rememberPersistedEmbedding(config)
+      }
       return { ok: true }
     } catch (e) {
       console.error('UpdateAIProviderConfig failed:', e)
@@ -617,17 +708,34 @@ export function createAIProviderController() {
     },
     get tuningSummary(): string {
       if (!config) return ''
+      const chat = config.chat
+      const style = presetLabel(
+        chat.temperature ?? 0.5,
+        TEMP_PRESETS,
+        'Default'
+      )
+      const depth = presetLabel(
+        chat.reasoning_effort ?? 'medium',
+        REASONING_PRESETS,
+        'Default'
+      )
+      const length = presetLabel(
+        chat.max_tokens ?? 2048,
+        TOKENS_PRESETS,
+        'Default'
+      )
+      const density = presetLabel(
+        config.embedding.dimensions ?? 0,
+        DIM_PRESETS,
+        'Auto'
+      )
       if (syncProviders) {
-        const chatModel = config.chat.model || 'none'
-        const embedModel = config.embedding.model || 'none'
-        return `Chat: ${chatModel} (Temp ${config.chat.temperature ?? 'default'}) · Embed: ${embedModel}`
+        return `${style}, ${depth}, ${length} · Index: ${density}`
       }
-      const b = config[activeRole]
-      const model = b.model || 'none'
       if (activeRole === 'chat') {
-        return `Chat Model: ${model} (Temp ${b.temperature ?? 'default'})`
+        return `${style}, ${depth}, ${length}`
       }
-      return `Embedding Model: ${model} (${b.dimensions ?? 'default'} dims)`
+      return `Index Density: ${density}`
     },
     get keyringSummary(): string {
       if (!config) return ''

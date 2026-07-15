@@ -314,7 +314,8 @@ describe('ctx.ai.embed', () => {
     expect(mocks.pluginAIEmbed).toHaveBeenCalledWith('emb-plugin', 'tok', {
       texts: ['a', 'b'],
       model: '',
-      dimensions: 768
+      dimensions: 768,
+      task_type: ''
     })
   })
 

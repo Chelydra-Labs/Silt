@@ -701,6 +701,8 @@ export interface PluginAIApi {
     texts: string[]
     model?: string
     dimensions?: number
+    /** Google-specific: RETRIEVAL_DOCUMENT (index) or RETRIEVAL_QUERY (search). */
+    taskType?: string
   }) => Promise<PluginAIEmbedResult>
 }
 

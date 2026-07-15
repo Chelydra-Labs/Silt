@@ -172,6 +172,54 @@ func TestEmbedGoogle_Success(t *testing.T) {
 	}
 }
 
+func TestEmbedGoogle_TaskTypeInBody(t *testing.T) {
+	cases := []struct {
+		name     string
+		taskType string
+		wantKey  bool
+	}{
+		{name: "document", taskType: "RETRIEVAL_DOCUMENT", wantKey: true},
+		{name: "query", taskType: "RETRIEVAL_QUERY", wantKey: true},
+		{name: "empty omits", taskType: "", wantKey: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var raw map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				if err := json.Unmarshal(body, &raw); err != nil {
+					t.Errorf("parse body: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"embeddings": []map[string]any{{"values": []float64{0.1, 0.2}}},
+				})
+			}))
+			defer srv.Close()
+			_, err := Embed(context.Background(), EmbedRequest{
+				Provider: AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "text-embedding-004"},
+				Texts:    []string{"hello"},
+				TaskType: tc.taskType,
+			})
+			if err != nil {
+				t.Fatalf("Embed: %v", err)
+			}
+			reqs, _ := raw["requests"].([]any)
+			if len(reqs) != 1 {
+				t.Fatalf("requests len = %d, want 1", len(reqs))
+			}
+			item, _ := reqs[0].(map[string]any)
+			got, has := item["taskType"]
+			if has != tc.wantKey {
+				t.Fatalf("taskType present = %v, want %v (body item=%v)", has, tc.wantKey, item)
+			}
+			if tc.wantKey && got != tc.taskType {
+				t.Errorf("taskType = %v, want %q", got, tc.taskType)
+			}
+		})
+	}
+}
+
 func TestCompleteGoogle_ErrorClassification(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -112,7 +112,7 @@ export async function needsFullRebuildForModel(
   return false
 }
 
-async function metaGet(
+export async function metaGet(
   ctx: PluginContext,
   key: string
 ): Promise<string | null> {
@@ -124,7 +124,7 @@ async function metaGet(
   return typeof v === 'string' ? v : null
 }
 
-async function metaSet(
+export async function metaSet(
   ctx: PluginContext,
   key: string,
   value: string
@@ -327,11 +327,19 @@ async function indexChunks(
   let dims = 0
   let done = 0
   const total = chunks.length
-  onProgress?.({ status: 'indexing', done: 0, total, message: 'Embedding…' })
+  onProgress?.({
+    status: 'indexing',
+    done: 0,
+    total,
+    message: 'Building search index…'
+  })
 
   for (let i = 0; i < chunks.length; i += BATCH) {
     const batch = chunks.slice(i, i + BATCH)
-    const res = await ctx.ai.embed({ texts: batch.map((c) => c.text) })
+    const res = await ctx.ai.embed({
+      texts: batch.map((c) => c.text),
+      taskType: 'RETRIEVAL_DOCUMENT'
+    })
     model = res.model || model
     dims = res.dimensions || dims
     if (!dims && res.embeddings[0]) dims = res.embeddings[0].length
@@ -385,12 +393,13 @@ async function indexChunks(
       total,
       model,
       dimensions: dims,
-      message: `Embedded ${done}/${total}`
+      message: `Indexed ${done}/${total}`
     })
   }
 
   await metaSet(ctx, 'model', model)
   await metaSet(ctx, 'updated_at', new Date().toISOString())
+  // task_type_used is stamped by the controller, which knows the provider type.
   const n = await countChunks(ctx)
   onProgress?.({
     status: 'ready',
@@ -399,7 +408,7 @@ async function indexChunks(
     model,
     dimensions: dims,
     chunkCount: n,
-    message: `Indexed ${n} chunks`
+    message: `Indexed ${n} notes`
   })
 }
 
@@ -407,7 +416,8 @@ async function indexChunks(
 export async function vectorSearch(
   ctx: PluginContext,
   query: string,
-  topK: number
+  topK: number,
+  queryVec?: number[]
 ): Promise<RankedHit[]> {
   await migrateIndex(ctx)
   const dimsStr = await metaGet(ctx, 'dimensions')
@@ -415,8 +425,14 @@ export async function vectorSearch(
   if (!dims) return []
   await ensureVecTable(ctx, dims)
 
-  const emb = await ctx.ai.embed({ texts: [query] })
-  const vec = emb.embeddings[0]
+  const vec =
+    queryVec ??
+    (
+      await ctx.ai.embed({
+        texts: [query],
+        taskType: 'RETRIEVAL_QUERY'
+      })
+    ).embeddings[0]
   if (!vec) return []
 
   const { rows } = await ctx.pluginDb.query(

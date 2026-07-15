@@ -144,6 +144,9 @@ type EmbedRequest struct {
 	Texts      []string   `json:"input"`
 	Model      string     `json:"model,omitempty"`      // override Provider.Model
 	Dimensions *int       `json:"dimensions,omitempty"` // override Provider.Dimensions (truncation)
+	// TaskType is Google-specific (RETRIEVAL_DOCUMENT / RETRIEVAL_QUERY).
+	// Empty string omits the field; other providers ignore it.
+	TaskType string `json:"task_type,omitempty"`
 }
 
 // EmbedResult is the output of a successful embedding batch. Embeddings[i] is

@@ -742,8 +742,10 @@ export function makePluginContext(
         PluginAIEmbed(pluginID, sessionToken ?? '', {
           texts: req.texts,
           model: req.model ?? '',
-          dimensions: req.dimensions
-        })
+          dimensions: req.dimensions,
+          // task_type is on the Go PluginAIEmbedInput; bindings regenerate on build.
+          task_type: req.taskType ?? ''
+        } as Parameters<typeof PluginAIEmbed>[2])
           .then((res: any) => ({
             embeddings: res?.embeddings ?? [],
             model: res?.model ?? '',

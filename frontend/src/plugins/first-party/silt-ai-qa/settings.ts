@@ -1,4 +1,4 @@
-// Default settings + resolver for silt-ai-qa (#228).
+// Default settings + resolver for silt-ai-qa (#228, #614, #617, #620).
 
 import type { QASettings } from './types'
 
@@ -6,10 +6,12 @@ export const DEFAULT_SETTINGS: QASettings = {
   notebook_scope: [],
   auto_reembed: true,
   hybrid_weight: 0.6,
-  top_k: 8,
+  top_k: 10,
   min_score: 0,
-  max_context_chars: 12000,
-  reindex_debounce_ms: 2000
+  max_context_chars: 24000,
+  reindex_debounce_ms: 2000,
+  stale_reason: null,
+  rerank_enabled: false
 }
 
 export function resolveSettings(
@@ -30,7 +32,7 @@ export function resolveSettings(
   ) {
     out.hybrid_weight = raw.hybrid_weight
   }
-  if (typeof raw.top_k === 'number' && raw.top_k >= 1 && raw.top_k <= 50) {
+  if (typeof raw.top_k === 'number' && raw.top_k >= 1 && raw.top_k <= 100) {
     out.top_k = Math.floor(raw.top_k)
   }
   if (typeof raw.min_score === 'number' && raw.min_score >= 0) {
@@ -38,7 +40,7 @@ export function resolveSettings(
   }
   if (
     typeof raw.max_context_chars === 'number' &&
-    raw.max_context_chars >= 500
+    raw.max_context_chars >= 1000
   ) {
     out.max_context_chars = Math.floor(raw.max_context_chars)
   }
@@ -47,6 +49,14 @@ export function resolveSettings(
     raw.reindex_debounce_ms >= 0
   ) {
     out.reindex_debounce_ms = Math.floor(raw.reindex_debounce_ms)
+  }
+  if (raw.stale_reason === null) {
+    out.stale_reason = null
+  } else if (typeof raw.stale_reason === 'string') {
+    out.stale_reason = raw.stale_reason.length > 0 ? raw.stale_reason : null
+  }
+  if (typeof raw.rerank_enabled === 'boolean') {
+    out.rerank_enabled = raw.rerank_enabled
   }
   return out
 }

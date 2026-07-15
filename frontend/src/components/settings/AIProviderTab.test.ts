@@ -92,7 +92,9 @@ const mocks = vi.hoisted(() => {
     TestAIConnection: vi.fn(),
     ListModels: vi.fn(),
     GetAIAudit: vi.fn(),
-    ClearAIAudit: vi.fn()
+    ClearAIAudit: vi.fn(),
+    // Used by stale-index detection via settings/store.updatePluginSetting.
+    UpdatePluginSetting: vi.fn()
   }
 })
 
@@ -106,7 +108,8 @@ vi.mock('../../../bindings/silt/app.js', () => ({
   TestAIConnection: mocks.TestAIConnection,
   ListModels: mocks.ListModels,
   GetAIAudit: mocks.GetAIAudit,
-  ClearAIAudit: mocks.ClearAIAudit
+  ClearAIAudit: mocks.ClearAIAudit,
+  UpdatePluginSetting: mocks.UpdatePluginSetting
 }))
 
 import AIProviderTab from './AIProviderTab.svelte'
@@ -124,6 +127,7 @@ describe('AIProviderTab', () => {
     mocks.ListModels.mockReset()
     mocks.GetAIAudit.mockReset()
     mocks.ClearAIAudit.mockReset()
+    mocks.UpdatePluginSetting.mockReset()
     // Default happy-path resolutions; individual tests override.
     mocks.GetAIProviderConfig.mockResolvedValue(
       structuredClone(mocks.configState)
@@ -143,6 +147,7 @@ describe('AIProviderTab', () => {
     mocks.ListModels.mockResolvedValue([])
     mocks.GetAIAudit.mockResolvedValue(structuredClone(mocks.auditState))
     mocks.ClearAIAudit.mockResolvedValue(undefined)
+    mocks.UpdatePluginSetting.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -1155,6 +1160,69 @@ describe('AIProviderTab', () => {
       expect(whenCell.textContent).not.toContain('T')
       expect(whenCell.textContent).not.toContain('Z')
       expect(whenCell.textContent?.trim().length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('embedding model / index density', () => {
+    it('marks the search index stale when the embedding model changes', async () => {
+      // Callers mutate config before persist; stale detection must compare
+      // against last-persisted values, not the already-mutated config.
+      render(AIProviderTab)
+      await ready()
+
+      const embedModel = document.getElementById(
+        'ai-embedding-model'
+      ) as HTMLInputElement
+      await fireEvent.input(embedModel, {
+        target: { value: 'text-embedding-3-small' }
+      })
+      await fireEvent.blur(embedModel)
+
+      await waitFor(() =>
+        expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+          'embedding',
+          expect.objectContaining({ model: 'text-embedding-3-small' })
+        )
+      )
+      await waitFor(() =>
+        expect(mocks.UpdatePluginSetting).toHaveBeenCalledWith(
+          'silt-ai-qa',
+          'stale_reason',
+          expect.stringMatching(/nomic-embed-text.*text-embedding-3-small/)
+        )
+      )
+    })
+
+    it('clears dimensions and marks stale when switching to a fixed-size model', async () => {
+      // Default fixture has dimensions: 768. Fixed models (ada-002) hide the
+      // density control; leftover overrides must not be sent to the API.
+      render(AIProviderTab)
+      await ready()
+
+      const embedModel = document.getElementById(
+        'ai-embedding-model'
+      ) as HTMLInputElement
+      await fireEvent.input(embedModel, {
+        target: { value: 'text-embedding-ada-002' }
+      })
+      await fireEvent.blur(embedModel)
+
+      await waitFor(() =>
+        expect(mocks.UpdateAIProviderConfig).toHaveBeenCalledWith(
+          'embedding',
+          expect.objectContaining({
+            model: 'text-embedding-ada-002',
+            dimensions: undefined
+          })
+        )
+      )
+      await waitFor(() =>
+        expect(mocks.UpdatePluginSetting).toHaveBeenCalledWith(
+          'silt-ai-qa',
+          'stale_reason',
+          expect.stringMatching(/nomic-embed-text.*text-embedding-ada-002/)
+        )
+      )
     })
   })
 

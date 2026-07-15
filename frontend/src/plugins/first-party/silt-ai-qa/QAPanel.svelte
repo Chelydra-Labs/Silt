@@ -48,11 +48,11 @@
       case 'no-chat-provider':
         return 'Chat model not configured'
       case 'no-embedding-provider':
-        return 'Embedding model not configured'
+        return 'Search model not configured'
       case 'error':
         return ctl.errorMessage || 'Error'
       case 'indexing':
-        return 'Index building…'
+        return 'Building search index…'
       default:
         return ''
     }
@@ -96,14 +96,33 @@
     {/if}
   </header>
 
-  {#if ctl?.progress?.status === 'indexing'}
+  {#if ctl?.showStaleBanner}
+    <div class="qa-banner stale" role="status">
+      <div class="stale-copy">
+        <strong>Search index needs updating</strong>
+        <span>{ctl.settings.stale_reason}. Rebuild for accurate results.</span>
+      </div>
+      <div class="stale-actions">
+        <button
+          type="button"
+          class="stale-rebuild"
+          onclick={() => void ctl.rebuild(ctx)}>Rebuild now</button
+        >
+        <button
+          type="button"
+          class="stale-later"
+          onclick={() => ctl.dismissStaleBanner()}>Later</button
+        >
+      </div>
+    </div>
+  {:else if ctl?.progress?.status === 'indexing'}
     <div class="qa-banner info" role="status">
-      Indexing… {ctl.progress.done}/{ctl.progress.total}
+      Building search index… {ctl.progress.done}/{ctl.progress.total}
       {ctl.progress.message ? ` — ${ctl.progress.message}` : ''}
     </div>
   {:else if ctl?.progress?.status === 'unconfigured' || (ctl && !ctl.embedReady())}
     <div class="qa-banner warn" role="status">
-      Configure an embedding model in Settings → AI Provider, then rebuild the
+      Configure a search model in Settings → AI Provider, then update the search
       index.
     </div>
   {:else if ctl && !ctl.chatReady()}
@@ -146,8 +165,8 @@
           </li>
         </ul>
         <p class="qa-hint">
-          Tip: set chat + embedding models under Settings → AI Provider, then
-          rebuild the index under Settings → AI Assistant.
+          Tip: set chat + search models under Settings → AI Provider, then
+          update the search index under Settings → AI Assistant.
         </p>
       </div>
     {/if}
@@ -296,6 +315,47 @@
   }
   .qa-banner.info {
     background: color-mix(in srgb, #3b82f6 15%, transparent);
+  }
+  .qa-banner.stale {
+    background: color-mix(
+      in srgb,
+      var(--color-status-warn, #fbbf24) 15%,
+      transparent
+    );
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--color-status-warn, #fbbf24) 40%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .stale-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .stale-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .stale-rebuild {
+    border: none;
+    border-radius: 0.35rem;
+    padding: 0.25rem 0.6rem;
+    background: color-mix(in srgb, var(--color-status-warn, #fbbf24) 85%, #000);
+    color: #1a1a1a;
+    font-weight: 600;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .stale-later {
+    border: 1px solid var(--color-surface-panel-border, #2a2a30);
+    border-radius: 0.35rem;
+    padding: 0.25rem 0.6rem;
+    background: transparent;
+    color: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
   }
   .qa-messages {
     flex: 1;

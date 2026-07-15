@@ -74,7 +74,7 @@ describe('QAPanel', () => {
     const { getByText } = render(QAPanel, {
       props: { ctx: {} as PluginContext }
     })
-    expect(getByText(/Configure an embedding model/i)).toBeTruthy()
+    expect(getByText(/Configure a search model/i)).toBeTruthy()
   })
 
   it('dispatches navigate-to-block on citation click', async () => {
