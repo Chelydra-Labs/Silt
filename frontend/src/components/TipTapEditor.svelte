@@ -60,6 +60,7 @@
     filterOwners,
     blocksToDoc
   } from '../lib/editor'
+  import { runPluginCommand } from '../lib/editor/runPluginCommand'
   import type {
     ParsedBlock,
     MetaKey,
@@ -1207,7 +1208,30 @@
       // other id must be a plugin command with a handler.
       const cmd = getSlashCommands().find((c) => c.id === commandId)
       if (cmd?.onSelect) {
-        cmd.onSelect(editorInstance, editorInstance.state.selection.to)
+        // Isolate plugin-handler failures (#581): a buggy plugin's throw or
+        // rejected Promise must not escape into the editor's dispatch path or
+        // go unhandled. The slash trigger text is already deleted above, so
+        // the editor stays clean either way; surface a non-blocking toast +
+        // a console error carrying the plugin + command id.
+        const pluginID = cmd.pluginID ?? 'unknown'
+        const report = (err: unknown): void => {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[silt] plugin ${pluginID} command ${commandId} failed:`,
+            err
+          )
+          pushNotification({
+            kind: 'error',
+            message: 'Plugin command failed — see console.',
+            autoDismissMs: 7000
+          })
+        }
+        runPluginCommand(
+          cmd,
+          editorInstance,
+          editorInstance.state.selection.to,
+          report
+        )
       }
       return
     }

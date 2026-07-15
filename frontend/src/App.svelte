@@ -37,6 +37,8 @@
   } from './components/settings/settingsSections.svelte'
   import QuickAddTask from './plugins/first-party/silt-tasks/components/QuickAddTask.svelte'
   import { loadPlugins } from './plugins/loader'
+  import { refreshGrants } from './plugins/grants.svelte'
+  import { revokeRevokedContributions } from './plugins/reconcile'
   import {
     initConfigHotReload,
     loadConfig,
@@ -792,7 +794,14 @@
       // The plugin manager is the "Plugins" section inside Settings.
       openSettings('plugins')
     }
-    function handlePluginsChanged() {
+    async function handlePluginsChanged() {
+      // Refresh grants BEFORE re-running discovery so re-registration reads the
+      // updated capabilities (fixes the race where loadPlugins read a stale
+      // grant cache), then drop contributions from plugins that lost a
+      // capability without a full reload (#582). grants.svelte no longer
+      // subscribes to plugins:changed itself — this is the single orchestrator.
+      await refreshGrants()
+      revokeRevokedContributions()
       // Re-run discovery with the live location so newly installed/enabled
       // plugins appear and removed ones drop out.
       loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
@@ -840,8 +849,9 @@
     window.addEventListener('page-renamed', handlePageRenamed)
     // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
     // be received via Events.On — a DOM addEventListener would never fire.
-    const offPluginsChanged = Events.On('plugins:changed', () =>
-      handlePluginsChanged()
+    const offPluginsChanged = Events.On(
+      'plugins:changed',
+      () => void handlePluginsChanged()
     )
     // `vault:moved` fires after a successful vault Move/Copy-Switch (#141).
     // The backend has already reinitialized services at the new path; reset

@@ -62,6 +62,14 @@ export function unregisterPluginDecorations(pluginID: string): void {
   }
 }
 
+/** The distinct pluginIDs that currently have at least one decoration provider
+ *  registered (used by the capability-reconcile pass, #582). */
+export function getDecorationProviderPluginIDs(): string[] {
+  const ids = new Set<string>()
+  for (const { pluginID } of providers.values()) ids.add(pluginID)
+  return [...ids]
+}
+
 /** Compute all decorations for a doc by calling every registered provider. */
 export function computeDecorations(doc: {
   content?: any[]

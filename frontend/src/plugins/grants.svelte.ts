@@ -9,7 +9,6 @@
 // event. First-party plugins are implicitly granted every capability.
 
 import { GetGrantedCapabilities } from '../../bindings/silt/app.js'
-import { Events } from '@wailsio/runtime'
 import { firstPartyPlugins } from './registry'
 
 const ALL_CAPS = [
@@ -81,14 +80,16 @@ export function isGranted(pluginID: string, capability: string): boolean {
 let wired = false
 
 /**
- * Wire the initial fetch + the plugins:changed subscription. Idempotent.
+ * Wire the initial fetch. Idempotent. The `plugins:changed` event is owned by
+ * App.svelte's handlePluginsChanged, which awaits refreshGrants() before
+ * loadPlugins() so re-registration sees fresh grants and revoked contributions
+ * are reconciled (#582).
  */
 export function initGrants(): void {
   if (wired) return
   wired = true
   refreshFirstPartyIDs()
   void refreshGrants()
-  Events.On('plugins:changed', () => void refreshGrants())
 }
 
 /** Test-only: reset the cache + wiring state. */
