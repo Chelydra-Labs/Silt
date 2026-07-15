@@ -1,0 +1,113 @@
+// Pure classification of a built-in slash-command id into a structured intent,
+// extracted from TipTapEditor.svelte's handleSlashSelect. The ~20-command
+// dispatch was a 115-line if/else buried inline with no direct unit test; this
+// module makes the command surface (id → intent) testable independent of the
+// live editor instance. Editor side-effects (convertToBlock, popover state,
+// chain().run()) stay in the component, which switch-executes the intent.
+//
+// A null result means "not a built-in" — the component then looks the id up in
+// the plugin slash-command registry (getSlashCommands from slash-registry.ts).
+
+// Maps inline-formatting slash-command ids to their TipTap mark type. 'clear'
+// is special (strips all marks); 'link' opens the URL prompt.
+export const FORMAT_COMMANDS: Record<string, string> = {
+  bold: 'bold',
+  italic: 'italic',
+  underline: 'underline',
+  strike: 'strike',
+  code: 'code',
+  highlight: 'highlight',
+  subscript: 'subscript',
+  superscript: 'superscript',
+  link: 'link',
+  'clear-formatting': 'clear'
+}
+
+export type SlashIntent =
+  | {
+      kind: 'convert'
+      blockType: 'taskBlock' | 'headerBlock' | 'noteBlock'
+      depth?: number
+    }
+  | { kind: 'align'; align: 'left' | 'center' | 'right' | 'justify' }
+  | { kind: 'quote' }
+  | { kind: 'callout'; variant: string }
+  | { kind: 'codeBlock' }
+  | { kind: 'math' }
+  | { kind: 'details' }
+  | { kind: 'table'; rows: number; cols: number }
+  | { kind: 'tableCustom' }
+  | { kind: 'color'; markType: 'textColor' | 'backgroundColor' }
+  | { kind: 'removeColor'; markType: 'textColor' | 'backgroundColor' }
+  | { kind: 'today' }
+  | { kind: 'embed' }
+  | { kind: 'template' }
+  | { kind: 'format'; mark: string }
+
+const ALIGNED: Record<string, 'left' | 'center' | 'right' | 'justify'> = {
+  'align-left': 'left',
+  'align-center': 'center',
+  'align-right': 'right',
+  'align-justify': 'justify'
+}
+
+// classifySlashCommand returns the structured intent for a built-in slash
+// command id, or null when the id is not a built-in (a plugin command or
+// unknown). Pure and deterministic; 'today' deliberately carries no date — the
+// component computes the current date at execution time.
+export function classifySlashCommand(commandId: string): SlashIntent | null {
+  switch (commandId) {
+    case 'todo':
+    case 'task':
+      return { kind: 'convert', blockType: 'taskBlock' }
+    case 'h1':
+      return { kind: 'convert', blockType: 'headerBlock', depth: 1 }
+    case 'h2':
+      return { kind: 'convert', blockType: 'headerBlock', depth: 2 }
+    case 'h3':
+      return { kind: 'convert', blockType: 'headerBlock', depth: 3 }
+    case 'note':
+      return { kind: 'convert', blockType: 'noteBlock' }
+    case 'quote':
+      return { kind: 'quote' }
+    case 'code-block':
+      return { kind: 'codeBlock' }
+    case 'math':
+      return { kind: 'math' }
+    case 'details':
+      return { kind: 'details' }
+    case 'table':
+      return { kind: 'table', rows: 3, cols: 3 }
+    case 'table-5x4':
+      return { kind: 'table', rows: 5, cols: 4 }
+    case 'table-custom':
+      return { kind: 'tableCustom' }
+    case 'text-color':
+      return { kind: 'color', markType: 'textColor' }
+    case 'background-color':
+      return { kind: 'color', markType: 'backgroundColor' }
+    case 'remove-color':
+      return { kind: 'removeColor', markType: 'textColor' }
+    case 'remove-background':
+      return { kind: 'removeColor', markType: 'backgroundColor' }
+    case 'today':
+      return { kind: 'today' }
+    case 'embed':
+      return { kind: 'embed' }
+    case 'template':
+      return { kind: 'template' }
+    case 'callout':
+      return { kind: 'callout', variant: 'note' }
+    default:
+      if (commandId.startsWith('callout-')) {
+        return { kind: 'callout', variant: commandId.slice('callout-'.length) }
+      }
+      if (ALIGNED[commandId]) {
+        return { kind: 'align', align: ALIGNED[commandId] }
+      }
+      if (FORMAT_COMMANDS[commandId]) {
+        return { kind: 'format', mark: FORMAT_COMMANDS[commandId] }
+      }
+      return null
+  }
+}

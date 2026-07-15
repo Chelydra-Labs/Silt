@@ -1,653 +1,49 @@
 <script lang="ts">
   // Settings → AI Provider tab.
   //
-  // Configures the local + cloud AI providers (chat completions and
-  // embeddings) that plugins call through ctx.ai.complete / ctx.ai.embed.
-  // The page also manages API key storage (OS keyring when available,
-  // plaintext config.yaml fallback otherwise), runs a live connection
-  // probe, and surfaces a recent-activity audit log.
-  //
-  // Provider config fields (provider_type / base_url / model / tuning)
-  // are bound directly to a locally-tracked AIPublicConfig and persisted
-  // on blur via UpdateAIProviderConfig. The API key is treated as a
-  // separate explicit-write surface: the input field is the only place
-  // the secret ever lives in the DOM, and it is cleared the instant
-  // Save lands so the value is never left client-side.
+  // Thin view over the reactive controller in
+  // ./ai/aiProviderController.svelte.ts, which owns config state, the
+  // chat/embedding sync fan-out, API-key management, the live connection
+  // probe, model discovery, and the audit log. The IPC bindings live in the
+  // controller so this view never touches IPC directly. See the controller
+  // for behavior; this file is layout + a11y only.
   import { onMount } from 'svelte'
-  import { aiProviderNeedsSetup } from '../../settings/ai-setup'
   import {
-    GetAIProviderConfig,
-    UpdateAIProviderConfig,
-    SetAIAPIKey,
-    CopyAIAPIKey,
-    ClearAIAPIKey,
-    SetUseKeyring,
-    TestAIConnection,
-    ListModels,
-    GetAIAudit,
-    ClearAIAudit
-  } from '../../../bindings/silt/app.js'
-  import type * as main from '../../../bindings/silt/models.js'
-  import type * as aiTypes from '../../../bindings/silt/backend/ai/models.js'
-
-  type Which = 'chat' | 'embedding'
+    createAIProviderController,
+    LOCAL_DEFAULT,
+    PROVIDER_TYPES,
+    supportsEmbeddings,
+    type ProviderType,
+    type Which
+  } from './ai/aiProviderController.svelte'
 
   type Props = Record<string, never>
   let {}: Props = $props()
 
-  let config = $state<main.AIPublicConfig | null>(null)
-  let loadError = $state<string | null>(null)
-  let loading = $state(true)
-  let syncProviders = $state(true)
-
-  // Split-mode tab state: tracks which role card is actively shown to the user.
-  // The inactive card is hidden via CSS to keep the DOM queryable for Vitest.
-  let activeRole = $state<Which>('chat')
-
-  // Per-provider UI state. Provider config fields live inside `config`
-  // (bound directly to inputs); these maps hold the transient UI state
-  // that doesn't belong in the saved config — the API-key input field
-  // (cleared after every save), the show/hide mask toggle, the in-flight
-  // test probe state, and the post-action status flashes.
-  let apiKeyInputs = $state<Record<Which, string>>({
-    chat: '',
-    embedding: ''
-  })
-  let showKey = $state<Record<Which, boolean>>({
-    chat: false,
-    embedding: false
-  })
-  let savingKey = $state<Record<Which, boolean>>({
-    chat: false,
-    embedding: false
-  })
-  let clearingKey = $state<Record<Which, boolean>>({
-    chat: false,
-    embedding: false
-  })
-  let testing = $state<Record<Which, boolean>>({
-    chat: false,
-    embedding: false
-  })
-  type TestOutcome = { ok: boolean; message?: string }
-  let testResult = $state<Record<Which, TestOutcome | null>>({
-    chat: null,
-    embedding: null
-  })
-  let keySavedFlash = $state<Record<Which, boolean>>({
-    chat: false,
-    embedding: false
-  })
-
-  // Model discovery state. The dropdown polls ListModels (cached server-side);
-  // this holds the client-side copy for rendering. manualModel tracks whether
-  // the user opted into the free-text input (or the poll failed/returned empty,
-  // which auto-falls-back). When true the <select> is hidden and a text input
-  // is shown, preserving the current model value.
-  let modelLists = $state<Record<Which, aiTypes.AIModel[]>>({
-    chat: [],
-    embedding: []
-  })
-  let modelLoading = $state<Record<Which, boolean>>({
-    chat: false,
-    embedding: false
-  })
-  let modelError = $state<Record<Which, string | null>>({
-    chat: null,
-    embedding: null
-  })
-  let manualModel = $state<Record<Which, boolean>>({
-    chat: false,
-    embedding: false
-  })
-
-  // Audit log state. Loaded lazily on first expand of the audit
-  // <details>; the open binding + $effect below trigger the fetch.
-  // `auditState` is a small state machine so the lazy-load effect
-  // doesn't refire after a failed probe (auditLoading flips back to
-  // false on error, which would otherwise re-trigger loadAudit and
-  // loop forever).
-  let audit = $state<main.AIAuditEntry[]>([])
-  let auditOpen = $state(false)
-  type AuditState = 'idle' | 'loading' | 'loaded' | 'error'
-  let auditState = $state<AuditState>('idle')
-  let auditError = $state<string | null>(null)
-
-  // Backend constants.
-  const LOCAL_DEFAULT = 'http://localhost:11434'
-  const OPENAI_DEFAULT = 'https://api.openai.com/v1'
-  const GOOGLE_DEFAULT = 'https://generativelanguage.googleapis.com'
-  const ANTHROPIC_DEFAULT = 'https://api.anthropic.com'
-
-  // Plain-object round-trip so Svelte 5's deep proxy can track nested
-  // field mutations — Wails returns class instances, which $state does
-  // not recursively wrap (so bind:value mutations on instance fields
-  // would silently not re-render).
-  function toPlain<T>(o: T): T {
-    return JSON.parse(JSON.stringify(o))
-  }
+  const ai = createAIProviderController()
 
   onMount(() => {
-    void reload()
+    void ai.reload()
   })
 
-  async function reload() {
-    loading = true
-    loadError = null
-    try {
-      config = toPlain(await GetAIProviderConfig())
-      if (config) {
-        // Sync-by-default if providers match type, url, and key status.
-        const sameType =
-          config.chat.provider_type === config.embedding.provider_type
-        const sameUrl = config.chat.base_url === config.embedding.base_url
-        const sameKey = config.chat.has_key === config.embedding.has_key
-        syncProviders = sameType && sameUrl && sameKey
-      }
-      // Load cached model lists (non-forced: no network call on cold start).
-      // Best-effort — a failure leaves the dropdown empty with manual fallback.
-      void loadModels('chat')
-      void loadModels('embedding')
-    } catch (e) {
-      loadError = e instanceof Error ? e.message : String(e)
-    } finally {
-      loading = false
-    }
-  }
-
-  // loadModels reads the server-side cache (no network when cached). On cold
-  // start with no cache it returns empty — the dropdown falls back to free-text.
-  async function loadModels(which: Which) {
-    try {
-      const models = toPlain(await ListModels(which, false))
-      modelLists[which] = models ?? []
-      if (modelLists[which].length === 0) {
-        manualModel[which] = true
-      } else {
-        manualModel[which] = false // Auto-show dropdown if models are cached
-      }
-    } catch {
-      // No cache yet — silent; user can click Refresh to poll.
-    }
-  }
-
-  // refreshModels forces a server-side poll (bypasses cache) and updates the
-  // dropdown. Automatically switches to dropdown mode if models are found,
-  // or manual input if empty, eliminating unnecessary pick-from-list clicks.
-  async function refreshModels(which: Which) {
-    if (modelLoading[which]) return
-    modelLoading[which] = true
-    modelError[which] = null
-    try {
-      const models = toPlain(await ListModels(which, true))
-      modelLists[which] = models ?? []
-      if (modelLists[which].length === 0) {
-        manualModel[which] = true
-      } else {
-        manualModel[which] = false // Auto-switch to dropdown once models land
-      }
-    } catch (e) {
-      modelError[which] = e instanceof Error ? e.message : String(e)
-      manualModel[which] = true
-    } finally {
-      modelLoading[which] = false
-    }
-  }
-
-  // --- Provider config persistence --------------------------------------
-
-  // validateAdvancedField returns an error message for an out-of-range tuning
-  // value, or null when the value is empty/valid. Empty values are fine — they
-  // mean "use the provider default" (omitempty on the Go side).
-  function advancedFieldError(
-    which: Which,
-    field: 'temperature' | 'max_tokens' | 'timeout_ms' | 'dimensions'
-  ): string | null {
-    if (!config) return null
-    const v = config[which][field]
-    if (v === undefined || v === null || Number.isNaN(v)) return null
-    switch (field) {
-      case 'temperature':
-        if (v < 0 || v > 2) return 'Must be 0–2'
-        break
-      case 'max_tokens':
-        if (v < 1) return 'Must be ≥ 1'
-        break
-      case 'timeout_ms':
-        if (v < 1000) return 'Must be ≥ 1000 ms'
-        break
-      case 'dimensions':
-        if (v < 1) return 'Must be ≥ 1'
-        break
-    }
-    return null
-  }
-
-  function hasAdvancedErrors(which: Which): boolean {
-    const fields: (
-      'temperature' | 'max_tokens' | 'timeout_ms' | 'dimensions'
-    )[] =
-      which === 'embedding'
-        ? ['temperature', 'max_tokens', 'timeout_ms', 'dimensions']
-        : ['temperature', 'max_tokens', 'timeout_ms']
-    return fields.some((f) => advancedFieldError(which, f) !== null)
-  }
-
-  type PersistResult = { ok: true } | { ok: false; message: string }
-
-  async function persistProvider(which: Which): Promise<PersistResult> {
-    if (!config)
-      return { ok: false, message: 'AI provider settings are not loaded.' }
-    if (hasAdvancedErrors(which)) {
-      return {
-        ok: false,
-        message: 'Fix invalid advanced settings before testing the connection.'
-      }
-    }
-    const b = config[which]
-    const patch: main.AIProviderPatch = {
-      provider_type: b.provider_type,
-      base_url: b.base_url,
-      model: b.model,
-      temperature: b.temperature,
-      max_tokens: b.max_tokens,
-      reasoning_effort: b.reasoning_effort,
-      timeout_ms: b.timeout_ms,
-      dimensions: b.dimensions
-    }
-    try {
-      await UpdateAIProviderConfig(which, patch)
-      return { ok: true }
-    } catch (e) {
-      console.error('UpdateAIProviderConfig failed:', e)
-      return {
-        ok: false,
-        message: `Failed to save provider settings: ${e instanceof Error ? e.message : String(e)}`
-      }
-    }
-  }
-
-  async function persistProviderWithSync(which: Which): Promise<PersistResult> {
-    if (!config) return { ok: false, message: 'No config loaded' }
-    if (syncProviders && which === 'chat') {
-      config.embedding.provider_type = config.chat.provider_type
-      config.embedding.base_url = config.chat.base_url
-
-      const resChat = await persistProvider('chat')
-      if (!resChat.ok) return resChat
-
-      if (supportsEmbeddings(config.chat.provider_type)) {
-        const resEmbed = await persistProvider('embedding')
-        if (!resEmbed.ok) return resEmbed
-      }
-      return { ok: true }
-    } else {
-      return persistProvider(which)
-    }
-  }
-
-  // Blur-save wrappers: the onblur handlers used to `void`-drop the
-  // PersistResult, so a failed save left the field showing the typed value
-  // with zero feedback. These surface failures through the existing
-  // per-provider error regions (modelError for the model field, testResult
-  // banner for the base URL). The success path is intentionally untouched so
-  // an incidental blur never wipes a valid test result or stale poll error.
-  async function persistModelOnBlur(w: Which): Promise<void> {
-    const r = await persistProvider(w)
-    if (!r.ok) modelError[w] = r.message ?? null
-  }
-  async function persistUrlOnBlur(which: Which): Promise<void> {
-    const r = await persistProviderWithSync(which)
-    if (!r.ok) testResult[which] = { ok: false, message: r.message }
-  }
-
-  type ProviderType = 'local' | 'openai-compatible' | 'google' | 'anthropic'
-
-  // Switching provider type snaps base_url to that type's canonical default
-  // unless the user has a custom endpoint, so flipping between types doesn't
-  // clobber a typed URL. Also drops the cached model list (different endpoint).
-  function selectProviderType(which: Which, type: ProviderType) {
-    if (!config) return
-
-    const updateOne = async (w: Which, t: ProviderType) => {
-      const b = config![w]
-      // No-op when re-selecting the current type: avoids wiping the cached
-      // model list and firing an unnecessary ListModels network poll against
-      // the same endpoint.
-      if (b.provider_type === t) return true
-      const oldDefault = providerDefaultURL(b.provider_type)
-      b.provider_type = t
-      const nativeTarget = t === 'google' || t === 'anthropic'
-      if (nativeTarget || b.base_url === oldDefault || !b.base_url) {
-        b.base_url = providerDefaultURL(t)
-      }
-      modelLists[w] = []
-      modelError[w] = null
-      manualModel[w] = false
-
-      const persisted = await persistProvider(w)
-      if (!persisted.ok) {
-        modelError[w] = persisted.message
-        manualModel[w] = true
-        return false
-      }
-      void refreshModels(w)
-      return true
-    }
-
-    if (syncProviders && which === 'chat') {
-      void (async () => {
-        const ok = await updateOne('chat', type)
-        if (ok) {
-          const embedType = supportsEmbeddings(type) ? type : 'local'
-          await updateOne('embedding', embedType as ProviderType)
-        }
-      })()
-    } else {
-      void updateOne(which, type)
-    }
-  }
-
-  function providerDefaultURL(type: string): string {
-    switch (type) {
-      case 'local':
-        return LOCAL_DEFAULT
-      case 'google':
-        return GOOGLE_DEFAULT
-      case 'anthropic':
-        return ANTHROPIC_DEFAULT
-      default:
-        return OPENAI_DEFAULT
-    }
-  }
-
-  // Anthropic has no native embeddings endpoint — the embedding block should
-  // surface this and disable the model field when anthropic is selected.
-  function supportsEmbeddings(type: string): boolean {
-    return type !== 'anthropic'
-  }
-
-  // --- API key save / clear --------------------------------------------
-
-  async function saveKey(which: Which) {
-    const key = apiKeyInputs[which].trim()
-    if (!key || savingKey[which]) return
-    savingKey[which] = true
-    try {
-      if (syncProviders && which === 'chat') {
-        await SetAIAPIKey('chat', key)
-        if (config) {
-          config.chat.has_key = true
-          if (supportsEmbeddings(config.chat.provider_type)) {
-            await SetAIAPIKey('embedding', key)
-            config.embedding.has_key = true
-          }
-        }
-        apiKeyInputs.chat = ''
-        showKey.chat = false
-        keySavedFlash.chat = true
-        setTimeout(() => {
-          keySavedFlash.chat = false
-        }, 3500)
-      } else {
-        await SetAIAPIKey(which, key)
-        if (config) config[which].has_key = true
-        apiKeyInputs[which] = ''
-        showKey[which] = false
-        keySavedFlash[which] = true
-        setTimeout(() => {
-          keySavedFlash[which] = false
-        }, 3500)
-      }
-    } catch (e) {
-      testResult[which] = {
-        ok: false,
-        message: `Failed to save key: ${e instanceof Error ? e.message : String(e)}`
-      }
-    } finally {
-      savingKey[which] = false
-    }
-  }
-
-  async function clearKey(which: Which) {
-    if (clearingKey[which]) return
-    clearingKey[which] = true
-    try {
-      if (syncProviders && which === 'chat') {
-        await ClearAIAPIKey('chat')
-        await ClearAIAPIKey('embedding')
-        if (config) {
-          config.chat.has_key = false
-          config.embedding.has_key = false
-        }
-        keySavedFlash.chat = false
-      } else {
-        await ClearAIAPIKey(which)
-        if (config) config[which].has_key = false
-        keySavedFlash[which] = false
-      }
-    } catch (e) {
-      testResult[which] = {
-        ok: false,
-        message: `Failed to clear key: ${e instanceof Error ? e.message : String(e)}`
-      }
-    } finally {
-      clearingKey[which] = false
-    }
-  }
-
-  // --- Test connection --------------------------------------------------
-
-  async function runTest(which: Which) {
-    if (testing[which]) return
-    testing[which] = true
-    testResult[which] = null
-    try {
-      const persisted = await persistProvider(which)
-      if (!persisted.ok) {
-        testResult[which] = { ok: false, message: persisted.message }
-        return
-      }
-      const result = await TestAIConnection(which)
-      testResult[which] = {
-        ok: result.ok,
-        message: result.message ?? undefined
-      }
-    } catch (e) {
-      testResult[which] = {
-        ok: false,
-        message: e instanceof Error ? e.message : String(e)
-      }
-    } finally {
-      testing[which] = false
-    }
-  }
-
-  async function runTestUnified() {
-    if (!config) return
-    const testChat = runTest('chat')
-    let testEmbed = Promise.resolve()
-    if (supportsEmbeddings(config.chat.provider_type)) {
-      testEmbed = runTest('embedding')
-    }
-    await Promise.all([testChat, testEmbed])
-  }
-
-  // --- Keyring ----------------------------------------------------------
-
-  async function toggleKeyring(on: boolean) {
-    if (!config || config.use_keyring === on) return
-    try {
-      await SetUseKeyring(on)
-      config.use_keyring = on
-      if (on) {
-        try {
-          config = toPlain(await GetAIProviderConfig())
-        } catch {
-          // Migration refresh is best-effort; the toggle itself succeeded.
-        }
-      }
-    } catch (e) {
-      loadError = `Failed to update key storage: ${e instanceof Error ? e.message : String(e)}`
-    }
-  }
-
-  async function toggleSyncProviders(on: boolean) {
-    if (!on) {
-      syncProviders = false
-      return
-    }
-    if (!config) {
-      syncProviders = true
-      return
-    }
-    // Flip sync on optimistically so the toggle tracks the user's click
-    // immediately; rolled back below if the persist or key copy fails.
-    syncProviders = true
-    // Sync the embedding slot to chat. Anthropic has no embeddings endpoint,
-    // so embedding falls back to local (mirrors selectProviderType) rather than
-    // persisting a provider_type that can never serve embeddings.
-    const chatSupportsEmbed = supportsEmbeddings(config.chat.provider_type)
-    config.embedding.provider_type = chatSupportsEmbed
-      ? config.chat.provider_type
-      : ('local' as ProviderType)
-    config.embedding.base_url = chatSupportsEmbed
-      ? config.chat.base_url
-      : providerDefaultURL('local')
-
-    modelLists['embedding'] = []
-    modelError['embedding'] = null
-    manualModel['embedding'] = false
-
-    const persisted = await persistProvider('embedding')
-    if (!persisted.ok) {
-      // Roll back the optimistic toggle and surface the failure — every other
-      // failure path in this tab surfaces its error; swallowing it left the UI
-      // claiming sync was on while the backend embedding config was stale.
-      syncProviders = false
-      loadError = persisted.message
-      return
-    }
-
-    // Share chat's existing key with embedding server-side. The frontend can
-    // only see has_key (never the value), so this goes through a backend copy
-    // binding rather than re-entering the secret. Skipped for the local
-    // fallback (Ollama is keyless) and when chat has no key.
-    if (chatSupportsEmbed && config.chat.has_key) {
-      try {
-        await CopyAIAPIKey('chat', 'embedding')
-        config.embedding.has_key = true
-      } catch (e) {
-        // Copy failed (e.g. keyring unavailable): don't lie about the key.
-        // Roll back and surface it so the user knows to re-enter the key.
-        syncProviders = false
-        loadError = `Failed to share the API key: ${e instanceof Error ? e.message : String(e)}`
-        return
-      }
-    } else {
-      config.embedding.has_key = config.chat.has_key && chatSupportsEmbed
-    }
-
-    void refreshModels('embedding')
-  }
-
-  // --- Audit log --------------------------------------------------------
-
-  async function loadAudit() {
-    if (auditState === 'loading') return
-    auditState = 'loading'
-    auditError = null
-    try {
-      audit = toPlain(await GetAIAudit())
-      auditState = 'loaded'
-    } catch (e) {
-      auditError = e instanceof Error ? e.message : String(e)
-      auditState = 'error'
-    }
-  }
-
-  async function clearAudit() {
-    try {
-      await ClearAIAudit()
-      audit = []
-    } catch (e) {
-      auditError = e instanceof Error ? e.message : String(e)
-      auditState = 'error'
-    }
-  }
-
+  // Audit lazy-load: the controller is a plain module (no component context),
+  // so the <details> open → loadAudit effect lives here. The state machine in
+  // the controller prevents a refire loop after a failed probe.
   $effect(() => {
-    if (auditOpen && auditState === 'idle') {
-      void loadAudit()
+    if (ai.auditOpen && ai.auditState === 'idle') {
+      void ai.loadAudit()
     }
-  })
-
-  // --- Derived + helpers ------------------------------------------------
-
-  function formatAuditTime(iso: string): string {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return iso
-    return new Intl.DateTimeFormat(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(d)
-  }
-
-  let needsSetup = $derived.by(() => {
-    if (!config) return false
-    return aiProviderNeedsSetup(config.chat)
-  })
-
-  function keyringFellBack(which: Which): boolean {
-    if (!config) return false
-    return (config.keyring_unusable_for ?? []).includes(which)
-  }
-
-  // Dynamic summaries for Accordion headers to show details at a glance.
-  let tuningSummary = $derived.by(() => {
-    if (!config) return ''
-    if (syncProviders) {
-      const chatModel = config.chat.model || 'none'
-      const embedModel = config.embedding.model || 'none'
-      return `Chat: ${chatModel} (Temp ${config.chat.temperature ?? 'default'}) · Embed: ${embedModel}`
-    } else {
-      const b = config[activeRole]
-      const model = b.model || 'none'
-      if (activeRole === 'chat') {
-        return `Chat Model: ${model} (Temp ${b.temperature ?? 'default'})`
-      } else {
-        return `Embedding Model: ${model} (${b.dimensions ?? 'default'} dims)`
-      }
-    }
-  })
-
-  let keyringSummary = $derived.by(() => {
-    if (!config) return ''
-    if (!config.keyring_available)
-      return 'OS Keyring unavailable (fallback active)'
-    return config.use_keyring
-      ? 'Secure OS Keychain storage enabled'
-      : 'Stored in vault configuration'
-  })
-
-  let auditSummary = $derived.by(() => {
-    if (auditState === 'idle') return 'Click to view log'
-    if (auditState === 'loading') return 'Loading logs…'
-    if (auditState === 'error') return 'Error loading logs'
-    return `${audit.length} call${audit.length === 1 ? '' : 's'} recorded`
   })
 </script>
 
 <div class="p-6 max-w-6xl mx-auto w-full space-y-6">
-  {#if loading}
+  {#if ai.loading}
     <div
       class="text-text-muted text-type-sm font-body-md animate-pulse py-8 text-center"
     >
       Loading AI configuration…
     </div>
-  {:else if loadError && !config}
+  {:else if ai.loadError && !ai.config}
     <div
       class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
       role="alert"
@@ -655,16 +51,17 @@
       <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
         >error</span
       >
-      <span class="flex-1">Failed to load AI configuration: {loadError}</span>
+      <span class="flex-1">Failed to load AI configuration: {ai.loadError}</span
+      >
       <button
         type="button"
-        onclick={() => void reload()}
+        onclick={() => void ai.reload()}
         class="text-type-xs font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
       >
         Retry
       </button>
     </div>
-  {:else if config}
+  {:else if ai.config}
     <!-- Intro & nudge banner -->
     <section aria-label="AI provider overview">
       <p class="text-text-primary text-type-md font-body-md leading-relaxed">
@@ -672,7 +69,7 @@
         summarization, semantic vault search, and task tracking. Choose a setup
         mode below to get started.
       </p>
-      {#if needsSetup}
+      {#if ai.needsSetup}
         <div
           class="mt-4 bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-xl p-4 flex items-start gap-3"
         >
@@ -720,19 +117,20 @@
             type="checkbox"
             class="keyring-switch peer sr-only"
             aria-labelledby="sync-providers-label"
-            checked={syncProviders}
-            onchange={(e) => void toggleSyncProviders(e.currentTarget.checked)}
+            checked={ai.syncProviders}
+            onchange={(e) =>
+              void ai.toggleSyncProviders(e.currentTarget.checked)}
           />
           <span
             aria-hidden="true"
             class="keyring-switch-track"
-            class:on={syncProviders}
+            class:on={ai.syncProviders}
           ></span>
         </label>
       </div>
 
       <!-- Split Role switcher (only visible in split mode) -->
-      {#if !syncProviders}
+      {#if !ai.syncProviders}
         <div
           class="flex p-1 rounded-xl bg-surface-panel/40 border border-surface-panel-border/80 max-w-xs"
           role="tablist"
@@ -741,9 +139,9 @@
           <button
             type="button"
             role="tab"
-            aria-selected={activeRole === 'chat'}
-            onclick={() => (activeRole = 'chat')}
-            class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {activeRole ===
+            aria-selected={ai.activeRole === 'chat'}
+            onclick={() => (ai.activeRole = 'chat')}
+            class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {ai.activeRole ===
             'chat'
               ? 'bg-accent-primary-start text-surface-app shadow-md'
               : 'text-text-muted hover:text-text-primary'}"
@@ -753,9 +151,9 @@
           <button
             type="button"
             role="tab"
-            aria-selected={activeRole === 'embedding'}
-            onclick={() => (activeRole = 'embedding')}
-            class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {activeRole ===
+            aria-selected={ai.activeRole === 'embedding'}
+            onclick={() => (ai.activeRole = 'embedding')}
+            class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {ai.activeRole ===
             'embedding'
               ? 'bg-accent-primary-start text-surface-app shadow-md'
               : 'text-text-muted hover:text-text-primary'}"
@@ -767,37 +165,15 @@
     </section>
 
     {#snippet providerCard(which: Which)}
-      {@const b = config![which]}
+      {@const b = ai.config![which]}
       {@const idPrefix = `ai-${which}`}
       {@const typeLabel =
         which === 'chat' ? 'Chat Provider Type' : 'Embedding Provider Type'}
       {@const isLocal = b.provider_type === 'local'}
       {@const embedUnsupported =
         which === 'embedding' && !supportsEmbeddings(b.provider_type)}
-      {@const testingNow = testing[which]}
-      {@const result = testResult[which]}
-      {@const providerTypes = [
-        {
-          value: 'local' as ProviderType,
-          icon: 'dns',
-          label: 'Local (Ollama)'
-        },
-        {
-          value: 'openai-compatible' as ProviderType,
-          icon: 'cloud',
-          label: 'OpenAI-compatible'
-        },
-        {
-          value: 'google' as ProviderType,
-          icon: 'auto_awesome',
-          label: 'Google AI'
-        },
-        {
-          value: 'anthropic' as ProviderType,
-          icon: 'psychology',
-          label: 'Anthropic'
-        }
-      ]}
+      {@const testingNow = ai.testing[which]}
+      {@const result = ai.testResult[which]}
       <div
         class="bg-surface-panel/10 border border-surface-panel-border/50 rounded-xl p-5 space-y-5"
       >
@@ -814,13 +190,13 @@
             aria-labelledby="{idPrefix}-type-label"
             class="grid grid-cols-2 sm:grid-cols-4 gap-2"
           >
-            {#each providerTypes as pt (pt.value)}
+            {#each PROVIDER_TYPES as pt (pt.value)}
               {@const selected = b.provider_type === pt.value}
               <button
                 type="button"
                 role="radio"
                 aria-checked={selected}
-                onclick={() => selectProviderType(which, pt.value)}
+                onclick={() => ai.selectProviderType(which, pt.value)}
                 class="flex items-center gap-2 px-3 py-2 rounded-lg border transition-all duration-150 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 {selected
                   ? 'bg-accent-primary-glow/15 border-accent-primary-start text-accent-primary-start shadow-sm'
                   : 'bg-surface-panel/40 border-surface-panel-border text-text-muted hover:border-border-active hover:text-text-primary'}"
@@ -869,7 +245,7 @@
               id="{idPrefix}-base-url"
               type="url"
               bind:value={b.base_url}
-              onblur={() => void persistUrlOnBlur(which)}
+              onblur={() => void ai.persistUrlOnBlur(which)}
               autocomplete="off"
               spellcheck="false"
               class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
@@ -895,19 +271,19 @@
             <div class="relative w-full">
               <input
                 id="{idPrefix}-key"
-                type={showKey[which] ? 'text' : 'password'}
-                bind:value={apiKeyInputs[which]}
+                type={ai.showKey[which] ? 'text' : 'password'}
+                bind:value={ai.apiKeyInputs[which]}
                 autocomplete="off"
                 spellcheck="false"
                 placeholder={b.has_key
-                  ? '••••••••••••••••••••••••••••••••'
+                  ? '•••••••••••••••••••••••••••••••'
                   : isLocal
                     ? 'Optional — local servers usually need no key'
                     : 'sk-…'}
                 onkeydown={(e: KeyboardEvent) => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
-                    void saveKey(which)
+                    void ai.saveKey(which)
                   }
                 }}
                 class="w-full bg-surface-panel border border-surface-panel-border rounded-lg pl-3 pr-24 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
@@ -919,30 +295,31 @@
               >
                 <button
                   type="button"
-                  onclick={() => (showKey[which] = !showKey[which])}
-                  aria-pressed={showKey[which]}
-                  aria-label={showKey[which]
+                  onclick={() => (ai.showKey[which] = !ai.showKey[which])}
+                  aria-pressed={ai.showKey[which]}
+                  aria-label={ai.showKey[which]
                     ? `Hide ${which} API key`
                     : `Show ${which} API key`}
-                  title={showKey[which] ? 'Hide' : 'Show'}
+                  title={ai.showKey[which] ? 'Hide' : 'Show'}
                   class="p-1 text-text-muted hover:text-text-primary bg-transparent border-none cursor-pointer"
                 >
                   <span
                     class="material-symbols-outlined text-icon-md"
                     aria-hidden="true"
                   >
-                    {showKey[which] ? 'visibility_off' : 'visibility'}
+                    {ai.showKey[which] ? 'visibility_off' : 'visibility'}
                   </span>
                 </button>
 
                 <!-- Save key button (visually hidden when empty, keeps tests passing) -->
                 <button
                   type="button"
-                  onclick={() => void saveKey(which)}
-                  disabled={!apiKeyInputs[which].trim() || savingKey[which]}
+                  onclick={() => void ai.saveKey(which)}
+                  disabled={!ai.apiKeyInputs[which].trim() ||
+                    ai.savingKey[which]}
                   aria-label="Save key"
                   class="px-2 py-1 bg-accent-primary-start text-surface-app rounded-md font-label-sm-bold text-type-2xs hover:brightness-110 transition-all cursor-pointer"
-                  class:hidden={!apiKeyInputs[which].trim()}
+                  class:hidden={!ai.apiKeyInputs[which].trim()}
                 >
                   Save
                 </button>
@@ -951,11 +328,11 @@
                 {#if b.has_key}
                   <button
                     type="button"
-                    onclick={() => void clearKey(which)}
-                    disabled={clearingKey[which]}
+                    onclick={() => void ai.clearKey(which)}
+                    disabled={ai.clearingKey[which]}
                     aria-label="Clear key"
                     class="px-2 py-1 bg-surface-panel border border-surface-panel-border text-text-muted hover:text-error hover:border-error/30 rounded-md font-label-sm-bold text-type-2xs transition-all cursor-pointer"
-                    class:hidden={apiKeyInputs[which].trim()}
+                    class:hidden={ai.apiKeyInputs[which].trim()}
                   >
                     Clear
                   </button>
@@ -963,7 +340,7 @@
               </div>
             </div>
 
-            {#if b.has_key && !apiKeyInputs[which].trim()}
+            {#if b.has_key && !ai.apiKeyInputs[which].trim()}
               <p
                 class="text-type-2xs font-label-sm text-accent-primary-start flex items-center gap-0.5 mt-0.5"
               >
@@ -974,7 +351,7 @@
                 Key configured
               </p>
             {/if}
-            {#if keyringFellBack(which) && b.has_key}
+            {#if ai.keyringFellBack(which) && b.has_key}
               <p
                 class="text-type-2xs font-label-sm text-status-warn flex items-center gap-0.5 mt-0.5"
               >
@@ -985,7 +362,7 @@
                 The keyring was unreachable; this key was saved to config.yaml instead.
               </p>
             {/if}
-            {#if keySavedFlash[which]}
+            {#if ai.keySavedFlash[which]}
               <p
                 class="text-type-2xs font-label-sm text-accent-primary-start mt-0.5 font-semibold"
                 role="status"
@@ -997,7 +374,7 @@
         </div>
 
         <!-- Model Selectors -->
-        {#if syncProviders && which === 'chat'}
+        {#if ai.syncProviders && which === 'chat'}
           <!-- Render both selectors in sync mode -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
             <!-- Chat Model -->
@@ -1027,7 +404,7 @@
               {/if}
             </div>
           </div>
-        {:else if !syncProviders}
+        {:else if !ai.syncProviders}
           <!-- Render single selector in split mode -->
           <div class="pt-1">
             {#if embedUnsupported}
@@ -1059,9 +436,9 @@
           class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-surface-panel-border/30"
         >
           <div class="flex-1 min-w-0">
-            {#if syncProviders && which === 'chat'}
+            {#if ai.syncProviders && which === 'chat'}
               <div class="space-y-1">
-                {#if testResult.chat?.ok}
+                {#if ai.testResult.chat?.ok}
                   <p
                     class="text-type-sm font-body-md text-accent-primary-start flex items-start gap-1.5"
                     role="status"
@@ -1071,13 +448,13 @@
                       aria-hidden="true">check_circle</span
                     >
                     <span
-                      >Connected (Chat){testResult.chat.message
-                        ? ` · ${testResult.chat.message}`
+                      >Connected (Chat){ai.testResult.chat.message
+                        ? ` · ${ai.testResult.chat.message}`
                         : ''}</span
                     >
                   </p>
                 {/if}
-                {#if testResult.chat && !testResult.chat.ok}
+                {#if ai.testResult.chat && !ai.testResult.chat.ok}
                   <p
                     class="text-type-sm font-body-md text-error flex items-start gap-1.5"
                     role="alert"
@@ -1087,15 +464,15 @@
                       aria-hidden="true">error</span
                     >
                     <span
-                      >Connection failed (Chat){testResult.chat.message
-                        ? ` · ${testResult.chat.message}`
+                      >Connection failed (Chat){ai.testResult.chat.message
+                        ? ` · ${ai.testResult.chat.message}`
                         : ''}</span
                     >
                   </p>
                 {/if}
 
                 {#if supportsEmbeddings(b.provider_type)}
-                  {#if testResult.embedding?.ok}
+                  {#if ai.testResult.embedding?.ok}
                     <p
                       class="text-type-sm font-body-md text-accent-primary-start flex items-start gap-1.5"
                       role="status"
@@ -1105,13 +482,13 @@
                         aria-hidden="true">check_circle</span
                       >
                       <span
-                        >Connected (Embedding){testResult.embedding.message
-                          ? ` · ${testResult.embedding.message}`
+                        >Connected (Embedding){ai.testResult.embedding.message
+                          ? ` · ${ai.testResult.embedding.message}`
                           : ''}</span
                       >
                     </p>
                   {/if}
-                  {#if testResult.embedding && !testResult.embedding.ok}
+                  {#if ai.testResult.embedding && !ai.testResult.embedding.ok}
                     <p
                       class="text-type-sm font-body-md text-error flex items-start gap-1.5"
                       role="alert"
@@ -1121,9 +498,9 @@
                         aria-hidden="true">error</span
                       >
                       <span
-                        >Connection failed (Embedding){testResult.embedding
+                        >Connection failed (Embedding){ai.testResult.embedding
                           .message
-                          ? ` · ${testResult.embedding.message}`
+                          ? ` · ${ai.testResult.embedding.message}`
                           : ''}</span
                       >
                     </p>
@@ -1169,17 +546,17 @@
           <button
             type="button"
             onclick={() => {
-              if (syncProviders && which === 'chat') {
-                void runTestUnified()
+              if (ai.syncProviders && which === 'chat') {
+                void ai.runTestUnified()
               } else {
-                void runTest(which)
+                void ai.runTest(which)
               }
             }}
             disabled={testingNow ||
-              (syncProviders && (testing.chat || testing.embedding))}
+              (ai.syncProviders && (ai.testing.chat || ai.testing.embedding))}
             class="flex-shrink-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary font-label-sm-bold hover:border-accent-primary-start hover:text-accent-primary-start transition-all cursor-pointer disabled:opacity-60"
           >
-            {#if testingNow || (syncProviders && which === 'chat' && (testing.chat || testing.embedding))}
+            {#if testingNow || (ai.syncProviders && which === 'chat' && (ai.testing.chat || ai.testing.embedding))}
               <span
                 class="material-symbols-outlined text-icon-md animate-spin"
                 aria-hidden="true">progress_activity</span
@@ -1198,7 +575,7 @@
     {/snippet}
 
     {#snippet modelSelector(w: Which, label: string)}
-      {@const b = config![w]}
+      {@const b = ai.config![w]}
       {@const idPrefix = `ai-${w}`}
 
       <div class="flex flex-col gap-1.5">
@@ -1208,13 +585,13 @@
         >
         <div class="flex items-center gap-2">
           <div class="flex-1 relative min-w-0">
-            {#if manualModel[w] || modelLists[w].length === 0}
+            {#if ai.manualModel[w] || ai.modelLists[w].length === 0}
               <!-- Free-text input -->
               <input
                 id="{idPrefix}-model"
                 type="text"
                 bind:value={b.model}
-                onblur={() => void persistModelOnBlur(w)}
+                onblur={() => void ai.persistModelOnBlur(w)}
                 autocomplete="off"
                 spellcheck="false"
                 placeholder={w === 'chat'
@@ -1222,10 +599,10 @@
                   : 'text-embedding-3-small, nomic-embed-text'}
                 class="w-full bg-surface-panel border border-surface-panel-border rounded-lg pl-3 pr-8 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
               />
-              {#if modelLists[w].length > 0}
+              {#if ai.modelLists[w].length > 0}
                 <button
                   type="button"
-                  onclick={() => (manualModel[w] = false)}
+                  onclick={() => (ai.manualModel[w] = false)}
                   title="Pick from list"
                   aria-label="Pick from list"
                   class="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary bg-transparent border-none cursor-pointer p-0"
@@ -1243,19 +620,19 @@
                 onchange={(e) => {
                   const val = (e.currentTarget as HTMLSelectElement).value
                   if (val === '__custom__') {
-                    manualModel[w] = true
+                    ai.manualModel[w] = true
                   } else {
                     b.model = val
-                    void persistProvider(w)
+                    void ai.persistProvider(w)
                   }
                 }}
                 class="w-full bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all cursor-pointer appearance-none pr-8"
               >
-                {#if !modelLists[w].some((m) => m.id === b.model)}
+                {#if !ai.modelLists[w].some((m) => m.id === b.model)}
                   <option value={b.model}>{b.model || 'Select a model…'}</option
                   >
                 {/if}
-                {#each modelLists[w] as m (m.id)}
+                {#each ai.modelLists[w] as m (m.id)}
                   <option value={m.id}>{m.display_name}</option>
                 {/each}
                 <option value="__custom__">+ Type model name manually...</option
@@ -1273,22 +650,22 @@
           <!-- Refresh models button -->
           <button
             type="button"
-            onclick={() => void refreshModels(w)}
-            disabled={modelLoading[w]}
+            onclick={() => void ai.refreshModels(w)}
+            disabled={ai.modelLoading[w]}
             title="Refresh models"
             aria-label="Refresh models"
             class="flex-shrink-0 flex items-center justify-center p-2 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted hover:text-text-primary hover:border-border-active transition-all cursor-pointer disabled:opacity-40"
           >
             <span
               class="material-symbols-outlined text-icon-md"
-              class:animate-spin={modelLoading[w]}
+              class:animate-spin={ai.modelLoading[w]}
             >
-              {modelLoading[w] ? 'progress_activity' : 'refresh'}
+              {ai.modelLoading[w] ? 'progress_activity' : 'refresh'}
             </span>
           </button>
         </div>
 
-        {#if modelError[w]}
+        {#if ai.modelError[w]}
           <p
             class="text-type-2xs font-label-sm text-error flex items-center gap-1 mt-0.5"
             role="alert"
@@ -1297,14 +674,14 @@
               class="material-symbols-outlined text-type-sm"
               aria-hidden="true">error</span
             >
-            {modelError[w]}
+            {ai.modelError[w]}
           </p>
         {/if}
       </div>
     {/snippet}
 
     {#snippet advancedTuningGrid(w: Which)}
-      {@const b = config![w]}
+      {@const b = ai.config![w]}
       {@const idPrefix = `ai-${w}`}
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {#if w === 'chat'}
@@ -1320,12 +697,12 @@
               max="2"
               step="0.1"
               bind:value={b.temperature}
-              onblur={() => void persistProvider(w)}
+              onblur={() => void ai.persistProvider(w)}
               class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
             />
-            {#if advancedFieldError(w, 'temperature')}
+            {#if ai.advancedFieldError(w, 'temperature')}
               <span class="text-error text-type-2xs font-label-sm" role="alert"
-                >{advancedFieldError(w, 'temperature')}</span
+                >{ai.advancedFieldError(w, 'temperature')}</span
               >
             {/if}
           </label>
@@ -1340,12 +717,12 @@
               type="number"
               min="1"
               bind:value={b.max_tokens}
-              onblur={() => void persistProvider(w)}
+              onblur={() => void ai.persistProvider(w)}
               class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
             />
-            {#if advancedFieldError(w, 'max_tokens')}
+            {#if ai.advancedFieldError(w, 'max_tokens')}
               <span class="text-error text-type-2xs font-label-sm" role="alert"
-                >{advancedFieldError(w, 'max_tokens')}</span
+                >{ai.advancedFieldError(w, 'max_tokens')}</span
               >
             {/if}
           </label>
@@ -1361,9 +738,9 @@
               onchange={(e) => {
                 const v = (e.currentTarget as HTMLSelectElement).value
                 b.reasoning_effort = v || undefined
-                void persistProvider(w)
+                void ai.persistProvider(w)
               }}
-              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all cursor-pointer"
+              class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
             >
               <option value="">Default</option>
               <option value="none">None</option>
@@ -1388,12 +765,12 @@
             min="1000"
             step="500"
             bind:value={b.timeout_ms}
-            onblur={() => void persistProvider(w)}
+            onblur={() => void ai.persistProvider(w)}
             class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
           />
-          {#if advancedFieldError(w, 'timeout_ms')}
+          {#if ai.advancedFieldError(w, 'timeout_ms')}
             <span class="text-error text-type-2xs font-label-sm" role="alert"
-              >{advancedFieldError(w, 'timeout_ms')}</span
+              >{ai.advancedFieldError(w, 'timeout_ms')}</span
             >
           {/if}
         </label>
@@ -1409,12 +786,12 @@
               type="number"
               min="1"
               bind:value={b.dimensions}
-              onblur={() => void persistProvider(w)}
+              onblur={() => void ai.persistProvider(w)}
               class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start transition-all"
             />
-            {#if advancedFieldError(w, 'dimensions')}
+            {#if ai.advancedFieldError(w, 'dimensions')}
               <span class="text-error text-type-2xs font-label-sm" role="alert"
-                >{advancedFieldError(w, 'dimensions')}</span
+                >{ai.advancedFieldError(w, 'dimensions')}</span
               >
             {/if}
           </label>
@@ -1428,9 +805,9 @@
       <!-- Split Mode: renders both cards, using CSS 'hidden' on the inactive one so Vitest can query them -->
       <section
         aria-labelledby="chat-heading"
-        class:hidden={!syncProviders && activeRole !== 'chat'}
+        class:hidden={!ai.syncProviders && ai.activeRole !== 'chat'}
       >
-        {#if !syncProviders}
+        {#if !ai.syncProviders}
           <h3
             id="chat-heading"
             class="font-label-sm-bold text-text-muted uppercase tracking-widest text-type-2xs mb-3"
@@ -1445,7 +822,7 @@
 
       <section
         aria-labelledby="embedding-heading"
-        class:hidden={syncProviders || activeRole !== 'embedding'}
+        class:hidden={ai.syncProviders || ai.activeRole !== 'embedding'}
       >
         <h3
           id="embedding-heading"
@@ -1476,7 +853,7 @@
                 >Advanced Options</span
               >
               <span class="text-type-2xs text-text-muted block mt-0.5"
-                >{tuningSummary}</span
+                >{ai.tuningSummary}</span
               >
             </div>
           </div>
@@ -1487,14 +864,14 @@
         </summary>
         <div class="px-4 pb-4 border-t border-surface-panel-border/30 pt-4">
           <div class="space-y-5">
-            {#if syncProviders}
+            {#if ai.syncProviders}
               <div>
                 <h4 class="text-type-xs font-semibold text-text-primary mb-3">
                   Chat Tuning
                 </h4>
                 {@render advancedTuningGrid('chat')}
               </div>
-              {#if supportsEmbeddings(config.chat.provider_type)}
+              {#if supportsEmbeddings(ai.config.chat.provider_type)}
                 <div class="border-t border-surface-panel-border/30 pt-4">
                   <h4 class="text-type-xs font-semibold text-text-primary mb-3">
                     Embedding Tuning
@@ -1503,7 +880,7 @@
                 </div>
               {/if}
             {:else}
-              {@render advancedTuningGrid(activeRole)}
+              {@render advancedTuningGrid(ai.activeRole)}
             {/if}
           </div>
         </div>
@@ -1526,7 +903,7 @@
                 >Key storage</span
               >
               <span class="text-type-2xs text-text-muted block mt-0.5"
-                >{keyringSummary}</span
+                >{ai.keyringSummary}</span
               >
             </div>
           </div>
@@ -1538,7 +915,7 @@
         <div
           class="px-4 pb-4 border-t border-surface-panel-border/30 pt-4 space-y-3"
         >
-          {#if !config.keyring_available}
+          {#if !ai.config.keyring_available}
             <div
               class="flex items-start gap-2 p-3 rounded-lg bg-status-warn/5 border border-status-warn/30 text-status-warn text-type-sm font-body-md"
               role="alert"
@@ -1562,18 +939,18 @@
               id="ai-keyring-toggle"
               type="checkbox"
               class="keyring-switch peer sr-only"
-              checked={config.use_keyring}
-              disabled={!config.keyring_available}
+              checked={ai.config.use_keyring}
+              disabled={!ai.config.keyring_available}
               onchange={(e: Event) =>
-                void toggleKeyring(
+                void ai.toggleKeyring(
                   (e.currentTarget as HTMLInputElement).checked
                 )}
             />
             <span
               aria-hidden="true"
               class="keyring-switch-track"
-              class:on={config.use_keyring && config.keyring_available}
-              class:disabled={!config.keyring_available}
+              class:on={ai.config.use_keyring && ai.config.keyring_available}
+              class:disabled={!ai.config.keyring_available}
             ></span>
             <span class="flex-1">
               <span class="text-text-primary text-type-md font-body-md block">
@@ -1595,7 +972,7 @@
 
       <!-- Section 3: Recent Activity -->
       <details
-        bind:open={auditOpen}
+        bind:open={ai.auditOpen}
         class="group bg-surface-panel/10 border border-surface-panel-border rounded-xl"
       >
         <summary
@@ -1612,7 +989,7 @@
                 >Plugin AI calls</span
               >
               <span class="text-type-2xs text-text-muted block mt-0.5"
-                >{auditSummary}</span
+                >{ai.auditSummary}</span
               >
             </div>
           </div>
@@ -1622,13 +999,13 @@
           >
         </summary>
         <div class="px-4 pb-4 border-t border-surface-panel-border/30 pt-4">
-          {#if auditState === 'loading'}
+          {#if ai.auditState === 'loading'}
             <div
               class="text-text-muted text-type-sm font-body-md animate-pulse py-3"
             >
               Loading audit log…
             </div>
-          {:else if auditError}
+          {:else if ai.auditError}
             <div
               class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
               role="alert"
@@ -1637,9 +1014,18 @@
                 class="material-symbols-outlined text-icon-lg"
                 aria-hidden="true">error</span
               >
-              <span class="flex-1">Failed to load audit log: {auditError}</span>
+              <span class="flex-1"
+                >Failed to load audit log: {ai.auditError}</span
+              >
+              <button
+                type="button"
+                onclick={() => void ai.loadAudit()}
+                class="text-type-xs font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
+              >
+                Retry
+              </button>
             </div>
-          {:else if audit.length === 0}
+          {:else if ai.audit.length === 0}
             <p class="text-text-muted text-type-sm font-body-md py-3">
               No activity recorded yet.
             </p>
@@ -1689,12 +1075,12 @@
                   </tr>
                 </thead>
                 <tbody>
-                  {#each audit as entry, i (`${entry.at}:${i}`)}
+                  {#each ai.audit as entry, i (`${entry.at}:${i}`)}
                     <tr
                       class="border-b border-surface-panel-border/50 text-text-primary"
                     >
                       <td class="py-1.5 pr-3 whitespace-nowrap" title={entry.at}
-                        >{formatAuditTime(entry.at)}</td
+                        >{ai.formatAuditTime(entry.at)}</td
                       >
                       <td class="py-1.5 pr-3">{entry.plugin}</td>
                       <td class="py-1.5 pr-3 capitalize">{entry.kind}</td>
@@ -1737,7 +1123,7 @@
             <div class="mt-3 flex justify-end">
               <button
                 type="button"
-                onclick={() => void clearAudit()}
+                onclick={() => void ai.clearAudit()}
                 class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted font-label-sm-bold hover:text-error hover:border-error/50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
               >
                 <span
@@ -1752,7 +1138,7 @@
       </details>
     </div>
 
-    {#if loadError}
+    {#if ai.loadError}
       <!-- Soft error banner -->
       <div
         class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
@@ -1761,12 +1147,12 @@
         <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
           >error</span
         >
-        <span class="flex-1">{loadError}</span>
+        <span class="flex-1">{ai.loadError}</span>
         <button
           type="button"
           onclick={() => {
-            loadError = null
-            void reload()
+            ai.loadError = null
+            void ai.reload()
           }}
           class="text-type-xs font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
         >

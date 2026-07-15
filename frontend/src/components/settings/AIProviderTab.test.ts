@@ -1102,6 +1102,29 @@ describe('AIProviderTab', () => {
       expect(message.closest('[role="alert"]')).not.toBeNull()
     })
 
+    it('Retry re-fetches the audit log after a transient failure', async () => {
+      // Once the load effect lands in 'error', re-opening <details> cannot
+      // recover (the effect only fires from 'idle'). The Retry button
+      // re-invokes loadAudit directly, clearing the error and re-running.
+      mocks.GetAIAudit.mockRejectedValueOnce(
+        new Error('db locked')
+      ).mockResolvedValue(structuredClone(mocks.auditState))
+      render(AIProviderTab)
+      await ready()
+
+      await fireEvent.click(summaryEl())
+
+      const message = await screen.findByText(/Failed to load audit log/i)
+      const alert = message.closest('[role="alert"]') as HTMLElement
+      await fireEvent.click(
+        within(alert).getByRole('button', { name: /Retry/i })
+      )
+
+      // Retry resolves → rows render and the error banner is gone.
+      expect(await screen.findByText('summarizer')).toBeInTheDocument()
+      expect(screen.queryByText(/Failed to load audit log/i)).toBeNull()
+    })
+
     it('renders a localized timestamp instead of the raw ISO string', async () => {
       // Raw RFC3339 is hard to scan and not locale-aware. The cell should
       // show a localized short date/time; the full ISO stays on the title
