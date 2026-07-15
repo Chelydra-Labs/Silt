@@ -52,19 +52,24 @@ function cosine(a: number[], b: number[]): number {
 /**
  * Re-score fused candidates by query–passage cosine similarity.
  * Fail-open: returns original order on any embed error.
+ * queryVec may be pre-computed by the caller to avoid a redundant embed.
  */
 export async function rerankPassages(
   ctx: PluginContext,
   query: string,
-  passages: RetrievedPassage[]
+  passages: RetrievedPassage[],
+  queryVec?: number[]
 ): Promise<RetrievedPassage[]> {
   if (passages.length === 0) return passages
   try {
-    const queryEmb = await ctx.ai.embed({
-      texts: [query],
-      taskType: 'RETRIEVAL_QUERY'
-    })
-    const qVec = queryEmb.embeddings[0]
+    const qVec =
+      queryVec ??
+      (
+        await ctx.ai.embed({
+          texts: [query],
+          taskType: 'RETRIEVAL_QUERY'
+        })
+      ).embeddings[0]
     if (!qVec) return passages
 
     const BATCH = 16
@@ -90,8 +95,8 @@ export async function rerankPassages(
         citeIndex: i + 1
       }))
     return ranked
-  } catch {
-    // Graceful degradation: keep RRF order.
+  } catch (e) {
+    console.warn('silt-ai-qa: rerank failed, falling back to RRF order:', e)
     return passages
   }
 }
@@ -106,13 +111,29 @@ export async function hybridRetrieve(
     ? Math.max(k * 5, 50)
     : Math.max(k * 2, 10)
 
+  // Embed the query once when reranking so the same vector feeds both
+  // vectorSearch and rerankPassages (avoids a redundant API call).
+  let queryVec: number[] | undefined
+  if (settings.rerank_enabled) {
+    try {
+      queryVec = (
+        await ctx.ai.embed({
+          texts: [question],
+          taskType: 'RETRIEVAL_QUERY'
+        })
+      ).embeddings[0]
+    } catch {
+      // vectorSearch will embed internally as fallback.
+    }
+  }
+
   let vecHits: RankedHit[] = []
   let ftsRows: Record<string, unknown>[] = []
   let vecErr: unknown = null
   let ftsErr: unknown = null
 
   const [vecSettled, ftsSettled] = await Promise.allSettled([
-    vectorSearch(ctx, question, fetchK),
+    vectorSearch(ctx, question, fetchK, queryVec),
     ctx.fullTextSearch(question)
   ])
 
@@ -153,7 +174,7 @@ export async function hybridRetrieve(
   })
 
   if (settings.rerank_enabled) {
-    fused = await rerankPassages(ctx, question, fused)
+    fused = await rerankPassages(ctx, question, fused, queryVec)
     fused = fused.slice(0, k).map((p, i) => ({ ...p, citeIndex: i + 1 }))
   }
 

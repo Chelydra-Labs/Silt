@@ -96,8 +96,8 @@ export function createQAController() {
     settings = { ...settings, stale_reason: reason }
     try {
       await updatePluginSetting('silt-ai-qa', 'stale_reason', reason)
-    } catch {
-      /* best-effort */
+    } catch (e) {
+      console.warn('silt-ai-qa: failed to persist stale_reason:', e)
     }
     if (reason) staleBannerDismissed = false
   }
@@ -175,7 +175,7 @@ export function createQAController() {
         status: 'unconfigured',
         done: 0,
         total: 0,
-        message: 'Configure an embedding model in Settings → AI Provider'
+        message: 'Configure a search model in Settings → AI Provider'
       }
       return
     }
@@ -214,7 +214,7 @@ export function createQAController() {
         status: 'unconfigured',
         done: 0,
         total: 0,
-        message: 'Configure an embedding model in Settings → AI Provider'
+        message: 'Configure a search model in Settings → AI Provider'
       }
       return
     }
@@ -309,7 +309,7 @@ export function createQAController() {
     if (!embedReady()) {
       panelStatus = 'no-embedding-provider'
       errorMessage =
-        'Configure an embedding model in Settings → AI Provider to build the index'
+        'Configure a search model in Settings → AI Provider to build the search index'
       return
     }
 

@@ -9,6 +9,7 @@
   import { settings, saveConfig } from '../../../settings/store.svelte'
   import { loadPlugins, teardownPlugin } from '../../loader'
   import PresetControl from '../../../components/settings/PresetControl.svelte'
+  import InfoTooltip from '../../../components/settings/InfoTooltip.svelte'
   import { DEFAULT_SETTINGS, resolveSettings } from './settings'
   import type { QASettings } from './types'
   import { getQAController } from './state.svelte'
@@ -321,24 +322,24 @@
               (e.currentTarget as HTMLInputElement).checked
             )}
         />
-        <span>Smart Re-ranking (Advanced)</span>
+        <span>Smart Re-ranking</span>
+        <InfoTooltip
+          text="After finding matching notes, re-evaluates and re-orders them for higher accuracy. Improves answer quality but adds a brief delay."
+          technical="Technical: Cross-encoder reranking on the top-N fused candidates before context injection."
+          label="What is Smart Re-ranking?"
+        />
       </label>
-      <p class="hint">
-        After finding matching notes, re-evaluates and re-orders them for higher
-        accuracy. Improves answer quality but adds a brief delay. Technical:
-        Cosine re-score on the top fused candidates before context injection.
-      </p>
     {/if}
   </section>
 
   <section class="card">
     <h3>Privacy</h3>
     <p class="hint">
-      Note content is sent to your configured embedding and chat endpoints when
-      you build the index or ask a question. Local (Ollama) endpoints keep data
-      on this machine. Cloud endpoints process content per that provider's
-      policy. Vectors live only in the plugin database and are deleted on
-      uninstall.
+      Note content is sent to your configured search and chat endpoints when you
+      build the search index or ask a question. Local (Ollama) endpoints keep
+      data on this machine. Cloud endpoints process content per that provider's
+      policy. The search index lives only in the plugin database and is deleted
+      on uninstall.
     </p>
   </section>
 </div>

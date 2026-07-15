@@ -10,6 +10,7 @@
 import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
 import { getEmbeddingCapabilities } from '../../../settings/modelCapabilities'
 import { updatePluginSetting } from '../../../settings/store.svelte'
+import { getQAController } from '../../../plugins/first-party/silt-ai-qa/state.svelte'
 import {
   GetAIProviderConfig,
   UpdateAIProviderConfig,
@@ -269,10 +270,18 @@ export function createAIProviderController() {
   }
 
   async function markSearchIndexStale(reason: string) {
+    // Update the live QA controller (if loaded) so the amber banner appears
+    // immediately — the controller owns the reactive showStaleBanner state.
+    const ctl = getQAController()
+    if (ctl) {
+      await ctl.setStaleReason(reason)
+      return
+    }
+    // Plugin not loaded yet — persist directly so the banner shows on next load.
     try {
       await updatePluginSetting('silt-ai-qa', 'stale_reason', reason)
-    } catch {
-      /* best-effort — search still works with a stale index */
+    } catch (e) {
+      console.warn('Failed to mark search index stale:', e)
     }
   }
 

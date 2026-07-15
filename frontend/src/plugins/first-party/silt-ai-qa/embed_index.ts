@@ -417,7 +417,8 @@ async function indexChunks(
 export async function vectorSearch(
   ctx: PluginContext,
   query: string,
-  topK: number
+  topK: number,
+  queryVec?: number[]
 ): Promise<RankedHit[]> {
   await migrateIndex(ctx)
   const dimsStr = await metaGet(ctx, 'dimensions')
@@ -425,11 +426,14 @@ export async function vectorSearch(
   if (!dims) return []
   await ensureVecTable(ctx, dims)
 
-  const emb = await ctx.ai.embed({
-    texts: [query],
-    taskType: 'RETRIEVAL_QUERY'
-  })
-  const vec = emb.embeddings[0]
+  const vec =
+    queryVec ??
+    (
+      await ctx.ai.embed({
+        texts: [query],
+        taskType: 'RETRIEVAL_QUERY'
+      })
+    ).embeddings[0]
   if (!vec) return []
 
   const { rows } = await ctx.pluginDb.query(

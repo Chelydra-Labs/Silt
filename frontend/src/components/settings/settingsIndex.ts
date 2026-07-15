@@ -231,8 +231,33 @@ const CORE_INDEX: SettingsIndexEntry[] = [
     sectionId: 'ai'
   },
   {
-    label: 'Temperature',
-    keywords: ['ai', 'tuning', 'creativity', 'advanced'],
+    label: 'Answer Style',
+    keywords: [
+      'ai',
+      'tuning',
+      'temperature',
+      'creativity',
+      'advanced',
+      'precise',
+      'creative'
+    ],
+    sectionId: 'ai'
+  },
+  {
+    label: 'Thinking Depth',
+    keywords: ['ai', 'tuning', 'reasoning', 'effort', 'advanced'],
+    sectionId: 'ai'
+  },
+  {
+    label: 'Index Density',
+    keywords: [
+      'ai',
+      'embedding',
+      'dimensions',
+      'truncation',
+      'matryoshka',
+      'advanced'
+    ],
     sectionId: 'ai'
   },
   {
