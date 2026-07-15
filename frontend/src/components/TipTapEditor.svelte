@@ -247,7 +247,11 @@
 
   // Custom-table size picker (#172) — an in-app popover replacing window.prompt.
   let showTableSizePicker = $state(false)
-  let tableSizeCoords = $state<{ left: number; top: number } | null>(null)
+  let tableSizeCoords = $state<{
+    top: number
+    bottom: number
+    left: number
+  } | null>(null)
 
   // LaTeX equation popover (Phase 5 / #328). Replaces window.prompt for both
   // the /math slash command (block create) and click-to-edit on a math node
@@ -1234,13 +1238,18 @@
         break
       case 'tableCustom':
         // Open an in-app size popover instead of the native window.prompt.
+        // The picker receives the cursor anchor rect and flips/clamps itself.
         if (!editorInstance || editorInstance.isDestroyed) return
         try {
           const { selection } = editorInstance.state
           const coords = editorInstance.view.coordsAtPos(selection.from)
-          tableSizeCoords = { left: coords.left, top: coords.bottom }
+          tableSizeCoords = {
+            top: coords.top,
+            bottom: coords.bottom,
+            left: coords.left
+          }
         } catch {
-          tableSizeCoords = { left: 100, top: 100 }
+          tableSizeCoords = { top: 100, bottom: 120, left: 100 }
         }
         showTableSizePicker = true
         break
@@ -1843,8 +1852,7 @@
   {/if}
   {#if showTableSizePicker && tableSizeCoords}
     <TableSizePicker
-      left={tableSizeCoords.left}
-      top={tableSizeCoords.top}
+      anchor={tableSizeCoords}
       onConfirm={confirmTableSize}
       onCancel={cancelTableSize}
     />
