@@ -615,6 +615,109 @@ func TestUpdateAIProviderConfig_RejectsNonHTTPBaseURL(t *testing.T) {
 	}
 }
 
+// --- Tool-calling threading (#595) ---------------------------------------
+
+// TestPluginAIComplete_ThreadsToolsAndToolCalls verifies the app binding maps
+// the plugin-facing Tools/ToolChoice into CompleteRequest and returns the
+// decoded ToolCalls from CompleteResult. Uses an OpenAI-compat mock that
+// echoes the request it received and replies with a tool_call.
+func TestPluginAIComplete_ThreadsToolsAndToolCalls(t *testing.T) {
+	app := newTestApp(t)
+	var capturedBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "m",
+			"choices": []map[string]any{
+				{"message": map[string]any{
+					"role": "assistant",
+					"tool_calls": []map[string]any{
+						{"id": "call_1", "type": "function", "function": map[string]any{
+							"name":      "search_notes",
+							"arguments": `{"q":"x"}`,
+						}},
+					},
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "m")
+
+	tok, err := app.RegisterPluginSession("silt-tasks")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	res, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+		Messages: []PluginAIChatMessage{{Role: "user", Content: "find x"}},
+		Tools: []PluginAIToolDef{{
+			Name:       "search_notes",
+			Parameters: json.RawMessage(`{"type":"object"}`),
+		}},
+		ToolChoice: &PluginAIToolChoice{Mode: "auto"},
+	})
+	if err != nil {
+		t.Fatalf("PluginAIComplete: %v", err)
+	}
+	// Tools + tool_choice threaded into the provider request.
+	if rawTools, _ := capturedBody["tools"].([]any); len(rawTools) != 1 {
+		t.Errorf("provider request tools = %v, want 1", rawTools)
+	}
+	if capturedBody["tool_choice"] != "auto" {
+		t.Errorf("provider request tool_choice = %v, want auto", capturedBody["tool_choice"])
+	}
+	// ToolCalls flowed back on the result.
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "search_notes" || res.ToolCalls[0].ID != "call_1" {
+		t.Errorf("tool_call = %+v", res.ToolCalls[0])
+	}
+}
+
+// TestPluginAIComplete_ToolMessageThreadsToProvider verifies a tool-role
+// message in the input maps onto the provider request (OpenAI role:tool +
+// tool_call_id) so the agent loop can replay multi-turn history.
+func TestPluginAIComplete_ToolMessageThreadsToProvider(t *testing.T) {
+	app := newTestApp(t)
+	var capturedBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "m",
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}}},
+		})
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "m")
+
+	tok, _ := app.RegisterPluginSession("silt-tasks")
+	_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+		Messages: []PluginAIChatMessage{
+			{Role: "user", Content: "find x"},
+			{Role: "assistant", ToolCalls: []PluginAIToolCall{
+				{ID: "call_1", Name: "search_notes", Arguments: json.RawMessage(`{"q":"x"}`)},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Content: "found"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PluginAIComplete: %v", err)
+	}
+	msgs, _ := capturedBody["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %d, want 3", len(msgs))
+	}
+	tool, _ := msgs[2].(map[string]any)
+	if tool["role"] != "tool" || tool["tool_call_id"] != "call_1" || tool["content"] != "found" {
+		t.Errorf("tool message not threaded: %+v", tool)
+	}
+}
+
 // --- Reasoning-effort gate (Fix D) ---------------------------------------
 
 func TestUpdateAIProviderConfig_RejectsInvalidReasoningEffort(t *testing.T) {

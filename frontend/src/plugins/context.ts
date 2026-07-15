@@ -79,7 +79,11 @@ import {
 import { Events } from '@wailsio/runtime'
 import { getActiveLocation } from './location.svelte'
 import { subscribe } from './events'
-import type { PluginAICompleteResult, PluginAIStream } from './sdk'
+import type {
+  PluginAICompleteResult,
+  PluginAIStream,
+  PluginAIToolCallDelta
+} from './sdk'
 import {
   registerSlashCommand,
   unregisterSlashCommand
@@ -669,13 +673,24 @@ export function makePluginContext(
     // Streaming (#226): stream:true returns PluginAIStream (async-iterable).
     ai: {
       complete: (async (req: {
-        messages: { role: string; content: string }[]
+        messages: {
+          role: string
+          content: string
+          tool_calls?: unknown[]
+          tool_call_id?: string
+        }[]
         model?: string
         temperature?: number
         maxTokens?: number
         reasoningEffort?: string
         stream?: boolean
         responseSchema?: Record<string, unknown>
+        tools?: {
+          name: string
+          description?: string
+          parameters?: Record<string, unknown>
+        }[]
+        toolChoice?: { mode: string; toolName?: string }
       }) => {
         const input = {
           messages: req.messages,
@@ -690,7 +705,15 @@ export function makePluginContext(
           // raw JSON bytes. Stringifying would double-encode it (object →
           // string), causing both native encoders to receive a JSON string
           // instead of a JSON object and silently reject the schema.
-          response_schema: req.responseSchema as any
+          response_schema: req.responseSchema as any,
+          tools: req.tools as any,
+          // Map the ergonomic camelCase field to the Go struct's snake_case.
+          tool_choice: req.toolChoice
+            ? {
+                mode: req.toolChoice.mode,
+                tool_name: req.toolChoice.toolName ?? ''
+              }
+            : undefined
         } as any
 
         if (req.stream) {
@@ -732,7 +755,8 @@ export function makePluginContext(
           return {
             content: stripReasoningContent(res?.content ?? ''),
             model: res?.model ?? '',
-            usage: res?.usage
+            usage: res?.usage,
+            tool_calls: res?.tool_calls
           }
         } catch (err) {
           throw normalizeAIError(err)
@@ -831,7 +855,8 @@ function createAIStream(
     finalResult = {
       content,
       model: String(p.model ?? startModel ?? ''),
-      usage: p.usage
+      usage: p.usage,
+      tool_calls: p.tool_calls
     }
     push({
       kind: 'done',
@@ -841,6 +866,20 @@ function createAIStream(
     })
     resultResolve?.(finalResult)
     cleanup()
+  })
+  // Live tool-call fragment stream (#595). Accumulated so a caller that wants
+  // progressive tool UX can drain it; the reassembled calls also arrive on the
+  // done event above. Filtered to this stream_id like the other listeners.
+  const toolDeltas: PluginAIToolCallDelta[] = []
+  const offToolDelta = Events.On('ai:complete:tool-delta', (ev: any) => {
+    const p = payloadOf(ev)
+    if (!p || p.stream_id !== streamId) return
+    toolDeltas.push({
+      index: Number(p.index ?? 0),
+      id: p.id ?? undefined,
+      name: p.name ?? undefined,
+      arguments_fragment: p.arguments_fragment ?? undefined
+    })
   })
   const offError = Events.On('ai:complete:error', (ev: any) => {
     const p = payloadOf(ev)
@@ -875,6 +914,11 @@ function createAIStream(
     } catch {
       /* ignore */
     }
+    try {
+      offToolDelta?.()
+    } catch {
+      /* ignore */
+    }
     if (wake) {
       const w = wake
       wake = null
@@ -895,6 +939,7 @@ function createAIStream(
 
   const stream: PluginAIStream = {
     streamId,
+    toolDeltas,
     cancel: async () => {
       try {
         await PluginAICancelStream(pluginID, sessionToken, streamId)

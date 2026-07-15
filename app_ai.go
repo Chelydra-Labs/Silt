@@ -45,9 +45,10 @@ import (
 // AI stream event names pushed to the frontend (#226). Payload is always a
 // single object (ev.data on the JS side).
 const (
-	aiEventCompleteDelta = "ai:complete:delta"
-	aiEventCompleteDone  = "ai:complete:done"
-	aiEventCompleteError = "ai:complete:error"
+	aiEventCompleteDelta     = "ai:complete:delta"
+	aiEventCompleteDone      = "ai:complete:done"
+	aiEventCompleteError     = "ai:complete:error"
+	aiEventCompleteToolDelta = "ai:complete:tool-delta"
 )
 
 // aiStreamBufferCap is the max number of unconsumed delta events buffered per
@@ -160,9 +161,35 @@ type AIPublicConfig struct {
 }
 
 // PluginAIChatMessage is one chat message crossing the plugin→service boundary.
+// For multi-turn tool use (#595): assistant turns may carry tool_calls, and a
+// tool result turn (role "tool") carries tool_call_id correlating it.
 type PluginAIChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string             `json:"role"`
+	Content    string             `json:"content"`
+	ToolCalls  []PluginAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string             `json:"tool_call_id,omitempty"`
+}
+
+// PluginAIToolDef declares one tool a plugin exposes to the model (#595).
+// Parameters is a raw JSON Schema object.
+type PluginAIToolDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// PluginAIToolCall is one tool invocation the model requested (#595). Arguments
+// is the raw JSON object bytes (unwrapped from OpenAI's stringified form).
+type PluginAIToolCall struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+// PluginAIToolChoice constrains tool selection (#595).
+type PluginAIToolChoice struct {
+	Mode     string `json:"mode"`                // auto|required|none|force
+	ToolName string `json:"tool_name,omitempty"` // set when Mode == "force"
 }
 
 // PluginAICompleteInput is the plugin-side request envelope for a chat
@@ -177,6 +204,8 @@ type PluginAICompleteInput struct {
 	ReasoningEffort *string               `json:"reasoning_effort,omitempty"`
 	Stream          bool                  `json:"stream,omitempty"`
 	ResponseSchema  json.RawMessage       `json:"response_schema,omitempty"`
+	Tools           []PluginAIToolDef     `json:"tools,omitempty"`
+	ToolChoice      *PluginAIToolChoice   `json:"tool_choice,omitempty"`
 }
 
 // PluginAIEmbedInput is the plugin-side request envelope for an embedding batch.
@@ -746,7 +775,12 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 	}
 	messages := make([]ai.ChatMessage, len(input.Messages))
 	for i, m := range input.Messages {
-		messages[i] = ai.ChatMessage{Role: m.Role, Content: m.Content}
+		messages[i] = ai.ChatMessage{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCalls:  toAIToolCalls(m.ToolCalls),
+			ToolCallID: m.ToolCallID,
+		}
 	}
 	req := ai.CompleteRequest{
 		Provider:        provider,
@@ -756,6 +790,8 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 		MaxTokens:       input.MaxTokens,
 		ReasoningEffort: input.ReasoningEffort,
 		ResponseSchema:  input.ResponseSchema,
+		Tools:           toAIToolDefs(input.Tools),
+		ToolChoice:      toAIToolChoice(input.ToolChoice),
 	}
 
 	if input.Stream {
@@ -807,6 +843,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 	// Buffered channel for backpressure between SSE reader and event emit.
 	// Producer aborts if the buffer fills (consumer not keeping up).
 	deltaCh := make(chan string, aiStreamBufferCap)
+	toolDeltaCh := make(chan ai.ToolCallDelta, aiStreamBufferCap)
 
 	// Audit stream start (one row); terminal status is audited when the
 	// goroutine finishes (#226 — not per-token).
@@ -857,6 +894,23 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			}
 		}()
 
+		// Fan-out tool-call fragments to a parallel event so the chat UX can
+		// surface in-progress tool invocations live (#595).
+		emitToolDone := make(chan struct{})
+		go func() {
+			defer close(emitToolDone)
+			for frag := range toolDeltaCh {
+				a.emit(aiEventCompleteToolDelta, map[string]any{
+					"stream_id":          streamID,
+					"plugin_id":          pluginID,
+					"index":              frag.Index,
+					"id":                 frag.ID,
+					"name":               frag.Name,
+					"arguments_fragment": frag.ArgumentsFragment,
+				})
+			}
+		}()
+
 		// Natural backpressure: block until the emit goroutine drains a slot
 		// or the stream is cancelled. A default arm would turn a momentary
 		// full buffer into a hard abort mid-answer (PR #540 review).
@@ -867,9 +921,18 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			case <-streamCtx.Done():
 				return streamCtx.Err()
 			}
+		}, func(frag ai.ToolCallDelta) error {
+			select {
+			case toolDeltaCh <- frag:
+				return nil
+			case <-streamCtx.Done():
+				return streamCtx.Err()
+			}
 		})
 		close(deltaCh)
+		close(toolDeltaCh)
 		<-emitDone
+		<-emitToolDone
 
 		status := "ok"
 		if callErr != nil {
@@ -897,6 +960,9 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			"plugin_id": pluginID,
 			"content":   result.Content,
 			"model":     result.Model,
+		}
+		if len(result.ToolCalls) > 0 {
+			payload["tool_calls"] = result.ToolCalls
 		}
 		if result.Usage != nil {
 			payload["usage"] = result.Usage
@@ -1027,6 +1093,41 @@ func aiErrKind(err error) string {
 		return string(e.Kind)
 	}
 	return "error"
+}
+
+// toAIToolDefs maps the plugin-facing tool defs into the ai package's
+// normalized ToolDef. The shapes are identical; this keeps the conversion in
+// one place so future divergence is intentional, not accidental.
+func toAIToolDefs(in []PluginAIToolDef) []ai.ToolDef {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ai.ToolDef, len(in))
+	for i, t := range in {
+		out[i] = ai.ToolDef{Name: t.Name, Description: t.Description, Parameters: t.Parameters}
+	}
+	return out
+}
+
+// toAIToolCalls maps plugin-facing tool calls into the ai package's ToolCall.
+func toAIToolCalls(in []PluginAIToolCall) []ai.ToolCall {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ai.ToolCall, len(in))
+	for i, c := range in {
+		out[i] = ai.ToolCall{ID: c.ID, Name: c.Name, Arguments: c.Arguments}
+	}
+	return out
+}
+
+// toAIToolChoice maps the plugin-facing tool choice into the ai package's
+// pointer-based ToolChoice (nil stays nil → provider default).
+func toAIToolChoice(in *PluginAIToolChoice) *ai.ToolChoice {
+	if in == nil {
+		return nil
+	}
+	return &ai.ToolChoice{Mode: in.Mode, ToolName: in.ToolName}
 }
 
 // migrateAIKeysToKeyring moves any plaintext AI API keys found in config.yaml

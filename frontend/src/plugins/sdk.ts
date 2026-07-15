@@ -724,6 +724,12 @@ export interface PluginAICompleteRequest {
    *  its own format. When set, the response content is the JSON-stringified
    *  result. */
   responseSchema?: Record<string, unknown>
+  /** Tools the model may call (#595). Each provider encodes them in its own
+   *  wire shape. For Anthropic, real caller tools are additive to the
+   *  structured_output tool when responseSchema is also set. */
+  tools?: PluginAIToolDef[]
+  /** Constrains tool selection. Omit to let the provider default apply. */
+  toolChoice?: PluginAIToolChoice
 }
 
 /**
@@ -733,18 +739,58 @@ export interface PluginAICompleteRequest {
  */
 export interface PluginAIStream extends AsyncIterable<string> {
   readonly streamId: string
+  /** Live tool-call fragments received so far (#595), in arrival order. The
+   *  reassembled calls also land on `result()`. */
+  readonly toolDeltas: PluginAIToolCallDelta[]
   cancel: () => Promise<void>
   /** Final aggregated result after the stream completes (or rejects on error). */
   result: () => Promise<PluginAICompleteResult>
 }
 
-/** One message in a chat-completion conversation. */
+/** One message in a chat-completion conversation. For multi-turn tool use
+ *  (#595): an assistant turn may carry `tool_calls`, and a tool result turn
+ *  (role 'tool') carries `tool_call_id` correlating it to the prior call. */
 export interface PluginAIChatMessage {
-  role: 'system' | 'user' | 'assistant'
+  role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  tool_calls?: PluginAIToolCall[]
+  tool_call_id?: string
 }
 
-/** Result of `ctx.ai.complete`. usage is present only when the provider reports it. */
+/** A tool the model may call (#595). parameters is a raw JSON Schema object. */
+export interface PluginAIToolDef {
+  name: string
+  description?: string
+  parameters: Record<string, unknown>
+}
+
+/** A tool invocation the model requested (#595). arguments is the raw JSON
+ *  object the provider returned (unwrapped from OpenAI's stringified form). */
+export interface PluginAIToolCall {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+}
+
+/** One streamed fragment of a tool call (#595). The same call is split across
+ *  many fragments: the first carries id+name, later fragments append to the
+ *  arguments. index identifies which call in a parallel-call set. */
+export interface PluginAIToolCallDelta {
+  index: number
+  id?: string
+  name?: string
+  arguments_fragment?: string
+}
+
+/** Constrains tool selection (#595). `force` pins the model to `toolName`. */
+export interface PluginAIToolChoice {
+  mode: 'auto' | 'required' | 'none' | 'force'
+  toolName?: string
+}
+
+/** Result of `ctx.ai.complete`. usage is present only when the provider reports it.
+ *  tool_calls carries the tool invocations the model requested (#595); content
+ *  may be empty when the model only emitted tool calls. */
 export interface PluginAICompleteResult {
   content: string
   model: string
@@ -753,6 +799,7 @@ export interface PluginAICompleteResult {
     completionTokens?: number
     totalTokens?: number
   }
+  tool_calls?: PluginAIToolCall[]
 }
 
 /** Result of `ctx.ai.embed`. embeddings[i] is the vector for texts[i]. */

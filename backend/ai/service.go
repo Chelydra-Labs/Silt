@@ -100,12 +100,64 @@ func validateBaseURL(baseURL string) error {
 	return nil
 }
 
+// Role constants for ChatMessage.Role. The OpenAI roles system/user/assistant
+// are the universal input shape; RoleTool carries a tool result back to the
+// model in a multi-turn agent loop (#595). Each provider encodes tool turns in
+// its own wire shape (OpenAI role:"tool", Anthropic user tool_result blocks,
+// Google user functionResponse parts).
+const (
+	RoleSystem    = "system"
+	RoleUser      = "user"
+	RoleAssistant = "assistant"
+	RoleTool      = "tool"
+)
+
+// ToolDef describes one tool the model may call (#595). Parameters is a JSON
+// Schema (raw JSON object, lowercase type strings) describing the arguments;
+// each provider encodes it in its own wire shape.
+type ToolDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// ToolCall is one invocation the model wants performed (#595). ID correlates
+// the call with the tool-result message in the next turn (OpenAI/Anthropic);
+// Google correlates by name and the decoder sets ID to the function name.
+// Arguments is the raw JSON object bytes (unwrapped from OpenAI's stringified
+// form).
+type ToolCall struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+// ToolChoice constrains which tool (if any) the model must call (#595).
+type ToolChoice struct {
+	Mode     string `json:"mode"`                // auto|required|none|force
+	ToolName string `json:"tool_name,omitempty"` // set when Mode == "force"
+}
+
+// ToolChoice mode values. Each provider maps these onto its own tool-selection
+// syntax (OpenAI keyword/object, Anthropic tool_choice type enum, Google
+// function_calling_config mode).
+const (
+	ToolChoiceAuto     = "auto"
+	ToolChoiceRequired = "required"
+	ToolChoiceNone     = "none"
+	ToolChoiceForce    = "force"
+)
+
 // ChatMessage is one message in a chat-completion conversation. The OpenAI
 // roles "system" / "user" / "assistant" are the universal input shape; native
-// providers translate as needed (e.g. system → top-level field).
+// providers translate as needed (e.g. system → top-level field). For multi-turn
+// tool use (#595): an assistant turn may carry ToolCalls, and a tool result
+// turn (Role == RoleTool) carries ToolCallID correlating it to the prior call.
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
 // CompleteRequest is the input to Complete. Messages is required and non-empty;
@@ -124,17 +176,28 @@ type CompleteRequest struct {
 	// per the D1 design decision). The schema is a raw JSON Schema object
 	// (lowercase type strings); each native encoder converts to its own format.
 	ResponseSchema json.RawMessage `json:"response_schema,omitempty"`
+	// Tools declares tools the model may call (#595). Each provider encodes
+	// them in its own wire shape. For Anthropic, real caller tools are additive
+	// to the structured_output tool when ResponseSchema is also set.
+	Tools []ToolDef `json:"tools,omitempty"`
+	// ToolChoice constrains tool selection. nil lets the provider default
+	// apply (auto for OpenAI/Google; omitted for Anthropic). Ignored on the
+	// Anthropic structured-output path, which always forces structured_output.
+	ToolChoice *ToolChoice `json:"tool_choice,omitempty"`
 }
 
 // CompleteResult is the output of a successful completion. Usage is optional
 // because not every provider returns token counts. StreamID is set only when
 // PluginAIComplete starts an async stream (#226): Content is empty on that
-// start response; deltas arrive via Wails events until done/error.
+// start response; deltas arrive via Wails events until done/error. ToolCalls
+// holds the tool invocations the model requested (#595); Content may be empty
+// when the model only emitted tool calls.
 type CompleteResult struct {
-	Content  string   `json:"content"`
-	Model    string   `json:"model"`
-	Usage    *AIUsage `json:"usage,omitempty"`
-	StreamID string   `json:"stream_id,omitempty"`
+	Content   string     `json:"content"`
+	Model     string     `json:"model"`
+	Usage     *AIUsage   `json:"usage,omitempty"`
+	StreamID  string     `json:"stream_id,omitempty"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
 // EmbedRequest is the input to Embed. Texts is required and non-empty; the

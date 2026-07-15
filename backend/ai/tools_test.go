@@ -1,0 +1,454 @@
+package ai
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+// dummySchema is a minimal JSON Schema reused across the round-trip tests.
+var dummySchema = json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}`)
+
+// dummyTool is the ToolDef the round-trip tests ask each provider to expose.
+func dummyTool() ToolDef {
+	return ToolDef{
+		Name:        "search_notes",
+		Description: "Search the vault",
+		Parameters:  dummySchema,
+	}
+}
+
+// --- OpenAI-compatible ---------------------------------------------------
+
+func TestCompleteOpenAI_EncodesToolsAndParsesToolCalls(t *testing.T) {
+	var captured chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Errorf("parse request: %v", err)
+		}
+		// Reply with a tool_call (OpenAI shape: arguments is a JSON string).
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "m",
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []map[string]any{
+							{
+								"id":   "call_01",
+								"type": "function",
+								"function": map[string]any{
+									"name":      "search_notes",
+									"arguments": `{"q":"meetings"}`,
+								},
+							},
+						},
+					},
+					"finish_reason": "tool_calls",
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider:   AIProvider{BaseURL: srv.URL, Model: "m"},
+		Messages:   []ChatMessage{{Role: "user", Content: "find meetings"}},
+		Tools:      []ToolDef{dummyTool()},
+		ToolChoice: &ToolChoice{Mode: ToolChoiceAuto},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	// Request encoded the tool as a function wrapper.
+	if len(captured.Tools) != 1 || captured.Tools[0].Type != "function" {
+		t.Fatalf("tools = %+v, want one function tool", captured.Tools)
+	}
+	if name := captured.Tools[0].Function.Name; name != "search_notes" {
+		t.Errorf("tool name = %q, want search_notes", name)
+	}
+	// tool_choice "auto" is the bare keyword.
+	if captured.ToolChoice != "auto" {
+		t.Errorf("tool_choice = %v, want \"auto\"", captured.ToolChoice)
+	}
+	// Response tool_call decoded into the unified ToolCall with raw-JSON args.
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
+	}
+	tc := res.ToolCalls[0]
+	if tc.ID != "call_01" || tc.Name != "search_notes" {
+		t.Errorf("tool_call = %+v", tc)
+	}
+	// Arguments unwrapped from the stringified form to raw JSON object bytes.
+	var args map[string]any
+	if err := json.Unmarshal(tc.Arguments, &args); err != nil {
+		t.Fatalf("arguments not valid JSON object: %v (raw=%s)", err, tc.Arguments)
+	}
+	if args["q"] != "meetings" {
+		t.Errorf("arguments.q = %v, want meetings", args["q"])
+	}
+}
+
+func TestCompleteOpenAI_ToolChoiceForceEncodesObject(t *testing.T) {
+	var captured chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "m",
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}}},
+		})
+	}))
+	defer srv.Close()
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider:   AIProvider{BaseURL: srv.URL, Model: "m"},
+		Messages:   []ChatMessage{{Role: "user", Content: "x"}},
+		Tools:      []ToolDef{dummyTool()},
+		ToolChoice: &ToolChoice{Mode: ToolChoiceForce, ToolName: "search_notes"},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	tc, ok := captured.ToolChoice.(map[string]any)
+	if !ok || tc["type"] != "function" {
+		t.Errorf("tool_choice = %+v, want function object", captured.ToolChoice)
+	}
+	fn, _ := tc["function"].(map[string]any)
+	if fn["name"] != "search_notes" {
+		t.Errorf("force tool name = %v, want search_notes", fn["name"])
+	}
+}
+
+// TestCompleteOpenAI_ReplaysToolTurnsInHistory verifies that an assistant
+// tool_call turn and a following tool result encode into the OpenAI request as
+// tool_calls + role:tool respectively — the multi-turn agent-loop contract.
+func TestCompleteOpenAI_ReplaysToolTurnsInHistory(t *testing.T) {
+	var captured chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "m",
+			"choices": []map[string]any{{"message": map[string]any{"content": "done"}}},
+		})
+	}))
+	defer srv.Close()
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m"},
+		Messages: []ChatMessage{
+			{Role: "user", Content: "find meetings"},
+			{Role: "assistant", ToolCalls: []ToolCall{
+				{ID: "call_01", Name: "search_notes", Arguments: json.RawMessage(`{"q":"meetings"}`)},
+			}},
+			{Role: "tool", ToolCallID: "call_01", Content: "3 matches"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(captured.Messages) != 3 {
+		t.Fatalf("messages = %d, want 3", len(captured.Messages))
+	}
+	// Assistant turn carries tool_calls with stringified arguments.
+	asst := captured.Messages[1]
+	if asst.Role != "assistant" || len(asst.ToolCalls) != 1 {
+		t.Errorf("assistant turn = %+v, want tool_calls", asst)
+	}
+	if asst.ToolCalls[0].Function.Arguments != `{"q":"meetings"}` {
+		t.Errorf("arguments = %q, want stringified JSON", asst.ToolCalls[0].Function.Arguments)
+	}
+	// Tool result turn carries role + tool_call_id + content.
+	tool := captured.Messages[2]
+	if tool.Role != "tool" || tool.ToolCallID != "call_01" || tool.Content != "3 matches" {
+		t.Errorf("tool turn = %+v", tool)
+	}
+}
+
+// --- Anthropic -----------------------------------------------------------
+
+func TestCompleteAnthropic_RealToolsAdditiveAndDecoded(t *testing.T) {
+	var captured anthropicRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{
+				{"type": "text", "text": "Let me search."},
+				{
+					"type":  "tool_use",
+					"id":    "toolu_01",
+					"name":  "search_notes",
+					"input": map[string]any{"q": "meetings"},
+				},
+			},
+			"model":       "claude-sonnet-5",
+			"stop_reason": "tool_use",
+		})
+	}))
+	defer srv.Close()
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderAnthropic, BaseURL: srv.URL, Model: "claude-sonnet-5"},
+		Messages: []ChatMessage{{Role: "user", Content: "find meetings"}},
+		Tools:    []ToolDef{dummyTool()},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	// Caller tool lands in the request tools[] as a real tool (not forced).
+	if len(captured.Tools) != 1 || captured.Tools[0].Name != "search_notes" {
+		t.Fatalf("tools = %+v, want one search_notes tool", captured.Tools)
+	}
+	// No ResponseSchema → no forced structured_output choice; caller's nil
+	// ToolChoice → tool_choice omitted.
+	if captured.ToolChoice != nil {
+		t.Errorf("tool_choice = %v, want nil (auto default)", captured.ToolChoice)
+	}
+	// Text + real tool_use decoded.
+	if res.Content != "Let me search." {
+		t.Errorf("content = %q, want 'Let me search.'", res.Content)
+	}
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
+	}
+	tc := res.ToolCalls[0]
+	if tc.ID != "toolu_01" || tc.Name != "search_notes" {
+		t.Errorf("tool_call = %+v", tc)
+	}
+	var args map[string]any
+	if err := json.Unmarshal(tc.Arguments, &args); err != nil {
+		t.Fatalf("arguments not object: %v", err)
+	}
+	if args["q"] != "meetings" {
+		t.Errorf("args.q = %v", args["q"])
+	}
+}
+
+// TestCompleteAnthropic_StructuredOutputUnchangedWithCallerTools guards the
+// regression: when ResponseSchema is set, the structured_output path dominates
+// — the response content is the JSON-stringified tool input, with no ToolCalls
+// on the result, even if caller tools are also present.
+func TestCompleteAnthropic_StructuredOutputUnchangedWithCallerTools(t *testing.T) {
+	var captured anthropicRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{
+				{
+					"type":  "tool_use",
+					"id":    "toolu_01",
+					"name":  "structured_output",
+					"input": map[string]any{"summary": "Meeting notes"},
+				},
+			},
+			"model": "claude-sonnet-5",
+		})
+	}))
+	defer srv.Close()
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider:       AIProvider{ProviderType: ProviderAnthropic, BaseURL: srv.URL, Model: "claude-sonnet-5"},
+		Messages:       []ChatMessage{{Role: "user", Content: "summarize"}},
+		ResponseSchema: dummySchema,
+		Tools:          []ToolDef{dummyTool()},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	// Both tools present; structured_output forced.
+	if len(captured.Tools) != 2 {
+		t.Fatalf("tools = %d, want 2 (caller + structured_output)", len(captured.Tools))
+	}
+	tc, ok := captured.ToolChoice.(map[string]any)
+	if !ok || tc["name"] != "structured_output" {
+		t.Errorf("tool_choice = %+v, want forced structured_output", captured.ToolChoice)
+	}
+	// Content is the JSON-stringified structured output; no ToolCalls leaked.
+	if !contains(res.Content, `"summary":"Meeting notes"`) {
+		t.Errorf("content = %q, want JSON-stringified structured input", res.Content)
+	}
+	if len(res.ToolCalls) != 0 {
+		t.Errorf("tool_calls = %d, want 0 on structured-output path", len(res.ToolCalls))
+	}
+}
+
+// TestCompleteAnthropic_EncodesToolResultHistory verifies a tool-role message
+// becomes a user turn with a tool_result content block.
+func TestCompleteAnthropic_EncodesToolResultHistory(t *testing.T) {
+	var captured anthropicRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "ok"}},
+			"model":   "claude-sonnet-5",
+		})
+	}))
+	defer srv.Close()
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderAnthropic, BaseURL: srv.URL, Model: "claude-sonnet-5"},
+		Messages: []ChatMessage{
+			{Role: "user", Content: "find meetings"},
+			{Role: "assistant", ToolCalls: []ToolCall{
+				{ID: "toolu_01", Name: "search_notes", Arguments: json.RawMessage(`{"q":"meetings"}`)},
+			}},
+			{Role: "tool", ToolCallID: "toolu_01", Content: "3 matches"},
+		},
+		Tools: []ToolDef{dummyTool()},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	// The request should carry 3 messages (user, assistant, user-toolresult).
+	if len(captured.Messages) != 3 {
+		t.Fatalf("messages = %d, want 3", len(captured.Messages))
+	}
+	// Assistant turn content is a JSON block array with a tool_use entry.
+	var asstBlocks []map[string]any
+	if err := json.Unmarshal(captured.Messages[1].Content, &asstBlocks); err != nil {
+		t.Fatalf("assistant content not block array: %v", err)
+	}
+	if asstBlocks[0]["type"] != "tool_use" || asstBlocks[0]["id"] != "toolu_01" {
+		t.Errorf("assistant tool_use block = %+v", asstBlocks[0])
+	}
+	// Tool result is a user turn with a tool_result block.
+	if captured.Messages[2].Role != "user" {
+		t.Errorf("tool result role = %q, want user", captured.Messages[2].Role)
+	}
+	var toolBlocks []map[string]any
+	if err := json.Unmarshal(captured.Messages[2].Content, &toolBlocks); err != nil {
+		t.Fatalf("tool-result content not block array: %v", err)
+	}
+	if toolBlocks[0]["type"] != "tool_result" || toolBlocks[0]["tool_use_id"] != "toolu_01" {
+		t.Errorf("tool_result block = %+v", toolBlocks[0])
+	}
+}
+
+// --- Google --------------------------------------------------------------
+
+func TestCompleteGoogle_EncodesFunctionDeclarationsAndParsesFunctionCall(t *testing.T) {
+	var captured googleGenerateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []map[string]any{
+				{"content": map[string]any{"parts": []map[string]any{
+					{"functionCall": map[string]any{"name": "search_notes", "args": map[string]any{"q": "meetings"}}},
+				}}},
+			},
+		})
+	}))
+	defer srv.Close()
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider:   AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-2.0-flash"},
+		Messages:   []ChatMessage{{Role: "user", Content: "find meetings"}},
+		Tools:      []ToolDef{dummyTool()},
+		ToolChoice: &ToolChoice{Mode: ToolChoiceAuto},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	// Tools nested as functionDeclarations under tools[].
+	if len(captured.Tools) != 1 || len(captured.Tools[0].FunctionDeclarations) != 1 {
+		t.Fatalf("tools = %+v, want one wrapper with one decl", captured.Tools)
+	}
+	decl := captured.Tools[0].FunctionDeclarations[0]
+	if decl.Name != "search_notes" {
+		t.Errorf("decl name = %q", decl.Name)
+	}
+	// Google's uppercase type-enum conversion applied to the parameters.
+	var params map[string]any
+	_ = json.Unmarshal(decl.Parameters, &params)
+	if params["type"] != "OBJECT" {
+		t.Errorf("parameters type = %v, want OBJECT", params["type"])
+	}
+	// tool_choice AUTO present.
+	if captured.ToolConfig == nil || captured.ToolConfig.FunctionCallingConfig.Mode != "AUTO" {
+		t.Errorf("toolConfig = %+v, want AUTO", captured.ToolConfig)
+	}
+	// functionCall decoded into ToolCall; ID carries the name (Google correlates
+	// results by name).
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
+	}
+	tc := res.ToolCalls[0]
+	if tc.Name != "search_notes" || tc.ID != "search_notes" {
+		t.Errorf("tool_call = %+v, want name/id = search_notes", tc)
+	}
+	var args map[string]any
+	if err := json.Unmarshal(tc.Arguments, &args); err != nil {
+		t.Fatalf("arguments not object: %v", err)
+	}
+	if args["q"] != "meetings" {
+		t.Errorf("args.q = %v", args["q"])
+	}
+}
+
+func TestCompleteGoogle_EncodesToolResultAsFunctionResponse(t *testing.T) {
+	var captured googleGenerateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []map[string]any{
+				{"content": map[string]any{"parts": []map[string]any{{"text": "ok"}}}},
+			},
+		})
+	}))
+	defer srv.Close()
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-2.0-flash"},
+		Messages: []ChatMessage{
+			{Role: "user", Content: "find meetings"},
+			{Role: "assistant", ToolCalls: []ToolCall{
+				{ID: "search_notes", Name: "search_notes", Arguments: json.RawMessage(`{"q":"meetings"}`)},
+			}},
+			{Role: "tool", ToolCallID: "search_notes", Content: `{"count":3}`},
+		},
+		Tools: []ToolDef{dummyTool()},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	// contents: user, model(functionCall), user(functionResponse).
+	if len(captured.Contents) != 3 {
+		t.Fatalf("contents = %d, want 3", len(captured.Contents))
+	}
+	model := captured.Contents[1]
+	if model.Role != "model" {
+		t.Errorf("assistant turn role = %q, want model", model.Role)
+	}
+	if len(model.Parts) != 1 || model.Parts[0].FunctionCall == nil {
+		t.Fatalf("model part missing functionCall: %+v", model.Parts)
+	}
+	res := captured.Contents[2]
+	if res.Role != "user" {
+		t.Errorf("tool result role = %q, want user", res.Role)
+	}
+	if len(res.Parts) != 1 || res.Parts[0].FunctionResponse == nil {
+		t.Fatalf("tool result missing functionResponse: %+v", res.Parts)
+	}
+	fr := res.Parts[0].FunctionResponse
+	if fr.Name != "search_notes" {
+		t.Errorf("functionResponse name = %q, want search_notes", fr.Name)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(fr.Response, &resp); err != nil {
+		t.Fatalf("response not object: %v", err)
+	}
+	if resp["count"] != float64(3) {
+		t.Errorf("response.count = %v, want 3", resp["count"])
+	}
+}

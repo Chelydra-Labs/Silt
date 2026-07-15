@@ -67,6 +67,93 @@ vi.mock('./location.svelte', () => ({
 import { makePluginContext } from './context'
 import type { PluginAIChatMessage } from './sdk'
 
+describe('ctx.ai.complete tool-calling (#595)', () => {
+  beforeEach(() => mocks.pluginAIComplete.mockClear())
+
+  it('threads tools + tool_choice (camelCase → snake_case) to the binding', async () => {
+    const ctx = makePluginContext('p')
+    await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'find meetings' }],
+      tools: [
+        {
+          name: 'search_notes',
+          description: 'Search the vault',
+          parameters: { type: 'object', properties: { q: { type: 'string' } } }
+        }
+      ],
+      toolChoice: { mode: 'force', toolName: 'search_notes' }
+    })
+    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >
+    expect(input.tools).toEqual([
+      {
+        name: 'search_notes',
+        description: 'Search the vault',
+        parameters: { type: 'object', properties: { q: { type: 'string' } } }
+      }
+    ])
+    // camelCase toolChoice maps to snake_case tool_choice with tool_name.
+    expect(input.tool_choice).toEqual({
+      mode: 'force',
+      tool_name: 'search_notes'
+    })
+  })
+
+  it('omits tool_choice when the caller does not set it', async () => {
+    const ctx = makePluginContext('p')
+    await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'x' }],
+      tools: [{ name: 'noop', parameters: { type: 'object' } }]
+    })
+    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >
+    expect(input.tool_choice).toBeUndefined()
+  })
+
+  it('maps tool_calls from the result envelope', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      content: '',
+      model: 'm',
+      tool_calls: [
+        { id: 'call_1', name: 'search_notes', arguments: { q: 'x' } }
+      ]
+    } as any)
+    const ctx = makePluginContext('p')
+    const res = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'x' }],
+      tools: [{ name: 'search_notes', parameters: { type: 'object' } }]
+    })
+    expect(res.tool_calls).toEqual([
+      { id: 'call_1', name: 'search_notes', arguments: { q: 'x' } }
+    ])
+  })
+
+  it('threads tool_calls + tool_call_id on messages for multi-turn replay', async () => {
+    const ctx = makePluginContext('p')
+    const messages = [
+      { role: 'user', content: 'find meetings' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: 'call_1', name: 'search_notes', arguments: { q: 'x' } }
+        ]
+      },
+      { role: 'tool', content: '3 matches', tool_call_id: 'call_1' }
+    ] as unknown as PluginAIChatMessage[]
+    await ctx.ai.complete({ messages })
+    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >
+    expect(input.messages).toEqual(messages)
+  })
+})
+
 describe('ctx.ai.complete', () => {
   beforeEach(() => mocks.pluginAIComplete.mockClear())
 
@@ -302,6 +389,53 @@ describe('ctx.ai.complete stream (#226)', () => {
     })
     expect(res).toMatchObject({ content: 'pong', model: 'qwen3:30b-a3b' })
     expect((res as any).streamId).toBeUndefined()
+  })
+
+  it('accumulates streamed tool-delta events on stream.toolDeltas (#595)', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      stream_id: 'sid-tool',
+      model: 'm'
+    } as any)
+    const ctx = makePluginContext('p', 'tok')
+    const stream = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true
+    })
+    const iter = (async () => {
+      for await (const _d of stream) {
+        /* drain */
+      }
+    })()
+    await Promise.resolve()
+    mocks.emitEvent('ai:complete:tool-delta', {
+      stream_id: 'sid-tool',
+      index: 0,
+      id: 'call_1',
+      name: 'search_notes'
+    })
+    mocks.emitEvent('ai:complete:tool-delta', {
+      stream_id: 'sid-tool',
+      index: 0,
+      arguments_fragment: '{"q":"x"}'
+    })
+    mocks.emitEvent('ai:complete:done', {
+      stream_id: 'sid-tool',
+      content: '',
+      model: 'm',
+      tool_calls: [
+        { id: 'call_1', name: 'search_notes', arguments: { q: 'x' } }
+      ]
+    })
+    await iter
+    expect(stream.toolDeltas).toHaveLength(2)
+    expect(stream.toolDeltas[0]).toMatchObject({
+      id: 'call_1',
+      name: 'search_notes'
+    })
+    const res = await stream.result()
+    expect(res.tool_calls).toEqual([
+      { id: 'call_1', name: 'search_notes', arguments: { q: 'x' } }
+    ])
   })
 })
 
