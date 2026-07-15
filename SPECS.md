@@ -390,12 +390,20 @@ Three input paths produce the same Dataview `[key:: value]` storage
 format:
 
 1. **`%` prefix autocomplete**: User types `%` → instant popup showing
-   all available metadata keys (scoped to task metadata only, unlike
-   the general `/` command palette). Typing filters; selecting inserts
-   `[key:: ]` with cursor positioned for value entry.
-2. **`/` slash commands**: TipTap's command palette. Richer UI: date
-   pickers for `/due`, priority selector for `/priority`, toggle for
-   `/pin`.
+   the task metadata keys (scoped to task metadata only, unlike the
+   general `/` command palette). Typing filters; selecting inserts
+   `[key:: ]` with the cursor positioned for value entry, and `pin`
+   auto-fills `[pin:: true]`. The key catalog lives in
+   `taskMetaSuggest.ts` (`META_KEYS`: due, start, owner, priority, pin,
+   progress, recur, blocked_by) — see the source for the authoritative
+   list rather than enumerating it here.
+2. **Task edit drawer**: `TaskEditDrawer.svelte` is the primary
+   structured editor for task metadata across every task view (Board,
+   List, Calendar) — opened by a single click on a task card or chip. It
+   exposes status, due date, priority, owner, estimate, tags,
+   recurrence, pin, and dependencies through purpose-built controls
+   (radiogroups, date picker, chip input, dependency picker), all
+   committing through the canonical atomic write chain.
 3. **Direct typing**: Power users type `[key:: value]` directly — what
    you type is what's stored (WYSIWYG).
 

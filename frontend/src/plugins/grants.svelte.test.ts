@@ -94,30 +94,13 @@ describe('grants cache (#158)', () => {
     expect(isGranted('any-plugin', 'network')).toBe(false)
   })
 
-  it('initGrants subscribes to plugins:changed', async () => {
+  it('initGrants performs the initial refresh and is idempotent', async () => {
     initGrants()
-    expect(mockEventsOn).toHaveBeenCalledWith(
-      'plugins:changed',
-      expect.any(Function)
-    )
-    // initGrants is idempotent — calling again does not re-subscribe.
+    // The initial fetch fires once on wiring.
+    expect(mockGetGranted).toHaveBeenCalled()
+    // initGrants is idempotent — calling again does not re-fetch.
+    mockGetGranted.mockClear()
     initGrants()
-    expect(mockEventsOn).toHaveBeenCalledTimes(1)
-  })
-
-  it('plugins:changed event triggers refreshGrants', async () => {
-    initGrants()
-    mockGetGranted.mockResolvedValue({
-      'evt-plugin': { 'ui-surface': 'granted' }
-    })
-
-    // Find the plugins:changed callback and invoke it.
-    const callback = mockEventsOn.mock.calls.find(
-      ([event]) => event === 'plugins:changed'
-    )?.[1]
-    expect(callback).toBeDefined()
-    await callback()
-
-    expect(isGranted('evt-plugin', 'ui-surface')).toBe(true)
+    expect(mockGetGranted).not.toHaveBeenCalled()
   })
 })

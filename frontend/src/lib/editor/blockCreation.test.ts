@@ -255,9 +255,9 @@ describe('block creation scan (#188 / #180 / #189 / #183 / #172)', () => {
       'callout',
       'callout-warning',
       'code-block',
+      'mermaid',
       'details',
       'table',
-      'table-5x4',
       'table-custom'
     ]) {
       expect(ids.has(id), `missing slash command ${id}`).toBe(true)

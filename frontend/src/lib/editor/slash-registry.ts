@@ -29,13 +29,6 @@ export interface SlashCommand {
    * binding is read from the config source of truth.
    */
   hotkey?: string
-  /**
-   * Non-hotkey hint shown right-aligned — reserved for slash-TRIGGER
-   * characters (`'#'`, `'T'`, `'[]'`, `'D'`, `'E'`) the user can type to
-   * autofill the command. Do NOT put hotkey bindings here; use `hotkey` so
-   * the display tracks config.
-   */
-  shortcut?: string
   /** The plugin id that registered this command, or undefined for built-ins. */
   pluginID?: string
   /**
@@ -110,39 +103,28 @@ export function resetSlashRegistryForTests(): void {
 // their own onSelect handler.
 
 registerSlashCommand({
-  id: 'todo',
-  label: 'Task',
-  description: 'Create task checkbox',
-  icon: 'check_box',
-  shortcut: '[]'
-})
-registerSlashCommand({
   id: 'h1',
   label: 'Heading 1',
   description: 'Large section header',
-  icon: 'format_size',
-  shortcut: '#'
+  icon: 'format_size'
 })
 registerSlashCommand({
   id: 'today',
   label: 'Today',
   description: "Insert today's date",
-  icon: 'calendar_today',
-  shortcut: 'D'
+  icon: 'calendar_today'
 })
 registerSlashCommand({
   id: 'embed',
   label: 'Embed Block',
   description: 'Insert a block embed',
-  icon: 'link',
-  shortcut: 'E'
+  icon: 'link'
 })
 registerSlashCommand({
   id: 'template',
   label: 'Template',
   description: 'Insert a page template at cursor',
-  icon: 'content_copy',
-  shortcut: 'T'
+  icon: 'content_copy'
 })
 
 // --- Inline formatting commands (#168) ------------------------------------
@@ -206,22 +188,6 @@ registerSlashCommand({
   icon: 'superscript',
   hotkey: 'format_superscript'
 })
-registerSlashCommand({
-  id: 'link',
-  label: 'Link',
-  description: 'Add a hyperlink to the selection',
-  icon: 'link',
-  hotkey: 'format_link'
-})
-// Clear formatting has no config action — the legacy `Ctrl+\` hint was a
-// phantom literal (no keymap registers it). Omit `hotkey` rather than lie.
-registerSlashCommand({
-  id: 'clear-formatting',
-  label: 'Clear formatting',
-  description: 'Remove all formatting from the selection',
-  icon: 'format_clear'
-})
-
 // --- Heading / block-type commands (#169) ---------------------------------
 registerSlashCommand({
   id: 'h2',
@@ -296,7 +262,7 @@ registerSlashCommand({
 registerSlashCommand({
   id: 'callout',
   label: 'Callout',
-  description: 'Insert a callout (pick a variant)',
+  description: 'Insert a Note callout',
   icon: 'info'
 })
 registerSlashCommand({
@@ -344,6 +310,18 @@ registerSlashCommand({
   icon: 'code_blocks'
 })
 
+// --- Mermaid diagrams -----------------------------------------------------
+// Mermaid is a render branch on codeBlock (ARCHITECTURE §5.1): a fence whose
+// language is `mermaid` renders an SVG via useMermaid. This command inserts
+// such a fence so the feature is discoverable through the slash menu instead
+// of requiring the user to remember the ```mermaid syntax.
+registerSlashCommand({
+  id: 'mermaid',
+  label: 'Mermaid diagram',
+  description: 'Insert a Mermaid diagram code block',
+  icon: 'schema'
+})
+
 // --- Block math (#191) ----------------------------------------------------
 registerSlashCommand({
   id: 'math',
@@ -372,12 +350,6 @@ registerSlashCommand({
   icon: 'table_view'
 })
 registerSlashCommand({
-  id: 'table-5x4',
-  label: 'Table (5×4)',
-  description: 'Insert a 5-row, 4-column table',
-  icon: 'grid_on'
-})
-registerSlashCommand({
   id: 'table-custom',
   label: 'Custom table…',
   description: 'Insert a table with custom dimensions',
@@ -396,16 +368,4 @@ registerSlashCommand({
   label: 'Background color',
   description: 'Pick a background color for the selection',
   icon: 'format_color_fill'
-})
-registerSlashCommand({
-  id: 'remove-color',
-  label: 'Remove text color',
-  description: 'Remove the text color from the selection',
-  icon: 'format_color_reset'
-})
-registerSlashCommand({
-  id: 'remove-background',
-  label: 'Remove background color',
-  description: 'Remove the background color from the selection',
-  icon: 'format_color_reset'
 })

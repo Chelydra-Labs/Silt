@@ -5,11 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { classifySlashCommand, FORMAT_COMMANDS } from './builtinSlashCommands'
 
 describe('classifySlashCommand', () => {
-  it('classifies task conversions (todo + task alias)', () => {
-    expect(classifySlashCommand('todo')).toEqual({
-      kind: 'convert',
-      blockType: 'taskBlock'
-    })
+  it('classifies the task conversion', () => {
     expect(classifySlashCommand('task')).toEqual({
       kind: 'convert',
       blockType: 'taskBlock'
@@ -73,40 +69,34 @@ describe('classifySlashCommand', () => {
 
   it('classifies structural inserts', () => {
     expect(classifySlashCommand('quote')?.kind).toBe('quote')
-    expect(classifySlashCommand('code-block')?.kind).toBe('codeBlock')
     expect(classifySlashCommand('math')?.kind).toBe('math')
     expect(classifySlashCommand('details')?.kind).toBe('details')
   })
 
-  it('classifies the two table presets and the custom picker', () => {
+  it('classifies code blocks (default and mermaid language)', () => {
+    expect(classifySlashCommand('code-block')).toEqual({ kind: 'codeBlock' })
+    expect(classifySlashCommand('mermaid')).toEqual({
+      kind: 'codeBlock',
+      language: 'mermaid'
+    })
+  })
+
+  it('classifies the table preset and the custom picker', () => {
     expect(classifySlashCommand('table')).toEqual({
       kind: 'table',
       rows: 3,
       cols: 3
     })
-    expect(classifySlashCommand('table-5x4')).toEqual({
-      kind: 'table',
-      rows: 5,
-      cols: 4
-    })
     expect(classifySlashCommand('table-custom')?.kind).toBe('tableCustom')
   })
 
-  it('classifies color set/remove', () => {
+  it('classifies color set', () => {
     expect(classifySlashCommand('text-color')).toEqual({
       kind: 'color',
       markType: 'textColor'
     })
     expect(classifySlashCommand('background-color')).toEqual({
       kind: 'color',
-      markType: 'backgroundColor'
-    })
-    expect(classifySlashCommand('remove-color')).toEqual({
-      kind: 'removeColor',
-      markType: 'textColor'
-    })
-    expect(classifySlashCommand('remove-background')).toEqual({
-      kind: 'removeColor',
       markType: 'backgroundColor'
     })
   })
@@ -121,14 +111,6 @@ describe('classifySlashCommand', () => {
     expect(classifySlashCommand('bold')).toEqual({
       kind: 'format',
       mark: 'bold'
-    })
-    expect(classifySlashCommand('clear-formatting')).toEqual({
-      kind: 'format',
-      mark: 'clear'
-    })
-    expect(classifySlashCommand('link')).toEqual({
-      kind: 'format',
-      mark: 'link'
     })
     // every entry in FORMAT_COMMANDS must resolve to a format intent
     for (const id of Object.keys(FORMAT_COMMANDS)) {

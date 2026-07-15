@@ -60,6 +60,7 @@
     filterOwners,
     blocksToDoc
   } from '../lib/editor'
+  import { runPluginCommand } from '../lib/editor/runPluginCommand'
   import type {
     ParsedBlock,
     MetaKey,
@@ -71,6 +72,7 @@
   import { settings, appendDismissedTip } from '../settings/store.svelte'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
+  import BlockPickerModal from './BlockPickerModal.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import PluginNoteBanners from './editor/PluginNoteBanners.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
@@ -85,7 +87,10 @@
   } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { classifySlashCommand } from '../lib/editor/builtinSlashCommands'
-  import { clampToViewport } from '../lib/editor/popoverPositioning'
+  import {
+    clampToViewport,
+    flipOrClamp
+  } from '../lib/editor/popoverPositioning'
   import {
     cutSelection,
     copySelection,
@@ -152,7 +157,22 @@
   let showSlashMenu = $state(false)
   let slashQuery = $state('')
   let slashMenuDismissed = $state(false)
+  // Measured size of the rendered slash palette, used for the flip/clamp
+  // decision so positioning reflects the real element rather than a fixed
+  // 256×300 estimate (#590). Falls back to the estimate until measured.
+  let paletteSize = $state({ width: 256, height: 300 })
+  $effect(() => {
+    if (!showSlashMenu) return
+    const el = document.getElementById('silt-slash-palette')
+    if (el && el.offsetWidth && el.offsetHeight) {
+      paletteSize = { width: el.offsetWidth, height: el.offsetHeight }
+    }
+  })
   let showTemplatePicker = $state(false)
+  // Block-embed picker (#593): selecting /embed opens BlockPickerModal; picking
+  // a block inserts a complete {{embed:UUID}} token (rendered as a live
+  // EmbedPortal by the existing tokenizer/NodeView pipeline).
+  let showEmbedPicker = $state(false)
   // Per-vault math opt-out (#191). Live so toggling it in Settings takes effect
   // on the next slash-menu open (hides the /math command).
   let mathEnabled = $derived(
@@ -233,7 +253,11 @@
 
   // Custom-table size picker (#172) — an in-app popover replacing window.prompt.
   let showTableSizePicker = $state(false)
-  let tableSizeCoords = $state<{ left: number; top: number } | null>(null)
+  let tableSizeCoords = $state<{
+    top: number
+    bottom: number
+    left: number
+  } | null>(null)
 
   // LaTeX equation popover (Phase 5 / #328). Replaces window.prompt for both
   // the /math slash command (block create) and click-to-edit on a math node
@@ -940,17 +964,46 @@
     const align = (e as CustomEvent).detail as string
     if (align) setBlockAlign(editorInstance as any, align)
   }
+  // Dismiss the selection-anchored popovers (link / color / math) when an
+  // ancestor scrolls or the window resizes (#594). They capture their anchor
+  // coordinates once and render position:fixed, so without this they would
+  // float at stale screen positions. Dismiss is chosen over reposition for
+  // parity with the selection bubble (repositioning mid-text-entry is jarring).
+  function dismissFloatingPopovers(): void {
+    if (showLinkInput) showLinkInput = false
+    if (showColorPicker) showColorPicker = false
+    if (mathPopover) mathPopover = null
+  }
   function onEditorScroll(): void {
     selectionCoords = null
+    // Dismiss the slash palette on scroll (parity with the selection bubble)
+    // so it never floats at stale coordinates (#590).
+    if (showSlashMenu) {
+      showSlashMenu = false
+      slashMenuDismissed = true
+    }
+    dismissFloatingPopovers()
+  }
+  function onWindowResize(): void {
+    // A resize can push an open palette/popover off-screen; dismiss rather
+    // than chase the cursor (#590 / #594).
+    if (showSlashMenu) {
+      showSlashMenu = false
+      slashMenuDismissed = true
+    }
+    dismissFloatingPopovers()
   }
   // Dismiss SelectionBubble when clicking outside the editor and bubble (#168).
+  // The slash palette is guarded by its dedicated data-slash-palette marker
+  // (decoupled from the .glass-palette visual class) so restyling the glass
+  // treatment cannot silently break dismissal (#584).
   function onDocumentClick(e: MouseEvent): void {
     const target = e.target as HTMLElement | null
     if (!target) return
     if (
       target.closest('.ProseMirror') ||
       target.closest('.selection-bubble') ||
-      target.closest('.glass-palette')
+      target.closest('[data-slash-palette]')
     )
       return
     selectionCoords = null
@@ -964,6 +1017,7 @@
   window.addEventListener('silt:open-color-picker', onOpenColorPicker)
   window.addEventListener('silt:edit-math', onEditMath)
   window.addEventListener('scroll', onEditorScroll, true)
+  window.addEventListener('resize', onWindowResize)
   document.addEventListener('click', onDocumentClick)
 
   onDestroy(() => {
@@ -985,6 +1039,7 @@
     window.removeEventListener('silt:open-color-picker', onOpenColorPicker)
     window.removeEventListener('silt:edit-math', onEditMath)
     window.removeEventListener('scroll', onEditorScroll, true)
+    window.removeEventListener('resize', onWindowResize)
     document.removeEventListener('click', onDocumentClick)
   })
 
@@ -1122,8 +1177,11 @@
     const pos = selection.$from.start()
     try {
       const c = editorInstance.view.coordsAtPos(pos)
-      return clampToViewport(
-        { x: c.left, y: c.bottom, width: 256, height: 300 },
+      // Flip above the cursor when there is no room below, using the palette's
+      // measured size rather than a fixed estimate (#590).
+      return flipOrClamp(
+        { top: c.top, bottom: c.bottom, left: c.left },
+        { width: paletteSize.width, height: paletteSize.height },
         { width: window.innerWidth, height: window.innerHeight }
       )
     } catch (err) {
@@ -1150,7 +1208,30 @@
       // other id must be a plugin command with a handler.
       const cmd = getSlashCommands().find((c) => c.id === commandId)
       if (cmd?.onSelect) {
-        cmd.onSelect(editorInstance, editorInstance.state.selection.to)
+        // Isolate plugin-handler failures (#581): a buggy plugin's throw or
+        // rejected Promise must not escape into the editor's dispatch path or
+        // go unhandled. The slash trigger text is already deleted above, so
+        // the editor stays clean either way; surface a non-blocking toast +
+        // a console error carrying the plugin + command id.
+        const pluginID = cmd.pluginID ?? 'unknown'
+        const report = (err: unknown): void => {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[silt] plugin ${pluginID} command ${commandId} failed:`,
+            err
+          )
+          pushNotification({
+            kind: 'error',
+            message: 'Plugin command failed — see console.',
+            autoDismissMs: 7000
+          })
+        }
+        runPluginCommand(
+          cmd,
+          editorInstance,
+          editorInstance.state.selection.to,
+          report
+        )
       }
       return
     }
@@ -1170,7 +1251,7 @@
         insertCallout(editorInstance as any, intent.variant)
         break
       case 'codeBlock':
-        insertCodeBlock(editorInstance as any)
+        insertCodeBlock(editorInstance as any, intent.language ?? '')
         break
       case 'math':
         // Open the LaTeX popover (block mode); on commit, insert a block
@@ -1198,22 +1279,23 @@
         break
       case 'tableCustom':
         // Open an in-app size popover instead of the native window.prompt.
+        // The picker receives the cursor anchor rect and flips/clamps itself.
         if (!editorInstance || editorInstance.isDestroyed) return
         try {
           const { selection } = editorInstance.state
           const coords = editorInstance.view.coordsAtPos(selection.from)
-          tableSizeCoords = { left: coords.left, top: coords.bottom }
+          tableSizeCoords = {
+            top: coords.top,
+            bottom: coords.bottom,
+            left: coords.left
+          }
         } catch {
-          tableSizeCoords = { left: 100, top: 100 }
+          tableSizeCoords = { top: 100, bottom: 120, left: 100 }
         }
         showTableSizePicker = true
         break
       case 'color':
         openColorPickerPopover(intent.markType)
-        break
-      case 'removeColor':
-        if (editorInstance)
-          editorInstance.chain().focus().unsetMark(intent.markType).run()
         break
       case 'today': {
         const d = new Date()
@@ -1222,7 +1304,10 @@
         break
       }
       case 'embed':
-        editorInstance.commands.insertContent('{{embed:')
+        // Open the block picker; the selected block is inserted as a complete
+        // {{embed:UUID}} token (#593). The bare '{{embed:' fragment the old
+        // path emitted never resolved into a live embed portal.
+        showEmbedPicker = true
         break
       case 'template':
         // The `/` text is already deleted above; open the picker. The editor
@@ -1232,14 +1317,10 @@
         showTemplatePicker = true
         break
       case 'format':
-        // Inline formatting slash commands (#168). Each toggles its mark.
-        if (intent.mark === 'link') {
-          openLinkInput()
-        } else if (intent.mark === 'clear') {
-          editorInstance.chain().focus().unsetAllMarks().run()
-        } else {
-          editorInstance.chain().focus().toggleMark(intent.mark).run()
-        }
+        // Inline formatting slash commands (#168). Each toggles its mark;
+        // the value is also a valid stored mark at a collapsed cursor, so the
+        // command does meaningful work without a selection.
+        editorInstance.chain().focus().toggleMark(intent.mark).run()
         break
     }
   }
@@ -1253,6 +1334,29 @@
     const doc = blocksToDoc(blocks)
     editorInstance.commands.insertContent(doc.content)
     editorInstance.commands.focus()
+  }
+
+  // --- Block embed picker (#593) -------------------------------------------
+  // Mirrors the TemplatePicker pattern: a picker-backed slash command. Picking
+  // a block inserts a complete embed portal. The token is inserted as a
+  // pre-built embedNode (not raw `{{embed:uuid}}` text) because the editor has
+  // no live input rule that converts the raw token — only the block load
+  // path (blocksToDoc) tokenizes. Inserting the node renders the live
+  // EmbedPortal immediately and round-trips back to `{{embed:uuid}}` on save.
+  // Cancelling inserts nothing (the consumed '/embed' trigger text was already
+  // deleted before the dispatch).
+  function handleEmbedPick(blockId: string): void {
+    showEmbedPicker = false
+    if (!editorInstance || editorInstance.isDestroyed) return
+    editorInstance.commands.insertContent({
+      type: 'embedNode',
+      attrs: { id: crypto.randomUUID(), uuid: blockId, bullet: '' }
+    })
+    editorInstance.commands.focus()
+  }
+  function closeEmbedPicker(): void {
+    showEmbedPicker = false
+    editorInstance?.chain().focus().run()
   }
 
   // --- Focus lock (reuses the #38 TTL-lease bindings) -----------------------
@@ -1669,6 +1773,7 @@
       <CommandPalette
         style="position: fixed; left: {coords.left}px; top: {coords.top}px;"
         query={slashQuery}
+        textboxEl={editorInstance?.view.dom ?? null}
         onSelect={handleSlashSelect}
         exclude={mathEnabled ? [] : ['math']}
         onClose={() => {
@@ -1814,8 +1919,7 @@
   {/if}
   {#if showTableSizePicker && tableSizeCoords}
     <TableSizePicker
-      left={tableSizeCoords.left}
-      top={tableSizeCoords.top}
+      anchor={tableSizeCoords}
       onConfirm={confirmTableSize}
       onCancel={cancelTableSize}
     />
@@ -1837,6 +1941,10 @@
     onClose={() => (showTemplatePicker = false)}
     onInsertBlocks={handleTemplateInsert}
   />
+{/if}
+
+{#if showEmbedPicker}
+  <BlockPickerModal onPick={handleEmbedPick} onClose={closeEmbedPicker} />
 {/if}
 
 <style>

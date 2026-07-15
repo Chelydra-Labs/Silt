@@ -239,6 +239,23 @@ function wireLifecycleOnce() {
     // Drop any remaining event-bus subscriptions so a stale listener cannot
     // fire against the next vault (#106).
     clearAllSubscribers()
+    // Unregister every plugin's editor contributions (slash commands,
+    // surfaces, decorations) before onShutdown and before the plugins map is
+    // cleared — mirroring teardownPlugin's ordering so a plugin's onShutdown
+    // cannot re-read its own now-removed contributions. Without this, a vault
+    // switch leaves the previous vault's plugin commands/surfaces/decorations
+    // in the registries as ghosts (#580).
+    for (const reg of loadedPlugins.plugins.values()) {
+      const id = reg.manifest.id
+      try {
+        unregisterPluginSlashCommands(id)
+        unregisterPluginSurfaces(id)
+        unregisterPluginDecorations(id)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(`[silt] contribution unregister for ${id} threw:`, err)
+      }
+    }
     for (const reg of loadedPlugins.plugins.values()) {
       try {
         reg.onShutdown?.()
