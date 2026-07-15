@@ -28,7 +28,8 @@ type googleTextPart struct {
 }
 
 // googleFunctionCall is the model's request to invoke a tool (#595). Google
-// correlates tool results by name; newer API versions also carry an id.
+// identifies the function by name and newer API versions may also provide an
+// opaque id for correlating the later function response.
 type googleFunctionCall struct {
 	ID   string          `json:"id,omitempty"`
 	Name string          `json:"name"`
@@ -36,7 +37,8 @@ type googleFunctionCall struct {
 }
 
 // googleFunctionResp is a tool result fed back to the model (#595), sent as a
-// part inside a user turn. Response is a JSON object.
+// part inside a user turn. Name identifies the function; ID is included when
+// the originating call supplied a distinct opaque id. Response is a JSON object.
 type googleFunctionResp struct {
 	ID       string          `json:"id,omitempty"`
 	Name     string          `json:"name"`
@@ -286,7 +288,7 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 	// parts (#595).
 	var system *googleContent
 	var contents []googleContent
-	for _, m := range req.Messages {
+	for messageIndex, m := range req.Messages {
 		if m.Role == RoleSystem {
 			if system == nil {
 				system = &googleContent{Parts: []googleTextPart{{Text: m.Content}}}
@@ -295,15 +297,36 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 			}
 			continue
 		}
-		// Tool result → user turn with a functionResponse part. Google
-		// correlates by name; the decoder set ToolCall.ID to the function
-		// name, so a tool-result message's ToolCallID carries that name.
+		// Tool result → user turn with a functionResponse part. Resolve the
+		// function name from the preceding assistant call when the tool result
+		// carries an opaque call id. Older name-based histories fall back to
+		// treating ToolCallID as the function name.
 		if m.Role == RoleTool {
+			name := m.ToolCallID
+			id := ""
+			matched := false
+			for i := messageIndex - 1; i >= 0 && !matched; i-- {
+				if req.Messages[i].Role != RoleAssistant {
+					continue
+				}
+				for _, tc := range req.Messages[i].ToolCalls {
+					if tc.ID != m.ToolCallID {
+						continue
+					}
+					name = tc.Name
+					if tc.ID != "" && tc.ID != tc.Name {
+						id = tc.ID
+					}
+					matched = true
+					break
+				}
+			}
 			contents = append(contents, googleContent{
 				Role: RoleUser,
 				Parts: []googleTextPart{{
 					FunctionResponse: &googleFunctionResp{
-						Name:     m.ToolCallID,
+						ID:       id,
+						Name:     name,
 						Response: googleToolResponse(m.Content),
 					},
 				}},
@@ -397,9 +420,9 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 			continue
 		}
 		if p.FunctionCall != nil {
-			// Google correlates tool results by name (not id), so the
-			// unified ToolCall.ID carries the function name to make a
-			// later tool-result message round-trip as functionResponse.
+			// Preserve Google's opaque id when present; callers use it to
+			// correlate the later tool-result message. Older responses without
+			// an id retain the name-based fallback.
 			id := p.FunctionCall.ID
 			if id == "" {
 				id = p.FunctionCall.Name

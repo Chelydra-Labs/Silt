@@ -276,14 +276,14 @@ func TestNormalize_NeverNil(t *testing.T) {
 // retired the standalone silt-calendar and silt-kanban ids).
 // TestDefaults_AIPluginsOffByDefault pins Sprint 20/22 product choice: AI
 // plugins ship disabled so a fresh vault never phones a model until the user
-// opts in (silt-ai-summary #220, silt-ai-qa #224).
+// opts in (silt-ai-summary #220, silt-ai-qa #224, silt-ai-agent).
 func TestDefaults_AIPluginsOffByDefault(t *testing.T) {
 	d := Defaults()
 	disabled := map[string]bool{}
 	for _, id := range d.Plugins.Disabled {
 		disabled[id] = true
 	}
-	for _, id := range []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant"} {
+	for _, id := range []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant", "silt-ai-agent"} {
 		if !disabled[id] {
 			t.Errorf("Defaults().Plugins.Disabled missing %q (AI plugins must ship off by default)", id)
 		}
@@ -344,6 +344,34 @@ func TestNormalize_SeedsSiltAIAssistantDisabledOnUpgrade(t *testing.T) {
 	for _, id := range cfg.Plugins.Disabled {
 		if id == "silt-ai-assistant" {
 			t.Fatal("normalize must not re-disable silt-ai-assistant after seed marker is set")
+		}
+	}
+}
+
+// TestNormalize_SeedsSiltAIAgentDisabledOnUpgrade: upgraded vaults must gain
+// silt-ai-agent in disabled exactly once.
+func TestNormalize_SeedsSiltAIAgentDisabledOnUpgrade(t *testing.T) {
+	cfg := normalize(SystemConfig{
+		Plugins: PluginsConfig{
+			Disabled:       []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant"},
+			PluginSettings: map[string]any{},
+		},
+	})
+	found := false
+	for _, id := range cfg.Plugins.Disabled {
+		if id == "silt-ai-agent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("normalize must append silt-ai-agent to disabled on upgrade; got %v", cfg.Plugins.Disabled)
+	}
+	cfg.Plugins.Disabled = []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant"} // user enabled Agent
+	cfg = normalize(cfg)
+	for _, id := range cfg.Plugins.Disabled {
+		if id == "silt-ai-agent" {
+			t.Fatal("normalize must not re-disable silt-ai-agent after seed marker is set")
 		}
 	}
 }

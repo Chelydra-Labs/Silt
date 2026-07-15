@@ -122,10 +122,10 @@ type ToolDef struct {
 }
 
 // ToolCall is one invocation the model wants performed (#595). ID correlates
-// the call with the tool-result message in the next turn (OpenAI/Anthropic);
-// Google correlates by name and the decoder sets ID to the function name.
-// Arguments is the raw JSON object bytes (unwrapped from OpenAI's stringified
-// form).
+// the call with the tool-result message in the next turn (OpenAI/Anthropic and
+// Google when the provider supplies an opaque id); Google falls back to the
+// function name when no id is present. Arguments is the raw JSON object bytes
+// (unwrapped from OpenAI's stringified form).
 type ToolCall struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`

@@ -2,10 +2,11 @@
 //
 // Replaces a block's body text via ctx.mutateBlock, which preserves the
 // block's UUID and identity. For TASK blocks the new content must not strip
-// any existing task-metadata tokens (status, owner, due, priority) or the
-// checkbox state — those have dedicated tools (setTaskDueDate, setTaskOwner,
-// setTaskPriority, updateBlockState) and silently dropping them via a prose
-// rewrite would be data loss. NOTE/HEADER blocks may be rewritten freely.
+// or alter the value of any existing task-metadata tokens (status, owner, due,
+// priority) or the checkbox state — those have dedicated tools
+// (setTaskDueDate, setTaskOwner, setTaskPriority, updateBlockState) and
+// silently changing them via a prose rewrite would be data loss. NOTE/HEADER
+// blocks may be rewritten freely.
 //
 // Single-block updates do NOT stage: the change is reversible prose and the
 // mutation round-trips through the markdown file (source of truth). A future
@@ -20,10 +21,11 @@ export const updateBlockToolDef = {
   name: 'update_block',
   description:
     "Rewrite a block's prose body by UUID, preserving its identity and " +
-    '(for TASK blocks) existing metadata tokens. For TASK blocks, the new ' +
-    'content must retain any [status::], [owner::], [due::], [priority::] ' +
-    'tokens and checkbox state present in the original — use the dedicated ' +
-    'tools to change those. NOTE/HEADER blocks may be rewritten freely. ' +
+    '(for TASK blocks) existing metadata values. For TASK blocks, the new ' +
+    'content must retain the original values of any [status::], [owner::], ' +
+    '[due::], or [priority::] tokens and the checkbox state — use the ' +
+    'dedicated tools to change those. NOTE/HEADER blocks may be rewritten ' +
+    'freely. ' +
     "Optional tags override the block's tags.",
   parameters: {
     type: 'object',
@@ -46,7 +48,7 @@ export const updateBlockToolDef = {
   }
 }
 
-/** Metadata tokens whose removal from a TASK block would be silent data loss. */
+/** Metadata tokens whose removal or value change would be silent data loss. */
 const TASK_TOKEN_KEYS = ['status', 'owner', 'due', 'priority'] as const
 
 /** A captured metadata token: key + raw bracketed text + value. */
@@ -82,17 +84,17 @@ export async function handleUpdateBlock(
   const currentContent = String(row.clean_content ?? '')
   const type = String(row.type ?? '').toUpperCase()
 
-  // 2. TASK blocks: reject if the new content strips any existing token or
-  //    the checkbox state.
+  // 2. TASK blocks: reject if the new content changes/removes any existing
+  //    metadata value or the checkbox state.
   if (type === 'TASK') {
-    const stripped = findStrippedTokens(currentContent, newContent)
-    if (stripped.length > 0) {
+    const changed = findStrippedTokens(currentContent, newContent)
+    if (changed.length > 0) {
       return {
         content: '',
         error:
-          'Cannot remove task metadata (status/owner/due/priority). ' +
-          'Use specific tools to change them. Stripped: ' +
-          stripped.join(', ')
+          'Cannot change or remove task metadata (status/owner/due/priority). ' +
+          'Use specific tools to change them. Changed/removed: ' +
+          changed.join(', ')
       }
     }
   }
@@ -131,9 +133,11 @@ export async function handleUpdateBlock(
 
 /**
  * Compare old vs new content and list which task-metadata tokens (or the
- * checkbox state) the rewrite would remove. Returns the raw removed tokens
- * (e.g. "[due:: 2026-07-20]", "[checkbox: - [x]]") so the error message is
- * actionable. An empty array means the rewrite is safe.
+ * checkbox state) the rewrite would change or remove. Token values are trimmed
+ * before comparison so harmless whitespace normalization remains allowed.
+ * Changed tokens are returned as old -> new pairs; removed tokens are returned
+ * as their raw value so the error message is actionable. An empty array means
+ * the rewrite is safe.
  */
 export function findStrippedTokens(
   oldContent: string,
@@ -143,13 +147,19 @@ export function findStrippedTokens(
 
   const oldTokens = new Map<string, TaskToken>()
   for (const t of extractTaskTokens(oldContent)) oldTokens.set(t.key, t)
-  const newKeys = new Set(extractTaskTokens(newContent).map((t) => t.key))
+  const newTokens = new Map<string, TaskToken>()
+  for (const t of extractTaskTokens(newContent)) newTokens.set(t.key, t)
 
-  // Each metadata key in the old content must still be present in the new.
+  // Each metadata key in the old content must still be present with the same
+  // value. New metadata keys are allowed; dedicated tools can set them later.
   for (const key of TASK_TOKEN_KEYS) {
     const oldTok = oldTokens.get(key)
-    if (oldTok && !newKeys.has(key)) {
+    if (!oldTok) continue
+    const newTok = newTokens.get(key)
+    if (!newTok) {
       stripped.push(oldTok.raw)
+    } else if (oldTok.value !== newTok.value) {
+      stripped.push(`${oldTok.raw} -> ${newTok.raw}`)
     }
   }
 

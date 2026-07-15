@@ -85,7 +85,7 @@ export async function handleGetVaultStatistics(
   // value would surface here rather than be silently dropped.
   const taskFrom = scoped
     ? 'FROM tasks t JOIN blocks b ON b.id = t.block_id WHERE b.notebook = ?'
-    : 'FROM tasks t'
+    : 'FROM tasks t WHERE 1 = 1'
   const taskParams: unknown[] = scoped ? [scope] : []
   const tasksByStatus = await runCounts(
     ctx,

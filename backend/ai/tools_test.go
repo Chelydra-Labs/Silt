@@ -377,8 +377,7 @@ func TestCompleteGoogle_EncodesFunctionDeclarationsAndParsesFunctionCall(t *test
 	if captured.ToolConfig == nil || captured.ToolConfig.FunctionCallingConfig.Mode != "AUTO" {
 		t.Errorf("toolConfig = %+v, want AUTO", captured.ToolConfig)
 	}
-	// functionCall decoded into ToolCall; ID carries the name (Google correlates
-	// results by name).
+	// A functionCall without an id retains the name-based fallback ID.
 	if len(res.ToolCalls) != 1 {
 		t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
 	}
@@ -392,6 +391,38 @@ func TestCompleteGoogle_EncodesFunctionDeclarationsAndParsesFunctionCall(t *test
 	}
 	if args["q"] != "meetings" {
 		t.Errorf("args.q = %v", args["q"])
+	}
+}
+
+func TestCompleteGoogle_PreservesOpaqueFunctionCallID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []map[string]any{
+				{"content": map[string]any{"parts": []map[string]any{
+					{"functionCall": map[string]any{
+						"id": "call_google_01", "name": "search_notes",
+						"args": map[string]any{"q": "meetings"},
+					}},
+				}}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-2.0-flash"},
+		Messages: []ChatMessage{{Role: "user", Content: "find meetings"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
+	}
+	tc := res.ToolCalls[0]
+	if tc.Name != "search_notes" || tc.ID != "call_google_01" {
+		t.Errorf("tool_call = %+v, want name search_notes and id call_google_01", tc)
 	}
 }
 
@@ -413,9 +444,9 @@ func TestCompleteGoogle_EncodesToolResultAsFunctionResponse(t *testing.T) {
 		Messages: []ChatMessage{
 			{Role: "user", Content: "find meetings"},
 			{Role: "assistant", ToolCalls: []ToolCall{
-				{ID: "search_notes", Name: "search_notes", Arguments: json.RawMessage(`{"q":"meetings"}`)},
+				{ID: "call_google_01", Name: "search_notes", Arguments: json.RawMessage(`{"q":"meetings"}`)},
 			}},
-			{Role: "tool", ToolCallID: "search_notes", Content: `{"count":3}`},
+			{Role: "tool", ToolCallID: "call_google_01", Content: `{"count":3}`},
 		},
 		Tools: []ToolDef{dummyTool()},
 	})
@@ -433,6 +464,9 @@ func TestCompleteGoogle_EncodesToolResultAsFunctionResponse(t *testing.T) {
 	if len(model.Parts) != 1 || model.Parts[0].FunctionCall == nil {
 		t.Fatalf("model part missing functionCall: %+v", model.Parts)
 	}
+	if model.Parts[0].FunctionCall.ID != "call_google_01" || model.Parts[0].FunctionCall.Name != "search_notes" {
+		t.Errorf("functionCall = %+v, want id call_google_01 and name search_notes", model.Parts[0].FunctionCall)
+	}
 	res := captured.Contents[2]
 	if res.Role != "user" {
 		t.Errorf("tool result role = %q, want user", res.Role)
@@ -443,6 +477,9 @@ func TestCompleteGoogle_EncodesToolResultAsFunctionResponse(t *testing.T) {
 	fr := res.Parts[0].FunctionResponse
 	if fr.Name != "search_notes" {
 		t.Errorf("functionResponse name = %q, want search_notes", fr.Name)
+	}
+	if fr.ID != "call_google_01" {
+		t.Errorf("functionResponse id = %q, want call_google_01", fr.ID)
 	}
 	var resp map[string]any
 	if err := json.Unmarshal(fr.Response, &resp); err != nil {

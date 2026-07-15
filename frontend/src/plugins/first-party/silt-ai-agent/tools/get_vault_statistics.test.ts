@@ -112,6 +112,19 @@ describe('get_vault_statistics', () => {
     expect(res.content).toMatch(/3 stale task\(s\)/)
   })
 
+  it('uses a WHERE clause before unscoped stale-task predicates', async () => {
+    const { ctx, calls } = makeCtx()
+    await handleGetVaultStatistics(ctx, {})
+
+    const staleCall = calls.find((c) =>
+      c.sql.toLowerCase().includes('as stale_tasks')
+    )
+    expect(staleCall?.sql).toMatch(
+      /from tasks t\s+where\s+1\s*=\s*1\s+and\s+t\.due_date/i
+    )
+    expect(staleCall?.sql).not.toMatch(/from tasks t\s+and/i)
+  })
+
   it('reports orphan pages: a page tuple with no inbound links', async () => {
     // All-pages query returns three pages; referenced-pages query returns one.
     // The two pages not in the referenced set are the orphans.

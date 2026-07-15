@@ -77,7 +77,7 @@ describe('update_block', () => {
       block_id: 't2',
       content: rewritten
     })
-    expect(res.error).toMatch(/Cannot remove task metadata/)
+    expect(res.error).toMatch(/Cannot change or remove task metadata/)
     expect(res.error).toMatch(/status/i)
     expect(res.error).toMatch(/due/i)
     expect(mutateBlock).not.toHaveBeenCalled()
@@ -93,7 +93,7 @@ describe('update_block', () => {
       block_id: 't3',
       content: rewritten
     })
-    expect(res.error).toMatch(/Cannot remove task metadata/)
+    expect(res.error).toMatch(/Cannot change or remove task metadata/)
     expect(res.error).toMatch(/due/i)
     expect(mutateBlock).not.toHaveBeenCalled()
   })
@@ -109,8 +109,31 @@ describe('update_block', () => {
       block_id: 't4',
       content: rewritten
     })
-    expect(res.error).toMatch(/Cannot remove task metadata/)
+    expect(res.error).toMatch(/Cannot change or remove task metadata/)
     expect(res.error).toMatch(/checkbox/)
+    expect(mutateBlock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a TASK rewrite that changes existing metadata values', async () => {
+    const original =
+      '- [ ] Ship it [status:: TODO] [owner:: alice] ' +
+      '[due:: 2026-08-01] [priority:: 2]'
+    const rewritten =
+      '- [ ] Ship it [status:: DOING] [owner:: bob] ' +
+      '[due:: 2026-08-02] [priority:: 1]'
+    const { ctx, mutateBlock } = makeCtx({
+      row: { clean_content: original, type: 'TASK' }
+    })
+    const res = await handleUpdateBlock(ctx, {
+      block_id: 't-values',
+      content: rewritten
+    })
+
+    expect(res.error).toMatch(/Cannot change or remove task metadata/)
+    expect(res.error).toMatch(/status/i)
+    expect(res.error).toMatch(/owner/i)
+    expect(res.error).toMatch(/due/i)
+    expect(res.error).toMatch(/priority/i)
     expect(mutateBlock).not.toHaveBeenCalled()
   })
 
@@ -197,6 +220,12 @@ describe('update_block', () => {
 
   it('findStrippedTokens is exported and detects all four keys + checkbox', () => {
     expect(findStrippedTokens('[status:: TODO]', '[status:: TODO]')).toEqual([])
+    expect(
+      findStrippedTokens('[status:: TODO]', '[status ::   TODO ]')
+    ).toEqual([])
+    expect(findStrippedTokens('[status:: TODO]', '[status:: DONE]')).toEqual([
+      '[status:: TODO] -> [status:: DONE]'
+    ])
     expect(findStrippedTokens('[due:: X]', 'no tokens')).toEqual(['[due:: X]'])
     expect(
       findStrippedTokens(
