@@ -15,18 +15,55 @@ export interface ToolResult {
   /** Set when the tool rejected its inputs or failed; surfaces to the model. */
   error?: string
   /**
-   * Phase 5 staging-token support (defined now so the DB schema + types are
-   * ready). When a tool stages a write for user confirmation, isStaged marks
-   * the result and stagedToken carries the token the UX submits to apply it.
-   * Unused in Phase 3.
+   * Phase 5 staging-token support. When a destructive tool stages a write for
+   * user confirmation, isStaged marks the result and stagedToken carries the
+   * token the UX submits to apply or reject it. stagedPreview is a short
+   * human-readable description of what would happen ("Delete 3 blocks"),
+   * surfaced in the confirm dialog. The agent loop intercepts staged results
+   * and does NOT feed them to the model — the model only sees the post-confirm
+   * outcome (commit result or "rejected by user").
    */
   isStaged?: boolean
   stagedToken?: string
+  stagedPreview?: StagedPreview
 }
+
+/**
+ * Preview data for a staged operation. `kind` is the operation category
+ * (delete_blocks, merge_pages, rename_tag, bulk_update, …); `summary` is a
+ * one-line description for the confirm dialog; `details` is an optional
+ * longer breakdown (e.g. per-target breadcrumbs). The agent loop does not
+ * interpret these — it forwards them to the UX via onStaging.
+ */
+export interface StagedPreview {
+  kind: string
+  /** Short imperative summary, e.g. "Delete 3 blocks in Work/Notes/Decisions". */
+  summary: string
+  /** Optional multi-line detail for the confirm dialog body. */
+  details?: string
+  /** Optional count of affected targets, for the dialog headline. */
+  affectedCount?: number
+}
+
+/**
+ * The commit half of a staged tool. After confirmOperation redeems the token,
+ * the agent loop calls commit(ctx, params) to execute the real write.
+ * `params` is the operation payload stored alongside the token at stage time,
+ * NOT the model's args — so the model cannot mutate the staged op between
+ * staging and confirmation.
+ */
+export type StagedCommit = (
+  ctx: PluginContext,
+  params: Record<string, unknown>
+) => Promise<ToolResult>
 
 /**
  * A tool the agent can call. `parameters` is a raw JSON Schema object
  * (lowercase type strings) describing the handler's `args`.
+ *
+ * Destructive tools register BOTH `handler` (which stages the op and returns
+ * a preview + token) and `commit` (which executes after the user confirms).
+ * Read-only tools omit `commit`.
  */
 export interface AgentToolDef {
   name: string
@@ -36,6 +73,8 @@ export interface AgentToolDef {
     ctx: PluginContext,
     args: Record<string, unknown>
   ) => Promise<ToolResult>
+  /** Optional: present on destructive (staged) tools. */
+  commit?: StagedCommit
 }
 
 // Module-scoped registry: one Map per process. clearTools() resets it so tests

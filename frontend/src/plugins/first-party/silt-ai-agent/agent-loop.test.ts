@@ -12,9 +12,11 @@ import {
   MAX_ITERATIONS,
   runAgent,
   truncateToolResult,
-  TOOL_RESULT_MAX_BYTES
+  TOOL_RESULT_MAX_BYTES,
+  type StagingEvent
 } from './agent-loop'
 import { clearTools, registerTool } from './tool-registry'
+import { stageOperation } from './staging'
 
 function mockStream(
   result: PluginAICompleteResult,
@@ -205,5 +207,283 @@ describe('agent-loop', () => {
     })
     const res = await p
     expect(res.cancelled).toBe(true)
+  })
+})
+
+// Phase 5 staging integration (#605): a tool that returns isStaged pauses the
+// loop until the UX resolves the token. On confirm, the tool's commit runs
+// against the (unmodified) stored params; on reject, "rejected by user" is
+// fed back to the model.
+describe('agent-loop staging', () => {
+  afterEach(() => {
+    clearTools()
+    vi.useRealTimers()
+  })
+
+  /** PluginDb mock that backs staging_tokens with a real in-memory table. */
+  function mockPluginDb() {
+    const rows = new Map<
+      string,
+      {
+        token: string
+        plugin_id: string
+        operation: string
+        expires_at: number
+        used: number
+      }
+    >()
+    return {
+      rows,
+      db: {
+        exec: vi.fn(async (sql: string, params: unknown[] = []) => {
+          const upper = sql.trim().toUpperCase()
+          if (upper.startsWith('INSERT')) {
+            const [token, pluginId, operation, _created, expiresAt] =
+              params as [string, string, string, number, number]
+            rows.set(token, {
+              token,
+              plugin_id: pluginId,
+              operation,
+              expires_at: expiresAt,
+              used: 0
+            })
+          } else if (upper.startsWith('UPDATE')) {
+            const tok = String(params[0])
+            const row = rows.get(tok)
+            if (!row) return
+            if (upper.includes('USED = 0') && row.used !== 0) return
+            row.used = 1
+          } else if (upper.startsWith('DELETE')) {
+            const cutoff = Number(params[0])
+            for (const [tok, r] of rows) {
+              if (r.expires_at < cutoff) rows.delete(tok)
+            }
+          }
+        }),
+        query: vi.fn(async (sql: string, params: unknown[] = []) => {
+          const upper = sql.trim().toUpperCase()
+          if (upper.startsWith('SELECT')) {
+            const tok = String(params[0])
+            const row = rows.get(tok)
+            if (!row) return { rows: [], truncated: false }
+            if (upper.includes('USED = 0') && row.used !== 0) {
+              return { rows: [], truncated: false }
+            }
+            return { rows: [{ ...row }], truncated: false }
+          }
+          return { rows: [], truncated: false }
+        }),
+        migrate: vi.fn(async () => {})
+      }
+    }
+  }
+
+  /** Stage via the real staging module so the token round-trips through
+   *  confirmOperation in the loop. */
+  function stageOpForTest(
+    ctx: PluginContext,
+    kind: string,
+    params: Record<string, unknown>
+  ): Promise<string> {
+    return stageOperation(ctx, kind, params)
+  }
+
+  function mockCtxWithDb(
+    completeImpl: (calls: number) => PluginAIStream
+  ): PluginContext {
+    const db = mockPluginDb()
+    const baseCtx = mockCtx(completeImpl)
+    return { ...baseCtx, pluginDb: db.db } as unknown as PluginContext
+  }
+
+  it('on confirm: pauses via onStaging, runs commit, feeds result to model', async () => {
+    // The destructive tool's handler stages a delete; commit runs the real
+    // write after the UX confirms. We assert that commit sees the stored
+    // params (not the model's args — the model cannot mutate the staged op).
+    const commitCalls: Record<string, unknown>[] = []
+    registerTool({
+      name: 'delete_blocks',
+      description: 'stage then delete',
+      parameters: {
+        type: 'object',
+        required: ['ids'],
+        properties: { ids: { type: 'array', items: { type: 'string' } } }
+      },
+      async handler(_ctx, args) {
+        // Stage and return a preview; the loop intercepts.
+        const token = await stageOpForTest(_ctx, 'delete_blocks', args)
+        return {
+          content: '',
+          isStaged: true,
+          stagedToken: token,
+          stagedPreview: {
+            kind: 'delete_blocks',
+            summary: 'Delete 2 blocks',
+            affectedCount: 2
+          }
+        }
+      },
+      async commit(_ctx, params) {
+        commitCalls.push(params)
+        const ids = (params as { ids: string[] }).ids
+        return { content: `Deleted ${ids.length} block(s).` }
+      }
+    })
+
+    const stagingEvents: StagingEvent[] = []
+    let callN = 0
+    const ctx = mockCtxWithDb((n) => {
+      callN = n
+      if (n === 1) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [
+            {
+              id: 'tc1',
+              name: 'delete_blocks',
+              arguments: { ids: ['b1', 'b2'] }
+            }
+          ]
+        })
+      }
+      return mockStream({ content: 'OK done.', model: 'm' })
+    })
+
+    // Capture tool messages by intercepting the second iteration's messages.
+    // We approximate by reading the staging events and asserting the flow.
+    const session = createAgentSession(ctx)
+    const p = session.run('delete b1 and b2', [], {
+      onStaging: (e) => {
+        stagingEvents.push(e)
+        // Simulate the UX confirming immediately.
+        queueMicrotask(() => session.resolveStaging(e.token, true))
+      }
+    })
+    const res = await p
+
+    expect(callN).toBe(2) // staging turn + final answer turn
+    expect(res.text).toBe('OK done.')
+    expect(stagingEvents).toHaveLength(1)
+    expect(stagingEvents[0].preview.summary).toBe('Delete 2 blocks')
+    // Commit ran with the staged params (the model's args were captured at
+    // stage time and replayed verbatim — the model cannot mutate them).
+    expect(commitCalls).toEqual([{ ids: ['b1', 'b2'] }])
+  })
+
+  it('on reject: surfaces "rejected by user" to the model', async () => {
+    const commitCalls: unknown[] = []
+    registerTool({
+      name: 'delete_blocks',
+      description: 'stage then delete',
+      parameters: {
+        type: 'object',
+        required: ['ids'],
+        properties: { ids: { type: 'array', items: { type: 'string' } } }
+      },
+      async handler(_ctx, args) {
+        const token = await stageOpForTest(_ctx, 'delete_blocks', args)
+        return {
+          content: '',
+          isStaged: true,
+          stagedToken: token,
+          stagedPreview: {
+            kind: 'delete_blocks',
+            summary: 'Delete 1 block'
+          }
+        }
+      },
+      async commit(_ctx, params) {
+        commitCalls.push(params)
+        return { content: 'should not run on reject' }
+      }
+    })
+
+    const ctx = mockCtxWithDb((n) => {
+      if (n === 1) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [
+            {
+              id: 'tc1',
+              name: 'delete_blocks',
+              arguments: { ids: ['bx'] }
+            }
+          ]
+        })
+      }
+      // Capture the second-turn message list to assert the tool body.
+      const stream = mockStream({ content: 'acknowledged.', model: 'm' })
+      return stream
+    })
+
+    // Patch dispatchTool path is hard; instead, inspect by capturing the
+    // messages the second iteration saw via a spy on ctx.ai.complete.
+    const completeSpy = ctx.ai.complete as ReturnType<typeof vi.fn>
+    const session = createAgentSession(ctx)
+    await session.run('delete bx', [], {
+      onStaging: (e) => {
+        queueMicrotask(() => session.resolveStaging(e.token, false))
+      }
+    })
+
+    expect(commitCalls).toHaveLength(0)
+    // Second complete() call's messages should include a tool role with the
+    // "rejected by user" body.
+    const secondCallMessages = (
+      completeSpy.mock.calls[1][0] as { messages: PluginAIChatMessage[] }
+    ).messages
+    const toolMsg = secondCallMessages.find((m) => m.role === 'tool')
+    expect(toolMsg?.content).toMatch(/rejected by the user/i)
+  })
+
+  it('auto-rejects when no awaitStaging/onStaging is wired', async () => {
+    // The default (no UX) treats staging as auto-rejected — important so a
+    // stray staged tool result in a test/headless context cannot hang the
+    // loop forever waiting for a confirmation that never comes.
+    registerTool({
+      name: 'delete_blocks',
+      description: 'stage then delete',
+      parameters: {
+        type: 'object',
+        required: ['ids'],
+        properties: { ids: { type: 'array', items: { type: 'string' } } }
+      },
+      async handler(_ctx, args) {
+        const token = await stageOpForTest(_ctx, 'delete_blocks', args)
+        return {
+          content: '',
+          isStaged: true,
+          stagedToken: token,
+          stagedPreview: { kind: 'delete_blocks', summary: 'Delete 1 block' }
+        }
+      },
+      async commit() {
+        return { content: 'ran' }
+      }
+    })
+
+    const ctx = mockCtxWithDb((n) => {
+      if (n === 1) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [
+            { id: 'tc1', name: 'delete_blocks', arguments: { ids: ['bx'] } }
+          ]
+        })
+      }
+      return mockStream({ content: 'done.', model: 'm' })
+    })
+    const completeSpy = ctx.ai.complete as ReturnType<typeof vi.fn>
+
+    await runAgent(ctx, 'delete bx', [])
+
+    const secondCallMessages = (
+      completeSpy.mock.calls[1][0] as { messages: PluginAIChatMessage[] }
+    ).messages
+    const toolMsg = secondCallMessages.find((m) => m.role === 'tool')
+    expect(toolMsg?.content).toMatch(/rejected by the user/i)
   })
 })

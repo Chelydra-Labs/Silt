@@ -3,8 +3,13 @@
   // streamed assistant text, and transparent tool-call cards), an input box
   // with send/stop buttons, and keyboard handling (Enter sends, Escape
   // stops). Designed to mirror silt-ai-qa's QAPanel styling conventions.
+  //
+  // Phase 5 staging (#605): when a destructive op is awaiting confirmation,
+  // StagingConfirm renders below the chat and the input is disabled until
+  // the user resolves it.
   import type { PluginContext } from '../../sdk'
   import { getAgentController, type AgentMessage } from './state.svelte'
+  import StagingConfirm from './StagingConfirm.svelte'
 
   interface Props {
     ctx?: PluginContext
@@ -32,6 +37,13 @@
       e.preventDefault()
       ctl.cancel()
     }
+  }
+
+  function onConfirmStaging(token: string) {
+    ctl?.resolveStaging(token, true)
+  }
+  function onRejectStaging(token: string) {
+    ctl?.resolveStaging(token, false)
   }
 
   function truncatedPreview(content: string): string {
@@ -176,6 +188,14 @@
     {/if}
   </div>
 
+  {#if ctl?.pendingStaging}
+    <StagingConfirm
+      event={ctl.pendingStaging}
+      onConfirm={onConfirmStaging}
+      onReject={onRejectStaging}
+    />
+  {/if}
+
   <div class="agent-input-row">
     <label class="sr-only" for="agent-input">Message for AI agent</label>
     <textarea
@@ -185,7 +205,7 @@
       placeholder={ctl?.running ? RUNNING_PLACEHOLDER : IDLE_PLACEHOLDER}
       aria-label="Message for AI agent"
       onkeydown={onKeydown}
-      disabled={ctl?.running}></textarea>
+      disabled={ctl?.running || !!ctl?.pendingStaging}></textarea>
     {#if ctl?.running}
       <button
         type="button"
@@ -201,7 +221,7 @@
         class="agent-btn send"
         aria-label="Send message"
         onclick={() => void onSend()}
-        disabled={!input.trim()}
+        disabled={!input.trim() || !!ctl?.pendingStaging}
       >
         Send
       </button>

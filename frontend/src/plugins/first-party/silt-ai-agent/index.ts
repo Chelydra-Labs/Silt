@@ -16,6 +16,7 @@ import {
 import { migrateSchema, resetMigrationState } from './db'
 import { clearTools } from './tool-registry'
 import { registerP0Tools } from './tools'
+import { cleanupExpired } from './staging'
 
 export const manifest: PluginManifest = {
   id: 'silt-ai-agent',
@@ -44,9 +45,11 @@ export default {
     registerP0Tools()
     // Stamp the staging_tokens schema so the DB is ready for Phase 5. Runs
     // once per process (guarded by a module flag); safe on every vault open.
-    void migrateSchema(ctx).catch((e) => {
-      console.warn('silt-ai-agent: schema migration failed:', e)
-    })
+    void migrateSchema(ctx)
+      .then(() => cleanupExpired(ctx))
+      .catch((e) => {
+        console.warn('silt-ai-agent: schema migration failed:', e)
+      })
   },
   onVaultClose() {
     getAgentController()?.dispose()

@@ -6,9 +6,14 @@ const { mockCtl, mockGetCtl } = vi.hoisted(() => {
   const ctl = {
     messages: [] as unknown[],
     running: false,
+    pendingStaging: null as null | {
+      token: string
+      preview: { kind: string; summary: string; affectedCount?: number }
+    },
     send: vi.fn(async () => {}),
     cancel: vi.fn(),
-    clear: vi.fn()
+    clear: vi.fn(),
+    resolveStaging: vi.fn()
   }
   return {
     mockCtl: ctl,
@@ -26,9 +31,11 @@ describe('AgentHub', () => {
   beforeEach(() => {
     mockCtl.messages = []
     mockCtl.running = false
+    mockCtl.pendingStaging = null
     mockCtl.send.mockReset()
     mockCtl.cancel.mockReset()
     mockCtl.clear.mockReset()
+    mockCtl.resolveStaging.mockReset()
     mockGetCtl.mockReturnValue(mockCtl)
   })
 
@@ -119,5 +126,61 @@ describe('AgentHub', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     await fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('renders StagingConfirm when pendingStaging is set', () => {
+    mockCtl.pendingStaging = {
+      token: 'c'.repeat(32),
+      preview: {
+        kind: 'delete_blocks',
+        summary: 'Delete 2 blocks',
+        affectedCount: 2
+      }
+    }
+    const { getByRole } = render(AgentHub, {
+      props: { ctx: {} as PluginContext }
+    })
+    const dialog = getByRole('dialog', { name: /Delete blocks/i })
+    expect(dialog).toBeTruthy()
+  })
+
+  it('Confirm in StagingConfirm resolves the staged op as confirmed', async () => {
+    mockCtl.pendingStaging = {
+      token: 'd'.repeat(32),
+      preview: { kind: 'rename_tag', summary: 'Rename #foo → #bar' }
+    }
+    const { getByRole } = render(AgentHub, {
+      props: { ctx: {} as PluginContext }
+    })
+    await fireEvent.click(getByRole('button', { name: /Confirm operation/i }))
+    expect(mockCtl.resolveStaging).toHaveBeenCalledWith('d'.repeat(32), true)
+  })
+
+  it('Reject in StagingConfirm resolves the staged op as rejected', async () => {
+    mockCtl.pendingStaging = {
+      token: 'e'.repeat(32),
+      preview: { kind: 'merge_pages', summary: 'Merge 2 pages' }
+    }
+    const { getByRole } = render(AgentHub, {
+      props: { ctx: {} as PluginContext }
+    })
+    await fireEvent.click(getByRole('button', { name: /Reject operation/i }))
+    expect(mockCtl.resolveStaging).toHaveBeenCalledWith('e'.repeat(32), false)
+  })
+
+  it('disables the Send button while a staging op is pending', async () => {
+    mockCtl.pendingStaging = {
+      token: 'f'.repeat(32),
+      preview: { kind: 'delete_blocks', summary: 'Delete 1 block' }
+    }
+    const { getByLabelText, getByRole } = render(AgentHub, {
+      props: { ctx: {} as PluginContext }
+    })
+    const input = getByLabelText(/Message for AI agent/i) as HTMLTextAreaElement
+    await fireEvent.input(input, { target: { value: 'go' } })
+    const send = getByRole('button', {
+      name: /Send message/i
+    }) as HTMLButtonElement
+    expect(send.disabled).toBe(true)
   })
 })

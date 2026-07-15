@@ -7,6 +7,13 @@
 // the final text streams to onAssistantText and the loop returns. The loop is
 // bounded (max 8 iterations) so a model stuck calling tools cannot spin
 // forever, and is cancellable via an AbortSignal or the session cancel flag.
+//
+// Phase 5 staging (#605): when a tool returns `{isStaged: true, stagedToken}`,
+// the loop does NOT feed it to the model. Instead it pauses with an onStaging
+// callback; the UX calls resolveStaging(token, confirmed) to resume. On
+// confirm the tool's commit() runs and its result is fed back; on reject a
+// "rejected by user" message is fed back. This keeps the model informed of
+// the outcome without ever handing it the destructive primitive directly.
 
 import type {
   PluginAIChatMessage,
@@ -14,11 +21,23 @@ import type {
   PluginContext,
   PluginAIStream
 } from '../../sdk'
-import { buildToolCatalog, dispatchTool, getTools } from './tool-registry'
+import {
+  buildToolCatalog,
+  dispatchTool,
+  getTools,
+  type StagedPreview
+} from './tool-registry'
+import { confirmOperation, rejectOperation } from './staging'
 
 export const MAX_ITERATIONS = 8
 /** Tool result bodies above this many bytes are truncated for the model. */
 export const TOOL_RESULT_MAX_BYTES = 10 * 1024
+
+/** Fired when a tool stages a destructive op awaiting user confirmation. */
+export interface StagingEvent {
+  token: string
+  preview: StagedPreview
+}
 
 export interface AgentOptions {
   /** Streamed assistant text delta (final answer). */
@@ -35,6 +54,19 @@ export interface AgentOptions {
     name: string
     result: { content: string; error?: string }
   }) => void
+  /**
+   * Fired when a tool stages a destructive op. The loop pauses until
+   * resolveStaging is called with the same token (the session exposes a
+   * Promise-based resolver; see createAgentSession).
+   */
+  onStaging?: (event: StagingEvent) => void
+  /**
+   * Phase 5 staging hook: resolve a staged op to confirmed or rejected. The
+   * loop awaits this for each staged tool result; the UX-backed resolver
+   * resolves with true (Confirm) or false (Reject). When omitted, the loop
+   * treats staging as auto-rejected (a non-interactive test default).
+   */
+  awaitStaging?: (event: StagingEvent) => Promise<boolean>
   /** Fired when the run completes (final text assembled). */
   onDone?: (finalText: string) => void
   /** Fired on a terminal error (not cancellation). */
@@ -80,6 +112,72 @@ export function truncateToolResult(content: string): string {
   // was more it cannot see (it can re-query with a narrower request).
   const slice = content.slice(0, TOOL_RESULT_MAX_BYTES)
   return `${slice}\n[… truncated at 10KB]`
+}
+
+/**
+ * Convert a dispatched tool result into the 'tool' message body the model
+ * sees next iteration. Normal results return their (truncated) content or
+ * error. Staged results block: the loop awaits user confirmation via
+ * opts.awaitStaging (defaulting to auto-reject when no UX is attached), then:
+ *   - Confirm → confirmOperation redeems the token, the tool's commit() runs
+ *     against the stored (unmodified) params, and its result is returned.
+ *   - Reject  → rejectOperation marks the token consumed; "rejected by user"
+ *     is returned so the model can re-plan.
+ * Any staging error (expired, replayed, malformed) is surfaced to the model
+ * as the tool message so the model can recover instead of stalling.
+ */
+async function materializeToolMessage(
+  ctx: PluginContext,
+  toolName: string,
+  res: {
+    content: string
+    error?: string
+    isStaged?: boolean
+    stagedToken?: string
+    stagedPreview?: StagedPreview
+  },
+  opts: AgentOptions
+): Promise<string> {
+  if (res.error) {
+    return `Error: ${res.error}`
+  }
+  if (!res.isStaged || !res.stagedToken) {
+    return truncateToolResult(res.content)
+  }
+
+  const token = res.stagedToken
+  const preview = res.stagedPreview ?? { kind: toolName, summary: toolName }
+  const event: StagingEvent = { token, preview }
+  opts.onStaging?.(event)
+
+  let confirmed = false
+  if (opts.awaitStaging) {
+    confirmed = await opts.awaitStaging(event)
+  }
+
+  if (!confirmed) {
+    try {
+      await rejectOperation(ctx, token)
+    } catch {
+      /* Token may already be consumed; treat as rejected either way. */
+    }
+    return `Operation "${preview.summary}" was rejected by the user. Propose a different approach or stop.`
+  }
+
+  try {
+    const op = await confirmOperation(ctx, token)
+    const tool = getTools().find((t) => t.name === toolName)
+    if (!tool?.commit) {
+      return `Error: staged operation "${op.kind}" has no commit handler.`
+    }
+    const committed = await tool.commit(ctx, op.params)
+    return committed.error
+      ? `Error: ${committed.error}`
+      : truncateToolResult(committed.content)
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e)
+    return `Error: staged operation could not be applied (${message}).`
+  }
 }
 
 /**
@@ -192,6 +290,9 @@ export async function runAgent(
       })
 
       // Dispatch all requested tools in parallel; surface each to the UX.
+      // Staged results are NOT fed to the model — they pause the loop until
+      // the UX resolves them (onStaging + awaitStaging), then their commit
+      // outcome (or a "rejected" message) becomes the tool message.
       const results = await Promise.all(
         calls.map(async (call) => {
           opts.onToolCall?.({
@@ -206,12 +307,17 @@ export async function runAgent(
       )
       for (const { call, res } of results) {
         if (cancelled()) break
+        const toolMessage = await materializeToolMessage(
+          ctx,
+          call.name,
+          res,
+          opts
+        )
+        if (cancelled()) break
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: res.error
-            ? `Error: ${res.error}`
-            : truncateToolResult(res.content)
+          content: toolMessage
         })
       }
     }
@@ -245,15 +351,35 @@ export interface AgentSession {
   ) => Promise<AgentRunResult>
   /** Request cancellation of the in-flight run. */
   cancel: () => void
+  /**
+   * Resolve a pending staged operation (Phase 5). `confirmed = true` runs
+   * the tool's commit; `false` rejects and surfaces "rejected by user" to
+   * the model. No-op when there is no pending resolver for `token` (the UX
+   * may have raced a stale event against a new turn).
+   */
+  resolveStaging: (token: string, confirmed: boolean) => void
 }
 
 /**
  * Create a session bound to `ctx` with its own cancellation flag. cancel()
  * flips the flag; the in-flight run observes it between iterations and stops.
+ *
+ * Phase 5 staging: when a tool returns a staged result, the loop awaits the
+ * `awaitStaging` callback, which resolves when resolveStaging(token, bool)
+ * is called from the UX. A token → resolver Map bridges the two sides.
  */
 export function createAgentSession(ctx: PluginContext): AgentSession {
   // An AbortController per active run is created in run(); cancel() trips it.
   let controller: AbortController | null = null
+  const pendingStaging = new Map<string, (confirmed: boolean) => void>()
+
+  function resolveStaging(token: string, confirmed: boolean): void {
+    const resolve = pendingStaging.get(token)
+    if (!resolve) return
+    pendingStaging.delete(token)
+    resolve(confirmed)
+  }
+
   return {
     async run(userMessage, chatHistory, opts = {}) {
       controller?.abort()
@@ -266,17 +392,37 @@ export function createAgentSession(ctx: PluginContext): AgentSession {
             once: true
           })
       }
+      // Bridge onStaging → awaitStaging so the loop pauses until the UX
+      // calls resolveStaging. onStaging is already announced by the loop
+      // before awaitStaging fires, so the wrapper only owns the resolver.
+      // When a caller passes their own awaitStaging (test/programmatic),
+      // it wins and the session's resolver Map is bypassed.
+      const awaitStaging =
+        opts.awaitStaging ??
+        ((event: StagingEvent): Promise<boolean> => {
+          return new Promise<boolean>((resolve) => {
+            pendingStaging.set(event.token, resolve)
+          })
+        })
       try {
         return await runAgent(ctx, userMessage, chatHistory, {
           ...opts,
+          awaitStaging,
+          onStaging: opts.onStaging,
           signal: controller.signal
         })
       } finally {
-        if (controller?.signal.aborted) controller = null
+        if (controller?.signal.aborted) {
+          // Cancel any staging still awaiting — the loop will not resume them.
+          for (const resolve of pendingStaging.values()) resolve(false)
+          pendingStaging.clear()
+          controller = null
+        }
       }
     },
     cancel() {
       controller?.abort()
-    }
+    },
+    resolveStaging
   }
 }

@@ -4,12 +4,18 @@
 // cards), the running flag, and the send/cancel entry points. send() drives
 // the agent loop (agent-loop.ts); each tool call + result is pushed into the
 // message list so the UX can render the agent's reasoning transparently.
+//
+// Phase 5 staging (#605): when a tool returns a staged result, the loop pauses
+// and `pendingStaging` holds the event until the UX calls resolveStaging. The
+// input is disabled while staging is pending so the user cannot enqueue a new
+// turn before resolving the confirmation.
 
 import type { PluginAIChatMessage, PluginContext } from '../../sdk'
 import {
   createAgentSession,
   type AgentOptions,
-  type AgentSession
+  type AgentSession,
+  type StagingEvent
 } from './agent-loop'
 import { clearTools } from './tool-registry'
 
@@ -40,6 +46,12 @@ function nextId(): string {
 export function createAgentController() {
   let messages = $state<AgentMessage[]>([])
   let running = $state(false)
+  /**
+   * Pending staged operation the user must confirm or reject. Set when the
+   * agent loop emits onStaging; cleared when the UX calls resolveStaging.
+   * Null when no destructive op is awaiting confirmation.
+   */
+  let pendingStaging = $state<StagingEvent | null>(null)
   let ctxRef: PluginContext | null = null
   let session: AgentSession | null = null
 
@@ -146,6 +158,10 @@ export function createAgentController() {
           }
         ]
       },
+      onStaging: (event) => {
+        // Surface to the UX; the loop blocks until resolveStaging().
+        pendingStaging = event
+      },
       onError: (err) => {
         const msg = err instanceof Error ? err.message : String(err)
         updateAssistant(`Error: ${msg}`)
@@ -171,7 +187,20 @@ export function createAgentController() {
       updateAssistant(`Error: ${msg}`)
     } finally {
       running = false
+      pendingStaging = null
     }
+  }
+
+  /**
+   * Resolve a pending staged op (Phase 5). Forwards to the agent session,
+   * which unblocks the loop and either commits (confirmed) or rejects
+   * (rejected → "rejected by user" surfaces to the model). Clears
+   * pendingStaging; the loop's finally block is the source of truth so a
+   * second stage in the same turn re-populates it.
+   */
+  function resolveStaging(token: string, confirmed: boolean) {
+    pendingStaging = null
+    session?.resolveStaging(token, confirmed)
   }
 
   function cancel() {
@@ -181,12 +210,14 @@ export function createAgentController() {
   function clear() {
     if (running) session?.cancel()
     messages = []
+    pendingStaging = null
   }
 
   function dispose() {
     detach()
     clearTools()
     messages = []
+    pendingStaging = null
   }
 
   return {
@@ -196,11 +227,15 @@ export function createAgentController() {
     cancel,
     clear,
     dispose,
+    resolveStaging,
     get messages() {
       return messages
     },
     get running() {
       return running
+    },
+    get pendingStaging() {
+      return pendingStaging
     }
   }
 }
