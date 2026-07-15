@@ -29,6 +29,32 @@ describe('CommandPalette', () => {
     expect(onSelect).toHaveBeenCalledWith('h1')
   })
 
+  // #585: after arrowing down, typing (narrowing the query) must reset the
+  // active option to the new top-ranked match — not leave the highlight on a
+  // stale index that Enter would then execute.
+  it('resets the active option to the top match when the query changes', async () => {
+    const { container, rerender } = render(CommandPalette, {
+      props: { onSelect: vi.fn(), onClose: vi.fn(), query: 'h' }
+    })
+    await flush()
+
+    // Several labels start with 'h' (Heading 1/2/3, Highlight). Move off top.
+    await fireEvent.keyDown(window, { key: 'ArrowDown' })
+    await flush()
+    const activeAfterArrow = container.querySelector(
+      'button[role="option"][aria-selected="true"]'
+    ) as HTMLElement
+    expect(activeAfterArrow.id).not.toBe('silt-slash-palette-opt-0')
+
+    // Narrowing the query resets the active option to the top-ranked match.
+    await rerender({ onSelect: vi.fn(), onClose: vi.fn(), query: 'heading' })
+    await flush()
+    const activeAfterQuery = container.querySelector(
+      'button[role="option"][aria-selected="true"]'
+    ) as HTMLElement
+    expect(activeAfterQuery.id).toBe('silt-slash-palette-opt-0')
+  })
+
   it('closes on Escape key press', async () => {
     const onSelect = vi.fn()
     const onClose = vi.fn()

@@ -66,11 +66,16 @@
     return rankSlashCommands(pool, query)
   })
 
-  // Reset selection index when the result set changes.
+  // Reset to the top-ranked match whenever the query changes so the active
+  // option tracks the new ranking (#585). This reads only `query`, so Arrow
+  // Up/Down — which write selectedIdx in handleKeyDown — do NOT retrigger it;
+  // an explicitly-moved selection survives until the user types again. Without
+  // this reset, typing after arrowing down leaves the highlight on a stale
+  // index and Enter runs whatever command now occupies it instead of the new
+  // top-ranked match.
   $effect(() => {
-    const _ = query
-    const _n = filteredCommands.length
-    if (selectedIdx > _n - 1) selectedIdx = Math.max(0, _n - 1)
+    query
+    selectedIdx = 0
   })
 
   // Scroll active item into view.

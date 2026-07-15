@@ -25,10 +25,14 @@
 
   let rows = $state(3)
   let cols = $state(3)
-  // Keyboard-focused grid cell (1..GRID); drives the roving-tabindex focus and
-  // the live preview. Clamped to GRID since the grid cannot select beyond 8.
-  let gridR = $state(3)
-  let gridC = $state(3)
+  // Grid-highlight extent (1..GRID), DERIVED from rows/cols so the filled cells
+  // track numeric entry — not just grid clicks/arrows. The grid caps at 8×8
+  // while the numeric controls reach 20, so a value above 8 lights the full
+  // extent (the strongest available signal). Grid interaction writes rows/cols
+  // via syncFromGrid; gridR/gridC are a read-only view of those, eliminating a
+  // prior two-source-of-truth desync where typing >8 left the highlight stale.
+  let gridR = $derived(clampGrid(rows))
+  let gridC = $derived(clampGrid(cols))
   // Transient "Adjusted to N" notice when an input was silently corrected.
   let adjusted = $state('')
 
@@ -62,10 +66,11 @@
   })
 
   function syncFromGrid(r: number, c: number): void {
-    gridR = clampGrid(r)
-    gridC = clampGrid(c)
-    rows = gridR
-    cols = gridC
+    // Grid values are 1..GRID; write them to the source of truth and let
+    // gridR/gridC rederive. clampInt (not clampGrid) so a grid pick is stored
+    // at its real value within the 1–20 numeric range.
+    rows = clampInt(r)
+    cols = clampInt(c)
     adjusted = ''
   }
 

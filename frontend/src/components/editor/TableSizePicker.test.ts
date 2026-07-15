@@ -98,6 +98,21 @@ describe('TableSizePicker', () => {
     expect(rowsInput.value).toBe('20')
   })
 
+  // Grid highlight must track numeric entry beyond the 8×8 grid cap, not just
+  // grid clicks/arrows. Typing 12 in Columns lights the full 8-wide extent.
+  it('keeps the grid highlight in sync with numeric entry beyond the grid cap', async () => {
+    const { container } = render(TableSizePicker, { props: baseProps() })
+    await flush()
+    const colsInput = container.querySelector(
+      'input[aria-label="Columns"]'
+    ) as HTMLInputElement
+    fireEvent.input(colsInput, { target: { value: '12' } })
+    await tick()
+    // gridC derives to clampGrid(12) = 8; default rows=3 → 3 × 8 = 24 filled.
+    const filled = container.querySelectorAll('.tsp-cell-filled')
+    expect(filled.length).toBe(24)
+  })
+
   it('committing a grid cell updates the dimensions and the live preview', async () => {
     const { container } = render(TableSizePicker, { props: baseProps() })
     await flush()
