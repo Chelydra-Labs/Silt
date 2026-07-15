@@ -84,6 +84,7 @@
     FALLBACK_COLOR_PALETTE
   } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
+  import { classifySlashCommand } from '../lib/editor/builtinSlashCommands'
   import { clampToViewport } from '../lib/editor/popoverPositioning'
   import {
     cutSelection,
@@ -99,21 +100,6 @@
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
   import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
   import { isSystemDark } from '../lib/systemTheme.svelte'
-
-  // Map of slash command ids to their mark type (#168). 'clear' is special
-  // (strips all marks); 'link' opens a URL prompt.
-  const FORMAT_COMMANDS: Record<string, string> = {
-    bold: 'bold',
-    italic: 'italic',
-    underline: 'underline',
-    strike: 'strike',
-    code: 'code',
-    highlight: 'highlight',
-    subscript: 'subscript',
-    superscript: 'superscript',
-    link: 'link',
-    'clear-formatting': 'clear'
-  }
 
   // Validates hex color strings before applying to marks (#170). Prevents
   // injection of arbitrary CSS or characters that break the converter regex.
@@ -1156,109 +1142,105 @@
     const to = from + sel.$from.parentOffset
     editorInstance.commands.deleteRange({ from, to })
 
-    if (commandId === 'todo') {
-      convertToBlock(editorInstance as any, 'taskBlock')
-    } else if (commandId === 'h1') {
-      convertToBlock(editorInstance as any, 'headerBlock', 1)
-    } else if (commandId === 'h2') {
-      convertToBlock(editorInstance as any, 'headerBlock', 2)
-    } else if (commandId === 'h3') {
-      convertToBlock(editorInstance as any, 'headerBlock', 3)
-    } else if (commandId === 'note') {
-      convertToBlock(editorInstance as any, 'noteBlock')
-    } else if (commandId === 'task') {
-      convertToBlock(editorInstance as any, 'taskBlock')
-    } else if (commandId === 'align-left') {
-      setBlockAlign(editorInstance as any, 'left')
-    } else if (commandId === 'align-center') {
-      setBlockAlign(editorInstance as any, 'center')
-    } else if (commandId === 'align-right') {
-      setBlockAlign(editorInstance as any, 'right')
-    } else if (commandId === 'align-justify') {
-      setBlockAlign(editorInstance as any, 'justify')
-    } else if (commandId === 'quote') {
-      toggleBlockQuote(editorInstance as any)
-    } else if (commandId === 'callout') {
-      insertCallout(editorInstance as any, 'note')
-    } else if (commandId.startsWith('callout-')) {
-      insertCallout(editorInstance as any, commandId.slice('callout-'.length))
-    } else if (commandId === 'code-block') {
-      insertCodeBlock(editorInstance as any)
-    } else if (commandId === 'math') {
-      // Open the LaTeX popover (block mode); on commit, insert a block
-      // equation at the selection via the same insertBlockMath path the old
-      // prompt used. The popover (with live preview) replaces window.prompt.
-      if (!editorInstance || editorInstance.isDestroyed) return
-      try {
-        const { selection } = editorInstance.state
-        const c = editorInstance.view.coordsAtPos(selection.from)
-        mathPopover = {
-          latex: '',
-          displayMode: true,
-          coords: { left: c.left, top: c.bottom },
-          onCommit: (l: string) => insertBlockMath(editorInstance as any, l)
-        }
-      } catch {
-        /* no selection coords → don't open the popover */
-      }
-    } else if (commandId === 'details') {
-      insertDetails(editorInstance as any)
-    } else if (commandId === 'table') {
-      insertTable(editorInstance as any, 3, 3)
-    } else if (commandId === 'table-5x4') {
-      insertTable(editorInstance as any, 5, 4)
-    } else if (commandId === 'table-custom') {
-      // Open an in-app size popover instead of the native window.prompt.
-      if (!editorInstance || editorInstance.isDestroyed) return
-      try {
-        const { selection } = editorInstance.state
-        const coords = editorInstance.view.coordsAtPos(selection.from)
-        tableSizeCoords = { left: coords.left, top: coords.bottom }
-      } catch {
-        tableSizeCoords = { left: 100, top: 100 }
-      }
-      showTableSizePicker = true
-    } else if (commandId === 'text-color') {
-      openColorPickerPopover('textColor')
-    } else if (commandId === 'background-color') {
-      openColorPickerPopover('backgroundColor')
-    } else if (commandId === 'remove-color') {
-      if (editorInstance)
-        editorInstance.chain().focus().unsetMark('textColor').run()
-    } else if (commandId === 'remove-background') {
-      if (editorInstance)
-        editorInstance.chain().focus().unsetMark('backgroundColor').run()
-    } else if (commandId === 'today') {
-      const d = new Date()
-      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      editorInstance.commands.insertContent(today)
-    } else if (commandId === 'embed') {
-      editorInstance.commands.insertContent('{{embed:')
-    } else if (commandId === 'template') {
-      // The `/` text is already deleted above; open the picker. The editor
-      // preserves its selection state, so when the user confirms the rendered
-      // blocks are inserted at the cursor position (ARCHITECTURE §5.1 — the
-      // UniqueBlockIds extension mints fresh UUIDs for the inserted nodes).
-      showTemplatePicker = true
-    } else if (FORMAT_COMMANDS[commandId]) {
-      // Inline formatting slash commands (#168). Each toggles its mark.
-      const mark = FORMAT_COMMANDS[commandId]
-      if (mark === 'link') {
-        openLinkInput()
-      } else if (mark === 'clear') {
-        editorInstance.chain().focus().unsetAllMarks().run()
-      } else {
-        editorInstance.chain().focus().toggleMark(mark).run()
-      }
-    } else {
+    const intent = classifySlashCommand(commandId)
+    if (!intent) {
       // v2 SDK plugin-registered slash command (#110): look up the command in
       // the registry and invoke its onSelect handler with the live editor +
-      // cursor position. Built-ins are handled by the id branches above; any
+      // cursor position. Built-ins are handled by classifySlashCommand; any
       // other id must be a plugin command with a handler.
       const cmd = getSlashCommands().find((c) => c.id === commandId)
       if (cmd?.onSelect) {
         cmd.onSelect(editorInstance, editorInstance.state.selection.to)
       }
+      return
+    }
+    switch (intent.kind) {
+      case 'convert':
+        if (intent.depth !== undefined)
+          convertToBlock(editorInstance as any, intent.blockType, intent.depth)
+        else convertToBlock(editorInstance as any, intent.blockType)
+        break
+      case 'align':
+        setBlockAlign(editorInstance as any, intent.align)
+        break
+      case 'quote':
+        toggleBlockQuote(editorInstance as any)
+        break
+      case 'callout':
+        insertCallout(editorInstance as any, intent.variant)
+        break
+      case 'codeBlock':
+        insertCodeBlock(editorInstance as any)
+        break
+      case 'math':
+        // Open the LaTeX popover (block mode); on commit, insert a block
+        // equation at the selection via the same insertBlockMath path the old
+        // prompt used. The popover (with live preview) replaces window.prompt.
+        if (!editorInstance || editorInstance.isDestroyed) return
+        try {
+          const { selection } = editorInstance.state
+          const c = editorInstance.view.coordsAtPos(selection.from)
+          mathPopover = {
+            latex: '',
+            displayMode: true,
+            coords: { left: c.left, top: c.bottom },
+            onCommit: (l: string) => insertBlockMath(editorInstance as any, l)
+          }
+        } catch {
+          /* no selection coords → don't open the popover */
+        }
+        break
+      case 'details':
+        insertDetails(editorInstance as any)
+        break
+      case 'table':
+        insertTable(editorInstance as any, intent.rows, intent.cols)
+        break
+      case 'tableCustom':
+        // Open an in-app size popover instead of the native window.prompt.
+        if (!editorInstance || editorInstance.isDestroyed) return
+        try {
+          const { selection } = editorInstance.state
+          const coords = editorInstance.view.coordsAtPos(selection.from)
+          tableSizeCoords = { left: coords.left, top: coords.bottom }
+        } catch {
+          tableSizeCoords = { left: 100, top: 100 }
+        }
+        showTableSizePicker = true
+        break
+      case 'color':
+        openColorPickerPopover(intent.markType)
+        break
+      case 'removeColor':
+        if (editorInstance)
+          editorInstance.chain().focus().unsetMark(intent.markType).run()
+        break
+      case 'today': {
+        const d = new Date()
+        const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        editorInstance.commands.insertContent(today)
+        break
+      }
+      case 'embed':
+        editorInstance.commands.insertContent('{{embed:')
+        break
+      case 'template':
+        // The `/` text is already deleted above; open the picker. The editor
+        // preserves its selection state, so when the user confirms the rendered
+        // blocks are inserted at the cursor position (ARCHITECTURE §5.1 — the
+        // UniqueBlockIds extension mints fresh UUIDs for the inserted nodes).
+        showTemplatePicker = true
+        break
+      case 'format':
+        // Inline formatting slash commands (#168). Each toggles its mark.
+        if (intent.mark === 'link') {
+          openLinkInput()
+        } else if (intent.mark === 'clear') {
+          editorInstance.chain().focus().unsetAllMarks().run()
+        } else {
+          editorInstance.chain().focus().toggleMark(intent.mark).run()
+        }
+        break
     }
   }
 
