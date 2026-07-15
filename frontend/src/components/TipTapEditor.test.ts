@@ -16,6 +16,7 @@ import {
   FIXTURE_UUID_A,
   FIXTURE_UUID_B
 } from '../lib/editor/nodeview-test-harness'
+import { docToBlocks } from '../lib/editor'
 
 const mocks = vi.hoisted(() => ({
   resolveBlockReference: vi.fn(),
@@ -173,8 +174,15 @@ describe('TipTapEditor smart-graph content (#127)', () => {
   // #593: picking a block from the /embed picker inserts a complete embed
   // portal. The insertion is a pre-built embedNode (the editor has no live
   // input rule that converts raw `{{embed:uuid}}` text), so it must render a
-  // live EmbedPortal immediately — not wait for a save+reload.
+  // live EmbedPortal immediately — not wait for a save+reload. The picker
+  // workflow itself (BlockPickerModal → onPick) is covered by that modal's own
+  // suite; this asserts the insertion contract handleEmbedPick must satisfy:
+  // the PICKED block id lands in the `uuid` attr and round-trips back to
+  // `{{embed:<picked-id>}}`, never the node's instance `id` (an id/uuid swap
+  // would silently embed the wrong block).
   it('renders a live embedNode when an embedNode is inserted via commands (#593)', async () => {
+    // Distinct instance id vs. picked uuid so the round-trip catches a swap.
+    const instanceId = crypto.randomUUID()
     const { editor, container, cleanup } = await mountNodeViewEditor([
       mkBlock('NOTE', { clean_text: 'host line' })
     ])
@@ -182,13 +190,21 @@ describe('TipTapEditor smart-graph content (#127)', () => {
     // Mirror handleEmbedPick: insert an embedNode pointing at FIXTURE_UUID_A.
     editor.commands.insertContent({
       type: 'embedNode',
-      attrs: { id: crypto.randomUUID(), uuid: FIXTURE_UUID_A, bullet: '' }
+      attrs: { id: instanceId, uuid: FIXTURE_UUID_A, bullet: '' }
     })
 
     await waitFor(() => {
       expect(container.querySelector('.node-embedNode')).toBeTruthy()
       expect(mocks.resolveBlockReference).toHaveBeenCalledWith(FIXTURE_UUID_A)
     })
+
+    // The picked uuid — not the node instance id — must serialize into the
+    // on-disk token, so the embed targets the block the user chose.
+    const serialized = docToBlocks(editor.getJSON())
+    const embedBlock = serialized.find((b) => b.clean_text.includes('{{embed:'))
+    expect(embedBlock).toBeTruthy()
+    expect(embedBlock!.clean_text).toBe(`{{embed:${FIXTURE_UUID_A}}}`)
+    expect(embedBlock!.clean_text).not.toContain(instanceId)
 
     cleanup()
   })
