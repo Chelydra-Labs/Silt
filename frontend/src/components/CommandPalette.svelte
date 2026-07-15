@@ -38,7 +38,7 @@
 
   function hintFor(cmd: SlashCommand): string {
     if (cmd.hotkey) return resolveHotkeyDisplay(cmd.hotkey, hotkeys)
-    return cmd.shortcut ?? ''
+    return ''
   }
 
   // Filter and rank commands by the query prop reactively

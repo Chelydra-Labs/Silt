@@ -1170,7 +1170,7 @@
         insertCallout(editorInstance as any, intent.variant)
         break
       case 'codeBlock':
-        insertCodeBlock(editorInstance as any)
+        insertCodeBlock(editorInstance as any, intent.language ?? '')
         break
       case 'math':
         // Open the LaTeX popover (block mode); on commit, insert a block
@@ -1211,10 +1211,6 @@
       case 'color':
         openColorPickerPopover(intent.markType)
         break
-      case 'removeColor':
-        if (editorInstance)
-          editorInstance.chain().focus().unsetMark(intent.markType).run()
-        break
       case 'today': {
         const d = new Date()
         const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -1232,14 +1228,10 @@
         showTemplatePicker = true
         break
       case 'format':
-        // Inline formatting slash commands (#168). Each toggles its mark.
-        if (intent.mark === 'link') {
-          openLinkInput()
-        } else if (intent.mark === 'clear') {
-          editorInstance.chain().focus().unsetAllMarks().run()
-        } else {
-          editorInstance.chain().focus().toggleMark(intent.mark).run()
-        }
+        // Inline formatting slash commands (#168). Each toggles its mark;
+        // the value is also a valid stored mark at a collapsed cursor, so the
+        // command does meaningful work without a selection.
+        editorInstance.chain().focus().toggleMark(intent.mark).run()
         break
     }
   }

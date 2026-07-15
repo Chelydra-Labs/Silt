@@ -8,8 +8,11 @@
 // A null result means "not a built-in" — the component then looks the id up in
 // the plugin slash-command registry (getSlashCommands from slash-registry.ts).
 
-// Maps inline-formatting slash-command ids to their TipTap mark type. 'clear'
-// is special (strips all marks); 'link' opens the URL prompt.
+// Maps inline-formatting slash-command ids to their TipTap mark type. Each
+// toggles a stored mark that is valid at a collapsed cursor, so they remain in
+// the slash catalog. Link / clear-formatting / remove-color are selection-only
+// no-ops at a collapsed cursor and were dropped from the catalog (#592); their
+// toolbar, selection-bubble, and hotkey entry points call TipTap directly.
 export const FORMAT_COMMANDS: Record<string, string> = {
   bold: 'bold',
   italic: 'italic',
@@ -18,9 +21,7 @@ export const FORMAT_COMMANDS: Record<string, string> = {
   code: 'code',
   highlight: 'highlight',
   subscript: 'subscript',
-  superscript: 'superscript',
-  link: 'link',
-  'clear-formatting': 'clear'
+  superscript: 'superscript'
 }
 
 export type SlashIntent =
@@ -32,13 +33,12 @@ export type SlashIntent =
   | { kind: 'align'; align: 'left' | 'center' | 'right' | 'justify' }
   | { kind: 'quote' }
   | { kind: 'callout'; variant: string }
-  | { kind: 'codeBlock' }
+  | { kind: 'codeBlock'; language?: string }
   | { kind: 'math' }
   | { kind: 'details' }
   | { kind: 'table'; rows: number; cols: number }
   | { kind: 'tableCustom' }
   | { kind: 'color'; markType: 'textColor' | 'backgroundColor' }
-  | { kind: 'removeColor'; markType: 'textColor' | 'backgroundColor' }
   | { kind: 'today' }
   | { kind: 'embed' }
   | { kind: 'template' }
@@ -57,7 +57,6 @@ const ALIGNED: Record<string, 'left' | 'center' | 'right' | 'justify'> = {
 // component computes the current date at execution time.
 export function classifySlashCommand(commandId: string): SlashIntent | null {
   switch (commandId) {
-    case 'todo':
     case 'task':
       return { kind: 'convert', blockType: 'taskBlock' }
     case 'h1':
@@ -72,24 +71,20 @@ export function classifySlashCommand(commandId: string): SlashIntent | null {
       return { kind: 'quote' }
     case 'code-block':
       return { kind: 'codeBlock' }
+    case 'mermaid':
+      return { kind: 'codeBlock', language: 'mermaid' }
     case 'math':
       return { kind: 'math' }
     case 'details':
       return { kind: 'details' }
     case 'table':
       return { kind: 'table', rows: 3, cols: 3 }
-    case 'table-5x4':
-      return { kind: 'table', rows: 5, cols: 4 }
     case 'table-custom':
       return { kind: 'tableCustom' }
     case 'text-color':
       return { kind: 'color', markType: 'textColor' }
     case 'background-color':
       return { kind: 'color', markType: 'backgroundColor' }
-    case 'remove-color':
-      return { kind: 'removeColor', markType: 'textColor' }
-    case 'remove-background':
-      return { kind: 'removeColor', markType: 'backgroundColor' }
     case 'today':
       return { kind: 'today' }
     case 'embed':

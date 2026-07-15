@@ -175,26 +175,5 @@ describe('formatting slash commands (#168)', () => {
     })
     const clear = getSlashCommands().find((c) => c.id === 'clear-formatting')
     expect(clear?.hotkey).toBeUndefined()
-    expect(clear?.shortcut).toBeUndefined()
-  })
-
-  it('non-hotkey entries keep using `shortcut` for slash-trigger characters', () => {
-    registerSlashCommand({
-      id: 'todo',
-      label: 'Task',
-      icon: 'check_box',
-      shortcut: '[]'
-    })
-    registerSlashCommand({
-      id: 'h1',
-      label: 'Heading 1',
-      icon: 'format_size',
-      shortcut: '#'
-    })
-    const cmds = getSlashCommands()
-    expect(cmds.find((c) => c.id === 'todo')?.shortcut).toBe('[]')
-    expect(cmds.find((c) => c.id === 'h1')?.shortcut).toBe('#')
-    // Trigger-char entries do NOT carry a hotkey action.
-    expect(cmds.find((c) => c.id === 'todo')?.hotkey).toBeUndefined()
   })
 })
