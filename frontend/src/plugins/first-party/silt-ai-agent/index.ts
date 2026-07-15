@@ -15,7 +15,7 @@ import {
 } from './state.svelte'
 import { migrateSchema, resetMigrationState } from './db'
 import { clearTools } from './tool-registry'
-import { registerP0Tools } from './tools'
+import { registerP0Tools, registerP1Tools } from './tools'
 import { cleanupExpired } from './staging'
 
 export const manifest: PluginManifest = {
@@ -41,8 +41,9 @@ export default {
     const ctl = createAgentController()
     setAgentController(ctl)
     ctl.attach(ctx)
-    // Register P0 tools so the agent loop has a catalog before it runs.
+    // Register P0 + P1 tools so the agent loop has a catalog before it runs.
     registerP0Tools()
+    registerP1Tools()
     // Stamp the staging_tokens schema so the DB is ready for Phase 5. Runs
     // once per process (guarded by a module flag); safe on every vault open.
     void migrateSchema(ctx)
