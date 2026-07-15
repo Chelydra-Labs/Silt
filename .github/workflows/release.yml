@@ -59,7 +59,7 @@ jobs:
             echo "skipped=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          SHA="${{ github.event.head_commit.sha }}"
+          SHA="${{ github.sha }}"
           if [ -z "$SHA" ]; then
             echo "::warning::No head_commit SHA on push event; proceeding with release."
             echo "skipped=false" >> "$GITHUB_OUTPUT"
@@ -143,20 +143,25 @@ jobs:
           git commit -m "chore(release): $VERSION [skip ci]"
           git tag "$TAG"
 
-          # Push with backoff. Between checkout and push, another run may
-          # have advanced origin/main, making our push non-fast-forward.
-          # Reset onto origin/main, re-read VERSION (now bumped by them),
+          # Push atomically. A regular multi-ref push can accept the tag while
+          # rejecting a stale main ref, leaving an orphan tag that blocks every
+          # queued release.
+          #
+          # Between checkout and push, another run may have advanced origin/main,
+          # making our push non-fast-forward. Refresh origin/main before each
+          # retry, reset onto it, and re-read VERSION (now bumped by them),
           # and commit the *next* version. Cap at 5 attempts to bound CI
           # minutes; if a real contention storm is happening, surface the
           # error rather than spin forever.
           PUSHED=false
           for attempt in 1 2 3 4 5; do
-            if git push origin main --tags; then
+            if git push --atomic origin main "$TAG"; then
               echo "Pushed on attempt $attempt."
               PUSHED=true
               break
             fi
             echo "Push attempt $attempt failed; rebasing onto origin/main and re-bumping."
+            git fetch origin main --tags --force
             git reset --hard origin/main
             git tag -d "$TAG" 2>/dev/null || true
             OLD="$(tr -d '[:space:]' < VERSION)"
