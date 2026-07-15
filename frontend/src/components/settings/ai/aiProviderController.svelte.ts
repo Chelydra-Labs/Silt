@@ -7,20 +7,20 @@
 // Follows the repo's .svelte.ts state-module pattern (theme/editor/workingCopy,
 // silt-tasks/state). The one $effect that needs component context (the audit
 // lazy-load on <details> expand) stays in the component and calls loadAudit().
-  import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
-  import { updatePluginSetting } from '../../../settings/store.svelte'
-  import {
-    GetAIProviderConfig,
-    UpdateAIProviderConfig,
-    SetAIAPIKey,
-    CopyAIAPIKey,
-    ClearAIAPIKey,
-    SetUseKeyring,
-    TestAIConnection,
-    ListModels,
-    GetAIAudit,
-    ClearAIAudit
-  } from '../../../../bindings/silt/app.js'
+import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
+import { updatePluginSetting } from '../../../settings/store.svelte'
+import {
+  GetAIProviderConfig,
+  UpdateAIProviderConfig,
+  SetAIAPIKey,
+  CopyAIAPIKey,
+  ClearAIAPIKey,
+  SetUseKeyring,
+  TestAIConnection,
+  ListModels,
+  GetAIAudit,
+  ClearAIAudit
+} from '../../../../bindings/silt/app.js'
 import type * as main from '../../../../bindings/silt/models.js'
 import type * as aiTypes from '../../../../bindings/silt/backend/ai/models.js'
 
@@ -679,13 +679,21 @@ export function createAIProviderController() {
     get tuningSummary(): string {
       if (!config) return ''
       const chat = config.chat
-      const style = presetLabel(chat.temperature ?? 0.5, TEMP_PRESETS, 'Default')
+      const style = presetLabel(
+        chat.temperature ?? 0.5,
+        TEMP_PRESETS,
+        'Default'
+      )
       const depth = presetLabel(
         chat.reasoning_effort ?? 'medium',
         REASONING_PRESETS,
         'Default'
       )
-      const length = presetLabel(chat.max_tokens ?? 2048, TOKENS_PRESETS, 'Default')
+      const length = presetLabel(
+        chat.max_tokens ?? 2048,
+        TOKENS_PRESETS,
+        'Default'
+      )
       const density = presetLabel(
         config.embedding.dimensions ?? 0,
         DIM_PRESETS,

@@ -688,9 +688,7 @@
       {@const b = ai.config![w]}
       {@const idPrefix = `ai-${w}`}
       {@const embedCaps =
-        w === 'embedding'
-          ? getEmbeddingCapabilities(b.model ?? '')
-          : null}
+        w === 'embedding' ? getEmbeddingCapabilities(b.model ?? '') : null}
       <div class="flex flex-col gap-5">
         {#if w === 'chat'}
           <PresetControl
@@ -701,7 +699,8 @@
               {
                 value: 0.2,
                 label: 'Precise',
-                description: 'Consistent, factual answers. Best for research and facts.'
+                description:
+                  'Consistent, factual answers. Best for research and facts.'
               },
               {
                 value: 0.5,
@@ -831,7 +830,8 @@
                 {
                   value: 768,
                   label: 'Compact',
-                  description: 'Smaller index, faster search. Slight quality tradeoff.'
+                  description:
+                    'Smaller index, faster search. Slight quality tradeoff.'
                 },
                 {
                   value: 1024,
@@ -851,8 +851,8 @@
             />
             {#if embedCaps?.supportsTruncation === undefined}
               <p class="text-type-2xs text-text-muted m-0">
-                If this model doesn't support truncation, the API will reject it —
-                fall back to Auto.
+                If this model doesn't support truncation, the API will reject it
+                — fall back to Auto.
               </p>
             {/if}
           {/if}
