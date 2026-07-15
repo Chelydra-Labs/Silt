@@ -331,7 +331,10 @@ async function indexChunks(
 
   for (let i = 0; i < chunks.length; i += BATCH) {
     const batch = chunks.slice(i, i + BATCH)
-    const res = await ctx.ai.embed({ texts: batch.map((c) => c.text) })
+    const res = await ctx.ai.embed({
+      texts: batch.map((c) => c.text),
+      taskType: 'RETRIEVAL_DOCUMENT'
+    })
     model = res.model || model
     dims = res.dimensions || dims
     if (!dims && res.embeddings[0]) dims = res.embeddings[0].length
@@ -391,6 +394,8 @@ async function indexChunks(
 
   await metaSet(ctx, 'model', model)
   await metaSet(ctx, 'updated_at', new Date().toISOString())
+  // Marks the index as built with document/query task-type asymmetry (#610).
+  await metaSet(ctx, 'task_type_version', '1')
   const n = await countChunks(ctx)
   onProgress?.({
     status: 'ready',
@@ -415,7 +420,10 @@ export async function vectorSearch(
   if (!dims) return []
   await ensureVecTable(ctx, dims)
 
-  const emb = await ctx.ai.embed({ texts: [query] })
+  const emb = await ctx.ai.embed({
+    texts: [query],
+    taskType: 'RETRIEVAL_QUERY'
+  })
   const vec = emb.embeddings[0]
   if (!vec) return []
 

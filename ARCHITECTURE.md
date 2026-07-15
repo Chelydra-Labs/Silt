@@ -520,10 +520,13 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   | `google` | `anthropic` (native first-party APIs — generateContent / messages —
   bypassing the compat shim for stability + structured-output support). NOT
   capability-gated (core cross-cutting settings), but `PluginAIComplete` /
-  `PluginAIEmbed` are. The `ctx.ai.complete` SDK wrapper normalizes
-  `<think>`/`<thought>`/`<reasoning>` reasoning tags out of `content` (the
-  OpenAI-compatible leak; native providers already separate reasoning) so every
-  plugin consumer receives reasoning-free text — see
+  `PluginAIEmbed` are. `PluginAIEmbed` accepts optional `task_type`
+  (`RETRIEVAL_DOCUMENT` at index time / `RETRIEVAL_QUERY` at search time);
+  Google includes it as `taskType` on each `batchEmbedContents` item, other
+  providers ignore it, and empty omits the field. The `ctx.ai.complete` SDK
+  wrapper normalizes `<think>`/`<thought>`/`<reasoning>` reasoning tags out of
+  `content` (the OpenAI-compatible leak; native providers already separate
+  reasoning) so every plugin consumer receives reasoning-free text — see
   `frontend/src/plugins/stripReasoning.ts`.
 
 Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`

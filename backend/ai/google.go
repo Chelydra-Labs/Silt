@@ -63,6 +63,9 @@ type googleEmbedOne struct {
 	Model                string        `json:"model"`
 	Content              googleContent `json:"content"`
 	OutputDimensionality *int          `json:"outputDimensionality,omitempty"`
+	// TaskType optimizes embeddings for asymmetric retrieval
+	// (RETRIEVAL_DOCUMENT at index time, RETRIEVAL_QUERY at search time).
+	TaskType string `json:"taskType,omitempty"`
 }
 
 // googleEmbedResponse is the batchEmbedContents response body.
@@ -265,6 +268,7 @@ func embedGoogle(ctx context.Context, req EmbedRequest, model, baseURL string) (
 			Model:                name,
 			Content:              googleContent{Parts: []googleTextPart{{Text: t}}},
 			OutputDimensionality: req.Dimensions,
+			TaskType:             req.TaskType,
 		}
 	}
 	body, err := json.Marshal(googleEmbedRequest{Requests: one})

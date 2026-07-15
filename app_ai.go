@@ -184,6 +184,8 @@ type PluginAIEmbedInput struct {
 	Texts      []string `json:"texts"`
 	Model      string   `json:"model,omitempty"`
 	Dimensions *int     `json:"dimensions,omitempty"`
+	// TaskType is Google-specific (RETRIEVAL_DOCUMENT / RETRIEVAL_QUERY); empty omits.
+	TaskType string `json:"task_type,omitempty"`
 }
 
 // AIProbeResult is the outcome of a Test Connection call. On failure, Kind is
@@ -1005,6 +1007,7 @@ func (a *App) PluginAIEmbed(pluginID, sessionToken string, input PluginAIEmbedIn
 		Texts:      input.Texts,
 		Model:      input.Model,
 		Dimensions: input.Dimensions,
+		TaskType:   input.TaskType,
 	})
 	status := "ok"
 	if callErr != nil {
