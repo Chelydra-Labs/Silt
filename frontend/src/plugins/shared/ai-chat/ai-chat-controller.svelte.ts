@@ -16,6 +16,7 @@ import {
   type AIChatEntry,
   type ProposalEntry
 } from './types'
+import { agentStatusMessage, toolStatusLabel } from './agent-status'
 import { parseCitations } from '../../first-party/silt-ai-qa/rag'
 import type { RetrievedPassage } from '../../shared/retrieval/hybrid'
 import type { ToolEvidence } from '../../first-party/silt-ai-agent/tool-registry'
@@ -126,6 +127,23 @@ export function createAgentCapability(): AIChatCapability {
           ]
         },
         onToolCall: (call) => {
+          if (stale()) return
+          // Promote the live status line so the shell shows a friendly tool
+          // label instead of a binary "running" flag (#629).
+          const thinking = context.transcript.find(
+            (e) => e.kind === 'status' && e.status === 'thinking'
+          )
+          if (thinking) {
+            context.update(thinking.id, (entry) =>
+              entry.kind === 'status'
+                ? {
+                    ...entry,
+                    status: 'running_tool',
+                    message: `${toolStatusLabel(call.name)}…`
+                  }
+                : entry
+            )
+          }
           context.append(
             toolCallEntry({
               role: 'assistant',
@@ -137,6 +155,20 @@ export function createAgentCapability(): AIChatCapability {
         },
         onToolResult: ({ result }) => {
           if (stale()) return
+          const toolStatus = context.transcript.find(
+            (e) => e.kind === 'status' && e.status === 'running_tool'
+          )
+          if (toolStatus) {
+            context.update(toolStatus.id, (entry) =>
+              entry.kind === 'status'
+                ? {
+                    ...entry,
+                    status: 'reviewing',
+                    message: agentStatusMessage('reviewing')
+                  }
+                : entry
+            )
+          }
           for (const evidence of result.evidence ?? []) {
             const key = `${evidence.blockId}:${evidence.citationIndex}`
             citationPassages.push({
@@ -190,6 +222,25 @@ export function createAgentCapability(): AIChatCapability {
           )
         },
         onStaging: (event) => {
+          if (stale()) return
+          const liveStatus = context.transcript.find(
+            (e) =>
+              e.kind === 'status' &&
+              (e.status === 'thinking' ||
+                e.status === 'running_tool' ||
+                e.status === 'reviewing')
+          )
+          if (liveStatus) {
+            context.update(liveStatus.id, (entry) =>
+              entry.kind === 'status'
+                ? {
+                    ...entry,
+                    status: 'waiting_confirmation',
+                    message: agentStatusMessage('waiting_confirmation')
+                  }
+                : entry
+            )
+          }
           context.append(
             confirmationEntry({
               role: 'system',
@@ -211,6 +262,20 @@ export function createAgentCapability(): AIChatCapability {
           context.update(confirmation.id, (entry) =>
             entry.kind === 'confirmation' ? { ...entry, state: outcome } : entry
           )
+          const liveStatus = context.transcript.find(
+            (e) => e.kind === 'status' && e.status === 'waiting_confirmation'
+          )
+          if (liveStatus && outcome === 'confirmed') {
+            context.update(liveStatus.id, (entry) =>
+              entry.kind === 'status'
+                ? {
+                    ...entry,
+                    status: 'applying',
+                    message: agentStatusMessage('applying')
+                  }
+                : entry
+            )
+          }
         },
         onDone: (finalText) => {
           if (stale()) return

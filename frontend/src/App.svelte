@@ -61,7 +61,7 @@
   } from './lib/editor/editorRegistry.svelte'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import PluginModalHost from './components/PluginModalHost.svelte'
-  import { agentChrome } from './plugins/first-party/silt-ai-agent/state.svelte'
+  import { getAIAvailability } from './plugins/shared/ai-chat/availability'
   import AIChatDrawer from './plugins/shared/ai-chat/AIChatDrawer.svelte'
   import {
     aiChatDrawer,
@@ -1379,7 +1379,9 @@
       bind:sidebarCollapsed
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
-      onAIClick={agentChrome.available ? () => toggleAIChatDrawer() : undefined}
+      onAIClick={getAIAvailability().drawerAvailable
+        ? () => toggleAIChatDrawer()
+        : undefined}
       aiOpen={aiChatDrawer.open}
     >
       {#if activeView === 'notes'}

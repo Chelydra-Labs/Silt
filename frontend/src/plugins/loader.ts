@@ -20,6 +20,10 @@ import { initGrants } from './grants.svelte'
 import { resetTaskHubState } from './first-party/silt-tasks/state.svelte'
 import { resetTasksSettings } from './first-party/silt-tasks/settings'
 import DiskPluginNotice from './DiskPluginNotice.svelte'
+import {
+  isFirstPartyAIPlugin,
+  shouldLoadAIPlugin
+} from './shared/ai-chat/availability'
 
 // Whether the lifecycle wiring (vault:closing subscription) has been installed.
 // Lives at module scope so repeated loadPlugins calls do not double-subscribe.
@@ -158,29 +162,34 @@ export async function loadPlugins(
     }
   }
 
-  // First-party plugins: always available but the user can disable them via
-  // Settings → Plugins (stored in config.yaml plugins.disabled). Uninstall is
-  // not available for bundled plugins.
+  // First-party plugins: user-disableable via Settings → Plugins
+  // (plugins.disabled). First-party AI modules are gated by ai.features
+  // instead (#632) so the Plugins tab is not the product switch.
   const disabledIds = new Set(settings.config?.plugins?.disabled ?? [])
   for (const fp of firstPartyPlugins()) {
-    if (disabledIds.has(fp.manifest.id)) continue
-    if (!plugins.has(fp.manifest.id)) {
+    const id = fp.manifest.id
+    if (isFirstPartyAIPlugin(id)) {
+      if (!shouldLoadAIPlugin(id)) continue
+    } else if (disabledIds.has(id)) {
+      continue
+    }
+    if (!plugins.has(id)) {
       // Register a session token for first-party plugins too (#151).
-      let fpToken = sessionTokens.get(fp.manifest.id)
+      let fpToken = sessionTokens.get(id)
       if (!fpToken) {
         try {
-          fpToken = await RegisterPluginSession(fp.manifest.id)
-          sessionTokens.set(fp.manifest.id, fpToken)
+          fpToken = await RegisterPluginSession(id)
+          sessionTokens.set(id, fpToken)
         } catch {
           // Best-effort: if session registration fails (e.g. vault not
           // loaded yet), continue with no token — the SDK passes '' which
           // the Go side rejects for session-gated bindings.
         }
       }
-      const ctx = makePluginContext(fp.manifest.id, fpToken)
+      const ctx = makePluginContext(id, fpToken)
       fp.init?.(ctx)
       fp.onVaultOpen?.(ctx)
-      plugins.set(fp.manifest.id, fp)
+      plugins.set(id, fp)
     }
   }
 

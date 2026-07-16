@@ -5,7 +5,6 @@
   import { getSessionToken } from '../../loader'
   import ChatShell from './ChatShell.svelte'
   import { createAIChatController } from './ai-chat-controller.svelte'
-  import { agentChrome } from '../../first-party/silt-ai-agent/state.svelte'
   import {
     aiChatDrawer,
     closeAIChatDrawer,
@@ -14,6 +13,7 @@
   } from './drawer.svelte'
   import { AI_CHAT_COMMAND_EVENT, type AIChatCommandDetail } from './commands'
   import type { EvidenceTarget } from './types'
+  import { getAIAvailability } from './availability'
 
   const PLUGIN_ID = 'silt-ai-agent'
   const chat = createAIChatController()
@@ -21,6 +21,7 @@
   registerAIChatController(chat)
 
   let open = $derived(aiChatDrawer.open)
+  let aiOn = $derived(getAIAvailability().drawerAvailable)
   let queuedCommand = $state<AIChatCommandDetail | null>(null)
   let drawerEl = $state<HTMLElement | null>(null)
   let isMobile = $state(false)
@@ -31,9 +32,15 @@
   // produces a new context and triggers the vault-switch clear).
   let cachedToken: string | undefined
   let cachedCtx: ReturnType<typeof makePluginContext> | null = null
+  let sessionReady = $derived(!!getSessionToken(PLUGIN_ID))
   let ctx = $derived.by(() => {
-    if (!open) return null
+    if (!open || !aiOn) return null
     const token = getSessionToken(PLUGIN_ID) ?? undefined
+    // Master AI on but agent session not registered yet (reload mid-flight):
+    // still open the shell so the empty-state / setup banner can show.
+    if (!token && !sessionReady) {
+      return null
+    }
     if (cachedCtx && token === cachedToken) return cachedCtx
     cachedCtx = makePluginContext(PLUGIN_ID, token)
     cachedToken = token
@@ -45,10 +52,9 @@
   })
 
   function onAIChatCommand(event: Event) {
-    // The unified drawer is the agent's surface: without the agent enabled
-    // there is no valid session to service the command, so ignore it rather
-    // than open a broken drawer. (Unified AI enablement tracked in #632.)
-    if (!agentChrome.available) return
+    // Gate on master AI enablement, not only agentChrome (session may lag a
+    // feature flip until the next vault reload).
+    if (!getAIAvailability().drawerAvailable) return
     const detail = (event as CustomEvent<AIChatCommandDetail>).detail
     if (!detail?.text) return
     queuedCommand = detail
@@ -164,7 +170,7 @@
   }
 </script>
 
-{#if open && ctx}
+{#if open && aiOn}
   {#if isMobile}
     <button
       type="button"
@@ -198,28 +204,46 @@
       </button>
     {/snippet}
 
-    <ChatShell
-      title="Silt AI"
-      transcript={chat.transcript}
-      busy={chat.busy}
-      lastOutcome={chat.lastOutcome}
-      providerReady={chat.providerReady}
-      actions={drawerActions}
-      onSend={(text) => {
-        void chat.send(text)
-      }}
-      onStop={chat.stop}
-      onAcceptProposal={(id) => void chat.acceptProposal(id)}
-      onDiscardProposal={(id) => void chat.discardProposal(id)}
-      onConfirmStaging={(token) => chat.resolveStaging(token, true)}
-      onRejectStaging={(token) => chat.resolveStaging(token, false)}
-      onOpenSettings={() => {
-        ctx?.openSettings('ai')
-        closeAIChatDrawer()
-      }}
-      onNavigateEvidence={navigateEvidence}
-      onClear={chat.clear}
-    />
+    {#if ctx}
+      <ChatShell
+        title="Silt AI"
+        transcript={chat.transcript}
+        busy={chat.busy}
+        lastOutcome={chat.lastOutcome}
+        providerReady={chat.providerReady}
+        actions={drawerActions}
+        onSend={(text) => {
+          void chat.send(text)
+        }}
+        onStop={chat.stop}
+        onAcceptProposal={(id) => void chat.acceptProposal(id)}
+        onDiscardProposal={(id) => void chat.discardProposal(id)}
+        onConfirmStaging={(token) => chat.resolveStaging(token, true)}
+        onRejectStaging={(token) => chat.resolveStaging(token, false)}
+        onOpenSettings={() => {
+          ctx?.openSettings('ai')
+          closeAIChatDrawer()
+        }}
+        onNavigateEvidence={navigateEvidence}
+        onClear={chat.clear}
+      />
+    {:else}
+      <div class="session-missing" role="status">
+        <p>
+          AI is enabled, but the agent session is not ready yet. Reload the
+          vault or open Settings → AI to finish setup.
+        </p>
+        <button
+          type="button"
+          class="close-button"
+          aria-label="Close Silt AI"
+          onclick={closeAIChatDrawer}
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">close</span
+          >
+        </button>
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -273,5 +297,14 @@
     max-width: min(380px, 92vw);
     box-shadow: -8px 0 32px var(--color-surface-app);
     z-index: 61;
+  }
+
+  .session-missing {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem;
+    color: var(--color-text-muted);
+    font-size: 0.875rem;
   }
 </style>

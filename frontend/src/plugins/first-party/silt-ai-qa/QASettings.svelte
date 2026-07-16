@@ -260,14 +260,9 @@
       <PresetControl
         label="Search Balance"
         tooltipText="How should your search work? Keyword search finds notes containing your exact words. Semantic search finds notes with similar meaning even if the words are different."
-        tooltipTechnical="Technical: Hybrid weight in Reciprocal Rank Fusion. 0.0 = pure keyword, 1.0 = pure semantic."
+        tooltipTechnical="Technical: Hybrid weight in Reciprocal Rank Fusion. 0.0 = pure keyword, 1.0 = pure semantic. Fine-tune under Advanced below."
         options={[...SEARCH_BALANCE_PRESETS]}
         value={local.hybrid_weight}
-        customLabel="Hybrid weight"
-        customMin={0}
-        customMax={1}
-        customStep={0.05}
-        customRange={true}
         onchange={(v) => void saveKey('hybrid_weight', v)}
       />
       <PresetControl
@@ -282,8 +277,27 @@
         value={contextBreadthKey === '__custom__' ? '' : contextBreadthKey}
         onchange={(v) => onContextBreadthChange(String(v))}
       />
+      <!-- Single Advanced disclosure for Search Balance + Context Breadth (#626).
+           Search Balance already exposes Advanced via PresetControl; Context
+           Breadth custom limits share one details here so the page is not two
+           nested Advanced sections. -->
       <details class="adv-details">
-        <summary>Advanced context limits</summary>
+        <summary>Advanced</summary>
+        <label class="field">
+          <span>Hybrid weight (Search Balance)</span>
+          <input
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={local.hybrid_weight}
+            onchange={(e) =>
+              void saveKey(
+                'hybrid_weight',
+                Number((e.currentTarget as HTMLInputElement).value)
+              )}
+          />
+        </label>
         <label class="field">
           <span>Notes to retrieve (top-k)</span>
           <input

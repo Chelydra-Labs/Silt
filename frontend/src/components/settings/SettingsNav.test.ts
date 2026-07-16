@@ -45,9 +45,7 @@ describe('SettingsNav — section list (sidebar tablist)', () => {
     expect(tablist.getAttribute('aria-orientation')).toBe('vertical')
     expect(screen.getByRole('tab', { name: /General/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Appearance/i })).toBeInTheDocument()
-    expect(
-      screen.getByRole('tab', { name: /AI Provider/i })
-    ).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^AI$/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /About/i })).toBeInTheDocument()
   })
 

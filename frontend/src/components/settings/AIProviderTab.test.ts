@@ -55,7 +55,12 @@ const mocks = vi.hoisted(() => {
     },
     use_keyring: true,
     keyring_available: true,
-    keyring_unusable_for: [] as string[]
+    keyring_unusable_for: [] as string[],
+    features: {
+      enabled: false,
+      rag_enabled: false,
+      summaries_enabled: false
+    }
   }
   return {
     configState: structuredClone(defaultConfig),
@@ -85,6 +90,7 @@ const mocks = vi.hoisted(() => {
     ],
     GetAIProviderConfig: vi.fn(),
     UpdateAIProviderConfig: vi.fn(),
+    UpdateAIFeatures: vi.fn(),
     SetAIAPIKey: vi.fn(),
     CopyAIAPIKey: vi.fn(),
     ClearAIAPIKey: vi.fn(),
@@ -101,6 +107,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('../../../bindings/silt/app.js', () => ({
   GetAIProviderConfig: mocks.GetAIProviderConfig,
   UpdateAIProviderConfig: mocks.UpdateAIProviderConfig,
+  UpdateAIFeatures: mocks.UpdateAIFeatures,
   SetAIAPIKey: mocks.SetAIAPIKey,
   CopyAIAPIKey: mocks.CopyAIAPIKey,
   ClearAIAPIKey: mocks.ClearAIAPIKey,
@@ -112,6 +119,22 @@ vi.mock('../../../bindings/silt/app.js', () => ({
   UpdatePluginSetting: mocks.UpdatePluginSetting
 }))
 
+vi.mock('../../settings/store.svelte', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../settings/store.svelte')>()
+  return {
+    ...actual,
+    loadConfig: vi.fn().mockResolvedValue(undefined),
+    // Preserve the binding path so stale-index tests still see UpdatePluginSetting.
+    updatePluginSetting: (...args: unknown[]) =>
+      mocks.UpdatePluginSetting(...args)
+  }
+})
+
+vi.mock('../../plugins/loader', () => ({
+  loadPlugins: vi.fn().mockResolvedValue({ plugins: new Map(), errors: [] })
+}))
+
 import AIProviderTab from './AIProviderTab.svelte'
 
 describe('AIProviderTab', () => {
@@ -119,6 +142,7 @@ describe('AIProviderTab', () => {
     mocks.resetConfig()
     mocks.GetAIProviderConfig.mockReset()
     mocks.UpdateAIProviderConfig.mockReset()
+    mocks.UpdateAIFeatures.mockReset()
     mocks.SetAIAPIKey.mockReset()
     mocks.CopyAIAPIKey.mockReset()
     mocks.ClearAIAPIKey.mockReset()
@@ -133,6 +157,7 @@ describe('AIProviderTab', () => {
       structuredClone(mocks.configState)
     )
     mocks.UpdateAIProviderConfig.mockResolvedValue(undefined)
+    mocks.UpdateAIFeatures.mockResolvedValue(undefined)
     mocks.SetAIAPIKey.mockResolvedValue(undefined)
     mocks.CopyAIAPIKey.mockResolvedValue(undefined)
     mocks.ClearAIAPIKey.mockResolvedValue(undefined)
@@ -162,6 +187,35 @@ describe('AIProviderTab', () => {
       ).toBeInTheDocument()
     )
   }
+
+  describe('features card', () => {
+    it('renders Enable AI and nested feature toggles', async () => {
+      render(AIProviderTab)
+      await ready()
+      expect(
+        screen.getByRole('checkbox', { name: /Enable AI/i })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: /Semantic search/i })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: /Note summaries/i })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: /Semantic search/i })
+      ).toBeDisabled()
+    })
+
+    it('calls UpdateAIFeatures when Enable AI is toggled', async () => {
+      render(AIProviderTab)
+      await ready()
+      const master = screen.getByRole('checkbox', { name: /Enable AI/i })
+      await fireEvent.click(master)
+      await waitFor(() => {
+        expect(mocks.UpdateAIFeatures).toHaveBeenCalledWith({ enabled: true })
+      })
+    })
+  })
 
   describe('initial render', () => {
     it('renders both provider cards with the config-sourced field values', async () => {
@@ -241,7 +295,12 @@ describe('AIProviderTab', () => {
         },
         use_keyring: true,
         keyring_available: true,
-        keyring_unusable_for: []
+        keyring_unusable_for: [],
+        features: {
+          enabled: false,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(
         structuredClone(mocks.configState)
@@ -277,7 +336,12 @@ describe('AIProviderTab', () => {
         },
         use_keyring: true,
         keyring_available: true,
-        keyring_unusable_for: []
+        keyring_unusable_for: [],
+        features: {
+          enabled: false,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(
         structuredClone(mocks.configState)
@@ -313,7 +377,12 @@ describe('AIProviderTab', () => {
         },
         use_keyring: true,
         keyring_available: true,
-        keyring_unusable_for: []
+        keyring_unusable_for: [],
+        features: {
+          enabled: false,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(
         structuredClone(mocks.configState)

@@ -161,7 +161,7 @@ describe('ChatShell', () => {
 
     expect(getByLabelText('Message Silt AI')).toBeDisabled()
     expect(getByRole('button', { name: 'Send message' })).toBeDisabled()
-    await fireEvent.click(getByRole('button', { name: 'Open AI Provider' }))
+    await fireEvent.click(getByRole('button', { name: 'Open AI settings' }))
     expect(value.onOpenSettings).toHaveBeenCalledOnce()
   })
 

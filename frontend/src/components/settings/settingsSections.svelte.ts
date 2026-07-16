@@ -152,9 +152,10 @@ export function getSettingsSections(): SettingsSection[] {
     },
     {
       id: 'ai',
-      label: 'AI Provider',
+      label: 'AI',
       icon: 'smart_toy',
-      description: 'Chat and search models, keys, and connection tests.',
+      description:
+        'Enable AI features, chat and embedding models, and connection tests.',
       group: 'intelligence'
     },
     {

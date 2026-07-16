@@ -24,7 +24,35 @@
   type Props = Record<string, never>
   let {}: Props = $props()
 
-  const ai = createAIProviderController()
+  const ai = createAIProviderController() as ReturnType<
+    typeof createAIProviderController
+  > & {
+    featuresSaving: boolean
+    featuresError: string | null
+    ragNeedsEmbeddingSetup: boolean
+    updateFeatures: (patch: {
+      enabled?: boolean
+      rag_enabled?: boolean
+      summaries_enabled?: boolean
+    }) => Promise<void>
+  }
+
+  // Features live on AIPublicConfig after Phase 2; cast for partial type caches.
+  const features = $derived(
+    (
+      ai.config as {
+        features?: {
+          enabled?: boolean
+          rag_enabled?: boolean
+          summaries_enabled?: boolean
+        }
+      } | null
+    )?.features ?? {
+      enabled: false,
+      rag_enabled: false,
+      summaries_enabled: false
+    }
+  )
 
   onMount(() => {
     void ai.reload()
@@ -66,12 +94,177 @@
       </button>
     </div>
   {:else if ai.config}
+    <!-- Features first: enablement before plumbing (#632) -->
+    <section
+      aria-label="AI features"
+      class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 space-y-4"
+      id="ai-features"
+    >
+      <div>
+        <h3 class="text-text-primary text-type-md font-semibold m-0">
+          Features
+        </h3>
+        <p class="text-text-muted text-type-xs font-label-sm m-0 mt-0.5">
+          Turn AI on once, then choose optional capabilities.
+        </p>
+      </div>
+
+      <div class="flex items-start justify-between gap-4">
+        <div class="space-y-0.5 min-w-0">
+          <span
+            id="ai-enable-label"
+            class="text-text-primary text-type-md font-semibold block"
+          >
+            Enable AI
+          </span>
+          <span class="text-text-muted text-type-xs font-label-sm block">
+            Chat with your vault, writing help, and tools. Uses your chat model.
+          </span>
+        </div>
+        <label
+          class="flex items-center cursor-pointer select-none"
+          for="ai-enable"
+        >
+          <input
+            id="ai-enable"
+            type="checkbox"
+            class="keyring-switch peer sr-only"
+            aria-labelledby="ai-enable-label"
+            checked={features.enabled === true}
+            disabled={ai.featuresSaving}
+            onchange={(e) =>
+              void ai.updateFeatures({ enabled: e.currentTarget.checked })}
+          />
+          <span
+            aria-hidden="true"
+            class="keyring-switch-track"
+            class:on={features.enabled === true}
+          ></span>
+        </label>
+      </div>
+
+      <div
+        class="ml-3 pl-3 border-l border-surface-panel-border space-y-3"
+        class:opacity-50={features.enabled !== true}
+      >
+        <div class="flex items-start justify-between gap-4">
+          <div class="space-y-0.5 min-w-0">
+            <span
+              id="ai-rag-label"
+              class="text-text-primary text-type-sm font-semibold block"
+            >
+              Semantic search
+            </span>
+            <span class="text-text-muted text-type-xs font-label-sm block">
+              Find notes by meaning. Needs an embedding model.
+            </span>
+          </div>
+          <label
+            class="flex items-center select-none"
+            class:cursor-pointer={features.enabled === true}
+            class:cursor-not-allowed={features.enabled !== true}
+            for="ai-rag"
+            title={features.enabled !== true ? 'Enable AI first' : undefined}
+          >
+            <input
+              id="ai-rag"
+              type="checkbox"
+              class="keyring-switch peer sr-only"
+              aria-labelledby="ai-rag-label"
+              checked={features.rag_enabled === true}
+              disabled={ai.featuresSaving || features.enabled !== true}
+              onchange={(e) =>
+                void ai.updateFeatures({
+                  rag_enabled: e.currentTarget.checked
+                })}
+            />
+            <span
+              aria-hidden="true"
+              class="keyring-switch-track"
+              class:on={features.rag_enabled === true}
+              class:disabled={features.enabled !== true}
+            ></span>
+          </label>
+        </div>
+
+        {#if ai.ragNeedsEmbeddingSetup}
+          <div
+            class="bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2"
+            role="status"
+          >
+            <span
+              class="material-symbols-outlined text-accent-primary-start text-icon-md flex-shrink-0"
+              aria-hidden="true">link</span
+            >
+            <div class="text-type-xs font-body-md text-text-primary">
+              Semantic search needs an embedding model.
+              <a
+                href="#ai-embedding-section"
+                class="text-accent-primary-start underline font-label-sm-bold ml-1"
+                onclick={(e) => {
+                  e.preventDefault()
+                  document
+                    .getElementById('ai-embedding-section')
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }}>Set up embedding</a
+              >
+            </div>
+          </div>
+        {/if}
+
+        <div class="flex items-start justify-between gap-4">
+          <div class="space-y-0.5 min-w-0">
+            <span
+              id="ai-summaries-label"
+              class="text-text-primary text-type-sm font-semibold block"
+            >
+              Note summaries
+            </span>
+            <span class="text-text-muted text-type-xs font-label-sm block">
+              Show a short summary banner on notes.
+            </span>
+          </div>
+          <label
+            class="flex items-center select-none"
+            class:cursor-pointer={features.enabled === true}
+            class:cursor-not-allowed={features.enabled !== true}
+            for="ai-summaries"
+            title={features.enabled !== true ? 'Enable AI first' : undefined}
+          >
+            <input
+              id="ai-summaries"
+              type="checkbox"
+              class="keyring-switch peer sr-only"
+              aria-labelledby="ai-summaries-label"
+              checked={features.summaries_enabled === true}
+              disabled={ai.featuresSaving || features.enabled !== true}
+              onchange={(e) =>
+                void ai.updateFeatures({
+                  summaries_enabled: e.currentTarget.checked
+                })}
+            />
+            <span
+              aria-hidden="true"
+              class="keyring-switch-track"
+              class:on={features.summaries_enabled === true}
+              class:disabled={features.enabled !== true}
+            ></span>
+          </label>
+        </div>
+      </div>
+
+      {#if ai.featuresError}
+        <p class="text-error text-type-xs m-0" role="alert">
+          {ai.featuresError}
+        </p>
+      {/if}
+    </section>
+
     <!-- Intro & nudge banner -->
     <section aria-label="AI provider overview">
       <p class="text-text-primary text-type-md font-body-md leading-relaxed">
-        Connect Silt to an AI model to power smart features like note
-        summarization, semantic vault search, and task tracking. Choose a setup
-        mode below to get started.
+        Connect Silt to an AI model to power chat, writing help, semantic
+        search, and note summaries. Choose a setup mode below to get started.
       </p>
       {#if ai.needsSetup}
         <div
@@ -910,6 +1103,7 @@
       </section>
 
       <section
+        id="ai-embedding-section"
         aria-labelledby="embedding-heading"
         class:hidden={ai.syncProviders || ai.activeRole !== 'embedding'}
       >

@@ -189,9 +189,10 @@ describe('agent-loop', () => {
 
   it('wraps vault tool results in hard untrusted-data delimiters', () => {
     const wrapped = wrapUntrustedToolResult('search_notes', 'vault body')
-    expect(wrapped).toContain('<<<UNTRUSTED_VAULT_DATA tool=search_notes>>>')
+    expect(wrapped).toContain('<vault_data tool="search_notes">')
+    expect(wrapped).toContain('</vault_data>')
+    expect(wrapped).not.toContain('<<<UNTRUSTED_VAULT_DATA')
     expect(wrapped).toContain('vault body')
-    expect(wrapped).toContain('<<<END_UNTRUSTED_VAULT_DATA>>>')
   })
 
   it('truncates Unicode results by UTF-8 bytes without splitting a code point', () => {
