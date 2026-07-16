@@ -218,25 +218,38 @@ export function createAgentCapability(): AIChatCapability {
         }
       }
 
-      const result = await session.run(text, priorHistory, options)
-      // Stale (stopped/cleared/superseded): the controller already finalized
-      // streaming + owns the lifecycle; do not touch protocolHistory.
-      if (stale() || result.cancelled) return
-      if (result.hitIterationCap) {
-        context.append(
-          statusEntry({
-            role: 'system',
-            status: 'iteration-limit',
-            message: 'Stopped after reaching the iteration limit.'
-          })
-        )
-      }
-      if (!finalTextRecorded && result.text) {
-        updateAssistant(result.text, false)
-        protocolHistory = [
-          ...protocolHistory,
-          { role: 'assistant', content: result.text }
-        ]
+      try {
+        const result = await session.run(text, priorHistory, options)
+        // Stale (stopped/cleared/superseded) or cancelled: roll back this turn's
+        // uncommitted protocol mutations (the user message + any partial
+        // tool_calls/tool messages). Otherwise the next turn would replay an
+        // orphaned assistant tool_call without matching tool results — a
+        // provider protocol error.
+        if (stale() || result.cancelled) {
+          protocolHistory = priorHistory
+          return
+        }
+        if (result.hitIterationCap) {
+          context.append(
+            statusEntry({
+              role: 'system',
+              status: 'iteration-limit',
+              message: 'Stopped after reaching the iteration limit.'
+            })
+          )
+        }
+        if (!finalTextRecorded && result.text) {
+          updateAssistant(result.text, false)
+          protocolHistory = [
+            ...protocolHistory,
+            { role: 'assistant', content: result.text }
+          ]
+        }
+      } catch (e) {
+        // Provider error mid-turn: roll back so protocolHistory only ever
+        // holds fully-committed turns, then let the controller surface it.
+        protocolHistory = priorHistory
+        throw e
       }
     },
     stop() {
@@ -267,6 +280,9 @@ export function createAIChatController(initialContext?: PluginContext) {
   // attach() bump it so callbacks from a stale (stopped / superseded / vault-
   // switched) run no-op instead of mutating the live transcript.
   let runId = 0
+  // The "Thinking…" status entry id for the active run, tracked here so stop()
+  // can remove it even though send()'s finally is fenced out for a stopped run.
+  let activeRunStatusId: string | null = null
   const capabilities = new Map<string, AIChatCapability>()
   const entryOwners = new Map<string, string>()
   let defaultCapabilityId = 'agent-tools'
@@ -362,6 +378,7 @@ export function createAIChatController(initialContext?: PluginContext) {
       message: 'Thinking…'
     })
     append(runningStatus)
+    activeRunStatusId = runningStatus.id
     busy = true
     activeCapability = capability
 
@@ -403,6 +420,7 @@ export function createAIChatController(initialContext?: PluginContext) {
       // run already reset these (and finalized streaming) in stop()/clear().
       if (live()) {
         remove(runningStatus.id)
+        activeRunStatusId = null
         finalizeStreaming()
         busy = false
         activeCapability = null
@@ -416,7 +434,16 @@ export function createAIChatController(initialContext?: PluginContext) {
     // (its finally() will see a stale runId and no-op).
     runId++
     activeCapability?.stop?.()
+    // Remove the lingering "Thinking…" status (send's finally is fenced out
+    // for a stopped run) and cancel any pending destructive confirmation: the
+    // run is dead so its staging resolver is gone, and a later Confirm would
+    // otherwise flip the card to "confirmed" with nothing happening.
+    if (activeRunStatusId) {
+      remove(activeRunStatusId)
+      activeRunStatusId = null
+    }
     finalizeStreaming()
+    cancelPendingConfirmations()
     append(
       statusEntry({
         role: 'system',
@@ -428,12 +455,27 @@ export function createAIChatController(initialContext?: PluginContext) {
     activeCapability = null
   }
 
+  // Mark every pending confirmation as rejected (used on stop/clear). The
+  // backing staging resolver is invalidated by capability.stop()/clear(), so
+  // leaving the cards pending would let a later Confirm silently no-op.
+  function cancelPendingConfirmations() {
+    for (const entry of transcript) {
+      if (entry.kind === 'confirmation' && entry.state === 'pending') {
+        update(entry.id, (e) =>
+          e.kind === 'confirmation' ? { ...e, state: 'rejected' } : e
+        )
+      }
+    }
+    pendingConfirmation = null
+  }
+
   function clear() {
     runId++
     activeCapability?.stop?.()
     for (const capability of capabilities.values()) capability.clear?.()
     transcript = []
     entryOwners.clear()
+    activeRunStatusId = null
     pendingConfirmation = null
     busy = false
     activeCapability = null

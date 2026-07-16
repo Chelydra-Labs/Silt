@@ -41,6 +41,13 @@ export interface RetrieveOptions {
   max_context_chars: number
   /** When true, re-score fused candidates by query–passage cosine similarity. */
   rerank_enabled: boolean
+  /**
+   * Optional filter applied to the FTS/vector-fused candidate set BEFORE
+   * rerank + trim. Use this to scope results (notebook/section/type) so that
+   * out-of-scope passage text is never sent to the embedding provider during
+   * rerank, and out-of-scope hits cannot crowd in-scope hits out of top_k.
+   */
+  filterPassages?: (passages: RetrievedPassage[]) => Promise<RetrievedPassage[]>
 }
 
 /**
@@ -223,6 +230,12 @@ export async function hybridRetrieve(
     topK: fuseTopK,
     minScore: settings.min_score
   })
+
+  // Scope candidates BEFORE rerank/trim so out-of-scope text is never embedded
+  // and cannot displace in-scope hits from top_k.
+  if (settings.filterPassages) {
+    fused = await settings.filterPassages(fused)
+  }
 
   if (settings.rerank_enabled) {
     fused = await rerankPassages(ctx, question, fused, queryVec)

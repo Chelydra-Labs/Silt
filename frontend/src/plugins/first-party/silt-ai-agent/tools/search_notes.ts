@@ -85,12 +85,18 @@ export async function handleSearchNotes(
   // Rerank on (embedding) so the model sees semantically ranked hits even
   // without a vector index. Generous char budget: the tool formats its own
   // output, so do not let the RAG trim stage drop results prematurely.
+  // Filters run BEFORE rerank so out-of-scope text is never embedded and
+  // cannot crowd in-scope hits out of top_k.
   const opts: RetrieveOptions = {
     top_k: topK,
     hybrid_weight: 0, // no agent vector index → pure FTS recall
     min_score: 0,
     max_context_chars: 100_000,
-    rerank_enabled: true
+    rerank_enabled: true,
+    filterPassages:
+      filters.notebook || filters.section || filters.type
+        ? async (passages) => filterPassages(ctx, passages, filters)
+        : undefined
   }
 
   let passages
@@ -99,16 +105,6 @@ export async function handleSearchNotes(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return { content: '', error: `search failed: ${msg}` }
-  }
-
-  if (filters.type) {
-    passages = await filterByType(ctx, passages, filters.type)
-  }
-  if (filters.notebook) {
-    passages = passages.filter((p) => p.notebook === filters.notebook)
-  }
-  if (filters.section) {
-    passages = passages.filter((p) => p.section === filters.section)
   }
 
   if (passages.length === 0) {
@@ -150,19 +146,32 @@ function normalizeFilters(raw: unknown): SearchFilters {
   }
 }
 
-/** Resolve block types in one query and drop passages that do not match. */
-async function filterByType(
+/**
+ * Apply notebook/section (field) + type (resolved via one query) filters to the
+ * fused candidate set. Runs before rerank so out-of-scope text is never embedded
+ * and cannot displace in-scope hits from top_k.
+ */
+async function filterPassages(
   ctx: PluginContext,
   passages: RetrievedPassage[],
-  type: string
+  filters: SearchFilters
 ): Promise<RetrievedPassage[]> {
-  const ids = passages.map((p) => p.blockId)
-  if (ids.length === 0) return passages
-  const placeholders = ids.map(() => '?').join(',')
-  const { rows } = await ctx.sqliteQuery(
-    `SELECT id, type FROM blocks WHERE id IN (${placeholders})`,
-    ids
-  )
-  const typeById = new Map(rows.map((r) => [String(r.id), String(r.type)]))
-  return passages.filter((p) => typeById.get(p.blockId) === type)
+  let filtered = passages
+  if (filters.notebook) {
+    filtered = filtered.filter((p) => p.notebook === filters.notebook)
+  }
+  if (filters.section) {
+    filtered = filtered.filter((p) => p.section === filters.section)
+  }
+  if (filters.type && filtered.length > 0) {
+    const ids = filtered.map((p) => p.blockId)
+    const placeholders = ids.map(() => '?').join(',')
+    const { rows } = await ctx.sqliteQuery(
+      `SELECT id, type FROM blocks WHERE id IN (${placeholders})`,
+      ids
+    )
+    const typeById = new Map(rows.map((r) => [String(r.id), String(r.type)]))
+    filtered = filtered.filter((p) => typeById.get(p.blockId) === filters.type)
+  }
+  return filtered
 }

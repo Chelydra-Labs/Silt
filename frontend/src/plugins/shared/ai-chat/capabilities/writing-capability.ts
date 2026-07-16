@@ -160,6 +160,13 @@ export function createWritingCapability(): AIChatCapability {
       const command = parseWritingCommand(text)
       if (!command) return
 
+      // Stamp the generation BEFORE the first await (buildScope) so a Stop
+      // during preflight is not undone: previously generation was bumped only
+      // after buildScope resolved, so stop() during preflight was overwritten
+      // by cancelled = false here.
+      const runId = ++generation
+      cancelled = false
+
       const settings = assistantSettings()
       if (!isActionEnabled(settings, command.actionId)) {
         throw new Error(
@@ -185,6 +192,8 @@ export function createWritingCapability(): AIChatCapability {
         blockId: request.blockId,
         instruction
       })
+      // Stop was pressed during preflight — abandon before any side effects.
+      if (cancelled || runId !== generation) return
       if (!hasInput(command.actionId, scope, instruction)) {
         throw new Error(
           command.actionId === 'draft-expand'
@@ -193,8 +202,6 @@ export function createWritingCapability(): AIChatCapability {
         )
       }
 
-      const runId = ++generation
-      cancelled = false
       streamSession = null
       streamEntryId = null
       const actionStatus = statusEntry({

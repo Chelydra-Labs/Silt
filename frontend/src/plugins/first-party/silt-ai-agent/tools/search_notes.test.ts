@@ -158,6 +158,41 @@ describe('search_notes', () => {
     expect(res.content).not.toContain('b1')
   })
 
+  it('does not embed out-of-scope passages when a notebook filter is set', async () => {
+    const embed = mockEmbed([1, 0], [[0.9, 0.1]])
+    const ctx = makeCtx({
+      ftsRows: [
+        {
+          id: 'b1',
+          notebook: 'Work',
+          section: 'S',
+          page: 'P',
+          clean_content: 'work secret'
+        },
+        {
+          id: 'b2',
+          notebook: 'Personal',
+          section: 'D',
+          page: 'P',
+          clean_content: 'personal diary'
+        }
+      ],
+      embed
+    })
+    await handleSearchNotes(ctx, {
+      query: 'note',
+      filters: { notebook: 'Work' }
+    })
+    const embeddedDocs = embed.mock.calls
+      .filter(
+        (c) =>
+          (c[0] as { taskType?: string })?.taskType === 'RETRIEVAL_DOCUMENT'
+      )
+      .flatMap((c) => (c[0] as { texts?: string[] })?.texts ?? [])
+    expect(embeddedDocs).toContain('work secret')
+    expect(embeddedDocs).not.toContain('personal diary')
+  })
+
   it('returns a clean no-results message when nothing matches', async () => {
     const ctx = makeCtx({ ftsRows: [], embed: mockEmbed([1, 0], []) })
     const res = await handleSearchNotes(ctx, { query: 'nothing' })
