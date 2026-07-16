@@ -615,6 +615,193 @@ func TestUpdateAIProviderConfig_RejectsNonHTTPBaseURL(t *testing.T) {
 	}
 }
 
+// --- Tool-calling threading (#595) ---------------------------------------
+
+// TestPluginAIComplete_ThreadsToolsAndToolCalls verifies the app binding maps
+// the plugin-facing Tools/ToolChoice into CompleteRequest and returns the
+// decoded ToolCalls from CompleteResult. Uses an OpenAI-compat mock that
+// echoes the request it received and replies with a tool_call.
+func TestPluginAIComplete_ThreadsToolsAndToolCalls(t *testing.T) {
+	app := newTestApp(t)
+	var capturedBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "m",
+			"choices": []map[string]any{
+				{"message": map[string]any{
+					"role": "assistant",
+					"tool_calls": []map[string]any{
+						{"id": "call_1", "type": "function", "function": map[string]any{
+							"name":      "search_notes",
+							"arguments": `{"q":"x"}`,
+						}},
+					},
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "m")
+
+	tok, err := app.RegisterPluginSession("silt-tasks")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	res, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+		Messages: []PluginAIChatMessage{{Role: "user", Content: "find x"}},
+		Tools: []PluginAIToolDef{{
+			Name:       "search_notes",
+			Parameters: json.RawMessage(`{"type":"object"}`),
+		}},
+		ToolChoice: &PluginAIToolChoice{Mode: "auto"},
+	})
+	if err != nil {
+		t.Fatalf("PluginAIComplete: %v", err)
+	}
+	// Tools + tool_choice threaded into the provider request.
+	if rawTools, _ := capturedBody["tools"].([]any); len(rawTools) != 1 {
+		t.Errorf("provider request tools = %v, want 1", rawTools)
+	}
+	if capturedBody["tool_choice"] != "auto" {
+		t.Errorf("provider request tool_choice = %v, want auto", capturedBody["tool_choice"])
+	}
+	// ToolCalls flowed back on the result.
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "search_notes" || res.ToolCalls[0].ID != "call_1" {
+		t.Errorf("tool_call = %+v", res.ToolCalls[0])
+	}
+}
+
+// TestPluginAIComplete_ToolMessageThreadsToProvider verifies a tool-role
+// message in the input maps onto the provider request (OpenAI role:tool +
+// tool_call_id) so the agent loop can replay multi-turn history.
+func TestPluginAIComplete_ToolMessageThreadsToProvider(t *testing.T) {
+	app := newTestApp(t)
+	var capturedBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "m",
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}}},
+		})
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "m")
+
+	tok, _ := app.RegisterPluginSession("silt-tasks")
+	_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+		Messages: []PluginAIChatMessage{
+			{Role: "user", Content: "find x"},
+			{Role: "assistant", ToolCalls: []PluginAIToolCall{
+				{ID: "call_1", Name: "search_notes", Arguments: json.RawMessage(`{"q":"x"}`)},
+			}},
+			{Role: "tool", ToolCallID: "call_1", Content: "found"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("PluginAIComplete: %v", err)
+	}
+	msgs, _ := capturedBody["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %d, want 3", len(msgs))
+	}
+	tool, _ := msgs[2].(map[string]any)
+	if tool["role"] != "tool" || tool["tool_call_id"] != "call_1" || tool["content"] != "found" {
+		t.Errorf("tool message not threaded: %+v", tool)
+	}
+}
+
+// --- Tool/tool_choice boundary validation (#595 hardening) ---------------
+
+// TestPluginAIComplete_RejectsMalformedTools verifies tools + tool_choice are
+// validated at the plugin boundary (bad-request) before rate-limiting or HTTP.
+func TestPluginAIComplete_RejectsMalformedTools(t *testing.T) {
+	app := newTestApp(t)
+	tok, _ := app.RegisterPluginSession("silt-tasks")
+
+	cases := []struct {
+		name       string
+		tools      []PluginAIToolDef
+		choice     *PluginAIToolChoice
+		wantSubstr string
+	}{
+		{
+			name:       "empty tool name",
+			tools:      []PluginAIToolDef{{Name: "  ", Parameters: json.RawMessage(`{"type":"object"}`)}},
+			wantSubstr: "non-empty name",
+		},
+		{
+			name:       "unknown tool_choice mode",
+			tools:      []PluginAIToolDef{{Name: "search_notes", Parameters: json.RawMessage(`{"type":"object"}`)}},
+			choice:     &PluginAIToolChoice{Mode: "bogus"},
+			wantSubstr: "tool_choice.mode",
+		},
+		{
+			name:       "force references unknown tool",
+			tools:      []PluginAIToolDef{{Name: "search_notes", Parameters: json.RawMessage(`{"type":"object"}`)}},
+			choice:     &PluginAIToolChoice{Mode: "force", ToolName: "ghost"},
+			wantSubstr: "unknown tool",
+		},
+		{
+			name:       "force without tool_name",
+			tools:      []PluginAIToolDef{{Name: "search_notes", Parameters: json.RawMessage(`{"type":"object"}`)}},
+			choice:     &PluginAIToolChoice{Mode: "force"},
+			wantSubstr: "force",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+				Messages:   []PluginAIChatMessage{{Role: "user", Content: "x"}},
+				Tools:      tc.tools,
+				ToolChoice: tc.choice,
+			})
+			if err == nil {
+				t.Fatalf("expected bad-request rejection, got nil")
+			}
+			aiErr, ok := err.(*ai.AIError)
+			if !ok || aiErr.Kind != ai.ErrBadRequest {
+				t.Fatalf("expected bad-request AIError, got %v", err)
+			}
+			if !containsStr(aiErr.Message, tc.wantSubstr) {
+				t.Fatalf("error %q does not contain %q", aiErr.Message, tc.wantSubstr)
+			}
+		})
+	}
+}
+
+// TestPluginAIComplete_AcceptsForceOnKnownTool verifies a "force" tool_choice
+// naming a declared tool passes the boundary gate and reaches the provider.
+func TestPluginAIComplete_AcceptsForceOnKnownTool(t *testing.T) {
+	app := newTestApp(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "m",
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}}},
+		})
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "m")
+	tok, _ := app.RegisterPluginSession("silt-tasks")
+
+	_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+		Messages:   []PluginAIChatMessage{{Role: "user", Content: "x"}},
+		Tools:      []PluginAIToolDef{{Name: "search_notes", Parameters: json.RawMessage(`{"type":"object"}`)}},
+		ToolChoice: &PluginAIToolChoice{Mode: "force", ToolName: "search_notes"},
+	})
+	if err != nil {
+		t.Fatalf("expected accepted force choice, got %v", err)
+	}
+}
+
 // --- Reasoning-effort gate (Fix D) ---------------------------------------
 
 func TestUpdateAIProviderConfig_RejectsInvalidReasoningEffort(t *testing.T) {
@@ -769,5 +956,49 @@ func TestPluginAIComplete_TrackedByWaitGroup(t *testing.T) {
 	}
 	if r.res.Content != "pong" {
 		t.Errorf("content = %q, want pong", r.res.Content)
+	}
+}
+
+func TestValidateAITools_RejectsDuplicateNames(t *testing.T) {
+	tools := []PluginAIToolDef{
+		{Name: "search", Parameters: json.RawMessage(`{"type":"object","properties":{}}`)},
+		{Name: "search", Parameters: json.RawMessage(`{"type":"object","properties":{}}`)},
+	}
+	if err := validateAITools(tools, nil); err == nil {
+		t.Fatal("expected error for duplicate tool names")
+	}
+}
+
+func TestValidateAITools_RejectsBadParameters(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"missing", ""},
+		{"scalar", `"string"`},
+		{"number", `42`},
+		{"array", `[]`},
+		{"wrong-type", `{"type":"string"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tools := []PluginAIToolDef{{
+				Name:       "t",
+				Parameters: json.RawMessage(tc.raw),
+			}}
+			if err := validateAITools(tools, nil); err == nil {
+				t.Fatalf("expected error for %s parameters", tc.name)
+			}
+		})
+	}
+}
+
+func TestValidateAITools_AcceptsValidSchema(t *testing.T) {
+	tools := []PluginAIToolDef{
+		{Name: "search", Parameters: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`)},
+		{Name: "read", Parameters: json.RawMessage(`{"properties":{"id":{"type":"string"}}}`)},
+	}
+	if err := validateAITools(tools, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

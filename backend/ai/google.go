@@ -21,8 +21,28 @@ type googleContent struct {
 }
 
 type googleTextPart struct {
-	Text    string `json:"text"`
-	Thought bool   `json:"thought,omitempty"`
+	Text             string              `json:"text,omitempty"`
+	Thought          bool                `json:"thought,omitempty"`
+	FunctionCall     *googleFunctionCall `json:"functionCall,omitempty"`
+	FunctionResponse *googleFunctionResp `json:"functionResponse,omitempty"`
+}
+
+// googleFunctionCall is the model's request to invoke a tool (#595). Google
+// identifies the function by name and newer API versions may also provide an
+// opaque id for correlating the later function response.
+type googleFunctionCall struct {
+	ID   string          `json:"id,omitempty"`
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args,omitempty"`
+}
+
+// googleFunctionResp is a tool result fed back to the model (#595), sent as a
+// part inside a user turn. Name identifies the function; ID is included when
+// the originating call supplied a distinct opaque id. Response is a JSON object.
+type googleFunctionResp struct {
+	ID       string          `json:"id,omitempty"`
+	Name     string          `json:"name"`
+	Response json.RawMessage `json:"response"`
 }
 
 // googleGenerateRequest is the generateContent request body.
@@ -30,6 +50,32 @@ type googleGenerateRequest struct {
 	SystemInstruction *googleContent          `json:"systemInstruction,omitempty"`
 	Contents          []googleContent         `json:"contents"`
 	GenerationConfig  *googleGenerationConfig `json:"generationConfig,omitempty"`
+	Tools             []googleTool            `json:"tools,omitempty"`
+	ToolConfig        *googleToolConfig       `json:"toolConfig,omitempty"`
+}
+
+// googleTool carries function declarations (Google nests them one level deep).
+type googleTool struct {
+	FunctionDeclarations []googleFunctionDecl `json:"functionDeclarations,omitempty"`
+}
+
+// googleFunctionDecl is one tool declaration. Parameters is a JSON Schema with
+// Google's uppercase type enum (converted from standard lowercase).
+type googleFunctionDecl struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// googleToolConfig selects tool-calling behavior (AUTO/ANY/NONE) and optional
+// allowed function names for force-mode.
+type googleToolConfig struct {
+	FunctionCallingConfig googleFunctionCallingConfig `json:"functionCallingConfig"`
+}
+
+type googleFunctionCallingConfig struct {
+	Mode                 string   `json:"mode,omitempty"`
+	AllowedFunctionNames []string `json:"allowedFunctionNames,omitempty"`
 }
 
 type googleGenerationConfig struct {
@@ -137,6 +183,75 @@ func googleConvertValue(v any) any {
 	}
 }
 
+// googleTools encodes the unified ToolDef slice as Google's tools[] array
+// (one wrapper with functionDeclarations[]). Parameter schemas are uppercased
+// to Google's type-enum convention, matching responseSchema handling.
+func googleTools(tools []ToolDef) []googleTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	decls := make([]googleFunctionDecl, len(tools))
+	for i, t := range tools {
+		var params json.RawMessage
+		if len(t.Parameters) > 0 {
+			params = googleConvertSchema(t.Parameters)
+		}
+		decls[i] = googleFunctionDecl{
+			Name:        t.Name,
+			Description: t.Description,
+			Parameters:  params,
+		}
+	}
+	return []googleTool{{FunctionDeclarations: decls}}
+}
+
+// googleBuildToolConfig maps the unified ToolChoice onto Google's
+// functionCallingConfig: auto→AUTO, required→ANY, none→NONE, force→ANY with
+// allowedFunctionNames pinned to the one tool. nil when there is no caller
+// preference and no structured output (Google's default is AUTO).
+func googleBuildToolConfig(tc *ToolChoice, schema json.RawMessage) *googleToolConfig {
+	if tc == nil {
+		return nil
+	}
+	cfg := &googleToolConfig{}
+	switch tc.Mode {
+	case ToolChoiceAuto:
+		cfg.FunctionCallingConfig.Mode = "AUTO"
+	case ToolChoiceRequired:
+		cfg.FunctionCallingConfig.Mode = "ANY"
+	case ToolChoiceNone:
+		cfg.FunctionCallingConfig.Mode = "NONE"
+	case ToolChoiceForce:
+		if tc.ToolName == "" {
+			cfg.FunctionCallingConfig.Mode = "ANY"
+		} else {
+			cfg.FunctionCallingConfig.Mode = "ANY"
+			cfg.FunctionCallingConfig.AllowedFunctionNames = []string{tc.ToolName}
+		}
+	default:
+		return nil
+	}
+	return cfg
+}
+
+// googleArgsFromRaw normalizes a tool-call arguments RawMessage into the JSON
+// object bytes Google's functionCall.args expects (defaults to {} when empty or
+// non-object).
+func googleArgsFromRaw(raw json.RawMessage) json.RawMessage {
+	return normalizeToolArguments(raw)
+}
+
+// googleToolResponse renders a tool-result content string as the JSON object
+// Google's functionResponse.response requires. A valid JSON body is passed
+// through; otherwise the string is wrapped under a "result" key.
+func googleToolResponse(content string) json.RawMessage {
+	if content != "" && json.Valid([]byte(content)) {
+		return json.RawMessage(content)
+	}
+	b, _ := json.Marshal(map[string]string{"result": content})
+	return b
+}
+
 // googleClassifyError maps a Google structured error body to an AIError. Returns
 // nil when the body isn't the expected shape so the default status-based path
 // runs.
@@ -167,11 +282,12 @@ func googleClassifyError(raw []byte, status int) *AIError {
 func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL string) (CompleteResult, error) {
 	// Split system messages into the top-level systemInstruction field; Google
 	// does not accept role:"system" in contents[]. Remaining messages map
-	// assistant→model.
+	// assistant→model; tool turns are encoded as functionCall/functionResponse
+	// parts (#595).
 	var system *googleContent
 	var contents []googleContent
-	for _, m := range req.Messages {
-		if m.Role == "system" {
+	for messageIndex, m := range req.Messages {
+		if m.Role == RoleSystem {
 			if system == nil {
 				system = &googleContent{Parts: []googleTextPart{{Text: m.Content}}}
 			} else {
@@ -179,12 +295,64 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 			}
 			continue
 		}
+		// Tool result → user turn with a functionResponse part. Resolve the
+		// function name from the preceding assistant call when the tool result
+		// carries an opaque call id. Older name-based histories fall back to
+		// treating ToolCallID as the function name.
+		if m.Role == RoleTool {
+			name := m.ToolCallID
+			id := ""
+			matched := false
+			for i := messageIndex - 1; i >= 0 && !matched; i-- {
+				if req.Messages[i].Role != RoleAssistant {
+					continue
+				}
+				for _, tc := range req.Messages[i].ToolCalls {
+					if tc.ID != m.ToolCallID {
+						continue
+					}
+					name = tc.Name
+					if tc.ID != "" && tc.ID != tc.Name {
+						id = tc.ID
+					}
+					matched = true
+					break
+				}
+			}
+			contents = append(contents, googleContent{
+				Role: RoleUser,
+				Parts: []googleTextPart{{
+					FunctionResponse: &googleFunctionResp{
+						ID:       id,
+						Name:     name,
+						Response: googleToolResponse(m.Content),
+					},
+				}},
+			})
+			continue
+		}
+		// Assistant turn that requested tools → model turn with functionCall
+		// parts (plus an optional leading text part when Content is set).
+		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
+			parts := make([]googleTextPart, 0, 1+len(m.ToolCalls))
+			if m.Content != "" {
+				parts = append(parts, googleTextPart{Text: m.Content})
+			}
+			for _, tc := range m.ToolCalls {
+				args := googleArgsFromRaw(tc.Arguments)
+				parts = append(parts, googleTextPart{
+					FunctionCall: &googleFunctionCall{ID: tc.ID, Name: tc.Name, Args: args},
+				})
+			}
+			contents = append(contents, googleContent{Role: "model", Parts: parts})
+			continue
+		}
 		role := m.Role
-		if role == "assistant" {
+		if role == RoleAssistant {
 			role = "model"
 		}
 		if role == "" {
-			role = "user"
+			role = RoleUser
 		}
 		contents = append(contents, googleContent{
 			Role:  role,
@@ -202,6 +370,8 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 		SystemInstruction: system,
 		Contents:          contents,
 		GenerationConfig:  gc,
+		Tools:             googleTools(req.Tools),
+		ToolConfig:        googleBuildToolConfig(req.ToolChoice, req.ResponseSchema),
 	})
 	if err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}
@@ -238,17 +408,35 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 		}
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("provider returned no content (finishReason: %s)", reason)}
 	}
-	// Concatenate non-thought text parts. Gemini 2.5+ thinking models emit
-	// reasoning in parts with thought:true — those are internal scratchpad,
-	// not the user-facing answer, so they are skipped.
+	// Concatenate non-thought text parts and collect functionCall parts.
+	// Gemini 2.5+ thinking models emit reasoning in parts with thought:true —
+	// those are internal scratchpad, not the user-facing answer, so skipped.
 	var sb strings.Builder
+	var toolCalls []ToolCall
 	for _, p := range resp.Candidates[0].Content.Parts {
 		if p.Thought {
 			continue
 		}
+		if p.FunctionCall != nil {
+			// Preserve Google's opaque id when present; callers use it to
+			// correlate the later tool-result message. Older responses without
+			// an id retain the name-based fallback.
+			id := p.FunctionCall.ID
+			if id == "" {
+				id = p.FunctionCall.Name
+			}
+			toolCalls = append(toolCalls, ToolCall{
+				ID:        id,
+				Name:      p.FunctionCall.Name,
+				Arguments: googleArgsFromRaw(p.FunctionCall.Args),
+			})
+			continue
+		}
+		// Skip empty Text on a functionResponse-bearing part (only relevant
+		// on the request side; defensive on decode).
 		sb.WriteString(p.Text)
 	}
-	out := CompleteResult{Content: sb.String(), Model: model}
+	out := CompleteResult{Content: sb.String(), Model: model, ToolCalls: toolCalls}
 	if resp.UsageMetadata != nil {
 		out.Usage = &AIUsage{
 			PromptTokens:     resp.UsageMetadata.PromptTokenCount,

@@ -25,11 +25,12 @@ const anthropicVersion = "2023-06-01"
 const anthropicDefaultMaxTokens = 4096
 
 // anthropicMessage is one message in the Anthropic messages[] array. Role is
-// "user" or "assistant"; content is the simple string form (the API also accepts
-// a content-blocks array, but the string form is the universal denominator).
+// "user" or "assistant". Content is raw JSON: a JSON string for plain text
+// turns (the universal denominator) or an array of content blocks for
+// tool-bearing turns (assistant tool_use, user tool_result).
 type anthropicMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
 }
 
 // anthropicRequest is the /v1/messages request body.
@@ -63,6 +64,7 @@ const anthropicStructuredToolName = "structured_output"
 type anthropicResponse struct {
 	Content []struct {
 		Type  string          `json:"type"`
+		ID    string          `json:"id"`
 		Text  string          `json:"text"`
 		Name  string          `json:"name"`
 		Input json.RawMessage `json:"input"`
@@ -119,36 +121,87 @@ func anthropicClassifyError(raw []byte, status int) *AIError {
 func completeAnthropic(ctx context.Context, req CompleteRequest, model, baseURL string) (CompleteResult, error) {
 	// Split system messages into the top-level system field (Anthropic does not
 	// accept role:"system" in messages[]). Remaining user/assistant messages
-	// pass through verbatim.
+	// pass through, with tool-bearing turns encoded as content blocks.
 	var system strings.Builder
 	var msgs []anthropicMessage
+	// Anthropic requires every tool_result for a multi-tool_use assistant turn
+	// to arrive in a SINGLE user message. The agent loop emits one RoleTool
+	// message per parallel tool call, so buffer consecutive tool results and
+	// flush them as one user turn when a non-tool message arrives (or at end).
+	var pendingToolResults []map[string]any
+	flushToolResults := func() {
+		if len(pendingToolResults) == 0 {
+			return
+		}
+		msgs = append(msgs, anthropicMessage{
+			Role:    RoleUser,
+			Content: marshalContentBlocks(pendingToolResults),
+		})
+		pendingToolResults = nil
+	}
 	for _, m := range req.Messages {
 		if m.Role == "system" {
+			flushToolResults()
 			if system.Len() > 0 {
 				system.WriteString("\n\n")
 			}
 			system.WriteString(m.Content)
 			continue
 		}
-		role := m.Role
-		if role != "assistant" {
-			role = "user"
+		// Tool result → buffer a tool_result content block keyed to the prior
+		// tool_use id (Anthropic's tool-result wire shape).
+		if m.Role == RoleTool {
+			pendingToolResults = append(pendingToolResults, map[string]any{
+				"type":        "tool_result",
+				"tool_use_id": m.ToolCallID,
+				"content":     m.Content,
+			})
+			continue
 		}
-		msgs = append(msgs, anthropicMessage{Role: role, Content: m.Content})
+		// Any non-tool turn terminates the current tool-result run.
+		flushToolResults()
+		// Assistant turn that requested tools → assistant turn with tool_use
+		// blocks (plus an optional leading text block when Content is set).
+		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
+			blocks := make([]map[string]any, 0, 1+len(m.ToolCalls))
+			if m.Content != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": m.Content})
+			}
+			for _, tc := range m.ToolCalls {
+				blocks = append(blocks, map[string]any{
+					"type":  "tool_use",
+					"id":    tc.ID,
+					"name":  tc.Name,
+					"input": anthropicInputFromRaw(tc.Arguments),
+				})
+			}
+			msgs = append(msgs, anthropicMessage{
+				Role:    RoleAssistant,
+				Content: marshalContentBlocks(blocks),
+			})
+			continue
+		}
+		role := m.Role
+		if role != RoleAssistant {
+			role = RoleUser
+		}
+		msgs = append(msgs, anthropicMessage{Role: role, Content: jsonString(m.Content)})
 	}
+	flushToolResults()
 	// max_tokens is mandatory for Anthropic. Default when the caller omits it.
 	maxTokens := anthropicDefaultMaxTokens
 	if req.MaxTokens != nil && *req.MaxTokens > 0 {
 		maxTokens = *req.MaxTokens
 	}
+	tools, toolChoice := anthropicBuildTools(req)
 	body, err := json.Marshal(anthropicRequest{
 		Model:       model,
 		MaxTokens:   maxTokens,
 		System:      system.String(),
 		Messages:    msgs,
 		Temperature: req.Temperature,
-		Tools:       anthropicStructuredTools(req.ResponseSchema),
-		ToolChoice:  anthropicStructuredChoice(req.ResponseSchema),
+		Tools:       tools,
+		ToolChoice:  toolChoice,
 	})
 	if err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}
@@ -173,11 +226,12 @@ func completeAnthropic(ctx context.Context, req CompleteRequest, model, baseURL 
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("parse response: %v", err)}
 	}
-	// Concatenate all text blocks. When forced tool-use is active, extract the
-	// structured output from the tool_use block's input (JSON-stringified so
-	// the existing string-based contract holds). A text block alongside a
-	// tool_use block (thinking text) is ignored for the structured result.
+	// Concatenate text blocks and collect real tool_use blocks. When forced
+	// tool-use for structured output is active, extract that tool's input as
+	// JSON-stringified content (existing contract). Any other tool_use block
+	// becomes a ToolCall on the result.
 	var sb strings.Builder
+	var toolCalls []ToolCall
 	for _, b := range resp.Content {
 		if b.Type == "tool_use" && b.Name == anthropicStructuredToolName && len(b.Input) > 0 {
 			// A truncated tool_use (stop_reason=max_tokens) produces incomplete
@@ -188,14 +242,22 @@ func completeAnthropic(ctx context.Context, req CompleteRequest, model, baseURL 
 			}
 			return CompleteResult{Content: string(b.Input), Model: resp.Model}, nil
 		}
+		if b.Type == "tool_use" {
+			toolCalls = append(toolCalls, ToolCall{
+				ID:        b.ID,
+				Name:      b.Name,
+				Arguments: anthropicInputFromRaw(b.Input),
+			})
+			continue
+		}
 		if b.Type == "text" {
 			sb.WriteString(b.Text)
 		}
 	}
-	if sb.Len() == 0 {
+	if sb.Len() == 0 && len(toolCalls) == 0 {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: "provider returned no text content"}
 	}
-	out := CompleteResult{Content: sb.String(), Model: resp.Model}
+	out := CompleteResult{Content: sb.String(), Model: resp.Model, ToolCalls: toolCalls}
 	if resp.Usage != nil {
 		out.Usage = &AIUsage{
 			PromptTokens:     resp.Usage.InputTokens,
@@ -266,24 +328,72 @@ func listModelsAnthropic(ctx context.Context, p AIProvider, baseURL string) ([]A
 	return out, nil
 }
 
-// anthropicStructuredTools returns a single forced tool whose input_schema is
-// the given JSON Schema, or nil when no schema is set (no structured output).
-func anthropicStructuredTools(schema json.RawMessage) []anthropicTool {
-	if len(schema) == 0 {
-		return nil
+// anthropicBuildTools assembles the tools array + tool_choice for a request,
+// merging caller-provided real tools with the structured_output tool (#595).
+//
+// When ResponseSchema is set, the structured_output tool is appended AND its
+// selection is forced — preserving the existing structured-output contract
+// verbatim (a caller ToolChoice is ignored in that case). When only caller
+// tools are present, the caller's ToolChoice maps onto Anthropic's tool_choice
+// (nil → provider default / auto).
+func anthropicBuildTools(req CompleteRequest) ([]anthropicTool, any) {
+	var tools []anthropicTool
+	for _, t := range req.Tools {
+		tools = append(tools, anthropicTool{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: normalizeSchemaObject(t.Parameters),
+		})
 	}
-	return []anthropicTool{{
-		Name:        anthropicStructuredToolName,
-		Description: "Return the structured result",
-		InputSchema: schema,
-	}}
+	if len(req.ResponseSchema) > 0 {
+		tools = append(tools, anthropicTool{
+			Name:        anthropicStructuredToolName,
+			Description: "Return the structured result",
+			InputSchema: req.ResponseSchema,
+		})
+		return tools, map[string]string{"type": "tool", "name": anthropicStructuredToolName}
+	}
+	return tools, anthropicToolChoiceFromRequest(req.ToolChoice)
 }
 
-// anthropicStructuredChoice forces the model to call the structured-output tool
-// when a schema is set, or nil when no schema is set.
-func anthropicStructuredChoice(schema json.RawMessage) any {
-	if len(schema) == 0 {
+// anthropicToolChoiceFromRequest maps the unified ToolChoice onto Anthropic's
+// tool_choice shape: auto→auto, required→any, none→none, force→specific tool.
+func anthropicToolChoiceFromRequest(tc *ToolChoice) any {
+	if tc == nil {
 		return nil
 	}
-	return map[string]string{"type": "tool", "name": anthropicStructuredToolName}
+	switch tc.Mode {
+	case ToolChoiceAuto:
+		return map[string]string{"type": "auto"}
+	case ToolChoiceRequired:
+		return map[string]string{"type": "any"}
+	case ToolChoiceNone:
+		return map[string]string{"type": "none"}
+	case ToolChoiceForce:
+		if tc.ToolName == "" {
+			return map[string]string{"type": "any"}
+		}
+		return map[string]string{"type": "tool", "name": tc.ToolName}
+	}
+	return nil
+}
+
+// anthropicInputFromRaw normalizes a tool-call arguments RawMessage into a
+// valid JSON object for Anthropic's tool_use input field (defaults to {} when
+// empty or non-object).
+func anthropicInputFromRaw(raw json.RawMessage) json.RawMessage {
+	return normalizeToolArguments(raw)
+}
+
+// jsonString wraps a plain string as a JSON-encoded RawMessage.
+func jsonString(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
+}
+
+// marshalContentBlocks serializes an Anthropic content-block array. The blocks
+// are pre-built maps; this is a thin marshal helper that keeps callers terse.
+func marshalContentBlocks(blocks []map[string]any) json.RawMessage {
+	b, _ := json.Marshal(blocks)
+	return b
 }

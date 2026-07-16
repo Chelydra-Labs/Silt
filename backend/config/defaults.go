@@ -135,8 +135,8 @@ func Defaults() SystemConfig {
 			// silt-ai-summary (#220) ships OFF by default: it is the first plugin
 			// that sends note content to an external LLM endpoint, so the user
 			// opts in explicitly (Plugins tab) after configuring a provider.
-			// AI plugins ship OFF by default (summary + Q&A + Writing Assistant).
-			Disabled: []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant"},
+			// AI plugins ship OFF by default (summary + Q&A + Writing Assistant + Agent).
+			Disabled: []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant", "silt-ai-agent"},
 			PluginSettings: map[string]any{
 				// silt-tasks is the unified hub (Phase 9 / #431). Every key
 				// the frontend loaders read (settings.ts) is seeded so a

@@ -45,9 +45,10 @@ import (
 // AI stream event names pushed to the frontend (#226). Payload is always a
 // single object (ev.data on the JS side).
 const (
-	aiEventCompleteDelta = "ai:complete:delta"
-	aiEventCompleteDone  = "ai:complete:done"
-	aiEventCompleteError = "ai:complete:error"
+	aiEventCompleteDelta     = "ai:complete:delta"
+	aiEventCompleteDone      = "ai:complete:done"
+	aiEventCompleteError     = "ai:complete:error"
+	aiEventCompleteToolDelta = "ai:complete:tool-delta"
 )
 
 // aiStreamBufferCap is the max number of unconsumed delta events buffered per
@@ -160,9 +161,35 @@ type AIPublicConfig struct {
 }
 
 // PluginAIChatMessage is one chat message crossing the plugin→service boundary.
+// For multi-turn tool use (#595): assistant turns may carry tool_calls, and a
+// tool result turn (role "tool") carries tool_call_id correlating it.
 type PluginAIChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string             `json:"role"`
+	Content    string             `json:"content"`
+	ToolCalls  []PluginAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string             `json:"tool_call_id,omitempty"`
+}
+
+// PluginAIToolDef declares one tool a plugin exposes to the model (#595).
+// Parameters is a raw JSON Schema object.
+type PluginAIToolDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// PluginAIToolCall is one tool invocation the model requested (#595). Arguments
+// is the raw JSON object bytes (unwrapped from OpenAI's stringified form).
+type PluginAIToolCall struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+// PluginAIToolChoice constrains tool selection (#595).
+type PluginAIToolChoice struct {
+	Mode     string `json:"mode"`                // auto|required|none|force
+	ToolName string `json:"tool_name,omitempty"` // set when Mode == "force"
 }
 
 // PluginAICompleteInput is the plugin-side request envelope for a chat
@@ -177,6 +204,8 @@ type PluginAICompleteInput struct {
 	ReasoningEffort *string               `json:"reasoning_effort,omitempty"`
 	Stream          bool                  `json:"stream,omitempty"`
 	ResponseSchema  json.RawMessage       `json:"response_schema,omitempty"`
+	Tools           []PluginAIToolDef     `json:"tools,omitempty"`
+	ToolChoice      *PluginAIToolChoice   `json:"tool_choice,omitempty"`
 }
 
 // PluginAIEmbedInput is the plugin-side request envelope for an embedding batch.
@@ -734,6 +763,13 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 			return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrBadRequest, Message: fmt.Sprintf("invalid reasoning_effort %q: must be one of none, minimal, low, medium, high, xhigh, max", *input.ReasoningEffort)}
 		}
 	}
+	// Validate tools + tool_choice at the boundary so a malformed request
+	// fails fast (bad-request) before snapshotting config or rate-limiting.
+	// Providers normalize inconsistently; this keeps one source of truth.
+	if verr := validateAITools(input.Tools, input.ToolChoice); verr != nil {
+		a.wg.Done()
+		return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrBadRequest, Message: verr.Error()}
+	}
 	provider, configuredModel, drainDone, err := a.withAIPreflight(pluginID, sessionToken, "chat")
 	if err != nil {
 		a.wg.Done()
@@ -746,7 +782,12 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 	}
 	messages := make([]ai.ChatMessage, len(input.Messages))
 	for i, m := range input.Messages {
-		messages[i] = ai.ChatMessage{Role: m.Role, Content: m.Content}
+		messages[i] = ai.ChatMessage{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCalls:  toAIToolCalls(m.ToolCalls),
+			ToolCallID: m.ToolCallID,
+		}
 	}
 	req := ai.CompleteRequest{
 		Provider:        provider,
@@ -756,6 +797,8 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 		MaxTokens:       input.MaxTokens,
 		ReasoningEffort: input.ReasoningEffort,
 		ResponseSchema:  input.ResponseSchema,
+		Tools:           toAIToolDefs(input.Tools),
+		ToolChoice:      toAIToolChoice(input.ToolChoice),
 	}
 
 	if input.Stream {
@@ -807,6 +850,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 	// Buffered channel for backpressure between SSE reader and event emit.
 	// Producer aborts if the buffer fills (consumer not keeping up).
 	deltaCh := make(chan string, aiStreamBufferCap)
+	toolDeltaCh := make(chan ai.ToolCallDelta, aiStreamBufferCap)
 
 	// Audit stream start (one row); terminal status is audited when the
 	// goroutine finishes (#226 — not per-token).
@@ -857,6 +901,23 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			}
 		}()
 
+		// Fan-out tool-call fragments to a parallel event so the chat UX can
+		// surface in-progress tool invocations live (#595).
+		emitToolDone := make(chan struct{})
+		go func() {
+			defer close(emitToolDone)
+			for frag := range toolDeltaCh {
+				a.emit(aiEventCompleteToolDelta, map[string]any{
+					"stream_id":          streamID,
+					"plugin_id":          pluginID,
+					"index":              frag.Index,
+					"id":                 frag.ID,
+					"name":               frag.Name,
+					"arguments_fragment": frag.ArgumentsFragment,
+				})
+			}
+		}()
+
 		// Natural backpressure: block until the emit goroutine drains a slot
 		// or the stream is cancelled. A default arm would turn a momentary
 		// full buffer into a hard abort mid-answer (PR #540 review).
@@ -867,9 +928,18 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			case <-streamCtx.Done():
 				return streamCtx.Err()
 			}
+		}, func(frag ai.ToolCallDelta) error {
+			select {
+			case toolDeltaCh <- frag:
+				return nil
+			case <-streamCtx.Done():
+				return streamCtx.Err()
+			}
 		})
 		close(deltaCh)
+		close(toolDeltaCh)
 		<-emitDone
+		<-emitToolDone
 
 		status := "ok"
 		if callErr != nil {
@@ -897,6 +967,9 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			"plugin_id": pluginID,
 			"content":   result.Content,
 			"model":     result.Model,
+		}
+		if len(result.ToolCalls) > 0 {
+			payload["tool_calls"] = result.ToolCalls
 		}
 		if result.Usage != nil {
 			payload["usage"] = result.Usage
@@ -1027,6 +1100,92 @@ func aiErrKind(err error) string {
 		return string(e.Kind)
 	}
 	return "error"
+}
+
+// toAIToolDefs maps the plugin-facing tool defs into the ai package's
+// normalized ToolDef. The shapes are identical; this keeps the conversion in
+// one place so future divergence is intentional, not accidental.
+func toAIToolDefs(in []PluginAIToolDef) []ai.ToolDef {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ai.ToolDef, len(in))
+	for i, t := range in {
+		out[i] = ai.ToolDef{Name: t.Name, Description: t.Description, Parameters: t.Parameters}
+	}
+	return out
+}
+
+// toAIToolCalls maps plugin-facing tool calls into the ai package's ToolCall.
+func toAIToolCalls(in []PluginAIToolCall) []ai.ToolCall {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ai.ToolCall, len(in))
+	for i, c := range in {
+		out[i] = ai.ToolCall{ID: c.ID, Name: c.Name, Arguments: c.Arguments}
+	}
+	return out
+}
+
+// toAIToolChoice maps the plugin-facing tool choice into the ai package's
+// pointer-based ToolChoice (nil stays nil → provider default).
+func toAIToolChoice(in *PluginAIToolChoice) *ai.ToolChoice {
+	if in == nil {
+		return nil
+	}
+	return &ai.ToolChoice{Mode: in.Mode, ToolName: in.ToolName}
+}
+
+// validateAITools rejects malformed tool definitions and tool_choice at the
+// plugin boundary. Tool names must be non-empty; tool_choice.mode must be a
+// known value; a "force" choice must name a declared tool. Providers each
+// normalize tool_choice in their own shape and only partially coerce bad
+// input, so this keeps a single source of truth before rate-limiting or HTTP.
+func validateAITools(tools []PluginAIToolDef, choice *PluginAIToolChoice) error {
+	seen := make(map[string]struct{}, len(tools))
+	for _, t := range tools {
+		if strings.TrimSpace(t.Name) == "" {
+			return fmt.Errorf("tool definitions must each carry a non-empty name")
+		}
+		if _, dup := seen[t.Name]; dup {
+			return fmt.Errorf("duplicate tool name %q", t.Name)
+		}
+		seen[t.Name] = struct{}{}
+		// parameters must be a JSON Schema object. Reject missing, scalar,
+		// and array shapes that providers would forward verbatim and then
+		// reject or misparse.
+		if len(t.Parameters) == 0 {
+			return fmt.Errorf("tool %q parameters must be a JSON Schema object", t.Name)
+		}
+		var params map[string]any
+		if err := json.Unmarshal(t.Parameters, &params); err != nil {
+			return fmt.Errorf("tool %q parameters must be a JSON object: %w", t.Name, err)
+		}
+		if pt, ok := params["type"].(string); ok && pt != "object" {
+			return fmt.Errorf("tool %q parameters must be type \"object\", got %q", t.Name, pt)
+		}
+	}
+	if choice == nil {
+		return nil
+	}
+	switch choice.Mode {
+	case ai.ToolChoiceAuto, ai.ToolChoiceRequired, ai.ToolChoiceNone, ai.ToolChoiceForce:
+	default:
+		return fmt.Errorf("tool_choice.mode %q must be one of auto, required, none, force", choice.Mode)
+	}
+	if choice.Mode == ai.ToolChoiceForce {
+		if strings.TrimSpace(choice.ToolName) == "" {
+			return fmt.Errorf(`tool_choice.mode "force" requires tool_name`)
+		}
+		for _, t := range tools {
+			if t.Name == choice.ToolName {
+				return nil
+			}
+		}
+		return fmt.Errorf("tool_choice forces unknown tool %q", choice.ToolName)
+	}
+	return nil
 }
 
 // migrateAIKeysToKeyring moves any plaintext AI API keys found in config.yaml

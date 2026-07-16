@@ -29,6 +29,7 @@ func TestFirstPartyPluginIDs_ExactSet(t *testing.T) {
 		"silt-ai-summary",
 		"silt-ai-qa",
 		"silt-ai-assistant",
+		"silt-ai-agent",
 	}
 	got := make([]string, 0, len(FirstPartyPluginIDs))
 	for id := range FirstPartyPluginIDs {
@@ -84,5 +85,17 @@ func TestFirstPartyPluginIDs_ContainsAIAssistant(t *testing.T) {
 		t.Fatal("silt-ai-assistant must be a reserved first-party id; without it " +
 			"seedFirstPartyGrants never seeds ai/content-mutate and every " +
 			"complete/accept path is denied at the Go requireGrant gate (#230)")
+	}
+}
+
+// TestFirstPartyPluginIDs_ContainsAIAgent is the focused regression for #596:
+// silt-ai-agent MUST be reserved so its ai + content-mutate + plugin-db +
+// read-files grants are seeded. Without the reservation, requireGrant denies
+// every ctx.ai.complete tool-call turn.
+func TestFirstPartyPluginIDs_ContainsAIAgent(t *testing.T) {
+	if !IsFirstPartyID("silt-ai-agent") {
+		t.Fatal("silt-ai-agent must be a reserved first-party id; without it " +
+			"seedFirstPartyGrants never seeds ai/content-mutate/plugin-db and " +
+			"every agent loop turn is denied at the Go requireGrant gate (#596)")
 	}
 }

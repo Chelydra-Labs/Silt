@@ -677,7 +677,7 @@ Backend Hooking Structure: Plugins communicate with the Go backend via standard 
 
 8.2 Host-Plugin API Specification (Frontend)
 
-Plugins run as native ES modules. First-party plugins ship as compiled Svelte components bundled with the app; third-party plugins live in `.system/plugins/<id>/index.js` and are loaded at boot (native ESM via a blob URL so Vite does not resolve them at build time). Both kinds receive the same PluginContext:
+Plugins run as native ES modules. First-party plugins with navigable views ship as compiled Svelte components bundled with the app; headless first-party providers may omit a view. Third-party plugins live in `.system/plugins/<id>/index.js` and are loaded at boot (native ESM via a blob URL so Vite does not resolve them at build time). Both kinds receive the same PluginContext:
 
 ```ts
 export interface PluginContext {
@@ -709,7 +709,70 @@ export interface SiltPlugin {
 
 The active `notebook/section/page` from the navigator is bound into the context as LIVE reactive getters; reading them inside a Svelte reactive context (template, `$derived`, `$effect`) tracks navigation changes automatically. `sqliteQuery` is read-only (anything other than SELECT/WITH is rejected). `getPluginSettings` resolves per-active-notebook so a plugin rendering for a linked notebook sees the co-located overrides; writes still persist to the vault config via `updatePluginSetting`. See `docs/PLUGIN_DEVELOPMENT.md` for the full author guide.
 
-**v2 SDK.** The PluginContext was expanded with: a capability/permission model (`capabilities` in the manifest, per-vault grants in `config.yaml`); lifecycle hooks (`onVaultOpen`/`onVaultClose`/`onShutdown`); a typed event bus (`ctx.on`); content CRUD (`createBlock`/`deleteBlock`/`moveBlock` + page/section/notebook CRUD); file I/O (`readFile`/`writeFile`/`deleteFile`/`listDir` + scratch space); OS integration (`openInNativeHandler`/`openUrl`/pickers/clipboard/notify); network/fetch (Go-side proxy, `network` capability-gated); editor extension points (slash-command registry + generic `embedBlock` node); rendered UI surfaces (sandboxed iframe + postMessage bridge); and a declarative settings schema (`settings` in the manifest, generated UI). Every privileged binding is gated server-side by `requireGrant`; `exec` is deferred. See `docs/PLUGIN_DEVELOPMENT.md` §8 for the full surface.
+**v2 SDK.** The PluginContext was expanded with: a capability/permission model (`capabilities` in the manifest, per-vault grants in `config.yaml`); lifecycle hooks (`onVaultOpen`/`onVaultClose`/`onShutdown`); a typed event bus (`ctx.on`); content CRUD (`createBlock`/`deleteBlock`/`moveBlock` + page/section/notebook CRUD); file I/O (`readFile`/`writeFile`/`deleteFile`/`listDir` + scratch space); OS integration (`openInNativeHandler`/`openUrl`/pickers/clipboard/notify); network/fetch (Go-side proxy, `network` capability-gated); editor extension points (slash-command registry + generic `embedBlock` node); rendered UI surfaces (sandboxed iframe + postMessage bridge); a declarative settings schema (`settings` in the manifest, generated UI); and the AI surface (`ctx.ai.complete` / `ctx.ai.embed`). The AI surface carries optional `tools` / `tool_choice` and returns `tool_calls` (`PluginAIToolDef` / `PluginAIToolChoice` / `PluginAIToolCall`); `messages` supports a `tool` role (with `tool_call_id` / `tool_calls`) for multi-turn tool use. Every privileged binding is gated server-side by `requireGrant`; `exec` is deferred. See `docs/PLUGIN_DEVELOPMENT.md` §8 for the full surface.
+
+**AI tool-calling contract (#595).** The chat surface is provider-agnostic: the host maps the unified `tools` / `tool_choice` onto each provider's wire shape (OpenAI-compat functions, Anthropic `tool_use`, Google `functionDeclarations`) and decodes the model's tool invocations back into a single `tool_calls` result. The exact types a plugin consumes:
+
+```ts
+export interface PluginAIToolDef {
+  name: string;
+  description?: string;
+  parameters: Record<string, unknown>; // JSON Schema (lowercase type strings)
+}
+
+export interface PluginAIToolChoice {
+  mode: 'auto' | 'required' | 'none' | 'force';
+  toolName?: string; // set when mode === 'force'
+}
+
+export interface PluginAIToolCall {
+  id: string;            // correlates the tool-result message with this call
+  name: string;
+  arguments: Record<string, unknown>; // raw JSON object (unwrapped from
+}                        // OpenAI's stringified form by the host)
+
+// PluginAICompleteRequest gains optional tools + tool_choice
+interface PluginAICompleteRequest {
+  messages: PluginAIChatMessage[];
+  tools?: PluginAIToolDef[];
+  toolChoice?: PluginAIToolChoice;
+  responseSchema?: Record<string, unknown>;
+  // ...model/temperature/max_tokens/stream fields
+}
+
+// PluginAICompleteResult gains tool_calls (content may be empty when only
+// tool calls were emitted)
+interface PluginAICompleteResult {
+  content: string;
+  toolCalls?: PluginAIToolCall[];
+  // ...model/usage/stream_id fields
+}
+
+// PluginAIChatMessage supports role 'tool' for multi-turn tool results:
+// an assistant turn may carry tool_calls; a 'tool' turn carries tool_call_id
+interface PluginAIChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  toolCalls?: PluginAIToolCall[];   // on assistant turns
+  toolCallId?: string;              // on 'tool' turns (correlates the call)
+}
+```
+
+For streamed runs, in-progress tool-call fragments arrive via the
+`ai:complete:tool-delta` event (indexed by call, arguments concatenated across
+chunks) alongside the text `ai:complete:delta` events. Destructive plugin tools
+(e.g. `silt-ai-agent`'s `rename_tag`) stage behind a single-use confirmation
+token rather than executing directly — see `docs/plugins/silt-ai-agent.md`.
+
+**Unified AI interaction.** Silt presents AI chat through one right-side
+**Silt AI** drawer rather than separate AI plugin views. The drawer accepts
+typed contributions for conversation text, evidence and citations, tool
+activity, reviewable proposals, staged confirmations, and status. AI-capable
+plugins are headless capability providers: they retain lifecycle, settings,
+retrieval, writing, and tool services while contributing their results to the
+shared chat surface. A plugin view component is therefore optional; the agent
+loop provides the default orchestration, retrieval supplies grounded evidence,
+and writing actions preserve propose-before-write review.
 
 8.3 Core Feature Decoupling
 

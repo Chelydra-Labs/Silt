@@ -3,6 +3,10 @@
 Search your vault with hybrid keyword + semantic retrieval, and get answers
 grounded in your own notes with clickable citations.
 
+This plugin is now a **headless capability provider** for the unified **Silt
+AI** drawer. Its retrieval index, citations, settings, and lifecycle remain
+plugin-owned; answers and evidence render in the shared typed transcript.
+
 **Off by default.** Enable under **Settings → AI Assistant** (or Plugins).
 
 ## What it does
@@ -24,15 +28,13 @@ grounded in your own notes with clickable citations.
 2. **Settings → AI Assistant**
    - Enable the plugin.
    - Optionally limit **notebook scope**.
-   - Click **Rebuild index** (first run). Progress shows in the panel.
-3. Open the **AI Assistant** drawer from the title-bar icon (next to Search)
-   and ask a question.
+   - Click **Rebuild index** (first run). Progress shows in the settings page.
+3. Open **Silt AI** from the title bar and ask a question.
 
-## Drawer
+## Unified AI chat
 
-The AI Assistant drawer is **mutually exclusive** with the **Writing Assistant**
-drawer: opening one closes the other so they never squeeze the note pane.
-**Escape** closes the AI Assistant drawer.
+Q&A answers and clickable citations render in the shared Silt AI drawer. The
+standard Search surface remains separate, and **Escape** closes the AI drawer.
 
 ## Privacy
 

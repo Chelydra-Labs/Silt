@@ -15,7 +15,8 @@ describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () =>
     'silt-tasks',
     'silt-ai-summary',
     'silt-ai-qa',
-    'silt-ai-assistant'
+    'silt-ai-assistant',
+    'silt-ai-agent'
   ]
 
   it('frontend registry ids match the Go FirstPartyPluginIDs roster', () => {
@@ -44,6 +45,15 @@ describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () =>
         p?.manifest.capabilities?.['content-mutate'],
         `${id} must declare content-mutate`
       ).toBe(true)
+    }
+  })
+
+  it('registers the unified AI providers without standalone view components', () => {
+    for (const id of ['silt-ai-qa', 'silt-ai-assistant', 'silt-ai-agent']) {
+      const plugin = firstPartyPlugins().find(
+        (entry) => entry.manifest.id === id
+      )
+      expect(plugin?.component, `${id} should be headless`).toBeUndefined()
     }
   })
 })

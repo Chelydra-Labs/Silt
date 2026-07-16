@@ -67,7 +67,7 @@ Candidates scored on usefulness (note workflow), reliability (parse success), an
 
 | Idea | Rationale |
 |---|---|
-| Open-ended autonomous agent / tool-use loop | Unreliable on small models; violates “no unsolicited writes” |
+| Open-ended autonomous agent / tool-use loop | Unreliable on small models; violates “no unsolicited writes” _(re-opened by Sprint 41’s `silt-ai-agent` — [silt-ai-agent.md](./silt-ai-agent.md) — under safety gates: user-invoked entry, transparent tool calls, staged confirmation for destructive ops)_ |
 | Image generation | Out of scope for note writing; not high-value for Silt’s markdown core |
 | Auto-generate content on note open | Unsolicited AI slop; user must invoke |
 | Free-form chat that edits the vault | Overlaps Q&A drawer; edit path must stay proposal-based |

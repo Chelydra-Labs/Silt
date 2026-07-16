@@ -10,12 +10,9 @@
     sidebarCollapsed: boolean
     sidebarWidth?: number
     onSearchClick: () => void
-    /** When set, show the AI Assistant toggle (plugin enabled). */
-    onAIAssistantClick?: () => void
-    aiAssistantOpen?: boolean
-    /** When set, show the Writing Assistant toggle (silt-ai-assistant). */
-    onWritingAssistantClick?: () => void
-    writingAssistantOpen?: boolean
+    /** When set, show the unified AI toggle (an AI provider is available). */
+    onAIClick?: () => void
+    aiOpen?: boolean
     children?: import('svelte').Snippet
   }
 
@@ -23,10 +20,8 @@
     sidebarCollapsed = $bindable(),
     sidebarWidth = 256,
     onSearchClick,
-    onAIAssistantClick,
-    aiAssistantOpen = false,
-    onWritingAssistantClick,
-    writingAssistantOpen = false,
+    onAIClick,
+    aiOpen = false,
     children
   }: Props = $props()
 
@@ -118,7 +113,7 @@
     {/if}
   </div>
 
-  <!-- Right: search + AI Assistant (near the right drawer) + window controls -->
+  <!-- Right: standard search + unified AI drawer + window controls -->
   <div class="flex items-center gap-2 flex-shrink-0 h-full pr-2">
     <button
       type="button"
@@ -136,38 +131,22 @@
       <span class="material-symbols-outlined text-type-2xl">search</span>
     </button>
 
-    {#if onAIAssistantClick}
+    {#if onAIClick}
       <button
         type="button"
-        onclick={onAIAssistantClick}
-        aria-label="AI Assistant"
-        aria-pressed={aiAssistantOpen}
-        title="AI Assistant"
+        onclick={onAIClick}
+        aria-label="Silt AI"
+        aria-expanded={aiOpen}
+        aria-controls="silt-ai-drawer"
+        title="Silt AI"
         class="flex items-center justify-center h-9 w-9 rounded-lg transition-colors cursor-pointer border-none bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-        class:text-accent-primary-start={aiAssistantOpen}
-        class:text-surface-titlebar-text-muted={!aiAssistantOpen}
-        class:hover:text-surface-titlebar-text={!aiAssistantOpen}
+        class:text-accent-primary-start={aiOpen}
+        class:text-surface-titlebar-text-muted={!aiOpen}
+        class:hover:text-surface-titlebar-text={!aiOpen}
         class:hover:bg-hover={true}
       >
         <span class="material-symbols-outlined text-type-2xl">auto_awesome</span
         >
-      </button>
-    {/if}
-
-    {#if onWritingAssistantClick}
-      <button
-        type="button"
-        onclick={onWritingAssistantClick}
-        aria-label="Writing Assistant"
-        aria-pressed={writingAssistantOpen}
-        title="Writing Assistant"
-        class="flex items-center justify-center h-9 w-9 rounded-lg transition-colors cursor-pointer border-none bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-        class:text-accent-primary-start={writingAssistantOpen}
-        class:text-surface-titlebar-text-muted={!writingAssistantOpen}
-        class:hover:text-surface-titlebar-text={!writingAssistantOpen}
-        class:hover:bg-hover={true}
-      >
-        <span class="material-symbols-outlined text-type-2xl">ink_pen</span>
       </button>
     {/if}
 

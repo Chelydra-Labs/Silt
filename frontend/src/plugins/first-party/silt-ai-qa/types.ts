@@ -1,4 +1,9 @@
 // Types for silt-ai-qa (#224–#228, Sprint 42).
+//
+// RetrievedPassage moved to the shared retrieval module (#597) and is
+// re-exported here so existing QA imports (`from './types'`) keep working.
+
+export type { RetrievedPassage } from '../../shared/retrieval/hybrid'
 
 export interface QASettings {
   /** Notebooks to index. Empty = all notebooks. */
@@ -30,18 +35,6 @@ export interface ChunkRecord {
   lineNumber: number
   text: string
   contentHash: string
-}
-
-export interface RetrievedPassage {
-  blockId: string
-  notebook: string
-  section: string
-  page: string
-  lineNumber: number
-  text: string
-  score: number
-  /** 1-based citation marker used in the prompt ([1], [2], …). */
-  citeIndex: number
 }
 
 export interface Citation {

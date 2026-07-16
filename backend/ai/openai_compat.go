@@ -16,19 +16,156 @@ import (
 
 // chatRequest is the OpenAI-compatible /v1/chat/completions request body.
 type chatRequest struct {
-	Model           string        `json:"model"`
-	Messages        []ChatMessage `json:"messages"`
-	Temperature     *float64      `json:"temperature,omitempty"`
-	MaxTokens       *int          `json:"max_tokens,omitempty"`
-	ReasoningEffort *string       `json:"reasoning_effort,omitempty"`
-	Stream          bool          `json:"stream,omitempty"`
+	Model           string          `json:"model"`
+	Messages        []openaiMessage `json:"messages"`
+	Temperature     *float64        `json:"temperature,omitempty"`
+	MaxTokens       *int            `json:"max_tokens,omitempty"`
+	ReasoningEffort *string         `json:"reasoning_effort,omitempty"`
+	Stream          bool            `json:"stream,omitempty"`
+	Tools           []openaiTool    `json:"tools,omitempty"`
+	ToolChoice      any             `json:"tool_choice,omitempty"`
+}
+
+// openaiMessage is the wire shape for one message. Assistant turns that
+// requested tools carry tool_calls; tool results carry tool_call_id. Plain
+// text turns carry only Role + Content (the historical shape).
+type openaiMessage struct {
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+}
+
+// openaiTool is one entry in the request tools[] array: a function wrapper.
+type openaiTool struct {
+	Type     string        `json:"type"` // always "function"
+	Function openaiToolDef `json:"function"`
+}
+
+// openaiToolDef is the function definition inside a tool entry.
+type openaiToolDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// openaiToolCall is one fully-formed tool invocation in an assistant message
+// (history replay). Arguments is a JSON-stringified object on the OpenAI wire.
+type openaiToolCall struct {
+	ID       string             `json:"id"`
+	Type     string             `json:"type"` // always "function"
+	Function openaiToolCallFunc `json:"function"`
+}
+
+type openaiToolCallFunc struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// openaiMessages converts the unified ChatMessage slice into the OpenAI wire
+// shape. Tool-call turns and tool-result turns are encoded per OpenAI's
+// chat-completions contract; plain text turns pass through unchanged.
+func openaiMessages(msgs []ChatMessage) []openaiMessage {
+	out := make([]openaiMessage, 0, len(msgs))
+	for _, m := range msgs {
+		om := openaiMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID}
+		if len(m.ToolCalls) > 0 {
+			om.ToolCalls = make([]openaiToolCall, len(m.ToolCalls))
+			for i, tc := range m.ToolCalls {
+				om.ToolCalls[i] = openaiToolCall{
+					ID:       tc.ID,
+					Type:     "function",
+					Function: openaiToolCallFunc{Name: tc.Name, Arguments: rawToOpenAIArgs(tc.Arguments)},
+				}
+			}
+		}
+		out = append(out, om)
+	}
+	return out
+}
+
+// openaiTools encodes the unified ToolDef slice as OpenAI function tools. An
+// empty Parameters schema is normalized to an empty object schema so the
+// provider doesn't reject the tool.
+func openaiTools(tools []ToolDef) []openaiTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]openaiTool, len(tools))
+	for i, t := range tools {
+		params := normalizeSchemaObject(t.Parameters)
+		out[i] = openaiTool{
+			Type: "function",
+			Function: openaiToolDef{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  params,
+			},
+		}
+	}
+	return out
+}
+
+// openaiToolChoice encodes the unified ToolChoice as the OpenAI tool_choice
+// field: a bare keyword ("auto"/"required"/"none") or a function-name object
+// for force. nil returns nil (field omitted).
+func openaiToolChoice(tc *ToolChoice) any {
+	if tc == nil {
+		return nil
+	}
+	switch tc.Mode {
+	case ToolChoiceAuto, ToolChoiceNone, ToolChoiceRequired:
+		return tc.Mode
+	case ToolChoiceForce:
+		if tc.ToolName == "" {
+			return ToolChoiceRequired
+		}
+		return map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": tc.ToolName},
+		}
+	}
+	return nil
+}
+
+// rawToOpenAIArgs renders a JSON object as the stringified JSON OpenAI expects
+// in a tool-call's arguments field. Invalid/non-object caller arguments are
+// normalized at the shared boundary before they are sent.
+func rawToOpenAIArgs(raw json.RawMessage) string {
+	return string(normalizeToolArguments(raw))
+}
+
+// openaiArgsToRaw turns OpenAI's stringified-JSON arguments into the raw JSON
+// object bytes the unified ToolCall carries. Invalid or non-object arguments
+// become {} because ToolCall.Arguments has one object-shaped contract.
+func openaiArgsToRaw(s string) json.RawMessage {
+	trimmed := strings.TrimSpace(s)
+	return normalizeToolArguments(json.RawMessage(trimmed))
+}
+
+// normalizeSchemaObject returns a non-empty JSON object schema, defaulting to
+// {"type":"object","properties":{}} when raw is empty so providers don't reject
+// a parameterless tool.
+func normalizeSchemaObject(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`{"type":"object","properties":{}}`)
+	}
+	return raw
 }
 
 // chatResponse is the OpenAI-compatible /v1/chat/completions response body.
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
 	Model string `json:"model"`
@@ -66,11 +203,13 @@ func completeOpenAI(ctx context.Context, req CompleteRequest, model, baseURL str
 	}
 	body, err := json.Marshal(chatRequest{
 		Model:           model,
-		Messages:        req.Messages,
+		Messages:        openaiMessages(req.Messages),
 		Temperature:     req.Temperature,
 		MaxTokens:       req.MaxTokens,
 		ReasoningEffort: reasoning,
 		Stream:          false, // buffered path; streaming uses streamOpenAI
+		Tools:           openaiTools(req.Tools),
+		ToolChoice:      openaiToolChoice(req.ToolChoice),
 	})
 	if err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("marshal request: %v", err)}
@@ -99,7 +238,16 @@ func completeOpenAI(ctx context.Context, req CompleteRequest, model, baseURL str
 	if len(resp.Choices) == 0 {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: "provider returned no choices"}
 	}
-	out := CompleteResult{Content: resp.Choices[0].Message.Content, Model: resp.Model}
+	msg := resp.Choices[0].Message
+	var toolCalls []ToolCall
+	for _, tc := range msg.ToolCalls {
+		toolCalls = append(toolCalls, ToolCall{
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: openaiArgsToRaw(tc.Function.Arguments),
+		})
+	}
+	out := CompleteResult{Content: msg.Content, Model: resp.Model, ToolCalls: toolCalls}
 	if resp.Usage != nil {
 		out.Usage = &AIUsage{
 			PromptTokens:     resp.Usage.PromptTokens,

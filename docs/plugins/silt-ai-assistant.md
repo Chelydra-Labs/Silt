@@ -5,6 +5,11 @@ clarify, extract tasks, suggest tags, and suggest related notes. Every result
 is a **proposal** you accept or discard. The AI never writes into your vault
 unsolicited.
 
+This plugin is now a **headless capability provider** for the unified **Silt
+AI** drawer. Its settings, slash commands, lifecycle, and proposal/apply
+flow remain; writing proposals render in the shared typed transcript rather
+than a standalone assistant surface.
+
 **Off by default.** Enable under **Settings → Writing Assistant** (or Plugins).
 
 > Not the same as **AI Assistant** (`silt-ai-qa`), which is vault Q&A / search.
@@ -32,8 +37,8 @@ unsolicited.
    - Enable the plugin.
    - Toggle individual actions.
    - Optionally set tag constraints and advanced prompt overrides.
-3. Open the panel from the title-bar **ink pen** icon, or run a slash command
-   in the editor (`/Draft`, `/Rewrite succinct`, …).
+3. Open **Silt AI** from the title bar, or run a slash command in the editor
+   (`/Draft`, `/Rewrite succinct`, …).
 
 ## Accept / reject model
 
@@ -50,7 +55,7 @@ ghost proposed text) before Accept. **Accept** (or Ctrl/Cmd+Enter) applies one
 ProseMirror replace transaction — a single undo step — then the normal autosave
 path writes to disk. **Reject** / **Escape** clears the preview only (no
 `docChanged`, no disk write). If the page is not focused, or the proposal is not
-a selection replace, the panel preview + SDK apply path remains.
+a selection replace, the unified drawer preview + SDK apply path remains.
 
 **Multi-block proposals.** When the selection spans multiple blocks and the AI
 returns multi-paragraph markdown, Accept creates one note block per paragraph —
@@ -58,17 +63,16 @@ paragraph structure is preserved instead of being flattened to a single line.
 Single-paragraph proposals, or proposals targeting a within-block selection,
 still use the inline replace path (flattened). If the target context can't
 accept block nodes (e.g. inside a table cell), the in-editor preview is not
-shown and the panel preview + SDK apply path handles the proposal instead — no
+shown and the unified drawer preview + SDK apply path handles the proposal instead — no
 proposal is ever silently dropped.
 
-## Drawer
+## Unified AI chat
 
-The Writing Assistant opens in a right-side drawer. It is **mutually exclusive**
-with the **AI Assistant** (Q&A) drawer: opening one closes the other so they
-never squeeze the note pane. Toggle either from its title-bar icon.
+Writing proposals render in the shared right-side Silt AI drawer alongside
+agent tool activity and Q&A evidence. There is one AI drawer, so the note pane
+is never squeezed by competing AI surfaces.
 
-**Escape** discards any in-flight proposal, then closes the Writing Assistant
-drawer.
+**Escape** discards any in-flight proposal, then closes the Silt AI drawer.
 
 ## Slash commands
 
@@ -88,7 +92,7 @@ They operate on the current selection when present, otherwise the active note.
 
 | Symptom | Fix |
 |---|---|
-| No title-bar ink pen icon | Enable Writing Assistant in settings |
+| No writing action in Silt AI | Enable Writing Assistant in settings |
 | “Chat model not configured” | Settings → AI Provider → set chat model |
 | Related notes empty / blocked | Set embedding model; ensure other notes exist |
 | Action missing from slash menu | Enable that action under Writing Assistant settings |

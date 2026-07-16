@@ -36,6 +36,10 @@ var FirstPartyPluginIDs = map[string]bool{
 	// silt-ai-assistant (#229–#233): Writing Assistant — curated writing
 	// actions with accept/reject. Uses ctx.ai.complete/embed and content-mutate.
 	"silt-ai-assistant": true,
+	// silt-ai-agent (#596): AI agent that uses tools to search, read, create,
+	// and organize notes. Uses ctx.ai.complete (with tools), content-mutate,
+	// plugin-db (staging tokens), and read-files.
+	"silt-ai-agent": true,
 }
 
 // IsFirstPartyID reports whether pluginID is a reserved (bundled) plugin id.

@@ -277,6 +277,7 @@ func normalize(cfg SystemConfig) SystemConfig {
 var optInDisabledPluginIDs = []string{
 	"silt-ai-qa",        // Sprint 22 / #224 — PR #540 review
 	"silt-ai-assistant", // Sprint 23 / #230 — Writing Assistant
+	"silt-ai-agent",     // AI Agent — opt-in by default
 }
 
 // seededOptInDisabledKey is a one-shot marker list under plugin_settings so we

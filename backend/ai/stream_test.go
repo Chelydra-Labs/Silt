@@ -1,7 +1,9 @@
 package ai
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -55,7 +57,7 @@ func TestCompleteStream_AggregatesDeltas(t *testing.T) {
 	}, func(delta string) error {
 		got = append(got, delta)
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("CompleteStream: %v", err)
 	}
@@ -98,7 +100,7 @@ func TestCompleteStream_CancelMidStream(t *testing.T) {
 			deltas.Add(1)
 			cancel() // cancel after first delta
 			return nil
-		})
+		}, nil)
 		errCh <- err
 	}()
 
@@ -116,17 +118,45 @@ func TestCompleteStream_CancelMidStream(t *testing.T) {
 	}
 }
 
-func TestCompleteStream_NativeProviderRejected(t *testing.T) {
-	_, err := CompleteStream(context.Background(), CompleteRequest{
-		Provider: AIProvider{BaseURL: "https://generativelanguage.googleapis.com", Model: "g", ProviderType: ProviderGoogle},
+func TestCompleteStream_NativeProviderBufferedFallback(t *testing.T) {
+	// Native providers have no SSE streaming; CompleteStream must fall back to
+	// a buffered non-stream Complete and emit the content as one delta.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("anthropic path = %q, want /v1/messages", r.URL.Path)
+		}
+		resp := map[string]any{
+			"id":   "msg_01",
+			"type": "message",
+			"role": "assistant",
+			"content": []map[string]any{
+				{"type": "text", "text": "native reply"},
+			},
+			"model":       "claude-sonnet-5",
+			"stop_reason": "end_turn",
+			"usage":       map[string]any{"input_tokens": 5, "output_tokens": 3},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	var got []string
+	res, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderAnthropic, BaseURL: srv.URL, APIKey: "k", Model: "claude-sonnet-5"},
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
-	}, func(string) error { return nil })
-	if err == nil {
-		t.Fatal("expected error for native google streaming")
+	}, func(delta string) error {
+		got = append(got, delta)
+		return nil
+	}, nil)
+	if err != nil {
+		t.Fatalf("CompleteStream: %v", err)
 	}
-	ae, ok := err.(*AIError)
-	if !ok || ae.Kind != ErrBadRequest {
-		t.Fatalf("want ErrBadRequest, got %v", err)
+	if res.Content != "native reply" {
+		t.Errorf("content = %q, want native reply", res.Content)
+	}
+	if len(got) != 1 || got[0] != "native reply" {
+		t.Errorf("deltas = %v, want [native reply]", got)
 	}
 }
 
@@ -154,11 +184,132 @@ func TestParseOpenAISSE_SkipsMalformed(t *testing.T) {
 		"data: [DONE]",
 		"",
 	}, "\n"))
-	res, err := parseOpenAISSE(body, "fallback", func(string) error { return nil })
+	res, err := parseOpenAISSE(body, "fallback", func(string) error { return nil }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Content != "ok" {
 		t.Errorf("content = %q", res.Content)
+	}
+}
+
+// TestCompleteStream_AccumulatesToolCallDeltas verifies streamed tool_call
+// fragments (OpenAI splits one call across chunks: first carries id+name, later
+// chunks append to the JSON arguments string) are reassembled onto the final
+// result AND forwarded via the onToolDelta callback.
+func TestCompleteStream_AccumulatesToolCallDeltas(t *testing.T) {
+	chunks := []string{
+		`{"model":"m","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search_notes","arguments":"{\"q\":"}}]}}]}`,
+		`{"model":"m","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"meetings\"}"}}]}}]}`,
+		`{"model":"m","choices":[{"delta":{"content":"done"}}]}`,
+	}
+	srv := sseChatServer(t, chunks)
+	defer srv.Close()
+
+	var toolFrags []ToolCallDelta
+	res, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m", ProviderType: ProviderLocal},
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+		Tools:    []ToolDef{{Name: "search_notes", Parameters: dummySchema}},
+	}, func(string) error { return nil }, func(d ToolCallDelta) error {
+		toolFrags = append(toolFrags, d)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("CompleteStream: %v", err)
+	}
+	if res.Content != "done" {
+		t.Errorf("content = %q, want done", res.Content)
+	}
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
+	}
+	tc := res.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Name != "search_notes" {
+		t.Errorf("reassembled tool_call = %+v", tc)
+	}
+	// Concatenated arguments string unwrapped to a raw JSON object.
+	var args map[string]any
+	if err := json.Unmarshal(tc.Arguments, &args); err != nil {
+		t.Fatalf("arguments not object: %v (raw=%s)", err, tc.Arguments)
+	}
+	if args["q"] != "meetings" {
+		t.Errorf("args.q = %v, want meetings", args["q"])
+	}
+	// Each fragment forwarded (at least one with id+name, one with arguments).
+	if len(toolFrags) < 2 {
+		t.Fatalf("tool deltas = %d, want >= 2", len(toolFrags))
+	}
+	if toolFrags[0].ID != "call_1" || toolFrags[0].Name != "search_notes" {
+		t.Errorf("first delta = %+v, want id+name", toolFrags[0])
+	}
+}
+
+func TestParseOpenAISSE_RejectsOversizedToolArguments(t *testing.T) {
+	var body bytes.Buffer
+	fragment := strings.Repeat("x", 512*1024)
+	for total := 0; total <= MaxStreamBytes; total += len(fragment) {
+		payload, err := json.Marshal(map[string]any{
+			"choices": []map[string]any{{"delta": map[string]any{
+				"tool_calls": []map[string]any{{"index": 0, "function": map[string]any{"arguments": fragment}}},
+			}}},
+		})
+		if err != nil {
+			t.Fatalf("marshal chunk: %v", err)
+		}
+		fmt.Fprintf(&body, "data: %s\n\n", payload)
+	}
+
+	_, err := parseOpenAISSE(&body, "m", func(string) error { return nil }, nil)
+	if err == nil {
+		t.Fatal("expected oversized tool arguments to fail")
+	}
+	ae, ok := err.(*AIError)
+	if !ok || ae.Kind != ErrServer {
+		t.Fatalf("want ErrServer, got %v", err)
+	}
+	if !strings.Contains(ae.Message, "tool arguments") {
+		t.Errorf("error = %q, want tool-argument cap message", ae.Message)
+	}
+}
+
+func TestParseOpenAISSE_RejectsTooManyMalformedFrames(t *testing.T) {
+	body := strings.NewReader(strings.Join([]string{
+		"data: not-json",
+		"data: still-not-json",
+		"data: definitely-not-json",
+		"data: [DONE]",
+		"",
+	}, "\n"))
+	_, err := parseOpenAISSE(body, "m", func(string) error { return nil }, nil)
+	if err == nil {
+		t.Fatal("expected too many malformed SSE frames to fail")
+	}
+	ae, ok := err.(*AIError)
+	if !ok || ae.Kind != ErrServer {
+		t.Fatalf("want ErrServer, got %v", err)
+	}
+}
+
+func TestParseOpenAISSE_MissingDoneIsToleratedWhenProviderFinished(t *testing.T) {
+	body := strings.NewReader(`data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n")
+	res, err := parseOpenAISSE(body, "m", func(string) error { return nil }, nil)
+	if err != nil {
+		t.Fatalf("parseOpenAISSE: %v", err)
+	}
+	if res.Content != "ok" {
+		t.Errorf("content = %q, want ok", res.Content)
+	}
+}
+
+func TestParseOpenAISSE_IncompleteToolArgumentsWithoutDoneFail(t *testing.T) {
+	body := strings.NewReader(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"q\":"}}]}}]}` + "\n")
+	_, err := parseOpenAISSE(body, "m", func(string) error { return nil }, nil)
+	if err == nil {
+		t.Fatal("expected incomplete tool arguments to fail")
+	}
+	ae, ok := err.(*AIError)
+	if !ok || ae.Kind != ErrServer {
+		t.Fatalf("want ErrServer, got %v", err)
 	}
 }
