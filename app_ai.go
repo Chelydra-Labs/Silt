@@ -1143,9 +1143,27 @@ func toAIToolChoice(in *PluginAIToolChoice) *ai.ToolChoice {
 // normalize tool_choice in their own shape and only partially coerce bad
 // input, so this keeps a single source of truth before rate-limiting or HTTP.
 func validateAITools(tools []PluginAIToolDef, choice *PluginAIToolChoice) error {
+	seen := make(map[string]struct{}, len(tools))
 	for _, t := range tools {
 		if strings.TrimSpace(t.Name) == "" {
 			return fmt.Errorf("tool definitions must each carry a non-empty name")
+		}
+		if _, dup := seen[t.Name]; dup {
+			return fmt.Errorf("duplicate tool name %q", t.Name)
+		}
+		seen[t.Name] = struct{}{}
+		// parameters must be a JSON Schema object. Reject missing, scalar,
+		// and array shapes that providers would forward verbatim and then
+		// reject or misparse.
+		if len(t.Parameters) == 0 {
+			return fmt.Errorf("tool %q parameters must be a JSON Schema object", t.Name)
+		}
+		var params map[string]any
+		if err := json.Unmarshal(t.Parameters, &params); err != nil {
+			return fmt.Errorf("tool %q parameters must be a JSON object: %w", t.Name, err)
+		}
+		if pt, ok := params["type"].(string); ok && pt != "object" {
+			return fmt.Errorf("tool %q parameters must be type \"object\", got %q", t.Name, pt)
 		}
 	}
 	if choice == nil {

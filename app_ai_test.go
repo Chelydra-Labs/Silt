@@ -739,19 +739,19 @@ func TestPluginAIComplete_RejectsMalformedTools(t *testing.T) {
 		},
 		{
 			name:       "unknown tool_choice mode",
-			tools:      []PluginAIToolDef{{Name: "search_notes"}},
+			tools:      []PluginAIToolDef{{Name: "search_notes", Parameters: json.RawMessage(`{"type":"object"}`)}},
 			choice:     &PluginAIToolChoice{Mode: "bogus"},
 			wantSubstr: "tool_choice.mode",
 		},
 		{
 			name:       "force references unknown tool",
-			tools:      []PluginAIToolDef{{Name: "search_notes"}},
+			tools:      []PluginAIToolDef{{Name: "search_notes", Parameters: json.RawMessage(`{"type":"object"}`)}},
 			choice:     &PluginAIToolChoice{Mode: "force", ToolName: "ghost"},
 			wantSubstr: "unknown tool",
 		},
 		{
 			name:       "force without tool_name",
-			tools:      []PluginAIToolDef{{Name: "search_notes"}},
+			tools:      []PluginAIToolDef{{Name: "search_notes", Parameters: json.RawMessage(`{"type":"object"}`)}},
 			choice:     &PluginAIToolChoice{Mode: "force"},
 			wantSubstr: "force",
 		},
@@ -794,7 +794,7 @@ func TestPluginAIComplete_AcceptsForceOnKnownTool(t *testing.T) {
 
 	_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
 		Messages:   []PluginAIChatMessage{{Role: "user", Content: "x"}},
-		Tools:      []PluginAIToolDef{{Name: "search_notes"}},
+		Tools:      []PluginAIToolDef{{Name: "search_notes", Parameters: json.RawMessage(`{"type":"object"}`)}},
 		ToolChoice: &PluginAIToolChoice{Mode: "force", ToolName: "search_notes"},
 	})
 	if err != nil {
@@ -956,5 +956,49 @@ func TestPluginAIComplete_TrackedByWaitGroup(t *testing.T) {
 	}
 	if r.res.Content != "pong" {
 		t.Errorf("content = %q, want pong", r.res.Content)
+	}
+}
+
+func TestValidateAITools_RejectsDuplicateNames(t *testing.T) {
+	tools := []PluginAIToolDef{
+		{Name: "search", Parameters: json.RawMessage(`{"type":"object","properties":{}}`)},
+		{Name: "search", Parameters: json.RawMessage(`{"type":"object","properties":{}}`)},
+	}
+	if err := validateAITools(tools, nil); err == nil {
+		t.Fatal("expected error for duplicate tool names")
+	}
+}
+
+func TestValidateAITools_RejectsBadParameters(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"missing", ""},
+		{"scalar", `"string"`},
+		{"number", `42`},
+		{"array", `[]`},
+		{"wrong-type", `{"type":"string"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tools := []PluginAIToolDef{{
+				Name:       "t",
+				Parameters: json.RawMessage(tc.raw),
+			}}
+			if err := validateAITools(tools, nil); err == nil {
+				t.Fatalf("expected error for %s parameters", tc.name)
+			}
+		})
+	}
+}
+
+func TestValidateAITools_AcceptsValidSchema(t *testing.T) {
+	tools := []PluginAIToolDef{
+		{Name: "search", Parameters: json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`)},
+		{Name: "read", Parameters: json.RawMessage(`{"properties":{"id":{"type":"string"}}}`)},
+	}
+	if err := validateAITools(tools, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
