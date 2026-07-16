@@ -505,9 +505,10 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 - **UI persistence** — `GetOpenTabs` / `SetOpenTabs` (pinned tabs only,
   pruned against `ListNavigation`); `GetNavOrder` / `SetNavOrder`;
   `GetSidebarWidth` / `SetSidebarWidth`.
-- **AI providers** (#216, #218, #479) — `GetAIProviderConfig` (key-scrubbed read;
-  emits `has_key` flags, never the raw secret), `UpdateAIProviderConfig`
-  (provider type / base URL / model / tuning — never the key),
+- **AI providers** (#216, #218, #479, #632) — `GetAIProviderConfig` (key-scrubbed
+  read; emits `has_key` flags + `features`, never the raw secret),
+  `UpdateAIProviderConfig` (provider type / base URL / model / tuning — never
+  the key), `UpdateAIFeatures` (product enablement: master AI, RAG, summaries),
   `SetAIAPIKey` / `ClearAIAPIKey` (dedicated key surface: routes to the OS
   keyring when `use_keyring` + reachable, else plaintext config), `SetUseKeyring`
   (toggles keyring storage + opportunistically migrates plaintext keys),
@@ -516,42 +517,34 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   on type/base-URL/key change; force=false on cold start returns empty without
   a network call). `GetAIAudit` / `ClearAIAudit` expose the plugin-AI-call log
   (in-memory, mirrored to per-plugin `ai.log`; `ClearAIAudit` truncates both).
-  Provider types: `local` | `openai-compatible` (universal default, OpenAI-shaped)
-  | `google` | `anthropic` (native first-party APIs — generateContent / messages —
-  bypassing the compat shim for stability + structured-output support). NOT
-  capability-gated (core cross-cutting settings), but `PluginAIComplete` /
-  `PluginAIEmbed` are. `PluginAIEmbed` accepts optional `task_type`
-  (`RETRIEVAL_DOCUMENT` at index time / `RETRIEVAL_QUERY` at search time);
-  Google includes it as `taskType` on each `batchEmbedContents` item, other
-  providers ignore it, and empty omits the field. `PluginAIComplete` (#595)
-  also carries optional `tools` (`PluginAIToolDef[]`) + `tool_choice`
-  (`PluginAIToolChoice`), and the `CompleteResult` echoes back any
-  `tool_calls` (`PluginAIToolCall[]`) the model requested; `messages`
-  accepts a `tool` role (with `tool_call_id` / `tool_calls`) so a plugin can
-  drive a multi-turn tool-use loop (consumer: `silt-ai-agent`). Streamed
-  runs surface in-progress tool-call fragments via `ai:complete:tool-delta`
-  (alongside `ai:complete:delta`). The `ctx.ai.complete` SDK wrapper
-  normalizes `<think>`/`<thought>`/`<reasoning>` reasoning tags out of
-  `content` (the OpenAI-compatible leak; native providers already separate
-  reasoning) so every plugin consumer receives reasoning-free text — see
-  `frontend/src/plugins/stripReasoning.ts`.
-  This tool-calling surface re-opens the autonomous-agent-loop exclusion the
-  earlier `silt-ai-assistant` spike doc recorded as out of scope: the agent
-  (`silt-ai-agent`) is **user-invoked only** (nothing runs until a message is
-  sent), tool calls are **transparent** (every call + result renders in the
-  shared drawer), and **destructive operations are staged** behind a
-  single-use confirmation token (`rename_tag` today; future delete/merge/bulk
-  tools follow the same gate) — preserving the "no unsolicited writes"
-  invariant while letting the agent act. See `docs/plugins/silt-ai-agent.md`.
+  `PluginAIAuditEvent` appends redacted structured agent events (tool_call,
+  staging_decision) to the same log. Provider types: `local` |
+  `openai-compatible` (universal default, OpenAI-shaped) | `google` |
+  `anthropic` (native first-party APIs). NOT capability-gated (core settings),
+  but `PluginAIComplete` / `PluginAIEmbed` / `PluginAIAuditEvent` are.
+  `PluginAIEmbed` accepts optional `task_type` (`RETRIEVAL_DOCUMENT` /
+  `RETRIEVAL_QUERY`). `PluginAIComplete` (#595) carries optional `tools` +
+  `tool_choice` and returns `tool_calls`; messages accept a `tool` role for
+  multi-turn agent loops (`silt-ai-agent`). Streamed runs emit
+  **owner-scoped** events `ai:complete:delta:<pluginID>`,
+  `ai:complete:tool-delta:<pluginID>`, `ai:complete:done:<pluginID>`,
+  `ai:complete:error:<pluginID>` (#635) so argument fragments are not on a
+  global bus. The `ctx.ai.complete` SDK wrapper strips reasoning tags — see
+  `frontend/src/plugins/stripReasoning.ts`. The agent is **user-invoked only**,
+  tool calls are **transparent**, and **destructive ops are staged** behind a
+  single-use confirmation token. See `docs/plugins/silt-ai-agent.md`.
 
-**Unified AI surface.** AI chat has one right-side drawer, opened by the
-titlebar's **Silt AI** control when AI is available. The ordinary Search
-control remains a separate, unchanged surface. The drawer renders a typed
-transcript of text, evidence/citations, tool calls, tool results, proposals,
-staged confirmations, and status entries. The agent tool loop is the default
-orchestrator; retrieval contributes evidence and citations, while writing
-actions contribute reviewable proposals. AI-capable plugins provide these
-capabilities and lifecycle services rather than owning separate chat views.
+**Unified AI surface + enablement (#632).** AI chat has one right-side drawer,
+opened by the titlebar **Silt AI** control when `ai.features.enabled` is on.
+Product enablement lives under **Settings → AI** (not four Plugins toggles):
+master **Enable AI** (agent + writing assistant), **Semantic search** (RAG /
+`silt-ai-qa`, requires master + embedding), **Note summaries** (sub-toggle for
+`silt-ai-summary`). First-party AI modules load from these flags via
+`AIPluginLoadEnabled` / frontend `shouldLoadAIPlugin`; a one-shot migration
+maps legacy `plugins.disabled` AI ids into features. The drawer renders a typed
+transcript (text, evidence, tool calls/results, proposals, confirmations,
+structured status). The agent loop is the default orchestrator; retrieval and
+writing attach as capabilities when their flags are on.
 
 Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`
 files; this list is the contract surface, not the source.
@@ -1102,16 +1095,15 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
   dial-time — the custom `DialContext` re-runs `isInternalIP` on every resolved
   IP (DNS-rebinding guard) and fails closed on lookup error so the OS resolver
   cannot bypass the check; audit-logged.
-- AI (#216): `ctx.ai.complete` / `ctx.ai.embed` route to the user-configured
-  model server (Settings → AI Provider) through `backend/ai` — one OpenAI-
-  compatible request shape for both local (Ollama) and cloud providers. The
-  provider config + resolved API key are snapshotted server-side under
-  vaultMu+configMu, the locks are RELEASED, and only then does the HTTP call
-  run, so a 60s LLM completion cannot hold the vault lock. Keys resolve
-  keyring-first (`backend/keyring`) with config.yaml as the documented fallback
-  (#218); the plugin never receives credentials. Every call is audit-logged
-  (`auditAI`, in-memory + on-disk `ai.log`, capped) and surfaced in
-  Settings → AI Provider → Recent AI activity.
+- AI (#216, #632): `ctx.ai.complete` / `ctx.ai.embed` / `ctx.ai.auditEvent`
+  route to the user-configured model server (Settings → AI) through
+  `backend/ai`. Provider config + resolved API key are snapshotted under
+  vaultMu+configMu, locks RELEASED, then HTTP runs so a long completion cannot
+  hold the vault lock. Keys resolve keyring-first (#218); plugins never receive
+  credentials. Transport uses per-attempt timeouts plus an overall retry
+  envelope, Retry-After, and jitter (#628). Calls and structured agent events
+  are audit-logged (`auditAI` / `PluginAIAuditEvent`, in-memory + `ai.log`) and
+  surfaced in Settings → AI → Recent AI activity.
 - Editor extension points: slash-command registry; generic embedBlock
   node (round-trips through <!-- silt-embed: {json} --> markers).
 - Rendered UI surfaces: sandboxed <iframe srcdoc> + postMessage bridge;
@@ -1175,7 +1167,7 @@ Global settings — editor defaults, parsing rules, hotkeys, and the plugin regi
 
 8.1 Parser (backend/config)
 
-config.SystemConfig mirrors the SPECS §10.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui / ai). The `ai.*` block (#216, #218) carries two provider configs (chat + embedding: provider_type, base_url, model, tuning) plus `use_keyring`. API keys are `json:"-"` (never serialized to the frontend) and, when `use_keyring` is on + the OS keyring is reachable, are stored in the OS credential store (`backend/keyring`) instead of plaintext config — so a synced vault doesn't carry cloud keys. `SaveSystemConfig` preserves live keys server-side so a frontend round-trip doesn't blank them. The `ui.*` block holds per-vault UI preferences: `sidebar_width`, `nav_order` (explicit section/page ordering for drag-to-reorder), `open_tabs` / `active_tab` (pinned-tab persistence — preview tabs are ephemeral), `enable_preview_tabs`, `max_open_tabs`, `show_format_toolbar`, `show_tab_dirty_indicators` (default true), `dismissed_tips`, and `formatting.*` toggles. Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
+config.SystemConfig mirrors the SPECS §10.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui / ai). The `ai.*` block (#216, #218, #632) carries two provider configs (chat + embedding: provider_type, base_url, model, tuning), `use_keyring`, and `features` (`enabled` / `rag_enabled` / `summaries_enabled` — product enablement for first-party AI modules; dependents clamp when master is off). API keys are `json:"-"` (never serialized to the frontend) and, when `use_keyring` is on + the OS keyring is reachable, are stored in the OS credential store (`backend/keyring`) instead of plaintext config — so a synced vault doesn't carry cloud keys. `SaveSystemConfig` preserves live keys server-side so a frontend round-trip doesn't blank them. The `ui.*` block holds per-vault UI preferences: `sidebar_width`, `nav_order` (explicit section/page ordering for drag-to-reorder), `open_tabs` / `active_tab` (pinned-tab persistence — preview tabs are ephemeral), `enable_preview_tabs`, `max_open_tabs`, `show_format_toolbar`, `show_tab_dirty_indicators` (default true), `dismissed_tips`, and `formatting.*` toggles. Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
 
 8.2 Hot-Reload (backend/config.ConfigWatcher)
 
@@ -1183,7 +1175,7 @@ A dedicated fsnotify watcher observes the .system parent directory (not the file
 
 8.3 Settings Menu (frontend)
 
-The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. Settings is a first-class **view** (`activeView === 'settings'`), matching how the Tasks/Tags plugin views own the sidebar rather than a modal or a workspace tab: the **Sidebar** renders `SettingsNav` (the section list — General / Editor / Appearance / AI Provider / Hotkeys / Plugins / `plugin:<id>` bespoke-settings tabs / Dev (dev mode only) / About — as a `role="tablist"` with roving keyboard navigation Arrow/Home/End), and the **content area** renders `SettingsPanel` (`role="tabpanel"`) for the active section. The section list is a single shared module (`settingsSections.svelte.ts`) consumed by both; the active section (`settingsSection`, default 'general') is the single source of truth, bind-chained App → Sidebar → SettingsNav. Settings opens via the activity-bar gear button (highlighted when active), the `open_settings` hotkey (`Ctrl+,`), the native File→Settings / Help→About menus, and the plugin `'open-settings'` / `open-plugin-manager` events; it is session-only by construction (`activeView` is not persisted). The former `SettingsShell` modal overlay was decomposed into `SettingsNav` + `SettingsPanel`, dropping the modal focus-trap — dismissal is by switching views. The former Workspace tab was folded into **General**, which now carries a **Window** section (user-global, pre-vault: close-to-tray) above a **Workspace** section (vault-scoped: move/copy/switch/export-import) — the split keeps user-global controls rendering before any vault is open. **AI Provider** is a separate core tab by design: it owns shared AI infrastructure and credentials (provider config, API key/keyring, connection test, audit log) that every plugin consumer routes through. Plugin-owned AI features — the `silt-ai-summary` note banner and similar — are plugin behavior rendered through the plugin surface system, not a tab concern; shared infrastructure/security and per-plugin feature behavior stay separate. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable (all plugins — first-party via config.yaml `plugins.disabled` list, third-party via `.disabled` sentinel), uninstall (third-party only), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The titlebar extension icon opens Settings → Plugins.
+The settings store (settings/store.svelte.ts) is a $state object exposing loadConfig/saveConfig, dirty tracking, and a config:changed / config:error subscription. Settings is a first-class **view** (`activeView === 'settings'`), matching how the Tasks/Tags plugin views own the sidebar rather than a modal or a workspace tab: the **Sidebar** renders `SettingsNav` (the section list — General / Editor / Appearance / AI / Hotkeys / Plugins / `plugin:<id>` bespoke-settings tabs / Dev (dev mode only) / About — as a `role="tablist"` with roving keyboard navigation Arrow/Home/End), and the **content area** renders `SettingsPanel` (`role="tabpanel"`) for the active section. The section list is a single shared module (`settingsSections.svelte.ts`) consumed by both; the active section (`settingsSection`, default 'general') is the single source of truth, bind-chained App → Sidebar → SettingsNav. Settings opens via the activity-bar gear button (highlighted when active), the `open_settings` hotkey (`Ctrl+,`), the native File→Settings / Help→About menus, and the plugin `'open-settings'` / `open-plugin-manager` events; it is session-only by construction (`activeView` is not persisted). The former `SettingsShell` modal overlay was decomposed into `SettingsNav` + `SettingsPanel`, dropping the modal focus-trap — dismissal is by switching views. The former Workspace tab was folded into **General**, which now carries a **Window** section (user-global, pre-vault: close-to-tray) above a **Workspace** section (vault-scoped: move/copy/switch/export-import) — the split keeps user-global controls rendering before any vault is open. **AI** (section id `ai`) is a separate core tab: product feature toggles (Enable AI / Semantic search / Note summaries via `ai.features`), shared provider infrastructure and credentials (chat + embedding, API key/keyring, connection test), and the audit log. First-party AI plugins are not independently toggled on the Plugins tab. Plugin-owned surfaces (e.g. the `silt-ai-summary` note banner) still render through the plugin surface system when their feature flag is on. GeneralTab edits a local draft (Save/Revert) so an external hot-reload cannot fight a half-edited form; if an external change lands while the draft is dirty, the draft is preserved and a non-blocking "reload" notice is shown (never a silent clobber). The Plugins tab is the single plugin UI: rich cards (first-party bundled vs. third-party installed), enable/disable (all plugins — first-party via config.yaml `plugins.disabled` list, third-party via `.disabled` sentinel), uninstall (third-party only), inline load errors, an expandable detail panel with per-plugin settings, and the .silt-plugin install flow. The titlebar extension icon opens Settings → Plugins.
 
 8.4 Editor Config Consumer (frontend)
 

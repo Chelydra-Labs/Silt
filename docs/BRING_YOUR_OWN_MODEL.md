@@ -6,7 +6,7 @@ point it at a model server you run (local) or an API you have a key for
 (cloud), and plugins that declare the `ai` capability route through that
 endpoint. This guide covers the common setups.
 
-> **Where to configure:** Settings → **AI Provider** (the tab with the
+> **Where to configure:** Settings → **AI** (the tab with the
 > `smart_toy` icon).
 
 ---

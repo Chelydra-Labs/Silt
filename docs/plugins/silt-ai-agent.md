@@ -155,8 +155,8 @@ the "no unsolicited writes" invariant while letting the agent act. See
 | Symptom | Fix |
 |---|---|
 | Agent calls the wrong tool / loops on the same call | Use a larger or tool-advertised model; rephrase the goal; the 8-iteration cap stops runaway loops |
-| Semantic tools return empty | Set the embedding model in AI Provider; check that other notes exist |
-| "Chat model not configured" | Settings → AI Provider → set chat model |
+| Semantic tools return empty | Enable Semantic search + set embedding model in Settings → AI |
+| "Chat model not configured" | Settings → AI → set chat model |
 | Tool result truncated in chat | Tool bodies cap at 10 KB for the model; the agent re-queries with a narrower call when it needs more |
 | Staged op shows "expired" | Tokens live 5 minutes — re-run the request and confirm promptly |
 | Agent hit the iteration cap | Rephrase toward a narrower goal, or split into two turns |

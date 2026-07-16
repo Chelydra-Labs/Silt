@@ -759,20 +759,20 @@ interface PluginAIChatMessage {
 ```
 
 For streamed runs, in-progress tool-call fragments arrive via the
-`ai:complete:tool-delta` event (indexed by call, arguments concatenated across
-chunks) alongside the text `ai:complete:delta` events. Destructive plugin tools
-(e.g. `silt-ai-agent`'s `rename_tag`) stage behind a single-use confirmation
-token rather than executing directly — see `docs/plugins/silt-ai-agent.md`.
+owner-scoped `ai:complete:tool-delta:<pluginID>` event (indexed by call,
+arguments concatenated across chunks) alongside `ai:complete:delta:<pluginID>`
+(#635). Destructive plugin tools (e.g. `silt-ai-agent`'s `rename_tag`) stage
+behind a single-use confirmation token rather than executing directly — see
+`docs/plugins/silt-ai-agent.md`.
 
-**Unified AI interaction.** Silt presents AI chat through one right-side
-**Silt AI** drawer rather than separate AI plugin views. The drawer accepts
-typed contributions for conversation text, evidence and citations, tool
-activity, reviewable proposals, staged confirmations, and status. AI-capable
-plugins are headless capability providers: they retain lifecycle, settings,
-retrieval, writing, and tool services while contributing their results to the
-shared chat surface. A plugin view component is therefore optional; the agent
-loop provides the default orchestration, retrieval supplies grounded evidence,
-and writing actions preserve propose-before-write review.
+**Unified AI interaction + enablement (#632).** Silt presents AI chat through
+one right-side **Silt AI** drawer. Product enablement is `ai.features`
+(Settings → AI): master enable, semantic search (RAG), note summaries — not
+four independent Plugins toggles. The drawer accepts typed contributions for
+conversation text, evidence and citations, tool activity, reviewable proposals,
+staged confirmations, and structured status. AI-capable plugins are headless
+capability providers loaded from feature flags; the agent loop provides default
+orchestration when AI is enabled.
 
 8.3 Core Feature Decoupling
 
@@ -1228,18 +1228,25 @@ plugins:
           columns: ["TODO", "DOING", "DONE"]
           filters: { owners: [], priorities: [], dueDate: "", tags: [] }
 
-# AI Providers (#216, #218)
+# AI Providers + product features (#216, #218, #632)
 # Two independent provider blocks (chat + embedding) that plugins call through
 # ctx.ai.complete / ctx.ai.embed. Silt makes no cloud calls of its own; this
 # points at a model server the user runs (local) or has a key for (cloud).
+# Product enablement is ai.features (not plugins.disabled for first-party AI).
 # See docs/BRING_YOUR_OWN_MODEL.md.
 ai:
   # When true (default), API keys live in the OS keyring (Credential Manager /
   # Keychain / Secret Service) instead of plaintext below. Keys are vault-
   # scoped (SHA-8 of the vault path) so they don't travel on sync. When the
   # keyring is unreachable (headless Linux, WSL2), keys fall back to the
-  # api_key field here and the AI Provider tab surfaces a warning.
+  # api_key field here and the AI settings tab surfaces a warning.
   use_keyring: true
+  # Product switches (Settings → AI). All default false (opt-in).
+  # rag_enabled / summaries_enabled require enabled; normalize clamps them.
+  features:
+    enabled: false            # master: agent drawer + writing assistant
+    rag_enabled: false        # semantic search / Q&A index + agent retrieval tools
+    summaries_enabled: false  # note summary banner
   chat:
     provider_type: "local"            # "local" | "openai-compatible"
     base_url: "http://localhost:11434" # local default = Ollama
