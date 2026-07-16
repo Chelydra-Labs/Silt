@@ -371,13 +371,18 @@ export function createAIChatController(initialContext?: PluginContext) {
     return capabilities.get(defaultCapabilityId)
   }
 
-  async function send(text: string, request: AIChatRequestOptions = {}) {
+  /** Returns false when the send was refused (busy, no provider, empty, …)
+   *  so callers (e.g. queued slash commands) can restore the command. */
+  async function send(
+    text: string,
+    request: AIChatRequestOptions = {}
+  ): Promise<boolean> {
     const prompt = text.trim()
     if (!prompt || busy || pendingConfirmation || !context || !providerReady)
-      return
+      return false
 
     const capability = pickCapability(prompt)
-    if (!capability) return
+    if (!capability) return false
     // Stamp this turn; any run that is stopped/cleared or superseded by a new
     // turn (or a vault switch via attach→clear) becomes stale and its callbacks
     // are ignored below.
@@ -442,6 +447,7 @@ export function createAIChatController(initialContext?: PluginContext) {
         activeCapability = null
       }
     }
+    return true
   }
 
   function stop() {
@@ -494,6 +500,9 @@ export function createAIChatController(initialContext?: PluginContext) {
     entryOwners.clear()
     activeRunStatusId = null
     pendingConfirmation = null
+    // Null so ChatShell does not announce a stale prior-run outcome when busy
+    // flips false after a vault switch / New chat mid-run.
+    lastOutcome = null
     busy = false
     activeCapability = null
   }

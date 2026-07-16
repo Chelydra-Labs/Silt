@@ -207,4 +207,48 @@ describe('AI chat controller — proposal accept/discard failure handling', () =
     expect(controller.busy).toBe(false)
     controller.dispose()
   })
+
+  it('clear() nulls lastOutcome so a11y does not announce a stale run', async () => {
+    const controller = createAIChatController()
+    controller.attach(pluginContextStub())
+    const stub: AIChatCapability = {
+      id: 'stub',
+      run: async () => {
+        throw new Error('boom')
+      }
+    }
+    controller.registerCapability(stub, { makeDefault: true })
+    await controller.send('hello')
+    expect(controller.lastOutcome).toBe('error')
+
+    controller.clear()
+    expect(controller.lastOutcome).toBeNull()
+    expect(controller.transcript).toEqual([])
+    controller.dispose()
+  })
+
+  it('send returns false when busy so callers can keep the command', async () => {
+    const controller = createAIChatController()
+    controller.attach(pluginContextStub())
+    let resolveRun!: () => void
+    const runPromise = new Promise<void>((r) => {
+      resolveRun = r
+    })
+    const stub: AIChatCapability = {
+      id: 'stub',
+      run: async () => {
+        await runPromise
+      }
+    }
+    controller.registerCapability(stub, { makeDefault: true })
+
+    const first = controller.send('a')
+    expect(controller.busy).toBe(true)
+    const second = await controller.send('b')
+    expect(second).toBe(false)
+
+    resolveRun()
+    expect(await first).toBe(true)
+    controller.dispose()
+  })
 })

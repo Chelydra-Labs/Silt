@@ -161,9 +161,10 @@
       // Announce work started without narrating streamed tokens (which would
       // flood assistive tech). The completion line below closes the loop.
       completionAnnouncement = 'Silt is responding.'
-    } else if (wasBusy) {
-      // Per-run terminal outcome from the controller — not a transcript-wide
-      // search, which could pick up a prior run's stale error/stopped status.
+    } else if (wasBusy && lastOutcome !== null) {
+      // Per-run terminal outcome from the controller. Guard on lastOutcome so
+      // clear()/vault-switch (busy→false with lastOutcome null) does not fire
+      // a spurious "complete/stopped" announcement on an empty transcript.
       completionAnnouncement =
         lastOutcome === 'error'
           ? 'AI response ended with an error.'
@@ -172,6 +173,15 @@
             : 'AI response complete.'
     }
     wasBusy = busy
+  })
+
+  // Drop expand-state keys when the transcript is wiped (New chat / vault
+  // switch). ChatShell is not destroyed, so without this the map grows for
+  // the life of the drawer.
+  $effect(() => {
+    if (transcript.length === 0 && Object.keys(expanded).length > 0) {
+      expanded = {}
+    }
   })
 
   $effect(() => {

@@ -322,7 +322,13 @@ async function materializeToolMessage(
     opts.onStagingOutcome?.(token, 'confirmed')
     return wrapUntrustedToolResult(toolName, committed.content)
   } catch (e: unknown) {
-    if (signal?.aborted || isAbortError(e)) throw e
+    // Abort after confirmOperation may have already marked the token used=1
+    // without running commit. Surface 'failed' so the confirmation card is
+    // not left pending forever.
+    if (signal?.aborted || isAbortError(e)) {
+      opts.onStagingOutcome?.(token, 'failed')
+      throw e
+    }
     const message = e instanceof Error ? e.message : String(e)
     opts.onStagingOutcome?.(token, 'failed')
     return `Error: staged operation could not be applied (${message}).`
@@ -459,22 +465,15 @@ export async function runAgent(
       // Staged results are NOT fed to the model — they pause the loop until
       // the UX resolves them (onStaging + awaitStaging), then their commit
       // outcome (or a "rejected" message) becomes the tool message.
-      // The registry currently accepts the signal as an optional extension;
-      // the abort race below also keeps this loop responsive with registries
-      // whose older implementation does not yet consume it.
-      const dispatchWithSignal = dispatchTool as unknown as (
-        ctx: PluginContext,
-        name: string,
-        args: Record<string, unknown>,
-        signal?: AbortSignal
-      ) => Promise<ToolResult>
+      // Tool handlers cannot be preempted mid-IPC: dispatchTool has no signal
+      // parameter. raceAbort only abandons the caller's wait; an in-flight
+      // mutation may still complete. The pre-dispatch gate below prevents
+      // starting new mutations after Stop.
       const results = await Promise.allSettled(
         calls.map(async (call) => {
           // Pre-dispatch gate: if the run was already cancelled (Stop pressed
           // during the model call), do NOT start the tool — direct-write tools
-          // would otherwise mutate the vault after the user stopped. (An
-          // already-in-flight IPC call can't be cancelled mid-flight; this
-          // gate prevents starting new mutations after cancel.)
+          // would otherwise mutate the vault after the user stopped.
           let res: ToolResult
           try {
             if (opts.signal?.aborted) {
@@ -486,7 +485,7 @@ export async function runAgent(
                 args: call.arguments
               })
               res = await raceAbort(
-                dispatchWithSignal(ctx, call.name, call.arguments, opts.signal),
+                dispatchTool(ctx, call.name, call.arguments),
                 opts.signal
               )
             }

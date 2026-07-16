@@ -63,6 +63,9 @@
 
   $effect(() => {
     if (!ctx || !queuedCommand) return
+    // Hold the queue until send can accept it. Consuming before send would
+    // drop slash commands dispatched mid-run (send no-ops when busy).
+    if (chat.busy || chat.pendingConfirmation || !chat.providerReady) return
     const command = queuedCommand
     queuedCommand = null
     void chat.send(command.text, command.request)
@@ -202,7 +205,9 @@
       lastOutcome={chat.lastOutcome}
       providerReady={chat.providerReady}
       actions={drawerActions}
-      onSend={(text) => chat.send(text)}
+      onSend={(text) => {
+        void chat.send(text)
+      }}
       onStop={chat.stop}
       onAcceptProposal={(id) => void chat.acceptProposal(id)}
       onDiscardProposal={(id) => void chat.discardProposal(id)}
