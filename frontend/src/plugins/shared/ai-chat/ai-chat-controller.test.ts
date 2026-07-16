@@ -22,7 +22,7 @@ vi.mock('./capabilities/writing-capability', () => ({
 
 import { createAIChatController } from './ai-chat-controller.svelte'
 import type { AIChatCapability } from './ai-chat-controller.svelte'
-import { proposalEntry, type ProposalEntry } from './types'
+import { proposalEntry, textEntry, type ProposalEntry } from './types'
 
 function pluginContextStub(): PluginContext {
   return { activeNotebook: 'Work' } as unknown as PluginContext
@@ -98,6 +98,69 @@ describe('AI chat controller — proposal accept/discard failure handling', () =
     expect(controller.transcript).toEqual([])
     expect(controller.busy).toBe(false)
 
+    controller.dispose()
+  })
+
+  it('ignores transcript mutations from a stale run after clear()', async () => {
+    const controller = createAIChatController()
+    controller.attach({} as PluginContext)
+    let resolveRun!: () => void
+    const runPromise = new Promise<void>((r) => {
+      resolveRun = r
+    })
+    const stub: AIChatCapability = {
+      id: 'stub',
+      run: async (_text, context) => {
+        await runPromise
+        // Late callback arriving after clear(): must be fenced out.
+        context.append(
+          proposalEntry({ role: 'assistant', title: 'stale', content: 'x' })
+        )
+      }
+    }
+    controller.registerCapability(stub, { makeDefault: true })
+
+    const sendPromise = controller.send('a') // suspends inside the stub
+    controller.clear() // bumps run id + wipes transcript
+    resolveRun() // stale run completes and attempts a late append
+    await sendPromise
+
+    expect(controller.transcript).toEqual([])
+    expect(controller.busy).toBe(false)
+    controller.dispose()
+  })
+
+  it('finalizes a streaming assistant entry when the run is stopped', async () => {
+    const controller = createAIChatController()
+    controller.attach({} as PluginContext)
+    let resolveRun!: () => void
+    const runPromise = new Promise<void>((r) => {
+      resolveRun = r
+    })
+    const stub: AIChatCapability = {
+      id: 'stub',
+      run: async (_text, context) => {
+        context.append(
+          textEntry({
+            id: 'streaming-entry',
+            role: 'assistant',
+            content: 'partial',
+            streaming: true
+          })
+        )
+        await runPromise
+      }
+    }
+    controller.registerCapability(stub, { makeDefault: true })
+
+    const sendPromise = controller.send('x') // stub appends streaming entry
+    controller.stop() // must drop the streaming caret
+    resolveRun()
+    await sendPromise
+
+    const entry = controller.transcript.find((e) => e.id === 'streaming-entry')
+    expect(entry?.kind).toBe('text')
+    expect((entry as { streaming?: boolean })?.streaming).toBeFalsy()
     controller.dispose()
   })
 })

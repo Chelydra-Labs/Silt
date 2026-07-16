@@ -9,13 +9,16 @@
   import {
     aiChatDrawer,
     closeAIChatDrawer,
-    openAIChatDrawer
+    openAIChatDrawer,
+    registerAIChatController
   } from './drawer.svelte'
   import { AI_CHAT_COMMAND_EVENT, type AIChatCommandDetail } from './commands'
   import type { EvidenceTarget } from './types'
 
   const PLUGIN_ID = 'silt-ai-agent'
   const chat = createAIChatController()
+  // Register so drawer close / vault teardown can stop in-flight runs.
+  registerAIChatController(chat)
 
   let open = $derived(aiChatDrawer.open)
   let queuedCommand = $state<AIChatCommandDetail | null>(null)
@@ -103,7 +106,10 @@
     return () => window.removeEventListener('keydown', onWindowKeydown)
   })
 
-  onDestroy(() => chat.dispose())
+  onDestroy(() => {
+    registerAIChatController(null)
+    chat.dispose()
+  })
 
   function navigateEvidence(target: EvidenceTarget) {
     window.dispatchEvent(
@@ -112,6 +118,36 @@
       })
     )
   }
+
+  // Mobile modal focus trap: keep Tab cycling inside the dialog so it cannot
+  // escape into the app behind the scrim. (Desktop is a non-modal panel, so
+  // the trap is gated on isMobile.) The confirmation card in ChatShell owns
+  // its own trap and stops propagation, so the two compose.
+  function onDrawerKeydown(event: KeyboardEvent) {
+    if (!isMobile || event.key !== 'Tab' || !drawerEl) return
+    const focusable = Array.from(
+      drawerEl.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    )
+    if (focusable.length === 0) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    const active = document.activeElement
+    if (
+      event.shiftKey &&
+      (active === first || !drawerEl.contains(active as Node))
+    ) {
+      event.preventDefault()
+      last.focus()
+    } else if (
+      !event.shiftKey &&
+      (active === last || !drawerEl.contains(active as Node))
+    ) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
 </script>
 
 {#if open && ctx}
@@ -119,7 +155,8 @@
     <button
       type="button"
       class="ai-chat-scrim"
-      aria-label="Close Silt AI"
+      tabindex="-1"
+      aria-hidden="true"
       transition:fade={{ duration: 150 }}
       onclick={closeAIChatDrawer}
     ></button>
@@ -134,6 +171,7 @@
     aria-label="Silt AI"
     tabindex="-1"
     bind:this={drawerEl}
+    onkeydown={onDrawerKeydown}
   >
     {#snippet drawerActions()}
       <button

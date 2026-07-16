@@ -63,6 +63,11 @@ export function createAgentCapability(): AIChatCapability {
   let protocolHistory: PluginAIChatMessage[] = []
   let citationPassages: RetrievedPassage[] = []
   const emittedEvidence = new Set<string>()
+  // Generation/cancel fence mirroring the writing capability: a stale run
+  // (stopped, cleared, detached, or superseded) must not mutate protocolHistory
+  // or citations, or Vault A's tool messages would leak into Vault B's history.
+  let generation = 0
+  let cancelled = false
 
   return {
     id: 'agent-tools',
@@ -71,10 +76,14 @@ export function createAgentCapability(): AIChatCapability {
       session = createAgentSession(context)
     },
     detach() {
+      cancelled = true
+      generation++
       session?.cancel()
       session = null
     },
     async run(text, context) {
+      const gen = ++generation
+      cancelled = false
       citationPassages = []
       emittedEvidence.clear()
       if (!session) session = createAgentSession(context.pluginContext)
@@ -102,10 +111,13 @@ export function createAgentCapability(): AIChatCapability {
         )
       }
 
+      const stale = () => cancelled || gen !== generation
+
       const options: AgentOptions = {
         onAssistantText: (_chunk, accumulated) =>
           updateAssistant(accumulated, true),
         onAssistantToolCalls: (calls, content) => {
+          if (stale()) return
           if (assistantId) context.remove(assistantId)
           assistantId = null
           protocolHistory = [
@@ -124,6 +136,7 @@ export function createAgentCapability(): AIChatCapability {
           )
         },
         onToolResult: ({ result }) => {
+          if (stale()) return
           for (const evidence of result.evidence ?? []) {
             const key = `${evidence.blockId}:${evidence.citationIndex}`
             citationPassages.push({
@@ -160,6 +173,7 @@ export function createAgentCapability(): AIChatCapability {
           }
         },
         onToolMessage: (result) => {
+          if (stale()) return
           protocolHistory = [
             ...protocolHistory,
             { role: 'tool', tool_call_id: result.id, content: result.content }
@@ -189,6 +203,7 @@ export function createAgentCapability(): AIChatCapability {
           )
         },
         onDone: (finalText) => {
+          if (stale()) return
           // Keep citation numbering identical to the retrieval prompt. The
           // parser deliberately drops unknown markers, matching Q&A behavior.
           parseCitations(finalText, citationPassages)
@@ -204,7 +219,9 @@ export function createAgentCapability(): AIChatCapability {
       }
 
       const result = await session.run(text, priorHistory, options)
-      if (result.cancelled) return
+      // Stale (stopped/cleared/superseded): the controller already finalized
+      // streaming + owns the lifecycle; do not touch protocolHistory.
+      if (stale() || result.cancelled) return
       if (result.hitIterationCap) {
         context.append(
           statusEntry({
@@ -223,12 +240,15 @@ export function createAgentCapability(): AIChatCapability {
       }
     },
     stop() {
+      cancelled = true
       session?.cancel()
     },
     resolveStaging(token, confirmed) {
       session?.resolveStaging(token, confirmed)
     },
     clear() {
+      cancelled = true
+      generation++
       session?.cancel()
       protocolHistory = []
       citationPassages = []
@@ -243,6 +263,10 @@ export function createAIChatController(initialContext?: PluginContext) {
   let pendingConfirmation = $state<string | null>(null)
   let context = initialContext ?? null
   let activeCapability: AIChatCapability | null = null
+  // Monotonic run id. Each send() captures the current value; clear()/stop()/
+  // attach() bump it so callbacks from a stale (stopped / superseded / vault-
+  // switched) run no-op instead of mutating the live transcript.
+  let runId = 0
   const capabilities = new Map<string, AIChatCapability>()
   const entryOwners = new Map<string, string>()
   let defaultCapabilityId = 'agent-tools'
@@ -273,6 +297,15 @@ export function createAIChatController(initialContext?: PluginContext) {
   function remove(id: string) {
     transcript = transcript.filter((entry) => entry.id !== id)
     entryOwners.delete(id)
+  }
+
+  /** Drop the streaming caret from any assistant text entry left mid-stream. */
+  function finalizeStreaming() {
+    transcript = transcript.map((entry) =>
+      entry.kind === 'text' && entry.streaming
+        ? { ...entry, streaming: false }
+        : entry
+    )
   }
 
   function registerCapability(
@@ -318,6 +351,10 @@ export function createAIChatController(initialContext?: PluginContext) {
 
     const capability = pickCapability(prompt)
     if (!capability) return
+    // Stamp this turn; any run that is stopped/cleared or superseded by a new
+    // turn (or a vault switch via attach→clear) becomes stale and its callbacks
+    // are ignored below.
+    const myRun = ++runId
     append(textEntry({ role: 'user', content: prompt }))
     const runningStatus = statusEntry({
       role: 'system',
@@ -328,35 +365,58 @@ export function createAIChatController(initialContext?: PluginContext) {
     busy = true
     activeCapability = capability
 
+    const live = () => myRun === runId
+    // Fence the capability's transcript mutations to this run so a stale run
+    // cannot append/update/remove into the live transcript (e.g. Vault A's
+    // late tool callbacks landing in Vault B after a switch).
+    const runContext = {
+      pluginContext: context,
+      request,
+      get transcript() {
+        return transcript
+      },
+      append: (entry: AIChatEntry) => {
+        if (live()) append(entry)
+      },
+      update: (id: string, updater: (entry: AIChatEntry) => AIChatEntry) => {
+        if (live()) update(id, updater)
+      },
+      remove: (id: string) => {
+        if (live()) remove(id)
+      }
+    }
+
     try {
-      await capability.run(prompt, {
-        pluginContext: context,
-        request,
-        get transcript() {
-          return transcript
-        },
-        append,
-        update,
-        remove
-      })
+      await capability.run(prompt, runContext)
     } catch (error) {
-      append(
-        statusEntry({
-          role: 'system',
-          status: 'error',
-          message: error instanceof Error ? error.message : String(error)
-        })
-      )
+      if (live()) {
+        append(
+          statusEntry({
+            role: 'system',
+            status: 'error',
+            message: error instanceof Error ? error.message : String(error)
+          })
+        )
+      }
     } finally {
-      remove(runningStatus.id)
-      busy = false
-      activeCapability = null
+      // Only the current run owns the busy/active lifecycle. A stopped/cleared
+      // run already reset these (and finalized streaming) in stop()/clear().
+      if (live()) {
+        remove(runningStatus.id)
+        finalizeStreaming()
+        busy = false
+        activeCapability = null
+      }
     }
   }
 
   function stop() {
     if (!busy) return
+    // Invalidate the in-flight run's callbacks, then own the lifecycle reset
+    // (its finally() will see a stale runId and no-op).
+    runId++
     activeCapability?.stop?.()
+    finalizeStreaming()
     append(
       statusEntry({
         role: 'system',
@@ -364,9 +424,12 @@ export function createAIChatController(initialContext?: PluginContext) {
         message: 'Stopped by you.'
       })
     )
+    busy = false
+    activeCapability = null
   }
 
   function clear() {
+    runId++
     activeCapability?.stop?.()
     for (const capability of capabilities.values()) capability.clear?.()
     transcript = []
