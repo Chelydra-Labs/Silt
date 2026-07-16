@@ -417,6 +417,10 @@
         "signature": "PickVaultExportPath(defaultFilename string) (string, error)"
       },
       {
+        "name": "PluginAIAuditEvent",
+        "signature": "PluginAIAuditEvent(pluginID, sessionToken, eventJSON string) error"
+      },
+      {
         "name": "PluginAICancelStream",
         "signature": "PluginAICancelStream(pluginID, sessionToken, streamID string) error"
       },
@@ -861,6 +865,10 @@
         "signature": "UnregisterPluginTemplates(pluginID string)"
       },
       {
+        "name": "UpdateAIFeatures",
+        "signature": "UpdateAIFeatures(patch AIFeaturesPatch) error"
+      },
+      {
         "name": "UpdateAIProviderConfig",
         "signature": "UpdateAIProviderConfig(which string, patch AIProviderPatch) error"
       },
@@ -933,7 +941,6 @@
       "frontend/src/components/editor/GlobalReplaceModal.svelte",
       "frontend/src/components/editor/GlobalReplaceModal.test.ts",
       "frontend/src/components/editor/PluginNoteBanners.test.ts",
-      "frontend/src/components/settings/AIProviderTab.svelte",
       "frontend/src/components/settings/AIProviderTab.test.ts",
       "frontend/src/components/settings/AboutTab.svelte",
       "frontend/src/components/settings/AboutTab.test.ts",
@@ -951,6 +958,7 @@
       "frontend/src/components/settings/VaultActionModal.test.ts",
       "frontend/src/components/settings/VaultArchiveModal.svelte",
       "frontend/src/components/settings/VaultArchiveModal.test.ts",
+      "frontend/src/components/settings/ai/aiProviderController.svelte.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.ts",
       "frontend/src/lib/editor/spellcheck/customDictionary.svelte.ts",
@@ -972,6 +980,7 @@
       "frontend/src/plugins/grants.svelte.ts",
       "frontend/src/plugins/loader.test.ts",
       "frontend/src/plugins/loader.ts",
+      "frontend/src/plugins/loader.vault-close.test.ts",
       "frontend/src/plugins/sdk.ts",
       "frontend/src/settings/store.svelte.test.ts",
       "frontend/src/settings/store.svelte.ts",
@@ -1023,9 +1032,9 @@
       "frontend/src/plugins/first-party/silt-tasks/views/BoardView.test.ts",
       "frontend/src/plugins/first-party/silt-tasks/views/CalendarView.test.ts",
       "frontend/src/plugins/grants.svelte.test.ts",
-      "frontend/src/plugins/grants.svelte.ts",
       "frontend/src/plugins/loader.test.ts",
       "frontend/src/plugins/loader.ts",
+      "frontend/src/plugins/loader.vault-close.test.ts",
       "frontend/src/settings/store.svelte.test.ts",
       "frontend/src/settings/store.svelte.ts",
       "frontend/src/templates/TemplatePicker.test.ts",
@@ -1038,9 +1047,6 @@
       "frontend/src/updates/store.test.ts"
     ],
     "frontend_events": [
-      "ai:complete:delta",
-      "ai:complete:done",
-      "ai:complete:error",
       "block:changed",
       "config:changed",
       "config:error",
@@ -1073,6 +1079,6 @@
       "vault:moved",
       "vault:watch-coverage"
     ],
-    "plugin_method_count": 52
+    "plugin_method_count": 53
   }
 }
