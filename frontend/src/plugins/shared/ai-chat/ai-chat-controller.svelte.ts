@@ -292,6 +292,10 @@ export function createAIChatController(initialContext?: PluginContext) {
 
   function attach(nextContext: PluginContext) {
     if (context === nextContext) return
+    // Vault switch: drop the prior vault's transcript + per-capability closure
+    // state (agent protocol history, citations, etc.) so it does not bleed
+    // into the new vault. Skipped on the first attach (nothing to clear).
+    if (context !== null) clear()
     for (const capability of capabilities.values()) capability.detach?.()
     context = nextContext
     for (const capability of capabilities.values())

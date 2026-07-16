@@ -74,4 +74,30 @@ describe('AI chat controller — proposal accept/discard failure handling', () =
 
     controller.dispose()
   })
+
+  it('clears transcript and capability state when attached to a new context (vault switch)', async () => {
+    const controller = createAIChatController()
+    controller.attach({} as PluginContext)
+
+    // Populate the transcript via a stub default capability.
+    const stub: AIChatCapability = {
+      id: 'stub',
+      run: async (_text, context) => {
+        context.append(
+          proposalEntry({ role: 'assistant', title: 'x', content: 'y' })
+        )
+      }
+    }
+    controller.registerCapability(stub, { makeDefault: true })
+    await controller.send('hello')
+    expect(controller.transcript.length).toBeGreaterThan(0)
+
+    // A genuinely new context (vault switch) must not carry the prior vault's
+    // transcript or protocol history forward.
+    controller.attach({ activeNotebook: 'Other' } as unknown as PluginContext)
+    expect(controller.transcript).toEqual([])
+    expect(controller.busy).toBe(false)
+
+    controller.dispose()
+  })
 })
