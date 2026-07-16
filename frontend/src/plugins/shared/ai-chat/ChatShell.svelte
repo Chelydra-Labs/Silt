@@ -6,6 +6,7 @@
     title?: string
     transcript: AIChatEntry[]
     busy: boolean
+    lastOutcome: 'complete' | 'stopped' | 'error' | null
     providerReady: boolean
     actions?: Snippet
     onSend: (text: string) => void | Promise<void>
@@ -23,6 +24,7 @@
     title = 'Silt AI',
     transcript,
     busy,
+    lastOutcome,
     providerReady,
     actions,
     onSend,
@@ -160,16 +162,12 @@
       // flood assistive tech). The completion line below closes the loop.
       completionAnnouncement = 'Silt is responding.'
     } else if (wasBusy) {
-      // Outcome-specific: the transition out of busy is caused by stop/error/
-      // completion, and the most recent status entry records which. Announcing
-      // "complete" on a stop or error would mislead assistive-tech users.
-      const lastStatus = [...transcript]
-        .reverse()
-        .find((e) => e.kind === 'status')
+      // Per-run terminal outcome from the controller — not a transcript-wide
+      // search, which could pick up a prior run's stale error/stopped status.
       completionAnnouncement =
-        lastStatus?.status === 'error'
+        lastOutcome === 'error'
           ? 'AI response ended with an error.'
-          : lastStatus?.status === 'stopped'
+          : lastOutcome === 'stopped'
             ? 'AI response stopped.'
             : 'AI response complete.'
     }

@@ -42,11 +42,6 @@ function selectionTextFromEditor(editor: unknown): string {
   }
 }
 
-/** Capture the editor's PM selection range and selected text for the in-editor
- *  proposed-edit preview (#543). Returns null when there is no non-empty
- *  selection. The selected text is captured so we can validate the range is
- *  still valid when the AI response arrives (positions drift if the user
- *  edits during streaming). */
 /**
  * Register slash commands for the full catalog. Enabled state is enforced at
  * invoke time so settings toggles apply without re-registering.

@@ -17,6 +17,7 @@ function props(transcript: AIChatEntry[] = [], busy = false) {
     title: 'Silt AI',
     transcript,
     busy,
+    lastOutcome: null as 'complete' | 'stopped' | 'error' | null,
     providerReady: true,
     onSend: vi.fn(),
     onStop: vi.fn(),

@@ -273,6 +273,7 @@ export function createAgentCapability(): AIChatCapability {
 export function createAIChatController(initialContext?: PluginContext) {
   let transcript = $state<AIChatEntry[]>([])
   let busy = $state(false)
+  let lastOutcome: 'complete' | 'stopped' | 'error' | null = $state(null)
   let pendingConfirmation = $state<string | null>(null)
   let context = initialContext ?? null
   let activeCapability: AIChatCapability | null = null
@@ -407,6 +408,7 @@ export function createAIChatController(initialContext?: PluginContext) {
       await capability.run(prompt, runContext)
     } catch (error) {
       if (live()) {
+        lastOutcome = 'error'
         append(
           statusEntry({
             role: 'system',
@@ -422,6 +424,7 @@ export function createAIChatController(initialContext?: PluginContext) {
         remove(runningStatus.id)
         activeRunStatusId = null
         finalizeStreaming()
+        lastOutcome = 'complete'
         busy = false
         activeCapability = null
       }
@@ -444,6 +447,7 @@ export function createAIChatController(initialContext?: PluginContext) {
     }
     finalizeStreaming()
     cancelPendingConfirmations()
+    lastOutcome = 'stopped'
     append(
       statusEntry({
         role: 'system',
@@ -575,6 +579,9 @@ export function createAIChatController(initialContext?: PluginContext) {
     },
     get busy() {
       return busy
+    },
+    get lastOutcome() {
+      return lastOutcome
     },
     get providerReady() {
       return providerReady

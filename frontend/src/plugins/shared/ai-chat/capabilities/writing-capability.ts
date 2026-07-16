@@ -14,6 +14,7 @@ import type { StreamSession } from '../../../first-party/silt-ai-assistant/actio
 import { applyProposal } from '../../../first-party/silt-ai-assistant/proposal/apply'
 import { resolveSettings } from '../../../first-party/silt-ai-assistant/settings'
 import { buildScope } from '../../../first-party/silt-ai-assistant/scope'
+import { writingAssistantChrome } from '../../../first-party/silt-ai-assistant/state.svelte'
 import type {
   ActionId,
   AssistantSettings,
@@ -148,7 +149,8 @@ export function createWritingCapability(): AIChatCapability {
 
   return {
     id: 'writing-proposals',
-    matches: (text) => parseWritingCommand(text) !== null,
+    matches: (text) =>
+      writingAssistantChrome.available && parseWritingCommand(text) !== null,
     attach(context) {
       attachedContext = context
     },
@@ -221,19 +223,20 @@ export function createWritingCapability(): AIChatCapability {
         )
         if (cancelled || runId !== generation) return
 
-        if (streamEntryId) {
-          context.update(streamEntryId, (entry) =>
-            entry.kind === 'text'
-              ? {
-                  ...entry,
-                  content: proposal.proposedMarkdown,
-                  streaming: false
-                }
-              : entry
-          )
-        }
-
         if (proposal.status === 'error') {
+          // Finalize the streamed text so the user sees what was generated
+          // before the failure; no proposal card is appended on error.
+          if (streamEntryId) {
+            context.update(streamEntryId, (entry) =>
+              entry.kind === 'text'
+                ? {
+                    ...entry,
+                    content: proposal.proposedMarkdown,
+                    streaming: false
+                  }
+                : entry
+            )
+          }
           context.append(
             statusEntry({
               role: 'system',
@@ -242,6 +245,12 @@ export function createWritingCapability(): AIChatCapability {
             })
           )
           return
+        }
+
+        // Success: the proposal card carries the same content as the streamed
+        // text, so remove the streamed entry to avoid showing it twice.
+        if (streamEntryId) {
+          context.remove(streamEntryId)
         }
 
         const entry = proposalEntry({

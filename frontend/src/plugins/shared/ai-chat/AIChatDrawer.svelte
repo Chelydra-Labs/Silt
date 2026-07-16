@@ -24,9 +24,20 @@
   let queuedCommand = $state<AIChatCommandDetail | null>(null)
   let drawerEl = $state<HTMLElement | null>(null)
   let isMobile = $state(false)
+  // Cache the plugin context per session token so closing and reopening the
+  // drawer does NOT create a new context object. attach() treats a new object
+  // as a vault switch and clears the transcript; caching keeps the same object
+  // across open/close cycles (only a real token change — new vault session —
+  // produces a new context and triggers the vault-switch clear).
+  let cachedToken: string | undefined
+  let cachedCtx: ReturnType<typeof makePluginContext> | null = null
   let ctx = $derived.by(() => {
     if (!open) return null
-    return makePluginContext(PLUGIN_ID, getSessionToken(PLUGIN_ID) ?? undefined)
+    const token = getSessionToken(PLUGIN_ID) ?? undefined
+    if (cachedCtx && token === cachedToken) return cachedCtx
+    cachedCtx = makePluginContext(PLUGIN_ID, token)
+    cachedToken = token
+    return cachedCtx
   })
 
   $effect(() => {
@@ -188,6 +199,7 @@
       title="Silt AI"
       transcript={chat.transcript}
       busy={chat.busy}
+      lastOutcome={chat.lastOutcome}
       providerReady={chat.providerReady}
       actions={drawerActions}
       onSend={(text) => chat.send(text)}
@@ -196,7 +208,10 @@
       onDiscardProposal={(id) => void chat.discardProposal(id)}
       onConfirmStaging={(token) => chat.resolveStaging(token, true)}
       onRejectStaging={(token) => chat.resolveStaging(token, false)}
-      onOpenSettings={() => ctx.openSettings('ai')}
+      onOpenSettings={() => {
+        ctx?.openSettings('ai')
+        closeAIChatDrawer()
+      }}
       onNavigateEvidence={navigateEvidence}
       onClear={chat.clear}
     />
