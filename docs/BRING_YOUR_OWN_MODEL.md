@@ -39,7 +39,7 @@ ollama pull qwen3:30b-a3b
 ollama pull nomic-embed-text
 ```
 
-In Silt's AI Provider tab, set:
+In Silt's Settings → AI tab, set:
 
 - **Chat** → Provider: *Local* · Base URL: `http://localhost:11434` · Model: `qwen3:30b-a3b`
 - **Embedding** → Provider: *Local* · Base URL: `http://localhost:11434` · Model: `nomic-embed-text`
@@ -127,7 +127,7 @@ On some systems no OS keyring is reachable — common cases:
 - A locked GNOME session at the moment of access.
 
 When this happens, Silt falls back to storing keys in plaintext `config.yaml`
-and surfaces a warning in the AI Provider tab ("The keyring was unreachable;
+and surfaces a warning in the AI settings tab ("The keyring was unreachable;
 this key was saved to config.yaml instead"). You can also disable keyring
 storage entirely from the tab if you prefer plaintext (e.g. for an automated
 environment with no keyring daemon).

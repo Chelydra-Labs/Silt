@@ -101,6 +101,27 @@ describe('AI chat controller — proposal accept/discard failure handling', () =
     controller.dispose()
   })
 
+  it('leaves a done status entry after a successful run', async () => {
+    const controller = createAIChatController()
+    controller.attach(pluginContextStub())
+    const stub: AIChatCapability = {
+      id: 'stub',
+      run: async () => {
+        /* no-op success */
+      }
+    }
+    controller.registerCapability(stub, { makeDefault: true })
+    await controller.send('hello')
+    expect(controller.lastOutcome).toBe('complete')
+    expect(
+      controller.transcript.some(
+        (e) =>
+          e.kind === 'status' && e.status === 'done' && e.message === 'Done'
+      )
+    ).toBe(true)
+    controller.dispose()
+  })
+
   it('ignores transcript mutations from a stale run after clear()', async () => {
     const controller = createAIChatController()
     controller.attach({} as PluginContext)

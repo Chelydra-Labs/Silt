@@ -48,6 +48,19 @@ export interface RetrieveOptions {
    * rerank, and out-of-scope hits cannot crowd in-scope hits out of top_k.
    */
   filterPassages?: (passages: RetrievedPassage[]) => Promise<RetrievedPassage[]>
+  /**
+   * Called when hybrid retrieve continues after one side (vector or FTS) fails
+   * but the other succeeds (#630 degraded search signal).
+   */
+  onDegraded?: (info: HybridDegradeInfo) => void
+}
+
+/** One-sided hybrid failure while the other channel still returned hits. */
+export interface HybridDegradeInfo {
+  /** Which channel failed. */
+  side: 'vector' | 'fts'
+  /** Safe short reason for audit / UI (no note bodies). */
+  message: string
 }
 
 /**
@@ -220,6 +233,19 @@ export async function hybridRetrieve(
   // FTS failed and vector empty → surface the FTS error.
   if (ftsErr && vecHits.length === 0) {
     throw new RetrieveError(`Keyword search failed: ${errMsg(ftsErr)}`, ftsErr)
+  }
+
+  // One side failed but the other produced hits — continue with a degrade signal.
+  if (vecErr && ftsRows.length > 0) {
+    settings.onDegraded?.({
+      side: 'vector',
+      message: `Semantic search failed; keyword results only. ${errMsg(vecErr)}`
+    })
+  } else if (ftsErr && vecHits.length > 0) {
+    settings.onDegraded?.({
+      side: 'fts',
+      message: `Keyword search failed; semantic results only. ${errMsg(ftsErr)}`
+    })
   }
 
   const ftsHits = ftsRowsToHits(ftsRows).slice(0, fetchK)

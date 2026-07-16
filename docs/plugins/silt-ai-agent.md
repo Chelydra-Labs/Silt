@@ -95,6 +95,34 @@ Small local models may misroute calls; the structural arg-validation in the
 tool registry keeps a malformed call from reaching tool code (it surfaces
 as an error the model can recover from on the next iteration).
 
+## Activity status
+
+The shared Silt AI drawer shows a structured activity line while a run is live
+(not a binary spinner):
+
+| Status | Meaning |
+|---|---|
+| **Thinking…** | Model is planning or writing prose |
+| **Running \<tool\>…** | Friendly label for the active tool (e.g. “Searching notes…”) |
+| **Reviewing results…** | Tool results returned; model is synthesizing |
+| **Waiting for your confirmation…** | Staged destructive op needs Confirm/Reject |
+| **Applying changes…** | Confirmed staged write is committing |
+| **Done** | Run finished successfully |
+| **Something went wrong** / error text | Terminal failure (also uses `role="alert"`) |
+
+**Stop** (and Escape when no confirmation is pending) cancels from any
+non-terminal state. Terminal success and error are distinct from assistant
+prose in the transcript.
+
+## Semantic search / RAG degrade
+
+Semantic tools (`search_notes`, `get_related_notes`, `suggest_link_targets`)
+register only when **Settings → AI → Semantic search** is on. Hybrid retrieval
+can continue if only keyword *or* only semantic fails: the run proceeds with
+the healthy side, and a `search_degraded` audit event is recorded (visible
+under Settings → AI activity / Search settings). Stale index banners also
+surface when the embedding model or index format changes.
+
 ## The agent loop
 
 - **User-invoked.** Nothing runs until you send a message — no background

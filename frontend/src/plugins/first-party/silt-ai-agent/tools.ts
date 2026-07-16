@@ -41,7 +41,7 @@ import {
 } from './tools/extract_and_save'
 
 /** Tools that need embeddings / RAG; omitted from the catalog when RAG is off. */
-const RAG_TOOL_NAMES = new Set([
+export const RAG_TOOL_NAMES = new Set([
   'search_notes',
   'get_related_notes',
   'suggest_link_targets'

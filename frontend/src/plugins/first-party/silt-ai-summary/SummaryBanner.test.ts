@@ -486,13 +486,13 @@ describe('SummaryBanner', () => {
   })
 
   // --- #472 settings deep-link CTAs ----------------------------------------
-  it('renders an "Open AI Provider settings" CTA in the unconfigured state', () => {
+  it('renders an "Open AI settings" CTA in the unconfigured state', () => {
     mockAppSettings.config.ai.chat.model = ''
     const ctx = makeCtx()
     const { getByRole } = render(SummaryBanner, {
       props: { ctx, onDismiss: () => {} }
     })
-    const cta = getByRole('button', { name: /Open AI Provider settings/i })
+    const cta = getByRole('button', { name: /Open AI settings/i })
     expect(cta).toBeTruthy()
     fireEvent.click(cta)
     expect(ctx.openSettings).toHaveBeenCalledWith('ai')

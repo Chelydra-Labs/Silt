@@ -1,13 +1,13 @@
 <script lang="ts">
-  // Bespoke settings page for silt-ai-qa (#228).
+  // Bespoke settings page for silt-ai-qa. Enablement is Settings → AI →
+  // Semantic search (ai.features); this page is fine-tuning only (#632).
   import { untrack } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import {
     aiProviderNeedsSetup,
     embeddingProviderNeedsSetup
   } from '../../../settings/ai-setup'
-  import { settings, saveConfig } from '../../../settings/store.svelte'
-  import { loadPlugins, teardownPlugin } from '../../loader'
+  import { settings } from '../../../settings/store.svelte'
   import PresetControl from '../../../components/settings/PresetControl.svelte'
   import InfoTooltip from '../../../components/settings/InfoTooltip.svelte'
   import { DEFAULT_SETTINGS, resolveSettings } from './settings'
@@ -27,10 +27,8 @@
     activeSection?: string
     activePage?: string
   }
-  let { ctx, manifest, activeNotebook, activeSection, activePage }: Props =
-    $props()
-
-  const PLUGIN_ID = 'silt-ai-qa'
+  // Location props are part of the settings-page surface contract; unused here.
+  let { ctx, manifest }: Props = $props()
 
   let local = $state<QASettings>({ ...DEFAULT_SETTINGS })
   let loaded = $state(false)
@@ -41,9 +39,6 @@
   )
   const embedUnconfigured = $derived(
     embeddingProviderNeedsSetup(settings.config?.ai?.embedding as any)
-  )
-  const enabled = $derived(
-    !(settings.config?.plugins?.disabled ?? []).includes(PLUGIN_ID)
   )
   const ctl = $derived(getQAController())
 
@@ -100,28 +95,6 @@
     })
   }
 
-  async function toggleEnabled() {
-    const cfg = settings.config
-    if (!cfg) return
-    if (!cfg.plugins) {
-      cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
-    }
-    const disabled = new Set(cfg.plugins.disabled ?? [])
-    if (enabled) {
-      disabled.add(PLUGIN_ID)
-      teardownPlugin(PLUGIN_ID)
-    } else {
-      disabled.delete(PLUGIN_ID)
-    }
-    cfg.plugins.disabled = [...disabled]
-    await saveConfig(cfg)
-    await loadPlugins(
-      activeNotebook ?? '',
-      activeSection ?? '',
-      activePage ?? ''
-    )
-  }
-
   async function onRebuild() {
     if (!ctl) return
     rebuildBusy = true
@@ -134,22 +107,24 @@
 </script>
 
 <div class="qa-settings">
-  <h2 class="title">{manifest?.name ?? 'AI Assistant'}</h2>
+  <h2 class="title">{manifest?.name ?? 'Semantic search'}</h2>
   <p class="lede">
     {manifest?.description ??
-      'Ask natural-language questions of your vault with cited answers. Off by default.'}
+      'Tune search balance and the note index. Turn semantic search on under Settings → AI → Features.'}
   </p>
 
-  <section class="card">
-    <h3>Enable</h3>
-    <label class="row">
-      <input
-        type="checkbox"
-        checked={enabled}
-        onchange={() => void toggleEnabled()}
-      />
-      <span>Enable AI Assistant plugin</span>
-    </label>
+  <section class="card" aria-label="Managed enablement">
+    <p class="hint">
+      Enablement is managed under
+      <button
+        type="button"
+        class="link"
+        onclick={() => ctx.openSettings?.('ai' as any)}
+      >
+        Settings → AI → Features
+      </button>
+      (Semantic search). This page is fine-tuning only.
+    </p>
   </section>
 
   <section class="card">
@@ -161,7 +136,7 @@
         class="link"
         onclick={() => ctx.openSettings?.('ai' as any)}
       >
-        AI Provider
+        Settings → AI
       </button>
       page. The search model powers the search index; chat answers questions. See
       BRING_YOUR_OWN_MODEL in the docs.
@@ -211,7 +186,7 @@
           <button
             type="button"
             class="primary warn"
-            disabled={rebuildBusy || embedUnconfigured || !enabled}
+            disabled={rebuildBusy || embedUnconfigured}
             onclick={() => void onRebuild()}
           >
             Rebuild now
@@ -222,6 +197,12 @@
             onclick={() => ctl.dismissStaleBanner()}>Later</button
           >
         </div>
+      </div>
+    {/if}
+    {#if ctl?.searchDegradeReason}
+      <div class="stale-banner" role="status">
+        <strong>Search running in degraded mode</strong>
+        <p>{ctl.searchDegradeReason}</p>
       </div>
     {/if}
     <div class="index-status" role="status">
@@ -240,14 +221,14 @@
           · error: {ctl.progress.lastError}
         {/if}
       {:else}
-        Status: unknown (enable plugin to track)
+        Status: idle
       {/if}
     </div>
     <button
       type="button"
       class="primary"
       class:warn={Boolean(local.stale_reason)}
-      disabled={rebuildBusy || embedUnconfigured || !enabled}
+      disabled={rebuildBusy || embedUnconfigured}
       onclick={() => void onRebuild()}
     >
       {rebuildBusy ? 'Updating…' : 'Update search index'}

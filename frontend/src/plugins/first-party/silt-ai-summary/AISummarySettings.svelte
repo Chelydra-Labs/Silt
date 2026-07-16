@@ -1,17 +1,11 @@
 <script lang="ts">
-  // AISummarySettings — the bespoke settings page for silt-ai-summary (#223).
-  // Mounted by PluginSettingsPanel as a dynamic Settings tab when the plugin
-  // is registered with settingsPageComponent. Controls live-update the vault
-  // config (plugin_settings.silt-ai-summary via ctx.updatePluginSetting) so a
-  // change applies on the next summary without a reload; enable/disable goes
-  // through the shared plugins.disabled path (mirrors the Plugins tab) so the
-  // loader tears down / re-mounts the plugin's lifecycle hooks consistently.
+  // AISummarySettings — fine-tuning for silt-ai-summary. Master enablement is
+  // Settings → AI → Note summaries (ai.features); not plugins.disabled (#632).
   import { untrack } from 'svelte'
   import type { PluginContext } from '../../sdk'
   import type { PluginManifest } from '../../sdk'
-  import { settings, saveConfig } from '../../../settings/store.svelte'
+  import { settings } from '../../../settings/store.svelte'
   import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
-  import { loadPlugins, teardownPlugin } from '../../loader'
   import { resolveSettings, DEFAULT_SETTINGS } from './settings'
   import type { SummarySettings } from './types'
 
@@ -22,18 +16,10 @@
     activeSection?: string
     activePage?: string
   }
-  let { ctx, manifest, activeNotebook, activeSection, activePage }: Props =
-    $props()
+  // Location props are part of the settings-page surface contract; unused here.
+  let { ctx, manifest }: Props = $props()
 
-  const PLUGIN_ID = 'silt-ai-summary'
-
-  // Enabled state derives from plugins.disabled (same source the Plugins tab
-  // edits). Toggling it reloads the plugin so onVaultOpen/onVaultClose rebind.
-  let enabled = $derived(
-    !(settings.config?.plugins?.disabled ?? []).includes(PLUGIN_ID)
-  )
-  // The chat-provider readiness nudge (mirrors the Plugins-tab badge + the
-  // banner's unconfigured state — all via the shared aiProviderNeedsSetup).
+  // Chat-provider readiness nudge (shared with Plugins badge + banner).
   let unconfigured = $derived(aiProviderNeedsSetup(settings.config?.ai?.chat))
 
   // Tuning is read from plugin_settings.<id> (resolved over defaults) and
@@ -68,29 +54,6 @@
     } catch {
       /* best-effort: the config:changed round-trip will resync */
     }
-  }
-
-  async function toggleEnabled() {
-    const cfg = settings.config
-    if (!cfg) return
-    if (!cfg.plugins) {
-      cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
-    }
-    const disabled = new Set(cfg.plugins.disabled ?? [])
-    if (enabled) {
-      disabled.add(PLUGIN_ID)
-      teardownPlugin(PLUGIN_ID)
-    } else {
-      disabled.delete(PLUGIN_ID)
-    }
-    cfg.plugins.disabled = [...disabled]
-    await saveConfig(cfg)
-    // Re-mount the plugin so its lifecycle hooks reflect the new state.
-    await loadPlugins(
-      activeNotebook ?? '',
-      activeSection ?? '',
-      activePage ?? ''
-    )
   }
 
   function writeFacet(key: keyof SummarySettings['facets'], value: boolean) {
@@ -129,42 +92,27 @@
           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary-start text-surface-app font-label-sm-bold text-type-xs hover:brightness-110 transition-all cursor-pointer"
           onclick={() => ctx.openSettings('ai')}
         >
-          Open AI Provider settings
+          Open AI settings
         </button>
       </div>
     </div>
   {/if}
 
-  <!-- Enable Toggle Switch Card -->
-  <section aria-label="Plugin Activation">
-    <div
-      class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 flex items-center justify-between gap-4"
-    >
-      <div>
-        <span class="text-text-primary text-type-md font-semibold block">
-          Enable note summaries
-        </span>
-        <span class="text-text-muted text-type-xs font-label-sm block mt-0.5">
-          Generate summaries automatically or on-demand at the top of each note.
-        </span>
-      </div>
-      <label
-        class="flex items-center cursor-pointer select-none"
-        for="summary-enabled-toggle"
+  <section
+    class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4"
+    aria-label="Managed enablement"
+  >
+    <p class="text-text-muted text-type-sm m-0">
+      Enablement is managed under
+      <button
+        type="button"
+        class="text-accent-primary-start underline bg-transparent border-none p-0 cursor-pointer font-inherit"
+        onclick={() => ctx.openSettings('ai')}
       >
-        <input
-          id="summary-enabled-toggle"
-          type="checkbox"
-          class="keyring-switch peer sr-only"
-          checked={enabled}
-          onchange={toggleEnabled}
-        />
-        <span aria-hidden="true" class="keyring-switch-track" class:on={enabled}
-        ></span>
-        <!-- Hidden label text to satisfy tests querying for "Generate summaries..." -->
-        <span class="sr-only">Generate summaries for notes</span>
-      </label>
-    </div>
+        Settings → AI → Features
+      </button>
+      (Note summaries). This page is fine-tuning only.
+    </p>
   </section>
 
   <!-- Privacy Callout -->
@@ -180,7 +128,7 @@
         Note content is sent only to your configured AI endpoint — local or
         remote — to generate the summary. No other note data is sent. See
         <strong class="text-accent-primary-start"
-          >Settings &rarr; AI Provider &rarr; Recent AI activity</strong
+          >Settings &rarr; AI &rarr; Recent AI activity</strong
         >
         for the call log.
       </p>
@@ -188,11 +136,7 @@
   </section>
 
   {#if loaded}
-    <div
-      class="space-y-4"
-      class:opacity-45={!enabled}
-      class:pointer-events-none={!enabled}
-    >
+    <div class="space-y-4">
       <!-- Generation settings card -->
       <div
         class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
@@ -418,37 +362,5 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
-  }
-
-  .keyring-switch-track {
-    width: 36px;
-    height: 20px;
-    border-radius: 9999px;
-    background: var(--color-surface-panel-border);
-    position: relative;
-    flex-shrink: 0;
-    margin-top: 2px;
-    transition: background-color 0.15s ease;
-  }
-  .keyring-switch-track.on {
-    background: var(--color-accent-primary-start);
-  }
-  .keyring-switch-track::after {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    border-radius: 9999px;
-    background: #ffffff;
-    transition: transform 0.15s ease;
-  }
-  .keyring-switch-track.on::after {
-    transform: translateX(16px);
-  }
-  .keyring-switch:focus-visible + .keyring-switch-track {
-    outline: 2px solid var(--color-accent-primary-start);
-    outline-offset: 2px;
   }
 </style>

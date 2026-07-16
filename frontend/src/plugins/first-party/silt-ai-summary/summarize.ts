@@ -48,7 +48,7 @@ export async function summarize(
       error: {
         code: 'unconfigured',
         message:
-          'No AI provider is configured. Add a chat model in Settings → AI Provider to generate summaries.'
+          'No AI provider is configured. Add a chat model in Settings → AI to generate summaries.'
       }
     }
   }

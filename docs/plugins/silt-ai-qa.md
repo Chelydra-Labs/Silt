@@ -7,7 +7,8 @@ This plugin is now a **headless capability provider** for the unified **Silt
 AI** drawer. Its retrieval index, citations, settings, and lifecycle remain
 plugin-owned; answers and evidence render in the shared typed transcript.
 
-**Off by default.** Enable under **Settings → AI Assistant** (or Plugins).
+**Off by default.** Enable under **Settings → AI → Features → Semantic search**
+(master **Enable AI** must be on). There is no independent Plugins-tab toggle.
 
 ## What it does
 
@@ -21,15 +22,18 @@ plugin-owned; answers and evidence render in the shared typed transcript.
 
 ## Setup
 
-1. **Settings → AI Provider**
+1. **Settings → AI**
+   - Turn on **Enable AI**, then **Semantic search**.
    - Configure a **chat** model (local Ollama or OpenAI-compatible).
    - Configure an **embedding** model independently (e.g. `nomic-embed-text`).
    - See [BRING_YOUR_OWN_MODEL.md](../BRING_YOUR_OWN_MODEL.md).
-2. **Settings → AI Assistant**
-   - Enable the plugin.
+2. **Settings → AI Assistant** (fine-tuning only when Semantic search is on)
    - Optionally limit **notebook scope**.
    - Click **Rebuild index** (first run). Progress shows in the settings page.
 3. Open **Silt AI** from the title bar and ask a question.
+
+When only one of keyword or semantic search fails mid-query, results continue
+from the healthy side and a degraded-search signal is recorded (audit + UI).
 
 ## Unified AI chat
 
@@ -50,7 +54,7 @@ standard Search surface remains separate, and **Escape** closes the AI drawer.
 
 | Symptom | Fix |
 |---|---|
-| “Embedding model not configured” | Set embedding model on AI Provider page |
+| “Embedding model not configured” | Set embedding model on Settings → AI |
 | Empty / weak answers | Rebuild index; raise hybrid weight toward semantic; check notebook scope |
 | Dimension / model change | Rebuild index (vec0 dimensions are fixed per model); model changes auto-trigger rebuild on open |
 | Streaming fails (native Google/Anthropic) | Use OpenAI-compatible or local chat for streaming; non-stream fallback still works |

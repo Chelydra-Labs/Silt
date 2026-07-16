@@ -145,9 +145,100 @@ describe('PluginsTab first-party disable guard', () => {
   })
 })
 
+// #632: first-party AI modules are managed under Settings → AI, not via
+// independent Plugins enable toggles.
+describe('PluginsTab first-party AI managed enablement', () => {
+  beforeEach(() => {
+    mocks.listPlugins.mockReset()
+    mocks.loadPlugins.mockReset()
+    mocks.saveConfig.mockReset()
+    mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
+    mocks.checkPluginUpdate.mockReset()
+    mocks.getNetworkAudit.mockReset()
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+    mocks.listPlugins.mockResolvedValue([])
+    mocks.loadPlugins.mockResolvedValue(undefined)
+    mocks.saveConfig.mockResolvedValue(true)
+    mocks.getGrantedCapabilities.mockResolvedValue({})
+    mocks.configNoPlugins = {
+      ai: {
+        features: {
+          enabled: true,
+          rag_enabled: false,
+          summaries_enabled: false
+        },
+        chat: { model: 'm', provider_type: 'local' }
+      },
+      plugins: { disabled: [], plugin_settings: {} }
+    }
+    mocks.firstPartyPluginsFn.mockReturnValue([
+      {
+        manifest: {
+          id: 'silt-ai-agent',
+          name: 'Silt AI Agent',
+          version: '1.0.0',
+          author: 'Silt',
+          description: 'Agent tools',
+          icon: 'smart_toy'
+        }
+      },
+      {
+        manifest: {
+          id: 'silt-tasks',
+          name: 'Tasks',
+          version: '1.0.0',
+          author: 'Silt',
+          description: '',
+          icon: 'checklist'
+        }
+      }
+    ])
+  })
+
+  afterEach(() => {
+    cleanup()
+    mocks.firstPartyPluginsFn.mockReturnValue([
+      {
+        manifest: {
+          id: 'silt-tasks',
+          name: 'Tasks',
+          version: '1.0.0',
+          author: 'Silt',
+          description: '',
+          icon: 'checklist'
+        }
+      }
+    ])
+  })
+
+  it('shows Managed in Settings → AI instead of an enable toggle for silt-ai-*', async () => {
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily',
+      onSwitchTab: vi.fn()
+    })
+    await flush()
+
+    expect(
+      screen.getByRole('button', {
+        name: /Silt AI Agent: managed in AI settings/i
+      })
+    ).toBeTruthy()
+    expect(
+      screen.queryByRole('button', { name: /Silt AI Agent: (Enable|Disable)/i })
+    ).toBeNull()
+    // Non-AI first-party still has enable/disable.
+    expect(
+      screen.getByRole('button', { name: /Tasks: (Enable|Disable)/i })
+    ).toBeTruthy()
+  })
+})
+
 // #447: when an enabled AI-capable plugin has no chat model configured,
 // the Plugins tab surfaces an "AI setup needed" nudge that links to the
-// AI Provider tab. These tests cover the render condition, the click
+// AI settings tab. These tests cover the render condition, the click
 // handler, and the graceful-degradation path when onSwitchTab is absent.
 describe('PluginsTab AI setup nudge', () => {
   // Disk plugin shapes used across the tests. `grantsFor` is what

@@ -608,7 +608,7 @@ const key = await ctx.getSetting('apiKey')  // schema-default-aware
 Deep-link to a settings tab from a CTA (#472):
 
 ```ts
-ctx.openSettings('ai')                    // → Settings → AI Provider
+ctx.openSettings('ai')                    // → Settings → AI
 ctx.openSettings('plugin:my-plugin')      // → this plugin's bespoke settings tab
 ctx.openSettings()                        // → Settings (default tab)
 ```
@@ -753,7 +753,7 @@ when your settings are flat key/value pairs (strings, bools, selects, colors,
 keymaps, lists). It is less code, automatically a11y-compliant, and renders
 consistently with the rest of Settings. Reserve the bespoke page for rich UI
 that the generic form cannot express: connection-test buttons, multi-step
-wizards, prompt editors, action catalogs. The AI Provider page (Sprint 20)
+wizards, prompt editors, action catalogs. The AI settings page (Sprint 20)
 and each AI plugin's page (Sprints 21–23) are the first consumers.
 
 ### 8.13 Surfaces: `note-banner` (#215)
@@ -826,7 +826,7 @@ third-party isolation. **Reference consumer: `silt-ai-summary`**
 
 Plugins that need AI call the **user-configured** model server through
 `ctx.ai`. Silt routes the request to the provider the user set up in
-**Settings → AI Provider** (see `docs/BRING_YOUR_OWN_MODEL.md`); the plugin
+**Settings → AI** (see `docs/BRING_YOUR_OWN_MODEL.md`); the plugin
 never sees the endpoint URL, model name, or API key.
 
 **Reference consumers:** `silt-ai-summary` (note banner), and the headless
@@ -941,8 +941,8 @@ store (§8.11) for semantic search or dedup.
 A denied capability grant throws a `CapabilityDeniedError` (same shape as the
 other v2 capabilities). A provider misconfiguration (no key set, unreachable
 server, wrong model name) throws an `AIError` whose `message` carries the
-server's response — surface it to the user so they can fix their AI Provider
-settings. Every call is audit-logged (Settings → AI Provider → Recent AI
+server's response — surface it to the user so they can fix their AI
+settings. Every call is audit-logged (Settings → AI → Recent AI
 activity).
 
 ---

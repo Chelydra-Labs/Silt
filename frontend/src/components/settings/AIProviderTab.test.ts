@@ -215,6 +215,27 @@ describe('AIProviderTab', () => {
         expect(mocks.UpdateAIFeatures).toHaveBeenCalledWith({ enabled: true })
       })
     })
+
+    it('enables nested Semantic search after master is on', async () => {
+      mocks.GetAIProviderConfig.mockResolvedValue({
+        ...structuredClone(mocks.configState),
+        features: {
+          enabled: true,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
+      })
+      render(AIProviderTab)
+      await ready()
+      const rag = screen.getByRole('checkbox', { name: /Semantic search/i })
+      expect(rag).not.toBeDisabled()
+      await fireEvent.click(rag)
+      await waitFor(() => {
+        expect(mocks.UpdateAIFeatures).toHaveBeenCalledWith({
+          rag_enabled: true
+        })
+      })
+    })
   })
 
   describe('initial render', () => {

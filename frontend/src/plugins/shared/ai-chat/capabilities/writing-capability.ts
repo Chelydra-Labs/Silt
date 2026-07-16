@@ -181,9 +181,7 @@ export function createWritingCapability(): AIChatCapability {
         meta?.needsEmbed &&
         embeddingProviderNeedsSetup(appSettings.config?.ai?.embedding as any)
       ) {
-        throw new Error(
-          'Configure an embedding model in Settings → AI Provider.'
-        )
+        throw new Error('Configure an embedding model in Settings → AI.')
       }
 
       const request = context.request

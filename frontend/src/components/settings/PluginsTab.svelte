@@ -619,7 +619,7 @@
                     type="button"
                     onclick={() => onSwitchTab?.('ai')}
                     disabled={!onSwitchTab}
-                    title="Open AI Provider settings"
+                    title="Open AI settings"
                     class="inline-flex items-center gap-0.5 text-type-3xs text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider hover:bg-accent-primary-start/20 hover:border-accent-primary-start/60 transition-all motion-reduce:transition-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:cursor-default disabled:opacity-70"
                   >
                     AI setup needed

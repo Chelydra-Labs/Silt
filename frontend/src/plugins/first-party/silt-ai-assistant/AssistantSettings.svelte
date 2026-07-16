@@ -1,13 +1,12 @@
 <script lang="ts">
+  // Writing Assistant fine-tuning. Master enablement is Settings → AI (#632).
   import { untrack } from 'svelte'
   import type { PluginContext, PluginManifest } from '../../sdk'
   import {
     aiProviderNeedsSetup,
     embeddingProviderNeedsSetup
   } from '../../../settings/ai-setup'
-  import { settings, saveConfig } from '../../../settings/store.svelte'
-  // Dynamic import of loader inside toggleEnabled — static import creates a
-  // cycle: this file → loader → registry → silt-ai-assistant index → here.
+  import { settings } from '../../../settings/store.svelte'
   import { ACTION_CATALOG } from './catalog'
   import { DEFAULT_SETTINGS, resolveSettings } from './settings'
   import type { ActionId, AssistantSettings as Settings } from './types'
@@ -19,10 +18,8 @@
     activeSection?: string
     activePage?: string
   }
-  let { ctx, manifest, activeNotebook, activeSection, activePage }: Props =
-    $props()
-
-  const PLUGIN_ID = 'silt-ai-assistant'
+  // Location props are part of the settings-page surface contract; unused here.
+  let { ctx, manifest }: Props = $props()
 
   let draft = $state<Settings>({
     ...DEFAULT_SETTINGS,
@@ -31,9 +28,6 @@
   })
   let loaded = $state(false)
 
-  const enabled = $derived(
-    !(settings.config?.plugins?.disabled ?? []).includes(PLUGIN_ID)
-  )
   const chatUnconfigured = $derived(
     aiProviderNeedsSetup(settings.config?.ai?.chat as any)
   )
@@ -76,29 +70,6 @@
     else delete prompt_overrides[id]
     await write('prompt_overrides', prompt_overrides)
   }
-
-  async function toggleEnabled() {
-    const { loadPlugins, teardownPlugin } = await import('../../loader')
-    const cfg = settings.config
-    if (!cfg) return
-    if (!cfg.plugins) {
-      cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
-    }
-    const disabled = new Set(cfg.plugins.disabled ?? [])
-    if (enabled) {
-      disabled.add(PLUGIN_ID)
-      teardownPlugin(PLUGIN_ID)
-    } else {
-      disabled.delete(PLUGIN_ID)
-    }
-    cfg.plugins.disabled = [...disabled]
-    await saveConfig(cfg)
-    await loadPlugins(
-      activeNotebook ?? '',
-      activeSection ?? '',
-      activePage ?? ''
-    )
-  }
 </script>
 
 <div class="p-6 max-w-3xl space-y-6">
@@ -112,6 +83,24 @@
     </p>
   </header>
 
+  <section
+    class="p-4 rounded-xl border border-surface-panel-border bg-surface-panel/10"
+    aria-label="Managed enablement"
+  >
+    <p class="text-text-muted text-type-sm m-0">
+      Enablement is managed under
+      <button
+        type="button"
+        class="text-accent-primary-start underline bg-transparent border-none p-0 cursor-pointer font-inherit"
+        onclick={() => ctx.openSettings('ai')}
+      >
+        Settings → AI → Features
+      </button>
+      (Enable AI). This page is action catalog fine-tuning only. AI never writes until
+      you accept a proposal.
+    </p>
+  </section>
+
   {#if chatUnconfigured || embedUnconfigured}
     <div
       class="flex flex-col gap-2 p-4 rounded-xl border border-accent-primary-start/30 bg-accent-primary-glow/20"
@@ -119,8 +108,7 @@
     >
       <p class="text-text-primary text-type-md">
         {#if chatUnconfigured}
-          Chat model not configured — writing actions need Settings → AI
-          Provider.
+          Chat model not configured — writing actions need Settings → AI.
         {/if}
         {#if embedUnconfigured}
           Embedding model not configured — related-note suggestions need an
@@ -132,26 +120,10 @@
         class="self-start text-accent-primary-start underline text-type-sm"
         onclick={() => ctx.openSettings('ai')}
       >
-        Open AI Provider
+        Open AI settings
       </button>
     </div>
   {/if}
-
-  <section class="space-y-3">
-    <h3 class="text-text-primary font-semibold">Plugin</h3>
-    <label class="flex items-center gap-3">
-      <input
-        type="checkbox"
-        checked={enabled}
-        onchange={() => void toggleEnabled()}
-      />
-      <span class="text-text-primary">Enable Writing Assistant</span>
-    </label>
-    <p class="text-text-muted text-type-sm">
-      Off by default. When enabled, slash commands and the assistant panel are
-      available. AI never writes until you accept a proposal.
-    </p>
-  </section>
 
   {#if loaded}
     <section class="space-y-3">

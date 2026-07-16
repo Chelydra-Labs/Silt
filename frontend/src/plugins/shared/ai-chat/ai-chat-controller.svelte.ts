@@ -505,7 +505,21 @@ export function createAIChatController(initialContext?: PluginContext) {
       // Only the current run owns the busy/active lifecycle. A stopped/cleared
       // run already reset these (and finalized streaming) in stop()/clear().
       if (live()) {
-        remove(runningStatus.id)
+        // Terminal success is a distinct status line (not just SR announce).
+        // Error/stopped already appended their own entries; do not clobber them.
+        if (lastOutcome === 'complete') {
+          update(runningStatus.id, (e) =>
+            e.kind === 'status'
+              ? {
+                  ...e,
+                  status: 'done',
+                  message: agentStatusMessage('done')
+                }
+              : e
+          )
+        } else {
+          remove(runningStatus.id)
+        }
         activeRunStatusId = null
         finalizeStreaming()
         busy = false

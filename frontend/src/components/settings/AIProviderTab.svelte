@@ -38,10 +38,17 @@
     }) => Promise<void>
   }
 
-  // Degraded semantic index signal (#630): surface QA stale_reason when RAG on.
+  // Degraded semantic index / hybrid search signals (#630).
   const qaStaleReason = $derived.by(() => {
     try {
       return getQAController()?.settings?.stale_reason ?? null
+    } catch {
+      return null
+    }
+  })
+  const qaSearchDegrade = $derived.by(() => {
+    try {
+      return getQAController()?.searchDegradeReason ?? null
     } catch {
       return null
     }
@@ -232,6 +239,19 @@
             <div class="text-type-xs font-body-md text-text-primary">
               Semantic search index may be out of date: {qaStaleReason}. Rebuild
               from Search settings for accurate results.
+            </div>
+          </div>
+        {:else if features.rag_enabled === true && qaSearchDegrade}
+          <div
+            class="bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2"
+            role="status"
+          >
+            <span
+              class="material-symbols-outlined text-accent-primary-start text-icon-md flex-shrink-0"
+              aria-hidden="true">warning</span
+            >
+            <div class="text-type-xs font-body-md text-text-primary">
+              Search is degraded: {qaSearchDegrade}
             </div>
           </div>
         {/if}

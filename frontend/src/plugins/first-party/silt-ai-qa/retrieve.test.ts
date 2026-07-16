@@ -20,6 +20,48 @@ describe('ftsRowsToHits', () => {
 })
 
 describe('hybridRetrieve', () => {
+  it('reports degrade when vector fails but FTS has hits', async () => {
+    const onDegraded = vi.fn()
+    // Exercise the shared pipeline with an injected vectorSearch that rejects
+    // (QA's own vectorSearch often soft-fails to [] without setting vecErr).
+    const { hybridRetrieve: sharedHybridRetrieve } =
+      await import('../../shared/retrieval/retrieve')
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({
+        rows: [
+          {
+            id: 'b1',
+            notebook: 'N',
+            section: 'S',
+            page: 'P',
+            clean_content: 'billing migration'
+          }
+        ]
+      })),
+      ai: { embed: vi.fn() }
+    } as unknown as PluginContext
+
+    const passages = await sharedHybridRetrieve(
+      ctx,
+      'billing',
+      {
+        hybrid_weight: 0.5,
+        top_k: 5,
+        min_score: 0,
+        max_context_chars: 24000,
+        rerank_enabled: false,
+        onDegraded
+      },
+      async () => {
+        throw new Error('vec index down')
+      }
+    )
+    expect(passages.length).toBeGreaterThan(0)
+    expect(onDegraded).toHaveBeenCalledWith(
+      expect.objectContaining({ side: 'vector' })
+    )
+  })
+
   it('throws RetrieveError when both sides fail', async () => {
     const ctx = {
       fullTextSearch: vi.fn(async () => {

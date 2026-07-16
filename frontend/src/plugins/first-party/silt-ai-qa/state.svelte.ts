@@ -81,6 +81,8 @@ export function createQAController() {
   let staleBannerDismissed = $state(false)
   /** Soft toast once per search session when querying a stale index. */
   let staleSearchToasted = false
+  /** Last one-sided hybrid failure message (session-scoped; #630). */
+  let searchDegradeReason = $state<string | null>(null)
 
   function loadSettings(_ctx?: PluginContext) {
     const raw = (appSettings.config?.plugins?.plugin_settings as any)?.[
@@ -194,7 +196,7 @@ export function createQAController() {
         status: 'unconfigured',
         done: 0,
         total: 0,
-        message: 'Configure a search model in Settings → AI Provider'
+        message: 'Configure a search model in Settings → AI'
       }
       return
     }
@@ -234,7 +236,7 @@ export function createQAController() {
         status: 'unconfigured',
         done: 0,
         total: 0,
-        message: 'Configure a search model in Settings → AI Provider'
+        message: 'Configure a search model in Settings → AI'
       }
       return
     }
@@ -325,13 +327,13 @@ export function createQAController() {
     if (askInFlight) return
     if (!chatReady()) {
       panelStatus = 'no-chat-provider'
-      errorMessage = 'Configure a chat model in Settings → AI Provider'
+      errorMessage = 'Configure a chat model in Settings → AI'
       return
     }
     if (!embedReady()) {
       panelStatus = 'no-embedding-provider'
       errorMessage =
-        'Configure a search model in Settings → AI Provider to build the search index'
+        'Configure a search model in Settings → AI to build the search index'
       return
     }
 
@@ -355,7 +357,15 @@ export function createQAController() {
           message: 'Search index is outdated; results may be less accurate.'
         })
       }
-      const passages = await hybridRetrieve(ctx, q, settings)
+      const passages = await hybridRetrieve(ctx, q, settings, (info) => {
+        searchDegradeReason = info.message
+        void ctx.ai.auditEvent?.({
+          kind: 'search_degraded',
+          side: info.side,
+          status: 'degraded',
+          detail: info.message
+        })
+      })
       if (passages.length === 0) {
         panelStatus = 'no-results'
         answer = NO_RESULTS_MESSAGE
@@ -496,6 +506,12 @@ export function createQAController() {
     },
     get showStaleBanner() {
       return Boolean(settings.stale_reason) && !staleBannerDismissed
+    },
+    get searchDegradeReason() {
+      return searchDegradeReason
+    },
+    clearSearchDegrade() {
+      searchDegradeReason = null
     },
     loadSettings,
     setSettings,
